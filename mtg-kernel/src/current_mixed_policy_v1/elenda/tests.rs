@@ -216,7 +216,6 @@ fn elenda_root_keeps_actual_cost_entry_order_and_complete_typed_statics() {
         "Spinner of Souls",
         "Flamewake Phoenix",
         "Painful Quandary",
-        "Homunculus Horde",
     ] {
         let id = crate::card_def::card_id_by_name(name).unwrap();
         assert!(

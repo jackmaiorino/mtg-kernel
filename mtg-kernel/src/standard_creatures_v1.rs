@@ -7,6 +7,9 @@ use crate::effect::ExecCtx;
 use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
+#[cfg(all(test, feature = "standard-magezero-fixtures"))]
+mod fellowship_talent_tests;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CreatureUpgradeV1 {
@@ -160,6 +163,53 @@ pub(crate) fn counter_transfer_snapshot(
         .unwrap_or_default()
 }
 
+/// New native effects stage their whole operation before calling this helper.
+/// Unlike the historical transfer entry, they never saturate a modifier.
+/// The existing event helper omits zero-count placement events.
+pub(crate) fn place_counters_checked_v1(
+    state: &mut GameState,
+    target: ObjectId,
+    player: crate::ids::PlayerId,
+    snapshot: CounterTransferV1,
+) -> Option<()> {
+    if snapshot == CounterTransferV1::default() {
+        return Some(());
+    }
+    let c = snapshot.counters;
+    for count in [
+        c.plus1_plus1,
+        i32::from(c.minus1_minus1),
+        i32::from(c.minus0_minus1),
+        i32::from(c.stun),
+        i32::from(c.lore),
+        i32::from(c.oil),
+        c.charge,
+        c.net,
+        c.bait,
+        c.soul,
+        c.incubation,
+        c.revival,
+        c.fellowship,
+        c.stash,
+        i32::from(snapshot.extras.lifelink),
+        i32::from(snapshot.extras.time),
+        i32::from(snapshot.extras.finality),
+    ] {
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, count).ok()?;
+    }
+    if snapshot.extras.loyalty > 0 {
+        crate::planeswalker_v1::quote_loyalty_counters_v48(state, target, snapshot.extras.loyalty)
+            .ok()?;
+    }
+    // The old transfer retains its signed-loyalty compatibility branch.
+    // New placement uses the full-width checked entry for that ledger.
+    let mut ordinary = snapshot;
+    ordinary.extras.loyalty = 0;
+    apply_counter_transfer(state, target, player, ordinary)?;
+    crate::planeswalker_v1::add_loyalty_counters_checked_v1(state, target, snapshot.extras.loyalty)
+        .ok()
+}
+
 fn apply_counter_transfer(
     state: &mut GameState,
     target: ObjectId,
@@ -180,6 +230,9 @@ fn apply_counter_transfer(
     };
     let placed_i16 = |amount: i16| i16::try_from(scale(i32::from(amount))?).ok();
     let live = state.objects.get(target);
+    if live.counters.fellowship < 0 || live.counters.stash < 0 {
+        return None;
+    }
     let minus_one = live
         .counters
         .minus1_minus1
@@ -202,6 +255,25 @@ fn apply_counter_transfer(
             .replaced_count(incubation_scaled)
             .ok()?;
     let incubation = live.counters.incubation.checked_add(incubation_placed)?;
+    let revival = live
+        .counters
+        .revival
+        .checked_add(scale(counters.revival)?)?;
+    let fellowship_scaled =
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.fellowship)
+            .ok()?;
+    let fellowship_placed =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller)
+            .replaced_count(fellowship_scaled)
+            .ok()?;
+    let fellowship = live.counters.fellowship.checked_add(fellowship_placed)?;
+    let stash_scaled =
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.stash).ok()?;
+    let stash_placed =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller)
+            .replaced_count(stash_scaled)
+            .ok()?;
+    let stash = live.counters.stash.checked_add(stash_placed)?;
     let soul_scaled =
         crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.soul).ok()?;
     let soul_placed =
@@ -250,6 +322,9 @@ fn apply_counter_transfer(
     live.counters.bait = bait;
     live.counters.soul = soul;
     live.counters.incubation = incubation;
+    live.counters.revival = revival;
+    live.counters.fellowship = fellowship;
+    live.counters.stash = stash;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {
@@ -320,13 +395,10 @@ pub(crate) fn creature_types(state: &GameState, id: ObjectId) -> Option<(Vec<u16
         .effective_subtype_ids
         .iter()
         .copied()
+        // The frozen materialized changeling pool is not a classification of
+        // every native creature subtype. Preserve noncreature and unknown IDs.
         .filter(|value| {
-            // Scout is a known creature subtype even before the FDN catalog
-            // admits Kellan and extends its materialized changeling universe.
-            *value != Subtype::Scout.stable_id()
-                && !Subtype::CREATURE_TYPES
-                    .iter()
-                    .any(|subtype| subtype.stable_id() == *value)
+            !Subtype::from_stable_id(*value).is_some_and(Subtype::is_native_creature_type)
         })
         .collect();
     result.extend_from_slice(types);
@@ -1064,6 +1136,51 @@ mod doubling_season_transfer_tests_v48 {
         state::Zone,
     };
     #[test]
+    fn native_fellowship_transfer_replacement_lki_restore_and_overflow_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let target = put(&mut state, actor, "Forest", Zone::Battlefield);
+            put(&mut state, actor, "Doubling Season", Zone::Battlefield);
+            // Generic native counter-storage and transfer primitives. No
+            // printed Forest or Banner ability is added by this fixture.
+            state.objects.get_mut(source).counters.fellowship = 3;
+            let contract = crate::state::AbilitySourceContractV4::capture(&state, source);
+            let generation = state.objects.get(source).zone_change_count;
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Graveyard),
+            );
+            assert_eq!(state.objects.get(source).counters.fellowship, 0);
+            assert_eq!(
+                state
+                    .counter_lki_for(source, generation)
+                    .unwrap()
+                    .fellowship,
+                3
+            );
+            let transfer = counter_transfer_snapshot(&state, contract);
+            assert_eq!(transfer.counters.fellowship, 3);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                apply_counter_transfer(branch, target, actor, transfer).unwrap();
+                assert_eq!(branch.objects.get(target).counters.fellowship, 6);
+                let before = branch.clone();
+                let overflow = CounterTransferV1 {
+                    counters: crate::state::Counters {
+                        fellowship: i32::MAX,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                assert!(apply_counter_transfer(branch, target, actor, overflow).is_none());
+                assert_eq!(*branch, before);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+    #[test]
     fn soul_transfer_preserves_value_restore_and_overflow_refusal_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -1218,6 +1335,9 @@ mod doubling_season_transfer_tests_v48 {
                     bait: 1,
                     soul: 1,
                     incubation: 1,
+                    revival: 1,
+                    fellowship: 0,
+                    stash: 1,
                 },
                 extras: CounterExtrasV1 {
                     loyalty: 1,
@@ -1232,6 +1352,7 @@ mod doubling_season_transfer_tests_v48 {
                 apply_counter_transfer(branch, target, actor, snapshot).unwrap();
                 let o = branch.objects.get(target);
                 assert_eq!(o.counters.plus1_plus1, 2);
+                assert_eq!(o.counters.stash, 2);
                 assert_eq!(o.counters.minus1_minus1, 2);
                 assert_eq!(o.counters.minus0_minus1, 2);
                 assert_eq!(o.counters.stun, 2);
@@ -1242,6 +1363,7 @@ mod doubling_season_transfer_tests_v48 {
                 assert_eq!(o.counters.bait, 2);
                 assert_eq!(o.counters.soul, 2);
                 assert_eq!(o.counters.incubation, 2);
+                assert_eq!(o.counters.revival, 2);
                 assert_eq!(o.v4.lifelink_keyword_counters, 2);
                 assert_eq!(o.v4.time_counters_v1, 2);
                 assert_eq!(o.v4.creature_upgrade.as_ref().unwrap().finality, 2);

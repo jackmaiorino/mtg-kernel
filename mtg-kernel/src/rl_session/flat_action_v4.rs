@@ -95,6 +95,70 @@ pub(super) fn census_hidden_source_conflicts_v1(
             .is_some_and(|pending| stack(&pending.resolving_item))
 }
 mod search_state;
+pub(super) fn redeterminize_call_v62(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_call_v62(state, actor, seed)
+}
+pub(super) fn same_current_unknown_pool_v69(
+    before: &crate::state::GameState,
+    current: &crate::state::GameState,
+    actor: crate::ids::PlayerId,
+) -> bool {
+    search_state::same_current_unknown_pool_v69(before, current, actor)
+}
+pub(super) fn redeterminize_muldrotha_v71(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_muldrotha_v71(state, actor, seed)
+}
+pub(super) fn redeterminize_tinybones_v72(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_tinybones_v72(state, actor, seed)
+}
+pub(super) fn redeterminize_liliana_v73(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_liliana_v73(state, actor, seed)
+}
+pub(super) fn redeterminize_kaito_v75(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_kaito_v75(state, actor, seed)
+}
+pub(super) fn redeterminize_chandra_v74(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_chandra_v74(state, actor, seed)
+}
+pub(super) fn redeterminize_genesis_wave_v69(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_genesis_wave_v69(state, actor, seed)
+}
+pub(super) fn redeterminize_end_turn_v68(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_end_turn_v68(state, actor, seed)
+}
+
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 pub(crate) use search_state::V4BoundaryEncodingFailureV1;
@@ -567,6 +631,10 @@ fn validate_origin_decision_against_reordered_candidates_v4(
     extension: &crate::policy_observation_v6::PolicyObservationExtensionsV6,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     let raw = crate::rl::core_policy_action_candidates_v5(&current.origin_decision, &session.state)
+        .inspect_err(|_error| {
+            #[cfg(test)]
+            eprintln!("V4 original candidate reconstruction: {_error}");
+        })
         .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     let mut original = current.clone();
     original.flat_action_cache = None;
@@ -574,8 +642,14 @@ fn validate_origin_decision_against_reordered_candidates_v4(
     original.flat_action_cache_v2 = None;
     original.flat_action_cache_error_v2 = None;
     original.candidates = raw;
-    flat_validate_current_binding_header_v1(session, &original)?;
-    flat_validate_origin_decision_v1(&original, &session.state)?;
+    flat_validate_current_binding_header_v1(session, &original).inspect_err(|_error| {
+        #[cfg(test)]
+        eprintln!("V4 reconstructed binding header: {_error:?}");
+    })?;
+    flat_validate_origin_decision_v1(&original, &session.state).inspect_err(|_error| {
+        #[cfg(test)]
+        eprintln!("V4 reconstructed decision relation: {_error:?}");
+    })?;
     super::flat_action_v3::normalize_candidates(
         &mut original.candidates,
         extension,
@@ -583,6 +657,17 @@ fn validate_origin_decision_against_reordered_candidates_v4(
         &original.origin_decision,
     )?;
     if original.candidates != current.candidates {
+        #[cfg(test)]
+        eprintln!(
+            "V4 normalized candidate mismatch: reconstructed={}, current={}, first_difference={:?}",
+            original.candidates.len(),
+            current.candidates.len(),
+            original
+                .candidates
+                .iter()
+                .zip(&current.candidates)
+                .position(|(a, b)| a != b)
+        );
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
     Ok(())
@@ -811,6 +896,10 @@ impl FastActorSessionV1 {
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
         let extension = crate::rl::policy_observation_extensions_v6(&self.state, current.actor)
+            .inspect_err(|_error| {
+                #[cfg(test)]
+                eprintln!("V4 current observation extension: {_error}");
+            })
             .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
         validate_origin_decision_against_reordered_candidates_v4(self, current, &extension)?;
         let actor: PlayerSeatV1 = current.actor.into();

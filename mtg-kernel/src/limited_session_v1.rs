@@ -49,19 +49,60 @@ pub struct CustomDeckV1 {
 impl CustomDeckV1 {
     /// The mainboard, for a deck without a companion.
     pub fn resolve(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::ExistingV40)
+    }
+    pub(crate) fn resolve_next_five_v59(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::NextFiveV59)
+    }
+    pub(crate) fn resolve_graveyard_return_v61(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::GraveyardReturnV61)
+    }
+    pub(crate) fn resolve_call_v62(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::CallV62)
+    }
+    pub(crate) fn resolve_end_turn_v68(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::EndTurnV68)
+    }
+    pub(crate) fn resolve_genesis_wave_v69(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::GenesisWaveV69)
+    }
+    pub(crate) fn resolve_vivien_v70(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::VivienV70)
+    }
+    pub(crate) fn resolve_muldrotha_v71(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::MuldrothaV71)
+    }
+    pub(crate) fn resolve_tinybones_v72(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::TinybonesV72)
+    }
+    pub(crate) fn resolve_liliana_v73(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::LilianaV73)
+    }
+    pub(crate) fn resolve_chandra_v74(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::ChandraV74)
+    }
+
+    pub(crate) fn resolve_kaito_v75(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::KaitoV75)
+    }
+
+    fn resolve_for_scope(
+        &self,
+        scope: crate::rl::CommonProjectionScopeV42,
+    ) -> Result<Vec<u16>, String> {
         if let Some(companion) = &self.companion {
             return Err(format!(
                 "companion {companion:?} is supported only by the Limited JSONL reset"
             ));
         }
-        self.resolve_mainboard()
+        self.resolve_mainboard(scope)
     }
 
     /// The mainboard and the companion's definition id, if any. A companion
     /// must be a fully supported companion card whose deck condition the
     /// mainboard meets.
     pub fn resolve_with_companion(&self) -> Result<(Vec<u16>, Option<u16>), String> {
-        let ids = self.resolve_mainboard()?;
+        let ids = self.resolve_mainboard(crate::rl::CommonProjectionScopeV42::ExistingV40)?;
         let Some(name) = &self.companion else {
             return Ok((ids, None));
         };
@@ -75,7 +116,15 @@ impl CustomDeckV1 {
         }
     }
 
-    fn resolve_mainboard(&self) -> Result<Vec<u16>, String> {
+    fn resolve_mainboard(
+        &self,
+        scope: crate::rl::CommonProjectionScopeV42,
+    ) -> Result<Vec<u16>, String> {
+        let cards = self.resolve_full()?;
+        crate::rl::require_declared_cards_for_scope(scope, &cards)?;
+        Ok(cards)
+    }
+    fn resolve_full(&self) -> Result<Vec<u16>, String> {
         let mut total = 0usize;
         let mut rows = Vec::new();
         for row in &self.cards {
@@ -480,6 +529,194 @@ impl LimitedJsonlServerV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn declared_scope_classification_never_overrides_original_full_preflight() {
+        use crate::rl::CommonProjectionScopeV42 as Scope;
+        for (name, next_five) in [
+            ("Midnight Snack", true),
+            ("Extravagant Replication", true),
+            ("Infernal Vessel", true),
+            ("Giada, Font of Hope", true),
+            ("Goblin Negotiation", true),
+            ("Alesha, Who Laughs at Fate", false),
+            ("Nine-Lives Familiar", false),
+        ] {
+            let id = card_id_by_name(name).unwrap();
+            assert_eq!(CARD_DEFS[usize::from(id)].has_full_support(), next_five);
+            assert!(
+                crate::rl::require_declared_cards_for_scope(Scope::ExistingV40, &[id]).is_err()
+            );
+            assert_eq!(
+                crate::rl::require_declared_cards_for_scope(Scope::NextFiveV59, &[id]).is_ok(),
+                next_five
+            );
+            assert!(
+                crate::rl::require_declared_cards_for_scope(Scope::GraveyardReturnV61, &[id])
+                    .is_ok()
+            );
+            let deck = CustomDeckV1 {
+                cards: vec![CustomCardCountV1 {
+                    name: name.into(),
+                    count: 40,
+                }],
+                companion: None,
+            };
+            if next_five {
+                let resolved = deck.resolve_full().unwrap();
+                assert_eq!(resolved, vec![id; 40]);
+                assert!(
+                    deck.resolve().is_err(),
+                    "old consumer still refuses complete new rules"
+                );
+                assert_eq!(deck.resolve_next_five_v59().unwrap(), resolved);
+                assert_eq!(deck.resolve_graveyard_return_v61().unwrap(), resolved);
+            } else {
+                let original = deck.resolve_full().unwrap_err();
+                assert!(original.contains("lacks full engine support"));
+                assert_eq!(deck.resolve().unwrap_err(), original);
+                assert_eq!(deck.resolve_next_five_v59().unwrap_err(), original);
+                assert_eq!(deck.resolve_graveyard_return_v61().unwrap_err(), original);
+            }
+        }
+        let basics = CustomDeckV1 {
+            cards: vec![CustomCardCountV1 {
+                name: "Forest".into(),
+                count: 40,
+            }],
+            companion: None,
+        };
+        assert_eq!(
+            basics.resolve().unwrap(),
+            basics.resolve_next_five_v59().unwrap()
+        );
+        assert_eq!(
+            basics.resolve().unwrap(),
+            basics.resolve_graveyard_return_v61().unwrap()
+        );
+        let zero = CustomDeckV1 {
+            cards: vec![CustomCardCountV1 {
+                name: "Alesha, Who Laughs at Fate".into(),
+                count: 0,
+            }],
+            companion: None,
+        };
+        assert_eq!(
+            zero.resolve().unwrap_err(),
+            zero.resolve_graveyard_return_v61().unwrap_err()
+        );
+        assert!(zero.resolve().unwrap_err().starts_with("zero copies"));
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn complete_wire_failed_partial_resets_retain_current_prompt_both_seats() {
+        use serde_json::{json, Value};
+        fn check(
+            mut handle: impl FnMut(&str) -> String,
+            schema: u32,
+            actor: crate::rl::PlayerSeatV1,
+        ) {
+            let reset = json!({"request_type":"reset", "schema_version":schema, "request_id":"initial",
+                "expected_card_db_hash":KERNEL_CARDDB_HASH, "episode_id":7, "env_seed":123,
+                "starting_player":actor, "max_physical_decisions":4096, "max_policy_steps":4096,
+                "decks":[{"cards":[{"name":"Forest","count":40}]},{"cards":[{"name":"Island","count":40}]}]});
+            let initial: Value = serde_json::from_str(&handle(&reset.to_string())).unwrap();
+            assert_ne!(initial["response_type"], "error");
+            let current = json!({"request_type":"current", "schema_version":schema,"request_id":"same-current"});
+            let before = handle(&current.to_string());
+            for name in [
+                "Alesha, Who Laughs at Fate",
+                "Nine-Lives Familiar",
+                "Valkyrie's Call",
+            ] {
+                let mut bad = reset.clone();
+                bad["request_id"] = json!(name);
+                bad["episode_id"] = json!(999);
+                bad["decks"][0]["cards"] =
+                    json!([{"name":"Forest","count":39},{"name":name,"count":1}]);
+                let rejected: Value = serde_json::from_str(&handle(&bad.to_string())).unwrap();
+                assert_eq!(rejected["code"], "unsupported_deck");
+                assert_eq!(handle(&current.to_string()), before);
+            }
+        }
+        for actor in [crate::rl::PlayerSeatV1::P0, crate::rl::PlayerSeatV1::P1] {
+            let mut v1 = crate::limited_common_session_v1::LimitedCommonJsonlServerV1::new();
+            check(|line| v1.handle_line(line), 1, actor);
+            let mut v2 = crate::limited_common_session_v2::LimitedCommonJsonlServerV2::new();
+            check(|line| v2.handle_line(line), 2, actor);
+            let mut v3 = crate::limited_common_session_v3::LimitedCommonJsonlServerV3::new();
+            check(|line| v3.handle_line(line), 3, actor);
+            let mut v4 = crate::limited_elenda_session_v4::LimitedElendaJsonlServerV4::new();
+            check(|line| v4.handle_line(line), 4, actor);
+            let mut v5 = crate::limited_prepared_session_v5::LimitedPreparedJsonlServerV5::new();
+            check(|line| v5.handle_line(line), 5, actor);
+            let mut v6 = crate::limited_next_five_session_v6::LimitedNextFiveJsonlServerV6::new();
+            check(|line| v6.handle_line(line), 6, actor);
+            let mut v7 = crate::limited_graveyard_return_session_v7::LimitedGraveyardReturnJsonlServerV7::new();
+            check(|line| v7.handle_line(line), 7, actor);
+        }
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn legacy_wire_failed_partial_resets_keep_active_world_and_prompt_for_each_mode() {
+        use serde_json::json;
+        for mut server in [
+            LimitedJsonlServerV1::new(),
+            LimitedJsonlServerV1::new_with_engine_priority_v1(),
+            LimitedJsonlServerV1::new_with_foundations_combat_v1(),
+            LimitedJsonlServerV1::new_with_london_mulligans_v1(),
+        ] {
+            let reset = json!({"request_type":"reset", "schema_version":server.schema_version(),
+                "request_id":"initial", "episode_id":7, "env_seed":123,
+                "max_physical_decisions":4096, "max_policy_steps":4096,
+                "decks":[{"cards":[{"name":"Forest","count":40}]},{"cards":[{"name":"Island","count":40}]}]});
+            let initial: LimitedReplyV1 =
+                serde_json::from_str(&server.handle_line(&reset.to_string())).unwrap();
+            assert!(!matches!(initial.body, LimitedReplyBodyV1::Error { .. }));
+            let active = server.active.as_ref().unwrap();
+            let before = (
+                active.privileged_environment_hash(),
+                active.current_response(),
+            );
+            for name in [
+                "Midnight Snack",
+                "Alesha, Who Laughs at Fate",
+                "Nine-Lives Familiar",
+            ] {
+                let mut bad = reset.clone();
+                bad["request_id"] = json!(name);
+                bad["episode_id"] = json!(999);
+                bad["decks"][0]["cards"] =
+                    json!([{"name":"Forest","count":39},{"name":name,"count":1}]);
+                let rejected: LimitedReplyV1 =
+                    serde_json::from_str(&server.handle_line(&bad.to_string())).unwrap();
+                let LimitedReplyBodyV1::Error { error } = rejected.body else {
+                    panic!("Partial was admitted")
+                };
+                assert_eq!(error.code, "unsupported_deck");
+                let active = server.active.as_ref().unwrap();
+                assert_eq!(
+                    (
+                        active.privileged_environment_hash(),
+                        active.current_response()
+                    ),
+                    before
+                );
+            }
+        }
+    }
 
     #[test]
     fn london_session_snapshot_restores_pending_bottom_menu_binding_and_transition() {

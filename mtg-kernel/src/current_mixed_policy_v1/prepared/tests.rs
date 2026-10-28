@@ -308,9 +308,8 @@ fn exact_new_printing_roots_preserve_cast_cost_characteristics_and_ordered_seman
     assert_eq!(r["countering_refunds_costs"], false);
     let horde = crate::card_def::card_id_by_name("Homunculus Horde").unwrap();
     assert!(printing(horde).unwrap().is_none());
-    assert!(
-        matches!(super::super::roots::baseline(horde),Err(Error::UnsupportedPrintedRoot(actual))if actual==horde)
-    );
+    // Horde's root is the observer-trigger printing, not a Prepared one.
+    assert!(super::super::roots::baseline(horde).is_ok());
 }
 
 #[test]

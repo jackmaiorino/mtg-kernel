@@ -2,7 +2,6 @@
 //! Public observations and frozen policy encoders do not inspect this ledger.
 
 use crate::event::CommittedEvent;
-use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{
     AbilitySourceContractV4, FirstLifeGainCaptureV1, GameState, LifeGainTurnV1, Zone,
@@ -85,10 +84,7 @@ pub(crate) fn event_ordinals(
     {
         return Err("first-life-gain cursor precedes a newer turn boundary".into());
     }
-    let gain = |event: &CommittedEvent| match event {
-        CommittedEvent::LifeGain { player, amount } if *amount > 0 => Some((*player, *amount)),
-        _ => None,
-    };
+    let gain = crate::snack_wide_life_v59::positive_gain;
     let historical: Vec<_> = history.iter().filter_map(gain).collect();
     let batch: Vec<_> = events.iter().filter_map(gain).collect();
     let before = historical
@@ -143,14 +139,13 @@ fn capture_pending(
 /// Called immediately after a positive gain commits, before the next effect op.
 /// The permanent history consumes first gain even when no source is active.
 pub(crate) fn capture_committed_gain(state: &mut GameState) {
-    let Some(CommittedEvent::LifeGain { player, amount }) = state.engine.event_history.last()
-    else {
+    let Some(event) = state.engine.event_history.last() else {
         return;
     };
-    if *amount <= 0 {
+    let Some((player, _)) = crate::snack_wide_life_v59::positive_gain(event) else {
         return;
-    }
-    let (player, amount) = (*player, *amount);
+    };
+    let event = event.clone();
     let active_player = state.active_player;
     let candidates: Vec<_> = state
         .objects
@@ -182,7 +177,6 @@ pub(crate) fn capture_committed_gain(state: &mut GameState) {
     if candidates.is_empty() {
         return;
     }
-    let event = CommittedEvent::LifeGain { player, amount };
     match event_ordinals(state, &[event]) {
         Ok(ordinals) if ordinals == [Some(1)] => {}
         Ok(_) => return,
@@ -221,15 +215,18 @@ fn validate_capture(state: &GameState, capture: &FirstLifeGainCaptureV1) -> Resu
     if capture.gain_history_index <= ledger.history_index {
         return Err("captured first life gain precedes this turn's boundary".into());
     }
-    let Some(CommittedEvent::LifeGain { player, amount }) =
-        state.engine.event_history.get(capture.gain_history_index)
+    let Some((player, _)) = state
+        .engine
+        .event_history
+        .get(capture.gain_history_index)
+        .and_then(crate::snack_wide_life_v59::positive_gain)
     else {
         return Err("captured first life gain has no committed event".into());
     };
-    if *amount <= 0
-        || state.engine.event_history[ledger.history_index + 1..capture.gain_history_index]
-            .iter()
-            .any(|event| matches!(event, CommittedEvent::LifeGain { player: previous, amount } if previous == player && *amount > 0))
+    if state.engine.event_history[ledger.history_index + 1..capture.gain_history_index]
+        .iter()
+        .filter_map(crate::snack_wide_life_v59::positive_gain)
+        .any(|(previous, _)| previous == player)
     {
         return Err("captured life gain is not the player's first actual gain".into());
     }
@@ -244,8 +241,8 @@ fn validate_capture(state: &GameState, capture: &FirstLifeGainCaptureV1) -> Resu
         return Err("captured ability is not a first-life-gain trigger".into());
     };
     if contract.zone != Zone::Battlefield
-        || contract.controller != *player
-        || (own_turn_only && ledger.active_player != *player)
+        || contract.controller != player
+        || (own_turn_only && ledger.active_player != player)
         || state.objects.try_get(contract.source).is_none_or(|object| {
             object.card_def != contract.card_def
                 || object.owner != contract.owner
@@ -267,7 +264,7 @@ pub(crate) fn take_captures(state: &mut GameState) -> Result<Vec<PendingTrigger>
         .engine
         .event_log
         .iter()
-        .any(|event| matches!(event, CommittedEvent::LifeGain { amount, .. } if *amount > 0));
+        .any(|event| crate::snack_wide_life_v59::positive_gain(event).is_some());
     if pending_gain {
         if let Some(source) = state.objects.iter().find_map(|(id, object)| {
             crate::trigger::triggers_for(object.card_def)
@@ -291,32 +288,31 @@ pub(crate) fn take_captures(state: &mut GameState) -> Result<Vec<PendingTrigger>
     // A historical first gain alone cannot authorize another delivery. Match
     // captures to the positive-gain suffix that is still awaiting collection.
     // Values are checked against history before using its exact event indices.
-    let pending_gain_indices: std::collections::BTreeSet<_> = if let Some(capture) =
-        ledger.captures.first()
-    {
-        event_ordinals(state, &state.engine.event_log).map_err(|_| capture.pending.source)?;
-        let pending_count = state
-            .engine
-            .event_log
-            .iter()
-            .filter(|event| matches!(event, CommittedEvent::LifeGain { amount, .. } if *amount > 0))
-            .count();
-        state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::LifeGain])
-            .iter()
-            .enumerate()
-            .rev()
-            .filter_map(|(index, event)| {
-                matches!(event, CommittedEvent::LifeGain { amount, .. } if *amount > 0)
-                    .then_some(index)
-            })
-            .take(pending_count)
-            .collect()
-    } else {
-        Default::default()
-    };
+    let pending_gain_indices: std::collections::BTreeSet<_> =
+        if let Some(capture) = ledger.captures.first() {
+            event_ordinals(state, &state.engine.event_log).map_err(|_| capture.pending.source)?;
+            let pending_count = state
+                .engine
+                .event_log
+                .iter()
+                .filter(|event| crate::snack_wide_life_v59::positive_gain(event).is_some())
+                .count();
+            state
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .rev()
+                .filter_map(|(index, event)| {
+                    crate::snack_wide_life_v59::positive_gain(event)
+                        .is_some()
+                        .then_some(index)
+                })
+                .take(pending_count)
+                .collect()
+        } else {
+            Default::default()
+        };
     let mut seen = std::collections::BTreeSet::new();
     for capture in &ledger.captures {
         let generation = capture

@@ -636,7 +636,7 @@ mod future_printed {
                 .is_none());
             assert_safe(&serde_json::to_value(&human).unwrap());
             // Real End-to-Cleanup traversal, including an actual discard if required.
-            state.step = Step::End;
+            crate::policy_observation_v6::tests::advance_to_end_for(&mut state, actor);
             let mut replay = copy(&state);
             for branch in [&mut state, &mut replay] {
                 for _ in 0..40 {

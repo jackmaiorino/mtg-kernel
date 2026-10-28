@@ -202,7 +202,10 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     let mut source = AbilitySourceContractV4::capture(state, ctx.source);
     source.controller = ctx.controller;
     if creature_legal {
-        event::propose_and_commit(state, ProposedEvent::damage(ctx.source, ctx.targets[0], 5));
+        event::propose_and_commit(
+            state,
+            crate::event::damage_from_exec_ctx_v1(ctx, ctx.targets[0], 5),
+        );
     }
     if equipment_legal {
         let Target::Object(equipment) = ctx.targets[1] else {
@@ -563,7 +566,7 @@ mod tests {
             assert_eq!(state.objects.get(creature).zone, Zone::Graveyard);
             let (mut state, creature, _, ctx) = fixture(caster, false, true);
             execute(&ctx, &mut state);
-            state.step = crate::state::Step::End;
+            crate::policy_observation_v6::tests::advance_to_end_for(&mut state, caster);
             for _ in 0..8 {
                 let decision = engine::advance_until_decision(&mut state);
                 assert!(!matches!(decision, Decision::Halted { .. }));
@@ -675,10 +678,18 @@ mod tests {
 
     #[test]
     fn genuine_cleanup_roster_preserved_but_expiry_erased_cannot_resurrect_shield() {
-        for actor in [PlayerId::P0, PlayerId::P1] {
+        for (actor, install_at_end) in [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .flat_map(|actor| [false, true].map(|at_end| (actor, at_end)))
+        {
             let (mut state, _, _, ctx) = fixture(actor, false, true);
             for _ in 0..8 {
                 put(&mut state, actor, "Forest", Zone::Hand);
+            }
+            if install_at_end {
+                // The fixture's labelled effect primitive can install during
+                // the real End step, after its beginning has already occurred.
+                crate::policy_observation_v6::tests::advance_to_end_for(&mut state, actor);
             }
             execute(&ctx, &mut state);
             let installed = state.engine.active_replacements.last().unwrap().clone();
@@ -699,19 +710,37 @@ mod tests {
             let second = state.engine.active_replacements.last().unwrap().clone();
             assert_predecessor_observation_refuses(&state, actor);
             let ending_key = state.turn_key_v1();
-            state.step = crate::state::Step::End;
+            for player in [actor, actor.opponent()] {
+                put(&mut state, player, "Forest", Zone::Library);
+            }
+            crate::policy_observation_v6::tests::advance_to_end_for(&mut state, actor);
             let mut cleanup = false;
             for _ in 0..12 {
                 match engine::advance_until_decision(&mut state) {
                     Decision::CastSpellOrPass { .. } => {
                         engine::step(&mut state, Action::Pass).unwrap()
                     }
-                    Decision::Discard { player, count, .. } => {
+                    Decision::Discard {
+                        player,
+                        count,
+                        choices,
+                    } => {
                         assert_eq!((player, count), (actor, 2));
                         assert_eq!(state.step, crate::state::Step::Cleanup);
                         assert_eq!(state.turn_key_v1(), ending_key);
-                        assert!(state.engine.active_replacements.is_empty());
+                        assert!(state.engine.active_replacements.contains(&installed));
+                        assert!(state.engine.active_replacements.contains(&second));
                         assert_predecessor_observation_refuses(&state, actor);
+                        engine::step(
+                            &mut state,
+                            Action::Discard(choices.into_iter().take(count as usize).collect()),
+                        )
+                        .unwrap();
+                        crate::policy_observation_v6::tests::advance_to_next_main_for(
+                            &mut state,
+                            actor.opponent(),
+                        );
+                        assert!(state.engine.active_replacements.is_empty());
                         cleanup = true;
                         break;
                     }
@@ -726,7 +755,7 @@ mod tests {
                 match corruption {
                     0 => {
                         // Retain the independently recorded real installation
-                        // and actual Cleanup roster, at the same ending turn.
+                        // and actual Cleanup roster after the completed turn.
                         bad.engine.event_history.retain(|e| {
                             !matches!(
                                 e,
@@ -772,6 +801,7 @@ mod tests {
                     }
                 }
                 let bytes = serde_json::to_vec(&bad).unwrap();
+                assert!(event::validate_exile_if_dies_replacements(&bad).is_err());
                 assert!(engine::step(&mut bad, Action::Pass).is_err());
                 assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
             }

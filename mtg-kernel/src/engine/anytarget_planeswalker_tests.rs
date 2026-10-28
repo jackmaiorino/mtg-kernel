@@ -44,8 +44,10 @@ fn anytarget_recipient_scope_matches_catalog_precedence_and_existing_order() {
                 }
                 Target::StackItem(_) => false,
                 Target::Object(object) => {
-                    state.objects.get(*object).controller == actor
-                        || !has_effective_keyword(&state, *object, Keywords::HEXPROOF)
+                    !has_effective_keyword(&state, *object, Keywords::PROTECTION_FROM_EVERYTHING)
+                        && !has_effective_keyword(&state, *object, Keywords::SHROUD)
+                        && (state.objects.get(*object).controller == actor
+                            || !has_effective_keyword(&state, *object, Keywords::HEXPROOF))
                 }
             })
             .collect();
@@ -230,6 +232,7 @@ mod fdn {
                 keyword,
             },
             &ExecCtx {
+                niv_damage_origin_v1: None,
                 stack_item_id: None,
                 source,
                 controller: state.objects.get(source).controller,

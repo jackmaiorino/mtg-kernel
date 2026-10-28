@@ -73,25 +73,9 @@ fn enter(state: &mut GameState, object: ObjectId) -> Vec<trigger::PendingTrigger
 }
 
 fn execute_trigger(state: &mut GameState, pending: &trigger::PendingTrigger) {
-    effect::execute(
-        &pending.effect,
-        &ExecCtx {
-            source: pending.source,
-            controller: pending.controller,
-            cauldron_grant: Default::default(),
-            stack_item_id: None,
-            targets: Vec::new(),
-            target_contracts: Vec::new(),
-            discarded: Vec::new(),
-            paid_cost_refs: Vec::new(),
-            hidden_ability_source: None,
-            ability_source_contract: pending.source_contract,
-            kicked: false,
-            optional_additional_cost_paid: None,
-            x_value: 0,
-        },
-        state,
-    );
+    let mut ctx = ExecCtx::no_targets(pending.source, pending.controller);
+    ctx.ability_source_contract = pending.source_contract;
+    effect::execute(&pending.effect, &ctx, state);
 }
 
 #[test]
@@ -163,23 +147,12 @@ fn cast_down_uses_the_nonlegendary_filter_and_shared_destroy_path() {
 
     let target = Target::Object(victim);
     let target_contract = StackTargetContractV4::capture(&state, target);
+    let mut ctx = ExecCtx::no_targets(cast_down, PlayerId::P0);
+    ctx.targets = vec![target];
+    ctx.target_contracts = vec![target_contract];
     effect::execute(
         &(CARD_DEFS[card_id("Cast Down") as usize].spell_effect)().unwrap(),
-        &ExecCtx {
-            source: cast_down,
-            controller: PlayerId::P0,
-            cauldron_grant: Default::default(),
-            stack_item_id: None,
-            targets: vec![target],
-            target_contracts: vec![target_contract],
-            discarded: Vec::new(),
-            paid_cost_refs: Vec::new(),
-            hidden_ability_source: None,
-            ability_source_contract: None,
-            kicked: false,
-            optional_additional_cost_paid: None,
-            x_value: 0,
-        },
+        &ctx,
         &mut state,
     );
     assert_eq!(state.objects.get(victim).zone, Zone::Graveyard);

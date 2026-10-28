@@ -333,3 +333,18 @@ pub(crate) fn answer(state: &mut GameState, action: Action) -> Result<(), String
         _ => Err("action does not answer the current London mulligan decision".into()),
     }
 }
+
+/// Exact native kept hands for the following opening-hand-action checkpoint.
+/// The normal London protocol and its serialized shape remain unchanged.
+pub(crate) fn kept_hands_for_opening_v1(
+    state: &GameState,
+) -> Result<Option<[Vec<ObjectLinkV4>; 2]>, String> {
+    let Some(opening) = state.london_mulligans_v1.as_ref() else {
+        return Ok(None);
+    };
+    validate(state)?;
+    if !opening.is_complete() {
+        return Err("London keeps must finish before opening actions".into());
+    }
+    Ok(Some(opening.hands.clone()))
+}

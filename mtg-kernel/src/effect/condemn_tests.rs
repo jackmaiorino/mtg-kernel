@@ -60,8 +60,25 @@ fn condemn_primitive_freezes_current_controller_and_modified_toughness_before_ow
                     assert_eq!(current.players[controller.opponent().index()].life, 20);
                     assert_eq!(crate::engine::effective_toughness(current, target), 2);
                     let move_index = current.engine.event_history.iter().rposition(|event| matches!(event, event::CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to: Zone::Library, .. } if *object == target)).unwrap();
+                    // The Niv catalog retains the source's departure authority
+                    // immediately after the move, before the next rules event.
+                    let gain_index = if crate::card_def::card_id_by_name("Niv-Mizzet, Visionary")
+                        .is_some()
+                    {
+                        assert!(matches!(
+                            current.engine.event_history.get(move_index + 1),
+                            Some(event::CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+                                source, departure_history_index,
+                            }) if source.source == target
+                                && source.controller == controller
+                                && *departure_history_index == move_index as u64
+                        ));
+                        move_index + 2
+                    } else {
+                        move_index + 1
+                    };
                     assert!(
-                        matches!(current.engine.event_history.get(move_index + 1), Some(event::CommittedEvent::LifeGain { player, amount: 7 }) if *player == controller)
+                        matches!(current.engine.event_history.get(gain_index), Some(event::CommittedEvent::LifeGain { player, amount: 7 }) if *player == controller)
                     );
                 }
                 assert_eq!(

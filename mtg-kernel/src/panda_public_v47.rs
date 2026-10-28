@@ -132,6 +132,7 @@ fn journal(state: &GameState, index: u64) -> Result<&JournalV1, RlContractError>
 fn source_at(state: &GameState, index: u64) -> Result<AbilitySourceContractV4, RlContractError> {
     match event(state, index)? {
         CommittedEvent::FiendishPandaLifeGainCaptureV1 { source, .. }
+        | CommittedEvent::FiendishPandaWideGainCaptureV59 { source, .. }
         | CommittedEvent::FiendishPandaDeathCaptureV1 { source, .. } => Ok(*source),
         _ => Err(RlContractError(
             "Panda public source names a foreign capture".into(),
@@ -162,6 +163,20 @@ pub fn stack_source_reference(
     state: &GameState,
     item: &StackItem,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    stack_source_reference_complete(state, item)
+}
+pub(crate) fn stack_source_reference_for_next_five(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
+    stack_source_reference_complete(state, item)
+}
+fn stack_source_reference_complete(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
     let Some(capture) = item.inline_effect.as_ref().and_then(binding) else {
         return Ok(None);
     };
@@ -174,6 +189,20 @@ pub fn stack_source_reference(
     Ok(Some(captured_source(source_at(state, capture)?)))
 }
 pub fn pending_source_reference(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    pending_source_reference_complete(state, pending)
+}
+pub(crate) fn pending_source_reference_for_next_five(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
+    pending_source_reference_complete(state, pending)
+}
+fn pending_source_reference_complete(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
@@ -195,6 +224,15 @@ pub fn original_target_reference(
     item: &StackItem,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
     if stack_source_reference(state, item)?.is_none() {
+        return Ok(None);
+    }
+    original_target(&item.v4.target_contracts)
+}
+pub(crate) fn original_target_reference_for_next_five(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    if stack_source_reference_for_next_five(state, item)?.is_none() {
         return Ok(None);
     }
     original_target(&item.v4.target_contracts)
@@ -226,6 +264,17 @@ fn original_target(
     }
 }
 pub fn capture(state: &GameState) -> Result<FactsV47, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    capture_ordinary(state)
+}
+/// This ordinary subset is only complete beside the mandatory V59 wide supplement.
+pub(crate) fn capture_ordinary_for_next_five(
+    state: &GameState,
+) -> Result<FactsV47, RlContractError> {
+    crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
+    capture_ordinary(state)
+}
+fn capture_ordinary(state: &GameState) -> Result<FactsV47, RlContractError> {
     panda::validate_state(state).map_err(RlContractError)?;
     let mut meanings = Vec::new();
     for (id, _) in crate::card_def::CARD_DEFS.iter().enumerate() {
@@ -441,6 +490,14 @@ pub fn capture(state: &GameState) -> Result<FactsV47, RlContractError> {
         let group_position = positions[pending.controller.index()];
         positions[pending.controller.index()] += 1;
         if let Some(capture) = binding(&pending.effect) {
+            // Frozen entrypoints reject wide history before this helper. Only
+            // complete NextFive construction splits these separate wide facts.
+            if matches!(
+                event(state, capture)?,
+                CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
+            ) {
+                continue;
+            }
             let occurrence = captures
                 .iter()
                 .position(|original| *original == capture)

@@ -653,6 +653,251 @@ fn faebloom_paid_instant_reflexive_season_restore_privacy_ravenous_both_seats() 
     paid_faebloom::<RavenousSession>();
 }
 
+fn paid_diregraf<O: Owner>() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut raw = crate::extra_turn_v1::tests::ready(actor);
+        let ghoul = put(&mut raw, actor, "Diregraf Ghoul", Zone::Hand);
+        let swamp = put(&mut raw, actor, "Swamp", Zone::Battlefield);
+        let mut s = O::own(raw);
+        let saved = s.snapshot();
+        let mut result = None;
+        for replay in 0..2 {
+            if replay != 0 {
+                s.restore(&saved).unwrap();
+            }
+            entry_attack::pay_cast(&mut s, actor, ghoul, &[swamp]);
+            entry_attack::finish_entry(&mut s, ghoul);
+            let live = s.world().objects.get(ghoul);
+            assert_eq!(
+                (live.zone, live.owner, live.controller),
+                (Zone::Battlefield, actor, actor)
+            );
+            assert!(live.tapped && live.summoning_sick);
+            assert_eq!(
+                crate::engine::checked_effective_pt(s.world(), ghoul).unwrap(),
+                (2, 2)
+            );
+            assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);
+            assert!(s.world().objects.get(swamp).tapped);
+            let output = (gameplay(&s), O::packet(&s.encode()).clone());
+            if let Some(expected) = &result {
+                assert_eq!(&output, expected);
+            } else {
+                result = Some(output);
+            }
+        }
+    }
+}
+
+#[test]
+fn diregraf_paid_black_cost_tapped_entry_and_numeric_restore_fake_both_seats() {
+    paid_diregraf::<FakeSession>();
+}
+
+#[test]
+fn diregraf_paid_black_cost_tapped_entry_and_numeric_restore_ravenous_both_seats() {
+    paid_diregraf::<RavenousSession>();
+}
+
+fn paid_burnished_hart<O: Owner>() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for selected_count in 0..=2 {
+            let mut raw = crate::extra_turn_v1::tests::ready(actor);
+            let hart = put(&mut raw, actor, "Burnished Hart", Zone::Hand);
+            let sources: Vec<_> = (0..6)
+                .map(|_| put(&mut raw, actor, "Forest", Zone::Battlefield))
+                .collect();
+            let candidates: Vec<_> = ["Forest", "Island", "Plains"]
+                .into_iter()
+                .map(|name| put(&mut raw, actor, name, Zone::Library))
+                .collect();
+            let nonland = put(&mut raw, actor, "Savannah Lions", Zone::Library);
+            let mut s = O::own(raw);
+            entry_attack::pay_cast(&mut s, actor, hart, &sources[..3]);
+            entry_attack::finish_entry(&mut s, hart);
+            assert!(s.world().objects.get(hart).summoning_sick);
+            assert_eq!(
+                crate::engine::checked_effective_pt(s.world(), hart).unwrap(),
+                (2, 2)
+            );
+            for land in &sources[3..] {
+                entry_attack::tap(&mut s, *land);
+            }
+            step(
+                &mut s,
+                |a| matches!(a,ActionSemanticV1::ActivateAbility { source,ability_index:0,granted_ability,.. }if source.arena_id==hart.0 && granted_ability.is_none()),
+            );
+            assert_eq!(s.world().objects.get(hart).zone, Zone::Graveyard);
+            assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);
+            assert!(sources
+                .iter()
+                .all(|land| s.world().objects.get(*land).tapped));
+            assert!(s.world().stack.iter().any(|row| row.source == hart
+                && row.controller == actor
+                && row.kind == crate::state::StackItemKind::ActivatedAbility));
+            for _ in 0..16 {
+                if s.actions().iter().any(|a| matches!(a,ActionSemanticV1::FinishEffectSelection{source,..}if source.arena_id==hart.0)) { break; }
+                pass(&mut s);
+            }
+            assert!(s.actions().iter().any(|a|matches!(a,ActionSemanticV1::FinishEffectSelection{source,..}if source.arena_id==hart.0)));
+            assert!(!s.actions().iter().any(|a|matches!(a,ActionSemanticV1::ChooseEffectTarget{target:TargetRefV1::Object{object},..}if object.arena_id==nonland.0)));
+            let saved = s.snapshot();
+            let before_randomness = s.world().legacy_rng().copied().expect("legacy fixture RNG");
+            let mut result = None;
+            for replay in 0..2 {
+                if replay != 0 {
+                    s.restore(&saved).unwrap();
+                }
+                for land in candidates.iter().take(selected_count) {
+                    step(
+                        &mut s,
+                        |a| matches!(a,ActionSemanticV1::ChooseEffectTarget{source,target:TargetRefV1::Object{object},..}if source.arena_id==hart.0 && object.arena_id==land.0),
+                    );
+                }
+                if s.actions().iter().any(|a|matches!(a,ActionSemanticV1::FinishEffectSelection{source,..}if source.arena_id==hart.0)) {
+                    step(&mut s, |a|matches!(a,ActionSemanticV1::FinishEffectSelection{source,..}if source.arena_id==hart.0));
+                }
+                drain(&mut s);
+                assert_ne!(s.world().legacy_rng(), Some(&before_randomness));
+                assert_eq!(s.world().objects.get(hart).zone, Zone::Graveyard);
+                for (index, land) in candidates.iter().enumerate() {
+                    let object = s.world().objects.get(*land);
+                    assert_eq!(
+                        object.zone,
+                        if index < selected_count {
+                            Zone::Battlefield
+                        } else {
+                            Zone::Library
+                        }
+                    );
+                    if index < selected_count {
+                        assert!(object.tapped);
+                        assert_eq!((object.owner, object.controller), (actor, actor));
+                    }
+                }
+                assert_eq!(s.world().objects.get(nonland).zone, Zone::Library);
+                let output = (gameplay(&s), O::packet(&s.encode()).clone());
+                if let Some(expected) = &result {
+                    assert_eq!(&output, expected);
+                } else {
+                    result = Some(output);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn burnished_hart_paid_cast_sacrifice_zero_one_two_basic_search_shuffle_and_restore_fake_both_seats(
+) {
+    paid_burnished_hart::<FakeSession>();
+}
+
+#[test]
+fn burnished_hart_paid_cast_sacrifice_zero_one_two_basic_search_shuffle_and_restore_ravenous_both_seats(
+) {
+    paid_burnished_hart::<RavenousSession>();
+}
+
+fn paid_goldvein<O: Owner>() {
+    use crate::state::ObjectLinkV4;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut raw = crate::extra_turn_v1::tests::ready(actor);
+        // Declared lands and vanilla host are initial setup. Pick and equip
+        // are paid through actual native actions; combat is declared below.
+        let pick = put(&mut raw, actor, "Goldvein Pick", Zone::Hand);
+        let host = put(&mut raw, actor, "Savannah Lions", Zone::Battlefield);
+        let forests: Vec<_> = (0..3)
+            .map(|_| put(&mut raw, actor, "Forest", Zone::Battlefield))
+            .collect();
+        let mut s = O::own(raw);
+        entry_attack::pay_cast(&mut s, actor, pick, &forests[..2]);
+        entry_attack::finish_entry(&mut s, pick);
+        assert_eq!(
+            crate::engine::checked_effective_pt(s.world(), host).unwrap(),
+            (2, 1)
+        );
+        entry_attack::tap(&mut s, forests[2]);
+        let saved = s.snapshot();
+        let mut result = None;
+        for replay in 0..2 {
+            if replay != 0 {
+                s.restore(&saved).unwrap();
+            }
+            step(
+                &mut s,
+                |a| matches!(a,ActionSemanticV1::ActivateAbility{source,ability_index:0,..}if source.arena_id==pick.0),
+            );
+            step(&mut s, |a| target(a, host));
+            drain(&mut s);
+            assert_eq!(
+                s.world().objects.get(pick).v4.attached_to,
+                Some(ObjectLinkV4 {
+                    object: host,
+                    zone_change_count: s.world().objects.get(host).zone_change_count
+                })
+            );
+            assert_eq!(
+                crate::engine::checked_effective_pt(s.world(), host).unwrap(),
+                (3, 2)
+            );
+            assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);
+            assert!(forests.iter().all(|id| s.world().objects.get(*id).tapped));
+            let life = s.world().players[actor.opponent().index()].life;
+            let mut declared = false;
+            for _ in 0..256 {
+                if s.world().active_player == actor
+                    && s.actions().iter().any(|a| attack_choice(a, host))
+                {
+                    step(&mut s, |a| attack_choice(a, host));
+                    finish_attack_declaration(&mut s, host);
+                    declared = true;
+                    break;
+                }
+                pass(&mut s);
+            }
+            assert!(declared, "paid Goldvein host did not attack");
+            let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+            for _ in 0..64 {
+                if s.world().players[actor.index()]
+                    .battlefield
+                    .iter()
+                    .any(|id| s.world().objects.get(*id).card_def == treasure)
+                {
+                    break;
+                }
+                pass(&mut s);
+            }
+            let tokens = s
+                .world()
+                .objects
+                .iter()
+                .filter(|(_, o)| o.zone == Zone::Battlefield && o.card_def == treasure)
+                .collect::<Vec<_>>();
+            assert_eq!(tokens.len(), 1);
+            assert_eq!((tokens[0].1.owner, tokens[0].1.controller), (actor, actor));
+            assert_eq!(s.world().players[actor.opponent().index()].life, life - 3);
+            assert!(s.world().engine.event_history.iter().any(|e|matches!(e,crate::event::CommittedEvent::CombatDamageToPlayer{source,amount:3,..}if *source==host)));
+            let output = (gameplay(&s), O::packet(&s.encode()).clone());
+            if let Some(expected) = &result {
+                assert_eq!(&output, expected);
+            } else {
+                result = Some(output);
+            }
+        }
+    }
+}
+
+#[test]
+fn goldvein_paid_cast_equip_real_combat_treasure_and_numeric_restore_fake_both_seats() {
+    paid_goldvein::<FakeSession>();
+}
+
+#[test]
+fn goldvein_paid_cast_equip_real_combat_treasure_and_numeric_restore_ravenous_both_seats() {
+    paid_goldvein::<RavenousSession>();
+}
+
 pub(in crate::current_mixed_policy_v1) fn paid_kellan<O: Owner>() {
     kellan::paid::<O>();
     kellan::privacy::<O>();

@@ -128,6 +128,7 @@ pub(crate) fn damage(
         touched_by: Vec::new(),
         is_combat: false,
         historical_source: None,
+        niv_damage_origin_v1: ctx.niv_damage_origin_v1,
     })
 }
 pub(crate) fn finishing(

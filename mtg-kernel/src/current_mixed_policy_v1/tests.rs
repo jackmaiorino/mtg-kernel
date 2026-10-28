@@ -857,7 +857,7 @@ mod paid {
         }
     }
     #[test]
-    fn genuine_large_trigger_menu_missing_printed_root_refuses_readonly_instead_of_flattening() {
+    fn genuine_large_trigger_menu_with_printed_root_scores_every_order_without_flattening() {
         macro_rules! run {
             ($owner:ident,$from:ident,$input:ident,$validate:ident,$world:ident) => {
                 for actor in [PlayerId::P0, PlayerId::P1] {
@@ -919,11 +919,13 @@ mod paid {
                                 assert!(session.inner.$input(forged, forged.acting_player).is_err());
                                 assert!(session.inner.$validate(forged, forged.acting_player, &binding).is_err());
                             }
-                            assert!(matches!(session.encode(e), Err(Error::UnsupportedPrintedRoot(actual)) if actual == id));
+                            // Horde has a printed root, so the encoder takes the whole
+                            // nine-way order menu; scoring it writes nothing.
+                            assert_eq!(session.encode(e).unwrap().packet.actions.len(), actions.len());
                             assert_eq!(session.inner.$world(), &before);
                             assert_eq!((session.inner.policy_step_count(), session.inner.physical_decision_count()), counts);
-                            // Only the genuine native owner advances after the model
-                            // encoder refused. Each prefix retains its entire binding.
+                            // Only the genuine native owner advances. Each prefix
+                            // retains its entire binding.
                             let index = actions.iter().position(|a| matches!(a,
                                 ActionSemanticV1::ChooseTriggerOrderNext { trigger_index, .. }
                                     if *trigger_index == usize::try_from(8-position).unwrap())).unwrap();
@@ -1220,6 +1222,367 @@ mod paid {
         run!(RavenousSession, from_ravenous_v51_fixture_state);
     }
 
+    #[test]
+    fn self_reflection_both_roots_and_nameless_copy_reject_changed_printings() {
+        use crate::card_def::{CardType, Keywords, TargetSpec};
+        let id = crate::card_def::card_id_by_name("Self-Reflection").unwrap();
+        let original = ordinary_recipe(id);
+        let meaning = roots::baseline_recipe(id, &original).unwrap();
+        let roots = &meaning["self_reflection_printing"]["ordered_cast_roots"];
+        assert_eq!(roots[0]["ordered_costs"][0]["cost"]["generic"], 4);
+        assert_eq!(roots[1]["ordered_costs"][0]["cost"]["generic"], 3);
+        assert_eq!(
+            roots[1]["physical_stack_departure"],
+            "ExileInsteadOfAnyOtherDeparture"
+        );
+        macro_rules! reject {
+            ($field:ident,$value:expr) => {{
+                let mut d = ordinary_recipe(id);
+                d.$field = $value;
+                assert!(roots::baseline_recipe(id, &d).is_err(), stringify!($field));
+            }};
+        }
+        reject!(cost, crate::mana::Cost::zero());
+        reject!(mana_value, 4);
+        reject!(types, &[CardType::Instant]);
+        reject!(target_spec, TargetSpec::Creature);
+        reject!(flashback, None);
+        reject!(spell_effect, || None);
+        reject!(keywords, Keywords::HASTE);
+        reject!(object_name, "Other");
+        reject!(
+            mode2,
+            Some(crate::card_def::ModeDef {
+                target_spec: TargetSpec::None,
+                effect: || crate::effect::EffectOp::Sequence(vec![])
+            })
+        );
+        let token =
+            crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)
+                .unwrap();
+        let printed = roots::baseline(token).unwrap();
+        assert_eq!(printed["primitive_printing"]["object_name"], "");
+        assert_eq!(printed["primitive_printing"]["power"], 2);
+        for field in 0..4 {
+            let mut d = ordinary_recipe(token);
+            match field {
+                0 => d.object_name = "Named",
+                1 => d.power = Some(3),
+                2 => d.colors = &[crate::mana::ManaColor::U],
+                _ => d.is_token = false,
+            }
+            assert!(roots::baseline_recipe(token, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn hare_dynamic_count_meaning_and_changed_fields_refuse() {
+        let id = crate::card_def::card_id_by_name("Hare Apparent").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let op = &value["simple_trigger_printing"]["ordered_triggers"][0]["ordered_resolution"][0];
+        assert_eq!(
+            op["exclude_only_original_captured_source_incarnation"],
+            true
+        );
+        assert_eq!(
+            op["all_created_tokens_enter_as_one_simultaneous_batch"],
+            true
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.power = Some(3),
+                2 => d.subtypes = &[crate::card_def::Subtype::Rabbit],
+                3 => d.colors = &[crate::mana::ManaColor::G],
+                4 => d.spell_effect = || None,
+                5 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                _ => d.ward_cost = Some(crate::card_def::WardCostDef::Generic(1)),
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn felidar_optional_target_count_and_changed_printing_refusals() {
+        use crate::card_def::{Keywords, TargetSpec};
+        let id = crate::card_def::card_id_by_name("Felidar Savior").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let trigger = &value["targeted_entry_printing"]["ordered_triggers"][0];
+        assert_eq!(trigger["targets"][0]["minimum"], 0);
+        assert_eq!(trigger["targets"][0]["maximum"], 2);
+        assert_eq!(trigger["zero_targets_allowed"], true);
+        assert_eq!(
+            trigger["ordered_resolution"][0]["an_illegal_slot_does_not_cancel_other_legal_slots"],
+            true
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.keywords = Keywords::NONE,
+                2 => d.power = Some(3),
+                3 => d.subtypes = &[crate::card_def::Subtype::Cat],
+                4 => d.target_spec = TargetSpec::Creature,
+                5 => d.mana_value = 3,
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn mossborn_entry_counter_and_resolution_count_meaning_reject_changed_fields() {
+        use crate::card_def::{EntersWithPlusOneCountersDef, Keywords};
+        let id = crate::card_def::card_id_by_name("Mossborn Hydra").unwrap();
+        let mut d = ordinary_recipe(id);
+        d.enters_with_plus_one_counters =
+            crate::card_def::CARD_DEFS[usize::from(id)].enters_with_plus_one_counters;
+        let value = roots::baseline_recipe(id, &d).unwrap();
+        assert_eq!(
+            value["observer_trigger_printing"]["battlefield_entry_replacement"]["count"],
+            1
+        );
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["ordered_resolution"][0]
+                ["sample_time"],
+            "EachTriggerResolution"
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                count: 1,
+                if_kicked: false,
+            });
+            match field {
+                0 => d.enters_with_plus_one_counters = None,
+                1 => {
+                    d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                        count: 2,
+                        if_kicked: false,
+                    })
+                }
+                2 => {
+                    d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                        count: 1,
+                        if_kicked: true,
+                    })
+                }
+                3 => d.keywords = Keywords::NONE,
+                4 => d.power = Some(1),
+                5 => d.cost = crate::mana::Cost::zero(),
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn searslicer_intervening_raid_and_changed_printings_refuse() {
+        let id = crate::card_def::card_id_by_name("Searslicer Goblin").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"]
+                ["check_at_trigger_time_and_resolution"],
+            true
+        );
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["event"]
+                ["observer_need_not_have_been_present_during_attack"],
+            true
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.power = Some(3),
+                2 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                3 => d.keywords = crate::card_def::Keywords::HASTE,
+                4 => d.subtypes = &[crate::card_def::Subtype::Goblin],
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn koma_combat_damage_not_attack_ward_and_uncounterable_roots_reject_changes() {
+        use crate::card_def::{Keywords, WardCostDef};
+        let id = crate::card_def::card_id_by_name("Koma, World-Eater").unwrap();
+        let mut d = ordinary_recipe(id);
+        d.ward_cost = Some(WardCostDef::Generic(4));
+        let value = roots::baseline_recipe(id, &d).unwrap();
+        assert_eq!(value["observer_trigger_printing"]["power"], 8);
+        assert_eq!(value["observer_trigger_printing"]["toughness"], 12);
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["event"]["event"],
+            "ObserverDealsPositiveCombatDamageToPlayer"
+        );
+        assert_eq!(
+            value["observer_trigger_printing"]["ward"]["cost"]["amount"],
+            4
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            d.ward_cost = Some(WardCostDef::Generic(4));
+            match field {
+                0 => d.spell_cannot_be_countered = false,
+                1 => d.ward_cost = None,
+                2 => d.ward_cost = Some(WardCostDef::Generic(2)),
+                3 => d.keywords = Keywords::NONE,
+                4 => d.toughness = Some(8),
+                5 => d.cost = crate::mana::Cost::zero(),
+                _ => d.supertypes = &[],
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn inspiring_call_snapshot_and_changed_printing_refusals() {
+        let id = crate::card_def::card_id_by_name("Inspiring Call").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let root = &value["ordinary_batch_spell_printing"]["ordered_cast_roots"][0];
+        assert_eq!(root["timing"], "InstantWithPriority");
+        assert_eq!(
+            root["ordered_resolution"][0]["snapshot_time"],
+            "ResolutionBeforeFirstDraw"
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.types = &[crate::card_def::CardType::Sorcery],
+                2 => d.target_spec = crate::card_def::TargetSpec::ControlledCreature,
+                3 => {
+                    d.spell_effect = || {
+                        Some(crate::effect::EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn{keyword:crate::card_def::Keywords::HEXPROOF})
+                    }
+                }
+                4 => d.mana_value = 2,
+                _ => d.colors = &[crate::mana::ManaColor::U],
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn second_draw_mystic_horde_and_token_printings_refuse_changes() {
+        for name in [
+            "Mischievous Mystic",
+            "Homunculus Horde",
+            "Homunculus Horde Token",
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+            let p = &value["observer_trigger_printing"];
+            assert_eq!(
+                p["ordered_triggers"][0]["event"]["requires_this_turn_draw_ordinal"],
+                2
+            );
+            if name == "Homunculus Horde Token" {
+                assert!(p.get("ordinary_cast").is_none());
+                assert_eq!(p["object_name"], "Homunculus Horde");
+                assert_eq!(p["mana_value"], 4);
+            }
+            for field in 0..6 {
+                let mut d = ordinary_recipe(id);
+                match field {
+                    0 => d.cost = crate::mana::Cost::zero(),
+                    1 => d.power = Some(3),
+                    2 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                    3 => d.is_token = !d.is_token,
+                    4 => d.object_name = "Other",
+                    _ => d.mana_value = 0,
+                }
+                assert!(roots::baseline_recipe(id, &d).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn sun_healer_kicker_target_filter_and_changed_printing_refusals() {
+        let id = crate::card_def::card_id_by_name("Sun-Blessed Healer").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let p = &value["targeted_entry_printing"];
+        assert_eq!(p["mana_value"], 2);
+        assert_eq!(
+            p["ordered_cast_roots"][1]["ordered_costs"][0]
+                ["base_total_before_increases_and_reductions"]["generic"],
+            2
+        );
+        assert_eq!(
+            p["ordered_triggers"][0]["targets"][0]["filter"]["printed_mana_value_at_most"],
+            2
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.kicker_cost = None,
+                1 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                2 => d.cost = crate::mana::Cost::zero(),
+                3 => d.keywords = crate::card_def::Keywords::NONE,
+                4 => d.mana_value = 4,
+                5 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                _ => d.power = Some(2),
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn gnarlid_additional_cost_entry_replacement_and_counter_grant_refuse_changes() {
+        use crate::card_def::{EntersWithPlusOneCountersDef, Keywords};
+        let id = crate::card_def::card_id_by_name("Gnarlid Colony").unwrap();
+        let exact = || {
+            let mut d = ordinary_recipe(id);
+            d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                count: 2,
+                if_kicked: true,
+            });
+            d.controlled_counter_keyword = Some(Keywords::TRAMPLE);
+            d
+        };
+        let value = roots::baseline_recipe(id, &exact()).unwrap();
+        let meaning = &value["gnarlid_printing"];
+        assert_eq!(
+            meaning["ordered_cast_roots"][1]["ordered_costs"][0]
+                ["base_total_before_increases_and_reductions"]["generic"],
+            3
+        );
+        assert_eq!(meaning["battlefield_entry_replacement"]["count"], 2);
+        assert_eq!(
+            meaning["ordered_static_roots"][0]["applies_on_both_players_turns"],
+            true
+        );
+        for field in 0..10 {
+            let mut d = exact();
+            match field {
+                0 => d.kicker_cost = None,
+                1 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                2 => d.enters_with_plus_one_counters = None,
+                3 => {
+                    d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                        count: 1,
+                        if_kicked: true,
+                    })
+                }
+                4 => {
+                    d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                        count: 2,
+                        if_kicked: false,
+                    })
+                }
+                5 => d.controlled_counter_keyword = Some(Keywords::FIRST_STRIKE),
+                6 => d.keywords = Keywords::TRAMPLE,
+                7 => d.mana_value = 5,
+                8 => d.power = Some(4),
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {
@@ -1228,8 +1591,8 @@ mod paid {
             name: d.name,
             capability: d.capability,
             cost: d.cost,
-            generic_cost_reduction: None,
-            ward_cost: None,
+            generic_cost_reduction: d.generic_cost_reduction,
+            ward_cost: d.ward_cost,
             spell_cannot_be_countered: d.spell_cannot_be_countered,
             records_mana_spent: d.records_mana_spent,
             equipment: None,
@@ -1251,13 +1614,19 @@ mod paid {
             spell_effect: d.spell_effect,
             mana_ability: d.mana_ability,
             alt_cost: None,
-            kicker_cost: None,
-            additional_cost: None,
-            flashback: None,
+            kicker_cost: d.kicker_cost,
+            additional_cost: d.additional_cost,
+            flashback: d
+                .flashback
+                .as_ref()
+                .map(|f| crate::card_def::FlashbackDef { cost: f.cost }),
             activated_abilities: d.activated_abilities,
             plot_cost: None,
             madness_cost: None,
-            mode2: None,
+            mode2: d.mode2.as_ref().map(|m| crate::card_def::ModeDef {
+                target_spec: m.target_spec,
+                effect: m.effect,
+            }),
             mode3: None,
             additional_modes: d.additional_modes,
             kicked_target_spec: None,
@@ -1296,7 +1665,1597 @@ mod paid {
             token_counter_replacement_v48: None,
             starting_life_self_bonuses_v1: d.starting_life_self_bonuses_v1,
             source_type_hexproof_v1: None,
+            creature_type_entry_v1: None,
             other_controlled_nontoken_death_v1: None,
+        }
+    }
+
+    #[test]
+    fn attack_printing_changed_cost_program_fields_and_target_specs_refuse() {
+        for name in [
+            "Armasaur Guide",
+            "Battlesong Berserker",
+            "Crypt Feaster",
+            "Dauntless Veteran",
+            "Courageous Goblin",
+            "Ruby, Daring Tracker",
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            assert_eq!(
+                super::super::roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                super::super::roots::baseline(id).unwrap()
+            );
+            for field in 0..6 {
+                let mut changed = ordinary_recipe(id);
+                match field {
+                    0 => changed.cost = crate::mana::Cost::zero(),
+                    1 => changed.power = Some(99),
+                    2 => changed.target_spec = crate::card_def::TargetSpec::AnyTarget,
+                    3 => changed.spell_effect = || None,
+                    4 => changed.ward_cost = Some(crate::card_def::WardCostDef::Generic(1)),
+                    _ => changed.kicker_cost = Some(crate::mana::Cost::zero()),
+                }
+                assert!(
+                    super::super::roots::baseline_recipe(id, &changed).is_err(),
+                    "{name} changed field {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ruby_legend_haste_exact_mana_choice_and_capture_only_power_condition_refuse_changes() {
+        use crate::{card_def::Keywords, mana::ManaColor};
+        let id = crate::card_def::card_id_by_name("Ruby, Daring Tracker").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let meaning = &value["attack_trigger_printing"];
+        assert_eq!(
+            meaning["ordered_triggers"][0]["event"]["does_not_recheck_power_at_resolution"],
+            true
+        );
+        assert!(meaning["ordered_triggers"][0]["intervening_if"].is_null());
+        assert_eq!(meaning["ordered_mana_abilities"][0]["amount"], 1);
+        assert_eq!(meaning["ordered_mana_abilities"][0]["uses_stack"], false);
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.supertypes = &[],
+                1 => d.keywords = Keywords::NONE,
+                2 => d.colors = &[ManaColor::R],
+                3 => d.produces_mana = &[ManaColor::R],
+                4 => d.mana_ability_choices = &[ManaColor::G],
+                _ => d.mana_ability = || Some(crate::effect::EffectOp::Sequence(vec![])),
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn buccaneer_raid_entry_draw_and_exact_printing_refuse_changes() {
+        let id = crate::card_def::card_id_by_name("Skyship Buccaneer").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let trigger = &value["observer_trigger_printing"]["ordered_triggers"][0];
+        assert_eq!(
+            trigger["event"]["later_attack_does_not_retroactively_trigger_prior_entry"],
+            true
+        );
+        assert_eq!(
+            trigger["intervening_if"]["check_at_trigger_time_and_resolution"],
+            true
+        );
+        assert_eq!(trigger["ordered_resolution"][0]["count"], 1);
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.keywords = crate::card_def::Keywords::NONE,
+                2 => d.mana_value = 4,
+                3 => d.power = Some(3),
+                4 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn squire_counter_entry_and_live_flying_knight_threshold_refuse_changed_printings() {
+        let id = crate::card_def::card_id_by_name("Skyknight Squire").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let p = &value["observer_trigger_printing"];
+        assert_eq!(p["ordered_triggers"][0]["event"]["tokens_count"], true);
+        assert_eq!(
+            p["ordered_triggers"][0]["ordered_resolution"][0]["count"],
+            1
+        );
+        assert_eq!(
+            p["ordered_static_roots"][0]["condition"]["count_at_least"],
+            3
+        );
+        assert_eq!(
+            p["ordered_static_roots"][0]["preserves_other_current_subtypes"],
+            true
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.keywords = crate::card_def::Keywords::FLYING,
+                2 => d.mana_value = 3,
+                3 => d.power = Some(2),
+                4 => {
+                    d.subtypes = &[
+                        crate::card_def::Subtype::Cat,
+                        crate::card_def::Subtype::Knight,
+                    ]
+                }
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
+    fn ward_discount_creature_exact_characteristics_payments_and_reductions_refuse_changes() {
+        use crate::card_def::{DynamicCountDef, GenericCostReductionDef, WardCostDef};
+        for name in [
+            "Cackling Prowler",
+            "Tolarian Terror",
+            "Sire of Seven Deaths",
+            "Ghalta, Primal Hunger",
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let original = roots::baseline(id).unwrap();
+            assert_eq!(
+                roots::registered_permanent_printing(id).unwrap(),
+                Some(original.clone())
+            );
+            assert_eq!(
+                roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                original
+            );
+            for field in 0..9 {
+                let mut d = ordinary_recipe(id);
+                match field {
+                    0 => d.cost = crate::mana::Cost::zero(),
+                    1 => d.power = Some(99),
+                    2 => d.target_spec = crate::card_def::TargetSpec::AnyTarget,
+                    3 => d.spell_effect = || None,
+                    4 => d.ward_cost = Some(WardCostDef::Generic(3)),
+                    5 => {
+                        d.generic_cost_reduction = Some(GenericCostReductionDef {
+                            generic_per_count: 2,
+                            count: DynamicCountDef::ControllerCreatureTotalPower,
+                        })
+                    }
+                    6 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                    7 => d.keywords = crate::card_def::Keywords::FLYING,
+                    _ => d.enters_battlefield_tapped = true,
+                }
+                assert!(
+                    roots::baseline_recipe(id, &d).is_err(),
+                    "{name} changed field {field}"
+                );
+            }
+            if name == "Tolarian Terror" || name == "Ghalta, Primal Hunger" {
+                let mut d = ordinary_recipe(id);
+                d.generic_cost_reduction = None;
+                assert!(roots::baseline_recipe(id, &d).is_err());
+            }
+            if name != "Ghalta, Primal Hunger" {
+                let mut d = ordinary_recipe(id);
+                d.ward_cost = None;
+                assert!(roots::baseline_recipe(id, &d).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn counter_return_creature_changed_activation_zone_timing_payment_target_and_program_refuse() {
+        use crate::{card_def::TargetSpec, effect::EffectOp, state::Zone};
+        for name in ["Reassembling Skeleton", "Treetop Snarespinner"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let original = roots::baseline(id).unwrap();
+            assert_eq!(
+                roots::registered_permanent_printing(id).unwrap(),
+                Some(original)
+            );
+            assert_eq!(
+                roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                roots::baseline(id).unwrap()
+            );
+            for field in 0..8 {
+                let mut d = ordinary_recipe(id);
+                let mut a = d.activated_abilities[0];
+                match field {
+                    0 => a.activation_zone = Zone::Hand,
+                    1 => a.sorcery_speed_only = !a.sorcery_speed_only,
+                    2 => a.cost = &[],
+                    3 => a.target_spec = TargetSpec::AnyTarget,
+                    4 => a.effect = || EffectOp::Sequence(vec![]),
+                    5 => a.max_activations_per_turn = Some(1),
+                    6 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                    _ => d.keywords = crate::card_def::Keywords::FLYING,
+                }
+                d.activated_abilities = Box::leak(vec![a].into_boxed_slice());
+                assert!(
+                    roots::baseline_recipe(id, &d).is_err(),
+                    "{name} changed field {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn utility_activation_changed_cost_timing_zone_target_program_and_mana_refuse() {
+        use crate::{card_def::TargetSpec, effect::EffectOp, state::Zone};
+        for name in ["Hungry Ghoul", "Rogue's Passage"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let original = roots::baseline(id).unwrap();
+            assert_eq!(
+                roots::registered_permanent_printing(id).unwrap(),
+                Some(original)
+            );
+            assert_eq!(
+                roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                roots::baseline(id).unwrap()
+            );
+            for field in 0..10 {
+                let mut d = ordinary_recipe(id);
+                let mut a = d.activated_abilities[0];
+                match field {
+                    0 => a.cost = &[],
+                    1 => a.activation_zone = Zone::Hand,
+                    2 => a.sorcery_speed_only = true,
+                    3 => a.target_spec = TargetSpec::AnyTarget,
+                    4 => a.effect = || EffectOp::Sequence(vec![]),
+                    5 => a.max_activations_per_turn = Some(1),
+                    6 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                    7 => d.produces_mana = &[crate::mana::ManaColor::G],
+                    8 => d.mana_ability = || Some(EffectOp::Sequence(vec![])),
+                    _ => d.enters_battlefield_tapped = true,
+                }
+                d.activated_abilities = Box::leak(vec![a].into_boxed_slice());
+                assert!(
+                    roots::baseline_recipe(id, &d).is_err(),
+                    "{name} changed field {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn exsanguinate_changed_x_pips_target_life_loss_program_or_foreign_cost_refuses() {
+        use crate::{card_def::TargetSpec, effect::EffectOp};
+        let id = crate::card_def::card_id_by_name("Exsanguinate").unwrap();
+        assert_eq!(
+            roots::registered_spell_printing(id).unwrap(),
+            Some(roots::baseline(id).unwrap())
+        );
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost.x_count = 0,
+                1 => d.cost = crate::mana::Cost::zero(),
+                2 => d.target_spec = TargetSpec::TargetOpponent,
+                3 => d.spell_effect = || Some(EffectOp::Sequence(vec![])),
+                4 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                _ => d.mana_value = 3,
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Exsanguinate changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn mandatory_discard_draw_changed_additional_cost_draw_count_target_and_modes_refuse() {
+        use crate::{
+            card_def::{CostComponent, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Thrill of Possibility").unwrap();
+        assert_eq!(
+            roots::registered_spell_printing(id).unwrap(),
+            Some(roots::baseline(id).unwrap())
+        );
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.additional_cost = None,
+                1 => d.additional_cost = Some(&[CostComponent::DiscardCards(2)]),
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DrawCards {
+                            player: PlayerRef::Controller,
+                            count: 3,
+                        })
+                    }
+                }
+                3 => d.target_spec = TargetSpec::AnyPlayer,
+                4 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                _ => d.cost = crate::mana::Cost::zero(),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Thrill changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn macabre_changed_target_cardinality_return_discard_order_and_cost_refuse() {
+        use crate::{
+            card_def::{CostComponent, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+            state::Zone,
+        };
+        let id = crate::card_def::card_id_by_name("Macabre Waltz").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.target_spec = TargetSpec::None,
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Sequence(vec![
+                            EffectOp::DiscardCards {
+                                player: PlayerRef::Controller,
+                                count: 1,
+                            },
+                            EffectOp::MoveAllTargets {
+                                to_zone: Zone::Hand,
+                            },
+                        ]))
+                    }
+                }
+                3 => d.additional_cost = Some(&[CostComponent::DiscardCards(1)]),
+                4 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                _ => d.types = &[crate::card_def::CardType::Instant],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Macabre changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn goblin_surprise_changed_mode_count_targets_program_tokens_cost_and_timing_refuse() {
+        use crate::{
+            card_def::{CardType, ModeDef, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Goblin Surprise").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.mode2 = None,
+                1 => d.mode2.as_mut().unwrap().target_spec = TargetSpec::Creature,
+                2 => {
+                    d.mode2.as_mut().unwrap().effect = || EffectOp::CreateToken {
+                        token_def: crate::card_def::card_id_by_name("Goblin Token").unwrap(),
+                        controller: PlayerRef::Controller,
+                    }
+                }
+                3 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+                            power: 2,
+                            toughness: 1,
+                            keywords: crate::card_def::Keywords::NONE,
+                        })
+                    }
+                }
+                4 => d.cost = crate::mana::Cost::zero(),
+                5 => d.types = &[CardType::Sorcery],
+                _ => {
+                    d.mode3 = Some(ModeDef {
+                        target_spec: TargetSpec::None,
+                        effect: || EffectOp::Sequence(vec![]),
+                    })
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Goblin Surprise changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn pilfer_changed_opponent_target_nonland_filter_chooser_timing_and_cost_refuse() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Pilfer").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.target_spec = TargetSpec::AnyPlayer,
+                1 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard {
+                            player: PlayerRef::Target(0),
+                        })
+                    }
+                }
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::RevealTargetHandChooseNonlandDiscard {
+                            player: PlayerRef::Controller,
+                        })
+                    }
+                }
+                3 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DiscardCards {
+                            player: PlayerRef::Target(0),
+                            count: 1,
+                        })
+                    }
+                }
+                4 => d.types = &[CardType::Instant],
+                _ => d.cost = crate::mana::Cost::zero(),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Pilfer changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn folly_changed_discard_recipient_count_mode_target_weakening_and_timing_refuse() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Seeker's Folly").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.mode2 = None,
+                1 => d.target_spec = TargetSpec::AnyPlayer,
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DiscardCards {
+                            player: PlayerRef::Target(0),
+                            count: 1,
+                        })
+                    }
+                }
+                3 => d.mode2.as_mut().unwrap().target_spec = TargetSpec::AnyPlayer,
+                4 => {
+                    d.mode2.as_mut().unwrap().effect =
+                        || EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+                            player: PlayerRef::Controller,
+                            power: -1,
+                            toughness: -1,
+                            keywords: crate::card_def::Keywords::NONE,
+                        }
+                }
+                5 => d.types = &[CardType::Instant],
+                _ => d.cost = crate::mana::Cost::zero(),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Folly changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn revenge_changed_flashback_token_count_controller_tapped_entry_or_cost_refuses() {
+        use crate::{
+            card_def::{CardType, CostComponent, DynamicValueDef},
+            effect::{EffectOp, PlayerRef},
+            mana::Cost,
+        };
+        const FREE: &[CostComponent] = &[CostComponent::Mana(Cost {
+            generic: 0,
+            pips: &[],
+            x_count: 0,
+        })];
+        fn effect(
+            token: &str,
+            count: DynamicValueDef,
+            tapped: bool,
+            controller: PlayerRef,
+        ) -> EffectOp {
+            EffectOp::CreateTokensDynamic {
+                token_def: crate::card_def::card_id_by_name(token).unwrap(),
+                controller,
+                count,
+                tapped,
+            }
+        }
+        let id = crate::card_def::card_id_by_name("Revenge of the Rats").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.flashback = None,
+                1 => d.flashback.as_mut().unwrap().cost = FREE,
+                2 => d.cost = Cost::zero(),
+                3 => {
+                    d.spell_effect = || {
+                        Some(effect(
+                            "Goblin Token",
+                            DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature),
+                            true,
+                            PlayerRef::Controller,
+                        ))
+                    }
+                }
+                4 => {
+                    d.spell_effect = || {
+                        Some(effect(
+                            "Rat Token",
+                            DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature),
+                            false,
+                            PlayerRef::Controller,
+                        ))
+                    }
+                }
+                5 => {
+                    d.spell_effect = || {
+                        Some(effect(
+                            "Rat Token",
+                            DynamicValueDef::ControlledPermanentsWithType(CardType::Creature),
+                            true,
+                            PlayerRef::Controller,
+                        ))
+                    }
+                }
+                _ => {
+                    d.spell_effect = || {
+                        Some(effect(
+                            "Rat Token",
+                            DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature),
+                            true,
+                            PlayerRef::Opponent,
+                        ))
+                    }
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Revenge changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn grow_changed_kicker_cost_search_branch_filter_target_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{
+                EffectCond, EffectOp, LibraryCardFilter, LibrarySearchDestinationV1, PlayerRef,
+            },
+            mana::Cost,
+        };
+        fn search(filter: LibraryCardFilter, maximum: u16) -> EffectOp {
+            EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter,
+                max_targets: maximum,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+            }
+        }
+        let id = crate::card_def::card_id_by_name("Grow from the Ashes").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.kicker_cost = None,
+                1 => d.kicker_cost = Some(Cost::zero()),
+                2 => d.cost = Cost::zero(),
+                3 => d.spell_effect = || Some(search(LibraryCardFilter::BasicLand, 1)),
+                4 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Conditional {
+                            cond: EffectCond::WasKicked,
+                            then: Box::new(search(LibraryCardFilter::AnyCard, 2)),
+                            else_: Box::new(search(LibraryCardFilter::AnyCard, 1)),
+                        })
+                    }
+                }
+                5 => d.target_spec = TargetSpec::AnyPlayer,
+                _ => d.types = &[CardType::Instant],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Grow changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn nessian_changed_cost_power_subtype_keyword_or_sorcery_cast_effect_refuses() {
+        use crate::{
+            card_def::{Keywords, Subtype},
+            effect::EffectOp,
+        };
+        let id = crate::card_def::card_id_by_name("Nessian Hornbeetle").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        let value = roots::baseline(id).unwrap();
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"]
+                ["minimum_power"],
+            4
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.power = Some(3),
+                2 => d.subtypes = &[Subtype::Elf],
+                3 => d.keywords = Keywords::FLYING,
+                _ => d.spell_effect = || Some(EffectOp::Sequence(vec![])),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Nessian changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn kraken_changed_double_blue_cost_size_subtype_keyword_or_cast_target_refuses() {
+        use crate::{
+            card_def::{Keywords, Subtype, TargetSpec},
+            mana::{Cost, ManaColor, Pip},
+        };
+        let id = crate::card_def::card_id_by_name("Grappling Kraken").unwrap();
+        let value = roots::baseline(id).unwrap();
+        assert_eq!(
+            value["targeted_entry_printing"]["ordered_triggers"][0]["event"],
+            "LandEntersUnderObserverControl"
+        );
+        assert_eq!(
+            value["targeted_entry_printing"]["ordered_triggers"][0]["landfall"]
+                ["creature_entry_itself_does_not_trigger"],
+            true
+        );
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => {
+                    d.cost = Cost {
+                        generic: 5,
+                        pips: &[Pip::Colored(ManaColor::U)],
+                        x_count: 0,
+                    }
+                }
+                1 => d.toughness = Some(5),
+                2 => d.subtypes = &[Subtype::Octopus],
+                3 => d.keywords = Keywords::VIGILANCE,
+                _ => d.target_spec = TargetSpec::OpponentControlledCreature,
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Kraken changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn indrik_changed_cost_size_subtype_target_keyword_or_spell_program_refuses() {
+        use crate::{
+            card_def::{Keywords, Subtype, TargetSpec},
+            effect::EffectOp,
+        };
+        let id = crate::card_def::card_id_by_name("Affectionate Indrik").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.power = Some(5),
+                2 => d.subtypes = &[Subtype::Spirit],
+                3 => d.target_spec = TargetSpec::Creature,
+                4 => d.keywords = Keywords::LIFELINK,
+                _ => d.spell_effect = || Some(EffectOp::Sequence(vec![])),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Indrik changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn banshee_changed_printed_cost_size_type_keyword_cast_effect_or_foreign_mode_refuses() {
+        use crate::{
+            card_def::{CardType, Keywords},
+            effect::EffectOp,
+        };
+        let id = crate::card_def::card_id_by_name("Tragic Banshee").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.toughness = Some(4),
+                2 => d.types = &[CardType::Enchantment],
+                3 => d.keywords = Keywords::FLYING,
+                4 => d.spell_effect = || Some(EffectOp::Sequence(vec![])),
+                _ => {
+                    d.mode2 = crate::card_def::CARD_DEFS
+                        [usize::from(crate::card_def::card_id_by_name("Abrade").unwrap())]
+                    .mode2
+                    .as_ref()
+                    .map(|mode| crate::card_def::ModeDef {
+                        target_spec: mode.target_spec,
+                        effect: mode.effect,
+                    })
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Banshee changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn bushwhack_changed_basic_search_fight_source_target_modes_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, LibraryCardFilter, ObjectRef, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Bushwhack").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::SearchLibraryToHand {
+                            player: PlayerRef::Controller,
+                            filter: LibraryCardFilter::AnyCard,
+                        })
+                    }
+                }
+                1 => d.mode2 = None,
+                2 => {
+                    d.mode2.as_mut().unwrap().target_spec =
+                        TargetSpec::TwoCreaturesWithDifferentControllers
+                }
+                3 => {
+                    d.mode2.as_mut().unwrap().effect = || EffectOp::FightObjects {
+                        first: ObjectRef::ThisSource,
+                        second: ObjectRef::Target(1),
+                        target_spec: TargetSpec::ControlledCreatureThenOpponentCreature,
+                    }
+                }
+                4 => d.target_spec = TargetSpec::Creature,
+                5 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Instant],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Bushwhack changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn voyage_changed_instruction_order_surveil_player_target_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, ObjectRef, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Uncharted Voyage").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Sequence(vec![
+                            EffectOp::SurveilOne {
+                                player: PlayerRef::Controller,
+                            },
+                            EffectOp::PutObjectInOwnersLibraryTopOrBottom {
+                                object: ObjectRef::Target(0),
+                            },
+                        ]))
+                    }
+                }
+                1 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Sequence(vec![
+                            EffectOp::PutObjectInOwnersLibraryTopOrBottom {
+                                object: ObjectRef::Target(0),
+                            },
+                            EffectOp::SurveilOne {
+                                player: PlayerRef::Opponent,
+                            },
+                        ]))
+                    }
+                }
+                2 => d.target_spec = TargetSpec::OpponentControlledCreature,
+                3 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Sorcery],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Voyage changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn paired_return_changed_controller_relation_program_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, ObjectRef},
+        };
+        let id = crate::card_def::card_id_by_name("Run Away Together").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.target_spec = TargetSpec::Creature,
+                1 => d.target_spec = TargetSpec::ControlledCreatureThenOpponentCreature,
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::MoveObject {
+                            object: ObjectRef::Target(0),
+                            to_zone: crate::state::Zone::Hand,
+                        })
+                    }
+                }
+                3 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Sorcery],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Paired return changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn condemn_changed_attack_filter_capture_program_slot_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, ObjectRef},
+        };
+        let id = crate::card_def::card_id_by_name("Condemn").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.target_spec = TargetSpec::AttackingOrBlockingCreature,
+                1 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { target_index: 1 })
+                    }
+                }
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::MoveObject {
+                            object: ObjectRef::Target(0),
+                            to_zone: crate::state::Zone::Library,
+                        })
+                    }
+                }
+                3 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Sorcery],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Condemn changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn stroke_changed_token_recipient_binding_count_definition_target_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, ObjectRef},
+        };
+        let id = crate::card_def::card_id_by_name("Stroke of Midnight").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DestroyObjectThenCreateTokens {
+                            object: ObjectRef::ThisSource,
+                            token_def: crate::card_def::card_id_by_name("Human Token").unwrap(),
+                            count: 1,
+                        })
+                    }
+                }
+                1 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DestroyObjectThenCreateTokens {
+                            object: ObjectRef::Target(0),
+                            token_def: crate::card_def::card_id_by_name("Human Token").unwrap(),
+                            count: 2,
+                        })
+                    }
+                }
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DestroyObjectThenCreateTokens {
+                            object: ObjectRef::Target(0),
+                            token_def: crate::card_def::card_id_by_name("Soldier Token").unwrap(),
+                            count: 1,
+                        })
+                    }
+                }
+                3 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Sequence(vec![
+                            EffectOp::DestroyObject {
+                                object: ObjectRef::Target(0),
+                            },
+                            EffectOp::CreateToken {
+                                token_def: crate::card_def::card_id_by_name("Human Token").unwrap(),
+                                controller: crate::effect::PlayerRef::Controller,
+                            },
+                        ]))
+                    }
+                }
+                4 => d.target_spec = TargetSpec::Creature,
+                5 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Sorcery],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Stroke changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn bulk_changed_signed_program_target_normal_or_flashback_cost_and_timing_refuse() {
+        use crate::{
+            card_def::{CardType, CostComponent, TargetSpec},
+            effect::{EffectOp, TargetRef},
+        };
+        const FREE_FLASHBACK: &[CostComponent] = &[CostComponent::Mana(crate::mana::Cost {
+            generic: 0,
+            pips: &[],
+            x_count: 0,
+        })];
+        let id = crate::card_def::card_id_by_name("Bulk Up").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.flashback = None,
+                1 => d.flashback.as_mut().unwrap().cost = FREE_FLASHBACK,
+                2 => d.cost = crate::mana::Cost::zero(),
+                3 => d.target_spec = TargetSpec::ControlledCreature,
+                4 => d.types = &[CardType::Sorcery],
+                _ => {
+                    d.spell_effect = || {
+                        Some(EffectOp::PumpTargetUntilEndOfTurnDynamic {
+                            target: TargetRef::Target(0),
+                            power: crate::card_def::DynamicValueDef::Fixed(2),
+                            toughness: crate::card_def::DynamicValueDef::Fixed(0),
+                        })
+                    }
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Bulk changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn burst_changed_base_or_kicker_cost_damage_choice_target_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectCond, EffectOp, TargetRef},
+            mana::Cost,
+        };
+        let id = crate::card_def::card_id_by_name("Burst Lightning").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        let printing = roots::baseline(id).unwrap();
+        let roots = printing["kicker_damage_printing"]["ordered_cast_roots"]
+            .as_array()
+            .unwrap();
+        assert_eq!(roots.len(), 2);
+        for (route, kicked) in roots.iter().zip([false, true]) {
+            assert_eq!(route["kicked"], kicked);
+            assert_eq!(route["ordered_costs"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                route["ordered_costs"][0]["base_total_before_increases_and_reductions"]["generic"],
+                if kicked { 4 } else { 0 }
+            );
+            assert_eq!(route["ordered_resolution"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                route["ordered_resolution"][0]["amount"],
+                if kicked { 4 } else { 2 }
+            );
+        }
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.kicker_cost = None,
+                1 => d.kicker_cost = Some(Cost::zero()),
+                2 => d.cost = Cost::zero(),
+                3 => d.target_spec = TargetSpec::Creature,
+                4 => d.types = &[CardType::Sorcery],
+                5 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Conditional {
+                            cond: EffectCond::WasKicked,
+                            then: Box::new(EffectOp::DealDamage {
+                                target: TargetRef::Target(0),
+                                amount: 2,
+                            }),
+                            else_: Box::new(EffectOp::DealDamage {
+                                target: TargetRef::Target(0),
+                                amount: 4,
+                            }),
+                        })
+                    }
+                }
+                _ => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DealDamage {
+                            target: TargetRef::Target(0),
+                            amount: 4,
+                        })
+                    }
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Burst changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn blast_changed_damage_discard_draw_order_target_cast_cost_and_timing_refuse() {
+        use crate::{
+            card_def::{CardType, CostComponent, TargetSpec},
+            effect::{EffectOp, PlayerRef, TargetRef},
+        };
+        fn program(amount: i32, discard: u8, draw: u32, swap: bool) -> Option<EffectOp> {
+            let damage = EffectOp::DealDamage {
+                target: TargetRef::Target(0),
+                amount,
+            };
+            let cost = EffectOp::MayPayCostThen {
+                discard,
+                sacrifice_lands: 0,
+                return_permanent: None,
+                then: Box::new(EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: draw,
+                }),
+                otherwise: None,
+            };
+            Some(EffectOp::Sequence(if swap {
+                vec![cost, damage]
+            } else {
+                vec![damage, cost]
+            }))
+        }
+        let id = crate::card_def::card_id_by_name("Incinerating Blast").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..8 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.spell_effect = || program(5, 1, 1, false),
+                1 => d.spell_effect = || program(6, 2, 1, false),
+                2 => d.spell_effect = || program(6, 1, 2, false),
+                3 => d.spell_effect = || program(6, 1, 1, true),
+                4 => d.target_spec = TargetSpec::AnyPlayer,
+                5 => d.types = &[CardType::Instant],
+                6 => d.additional_cost = Some(&[CostComponent::DiscardCards(1)]),
+                _ => d.cost = crate::mana::Cost::zero(),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Blast changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
+        use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
+        use crate::effect::{EffectOp, PlayerRef};
+        use crate::mana::{Cost, ManaColor};
+
+        let id = crate::card_def::card_id_by_name("Dragon 5/5 Token").unwrap();
+        let token = roots::baseline(id).unwrap();
+        let p = &token["primitive_printing"];
+        assert_eq!(p["object_name"], "Dragon Token");
+        assert_eq!(p["power"], 5);
+        assert_eq!(p["toughness"], 5);
+        assert_eq!(p["keywords"], Keywords::FLYING.0);
+        assert_eq!(p["token"], true);
+        assert_eq!(p["ordered_instructions"][0]["not_cast_permission"], true);
+        let rite = crate::card_def::card_id_by_name("Rite of the Dragoncaller").unwrap();
+        assert_eq!(
+            roots::baseline(rite).unwrap()["triggered_enchantment_printing"]["ordered_triggers"][0]
+                ["ordered_resolution"][0]["token_definition"],
+            token
+        );
+        macro_rules! reject {
+            ($field:ident, $value:expr) => {{
+                let mut changed = ordinary_recipe(id);
+                changed.$field = $value;
+                assert!(matches!(roots::baseline_recipe(id, &changed),
+                    Err(Error::UnsupportedPrintedRoot(actual)) if actual == id), stringify!($field));
+            }};
+        }
+        reject!(object_name, "Different Dragon");
+        reject!(object_name, "Dragon 5/5 Token");
+        reject!(power, Some(4));
+        reject!(toughness, Some(4));
+        reject!(keywords, Keywords::NONE);
+        reject!(subtypes, &[Subtype::Bird]);
+        reject!(types, &[CardType::Artifact]);
+        reject!(colors, &[ManaColor::U]);
+        reject!(is_token, false);
+        reject!(mana_value, 1);
+        reject!(
+            cost,
+            Cost {
+                generic: 1,
+                ..Cost::zero()
+            }
+        );
+        reject!(target_spec, TargetSpec::AnyPlayer);
+        reject!(produces_mana, &[ManaColor::R]);
+        reject!(enters_battlefield_tapped, true);
+        reject!(
+            controlled_creature_grant,
+            Some(crate::controlled_creature_grants_v1::MEMORIAL)
+        );
+        reject!(spell_effect, || Some(EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1
+        }));
+        let other = crate::card_def::card_id_by_name("Dragon Token").unwrap();
+        assert!(
+            matches!(roots::baseline_recipe(other, &ordinary_recipe(id)),
+            Err(Error::UnsupportedPrintedRoot(actual)) if actual == other)
+        );
+        let mut foreign = ordinary_recipe(other);
+        foreign.object_name = "Different Dragon";
+        assert!(matches!(roots::baseline_recipe(other, &foreign),
+            Err(Error::UnsupportedPrintedRoot(actual)) if actual == other));
+    }
+
+    #[test]
+    fn growth_and_druid_printings_preserve_exact_cost_boost_duration_mana_and_conditional_hexproof()
+    {
+        use crate::card_def::{CardType, Keywords};
+        use crate::effect::{EffectOp, PlayerRef};
+        use crate::mana::{Cost, ManaColor, Pip};
+        fn wrong_program() -> Option<EffectOp> {
+            Some(EffectOp::GainLife {
+                player: PlayerRef::Controller,
+                amount: 1,
+            })
+        }
+        for name in ["Giant Growth", "Paradise Druid"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let growth = name == "Giant Growth";
+            let value = roots::baseline(id).unwrap();
+            assert_eq!(
+                roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                value
+            );
+            let printing = &value["primitive_printing"];
+            let cast = &printing["ordered_cast_roots"][0];
+            assert_eq!(
+                cast["ordered_costs"],
+                json!([{"PrintedMana":Cost {
+                    generic: if growth { 0 } else { 1 },
+                    pips: &[Pip::Colored(ManaColor::G)], x_count: 0
+                }}])
+            );
+            if growth {
+                assert_eq!(printing["types"], json!([CardType::Instant]));
+                assert_eq!(cast["timing"], "InstantWithPriority");
+                assert_eq!(cast["target_count"], 1);
+                assert_eq!(
+                    cast["target_filter"],
+                    json!(crate::card_def::TargetSpec::Creature)
+                );
+                assert_eq!(cast["target_may_be_own_or_opposing"], true);
+                assert_eq!(
+                    cast["requires_exact_live_battlefield_target_incarnation"],
+                    true
+                );
+                assert_eq!(cast["duration"], "UntilEndOfTurn");
+                assert_eq!(cast["places_no_counters"], true);
+                assert_eq!(
+                    cast["ordered_resolution"],
+                    json!([(crate::card_def::CARD_DEFS[usize::from(id)].spell_effect)().unwrap()])
+                );
+                assert_eq!(printing["ordered_mana_roots"], json!([]));
+                assert_eq!(printing["ordered_static_roots"], json!([]));
+            } else {
+                assert_eq!(printing["types"], json!([CardType::Creature]));
+                assert_eq!(
+                    (printing["power"].as_i64(), printing["toughness"].as_i64()),
+                    (Some(2), Some(1))
+                );
+                assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+                let mana = &printing["ordered_mana_roots"][0];
+                assert_eq!(mana["ordered_costs"], json!(["TapOriginalSource"]));
+                assert_eq!(
+                    mana["controller_chooses_exactly_one_color"],
+                    json!([
+                        ManaColor::W,
+                        ManaColor::U,
+                        ManaColor::B,
+                        ManaColor::R,
+                        ManaColor::G
+                    ])
+                );
+                assert_eq!(mana["requires_control_since_turn_began_or_haste"], true);
+                assert_eq!(mana["uses_stack"], false);
+                assert_eq!(mana["mana_amount"], 1);
+                let keyword = &printing["ordered_static_roots"][0];
+                assert_eq!(keyword["condition"], "ThisSourceIsUntapped");
+                assert_eq!(keyword["keyword"], "Hexproof");
+                assert_eq!(keyword["requires_printed_abilities_active"], true);
+                assert_eq!(
+                    keyword["opposing_spells_and_abilities_cannot_target_this"],
+                    true
+                );
+            }
+            for mode in 0..9 {
+                let mut changed = ordinary_recipe(id);
+                match mode {
+                    0 => changed.cost.generic += 1,
+                    1 => changed.types = &[CardType::Sorcery],
+                    2 => changed.colors = &[ManaColor::R],
+                    3 => changed.power = Some(9),
+                    4 => changed.mana_ability_choices = &[ManaColor::G],
+                    5 => changed.keywords = Keywords::FLYING,
+                    6 => changed.spell_cannot_be_countered = true,
+                    7 => changed.spell_effect = wrong_program,
+                    8 => changed.produces_mana = &[ManaColor::G],
+                    _ => unreachable!(),
+                }
+                assert!(
+                    matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(actual)) if actual==id),
+                    "{name}: mutation {mode}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn burnished_hart_printing_preserves_artifact_creature_paid_sacrifice_and_optional_basic_search(
+    ) {
+        use crate::card_def::{CardType, CostComponent};
+        use crate::effect::{EffectOp, LibraryCardFilter, LibrarySearchDestinationV1, PlayerRef};
+        use crate::mana::Cost;
+        let id = crate::card_def::card_id_by_name("Burnished Hart").unwrap();
+        let value = roots::baseline(id).unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            value
+        );
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["types"],
+            json!([CardType::Artifact, CardType::Creature])
+        );
+        assert_eq!(
+            (printing["power"].as_i64(), printing["toughness"].as_i64()),
+            (Some(2), Some(2))
+        );
+        assert_eq!(
+            printing["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"]["generic"],
+            3
+        );
+        let activation = &printing["ordered_activation_roots"][0];
+        assert_eq!(
+            activation["ordered_costs"],
+            json!([
+                {"Mana":Cost {
+                    generic: 3,
+                    pips: &[],
+                    x_count: 0
+                }},
+                "SacrificeSelf"
+            ])
+        );
+        assert_eq!(activation["source_sacrificed_before_publication"], true);
+        assert_eq!(activation["resolution_requires_source_to_remain"], false);
+        assert_eq!(activation["minimum_selected"], 0);
+        assert_eq!(activation["maximum_selected"], 2);
+        assert_eq!(activation["shuffle_even_when_no_cards_selected"], true);
+        assert_eq!(
+            activation["ordered_resolution"],
+            json!([EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: LibraryCardFilter::BasicLand,
+                max_targets: 2,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: true }
+            }])
+        );
+        fn wrong_search() -> EffectOp {
+            EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: LibraryCardFilter::AnyLand,
+                max_targets: 2,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+            }
+        }
+        for mode in 0..10 {
+            let mut changed = ordinary_recipe(id);
+            let mut ability = changed.activated_abilities[0];
+            match mode {
+                0 => changed.cost.generic = 2,
+                1 => changed.power = Some(3),
+                2 => changed.types = &[CardType::Creature],
+                3 => {
+                    ability.cost = &[CostComponent::Mana(Cost {
+                        generic: 3,
+                        pips: &[],
+                        x_count: 0,
+                    })]
+                }
+                4 => {
+                    ability.cost = &[
+                        CostComponent::SacrificeSelf,
+                        CostComponent::Mana(Cost {
+                            generic: 3,
+                            pips: &[],
+                            x_count: 0,
+                        }),
+                    ]
+                }
+                5 => {
+                    ability.cost = &[
+                        CostComponent::Mana(Cost {
+                            generic: 3,
+                            pips: &[],
+                            x_count: 0,
+                        }),
+                        CostComponent::Tap,
+                        CostComponent::SacrificeSelf,
+                    ]
+                }
+                6 => ability.effect = wrong_search,
+                7 => ability.sorcery_speed_only = true,
+                8 => ability.target_spec = crate::card_def::TargetSpec::ControlledCreature,
+                _ => changed.enters_battlefield_tapped = true,
+            }
+            changed.activated_abilities = Box::leak(vec![ability].into_boxed_slice());
+            assert!(
+                matches!(roots::baseline_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(card))if card==id),
+                "field mode {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn diregraf_printing_preserves_mandatory_tapped_entry_and_rejects_a_vanilla_replacement() {
+        let id = crate::card_def::card_id_by_name("Diregraf Ghoul").unwrap();
+        let value = roots::baseline(id).unwrap();
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["cost"],
+            json!({"generic":0,"pips":[{"Colored":"B"}],"x_count":0})
+        );
+        assert_eq!(printing["power"], 2);
+        assert_eq!(printing["toughness"], 2);
+        assert_eq!(
+            printing["ordered_instructions"],
+            json!([{"operation":"EnterBattlefield","controller":"Caster","enters_battlefield_tapped":true}])
+        );
+        for mode in 0..5 {
+            let mut changed = ordinary_recipe(id);
+            match mode {
+                0 => changed.enters_battlefield_tapped = false,
+                1 => changed.cost.generic = 1,
+                2 => changed.power = Some(3),
+                3 => changed.subtypes = &[],
+                _ => changed.colors = &[],
+            }
+            assert!(
+                matches!(roots::baseline_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(card))if card==id),
+                "field mode {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn goldvein_printing_keeps_equip_bonus_and_original_controller_treasure_trigger() {
+        use crate::effect::{EffectOp, ObjectRef, PlayerRef};
+        let id = crate::card_def::card_id_by_name("Goldvein Pick").unwrap();
+        let value = roots::baseline(id).unwrap();
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"]["generic"],
+            2
+        );
+        assert_eq!(printing["ordered_static_roots"][0]["power_delta"], 1);
+        assert_eq!(printing["ordered_static_roots"][0]["toughness_delta"], 1);
+        assert_eq!(
+            printing["ordered_static_roots"][0]["controller_turn_only"],
+            false
+        );
+        let equip = &printing["ordered_activation_roots"][0];
+        assert_eq!(equip["ordered_costs"][0]["PrintedMana"]["generic"], 1);
+        assert_eq!(equip["target_filter"], "ControlledCreature");
+        assert_eq!(
+            equip["ordered_resolution"],
+            json!([EffectOp::AttachSourceToTarget {
+                object: ObjectRef::Target(0)
+            }])
+        );
+        let trigger = &printing["ordered_trigger_roots"][0];
+        assert_eq!(
+            trigger["condition"],
+            "EquippedCreatureDealsCombatDamageToPlayer"
+        );
+        assert_eq!(trigger["captured_actor"], "EquipmentController");
+        assert_eq!(
+            trigger["resolution_does_not_require_source_or_attachment_to_remain"],
+            true
+        );
+        let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+        assert_eq!(
+            trigger["ordered_resolution"],
+            json!([EffectOp::CreateToken {
+                token_def: treasure,
+                controller: PlayerRef::Controller
+            }])
+        );
+        assert_eq!(
+            trigger["created_token_printing"],
+            roots::baseline(treasure).unwrap()
+        );
+        let encoded = NumericTree::encode(&value).unwrap();
+        for path in [
+            "ordered_static_roots",
+            "ordered_activation_roots",
+            "ordered_trigger_roots",
+        ] {
+            let mut erased = value.clone();
+            erased["primitive_printing"]
+                .as_object_mut()
+                .unwrap()
+                .remove(path);
+            assert_ne!(encoded, NumericTree::encode(&erased).unwrap(), "{path}");
+        }
+
+        let fixture = || {
+            let mut d = ordinary_recipe(id);
+            d.equipment = crate::card_def::CARD_DEFS[usize::from(id)].equipment;
+            d
+        };
+        assert_eq!(roots::baseline_recipe(id, &fixture()).unwrap(), value);
+        for mode in 0..10 {
+            let mut changed = fixture();
+            match mode {
+                0 => changed.cost.generic = 3,
+                1 => changed.equipment.as_mut().unwrap().power_delta = 2,
+                2 => changed.equipment.as_mut().unwrap().toughness_delta = 2,
+                3 => changed.equipment.as_mut().unwrap().pt_controller_turn_only = true,
+                4 => {
+                    changed.equipment.as_mut().unwrap().controller_turn_keywords =
+                        crate::card_def::Keywords::FLYING
+                }
+                5 => changed.equipment.as_mut().unwrap().job_select = true,
+                6 => changed.equipment = None,
+                7 => changed.ward_cost = Some(crate::card_def::WardCostDef::Generic(1)),
+                8 => changed.enters_battlefield_tapped = true,
+                _ => changed.capability = crate::card_def::CardCapability::Partial,
+            }
+            assert!(
+                matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(card)) if card == id),
+                "field mode {mode}"
+            );
+        }
+        for mode in 0..7 {
+            let mut changed = fixture();
+            let mut ability = changed.activated_abilities[0];
+            match mode {
+                0 => ability.cost = &[],
+                1 => ability.sorcery_speed_only = false,
+                2 => ability.activation_zone = Zone::Hand,
+                3 => ability.target_spec = crate::card_def::TargetSpec::Creature,
+                4 => ability.max_activations_per_turn = Some(1),
+                5 => ability.face = Some(1),
+                _ => {
+                    ability.effect = || EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    }
+                }
+            }
+            changed.activated_abilities = Box::leak(vec![ability].into_boxed_slice());
+            assert!(
+                matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(card)) if card == id),
+                "ability mode {mode}"
+            );
         }
     }
 

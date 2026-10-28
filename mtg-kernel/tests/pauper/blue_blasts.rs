@@ -185,6 +185,9 @@ fn put_spell_on_stack(
         finalized_method: Some(cast_method),
     });
     object_v4.finalized_cast_binding = Some(FinalizedCastBindingV1 {
+        omniscience_cast_v1: Default::default(),
+        sphinx_lore_cast_v1: Default::default(),
+        greatwurm_payment_v1: Default::default(),
         x_value: 0,
         chosen_creature_cost: None,
         variable_targeting_kicked: None,

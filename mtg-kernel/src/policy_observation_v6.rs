@@ -187,6 +187,30 @@ pub(crate) mod tests {
         state
     }
 
+    pub(crate) fn advance_to_end_for(state: &mut GameState, actor: PlayerId) {
+        let turn = state.turn_key_v1();
+        for _ in 0..128 {
+            let decision = engine::advance_until_decision(state);
+            assert_eq!((state.turn_key_v1(), state.active_player), (turn, actor));
+            if state.step == Step::End
+                && matches!(&decision, engine::Decision::CastSpellOrPass { .. })
+            {
+                return;
+            }
+            let action = match decision {
+                engine::Decision::CastSpellOrPass { .. } => Action::Pass,
+                engine::Decision::DeclareAttackers { .. } => Action::DeclareAttackers(Vec::new()),
+                engine::Decision::DeclareBlockers { .. } => Action::DeclareBlockers(Vec::new()),
+                engine::Decision::OrderTriggers { pending, .. } => {
+                    Action::OrderTriggers((0..pending.len()).collect())
+                }
+                other => panic!("unexpected real fixture End transition {other:?}"),
+            };
+            engine::step(state, action).unwrap();
+        }
+        panic!("fixture did not reach the requested real End step");
+    }
+
     pub(crate) fn advance_to_next_main_for(state: &mut GameState, actor: PlayerId) {
         let original = (state.turn_key_v1(), state.active_player);
         for _ in 0..128 {

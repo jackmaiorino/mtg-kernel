@@ -33,20 +33,729 @@ def historical_records(records, count):
     return historical
 
 
+NEXT_FIVE_NAMES = ("Midnight Snack", "Extravagant Replication", "Infernal Vessel", "Giada, Font of Hope", "Goblin Negotiation")
+ALL_PARTIAL_NAMES = ( "Alesha, Who Laughs at Fate", "Nine-Lives Familiar", "Valkyrie's Call", "Perforating Artist", "Niv-Mizzet, Visionary", "Embercleave", "Banner of Kinship", "Drakuseth, Maw of Flames", "Zimone, Paradox Sculptor", "Sphinx's Tutelage", "Consuming Aberration", "Lathril, Blade of the Elves", "Blasphemous Edict", "Secluded Courtyard", "Electroduplicate", "Curator of Destinies", "Loot, Exuberant Explorer", "Kykar, Zephyr Awakener", "Kykar Spirit Token", "Quilled Greatwurm", "Sphinx of Forgotten Lore", "Omniscience", "Abyssal Harvester", "Progenitus", "Etali, Primal Storm", "Leyline Axe", "Fiend Artisan", "Imprisoned in the Moon", "Thousand-Year Storm", "Time Stop", "Genesis Wave", "Vivien Reid", "Muldrotha, the Gravetide", "Tinybones, Bauble Burglar", "Liliana, Dreadhorde General", "Zombie Token", "Chandra, Flameshaper", "Kaito, Cunning Infiltrator", "Ninja Token")
+
+def before_next_five_full(records):
+    historical = json.loads(json.dumps(records))
+    for row in historical:
+        if row["name"] in NEXT_FIVE_NAMES:
+            row["engine_capability"] = "partial"
+            row["decks"] = [name for name in row["decks"] if not name.endswith("_full_candidate.dck")]
+    return historical
+
+
+
 class LimitedDeckTest(unittest.TestCase):
+    def test_liliana_and_exact_zombie_append_after_actual_tinybones_as_partial(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(rows)), (496, 304))
+        self.assertEqual([(r["name"], self.registry[r["name"]].card_id, r["engine_capability"])
+                          for r in rows[298:301]],
+                         [("Tinybones, Bauble Burglar", 490, "partial"),
+                          ("Liliana, Dreadhorde General", 491, "partial"),
+                          ("Zombie Token", 492, "partial")])
+        prefix = json.dumps(rows[:299], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "e83d954aef5d05d54f6f3d66437f61a151c5670e892998a0e63a6e160e794fb2")
+        liliana, zombie = rows[299:301]
+        self.assertEqual((liliana["mana_cost"], liliana["mana_value"], liliana["colors"],
+                          liliana["types"], liliana["subtypes"], liliana["supertypes"],
+                          liliana["starting_loyalty"], liliana["is_token"]),
+                         ("{4}{B}{B}", 6, ["B"], ["Planeswalker"], ["Liliana"], ["Legendary"], 6, False))
+        self.assertEqual((zombie["mana_cost"], zombie["colors"], zombie["types"], zombie["subtypes"],
+                          zombie["power"], zombie["toughness"], zombie["mechanics"], zombie["is_token"]),
+                         ("", ["B"], ["Creature"], ["Zombie"], 2, 2, [], True))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == liliana["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "176", "cb28d217-795e-4320-a032-cd713f7ecc8a"))
+        token, = [t for t in frozen["token_dependencies"] if t["name"] == "Zombie"]
+        self.assertEqual((len(frozen["card_names"]), len(frozen["token_dependencies"])), (286, 24))
+        self.assertEqual((token["id"], token["required_by"]),
+                         ("e29a360b-11fd-42ba-82ba-de8f7e136c20", [liliana["name"]]))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_liliana_dreadhorde_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Liliana, Dreadhorde General \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+        with self.assertRaisesRegex(ValueError, "token"):
+            limited.resolve_mainboard(limited.parse_dck("40 Zombie Token"), self.registry)
+
+    def test_muldrotha_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[297]
+        self.assertEqual((len(self.registry), len(rows)), (496, 304))
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Muldrotha, the Gravetide", 489, "partial"))
+        self.assertEqual((row["mana_cost"], row["types"], row["subtypes"], row["supertypes"], row["power"], row["toughness"]),
+                         ("{3}{B}{G}{U}", ["Creature"], ["Elemental", "Avatar"], ["Legendary"], 6, 6))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "243", "51710b19-68e3-4853-901f-e618bde61161"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_muldrotha_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Muldrotha, the Gravetide \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_vivien_reid_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[296]
+        self.assertEqual((len(self.registry), len(rows)), (496, 304))
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]), ("Vivien Reid", 488, "partial"))
+        self.assertEqual((row["mana_cost"], row["types"], row["subtypes"], row["supertypes"], row["starting_loyalty"]), ("{3}{G}{G}", ["Planeswalker"], ["Vivien"], ["Legendary"], 5))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "234", "38769247-42a1-4571-9071-6d59fe28650a"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_vivien_reid_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Vivien Reid \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_genesis_wave_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[295]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Genesis Wave", 487, "partial"))
+        self.assertEqual((row["mana_cost"], row["mana_value"], row["types"]),
+                         ("{X}{G}{G}{G}", 3, ["Sorcery"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "221", "d46f7ddb-f986-4f1f-b096-ae1a02d0bdc8"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_genesis_wave_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Genesis Wave \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_time_stop_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[294]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Time Stop", 486, "partial"))
+        self.assertEqual((row["mana_cost"], row["types"], row["colors"]),
+                         ("{4}{U}{U}", ["Instant"], ["U"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]),
+                         ("166", "d938603b-0f1e-44c4-b86e-38e15f4a0d27"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_time_stop_partial.dck").read_text())
+        with self.assertRaisesRegex(ValueError, r"Time Stop \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_thousand_year_storm_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[293]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Thousand-Year Storm", 485, "partial"))
+        self.assertEqual((row["mana_cost"], row["types"], row["subtypes"], row["colors"]),
+                         ("{4}{U}{R}", ["Enchantment"], [], ["U", "R"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "248", "76c48a67-1410-40f1-9b93-0172d85e4688"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_thousand_year_storm_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Thousand-Year Storm \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_imprisoned_moon_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[292]
+        self.assertEqual((len(self.registry), len(rows)), (496, 304))
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Imprisoned in the Moon", 484, "partial"))
+        self.assertEqual((row["mana_cost"], row["types"], row["subtypes"], row["colors"], row["power"], row["toughness"]),
+                         ("{2}{U}", ["Enchantment"], ["Aura"], ["U"], None, None))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "156", "ee28e147-6622-4399-a314-c14a5c912dd0"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_imprisoned_moon_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Imprisoned in the Moon \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+
+    def test_fiend_artisan_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[291]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Fiend Artisan", 483, "partial"))
+        self.assertEqual((row["mana_cost"], row["types"], row["subtypes"], row["power"], row["toughness"]),
+                         ("{B/G}{B/G}", ["Creature"], ["Nightmare"], 1, 1))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("SPG", "83", "50a31dde-29b0-4c6f-b345-ae3c984cd1c7"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_fiend_artisan_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Fiend Artisan \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_leyline_axe_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[290]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Leyline Axe", 482, "partial"))
+        self.assertEqual((row["mana_cost"], row["types"], row["subtypes"], row["colors"]),
+                         ("{4}", ["Artifact"], ["Equipment"], []))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]),
+                         ("129", "b9c03336-a321-4c06-94d1-809f328fabd8"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_leyline_axe_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Leyline Axe \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_etali_primal_storm_exact_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[289]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Etali, Primal Storm", 481, "partial"))
+        self.assertEqual((row["mana_cost"], row["power"], row["toughness"], row["subtypes"], row["supertypes"]),
+                         ("{4}{R}{R}", 6, 6, ["Elder", "Dinosaur"], ["Legendary"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]),
+                         ("194", "b6af9894-95b5-4c8e-902f-a9ba70f02e4a"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_etali_primal_storm_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Etali, Primal Storm \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_progenitus_frozen_partial_and_full_preflight_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[288]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]), ("Progenitus", 480, "partial"))
+        self.assertEqual((row["mana_cost"], row["power"], row["toughness"], row["subtypes"]), ("{W}{W}{U}{U}{B}{B}{R}{R}{G}{G}", 10, 10, ["Hydra", "Avatar"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == "Progenitus"]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]), ("244", "e77fbc87-d78e-4602-baa0-da9b0d464dfb"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_progenitus_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Progenitus \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_harvester_exact_frozen_partial_printing_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[287]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Abyssal Harvester", 479, "partial"))
+        self.assertEqual((row["mana_cost"], row["power"], row["toughness"], row["subtypes"]),
+                         ("{1}{B}{B}", 3, 2, ["Demon", "Warlock"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]),
+                         ("54", "f2e0f538-5825-47e9-883c-3ec6fd5b25ea"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_abyssal_harvester_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Abyssal Harvester \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_omniscience_exact_frozen_partial_printing_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[286]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Omniscience", 478, "partial"))
+        self.assertEqual((row["mana_cost"], row["mana_value"], row["types"], row["subtypes"],
+                          row["power"], row["toughness"]),
+                         ("{7}{U}{U}{U}", 10, ["Enchantment"], [], None, None))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]),
+                         ("161", "d33d91d0-1506-45e4-9def-975bf901815e"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_omniscience_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Omniscience \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_sphinx_forgotten_lore_exact_partial_printing_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[285]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]),
+                         ("Sphinx of Forgotten Lore", 477, "partial"))
+        self.assertEqual((row["mana_cost"], row["power"], row["toughness"], row["subtypes"]),
+                         ("{2}{U}{U}", 3, 3, ["Sphinx"]))
+        self.assertEqual(row["mechanics"][:2], ["flash", "flying"])
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]),
+                         ("51", "af6e46b8-62ed-4bca-ba38-a821f225b59f"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_sphinx_forgotten_lore_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Sphinx of Forgotten Lore \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_quilled_greatwurm_exact_partial_append_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        card = rows[284]
+        self.assertEqual((card["name"], self.registry[card["name"]].card_id, card["engine_capability"]), ("Quilled Greatwurm", 476, "partial"))
+        self.assertEqual((card["mana_cost"], card["power"], card["toughness"], card["subtypes"]), ("{4}{G}{G}", 7, 7, ["Wurm"]))
+        prefix = json.dumps(before_next_five_full(rows[:284]), sort_keys=True, separators=(",", ":")).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(), "1d3f008667647f9c9bb47629f84dc320b09edb2ca2e85d55170ae5c64278b7c1")
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == card["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]), ("111", "31b60531-3d33-4e66-923a-29008716b15c"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_quilled_greatwurm_partial.dck").read_text())
+        with self.assertRaisesRegex(ValueError, r"Quilled Greatwurm \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_kykar_frozen_printing_and_distinct_partial_spirit_dependency(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        card, token = rows[282:284]
+        self.assertEqual((card["name"], self.registry[card["name"]].card_id, card["engine_capability"]), ("Kykar, Zephyr Awakener", 474, "partial"))
+        self.assertEqual((card["mana_cost"], card["power"], card["toughness"], card["subtypes"]), ("{2}{W}{U}", 3, 4, ["Bird", "Wizard"]))
+        self.assertEqual((token["name"], self.registry[token["name"]].card_id, token["engine_capability"]), ("Kykar Spirit Token", 475, "partial"))
+        self.assertEqual((token["power"], token["toughness"], token["colors"], token["types"], token["subtypes"], token["mechanics"], token["is_token"]), (1, 1, ["W"], ["Creature"], ["Spirit"], ["flying"], True))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing = next(c for c in frozen["cards"] if c["name"] == card["name"])
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]), ("FDN", "122", "6c980998-7124-4ec6-a0b6-e8d9a2364925"))
+        dependency = next(t for t in frozen["token_dependencies"] if t["name"] == "Spirit")
+        self.assertEqual(dependency["id"], "278adad2-49a6-4baa-8dbe-93474545eef7")
+        self.assertEqual(dependency["required_by"], [card["name"]])
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_kykar_zephyr_awakener_partial.dck").read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(ValueError, r"Kykar, Zephyr Awakener \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+        with self.assertRaisesRegex(ValueError, "token"):
+            limited.resolve_mainboard(limited.parse_dck("39 Plains\n1 Kykar Spirit Token"), self.registry)
+
+    def test_loot_partial_printing_keeps_full_only_reset_refusal(self) -> None:
+        self.assertEqual(self.registry["Loot, Exuberant Explorer"].card_id, 473)
+        self.assertEqual(self.registry["Loot, Exuberant Explorer"].capability, "partial")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_loot_exuberant_explorer_partial.dck").read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(ValueError, r"Loot, Exuberant Explorer \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_curator_exact_frozen_partial_append_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[280]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"], row["mana_cost"], row["power"], row["toughness"]),
+                         ("Curator of Destinies", 472, "partial", "{4}{U}{U}", 5, 5))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"]), ("34", "9ff79da7-c3f7-4541-87a0-503544c699b5"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_curator_of_destinies_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Curator of Destinies \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_electroduplicate_exact_frozen_partial_append_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[279]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id,
+                          row["engine_capability"], row["mana_cost"], row["mana_value"],
+                          row["types"], row["colors"]),
+                         ("Electroduplicate", 471, "partial", "{2}{R}", 3, ["Sorcery"], ["R"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [card for card in frozen["cards"] if card["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "85", "abb06b1c-5d4e-49b9-9c4a-e60ab656a257"))
+        self.assertEqual(row["java_file"], "Mage.Sets/src/mage/cards/e/Electroduplicate.java")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_electroduplicate_partial.dck").read_text())
+        self.assertEqual(sum(card.count for card in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Electroduplicate \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_courtyard_exact_frozen_partial_append_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[278]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id,
+                          row["engine_capability"], row["types"], row["produces_mana"]),
+                         ("Secluded Courtyard", 470, "partial", ["Land"], ["C"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "267", "d13373d2-139b-48c7-a8c9-828cefc4f150"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_secluded_courtyard_partial.dck").read_text())
+        self.assertEqual(sum(r.count for r in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Secluded Courtyard \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_edict_exact_frozen_partial_append_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[277]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id,
+                          row["engine_capability"], row["mana_cost"], row["mana_value"],
+                          row["types"], row["colors"]),
+                         ("Blasphemous Edict", 469, "partial", "{3}{B}{B}", 5,
+                          ["Sorcery"], ["B"]))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [card for card in frozen["cards"] if card["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "57", "11040ecd-3153-4029-b42b-1441bc51ec34"))
+        self.assertEqual(row["java_file"], "Mage.Sets/src/mage/cards/b/BlasphemousEdict.java")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_blasphemous_edict_partial.dck").read_text())
+        self.assertEqual(sum(card.count for card in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Blasphemous Edict \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
     def setUp(self) -> None:
         self.registry = limited.fdn_registry()
+
+    def test_lathril_exact_frozen_partial_append_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[276]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id,
+                          row["engine_capability"], row["mana_cost"], row["mana_value"],
+                          row["types"], row["subtypes"], row["supertypes"], row["colors"], row["power"], row["toughness"]),
+                         ("Lathril, Blade of the Elves", 468, "partial", "{2}{B}{G}", 4,
+                          ["Creature"], ["Elf", "Noble"], ["Legendary"], ["B", "G"], 2, 3))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [card for card in frozen["cards"] if card["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "242", "8d4e5480-a287-4a25-b855-a26dae555b1c"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_lathril_partial.dck").read_text())
+        self.assertEqual(sum(card.count for card in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Lathril, Blade of the Elves \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_aberration_exact_frozen_partial_append_preserves_all_previous_rows(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[275]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id,
+                          row["engine_capability"], row["mana_cost"], row["mana_value"],
+                          row["types"], row["subtypes"], row["colors"], row["power"], row["toughness"]),
+                         ("Consuming Aberration", 467, "partial", "{3}{U}{B}", 5,
+                          ["Creature"], ["Horror"], ["U", "B"], 0, 0))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [card for card in frozen["cards"] if card["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "238", "bc2b28fd-66b0-457c-80ea-7caed2cc7926"))
+        self.assertEqual(row["java_file"], "Mage.Sets/src/mage/cards/c/ConsumingAberration.java")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_consuming_aberration_partial.dck").read_text())
+        self.assertEqual(sum(card.count for card in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Consuming Aberration \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_tutelage_exact_spg_partial_append_and_full_deck_refusal(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = rows[274]
+        self.assertEqual((row["name"], self.registry[row["name"]].card_id,
+                          row["engine_capability"], row["mana_cost"], row["mana_value"],
+                          row["types"], row["colors"], row["power"], row["toughness"]),
+                         ("Sphinx's Tutelage", 466, "partial", "{2}{U}", 3,
+                          ["Enchantment"], ["U"], None, None))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [card for card in frozen["cards"] if card["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("SPG", "75", "94a3673b-6003-4612-a8f6-02829aa9de7d"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_sphinxs_tutelage_partial.dck").read_text())
+        with self.assertRaisesRegex(ValueError, r"Sphinx's Tutelage \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_zimone_appends_exact_partial_printing_and_full_only_refuses(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        row = records[273]
+        name = "Zimone, Paradox Sculptor"
+        self.assertEqual((row["name"], self.registry[name].card_id,
+                          row["engine_capability"], row["mana_cost"], row["mana_value"],
+                          row["colors"], row["types"], row["subtypes"], row["supertypes"],
+                          row["power"], row["toughness"], row["is_token"]),
+                         (name, 465, "partial", "{2}{G}{U}", 4, ["G", "U"],
+                          ["Creature"], ["Human", "Wizard"], ["Legendary"], 1, 4, False))
+        self.assertEqual(row["java_file"],
+                         "Mage.Sets/src/mage/cards/z/ZimoneParadoxSculptor.java")
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [card for card in frozen["cards"] if card["name"] == name]
+        self.assertEqual((printing["set"], printing["collector_number"]), ("FDN", "126"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_zimone_partial.dck").read_text())
+        self.assertEqual(sum(card.count for card in deck.mainboard), 40)
+        self.assertEqual([(card.name, card.count) for card in deck.mainboard
+                          if card.name == name], [(name, 4)])
+        with self.assertRaisesRegex(ValueError,
+                                    r"unsupported mainboard: Zimone, Paradox Sculptor \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_kaito_and_exact_ninja_follow_actual_chandra_as_partial(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(rows)), (496, 304))
+        kaito, ninja = rows[302:]
+        self.assertEqual([(r["name"], self.registry[r["name"]].card_id, r["engine_capability"]) for r in [kaito, ninja]],
+                         [("Kaito, Cunning Infiltrator", 494, "partial"), ("Ninja Token", 495, "partial")])
+        self.assertEqual((kaito["mana_cost"], kaito["starting_loyalty"], kaito["types"], kaito["subtypes"], kaito["supertypes"]),
+                         ("{1}{U}{U}", 3, ["Planeswalker"], ["Kaito"], ["Legendary"]))
+        self.assertEqual((ninja["mana_cost"], ninja["mana_value"], ninja["colors"], ninja["types"], ninja["subtypes"], ninja["power"], ninja["toughness"], ninja["mechanics"], ninja["is_token"]),
+                         ("", 0, ["U"], ["Creature"], ["Ninja"], 2, 1, [], True))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == kaito["name"]]
+        self.assertEqual((printing["collector_number"], printing["scryfall_id"], printing["oracle_id"]),
+                         ("44", "5dabdea9-2015-49b9-853d-4f7e1262eab3", "f6d3f145-00e0-47cd-91d8-0381c19a000d"))
+        dependency, = [r for r in frozen["token_dependencies"] if r["id"] == "aeec04b1-475c-4e55-b72f-327ea5258146"]
+        self.assertEqual(dependency["required_by"], [kaito["name"]])
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_kaito_cunning_partial.dck").read_text())
+        self.assertEqual(sum(row.count for row in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Kaito, Cunning Infiltrator \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_chandra_flameshaper_is_exact_partial_after_actual_liliana_and_zombie(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        card = records[301]
+        self.assertEqual((card["name"], self.registry[card["name"]].card_id,
+                          card["engine_capability"], card["mana_cost"],
+                          card["starting_loyalty"], card["types"], card["subtypes"]),
+                         ("Chandra, Flameshaper", 493, "partial", "{5}{R}{R}", 6,
+                          ["Planeswalker"], ["Chandra"]))
+        self.assertEqual(self.registry["Liliana, Dreadhorde General"].card_id, 491)
+        self.assertEqual(self.registry["Zombie Token"].card_id, 492)
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [row for row in frozen["cards"] if row["name"] == card["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"],
+                          printing["scryfall_id"], printing["oracle_id"]),
+                         ("FDN", "81", "a22d21ec-0fb3-4574-a803-6442ec13167e",
+                          "818f908c-9af6-4edc-bb0e-193bc830e2e4"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_chandra_flameshaper_partial.dck").read_text())
+        self.assertEqual(sum(row.count for row in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Chandra, Flameshaper \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_drakuseth_is_actual_partial_append_and_genuine_reference_deck_refuses(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        card = records[272]
+        self.assertEqual((card["name"], card["engine_capability"]), ("Drakuseth, Maw of Flames", "partial"))
+        self.assertEqual(self.registry[card["name"]].card_id, 464)
+        self.assertEqual((card["mana_cost"], card["mana_value"], card["types"], card["subtypes"], card["supertypes"], card["power"], card["toughness"]),
+                         ("{4}{R}{R}{R}", 7, ["Creature"], ["Dragon"], ["Legendary"], 7, 7))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing = next(row for row in frozen["cards"] if row["name"] == card["name"])
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "193", "029b1edb-e1de-4f1c-81df-8d17f4920318"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_drakuseth_partial.dck").read_text())
+        self.assertEqual(sum(entry.count for entry in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, r"Drakuseth, Maw of Flames \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_alesha_appends_exact_partial_printing_preserves_prefix_and_refuses_full_deck(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        prefix = json.dumps(before_next_five_full(records[:265]), sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "459cc18dafa31596fc696ff5d35f8a87b409866142047b85272620dfa699645d")
+        card = records[265]
+        name = "Alesha, Who Laughs at Fate"
+        self.assertEqual((card["name"], self.registry[name].card_id,
+                          card["engine_capability"], card["mana_cost"], card["mana_value"],
+                          card["types"], card["subtypes"], card["supertypes"],
+                          card["power"], card["toughness"], card["is_token"]),
+                         (name, 457, "partial", "{1}{B}{R}", 3, ["Creature"],
+                          ["Human", "Warrior"], ["Legendary"], 2, 2, False))
+        self.assertEqual(card["java_file"], "Mage.Sets/src/mage/cards/a/AleshaWhoLaughsAtFate.java")
+        printing, = [row for row in json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())["cards"]
+                     if row["name"] == name]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "115", "a93e3406-4e29-4bc0-ae52-cbd2ac1f99a4"))
+        self.assertEqual(limited.card_status(name, self.registry), "partial")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_alesha_partial.dck").read_text())
+        self.assertEqual(sum(item.count for item in deck.mainboard), 40)
+        self.assertEqual([(item.name, item.count) for item in deck.mainboard if item.name == name],
+                         [(name, 4)])
+        self.assertEqual(sum(item.count for item in deck.mainboard if item.name in {"Swamp", "Mountain"}),
+                         32)
+        with self.assertRaisesRegex(ValueError, r"unsupported mainboard: Alesha, Who Laughs at Fate \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_perforating_artist_appends_exact_partial_printing_and_refuses_full_deck(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        prefix = json.dumps(before_next_five_full(records[:268]), sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(), "03d02956fd7906368cf5abd0220bc8831ceac1b97842efd39ae2d8d1169e6119")
+        card = records[268]
+        name = "Perforating Artist"
+        self.assertEqual((card["name"], self.registry[name].card_id,
+                          card["engine_capability"], card["mana_cost"], card["mana_value"],
+                          card["types"], card["subtypes"], card["colors"],
+                          card["power"], card["toughness"], card["is_token"]),
+                         (name, 460, "partial", "{1}{B}{R}", 3, ["Creature"],
+                          ["Devil"], ["B", "R"], 3, 2, False))
+        printing, = [row for row in json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())["cards"]
+                     if row["name"] == name]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "124", "72980409-53f0-43c1-965e-06f22e7bb608"))
+        self.assertEqual(card["java_file"], "Mage.Sets/src/mage/cards/p/PerforatingArtist.java")
+        self.assertEqual(limited.card_status(name, self.registry), "partial")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_perforating_artist_partial.dck").read_text())
+        self.assertEqual(sum(item.count for item in deck.mainboard), 40)
+        self.assertEqual([(item.name, item.count) for item in deck.mainboard if item.name == name], [(name, 4)])
+        with self.assertRaisesRegex(ValueError, r"unsupported mainboard: Perforating Artist \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
 
     def assert_current_full_and_historical_partial_refusal(self, deck):
         resolved = limited.resolve_mainboard(deck, self.registry)
         self.assertEqual(len(resolved), 40)
-        candidates = {entry.name for entry in deck.mainboard} & set(PREPARED_FULL_NAMES)
+        candidates = {entry.name for entry in deck.mainboard} & set((*PREPARED_FULL_NAMES, *NEXT_FIVE_NAMES))
         self.assertTrue(candidates)
         for name in candidates:
             historical = dict(self.registry)
             historical[name] = replace(historical[name], capability="partial")
             with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
                 limited.resolve_mainboard(deck, historical)
+
+    def test_nine_lives_appends_exact_partial_printing_and_refuses_full_deck(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        prefix = json.dumps(before_next_five_full(records[:266]), sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "a57f18e629dc2ea3bfcb998fc8036d1c06cc6868f3bbc699a5c79a85015dd5bd")
+        card = records[266]
+        name = "Nine-Lives Familiar"
+        self.assertEqual((card["name"], self.registry[name].card_id,
+                          card["engine_capability"], card["mana_cost"], card["mana_value"],
+                          card["types"], card["subtypes"], card["power"], card["toughness"],
+                          card["is_token"]),
+                         (name, 458, "partial", "{1}{B}{B}", 3, ["Creature"], ["Cat"], 1, 1, False))
+        printing, = [row for row in json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())["cards"]
+                     if row["name"] == name]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "66", "988c23f6-59fe-49f9-a9ce-9881dccb7033"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_nine_lives_familiar_partial.dck").read_text())
+        self.assertEqual(sum(item.count for item in deck.mainboard), 40)
+        self.assertEqual([(item.name, item.count) for item in deck.mainboard if item.name == name],
+                         [(name, 4)])
+        with self.assertRaisesRegex(ValueError, r"unsupported mainboard: Nine-Lives Familiar \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_valkyries_call_appends_exact_partial_printing_and_refuses_full_deck(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        prefix = json.dumps(before_next_five_full(records[:267]), sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "b4c06d92326090d643c371ac7f45724e470f71fde09fda502bb1b3ef771fbbdd")
+        card = records[267]
+        name = "Valkyrie's Call"
+        self.assertEqual((card["name"], self.registry[name].card_id,
+                          card["engine_capability"], card["mana_cost"], card["mana_value"],
+                          card["types"], card["subtypes"], card["power"], card["toughness"],
+                          card["is_token"]),
+                         (name, 459, "partial", "{3}{W}{W}", 5, ["Enchantment"], [],
+                          None, None, False))
+        printing, = [row for row in json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())["cards"]
+                     if row["name"] == name]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "27", "0e1f1ff2-fa8f-4d38-b631-2d6e08e614c8"))
+        self.assertEqual(limited.card_status(name, self.registry), "partial")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_valkyries_call_partial.dck").read_text())
+        self.assertEqual(sum(item.count for item in deck.mainboard), 40)
+        self.assertEqual([(item.name, item.count) for item in deck.mainboard if item.name == name],
+                         [(name, 4)])
+        with self.assertRaisesRegex(ValueError, r"unsupported mainboard: Valkyrie's Call \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_niv_mizzet_appends_exact_partial_printing_and_refuses_full_deck(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        card = records[269]
+        name = "Niv-Mizzet, Visionary"
+        self.assertEqual((card["name"], self.registry[name].card_id,
+                          card["engine_capability"], card["mana_cost"], card["mana_value"],
+                          card["types"], card["subtypes"], card["supertypes"],
+                          card["power"], card["toughness"], card["is_token"]),
+                         (name, 461, "partial", "{4}{U}{R}", 6, ["Creature"],
+                          ["Dragon", "Wizard"], ["Legendary"], 5, 5, False))
+        self.assertEqual(card["java_file"], "Mage.Sets/src/mage/cards/n/NivMizzetVisionary.java")
+        printing, = [row for row in json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())["cards"]
+                     if row["name"] == name]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "123", "7a69a618-d588-4745-8ede-0ff0a9f356f1"))
+        self.assertEqual(limited.card_status(name, self.registry), "partial")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_niv_mizzet_visionary_partial.dck").read_text())
+        self.assertEqual(sum(item.count for item in deck.mainboard), 40)
+        self.assertEqual([(item.name, item.count) for item in deck.mainboard if item.name == name],
+                         [(name, 4)])
+        self.assertTrue(all(limited.card_status(item.name, self.registry) == "full"
+                            for item in deck.mainboard if item.name != name))
+        with self.assertRaisesRegex(ValueError, r"unsupported mainboard: Niv-Mizzet, Visionary \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_embercleave_appends_exact_guest_partial_printing_and_refuses_full_deck(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        card = records[270]
+        name = "Embercleave"
+        self.assertEqual((card["name"], self.registry[name].card_id,
+                          card["engine_capability"], card["mana_cost"], card["mana_value"],
+                          card["colors"], card["types"], card["subtypes"], card["supertypes"],
+                          card["power"], card["toughness"], card["is_token"]),
+                         (name, 462, "partial", "{4}{R}{R}", 6, ["R"], ["Artifact"],
+                          ["Equipment"], ["Legendary"], None, None, False))
+        self.assertEqual(card["java_file"], "Mage.Sets/src/mage/cards/e/Embercleave.java")
+        printing, = [row for row in json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())["cards"]
+                     if row["name"] == name]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"],
+                          printing["oracle_id"]),
+                         ("SPG", "77", "32bee083-859e-407c-99ad-3fb74b1d4233",
+                          "4d6120d6-fcce-40bc-9fc6-e1f5beb6c728"))
+        self.assertEqual(limited.card_status(name, self.registry), "partial")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_embercleave_partial.dck").read_text())
+        self.assertEqual(sum(item.count for item in deck.mainboard), 40)
+        self.assertEqual([(item.name, item.count) for item in deck.mainboard if item.name == name],
+                         [(name, 4)])
+        self.assertTrue(all(limited.card_status(item.name, self.registry) == "full"
+                            for item in deck.mainboard if item.name != name))
+        with self.assertRaisesRegex(ValueError, r"unsupported mainboard: Embercleave \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_banner_of_kinship_exact_frozen_partial_printing_and_full_only_refusal(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        prefix = json.dumps(before_next_five_full(records[:271]), ensure_ascii=False, sort_keys=True,
+                            separators=(",", ":")).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(), "58ea10700676a3fbb3e0a4335e5fe05f1f13c469943e53297936bb6d701a751e")
+        card = records[271]
+        name = "Banner of Kinship"
+        self.assertEqual((card["name"], self.registry[name].card_id, card["engine_capability"],
+                          card["mana_cost"], card["mana_value"], card["types"], card["subtypes"],
+                          card["supertypes"], card["colors"], card["power"], card["toughness"]),
+                         (name, 463, "partial", "{5}", 5, ["Artifact"], [], [], [], None, None))
+        self.assertEqual(card["java_file"], "Mage.Sets/src/mage/cards/b/BannerOfKinship.java")
+        printing, = [r for r in json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())["cards"]
+                     if r["name"] == name]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"],
+                          printing["oracle_id"]),
+                         ("FDN", "127", "a14c16c0-4053-46b0-8fa6-be8b4a7a1c8a",
+                          "8c220dbd-6572-4715-aae6-dd09a4252d68"))
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_banner_of_kinship_partial.dck").read_text())
+        self.assertEqual(sum(item.count for item in deck.mainboard), 40)
+        self.assertEqual([(item.name, item.count) for item in deck.mainboard if item.name == name], [(name, 4)])
+        self.assertTrue(all(limited.card_status(item.name, self.registry) == "full"
+                            for item in deck.mainboard if item.name != name))
+        with self.assertRaisesRegex(ValueError, r"unsupported mainboard: Banner of Kinship \(partial\)"):
+            limited.resolve_mainboard(deck, self.registry)
+
+    def test_midnight_snack_exact_printing_reuses_food_and_refuses_full_only_decks(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
+        card = records[260]
+        self.assertEqual((card["name"], self.registry[card["name"]].card_id,
+                          card["engine_capability"], card["mana_cost"], card["mana_value"],
+                          card["types"], card["colors"], card["power"], card["toughness"]),
+                         ("Midnight Snack", 452, "full", "{2}{B}", 3,
+                          ["Enchantment"], ["B"], None, None))
+        for offset, name in enumerate(NEXT_FIVE_NAMES, 452):
+            self.assertEqual((self.registry[name].card_id, self.registry[name].capability),(offset,"full"))
+        self.assertEqual(len(ALL_PARTIAL_NAMES),39)
+        metadata = json.loads((FIXTURES / "midnight_snack_prepared_v1.json").read_bytes())
+        self.assertEqual((metadata["printing"]["set"], metadata["printing"]["collector_number"]), ("FDN", "65"))
+        self.assertEqual(metadata["mage_commit"], "a5c90fe180021e70e2a644ade00eeab07f857a40")
+        self.assertFalse(metadata["model_admitted"])
+        self.assertFalse(metadata["runtime_qualified"])
+        self.assertEqual(len(metadata["primary_sources"]), 4)
+        base = json.loads((REPO_ROOT / "data/cards_v1.json").read_bytes())["cards"]
+        food, = [row for row in base + records[:260] if row["name"] == "Food Token"]
+        self.assertTrue(food["is_token"])
+        self.assertEqual(food["engine_capability"], "full")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_midnight_snack_partial.dck").read_text())
+        self.assertEqual(sum(item.count for item in deck.mainboard), 40)
+        self.assertTrue(all(limited.card_status(item.name, self.registry) == "full"
+                            for item in deck.mainboard if item.name != "Midnight Snack"))
+        self.assert_current_full_and_historical_partial_refusal(deck)
 
     def test_conqueror_season_are_genuine_partial_appendices_with_full_only_deck_refusal(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
@@ -56,7 +765,7 @@ class LimitedDeckTest(unittest.TestCase):
         prefix = json.dumps(historical, sort_keys=True, separators=(",", ":"),
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(), "7ed089181b25bce1e63c6db4de9d1cdc60811ce76314b0a5f8ae89123c842f69")
-        self.assertEqual((len(self.registry), len(records)), (452, 260))
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
         frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
         self.assertEqual((len(frozen["cards"]), len(frozen["token_dependencies"])), (286, 24))
         for name, card_id, cost, types, pt, collector, slug in [
@@ -89,10 +798,10 @@ class LimitedDeckTest(unittest.TestCase):
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
                          "da28318f5d9ca002b95ab06f83e265824c61982c61609a0b3100fc7a08c97b10")
-        self.assertEqual((len(self.registry), len(records)), (452, 260))
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
         self.assertEqual([(row["name"], row["engine_capability"]) for row in records
                           if row["engine_capability"] != "full"],
-                         [])
+                         [(name, "partial") for name in ALL_PARTIAL_NAMES])
         card, token = records[256:258]
         self.assertEqual((card["name"], self.registry[card["name"]].card_id), ("Drake Hatcher", 448))
         self.assertEqual((card["mana_cost"], card["mana_value"], card["power"], card["toughness"],
@@ -140,10 +849,10 @@ class LimitedDeckTest(unittest.TestCase):
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
                          "da28318f5d9ca002b95ab06f83e265824c61982c61609a0b3100fc7a08c97b10")
-        self.assertEqual((len(self.registry), len(records)), (452, 260))
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
         partial = {name: card.card_id for name, card in self.registry.items()
                    if card.capability == "partial"}
-        self.assertEqual(partial, {})
+        self.assertEqual(partial, {name: 457 + i for i, name in enumerate(ALL_PARTIAL_NAMES)})
         card = records[255]
         self.assertEqual(card["name"], "Painful Quandary")
         self.assertEqual((card["engine_capability"], card["mana_cost"], card["mana_value"],
@@ -169,7 +878,7 @@ class LimitedDeckTest(unittest.TestCase):
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
                          "da28318f5d9ca002b95ab06f83e265824c61982c61609a0b3100fc7a08c97b10")
-        self.assertEqual((len(self.registry), len(records)), (452, 260))
+        self.assertEqual((len(self.registry), len(records)), (496, 304))
         self.assertEqual(records[254]["name"], "Spinner of Souls")
         self.assertEqual(self.registry["Spinner of Souls"].card_id, 446)
         self.assertEqual(limited.card_status("Spinner of Souls", self.registry), "full")
@@ -178,7 +887,7 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(records[254]["intrinsic_keywords_v1"], ["reach"])
         self.assertEqual([(name, card.card_id) for name, card in self.registry.items()
                           if card.capability == "partial"],
-                         [])
+                         [(name, 457 + i) for i, name in enumerate(ALL_PARTIAL_NAMES)])
         deck = limited.parse_dck((FIXTURES / "FDN_reference_spinner_of_souls_partial.dck")
                                  .read_text(encoding="utf-8"))
         self.assertEqual(sum(entry.count for entry in deck.mainboard), 40)
@@ -200,7 +909,7 @@ class LimitedDeckTest(unittest.TestCase):
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
                          "da28318f5d9ca002b95ab06f83e265824c61982c61609a0b3100fc7a08c97b10")
-        self.assertEqual(len(records), 260)
+        self.assertEqual(len(records), 304)
         printing = self.registry["Flamewake Phoenix"]
         self.assertEqual(printing.card_id, 445)
         self.assertEqual(limited.card_status("Flamewake Phoenix", self.registry), "full")
@@ -215,7 +924,7 @@ class LimitedDeckTest(unittest.TestCase):
         prefix = json.dumps(historical, sort_keys=True, separators=(",", ":"),
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(), "d5bc58f4d8afe65ea7add52d000ea127e66d695779c5250e75cdd64b0ccae6af")
-        self.assertEqual(len(records), 260)
+        self.assertEqual(len(records), 304)
         self.assertEqual(self.registry["Ravenous Amulet"].card_id, 443)
         self.assertEqual(self.registry["Fake Your Own Death"].card_id, 442)
         self.assertEqual(limited.card_status("Ravenous Amulet", self.registry), "full")
@@ -228,7 +937,7 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_fake_engine_full_preserves_prior_registry_and_resolves_reference_deck(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        prefix = json.dumps(records[:250], sort_keys=True, separators=(",", ":"),
+        prefix = json.dumps(before_next_five_full(records[:250]), sort_keys=True, separators=(",", ":"),
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
                          "06ac37d8b170426de4a6248a3d770b5e912cb816cdea986155e2c3e30fde83b0")
@@ -241,7 +950,62 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(resolved.count(442), 4)
         self.assertEqual([(row["name"], row["engine_capability"]) for row in records
                           if row["engine_capability"] != "full"],
-                         [])
+                         [(name, "partial") for name in ALL_PARTIAL_NAMES])
+
+    def test_extravagant_replication_is_genuine_partial_suffix_and_full_only_deck_refuses(self) -> None:
+        rows=json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual((len(self.registry),len(rows)),(496,304))
+        prefix=json.dumps(historical_records(rows, 260),sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),"47c04b86234154aca529aa0b7e59fccf2c7487989c557ea5972c95e000f99a46")
+        row=rows[261]
+        self.assertEqual((row["name"],row["engine_capability"],self.registry[row["name"]].card_id),("Extravagant Replication","full",453))
+        self.assertEqual((row["mana_cost"],row["mana_value"],row["types"],row["colors"]),("{4}{U}{U}",6,["Enchantment"],["U"]))
+        deck=limited.parse_dck((FIXTURES / "FDN_reference_extravagant_replication_partial.dck").read_text())
+        self.assertEqual(sum(entry.count for entry in deck.mainboard),40)
+        self.assert_current_full_and_historical_partial_refusal(deck)
+
+    def test_infernal_vessel_appends_after_enchantments_and_refuses_full_only_decks(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual([(row["name"], self.registry[row["name"]].card_id)
+                          for row in rows[260:263]],
+                         [("Midnight Snack", 452), ("Extravagant Replication", 453),
+                          ("Infernal Vessel", 454)])
+        self.assertEqual(limited.card_status("Infernal Vessel", self.registry), "full")
+        deck = limited.parse_dck("4 [FDN:63] Infernal Vessel\n36 Swamp\n")
+        report = limited.inspect_deck(deck, self.registry)
+        self.assertEqual(deck.mainboard[0].printing, "FDN:63")
+        self.assertEqual(report["mainboard"]["copies"], 40)
+        self.assertEqual(report["mainboard"]["supported_copies"], 40)
+        self.assertTrue(report["mainboard"]["registry_ready"])
+        self.assert_current_full_and_historical_partial_refusal(deck)
+
+    def test_giada_appends_partial_angel_and_reference_deck_refuses_full_resolution(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual(rows[262]["name"], "Infernal Vessel")
+        self.assertEqual((rows[263]["name"], self.registry[rows[263]["name"]].card_id),
+                         ("Giada, Font of Hope", 455))
+        self.assertEqual(limited.card_status("Giada, Font of Hope", self.registry), "full")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_giada_partial.dck").read_text(encoding="utf-8"))
+        report = limited.inspect_deck(deck, self.registry)
+        self.assertEqual(deck.mainboard[0].printing, "FDN:141")
+        self.assertEqual(report["mainboard"]["copies"], 40)
+        self.assertEqual(report["mainboard"]["supported_copies"], 40)
+        self.assertTrue(report["mainboard"]["registry_ready"])
+        self.assert_current_full_and_historical_partial_refusal(deck)
+
+    def test_negotiation_appends_after_giada_and_full_only_reference_deck_refuses(self) -> None:
+        rows = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual([(row["name"], self.registry[row["name"]].card_id)
+                          for row in rows[263:265]],
+                         [("Giada, Font of Hope", 455), ("Goblin Negotiation", 456)])
+        self.assertEqual(limited.card_status("Goblin Negotiation", self.registry), "full")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_goblin_negotiation_partial.dck").read_text(encoding="utf-8"))
+        report = limited.inspect_deck(deck, self.registry)
+        self.assertEqual(deck.mainboard[0].printing, "FDN:88")
+        self.assertEqual(report["mainboard"]["copies"], 40)
+        self.assertEqual(report["mainboard"]["supported_copies"], 40)
+        self.assertTrue(report["mainboard"]["registry_ready"])
+        self.assert_current_full_and_historical_partial_refusal(deck)
 
     def test_registry_extension_keeps_all_original_ids_and_resolves_the_new_batch(self) -> None:
         cards = limited.load_json((REPO_ROOT / "data/cards_v1.json").read_bytes())["cards"]
@@ -270,7 +1034,7 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_hunter_eaten_panda_candidate_preserves_prior_registry_and_resolves_real_decks(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        prefix = json.dumps(records[:247], sort_keys=True, separators=(",", ":"),
+        prefix = json.dumps(before_next_five_full(records[:247]), sort_keys=True, separators=(",", ":"),
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
                          "106363f2efffdc1206de1a1f3e95b539297bd355ad078cba5a92f6f2c13a9e9e")
@@ -290,8 +1054,8 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_full_ajani_candidate_preserves_prior_prefix_and_distinct_token_dependency(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        self.assertEqual(len(self.registry), 452)
-        self.assertEqual(len(records), 260)
+        self.assertEqual(len(self.registry), 496)
+        self.assertEqual(len(records), 304)
         original = json.loads(json.dumps(records[:245]))
         ajani = original[215 - 192]
         self.assertEqual(ajani["name"], "Ajani, Caller of the Pride")
@@ -339,9 +1103,9 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_faebloom_candidate_appends_exact_printing_and_reuses_existing_faerie(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        self.assertEqual(len(records), 260)
-        self.assertEqual(len(self.registry), 452)
-        prefix = json.dumps(records[:246], sort_keys=True, separators=(",", ":"),
+        self.assertEqual(len(records), 304)
+        self.assertEqual(len(self.registry), 496)
+        prefix = json.dumps(before_next_five_full(records[:246]), sort_keys=True, separators=(",", ":"),
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
                          "8bbb2bb37734dc2d149d852385ce91fd4fcf5ed2234881662610fe242bf73d6c")
@@ -820,9 +1584,9 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 245)
-        self.assertEqual(sum(card["status"] == "partial" for card in report["cards"]), 0)
-        self.assertEqual(sum(card["status"] == "missing" for card in report["cards"]), 41)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 250)
+        self.assertEqual(sum(card["status"] == "partial" for card in report["cards"]), 36)
+        self.assertEqual(sum(card["status"] == "missing" for card in report["cards"]), 0)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

@@ -505,6 +505,13 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1: &str = "0d4666d37951a
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// Native228's retained 496-definition export includes every frozen printing,
+// with 36 printing recipes still Partial. This is record identity only;
+// it does not authorize those cards, models, search, or training.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1: &str = "2430d3860838f596";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_FULL_POOL_PROVISIONAL_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -2248,6 +2255,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnRavenousPartialBatch,
     FdnDualFullBatch,
     FdnSevenFullBatch,
+    FdnFullPoolProvisional,
 }
 
 impl ValidatedTrainRunV2 {
@@ -3007,6 +3015,11 @@ fn classify_catalog_profile_from_identity_v1(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1,
             NativeRunCatalogProfileV1::FdnSevenFullBatch,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_FULL_POOL_PROVISIONAL_V1,
+            NativeRunCatalogProfileV1::FdnFullPoolProvisional,
         ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_CELESTIAL_ARMOR_V1,
@@ -5954,6 +5967,16 @@ pub(crate) fn test_fixture_bytes_fdn_dual_full_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_dual_full_batch()
 }
 
+#[cfg(all(
+    test,
+    windows,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn test_fixture_bytes_fdn_seven_full_batch_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_seven_full_batch()
+}
+
 #[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_following_source_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_following_source_batch()
@@ -8515,7 +8538,7 @@ mod tests {
     // Dual-Profile Catalog Successor (collab CLAUDE #220)
     // ------------------------------------------------------------------
 
-    /// Canary: the latest admitted catalog literals must equal today's
+    /// Canary: the latest record catalog literals must equal today's
     /// live build constants exactly. If this ever fails, either the crate's
     /// card database/runtime catalog changed again (needs a new profile) or
     /// the frozen literals were typed wrong when this successor landed.
@@ -8524,20 +8547,20 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn fdn_seven_full_batch_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_full_pool_provisional_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_FULL_POOL_PROVISIONAL_V1
         );
     }
 
@@ -8976,25 +8999,61 @@ mod tests {
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
 
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(super) fn fixture_bytes_fdn_seven_full_batch() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
     #[test]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn fdn_seven_full_batch_fixture_decodes_live_without_model_admission() {
-        let bytes = fixture_bytes();
+    fn fdn_seven_full_batch_remains_readable_byte_identically_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_seven_full_batch();
         let validated = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(validated.canonical_bytes(), bytes);
         assert_eq!(
             validated.catalog_profile_v1(),
             NativeRunCatalogProfileV1::FdnSevenFullBatch
         );
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1,
+            "0d4666d37951a4fc"
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn fdn_full_pool_provisional_fixture_decodes_live_without_model_admission() {
+        let bytes = fixture_bytes();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnFullPoolProvisional
+        );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1,
-            "0d4666d37951a4fc"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1,
+            "2430d3860838f596"
         );
     }
 
@@ -9011,8 +9070,51 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 452);
-        assert!(partials.is_empty());
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 496);
+        assert_eq!(
+            partials,
+            [
+                (457, "Alesha, Who Laughs at Fate"),
+                (458, "Nine-Lives Familiar"),
+                (459, "Valkyrie's Call"),
+                (460, "Perforating Artist"),
+                (461, "Niv-Mizzet, Visionary"),
+                (462, "Embercleave"),
+                (463, "Banner of Kinship"),
+                (464, "Drakuseth, Maw of Flames"),
+                (465, "Zimone, Paradox Sculptor"),
+                (466, "Sphinx's Tutelage"),
+                (467, "Consuming Aberration"),
+                (468, "Lathril, Blade of the Elves"),
+                (469, "Blasphemous Edict"),
+                (470, "Secluded Courtyard"),
+                (471, "Electroduplicate"),
+                (472, "Curator of Destinies"),
+                (473, "Loot, Exuberant Explorer"),
+                (474, "Kykar, Zephyr Awakener"),
+                (475, "Kykar Spirit Token"),
+                (476, "Quilled Greatwurm"),
+                (477, "Sphinx of Forgotten Lore"),
+                (478, "Omniscience"),
+                (479, "Abyssal Harvester"),
+                (480, "Progenitus"),
+                (481, "Etali, Primal Storm"),
+                (482, "Leyline Axe"),
+                (483, "Fiend Artisan"),
+                (484, "Imprisoned in the Moon"),
+                (485, "Thousand-Year Storm"),
+                (486, "Time Stop"),
+                (487, "Genesis Wave"),
+                (488, "Vivien Reid"),
+                (489, "Muldrotha, the Gravetide"),
+                (490, "Tinybones, Bauble Burglar"),
+                (491, "Liliana, Dreadhorde General"),
+                (492, "Zombie Token"),
+                (493, "Chandra, Flameshaper"),
+                (494, "Kaito, Cunning Infiltrator"),
+                (495, "Ninja Token"),
+            ]
+        );
         let mut playable = Vec::new();
         for (id, name) in [
             (442, "Fake Your Own Death"),
@@ -9025,6 +9127,11 @@ mod tests {
             (449, "Drake Token"),
             (450, "Bloodthirsty Conqueror"),
             (451, "Doubling Season"),
+            (452, "Midnight Snack"),
+            (453, "Extravagant Replication"),
+            (454, "Infernal Vessel"),
+            (455, "Giada, Font of Hope"),
+            (456, "Goblin Negotiation"),
         ] {
             assert_eq!(crate::card_def::card_id_by_name(name), Some(id));
             assert_eq!(
@@ -9050,8 +9157,38 @@ mod tests {
                 playable.push(id);
             }
         }
-        assert_eq!(playable, [442, 443, 444, 445, 446, 447, 448, 450, 451]);
+        assert_eq!(
+            playable,
+            [442, 443, 444, 445, 446, 447, 448, 450, 451, 452, 453, 454, 455, 456]
+        );
         crate::card_def::preflight_fully_supported_deck(&playable).unwrap();
+        // The appended native source recipes grant no Full-deck permission.
+        // Check the complete actual registry, including every Full token.
+        let mut all_playable = Vec::new();
+        for (index, definition) in crate::card_def::CARD_DEFS.iter().enumerate() {
+            let id = u16::try_from(index).unwrap();
+            let result = crate::card_def::preflight_fully_supported_deck(&[id]);
+            if definition.is_token {
+                assert!(matches!(result,
+                    Err(crate::card_def::DeckPreflightError::TokenInDeck {
+                        index: 0, card_def, name,
+                    }) if card_def == id && name == definition.name));
+            } else if definition.capability == crate::card_def::CardCapability::Full {
+                result.unwrap();
+                all_playable.push(id);
+            } else {
+                assert_eq!(
+                    definition.capability,
+                    crate::card_def::CardCapability::Partial
+                );
+                assert!(matches!(result,
+                    Err(crate::card_def::DeckPreflightError::NotFullySupported {
+                        index: 0, card_def, name, capability: crate::card_def::CardCapability::Partial,
+                    }) if card_def == id && name == definition.name));
+            }
+        }
+        assert!(playable.iter().all(|id| all_playable.contains(id)));
+        crate::card_def::preflight_fully_supported_deck(&all_playable).unwrap();
     }
 
     #[test]
@@ -9523,7 +9660,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnSevenFullBatch
+                NativeRunCatalogProfileV1::FdnFullPoolProvisional
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }

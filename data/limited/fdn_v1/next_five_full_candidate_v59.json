@@ -1,0 +1,91 @@
+{
+  "schema": "mtg-kernel/fdn-next-five-full-source-candidate/v59",
+  "status": "unaccepted_source_candidate",
+  "source_base": "29ae13f621aed0e6ef52cfd829f7de01cd764a38",
+  "printing_ids": [
+    452,
+    453,
+    454,
+    455,
+    456
+  ],
+  "printing_names": [
+    "Midnight Snack",
+    "Extravagant Replication",
+    "Infernal Vessel",
+    "Giada, Font of Hope",
+    "Goblin Negotiation"
+  ],
+  "source_catalog_counts": {
+    "definitions": 486,
+    "fdn_rows": 294,
+    "frozen_printings": 286,
+    "frozen_token_dependencies": 24,
+    "pool_full_candidate": 250,
+    "pool_partial": 28,
+    "pool_missing": 8,
+    "registry_partial_including_token": 29
+  },
+  "production_reference_decks": [
+    "FDN_reference_midnight_snack_full_candidate.dck",
+    "FDN_reference_extravagant_replication_full_candidate.dck",
+    "FDN_reference_infernal_vessel_full_candidate.dck",
+    "FDN_reference_giada_full_candidate.dck",
+    "FDN_reference_goblin_negotiation_full_candidate.dck"
+  ],
+  "production_apis": [
+    "NextFiveSessionV59::reset",
+    "current_mixed_policy_v1::NextFiveSession::from_next_five",
+    "HumanNextFiveSessionV59::reset",
+    "kernel_limited_next_five_jsonl/schema6 Reset"
+  ],
+  "runtime_qualified": false,
+  "accepted_full_promotion": false,
+  "sampling_admitted": false,
+  "search_admitted": false,
+  "training_admitted": false,
+  "new_catalog_hash": null,
+  "new_runtime_catalog_sha256": null,
+  "new_native_run_profile": null,
+  "remaining_qualification": [
+    "compile and run all affected native, public, owning, numeric, Human and V6 groups on the exact composed candidate",
+    "run genuine production deck cases for all five and both seats",
+    "actual fresh catalog export and complete printing/capability/roster check",
+    "derive a distinct native run profile from actual export, preserving V88 historical tuple",
+    "actual V6 subprocess replay with current headers and genuine five-card deck inputs",
+    "reconcile original seed123 current qualification separately; a basic-land seed123 game does not qualify these five",
+    "required production CI and default-branch delivery"
+  ],
+  "composition_notes": [
+    "Includes actual Moon484 and ordinary V49 lost-Runner repair99422 plus concrete3131 enum/source closure repairs via normal merge of d748.",
+    "Original V88 catalog/profile canaries remain frozen and cannot certify this changed catalog.",
+    "Normal composition of wide-X15050 and future EventHistory/Storm bridge0ef770; all prior candidate flags and production groups retained.",
+    "EventKindV1 has300 kinds;237 current sample rows are preserved and63 future rows remain missing. Complete-kind assertions remain unchanged and unqualified."
+  ],
+  "source_test_counts": {
+    "next_five_native_public_owner_human_v6_excluding_numeric": 123,
+    "complete_current_mixed_policy_v1": 163,
+    "next_five_numeric_subset": 28,
+    "unique_combined": 286,
+    "new_production_groups": 4,
+    "supplemental_storm_groups": 14,
+    "unique_including_supplemental_storm": 300,
+    "new_wide_x_groups": 6
+  },
+  "observed_checks": {
+    "pinned_formatter": "Rust1.94.1 parser/format only",
+    "python_limited_decks": 99,
+    "python_v6": 21,
+    "python_v7": 11,
+    "python_v8": 4,
+    "rust_compiled": false,
+    "rust_executed": false,
+    "scope": "composed candidate affected Python135 PASS; Rust formatter/static only"
+  },
+  "composition_base": "d748777d6db9659df7bc001d702ac0fd594fbfd0",
+  "composition_parents": [
+    "15050c3beef7dbe9e98e515ff953559bc6e7bfe3",
+    "0ef77028338d362762b27f1cfac8b5d9c0bf8ed8"
+  ],
+  "event_kind_samples_pending": 63
+}

@@ -64,7 +64,7 @@ fn teamwork_payment(
     let modifiers = spell_cost_generic_modifiers_v1(state, s.types, p.controller);
     let objects = chosen.iter().map(|b| b.object).collect::<Vec<_>>();
     s.teamwork_payment(
-        p.x_value.unwrap_or(0),
+        p.selected_x_v59().unwrap_or(0),
         p.controller,
         state,
         modifiers,
@@ -129,7 +129,9 @@ fn cost(state: &GameState, p: &PendingCast) -> Option<(Vec<mana::Pip>, u32, bool
     let generic = s
         .costs
         .iter()
-        .map(|c| u32::from(c.generic) + u32::from(c.x_count) * u32::from(p.x_value.unwrap_or(0)))
+        .map(|c| {
+            u32::from(c.generic) + u32::from(c.x_count) * u32::from(p.selected_x_v59().unwrap_or(0))
+        })
         .sum::<u32>()
         .saturating_add(increase)
         .saturating_sub(reduction.saturating_add(s.own_generic_reduction));
@@ -204,7 +206,8 @@ pub(super) fn payment(
     ) -> Option<mana::PaymentPlan> {
         let (pips, generic) = remaining_cost;
         if i == chosen.len() {
-            return mana::plan_spell_mana_total_v1(
+            let spell = selected(state, p)?;
+            return mana::plan_spell_mana_total_with_restrictions_v1_typed_v60(
                 &pips,
                 generic,
                 p.controller,
@@ -212,6 +215,9 @@ pub(super) fn payment(
                 creature_spell,
                 excluded,
                 0,
+                spell.legendary_spell,
+                &spell.spell_subtypes,
+                spell.all_creature_types_v60,
             );
         }
         let colors = if improvises(state, p) {
@@ -320,7 +326,7 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
         return Err("convoker changed incarnation or eligibility".into());
     }
     if (!p.convoke_chosen.is_empty() || p.convoke_finished)
-        && (p.x_value.is_none() || !can_complete(state, p, &p.convoke_chosen))
+        && (p.selected_x_v59().is_none() || !can_complete(state, p, &p.convoke_chosen))
     {
         return Err("convoke selection cannot complete".into());
     }

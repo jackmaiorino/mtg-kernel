@@ -144,10 +144,14 @@ pub(super) struct SpellComponentChoicesV1 {
 }
 
 pub(super) struct SelectedSpellManaCostsV1 {
+    granted_flashback_v1: bool,
+    tinybones_mana_v72: Option<super::tinybones_v72::ManaGrantV72>,
     /// Whether the last component group is retrace's land discard
     /// (Wrenn and Six's emblem), added after any definition-owned groups.
     pub(super) retrace: bool,
     pub(super) legendary_spell: bool,
+    pub(super) spell_subtypes: Vec<u16>,
+    pub(super) all_creature_types_v60: bool,
     pub(super) costs: Vec<Cost>,
     pub(super) component_groups: Vec<&'static [CostComponent]>,
     pub(super) types: &'static [CardType],
@@ -161,9 +165,6 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) improvise: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
     pub(super) replicate: Option<Cost>,
-    /// The spell's sorted creature subtype ids, for mana restricted to a
-    /// chosen creature type (Cavern of Souls).
-    pub(super) spell_subtype_ids: Vec<u16>,
     /// Whether this is a colorless Eldrazi spell, for Eldrazi Temple's
     /// restricted mana.
     pub(super) colorless_eldrazi: bool,
@@ -187,6 +188,7 @@ impl SelectedSpellManaCostsV1 {
     ) -> Option<SpellComponentChoicesV1> {
         let base = match method {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
+            CastMethodV4::Flashback if self.granted_flashback_v1 => Some(&[][..]),
             CastMethodV4::Flashback => Some(flashback_cost_v1(definition)?),
             CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
             _ => None,
@@ -279,7 +281,7 @@ impl SelectedSpellManaCostsV1 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn payment_plan_with_component_choices_v1(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         source: ObjectId,
         state: &GameState,
@@ -331,6 +333,9 @@ impl SelectedSpellManaCostsV1 {
         }
         let (increase, reduction) = generic_modifiers;
         self.payment_plan(x, player, state, increase, reduction, &reserved)
+            .filter(|payment| {
+                super::checked_spell_mana_plan_v59(state, player, &payment.mana).is_some()
+            })
     }
 
     /// Determine the payment without changing state. Freeze this result before
@@ -338,7 +343,7 @@ impl SelectedSpellManaCostsV1 {
     /// unavailable as mana sources or as Delve cards.
     pub(super) fn payment_plan(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         state: &GameState,
         increase: u32,
@@ -368,7 +373,7 @@ impl SelectedSpellManaCostsV1 {
     /// the teamwork requirement, and they pay no mana.
     pub(super) fn teamwork_payment(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         state: &GameState,
         generic_modifiers: (u32, u32),
@@ -391,7 +396,7 @@ impl SelectedSpellManaCostsV1 {
     /// The mana payment alone, without teamwork's tapping.
     fn mana_payment_plan(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         state: &GameState,
         increase: u32,
@@ -439,16 +444,23 @@ impl SelectedSpellManaCostsV1 {
             })
             .sum::<u32>();
         if self.convoke {
-            let (mana, convoke_tapped) = mana::plan_spell_mana_total_with_tappers_v1(
-                &pips,
-                generic,
-                player,
-                state,
-                self.types.contains(&CardType::Creature),
-                reserved,
-                additional_life,
-                self.improvise,
-            )?;
+            let (mana, convoke_tapped) =
+                mana::plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
+                    &pips,
+                    generic,
+                    player,
+                    state,
+                    self.types.contains(&CardType::Creature),
+                    reserved,
+                    additional_life,
+                    self.legendary_spell,
+                    &self.spell_subtypes,
+                    self.all_creature_types_v60,
+                    self.tinybones_mana_v72.as_ref(),
+                    self.types.contains(&CardType::Artifact),
+                    self.colorless_eldrazi,
+                    self.improvise,
+                )?;
             return Some(SpellManaPaymentV1 {
                 mana,
                 convoke_tapped,
@@ -468,7 +480,7 @@ impl SelectedSpellManaCostsV1 {
         // Preserve deterministic minimum-exile, oldest-first Delve payment.
         let max_exiled = graveyard.len().min(generic as usize);
         for exiled in 0..=max_exiled {
-            if let Some(mana) = mana::plan_spell_mana_total_with_restrictions_v1(
+            if let Some(mana) = mana::plan_spell_mana_total_with_restrictions_with_grant_v72(
                 &pips,
                 generic - exiled as u32,
                 player,
@@ -477,8 +489,10 @@ impl SelectedSpellManaCostsV1 {
                 reserved,
                 additional_life,
                 self.legendary_spell,
+                &self.spell_subtypes,
+                self.all_creature_types_v60,
+                self.tinybones_mana_v72.as_ref(),
                 self.types.contains(&CardType::Artifact),
-                &self.spell_subtype_ids,
                 self.colorless_eldrazi,
             ) {
                 return Some(SpellManaPaymentV1 {
@@ -493,7 +507,7 @@ impl SelectedSpellManaCostsV1 {
 
     pub(super) fn live_mana_only_plan(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         state: &GameState,
     ) -> Option<mana::PaymentPlan> {
@@ -520,7 +534,7 @@ impl SelectedSpellManaCostsV1 {
     /// payment planners and cannot silently fall back to this path.
     pub(super) fn mana_only_plan(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         state: &GameState,
         increase: u32,
@@ -580,11 +594,25 @@ pub(super) fn selected_spell_mana_costs_v1(
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
     let mut selected = SelectedSpellManaCostsV1 {
+        granted_flashback_v1: false,
+        tinybones_mana_v72: None,
         retrace: false,
         legendary_spell: definition
             .supertypes
             .contains(&card_def::Supertype::Legendary)
             && method != CastMethodV4::Omen,
+        all_creature_types_v60: definition.changeling
+            && method != CastMethodV4::Omen
+            && method != CastMethodV4::Bestow
+            && !(method == CastMethodV4::Alternative
+                && definition
+                    .alt_cost
+                    .is_some_and(|a| a.condition == card_def::AltCostCondition::DisguiseFromHand)),
+        spell_subtypes: definition
+            .subtypes
+            .iter()
+            .map(|subtype| subtype.stable_id())
+            .collect(),
         costs: Vec::new(),
         component_groups: Vec::new(),
         types: definition.types,
@@ -597,7 +625,6 @@ pub(super) fn selected_spell_mana_costs_v1(
         // Splice onto Arcane is paid like replicate: once per spliced card.
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name)
             .or_else(|| crate::eternal_pauper_e8b_v1::splice_cost(definition)),
-        spell_subtype_ids: spell_subtype_ids(definition),
         colorless_eldrazi: definition.colors.is_empty()
             && definition.subtypes.contains(&card_def::Subtype::Eldrazi),
         teamwork: None,
@@ -642,6 +669,33 @@ pub(super) fn selected_spell_mana_costs_v1(
             selected.types = &[CardType::Enchantment];
         }
     }
+    // Spend restrictions inspect the selected spell form, not the creature
+    // printed on a different face/form or the source of an activated ability.
+    if method == CastMethodV4::Omen
+        || (method == CastMethodV4::Alternative
+            && definition
+                .alt_cost
+                .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand))
+    {
+        selected.spell_subtypes.clear();
+    } else if method == CastMethodV4::Bestow {
+        selected.spell_subtypes.retain(|id| {
+            !card_def::Subtype::CREATURE_TYPES
+                .iter()
+                .any(|subtype| subtype.stable_id() == *id)
+        });
+        selected
+            .spell_subtypes
+            .push(card_def::Subtype::Aura.stable_id());
+    } else if definition.changeling {
+        selected.spell_subtypes.extend(
+            card_def::Subtype::CREATURE_TYPES
+                .iter()
+                .map(|subtype| subtype.stable_id()),
+        );
+    }
+    selected.spell_subtypes.sort_unstable();
+    selected.spell_subtypes.dedup();
     // Goblin Anarchomancer and the Familiars: spells of their colors cost
     // {1} less, whichever cost is paid.
     #[cfg(feature = "eternal-fixtures")]
@@ -730,27 +784,6 @@ fn escape_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostCompon
         .or_else(|| crate::eternal_lurrus_v1::granted_escape_cost(definition))
 }
 
-/// The sorted subtype ids a spell of `definition` has, every creature type
-/// for a changeling.
-fn spell_subtype_ids(definition: &card_def::CardDef) -> Vec<u16> {
-    let mut ids = definition
-        .subtypes
-        .iter()
-        .map(|subtype| subtype.stable_id())
-        .collect::<Vec<_>>();
-    if definition.changeling {
-        ids.extend(
-            card_def::Subtype::CREATURE_TYPES
-                .iter()
-                .filter(|subtype| subtype.is_creature_type())
-                .map(|subtype| subtype.stable_id()),
-        );
-    }
-    ids.sort_unstable();
-    ids.dedup();
-    ids
-}
-
 // Keep selected form, payment and source inputs explicit at this shared quote boundary.
 pub(super) fn selected_spell_mana_costs_for_source_v1(
     source: ObjectId,
@@ -760,9 +793,55 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
     player: PlayerId,
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
+    selected_spell_mana_costs_for_source_grant_v1(
+        source,
+        definition,
+        form,
+        targets,
+        player,
+        state,
+        crate::effect::sphinx_lore_v1::granted_route(state, source),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn selected_spell_mana_costs_for_source_grant_v1(
+    source: ObjectId,
+    definition: &card_def::CardDef,
+    form: (CastMethodV4, bool, u8),
+    targets: &[Target],
+    player: PlayerId,
+    state: &GameState,
+    grant: Option<u64>,
+) -> Option<SelectedSpellManaCostsV1> {
     let (method, kicked, mode) = form;
-    let mut selected =
-        selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    let granted = method == CastMethodV4::Flashback && grant.is_some();
+    if let Some(index) = grant {
+        if state
+            .objects
+            .try_get(source)
+            .and_then(|o| card_def::CARD_DEFS.get(o.card_def as usize))
+            .is_none_or(|actual| !std::ptr::eq(actual, definition))
+            || method != CastMethodV4::Flashback
+            || !crate::effect::sphinx_lore_v1::quote_grant(state, source, player, index)
+        {
+            return None;
+        }
+    }
+    let mut selected = selected_spell_mana_costs_v1(
+        definition,
+        if granted {
+            CastMethodV4::Normal
+        } else {
+            method
+        },
+        kicked,
+        mode,
+        targets,
+        player,
+        state,
+    )?;
+    selected.tinybones_mana_v72 = super::tinybones_v72::mana_grant(state, source, player);
     // Bilbo, Thief in the Night: "Spells you cast from anywhere other than
     // your hand cost {1} less to cast."
     #[cfg(feature = "eternal-fixtures")]
@@ -785,6 +864,10 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_legacy_e5b_v1::spell_cost_reduction(state, definition, player),
         );
+    }
+    if granted {
+        selected.component_groups.insert(0, &[]);
+        selected.granted_flashback_v1 = true;
     }
     if super::resolution_cast_v1::free_cast_for(state, source, player) {
         if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {
@@ -823,6 +906,103 @@ pub(super) fn selected_spell_quote_v1(
     state: &GameState,
     reserved_graveyard: &[ObjectId],
 ) -> Option<SpellManaPaymentV1> {
+    selected_spell_quote_wide_x_v59(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        u16::from(x),
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn selected_spell_quote_wide_x_v59(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u16,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+) -> Option<SpellManaPaymentV1> {
+    selected_spell_quote_with_grant_wide_x_v59(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        x,
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+        crate::effect::sphinx_lore_v1::granted_route(state, source),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn selected_spell_quote_with_grant_v1(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u8,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+    grant: Option<u64>,
+) -> Option<SpellManaPaymentV1> {
+    selected_spell_quote_with_grant_wide_x_v59(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        u16::from(x),
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+        grant,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn selected_spell_quote_with_grant_wide_x_v59(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u16,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+    grant: Option<u64>,
+) -> Option<SpellManaPaymentV1> {
     if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
         let choice = state
             .engine
@@ -835,7 +1015,7 @@ pub(super) fn selected_spell_quote_v1(
             .into_iter()
             .filter(|branch| choice.is_none_or(|selected| selected == *branch))
             .find_map(|branch| {
-                selected_spell_quote_branch_v1(
+                selected_spell_quote_branch_grant_v1(
                     definition,
                     source,
                     origin_zone,
@@ -849,10 +1029,11 @@ pub(super) fn selected_spell_quote_v1(
                     state,
                     reserved_graveyard,
                     Some(branch),
+                    grant,
                 )
             });
     }
-    selected_spell_quote_branch_v1(
+    selected_spell_quote_branch_grant_v1(
         definition,
         source,
         origin_zone,
@@ -866,24 +1047,60 @@ pub(super) fn selected_spell_quote_v1(
         state,
         reserved_graveyard,
         None,
+        grant,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn selected_spell_quote_branch_v1(
+pub(super) fn selected_spell_quote_branch_wide_x_v59(
     definition: &card_def::CardDef,
     source: ObjectId,
     origin_zone: crate::state::Zone,
     method: CastMethodV4,
     kicked: bool,
     mode: u8,
-    x: u8,
+    x: u16,
     targets: &[Target],
     chosen_prefix: &[ObjectId],
     player: PlayerId,
     state: &GameState,
     reserved_graveyard: &[ObjectId],
     forced_branch: Option<bool>,
+) -> Option<SpellManaPaymentV1> {
+    selected_spell_quote_branch_grant_v1(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        x,
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+        forced_branch,
+        crate::effect::sphinx_lore_v1::granted_route(state, source),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn selected_spell_quote_branch_grant_v1(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u16,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+    forced_branch: Option<bool>,
+    grant: Option<u64>,
 ) -> Option<SpellManaPaymentV1> {
     if x != 0
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
@@ -922,13 +1139,14 @@ pub(super) fn selected_spell_quote_branch_v1(
     ) {
         return None;
     }
-    let mut selected = selected_spell_mana_costs_for_source_v1(
+    let mut selected = selected_spell_mana_costs_for_source_grant_v1(
         source,
         definition,
         (method, kicked, mode),
         targets,
         player,
         state,
+        grant,
     )?;
     if let Some(pay_mana) = forced_branch {
         let mana = super::mandatory_cast_cost_v1::mana_branch(definition)?;
@@ -1079,15 +1297,21 @@ pub(super) fn selected_spell_quote_branch_v1(
             .iter()
             .map(Vec::as_slice)
             .collect::<Vec<_>>();
-        selected.payment_plan_with_component_choices_v1(
-            x,
-            player,
-            source,
-            state,
-            modifiers,
-            &groups,
-            reserved_graveyard,
-        )
+        selected
+            .payment_plan_with_component_choices_v1(
+                x,
+                player,
+                source,
+                state,
+                modifiers,
+                &groups,
+                reserved_graveyard,
+            )
+            .filter(|payment| {
+                !definition.records_mana_spent
+                    || super::checked_spell_mana_plan_v59(state, player, &payment.mana)
+                        .is_some_and(|n| u16::try_from(n).is_ok())
+            })
     };
     let Some((needed, candidates)) = family else {
         return chosen_prefix.is_empty().then(|| quote(&[])).flatten();
@@ -1156,6 +1380,7 @@ pub(super) fn selected_spell_quote_branch_v1(
 /// Complete ephemeral payment, prepared before any real discard or mana use.
 /// The engine must consume it synchronously with the same player/source/state.
 pub(super) struct PreparedSpellPaymentV1 {
+    greatwurm: Option<super::greatwurm_cast_v1::PaymentV1>,
     mana: SpellManaPaymentV1,
     base: PreparedSpellNonmanaV1,
     additional: PreparedSpellNonmanaV1,
@@ -1167,7 +1392,7 @@ pub(super) struct PreparedSpellPaymentV1 {
 }
 
 impl SpellManaPaymentV1 {
-    fn commit(&self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u16 {
+    fn commit(&self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
         for &object in &self.convoke_tapped {
             super::event::propose_and_commit(state, super::ProposedEvent::tap(object));
         }
@@ -1175,7 +1400,11 @@ impl SpellManaPaymentV1 {
             state.objects.get_mut(source).v4.convoked_creatures_v1 =
                 u8::try_from(self.convoke_tapped.len()).unwrap_or(u8::MAX);
         }
-        let spent = super::pay_plan(state, player, &self.mana);
+        let spent = if super::spell_mana_needs_wide_commit_v59(state, player, &self.mana) {
+            super::pay_spell_plan_wide_v59(state, player, &self.mana)
+        } else {
+            u32::from(super::pay_plan(state, player, &self.mana))
+        };
         if !self.delve_exiled.is_empty() {
             super::commit_graveyard_exile(state, &self.delve_exiled);
         }
@@ -1261,7 +1490,7 @@ impl PreparedSpellPaymentV1 {
     }
 
     /// Discards have already committed through the shared Madness-aware path.
-    pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u16 {
+    pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
         let spent = self.mana.commit(state, player, source);
         self.base.apply(state, player, source);
         if let Some(object) = self.chosen_reveal {
@@ -1269,6 +1498,9 @@ impl PreparedSpellPaymentV1 {
         }
         self.additional.apply(state, player, source);
         self.commit_optional(state);
+        if let Some(plan) = self.greatwurm {
+            plan.apply(state);
+        }
         spent
     }
 }
@@ -1282,6 +1514,9 @@ pub(super) fn prepare_final_spell_payment_v1(
     method: CastMethodV4,
     discarded: &[ObjectId],
 ) -> Option<PreparedSpellPaymentV1> {
+    if super::sphinx_lore_cast_v1::waiting(pending) {
+        return None;
+    }
     let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let player = pending.controller;
     let source = pending.spell;
@@ -1363,16 +1598,30 @@ pub(super) fn prepare_final_spell_payment_v1(
         Some(projected)
     };
     let resources = resource_projection.as_ref().unwrap_or(state);
+    let mana = selected.payment_plan_with_component_choices_v1(
+        pending.selected_x_v59().unwrap_or(0),
+        player,
+        source,
+        resources,
+        modifiers,
+        &group_choices,
+        optional_graveyard,
+    )?;
+    let spent = super::checked_spell_mana_plan_v59(resources, player, &mana.mana)?;
+    if definition.records_mana_spent && u16::try_from(spent).is_err() {
+        return None;
+    }
     let mut prepared = PreparedSpellPaymentV1 {
-        mana: selected.payment_plan_with_component_choices_v1(
-            pending.x_value.unwrap_or(0),
-            player,
-            source,
-            resources,
-            modifiers,
-            &group_choices,
-            optional_graveyard,
-        )?,
+        greatwurm: if pending
+            .greatwurm_v1
+            .as_ref()
+            .is_some_and(|c| c.printed_route == Some(true))
+        {
+            Some(super::greatwurm_cast_v1::prepare(state, pending)?)
+        } else {
+            None
+        },
+        mana,
         base: PreparedSpellNonmanaV1 {
             actions: Vec::new(),
         },
@@ -1393,7 +1642,8 @@ pub(super) fn prepare_final_spell_payment_v1(
             super::standard_cast_convoke::payment(resources, pending, &pending.convoke_chosen)?;
     }
     // Ordinary mana-only spells require no whole-state projection.
-    if selected.component_groups.is_empty()
+    if prepared.greatwurm.is_none()
+        && selected.component_groups.is_empty()
         && discarded.is_empty()
         && optional_kind.is_none()
         && pending.chosen_creature_cost.is_none()
@@ -1471,6 +1721,23 @@ pub(super) fn prepare_final_spell_payment_v1(
                 .unwrap_or(0),
             _ => return None,
         });
+    }
+    if prepared.greatwurm.is_some() {
+        // Counts and exact incarnations were prepared before any real payment.
+        // Automatic mana/base costs may not silently spend the same selected
+        // counter units. Validate the exact counter-payment input before any
+        // real cost. Current Greatwurm has no other printed nonmana cost.
+        for unit in &pending.greatwurm_v1.as_ref()?.units {
+            if crate::effect::greatwurm_v1::count(&projected, unit.permanent.object, unit.kind)
+                .ok()?
+                != crate::effect::greatwurm_v1::count(state, unit.permanent.object, unit.kind)
+                    .ok()?
+            {
+                return None;
+            }
+        }
+        super::greatwurm_cast_v1::prepare(&projected, pending)?.apply(&mut projected);
+        super::validate_battlefield_pt(&projected).ok()?;
     }
     Some(prepared)
 }

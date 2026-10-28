@@ -5,6 +5,25 @@ use crate::effect::{EffectCond, EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+#[path = "attack_trigger_printing.rs"]
+mod attack_trigger_printing;
+#[path = "counter_return_creature_printing.rs"]
+mod counter_return_creature_printing;
+#[path = "discard_cost_spell_printing.rs"]
+mod discard_cost_spell_printing;
+#[path = "utility_activation_printing.rs"]
+mod utility_activation_printing;
+#[path = "ward_discount_creature_printing.rs"]
+mod ward_discount_creature_printing;
+
+#[path = "bloodwitch_printing.rs"]
+mod bloodwitch_printing;
+#[path = "conditional_player_spell_printing.rs"]
+mod conditional_player_spell_printing;
+#[path = "cost_reduced_spell_printing.rs"]
+mod cost_reduced_spell_printing;
+#[path = "creature_power_spell_printing.rs"]
+mod creature_power_spell_printing;
 #[path = "crystal_printing.rs"]
 pub(super) mod crystal_printing;
 #[path = "divine_printing.rs"]
@@ -15,18 +34,72 @@ pub(super) mod early_activation_printing;
 pub(super) mod eaten_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
+#[path = "entry_branch_printing.rs"]
+mod entry_branch_printing;
+#[path = "entry_destruction_printing.rs"]
+mod entry_destruction_printing;
+#[path = "entry_exile_printing.rs"]
+mod entry_exile_printing;
+#[path = "evolving_printing.rs"]
+mod evolving_printing;
 #[path = "faebloom_printing.rs"]
 pub(super) mod faebloom_printing;
 #[path = "fiery_printing.rs"]
 pub(super) mod fiery_printing;
+#[path = "gnarlid_printing.rs"]
+mod gnarlid_printing;
+#[path = "graveyard_batch_spell_printing.rs"]
+mod graveyard_batch_spell_printing;
 #[path = "kellan_printing.rs"]
 pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
+#[path = "library_search_printing.rs"]
+mod library_search_printing;
+#[path = "lookout_printing.rs"]
+mod lookout_printing;
+#[path = "luminous_printing.rs"]
+mod luminous_printing;
+#[path = "observer_trigger_printing.rs"]
+mod observer_trigger_printing;
+#[path = "ordinary_aura_printing.rs"]
+mod ordinary_aura_printing;
+#[path = "ordinary_batch_spell_printing.rs"]
+mod ordinary_batch_spell_printing;
+#[path = "ordinary_equipment_printing.rs"]
+mod ordinary_equipment_printing;
+#[path = "ordinary_removal_printing.rs"]
+mod ordinary_removal_printing;
+#[path = "paladin_printing.rs"]
+mod paladin_printing;
 #[path = "rallier_bloom_printing.rs"]
 pub(super) mod rallier_bloom_printing;
+#[path = "sacrifice_printing.rs"]
+mod sacrifice_printing;
+#[path = "sailor_printing.rs"]
+mod sailor_printing;
+#[path = "shivan_printing.rs"]
+mod shivan_printing;
+#[path = "simple_trigger_printing.rs"]
+mod simple_trigger_printing;
+#[path = "solemn_printing.rs"]
+mod solemn_printing;
 #[path = "soulstone_printing.rs"]
 pub(super) mod soulstone_printing;
+#[path = "surveil_many_printing.rs"]
+mod surveil_many_printing;
+#[path = "surveil_one_printing.rs"]
+mod surveil_one_printing;
+#[path = "targeted_entry_printing.rs"]
+mod targeted_entry_printing;
+#[path = "targeted_spell_printing.rs"]
+mod targeted_spell_printing;
+#[path = "team_static_printing.rs"]
+mod team_static_printing;
+#[path = "threshold_loot_printing.rs"]
+mod threshold_loot_printing;
+#[path = "triggered_enchantment_printing.rs"]
+mod triggered_enchantment_printing;
 #[path = "tyrant_herald_printing.rs"]
 pub(super) mod tyrant_herald_printing;
 
@@ -47,6 +120,7 @@ struct ThinkTwiceCastRoot {
 #[derive(serde::Serialize)]
 enum BaselineTiming {
     InstantWithPriority,
+    OwnMainPhaseEmptyStackWithPriority,
 }
 #[derive(serde::Serialize)]
 enum BaselineManaCost {
@@ -312,10 +386,130 @@ fn counter_cast_root(id: u16, d: &CardDef) -> Result<Option<CounterCastRoot>> {
     }))
 }
 
+fn gain_land_colors(name: &str) -> Option<&'static [crate::mana::ManaColor]> {
+    use crate::mana::ManaColor::*;
+    Some(match name {
+        "Blossoming Sands" => &[G, W],
+        "Thornwood Falls" => &[G, U],
+        "Bloodfell Caves" => &[B, R],
+        "Dismal Backwater" => &[U, B],
+        "Jungle Hollow" => &[B, G],
+        "Rugged Highlands" => &[R, G],
+        "Scoured Barrens" => &[W, B],
+        "Swiftwater Cliffs" => &[U, R],
+        "Tranquil Cove" => &[W, U],
+        "Wind-Scarred Crag" => &[R, W],
+        _ => return None,
+    })
+}
+pub(super) fn is_gain_land(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| gain_land_colors(d.name).is_some())
+}
+pub(super) fn is_untargeted_spell(id: u16) -> bool {
+    CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+        matches!(
+            d.name,
+            "Aetherize" | "Boltwave" | "Day of Judgment" | "Overrun" | "Preposterous Proportions"
+        )
+    })
+}
+pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
+    is_untargeted_spell(id)
+        || CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+            targeted_spell_printing::handles(d.name)
+                || ordinary_batch_spell_printing::handles(d.name)
+                || discard_cost_spell_printing::handles(d.name)
+                || conditional_player_spell_printing::handles(d.name)
+                || graveyard_batch_spell_printing::handles(d.name)
+                || cost_reduced_spell_printing::handles(d.name)
+                || creature_power_spell_printing::handles(d.name)
+                || luminous_printing::handles(d.name)
+                || library_search_printing::handles_spell(d.name)
+        })
+}
+
 pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    baseline_recipe(id, d)
+}
+
+pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
+    CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+        simple_trigger_printing::handles(d.name)
+            || gnarlid_printing::handles(d.name)
+            || utility_activation_printing::handles(d.name)
+            || counter_return_creature_printing::handles(d.name)
+            || ward_discount_creature_printing::handles(d.name)
+            || attack_trigger_printing::handles(d.name)
+            || observer_trigger_printing::handles(d.name)
+            || triggered_enchantment_printing::handles(d.name)
+            || bloodwitch_printing::handles(d.name)
+            || targeted_entry_printing::handles(d.name)
+            || entry_destruction_printing::handles(d.name)
+            || entry_exile_printing::handles(d.name)
+            || entry_branch_printing::handles(d.name)
+            || library_search_printing::handles_permanent(d.name)
+            || solemn_printing::handles(d.name)
+            || surveil_many_printing::handles(d.name)
+            || threshold_loot_printing::handles(d.name)
+    })
+}
+pub(super) fn is_ordinary_equipment(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| ordinary_equipment_printing::handles(d.name))
+}
+pub(super) fn is_ordinary_aura(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| ordinary_aura_printing::handles(d.name))
+}
+pub(super) fn is_team_static_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| team_static_printing::handles(d.name))
+}
+pub(super) fn is_shivan_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| shivan_printing::handles(d.name))
+}
+pub(super) fn is_sacrifice_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| sacrifice_printing::handles(d.name))
+}
+pub(super) fn is_sailor_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| sailor_printing::handles(d.name))
+}
+pub(super) fn is_lookout_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| lookout_printing::handles(d.name))
+}
+pub(super) fn is_evolving_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| evolving_printing::handles(d.name))
+}
+pub(super) fn is_surveil_one_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| surveil_one_printing::handles(d.name))
+}
+pub(super) fn is_paladin_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| paladin_printing::handles(d.name))
+}
+
+pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     if d.name == "Divine Resilience" {
         return divine_printing::baseline(id, d);
     }
@@ -345,7 +539,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     }
     if matches!(
         d.name,
-        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie"
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" | "Axgard Cavalry"
     ) {
         return early_activation_printing::baseline(id, d);
     }
@@ -357,6 +551,113 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     }
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
+    let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
+    let targeted_spell = targeted_spell_printing::printing(id, d)?;
+    let ordinary_batch_spell = ordinary_batch_spell_printing::printing(id, d)?;
+    let conditional_player_spell = conditional_player_spell_printing::printing(id, d)?;
+    let discard_cost_spell = discard_cost_spell_printing::printing(id, d)?;
+    let graveyard_batch_spell = graveyard_batch_spell_printing::printing(id, d)?;
+    let cost_reduced_spell = cost_reduced_spell_printing::printing(id, d)?;
+    let creature_power_spell = creature_power_spell_printing::printing(id, d)?;
+    let luminous = luminous_printing::printing(id, d)?;
+    let team_static = team_static_printing::printing(id, d)?;
+    let triggered_enchantment = triggered_enchantment_printing::printing(id, d)?;
+    let shivan = shivan_printing::printing(id, d)?;
+    let sacrifice = sacrifice_printing::printing(id, d)?;
+    let counter_return_creature = counter_return_creature_printing::printing(id, d)?;
+    let utility_activation = utility_activation_printing::printing(id, d)?;
+    let sailor = sailor_printing::printing(id, d)?;
+    let lookout = lookout_printing::printing(id, d)?;
+    let library_search = library_search_printing::printing(id, d)?;
+    let solemn = solemn_printing::printing(id, d)?;
+    let evolving = evolving_printing::printing(id, d)?;
+    let surveil_one = surveil_one_printing::printing(id, d)?;
+    let surveil_many = surveil_many_printing::printing(id, d)?;
+    let threshold_loot = threshold_loot_printing::printing(id, d)?;
+    let bloodwitch = bloodwitch_printing::printing(id, d)?;
+    let paladin = paladin_printing::printing(id, d)?;
+    let gnarlid = gnarlid_printing::printing(id, d)?;
+    let targeted_entry = targeted_entry_printing::printing(id, d)?;
+    let entry_destruction = entry_destruction_printing::printing(id, d)?;
+    let entry_exile = entry_exile_printing::printing(id, d)?;
+    let entry_branch = entry_branch_printing::printing(id, d)?;
+    let simple_trigger = simple_trigger_printing::printing(id, d)?;
+    let observer_trigger = observer_trigger_printing::printing(id, d)?;
+    let attack_trigger = attack_trigger_printing::printing(id, d)?;
+    let ward_discount_creature = ward_discount_creature_printing::printing(id, d)?;
+    let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
+    let ordinary_aura = ordinary_aura_printing::printing(id, d)?;
+    let goldvein = goldvein_printing(id, d)?;
+    let hart = burnished_hart_printing(id, d)?;
+    let growth_or_druid = growth_or_druid_printing(id, d)?;
+    let gain_land = gain_land_colors(d.name);
+    if let Some(colors) = gain_land {
+        let triggers = crate::trigger::triggers_for(id);
+        if crate::card_def::card_id_by_name(d.name) != Some(id)
+            || !d.is_land
+            || d.is_token
+            || d.types != [CardType::Land]
+            || !d.subtypes.is_empty()
+            || !d.supertypes.is_empty()
+            || !d.colors.is_empty()
+            || d.power.is_some()
+            || d.toughness.is_some()
+            || d.mana_value != 0
+            || d.cost != crate::mana::Cost::zero()
+            || d.target_spec != TargetSpec::None
+            || d.keywords != crate::card_def::Keywords::NONE
+            || !d.enters_battlefield_tapped
+            || d.produces_mana != colors
+            || d.mana_ability_choices != colors
+            || (d.mana_ability)().is_some()
+            || (d.spell_effect)().is_some()
+            || triggers.len() != 1
+            || triggers[0].condition != crate::trigger::TriggerCondition::Etb
+            || triggers[0].home_zone != Zone::Battlefield
+            || triggers[0].face_index != 0
+            || triggers[0].intervening_if_kicked
+            || triggers[0].intervening_if_controls_another_source_card
+            || (triggers[0].effect)()
+                != (EffectOp::GainLife {
+                    player: PlayerRef::Controller,
+                    amount: 1,
+                })
+        {
+            return Err(Error::UnsupportedPrintedRoot(id));
+        }
+    }
+    let diregraf = d.name == "Diregraf Ghoul";
+    if diregraf
+        && (crate::card_def::card_id_by_name("Diregraf Ghoul") != Some(id)
+            || d.cost
+                != crate::mana::Cost {
+                    generic: 0,
+                    pips: &[crate::mana::Pip::Colored(crate::mana::ManaColor::B)],
+                    x_count: 0,
+                }
+            || d.mana_value != 1
+            || d.types != [CardType::Creature]
+            || d.subtypes != [crate::card_def::Subtype::Zombie]
+            || !d.supertypes.is_empty()
+            || d.colors != [crate::mana::ManaColor::B]
+            || d.power != Some(2)
+            || d.toughness != Some(2)
+            || d.keywords != crate::card_def::Keywords::NONE
+            || d.is_land
+            || d.is_token
+            || d.target_spec != TargetSpec::None
+            || !d.enters_battlefield_tapped
+            || !d.produces_mana.is_empty()
+            || !d.mana_ability_choices.is_empty()
+            || (d.mana_ability)().is_some()
+            || (d.spell_effect)()
+                != Some(EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                }))
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
     let think_twice = d.name == "Think Twice"
         && !d.is_token
         && !d.is_land
@@ -412,33 +713,140 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
                 controller_damage: 0,
                 max_activations_per_turn: None,
             });
+    // The catalog distinguishes the two Dragon token definitions by a lookup
+    // name. Their actual object name is shared; authenticate this exact variant
+    // before allowing that difference through the common guard.
+    let dragon_token = d.name == "Dragon 5/5 Token";
+    // Koma's Coil keeps its printed token name; the catalog lookup name adds
+    // " Token". Authenticate the exact blueprint before allowing that difference.
+    let koma_coil = d.name == "Koma's Coil Token";
+    if koma_coil
+        && (crate::card_def::card_id_by_name(d.name) != Some(id)
+            || d.object_name != "Koma's Coil"
+            || !d.is_token
+            || d.is_land
+            || d.cost != crate::mana::Cost::zero()
+            || d.mana_value != 0
+            || d.types != [CardType::Creature]
+            || d.subtypes != [crate::card_def::Subtype::Serpent]
+            || !d.supertypes.is_empty()
+            || d.colors != [crate::mana::ManaColor::U]
+            || d.power != Some(3)
+            || d.toughness != Some(3)
+            || d.keywords != crate::card_def::Keywords::NONE
+            || d.target_spec != TargetSpec::None
+            || (d.spell_effect)().is_some())
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    // A face-down copy has no object name. This internal catalog lookup name
+    // must not become a public name or a route to casting the token.
+    let anonymous_token = d.name == crate::self_reflection_v1::ANONYMOUS_BLUEPRINT;
+    if anonymous_token
+        && (crate::card_def::card_id_by_name(d.name) != Some(id)
+            || !crate::self_reflection_v1::anonymous_blueprint_is_exact(id)
+            || !d.object_name.is_empty()
+            || !d.is_token
+            || d.is_land
+            || d.cost != crate::mana::Cost::zero()
+            || d.mana_value != 0
+            || d.types != [CardType::Creature]
+            || !d.subtypes.is_empty()
+            || !d.supertypes.is_empty()
+            || !d.colors.is_empty()
+            || d.power != Some(2)
+            || d.toughness != Some(2)
+            || d.keywords != crate::card_def::Keywords::NONE
+            || d.target_spec != TargetSpec::None
+            || (d.spell_effect)().is_some()
+            || (d.mana_ability)().is_some()
+            || !d.produces_mana.is_empty()
+            || !d.mana_ability_choices.is_empty())
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    if dragon_token
+        && (crate::card_def::card_id_by_name(d.name) != Some(id)
+            || d.object_name != "Dragon Token"
+            || !d.is_token
+            || d.is_land
+            || d.cost != crate::mana::Cost::zero()
+            || d.mana_value != 0
+            || d.types != [CardType::Creature]
+            || d.subtypes != [crate::card_def::Subtype::Dragon]
+            || !d.supertypes.is_empty()
+            || d.colors != [crate::mana::ManaColor::R]
+            || d.power != Some(5)
+            || d.toughness != Some(5)
+            || d.keywords != crate::card_def::Keywords::FLYING
+            || d.target_spec != TargetSpec::None
+            || (d.spell_effect)().is_some())
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
     if !(d.capability == CardCapability::Full
-        && d.object_name == d.name
-        && d.activated_abilities.is_empty()
-        && d.ward_cost.is_none()
+        && (d.object_name == d.name
+            || dragon_token
+            || koma_coil
+            || anonymous_token
+            || (observer_trigger.is_some()
+                && d.name == "Homunculus Horde Token"
+                && d.object_name == "Homunculus Horde"))
+        && (d.activated_abilities.is_empty()
+            || goldvein.is_some()
+            || hart.is_some()
+            || shivan.is_some()
+            || utility_activation.is_some()
+            || counter_return_creature.is_some()
+            || sacrifice.is_some()
+            || sailor.is_some()
+            || lookout.is_some()
+            || evolving.is_some()
+            || surveil_one.is_some()
+            || ordinary_equipment.is_some())
+        && (d.ward_cost.is_none()
+            || ward_discount_creature.is_some()
+            || (observer_trigger.is_some() && d.name == "Koma, World-Eater"))
         && d.alt_cost.is_none()
-        && d.mode2.is_none()
+        && (d.mode2.is_none()
+            || (ordinary_removal.is_some() && d.name == "Abrade")
+            || (ordinary_batch_spell.is_some() && d.name == "Goblin Surprise")
+            || (library_search.is_some() && d.name == "Bushwhack")
+            || (conditional_player_spell.is_some() && d.name == "Seeker's Folly"))
         && d.mode3.is_none()
         && d.additional_modes.is_empty()
-        && (d.flashback.is_none() || think_twice)
-        && d.kicker_cost.is_none()
-        && d.additional_cost.is_none()
+        && (d.flashback.is_none()
+            || think_twice
+            || (targeted_spell.is_some() && matches!(d.name, "Bulk Up" | "Self-Reflection"))
+            || (ordinary_batch_spell.is_some() && d.name == "Revenge of the Rats"))
+        && (d.kicker_cost.is_none()
+            || gnarlid.is_some()
+            || (targeted_spell.is_some() && d.name == "Burst Lightning")
+            || (targeted_entry.is_some() && d.name == "Sun-Blessed Healer")
+            || (library_search.is_some() && d.name == "Grow from the Ashes"))
+        && (d.additional_cost.is_none() || discard_cost_spell.is_some())
         && d.optional_additional_cost.is_none()
-        && d.equipment.is_none()
-        && d.attachment.is_none()
+        && (d.equipment.is_none() || goldvein.is_some() || ordinary_equipment.is_some())
+        && (d.attachment.is_none() || ordinary_aura.is_some())
         && d.starting_loyalty.is_none()
-        && d.enters_with_plus_one_counters.is_none()
+        && (d.enters_with_plus_one_counters.is_none()
+            || gnarlid.is_some()
+            || (observer_trigger.is_some() && d.name == "Mossborn Hydra"))
         && d.controlled_creature_grant.is_none()
-        && d.controlled_counter_keyword.is_none()
+        && (d.controlled_counter_keyword.is_none() || paladin.is_some() || gnarlid.is_some())
         && d.game_outcome_protection_v1.is_none()
-        && d.generic_cost_reduction.is_none()
-        && !d.spell_cannot_be_countered
+        && (d.generic_cost_reduction.is_none()
+            || ward_discount_creature.is_some()
+            || cost_reduced_spell.is_some()
+            || luminous.is_some())
+        && (!d.spell_cannot_be_countered
+            || (observer_trigger.is_some() && d.name == "Koma, World-Eater"))
         && !d.records_mana_spent
         && d.plot_cost.is_none()
         && d.madness_cost.is_none()
         && d.kicked_target_spec.is_none()
         && d.escape.is_none()
-        && !d.enters_battlefield_tapped
+        && (!d.enters_battlefield_tapped || diregraf || gain_land.is_some())
         && (d.mana_ability_def.is_none() || treasure)
         && d.minimum_blockers == 1
         && d.omen.is_none()
@@ -466,10 +874,166 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.token_counter_replacement_v48.is_none()
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
-        && d.other_controlled_nontoken_death_v1.is_none()
-        && crate::trigger::triggers_for(id).is_empty())
+        && (d.other_controlled_nontoken_death_v1.is_none() && d.creature_type_entry_v1.is_none())
+        && (crate::trigger::triggers_for(id).is_empty()
+            || goldvein.is_some()
+            || gain_land.is_some()
+            || simple_trigger.is_some()
+            || triggered_enchantment.is_some()
+            || bloodwitch.is_some()
+            || targeted_entry.is_some()
+            || entry_destruction.is_some()
+            || entry_exile.is_some()
+            || entry_branch.is_some()
+            || library_search.is_some()
+            || solemn.is_some()
+            || surveil_one.is_some()
+            || surveil_many.is_some()
+            || threshold_loot.is_some()
+            || attack_trigger.is_some()
+            || ward_discount_creature.is_some()
+            || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    if let Some(colors) = gain_land {
+        return Ok(json!({"card_id":id,"gain_land_printing":{
+            "schema":"printed-gain-land/v1",
+            "types":["Land"],"subtypes":[],"supertypes":[],"colors":[],"mana_value":0,"token":false,
+            "ordinary_play":{"origin":"OwnHand","timing":"OwnMainPhaseEmptyStackWithPriority",
+                "consumes_land_play_allowance":1,"uses_stack":false,"is_cast":false,
+                "entry_controller":"PlayerPlayingTheLand","enters_tapped":true,
+                "other_permissions_require_current_candidate_authority":true},
+            "mana_ability":{"ordered_costs":["TapThisPermanent"],"colors":colors,"choose_exactly_one":true,
+                "amount":1,"recipient":"CurrentController","uses_stack":false,
+                "tap_cost_checks_summoning_sickness_if_currently_a_creature":true},
+            "entry_trigger":{"event":"ThisPermanentEntersBattlefield","home_zone":"Battlefield",
+                "controller":"CapturedControllerAtEntry","mandatory":true,"targets":[],"uses_stack":true,
+                "ordered_resolution":[{"operation":"GainLife","recipient":"CapturedTriggerController","amount":1}],
+                "survives_source_departure_and_later_control_change":true,"normal_life_replacements_apply":true}
+        }}));
+    }
+    if let Some(printing) = goldvein {
+        return Ok(printing);
+    }
+    if let Some(printing) = hart {
+        return Ok(printing);
+    }
+    if let Some(printing) = growth_or_druid {
+        return Ok(printing);
+    }
+    if let Some(printing) = targeted_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = simple_trigger {
+        return Ok(printing);
+    }
+    if let Some(printing) = observer_trigger {
+        return Ok(printing);
+    }
+    if let Some(printing) = attack_trigger {
+        return Ok(printing);
+    }
+    if let Some(printing) = ward_discount_creature {
+        return Ok(printing);
+    }
+    if let Some(printing) = ordinary_equipment {
+        return Ok(printing);
+    }
+    if let Some(printing) = ordinary_aura {
+        return Ok(printing);
+    }
+    if let Some(printing) = ordinary_batch_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = discard_cost_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = conditional_player_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = graveyard_batch_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = cost_reduced_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = creature_power_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = luminous {
+        return Ok(printing);
+    }
+    if let Some(printing) = team_static {
+        return Ok(printing);
+    }
+    if let Some(printing) = triggered_enchantment {
+        return Ok(printing);
+    }
+    if let Some(printing) = shivan {
+        return Ok(printing);
+    }
+    if let Some(printing) = utility_activation {
+        return Ok(printing);
+    }
+    if let Some(printing) = counter_return_creature {
+        return Ok(printing);
+    }
+    if let Some(printing) = sacrifice {
+        return Ok(printing);
+    }
+    if let Some(printing) = sailor {
+        return Ok(printing);
+    }
+    if let Some(printing) = lookout {
+        return Ok(printing);
+    }
+    if let Some(printing) = library_search {
+        return Ok(printing);
+    }
+    if let Some(printing) = solemn {
+        return Ok(printing);
+    }
+    if let Some(printing) = evolving {
+        return Ok(printing);
+    }
+    if let Some(printing) = surveil_one {
+        return Ok(printing);
+    }
+    if let Some(printing) = surveil_many {
+        return Ok(printing);
+    }
+    if let Some(printing) = threshold_loot {
+        return Ok(printing);
+    }
+    if let Some(printing) = bloodwitch {
+        return Ok(printing);
+    }
+    if let Some(printing) = gnarlid {
+        return Ok(printing);
+    }
+    if let Some(printing) = paladin {
+        return Ok(printing);
+    }
+    if let Some(printing) = targeted_entry {
+        return Ok(printing);
+    }
+    if let Some(printing) = entry_destruction {
+        return Ok(printing);
+    }
+    if let Some(printing) = entry_exile {
+        return Ok(printing);
+    }
+    if let Some(printing) = entry_branch {
+        return Ok(printing);
+    }
+    if let Some(roots) = ordinary_removal {
+        return Ok(json!({"card_id":id,"primitive_printing":{
+            "cost":d.cost,"types":d.types.iter().map(|v|*v as u8).collect::<Vec<_>>(),
+            "subtypes":[],"supertypes":[],"colors":d.colors,"power":d.power,
+            "toughness":d.toughness,"keywords":d.keywords.0,"mana_value":d.mana_value,
+            "token":false,"ordered_cast_roots":roots
+        }}));
     }
     if think_twice {
         return Ok(json!({"card_id":id,"primitive_printing":{
@@ -543,7 +1107,11 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
             && d.toughness.is_some()
             && (mana.is_none() || d.name == "Llanowar Elves") =>
         {
-            json!({"operation":"EnterBattlefield","controller":"Caster"})
+            if diregraf {
+                json!({"operation":"EnterBattlefield","controller":"Caster","enters_battlefield_tapped":true})
+            } else {
+                json!({"operation":"EnterBattlefield","controller":"Caster"})
+            }
         }
         Some(EffectOp::DealDamage {
             target: crate::effect::TargetRef::Target(0),
@@ -561,7 +1129,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         }
         _ => return Err(Error::UnsupportedPrintedRoot(id)),
     };
-    Ok(json!({"card_id":id,"primitive_printing":{
+    let mut value = json!({"card_id":id,"primitive_printing":{
         "cost":d.cost,"types":d.types.iter().map(|v|*v as u8).collect::<Vec<_>>(),
         "subtypes":d.subtypes.iter().map(|v|*v as u16).collect::<Vec<_>>(),
         "supertypes":d.supertypes.iter().map(|v|*v as u8).collect::<Vec<_>>(),
@@ -569,7 +1137,357 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         "keywords":d.keywords.0,"mana_value":d.mana_value,"token":d.is_token,
         "ordered_instructions":[instruction],
         "mana_ability":mana.map(|colors|json!({"cost":"TapSelf","recipient":"Controller","colors":colors,"amount":1}))
-    }}))
+    }});
+    if dragon_token || anonymous_token {
+        value["primitive_printing"]["object_name"] = json!(d.object_name);
+    }
+    Ok(value)
+}
+
+/// Both recipes pass the common exclusion guard before publication. The Druid's
+/// conditional native keyword is separate from its empty printed keyword bits.
+fn growth_or_druid_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{Keywords, Subtype};
+    use crate::mana::{Cost, ManaColor, Pip};
+    if !matches!(d.name, "Giant Growth" | "Paradise Druid") {
+        return Ok(None);
+    }
+    let growth = d.name == "Giant Growth";
+    let cost = Cost {
+        generic: if growth { 0 } else { 1 },
+        pips: &[Pip::Colored(ManaColor::G)],
+        x_count: 0,
+    };
+    let program = if growth {
+        EffectOp::PumpTargetUntilEndOfTurnDynamic {
+            target: crate::effect::TargetRef::Target(0),
+            power: crate::card_def::DynamicValueDef::Fixed(3),
+            toughness: crate::card_def::DynamicValueDef::Fixed(3),
+        }
+    } else {
+        EffectOp::MoveObject {
+            object: ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield,
+        }
+    };
+    let colors = [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ];
+    let types: &[CardType] = if growth {
+        &[CardType::Instant]
+    } else {
+        &[CardType::Creature]
+    };
+    let subtypes: &[Subtype] = if growth {
+        &[]
+    } else {
+        &[Subtype::Elf, Subtype::Druid]
+    };
+    let produced: &[ManaColor] = if growth { &[] } else { &colors };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != if growth { 1 } else { 2 }
+        || d.types != types
+        || d.subtypes != subtypes
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::G]
+        || d.power != if growth { None } else { Some(2) }
+        || d.toughness != if growth { None } else { Some(1) }
+        || d.keywords != Keywords::NONE
+        || d.target_spec
+            != if growth {
+                TargetSpec::Creature
+            } else {
+                TargetSpec::None
+            }
+        || d.is_land
+        || d.is_token
+        || (d.spell_effect)() != Some(program.clone())
+        || (d.mana_ability)().is_some()
+        || d.produces_mana != produced
+        || d.mana_ability_choices != produced
+        || !growth
+            && crate::engine::static_untapped_self_keyword_for(d.name) != Some(Keywords::HEXPROOF)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let cast = if growth {
+        json!({
+            "method":crate::state::CastMethodV4::Normal,
+            "ordinary_route":crate::state::SpellCastRouteV4::Hand,
+            "ordinary_origin":Zone::Hand,"timing":BaselineTiming::InstantWithPriority,
+            "ordered_costs":[BaselineManaCost::PrintedMana(cost)],
+            "target_count":1,"target_filter":TargetSpec::Creature,
+            "target_may_be_own_or_opposing":true,
+            "requires_exact_live_battlefield_target_incarnation":true,
+            "all_targets_illegal_skips_entire_resolution":true,
+            "ordered_resolution":[program],"duration":"UntilEndOfTurn",
+            "power_and_toughness_are_additive_modifiers":true,"places_no_counters":true,
+            "physical_stack_departure":BaselineDeparture::GraveyardAfterResolutionOrCounter,
+            "virtual_spell_copy_ceases":true,"countering_does_not_refund_payment":true,
+            "other_cast_permissions_require_current_candidate_authority":true
+        })
+    } else {
+        serde_json::to_value(OrdinaryPermanentCastRoot {
+            method: crate::state::CastMethodV4::Normal,
+            ordinary_route: crate::state::SpellCastRouteV4::Hand,
+            ordinary_origin: Zone::Hand,
+            timing: PermanentTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets: PermanentTargets::None,
+            ordered_costs: [BaselineManaCost::PrintedMana(cost)],
+            ordered_resolution: [
+                PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl,
+            ],
+            physical_departure: PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority: true,
+            zone_replacements_still_apply: true,
+        })
+        .map_err(|_| Error::UnsupportedPrintedRoot(id))?
+    };
+    let mana = if growth {
+        json!([])
+    } else {
+        json!([{
+            "activation_zone":Zone::Battlefield,"ordered_costs":["TapOriginalSource"],
+            "requires_control_since_turn_began_or_haste":true,"uses_stack":false,
+            "targets":[],"controller_chooses_exactly_one_color":colors,
+            "mana_amount":1,"mana_recipient":"Controller","spending_restriction":"Unrestricted"
+        }])
+    };
+    let statics = if growth {
+        json!([])
+    } else {
+        json!([{
+            "requires_printed_abilities_active":true,"condition":"ThisSourceIsUntapped",
+            "keyword":"Hexproof","recipient":"ThisSource",
+            "opposing_spells_and_abilities_cannot_target_this":true,
+            "condition_rechecked_from_current_tap_state":true,
+            "does_not_prevent_damage_or_untargeted_effects":true
+        }])
+    };
+    Ok(Some(json!({"card_id":id,"primitive_printing":{
+        "cost":d.cost,"types":d.types,"subtypes":d.subtypes,"supertypes":[],
+        "colors":d.colors,"power":d.power,"toughness":d.toughness,
+        "keywords":d.keywords.0,"mana_value":d.mana_value,"token":false,
+        "ordered_cast_roots":[cast],"ordered_mana_roots":mana,"ordered_static_roots":statics
+    }})))
+}
+
+/// Exact ordinary Equipment recipe. These roots describe the existing native
+/// cast, attachment and triggered programs; they grant no action permission.
+fn goldvein_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{ActivationTargetFilter, CostComponent, Keywords, Subtype};
+    use crate::mana::Cost;
+    if d.name != "Goldvein Pick" {
+        return Ok(None);
+    }
+    let cost = Cost {
+        generic: 2,
+        pips: &[],
+        x_count: 0,
+    };
+    let equip_cost = Cost {
+        generic: 1,
+        pips: &[],
+        x_count: 0,
+    };
+    let Some(equipment) = d.equipment else {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    };
+    let [ability] = d.activated_abilities else {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    };
+    let [trigger] = crate::trigger::triggers_for(id) else {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    };
+    let treasure = crate::card_def::card_id_by_name("Treasure Token")
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let equip_program = EffectOp::AttachSourceToTarget {
+        object: ObjectRef::Target(0),
+    };
+    let trigger_program = EffectOp::CreateToken {
+        token_def: treasure,
+        controller: PlayerRef::Controller,
+    };
+    if crate::card_def::card_id_by_name("Goldvein Pick") != Some(id)
+        || d.cost != cost
+        || d.mana_value != 2
+        || d.types != [CardType::Artifact]
+        || d.subtypes != [Subtype::Equipment]
+        || !d.supertypes.is_empty()
+        || !d.colors.is_empty()
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.target_spec != TargetSpec::None
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || equipment.power_delta != 1
+        || equipment.toughness_delta != 1
+        || equipment.pt_controller_turn_only
+        || equipment.add_subtype.is_some()
+        || equipment.controller_turn_keywords != Keywords::NONE
+        || equipment.other_turn_keywords != Keywords::NONE
+        || equipment.noncreature_spell_damage_to_each_opponent != 0
+        || equipment.job_select
+        || equipment.granted_activated_ability.is_some()
+        || ability.cost != [CostComponent::Mana(equip_cost)]
+        || ability.target_spec != TargetSpec::ControlledCreature
+        || (ability.effect)() != equip_program
+        || ability.activation_zone != Zone::Battlefield
+        || !ability.sorcery_speed_only
+        || ability.activation_target_filter != ActivationTargetFilter::TargetSpecOnly
+        || ability.max_activations_per_turn.is_some()
+        || ability.face.is_some()
+        || !matches!(
+            trigger.condition,
+            crate::trigger::TriggerCondition::EquippedCreatureDealsCombatDamageToPlayer
+        )
+        || trigger.home_zone != Zone::Battlefield
+        || trigger.face_index != 0
+        || trigger.intervening_if_kicked
+        || trigger.intervening_if_controls_another_source_card
+        || (trigger.effect)() != trigger_program
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(Some(json!({"card_id":id,"primitive_printing":{
+        "cost":cost,"types":[CardType::Artifact],"subtypes":[Subtype::Equipment],
+        "supertypes":[],"colors":[],"power":null,"toughness":null,
+        "keywords":0,"mana_value":2,"token":false,
+        "ordered_cast_roots":[OrdinaryPermanentCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,
+            ordinary_origin:Zone::Hand,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets:PermanentTargets::None,
+            ordered_costs:[BaselineManaCost::PrintedMana(cost)],
+            ordered_resolution:[PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority:true,
+            zone_replacements_still_apply:true,
+        }],
+        "ordered_static_roots":[{
+            "recipient":"CurrentExactAttachedCreature","power_delta":1,"toughness_delta":1,
+            "controller_turn_only":false,"requires_active_printed_abilities":true
+        }],
+        "ordered_activation_roots":[{
+            "ability_index":0,"activation_zone":Zone::Battlefield,
+            "timing":"ControllerMainPhaseEmptyStackWithPriority",
+            "ordered_costs":[BaselineManaCost::PrintedMana(equip_cost)],
+            "target_slot":0,"target_filter":"ControlledCreature",
+            "requires_exact_source_and_target_incarnations":true,
+            "ordered_resolution":[equip_program],"uses_stack":true,
+            "countered_or_illegal_target_does_not_refund_cost":true
+        }],
+        "ordered_trigger_roots":[{
+            "home_zone":Zone::Battlefield,"face_index":0,
+            "condition":"EquippedCreatureDealsCombatDamageToPlayer",
+            "requires_actual_combat_damage_marker_and_exact_current_host":true,
+            "captured_actor":"EquipmentController",
+            "resolution_does_not_require_source_or_attachment_to_remain":true,
+            "ordered_resolution":[trigger_program],"created_token_printing":baseline(treasure)?
+        }]
+    }})))
+}
+
+/// This Artifact Creature's sacrifice is an activation cost, not resolution.
+/// The enclosing exclusion guard still rejects every unrelated mechanic.
+fn burnished_hart_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{ActivationTargetFilter, CostComponent, Keywords, Subtype};
+    use crate::effect::{LibraryCardFilter, LibrarySearchDestinationV1};
+    use crate::mana::Cost;
+    if d.name != "Burnished Hart" {
+        return Ok(None);
+    }
+    let cost = Cost {
+        generic: 3,
+        pips: &[],
+        x_count: 0,
+    };
+    let [ability] = d.activated_abilities else {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    };
+    let search = EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: LibraryCardFilter::BasicLand,
+        max_targets: 2,
+        destination: LibrarySearchDestinationV1::Battlefield { tapped: true },
+    };
+    if crate::card_def::card_id_by_name("Burnished Hart") != Some(id)
+        || d.cost != cost
+        || d.mana_value != 3
+        || d.types != [CardType::Artifact, CardType::Creature]
+        || d.subtypes != [Subtype::Elk]
+        || !d.supertypes.is_empty()
+        || !d.colors.is_empty()
+        || d.power != Some(2)
+        || d.toughness != Some(2)
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.target_spec != TargetSpec::None
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || ability.cost != [CostComponent::Mana(cost), CostComponent::SacrificeSelf]
+        || ability.target_spec != TargetSpec::None
+        || (ability.effect)() != search
+        || ability.activation_zone != Zone::Battlefield
+        || ability.sorcery_speed_only
+        || ability.activation_target_filter != ActivationTargetFilter::TargetSpecOnly
+        || ability.max_activations_per_turn.is_some()
+        || ability.face.is_some()
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(Some(json!({"card_id":id,"primitive_printing":{
+        "cost":cost,"types":[CardType::Artifact,CardType::Creature],
+        "subtypes":[Subtype::Elk],"supertypes":[],"colors":[],
+        "power":2,"toughness":2,"keywords":0,"mana_value":3,"token":false,
+        "ordered_cast_roots":[OrdinaryPermanentCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,
+            ordinary_origin:Zone::Hand,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets:PermanentTargets::None,
+            ordered_costs:[BaselineManaCost::PrintedMana(cost)],
+            ordered_resolution:[PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority:true,
+            zone_replacements_still_apply:true,
+        }],
+        "ordered_activation_roots":[{
+            "ability_index":0,"activation_zone":Zone::Battlefield,
+            "timing":"ControllerWithPriorityIncludingOpponentsTurnAndNonemptyStack",
+            "ordered_costs":[PrintedActivationCost::Mana(cost),PrintedActivationCost::SacrificeSelf],
+            "targets":[],"uses_stack":true,
+            "source_sacrificed_before_publication":true,
+            "resolution_requires_source_to_remain":false,
+            "countering_does_not_refund_cost":true,
+            "library_owner":"CapturedAbilityController",
+            "selection_is_not_targeting":true,"minimum_selected":0,"maximum_selected":2,
+            "shuffle_even_when_no_cards_selected":true,
+            "ordered_resolution":[search]
+        }]
+    }})))
 }
 
 #[derive(serde::Serialize)]
@@ -614,7 +1532,7 @@ pub(super) fn elenda_printing(id: u16) -> Result<Value> {
         crate::rules_meaning_elenda_v52::RootV52::CreatureSpellAndPrintedStatics,
     )
     .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
-    if d.other_controlled_nontoken_death_v1.is_some()
+    if (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
         || d.cost.x_count != 0
         || (d.spell_effect)()
             != Some(EffectOp::MoveObject {
@@ -676,6 +1594,9 @@ pub(super) fn registered_spell_printing(id: u16) -> Result<Option<Value>> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if is_mandatory_ordinary_spell(id) {
+        return baseline_recipe(id, d).map(Some);
+    }
     match d.name {
         "Divine Resilience" => divine_printing::printing(id, d).map(Some),
         "Fiery Annihilation" => fiery_printing::printing(id, d).map(Some),
@@ -693,6 +1614,21 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if is_gain_land(id)
+        || is_simple_trigger_permanent(id)
+        || is_ordinary_equipment(id)
+        || is_ordinary_aura(id)
+        || is_team_static_permanent(id)
+        || is_shivan_permanent(id)
+        || is_sacrifice_permanent(id)
+        || is_sailor_permanent(id)
+        || is_lookout_permanent(id)
+        || is_evolving_permanent(id)
+        || is_surveil_one_permanent(id)
+        || is_paladin_permanent(id)
+    {
+        return baseline_recipe(id, d).map(Some);
+    }
     let keywords = match d.name {
         "Kellan, Planar Trailblazer" => return kellan_printing::printing(id, d),
         "Soulstone Sanctuary" => return soulstone_printing::printing(id, d),
@@ -704,7 +1640,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
             return tyrant_herald_printing::printing(id, d)
         }
         "Squad Rallier" | "Bloom Tender" => return rallier_bloom_printing::printing(id, d),
-        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" => {
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" | "Axgard Cavalry" => {
             return early_activation_printing::printing(id, d)
         }
         "Arahbo, the First Fang" | "Zul Ashur, Lich Lord" => {
@@ -969,6 +1905,7 @@ pub(super) fn validate_family_permanent_recipe(id: u16, d: &CardDef) -> Result<(
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
     if d.object_name != d.name
         || d.capability != CardCapability::Full
@@ -1044,7 +1981,7 @@ pub(super) fn validate_family_permanent_recipe(id: u16, d: &CardDef) -> Result<(
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1262,7 +2199,7 @@ pub(super) fn attack_or_banner_printing(id: u16, d: &CardDef) -> Result<Option<V
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1375,6 +2312,7 @@ struct SowerPrintedActivation {
 #[derive(serde::Serialize)]
 enum PrintedActivationCost {
     Mana(crate::mana::Cost),
+    SacrificeSelf,
 }
 #[derive(serde::Serialize)]
 enum PrintedActivationTiming {
@@ -1465,7 +2403,7 @@ pub(super) fn sower_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1666,7 +2604,7 @@ pub(super) fn wildwood_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }

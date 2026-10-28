@@ -7,6 +7,7 @@ enum Kind {
     Ooze,
     Heartfire,
     Zombie,
+    Cavalry,
 }
 fn validate_shape(id: u16, d: &CardDef) -> Result<Kind> {
     if !cfg!(all(
@@ -20,6 +21,7 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<Kind> {
         "Scavenging Ooze" => Kind::Ooze,
         "Heartfire Immolator" => Kind::Heartfire,
         "Soul-Shackled Zombie" => Kind::Zombie,
+        "Axgard Cavalry" => Kind::Cavalry,
         _ => return Err(Error::UnsupportedPrintedRoot(id)),
     };
     if CARD_DEFS
@@ -32,7 +34,7 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<Kind> {
         generic: if kind == Kind::Zombie { 3 } else { 1 },
         pips: match kind {
             Kind::Ooze => &[Pip::Colored(ManaColor::G)],
-            Kind::Heartfire => &[Pip::Colored(ManaColor::R)],
+            Kind::Heartfire | Kind::Cavalry => &[Pip::Colored(ManaColor::R)],
             Kind::Zombie => &[Pip::Colored(ManaColor::B)],
         },
         x_count: 0,
@@ -42,10 +44,11 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<Kind> {
         Kind::Ooze => &[Subtype::Ooze][..],
         Kind::Heartfire => &[Subtype::Human, Subtype::Wizard][..],
         Kind::Zombie => &[Subtype::Zombie][..],
+        Kind::Cavalry => &[Subtype::Dwarf, Subtype::Berserker][..],
     };
     let colors = match kind {
         Kind::Ooze => &[ManaColor::G][..],
-        Kind::Heartfire => &[ManaColor::R][..],
+        Kind::Heartfire | Kind::Cavalry => &[ManaColor::R][..],
         Kind::Zombie => &[ManaColor::B][..],
     };
     let power = if kind == Kind::Zombie { 4 } else { 2 };
@@ -122,6 +125,7 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<Kind> {
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
     if d.object_name != d.name
         || d.capability != CardCapability::Full
@@ -196,7 +200,7 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<Kind> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -222,23 +226,33 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<Kind> {
             },
             x_count: 0,
         };
-        let correct_cost = if kind == Kind::Ooze {
-            matches!(ability.cost,[CostComponent::Mana(actual)] if *actual==mana)
-        } else {
-            matches!(ability.cost,[CostComponent::Mana(actual),CostComponent::SacrificeSelf] if *actual==mana)
+        let correct_cost = match kind {
+            Kind::Ooze => matches!(ability.cost,[CostComponent::Mana(actual)] if *actual==mana),
+            Kind::Heartfire => {
+                matches!(ability.cost,[CostComponent::Mana(actual),CostComponent::SacrificeSelf] if *actual==mana)
+            }
+            Kind::Cavalry => matches!(ability.cost, [CostComponent::Tap]),
+            Kind::Zombie => unreachable!(),
         };
-        let (target, effect) = if kind == Kind::Ooze {
-            (
+        let (target, effect) = match kind {
+            Kind::Ooze => (
                 TargetSpec::CardInGraveyards,
                 EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature,
-            )
-        } else {
-            (
+            ),
+            Kind::Heartfire => (
                 TargetSpec::CreatureOrPlaneswalker,
                 EffectOp::StandardV1(
                     crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
                 ),
-            )
+            ),
+            Kind::Cavalry => (
+                TargetSpec::Creature,
+                EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                    object: ObjectRef::Target(0),
+                    keyword: Keywords::HASTE,
+                },
+            ),
+            Kind::Zombie => unreachable!(),
         };
         if !correct_cost
             || ability.target_spec != target
@@ -251,7 +265,11 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<Kind> {
         {
             return Err(Error::UnsupportedPrintedRoot(id));
         }
-        if kind == Kind::Ooze {
+        if kind == Kind::Cavalry {
+            if !triggers.is_empty() {
+                return Err(Error::UnsupportedPrintedRoot(id));
+            }
+        } else if kind == Kind::Ooze {
             if !triggers.is_empty() {
                 return Err(Error::UnsupportedPrintedRoot(id));
             }
@@ -328,6 +346,41 @@ fn prowess() -> Prowess {
         }],
     }
 }
+#[derive(serde::Serialize)]
+struct CavalryHaste {
+    printed_ability_index: u8,
+    target: ActivationTarget,
+    either_controller: bool,
+    target_incarnation_bound_at_announcement: bool,
+    recheck_creature_target_legality_on_resolution: bool,
+    illegal_only_target_counters_whole_ability: bool,
+    ordered_resolution: [CavalryHasteInstruction; 1],
+}
+#[derive(serde::Serialize)]
+enum CavalryHasteInstruction {
+    GrantHasteToOriginalTargetIncarnation {
+        duration: BoostDuration,
+        later_target_incarnation_does_not_receive_grant: bool,
+        source_departure_or_control_change_does_not_cancel: bool,
+    },
+}
+fn cavalry_haste() -> CavalryHaste {
+    CavalryHaste {
+        printed_ability_index: 0,
+        target: ActivationTarget::BattlefieldCreature,
+        either_controller: true,
+        target_incarnation_bound_at_announcement: true,
+        recheck_creature_target_legality_on_resolution: true,
+        illegal_only_target_counters_whole_ability: true,
+        ordered_resolution: [
+            CavalryHasteInstruction::GrantHasteToOriginalTargetIncarnation {
+                duration: BoostDuration::NextCleanupIncludingRepeatedCleanup,
+                later_target_incarnation_does_not_receive_grant: true,
+                source_departure_or_control_change_does_not_cancel: true,
+            },
+        ],
+    }
+}
 fn meanings(id: u16, kind: Kind) -> Result<Vec<Value>> {
     let convert = |value: std::result::Result<Value, serde_json::Error>| {
         value.map_err(|e| Error::Projection(e.to_string()))
@@ -348,10 +401,11 @@ fn meanings(id: u16, kind: Kind) -> Result<Vec<Value>> {
             crate::rules_meaning_soul_shackled_zombie_v1::root_meaning(id, 0)
                 .map_err(|_| Error::UnsupportedPrintedRoot(id))?,
         ))?],
+        Kind::Cavalry => vec![convert(serde_json::to_value(cavalry_haste()))?],
     })
 }
 // These exact full early DTOs use source_sha256, not root_sha256. Route only
-// these three authenticated recipes before the vanilla exclusion guard. The
+// these authenticated recipes before the vanilla exclusion guard. The
 // mandatory ordinary supplement is still independent of the covered-ID set.
 pub(super) fn baseline(id: u16, d: &CardDef) -> Result<Value> {
     let kind = validate_shape(id, d)?;
@@ -361,11 +415,16 @@ pub(super) fn baseline(id: u16, d: &CardDef) -> Result<Value> {
 enum ActivationCost {
     Mana(Cost),
     SacrificeOriginalSource,
+    TapOriginalSource,
 }
 #[derive(serde::Serialize)]
 enum ActivationTarget {
-    OnePhysicalCardInEitherGraveyard,
-    OneBattlefieldCreatureOrPlaneswalker,
+    #[serde(rename = "OnePhysicalCardInEitherGraveyard")]
+    PhysicalCardInEitherGraveyard,
+    #[serde(rename = "OneBattlefieldCreatureOrPlaneswalker")]
+    BattlefieldCreatureOrPlaneswalker,
+    #[serde(rename = "OneBattlefieldCreature")]
+    BattlefieldCreature,
 }
 #[derive(serde::Serialize)]
 struct Activation {
@@ -396,15 +455,19 @@ pub(in crate::current_mixed_policy_v1) fn printing(id: u16, d: &CardDef) -> Resu
         } else {
             ManaColor::R
         };
-        let mut costs = vec![ActivationCost::Mana(Cost {
-            generic: 0,
-            pips: if color == ManaColor::G {
-                &[Pip::Colored(ManaColor::G)]
-            } else {
-                &[Pip::Colored(ManaColor::R)]
-            },
-            x_count: 0,
-        })];
+        let mut costs = if kind == Kind::Cavalry {
+            vec![ActivationCost::TapOriginalSource]
+        } else {
+            vec![ActivationCost::Mana(Cost {
+                generic: 0,
+                pips: if color == ManaColor::G {
+                    &[Pip::Colored(ManaColor::G)]
+                } else {
+                    &[Pip::Colored(ManaColor::R)]
+                },
+                x_count: 0,
+            })]
+        };
         if kind == Kind::Heartfire {
             costs.push(ActivationCost::SacrificeOriginalSource);
         }
@@ -415,18 +478,19 @@ pub(in crate::current_mixed_policy_v1) fn printing(id: u16, d: &CardDef) -> Resu
             current_source_controller_must_be_actor: true,
             requires_active_effective_printed_slot_at_activation: true,
             later_source_departure_or_ability_loss_does_not_counter: true,
-            target: if kind == Kind::Ooze {
-                ActivationTarget::OnePhysicalCardInEitherGraveyard
-            } else {
-                ActivationTarget::OneBattlefieldCreatureOrPlaneswalker
+            target: match kind {
+                Kind::Ooze => ActivationTarget::PhysicalCardInEitherGraveyard,
+                Kind::Cavalry => ActivationTarget::BattlefieldCreature,
+                Kind::Heartfire => ActivationTarget::BattlefieldCreatureOrPlaneswalker,
+                Kind::Zombie => unreachable!(),
             },
             original_source_incarnation_bound_before_payment: true,
             target_announced_before_cost_payment: true,
             ordered_costs: costs,
             payment_precedes_stack_publication: true,
             countered_activation_never_refunds_costs: true,
-            no_tap_cost: true,
-            no_summoning_sickness_restriction: true,
+            no_tap_cost: kind != Kind::Cavalry,
+            no_summoning_sickness_restriction: kind != Kind::Cavalry,
             canonical_effect: canonical.last().unwrap().clone(),
         }]
     };

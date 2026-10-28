@@ -935,6 +935,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .collect::<Vec<_>>();
         match (live.as_slice(), removals.as_slice()) {
             ([item], []) if *item == paid.item.as_ref() => {}
+            ([], []) if crate::engine::time_stop_v1::disposed(state, &paid.item)? => {}
             ([], [removed]) => {
                 let completions = state
                     .engine

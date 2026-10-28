@@ -557,6 +557,10 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .amount(AmtF::fixed(1)),
             );
         }
+        EffectOp::ReturnSourceAsDemonWithTwoCountersV1 => {
+            // Frozen meaning vocabulary cannot express departed subtype eligibility.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::ReturnSourceAsEnduringEnchantment => {
             // Enduring: the source returns from the graveyard to the
             // battlefield under its owner's control as an enchantment that

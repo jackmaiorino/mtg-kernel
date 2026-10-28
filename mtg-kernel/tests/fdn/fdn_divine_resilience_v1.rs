@@ -405,7 +405,10 @@ fn divine_indestructible_keeps_lethal_damage_until_real_cleanup_then_expires() {
         assert_eq!(state.objects.get(creature).zone, Zone::Battlefield);
         assert_eq!(state.objects.get(creature).damage, 3); // Indestructible does not prevent damage.
         assert!(protected(&state, creature));
-        state.step = Step::End; // Prepare a normal end-step priority window, then take real passes.
+        {
+            let active = state.active_player;
+            super::fixture_turn_v1::reach(&mut state, active, Step::End);
+        }
         let mut replay = restored(&state);
         for current in [&mut state, &mut replay] {
             let mut surface = self::surface();
@@ -531,23 +534,25 @@ fn divine_pending_and_finalized_kicker_bindings_reject_unilateral_restore_rewrit
             } else {
                 item.kicked = false;
             }
-            let mut halted = false;
+            let mut rejected = false;
             for _ in 0..8 {
                 match engine::advance_until_decision(&mut forged) {
                     Decision::CastSpellOrPass { .. } => {
-                        engine::step(&mut forged, Action::Pass).unwrap();
+                        let before = serde_json::to_vec(&forged).unwrap();
+                        if engine::step(&mut forged, Action::Pass).is_err() {
+                            assert_eq!(before, serde_json::to_vec(&forged).unwrap());
+                            rejected = true;
+                            break;
+                        }
                     }
                     Decision::Halted { .. } => {
-                        halted = true;
+                        rejected = true;
                         break;
                     }
                     other => panic!("unexpected forged-cast decision {other:?}"),
                 }
             }
-            assert!(
-                halted,
-                "forged cast must halt when ordinary priority reaches resolution"
-            );
+            assert!(rejected, "forged cast must refuse before resolving");
             assert!(!protected(&forged, creature));
         }
     }

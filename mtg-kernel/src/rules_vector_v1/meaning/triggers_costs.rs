@@ -41,10 +41,18 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
-        TriggerCondition::OpponentCastsSpellV1 => out.atoms.push(Atom::Opaque),
+        TriggerCondition::DiesUnlessSubtype(_)
+        | TriggerCondition::DiesWithRevivalCounterV1
+        | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_) => {
+            out.atoms.push(Atom::Opaque)
+        }
+        TriggerCondition::OpponentDiscardsV72 | TriggerCondition::OpponentCastsSpellV1 => {
+            out.atoms.push(Atom::Opaque)
+        }
         TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(_)
         | TriggerCondition::OpponentLosesLifeBatchV49
         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
+        | TriggerCondition::ControlledCreatureCombatDamageDuringOwnTurnV1
         | TriggerCondition::OtherNontokenCreatureDies
         | TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1
         | TriggerCondition::FishingPoleEquippedCreatureUntappedV39
@@ -758,6 +766,9 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             // the filter, the source included and summoning sickness
             // irrelevant. Vocabulary gap: `TapOthers` carries no count or
             // class.
+            if matches!(filter, PermanentFilter::AnotherWithSubtype(_)) {
+                out.atoms.push(Atom::Opaque);
+            }
             let _ = (count, filter);
             out.cost(CostAtom::TapOthers);
         }
@@ -772,7 +783,10 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             out.atoms.push(Atom::Opaque);
         }
         CostComponent::SacrificeControlled { count, filter } => {
-            if filter == PermanentFilter::AnotherArtifact {
+            if matches!(
+                filter,
+                PermanentFilter::AnotherArtifact | PermanentFilter::AnotherWithSubtype(_)
+            ) {
                 out.atoms.push(Atom::Opaque);
             }
             // The component itself restricts candidates to the payer's

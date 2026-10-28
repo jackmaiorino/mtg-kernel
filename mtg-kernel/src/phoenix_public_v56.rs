@@ -286,8 +286,11 @@ pub fn capture(state: &GameState) -> Result<FactsV56, RlContractError> {
             }
         }
     }
+    // Native token cessation removes live membership and retains the last zone
+    // marker in the arena. Graveyard token tombstones are historical objects.
     if state.objects.iter().any(|(object, live)| {
-        matches!(live.zone, Zone::Battlefield | Zone::Graveyard) && !seen.contains(&object)
+        (live.zone == Zone::Battlefield || (live.zone == Zone::Graveyard && !live.v4.is_token))
+            && !seen.contains(&object)
     }) {
         return Err(error("Phoenix public roster incomplete"));
     }
@@ -408,5 +411,51 @@ pub fn validate(state: &GameState, value: &FactsV56) -> Result<(), RlContractErr
         Ok(())
     } else {
         Err(error("Phoenix current public facts differ"))
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod ceased_token_tests {
+    use super::*;
+    use crate::{
+        event::{self, ProposedEvent},
+        ids::PlayerId,
+        policy_observation_v6::tests::{put, ready_state_for},
+    };
+
+    #[test]
+    fn native_ceased_food_preserves_public_facts_but_live_roster_erasures_refuse_both_seats() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(player);
+            let food = put(&mut state, player, "Food Token", Zone::Battlefield);
+            let original = capture(&state).unwrap();
+            let mut missing_live = state.clone();
+            missing_live.players[player.index()]
+                .battlefield
+                .retain(|id| *id != food);
+            assert!(capture(&missing_live).is_err());
+
+            // Actual native zone and cessation primitives retain the inert id.
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(food, Zone::Graveyard),
+            );
+            assert!(event::cease_to_exist(&mut state, food));
+            assert_eq!(state.objects.get(food).zone, Zone::Graveyard);
+            assert!(!state.players[player.index()].graveyard.contains(&food));
+            assert_eq!(capture(&state).unwrap(), original);
+            let restored = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(capture(&restored).unwrap(), original);
+
+            let card = put(&mut state, player, "Llanowar Elves", Zone::Graveyard);
+            state.players[player.index()]
+                .graveyard
+                .retain(|id| *id != card);
+            assert!(capture(&state).is_err());
+        }
     }
 }

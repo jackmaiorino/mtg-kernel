@@ -105,11 +105,17 @@ pub fn producer_sha256() -> String {
             SCHEMA,
             include_str!("ravenous_public_v51.rs"),
             include_str!("rl.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/standard_copy.rs"),
+            include_str!("standard_spell_copy.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             hash.update((source.len() as u64).to_le_bytes());
             hash.update(source.as_bytes());
         }
         hash.update(meaning::producer_sha256().as_bytes());
+        hash.update(b"legacy-graveyard-return-guard/v61\0");
+        hash.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         hash.finalize()
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -351,15 +357,37 @@ fn battlefield_unframed(state: &GameState) -> Result<BattlefieldV51, RlContractE
     Ok(BattlefieldV51 { facts, cards })
 }
 
-pub(crate) fn battlefield_prepared_v57(
+pub(crate) fn battlefield_complete_scope(
     state: &GameState,
+    scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<BattlefieldV51, RlContractError> {
+    if !matches!(
+        scope,
+        crate::rl::CommonProjectionScopeV42::PreparedV57
+            | crate::rl::CommonProjectionScopeV42::NextFiveV59
+            | crate::rl::CommonProjectionScopeV42::GraveyardReturnV61
+            | crate::rl::CommonProjectionScopeV42::CallV62
+            | crate::rl::CommonProjectionScopeV42::EndTurnV68
+            | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
+            | crate::rl::CommonProjectionScopeV42::VivienV70
+            | crate::rl::CommonProjectionScopeV42::MuldrothaV71
+            | crate::rl::CommonProjectionScopeV42::TinybonesV72
+            | crate::rl::CommonProjectionScopeV42::LilianaV73
+            | crate::rl::CommonProjectionScopeV42::ChandraV74
+            | crate::rl::CommonProjectionScopeV42::KaitoV75
+    ) {
+        return Err(RlContractError(
+            "wrong complete counter compatibility scope".into(),
+        ));
+    }
     crate::continuous_source_frame_v1::with_frame(state, || {
-        battlefield_prepared_v57_unframed(state)
+        battlefield_complete_scope_unframed(state, scope)
     })
 }
-// The body of the function above, run inside its source-list frame.
-fn battlefield_prepared_v57_unframed(state: &GameState) -> Result<BattlefieldV51, RlContractError> {
+fn battlefield_complete_scope_unframed(
+    state: &GameState,
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<BattlefieldV51, RlContractError> {
     let facts = capture(state)?;
     let mut cards: [Vec<CardV51>; 2] = [Vec::new(), Vec::new()];
     let mut seen = Vec::new();
@@ -381,7 +409,32 @@ fn battlefield_prepared_v57_unframed(state: &GameState) -> Result<BattlefieldV51
             }
             seen.push(*id);
             cards[seat].push(CardV51 {
-                card: crate::rl::public_card_prepared_compat_v57(state, *id)?,
+                card: if matches!(
+                    scope,
+                    crate::rl::CommonProjectionScopeV42::TinybonesV72
+                        | crate::rl::CommonProjectionScopeV42::LilianaV73
+                        | crate::rl::CommonProjectionScopeV42::ChandraV74
+                        | crate::rl::CommonProjectionScopeV42::KaitoV75
+                ) {
+                    crate::rl::public_card_tinybones_compat_v72(state, *id)?
+                } else if matches!(
+                    scope,
+                    crate::rl::CommonProjectionScopeV42::CallV62
+                        | crate::rl::CommonProjectionScopeV42::EndTurnV68
+                        | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
+                        | crate::rl::CommonProjectionScopeV42::VivienV70
+                        | crate::rl::CommonProjectionScopeV42::MuldrothaV71
+                        | crate::rl::CommonProjectionScopeV42::TinybonesV72
+                        | crate::rl::CommonProjectionScopeV42::LilianaV73
+                        | crate::rl::CommonProjectionScopeV42::ChandraV74
+                        | crate::rl::CommonProjectionScopeV42::KaitoV75
+                ) {
+                    crate::rl::public_card_call_compat_v62(state, *id)?
+                } else if scope == crate::rl::CommonProjectionScopeV42::GraveyardReturnV61 {
+                    crate::rl::public_card_graveyard_return_compat_v61(state, *id)?
+                } else {
+                    crate::rl::public_card_prepared_compat_v57(state, *id)?
+                },
                 marked_damage: live.damage,
                 plus_one_counters: live.counters.plus1_plus1,
                 soul: live.counters.soul,

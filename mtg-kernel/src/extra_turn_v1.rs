@@ -565,6 +565,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     .collect();
                 match removals.as_slice() {
                     [] if live.as_slice() == [item.as_ref()] => {}
+                    [] if live.is_empty()
+                        && crate::engine::time_stop_v1::disposed(state, item)? => {}
                     [(i, original, outcome)]
                         if index < *i && original.as_ref() == item.as_ref() && live.is_empty() =>
                     {

@@ -21,6 +21,7 @@ pub(super) fn validate_required_stage(
                 ops.iter().any(contains)
             }
             EffectOp::Conditional { then, else_, .. } => contains(then) || contains(else_),
+            EffectOp::MaySacrificeNonlandOtherwiseV1 { unpaid, .. } => contains(unpaid),
             _ => false,
         }
     }
@@ -103,7 +104,12 @@ fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> 
             EffectOp::Choice { options, .. } => options
                 .get(usize::from(component))
                 .ok_or("discard payment option changed")?,
-            EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } if component == 0 => unpaid,
+            EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. }
+            | EffectOp::MaySacrificeNonlandOtherwiseV1 { unpaid, .. }
+                if component == 0 =>
+            {
+                unpaid
+            }
             _ => return Err("discard payment path is not definition-owned".into()),
         };
         prefix.push(component);
