@@ -30,9 +30,10 @@ It starts only when all of these hold:
 - it fits in the cores free now;
 - it is in the head's class (ordinary or background);
 - no earlier request behind the head is also eligible;
-- it cannot delay the head. The running claims could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with every backfill running. Hosts with more than 12 running claims do not backfill.
+- no timed reservation is held, and the host has at most 12 live claims (backfills and background claims included);
+- it cannot delay the head. The running claims could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with every backfill running, and an ordinary head must not need any background claim's cores that it would not have needed anyway (it would wait for them to suspend). A queued request from a launcher that predates background claims is checked the way its own admission counts cores.
 
-The no-delay check does not use durations. Past `--max-seconds`, `status` lists the claim under `backfill` with `overdue: true`; nothing is stopped, suspended or preempted. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
+The no-delay check does not use durations. `--max-seconds` is at most 30 days. Past it, `status` lists the claim under `backfill` with `overdue: true`; nothing is stopped, suspended or preempted. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
 
 ## Interaction with timed work
 

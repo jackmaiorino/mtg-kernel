@@ -26,10 +26,11 @@ never changes what it means. It keeps its own records beside it, under
   and returns at once.
 - Backfill: a request that declares `--max-seconds S` may start before the
   queue head when it fits in free cores now and cannot delay the head, under
-  every order in which the running claims could end (at most 12 of them).
-  Only the first such request behind the head starts, and only in the head's
-  class (ordinary or background). Past S, `status` flags it overdue; nothing
-  is ever preempted.
+  every order in which the running claims could end (at most 12 claims, and
+  never while a timed reservation is held). Only the first such request
+  behind the head starts, and only in the head's class (ordinary or
+  background). S is at most 30 days. Past S, `status` flags it overdue;
+  nothing is ever preempted.
 - `status` prints the timed reservation (lane, work and declared cores),
   the claims, the queue and the free cores. It never prints the token.
   `topology` lists the logical CPUs with each core's efficiency class:
@@ -101,6 +102,7 @@ MUTEX_TIMEOUT_SECONDS = 30.0
 MUTEX_STALE_SECONDS = 30.0
 TIMED_VACATE_SECONDS = 60.0
 BACKFILL_MAX_RUNNING = 12
+BACKFILL_MAX_SECONDS = 30 * 86400.0
 
 
 class NoRoom(Exception):
@@ -628,7 +630,7 @@ def background_busy(cores, claim_id: str) -> bool:
 
 def _max_seconds(record: dict) -> float | None:
     value = record.get("max_seconds")
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= BACKFILL_MAX_SECONDS:
         return None
     return float(value)
 
@@ -638,35 +640,50 @@ def _pool(record: dict) -> list[int] | None:
     return pool if isinstance(pool, list) else None
 
 
+def _head_start(config: dict, timed: dict, claims: list[dict], head: dict) -> tuple[set, set] | None:
+    """The cores head's own admission would take with these claims, and the background claims' cores
+    among them (an ordinary head waits for those to suspend), or None when it cannot start."""
+    # A ticket without the background field comes from a launcher that predates it, whose admission
+    # counts every claim; the field is never omitted by this version.
+    counts_background = "background" not in head or bool(head["background"])
+    room = available(config, timed, claims, background=counts_background, core_pool=_pool(head))
+    if len(room) < head["cores_wanted"]:
+        return None
+    chosen = set(room[:head["cores_wanted"]])
+    borrowed = {core for claim in claims if claim.get("background", False) for core in claim["cores"]}
+    return chosen, chosen & borrowed
+
+
 def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, ticket: dict) -> list[int] | None:
     """Cores ticket may take ahead of head without delaying it, or None.
 
-    Release order of the running claims is unknown, so every subset of them is tried: whenever releasing
-    a subset would let the head start with no backfills, it must still start with every backfill
-    (existing ones and this one) running. Durations play no part in that check."""
+    The running claims may end in any order, so every subset of them is tried: whenever ending a
+    subset would let the head start with no backfills, it must still start with every backfill
+    (existing ones and this one) running, without waiting on more background cores. Durations play
+    no part in that check. A held timed reservation may end or change at any time, so no backfill
+    starts while one is held."""
     background = bool(ticket.get("background", False))
-    if _max_seconds(ticket) is None or background != bool(head.get("background", False)):
+    if (_max_seconds(ticket) is None or background != bool(head.get("background", False)) or timed["held"]
+            or len(claims) > BACKFILL_MAX_RUNNING):
         return None
-    wanted = ticket.get("cores_wanted")
+    wanted, head_wanted = ticket.get("cores_wanted"), head.get("cores_wanted")
+    for value in (wanted, head_wanted):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return None
     room = available(config, timed, claims, background=background, core_pool=_pool(ticket))
-    if isinstance(wanted, bool) or not isinstance(wanted, int) or wanted < 1 or len(room) < wanted:
+    if len(room) < wanted:
         return None
     cores = sorted(room[:wanted])
     candidate = {"cores": cores, "background": background, "backfill": True}
-    running = [claim for claim in claims if not claim.get("backfill")
-               and (background or not claim.get("background", False))]
-    if len(running) > BACKFILL_MAX_RUNNING:
-        return None
-    head_wanted, head_pool = head.get("cores_wanted"), _pool(head)
-    if isinstance(head_wanted, bool) or not isinstance(head_wanted, int):
-        return None
+    running = [claim for claim in claims if not claim.get("backfill")]
     for mask in range(1 << len(running)):
-        released = {id(claim) for bit, claim in enumerate(running) if mask >> bit & 1}
-        rest = [claim for claim in claims if id(claim) not in released]
-        without = available(config, timed, [c for c in rest if not c.get("backfill")], background=background,
-                            core_pool=head_pool)
-        if len(without) >= head_wanted and len(available(config, timed, rest + [candidate], background=background,
-                                                         core_pool=head_pool)) < head_wanted:
+        ended = {id(claim) for bit, claim in enumerate(running) if mask >> bit & 1}
+        rest = [claim for claim in claims if id(claim) not in ended]
+        without = _head_start(config, timed, [claim for claim in rest if not claim.get("backfill")], head)
+        if without is None:
+            continue
+        with_backfill = _head_start(config, timed, rest + [candidate], head)
+        if with_backfill is None or not with_backfill[1] <= without[1]:
             return None
     return cores
 
@@ -881,7 +898,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     if not (lane and work_id and command):
         raise ValueError("lane, work_id and a command are required")
     if max_seconds is not None and _max_seconds({"max_seconds": max_seconds}) is None:
-        raise ValueError("max seconds must be a positive number")
+        raise ValueError(f"max seconds must be a number above 0 and at most {BACKFILL_MAX_SECONDS:.0f}")
     config = load_config()
     if core_pool is not None:
         if not core_pool or not set(core_pool) <= set(config["cores"]) or len(set(core_pool)) < cores_wanted:
@@ -1247,6 +1264,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"exit_code": code}), flush=True)
             return code
         if args.op == "submit":
+            if args.max_seconds is not None and _max_seconds({"max_seconds": args.max_seconds}) is None:
+                raise ValueError(f"max seconds must be a number above 0 and at most {BACKFILL_MAX_SECONDS:.0f}")
             options = ["--lane", args.lane, "--work-id", args.work_id, "--cores", str(args.cores)]
             if args.background:
                 options.append("--background")
