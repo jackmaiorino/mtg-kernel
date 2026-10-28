@@ -952,12 +952,48 @@ fn the_throughput_guard_refuses_other_hosts_binaries_and_counts() {
         "config_sha256": loaded.sha256, "binary_sha256": binary_sha256_v1().unwrap(),
         "selected_workers": 4, "forward_workers": 1});
     fs::write(&path, serde_json::to_vec(&good).unwrap()).unwrap();
-    require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(1)).unwrap();
-    require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, None).unwrap();
+    require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(1), None).unwrap();
+    require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, None, None).unwrap();
     // Qualified with one forward worker per fit is not qualified with 64.
-    assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(64)).is_err());
-    assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 8, Some(1)).is_err());
-    assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Collect, 4, None).is_err());
+    assert!(
+        require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(64), None).is_err()
+    );
+    assert!(
+        require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 8, Some(1), None).is_err()
+    );
+    assert!(
+        require_qualification_v1(loaded, &path, QualifiedStageV1::Collect, 4, None, None).is_err()
+    );
+    // A record without a scheduler qualifies the per-chain scheduler only; a
+    // cross-chain record qualifies the cross-chain scheduler only.
+    let per_chain = Some(FitSchedulerV1::PerChain);
+    let cross_chain = Some(FitSchedulerV1::CrossChain);
+    require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(1), per_chain).unwrap();
+    assert!(require_qualification_v1(
+        loaded,
+        &path,
+        QualifiedStageV1::Fit,
+        4,
+        Some(1),
+        cross_chain
+    )
+    .is_err());
+    let mut cross = good.clone();
+    cross["scheduler"] = json!(CROSS_CHAIN_SCHEDULER_V1);
+    fs::write(&path, serde_json::to_vec(&cross).unwrap()).unwrap();
+    require_qualification_v1(
+        loaded,
+        &path,
+        QualifiedStageV1::Fit,
+        4,
+        Some(1),
+        cross_chain,
+    )
+    .unwrap();
+    assert!(
+        require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(1), per_chain)
+            .is_err()
+    );
     for (field, value) in [
         ("host", json!("another-host")),
         ("binary_sha256", json!("0".repeat(64))),
@@ -967,7 +1003,8 @@ fn the_throughput_guard_refuses_other_hosts_binaries_and_counts() {
         changed[field] = value;
         fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
         assert!(
-            require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(1)).is_err()
+            require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(1), None)
+                .is_err()
         );
     }
 }
@@ -1093,4 +1130,248 @@ fn real_b512_step0_preflight() {
         "chain {index}: w128 matched w64 bit for bit on {inputs} inputs for {} seeds",
         seeds.len()
     );
+}
+
+/// A two-chain fixture (both chains from the fixture parent, two fitting
+/// seeds, so 12 fits), collected, converted and preserved: ready to fit.
+fn prepared_two_chain_root_v1(
+    label: &str,
+    tweak: impl FnOnce(&mut PrescreenConfigV1),
+) -> FixtureV1 {
+    let mut fixture = fixture_v1(label);
+    let config = &mut fixture.loaded.config;
+    let mut second = config.chains[0].clone();
+    second.index = 2;
+    second.id = "fixture-2".into();
+    config.chains.push(second);
+    config.fitting.fitting_seeds = vec![1, 2];
+    tweak(config);
+    config.validate_with_v1(false).unwrap();
+    fixture.loaded.sha256 = sha(&serde_json::to_vec(&fixture.loaded.config).unwrap());
+    let (loaded, root) = (&fixture.loaded, fixture.root.as_path());
+    let chains = loaded.config.chains.clone();
+    for chain in &chains {
+        collect_chain_stage_v1(loaded, root, chain, 2).unwrap();
+        convert_chain_stage_v1(loaded, root, chain).unwrap();
+    }
+    section7_stage_v1(loaded, root).unwrap().unwrap();
+    for chain in &chains {
+        preserve_chain_stage_v1(loaded, root, chain, 2).unwrap();
+    }
+    fixture
+}
+
+fn copy_tree_v1(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree_v1(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+/// A copy of a prepared root, removed when dropped.
+fn copied_root_v1(fixture: &FixtureV1, label: &str) -> FixtureV1 {
+    let root = std::env::temp_dir().join(format!("bwps-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    copy_tree_v1(&fixture.root, &root);
+    FixtureV1 {
+        loaded: fixture.loaded.clone(),
+        root,
+    }
+}
+
+fn all_fits_v1(loaded: &LoadedConfigV1) -> Vec<(u32, u32, &'static str)> {
+    let mut fits = Vec::new();
+    for chain in &loaded.config.chains {
+        for &seed in &loaded.config.fitting.fitting_seeds {
+            for arm in ARM_NAMES_V1 {
+                fits.push((chain.index, seed, arm));
+            }
+        }
+    }
+    fits
+}
+
+/// The cross-chain queue writes every report byte for byte as the per-chain
+/// scheduler does (with one resident chain at a time too), and
+/// `FIT-LAUNCH.json` binds the scheduler: a root started under one refuses
+/// the other, and a per-chain root's record has no `scheduler` field.
+#[test]
+fn cross_chain_reports_are_byte_identical_to_per_chain() {
+    let fixture = prepared_two_chain_root_v1("sched-per", |_| {});
+    let cross = copied_root_v1(&fixture, "sched-cross");
+    let single = copied_root_v1(&fixture, "sched-single");
+    let loaded = &fixture.loaded;
+    let chains: Vec<&PrescreenChainV1> = loaded.config.chains.iter().collect();
+    let per = fit_stage_v1(
+        loaded,
+        &fixture.root,
+        &chains,
+        3,
+        1,
+        FitSchedulerV1::PerChain,
+    )
+    .unwrap();
+    assert_eq!(per.len(), 2);
+    let queued = fit_stage_v1(
+        loaded,
+        &cross.root,
+        &chains,
+        3,
+        1,
+        FitSchedulerV1::CrossChain,
+    )
+    .unwrap();
+    assert_eq!(queued[0]["fits_written"], json!(12));
+    assert_eq!(queued[0]["scheduler"], json!(CROSS_CHAIN_SCHEDULER_V1));
+    assert!(queued[0]["resident_chains_peak"].as_u64().unwrap() <= 3);
+    // One resident chain at a time still completes and changes nothing.
+    let one = fit_cross_chain_stage_v1(loaded, &single.root, &chains, 3, 1, 1).unwrap();
+    assert_eq!(one["resident_chains_peak"], json!(1));
+    let fits = all_fits_v1(loaded);
+    assert_eq!(fits.len(), 12);
+    for &(chain, seed, arm) in &fits {
+        let reference = read_v1(&fit_path_v1(&fixture.root, chain, seed, arm)).unwrap();
+        for other in [&cross.root, &single.root] {
+            assert_eq!(
+                read_v1(&fit_path_v1(other, chain, seed, arm)).unwrap(),
+                reference,
+                "chain {chain} seed {seed} {arm}"
+            );
+        }
+    }
+    // The scheduler binding.
+    let per_launch: Value =
+        serde_json::from_slice(&read_v1(&fit_launch_path_v1(&fixture.root)).unwrap()).unwrap();
+    assert!(per_launch.get("scheduler").is_none());
+    let cross_launch: Value =
+        serde_json::from_slice(&read_v1(&fit_launch_path_v1(&cross.root)).unwrap()).unwrap();
+    assert_eq!(cross_launch["scheduler"], json!(CROSS_CHAIN_SCHEDULER_V1));
+    for (root, scheduler) in [
+        (&fixture.root, FitSchedulerV1::CrossChain),
+        (&cross.root, FitSchedulerV1::PerChain),
+    ] {
+        let error = fit_stage_v1(loaded, root, &chains, 3, 1, scheduler).unwrap_err();
+        assert!(error.contains("FIT-LAUNCH.json"), "{error}");
+    }
+    assert_eq!(
+        FitSchedulerV1::parse_v1("cross-chain").unwrap(),
+        FitSchedulerV1::CrossChain
+    );
+    assert!(FitSchedulerV1::parse_v1("longest-first").is_err());
+}
+
+/// A resumed queue: a complete report left unpublished is compared with the
+/// rerun and published, an incomplete one is removed and rerun, a lost one is
+/// rerun, all to the per-chain scheduler's bytes; a complete report the
+/// rerun does not reproduce records a mismatch and is never rerun again.
+#[test]
+fn a_resumed_cross_chain_queue_reproduces_reports_and_mismatches_stay_void() {
+    let fixture = prepared_two_chain_root_v1("queue-resume-per", |_| {});
+    let cross = copied_root_v1(&fixture, "queue-resume-cross");
+    let loaded = &fixture.loaded;
+    let chains: Vec<&PrescreenChainV1> = loaded.config.chains.iter().collect();
+    fit_stage_v1(
+        loaded,
+        &fixture.root,
+        &chains,
+        3,
+        1,
+        FitSchedulerV1::PerChain,
+    )
+    .unwrap();
+    fit_stage_v1(
+        loaded,
+        &cross.root,
+        &chains,
+        3,
+        1,
+        FitSchedulerV1::CrossChain,
+    )
+    .unwrap();
+    let root = cross.root.as_path();
+    let reference =
+        |chain, seed, arm| read_v1(&fit_path_v1(&fixture.root, chain, seed, arm)).unwrap();
+    // Interrupted: a complete temporary (chain 1 seed 2 w128), an incomplete
+    // one (chain 2 seed 1 w64) and a lost report (chain 2 seed 2 w32).
+    let complete = root.join("fits/.k1-s2-w128.json.tmp-4294967291");
+    fs::remove_file(fit_path_v1(root, 1, 2, "w128")).unwrap();
+    fs::write(&complete, reference(1, 2, "w128")).unwrap();
+    let incomplete = root.join("fits/.k2-s1-w64.json.tmp-4294967290");
+    fs::remove_file(fit_path_v1(root, 2, 1, "w64")).unwrap();
+    let whole = reference(2, 1, "w64");
+    fs::write(&incomplete, &whole[..whole.len() - 1]).unwrap();
+    fs::remove_file(fit_path_v1(root, 2, 2, "w32")).unwrap();
+    let resumed = fit_stage_v1(loaded, root, &chains, 3, 1, FitSchedulerV1::CrossChain).unwrap();
+    assert_eq!(resumed[0]["fits_written"], json!(3));
+    assert_eq!(
+        resumed[0]["complete_temporaries_compared"],
+        json!([".k1-s2-w128.json.tmp-4294967291"])
+    );
+    assert_eq!(
+        resumed[0]["stale_temporaries_removed"],
+        json!([".k2-s1-w64.json.tmp-4294967290"])
+    );
+    assert!(!complete.exists() && !incomplete.exists());
+    for &(chain, seed, arm) in &all_fits_v1(loaded) {
+        assert_eq!(
+            read_v1(&fit_path_v1(root, chain, seed, arm)).unwrap(),
+            reference(chain, seed, arm),
+            "chain {chain} seed {seed} {arm}"
+        );
+    }
+    // A complete report the rerun does not reproduce.
+    let mut forged: Value = serde_json::from_slice(&reference(2, 1, "w128")).unwrap();
+    forged["report"]["config"]["forward_workers"] = json!(2);
+    let forged = json_bytes_v1(&forged).unwrap();
+    let earlier = root.join("fits/.k2-s1-w128.json.tmp-4294967289");
+    fs::remove_file(fit_path_v1(root, 2, 1, "w128")).unwrap();
+    fs::write(&earlier, &forged).unwrap();
+    let error = fit_stage_v1(loaded, root, &chains, 3, 1, FitSchedulerV1::CrossChain).unwrap_err();
+    assert!(
+        error.contains("differs from the complete report"),
+        "{error}"
+    );
+    let mismatch: Value =
+        serde_json::from_slice(&read_v1(&mismatch_path_v1(root, 2, 1, "w128")).unwrap()).unwrap();
+    assert_eq!(mismatch["retained"][0]["sha256"], json!(sha(&forged)));
+    assert_eq!(
+        mismatch["rerun_sha256"],
+        json!(sha(&reference(2, 1, "w128")))
+    );
+    assert_eq!(read_v1(&earlier).unwrap(), forged);
+    assert!(!fit_path_v1(root, 2, 1, "w128").exists());
+    let again = fit_stage_v1(loaded, root, &chains, 3, 1, FitSchedulerV1::CrossChain).unwrap_err();
+    assert!(again.contains("records a rerun mismatch"), "{again}");
+}
+
+/// Under the queue a fit-entry refusal is recorded durably, stops the stage
+/// and is never requeued, exactly as under the per-chain scheduler.
+#[test]
+fn a_cross_chain_entry_refusal_is_recorded_and_never_rerun() {
+    let fixture = prepared_two_chain_root_v1("queue-refusal", |config| {
+        // A minibatch larger than any fit set: the entry refuses every fit.
+        config.fitting.batch_groups = 1_000_000;
+        config.fitting.heldout_curve_points = 1;
+    });
+    let (loaded, root) = (&fixture.loaded, fixture.root.as_path());
+    let chains: Vec<&PrescreenChainV1> = loaded.config.chains.iter().collect();
+    let error = fit_stage_v1(loaded, root, &chains, 3, 1, FitSchedulerV1::CrossChain).unwrap_err();
+    assert!(error.contains("fit-entry refusal recorded"), "{error}");
+    // The queue's first fit is chain 1's seed 1 w128.
+    let refusal = refusal_path_v1(root, 1, 1, "w128");
+    let record: Value = serde_json::from_slice(&read_v1(&refusal).unwrap()).unwrap();
+    assert_eq!(record["schema"], json!(REFUSAL_SCHEMA_V1));
+    assert!(record["error"]
+        .as_str()
+        .unwrap()
+        .contains("BatchLargerThanFitSet"));
+    let again = fit_stage_v1(loaded, root, &chains, 3, 1, FitSchedulerV1::CrossChain).unwrap_err();
+    assert!(again.contains("records a fit-entry refusal"), "{again}");
+    assert!(!fit_path_v1(root, 1, 1, "w128").exists());
 }
