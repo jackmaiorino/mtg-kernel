@@ -92,8 +92,17 @@ class Campaign(base.Campaign):
             raise SystemExit("the storage allowance must be at most the study's 120 GB")
 
     def admits(self, block: int) -> str | None:
-        """None when block may run, else why not: past block 2 only on the host the pinned placement record
-        chose from a passing qualification there; past D_b (494) only with a pinned "continue" decision."""
+        """None when block may run, else why not.
+
+        Past block 2 only on the host the pinned placement record chose, citing a passing qualification
+        record there with this campaign's runtime, and passing records of qualification items 4 and 5 (the
+        Windows evaluator and the Spellbench scorer). Past D_b (494) only with a pinned "continue" decision.
+        The one exception is qualification's own synthetic history block (``qualification_synthetic_block``,
+        set only on a scratch campaign of the qualification tool, which stops at that block).
+        """
+        synthetic = self.raw.get("qualification_synthetic_block")
+        if synthetic is not None and block == synthetic == self.stop_after:
+            return None
         if block > QUALIFICATION_BLOCKS:
             item = self.raw.get("placement_record")
             if not item:
@@ -102,9 +111,13 @@ class Campaign(base.Campaign):
             if placement.get("schema") != PLACEMENT_SCHEMA or placement.get("host") != self.host():
                 return "the placement record does not choose this host"
             qualification = read_pinned(placement["qualification"])
-            if qualification.get("schema") != QUALIFICATION_SCHEMA or not qualification.get("pass") \
-                    or qualification.get("host") != self.host():
-                return "the placement record cites no passing qualification on this host"
+            if qualification.get("schema") != QUALIFICATION_SCHEMA or qualification.get("pass") is not True \
+                    or qualification.get("host") != self.host() \
+                    or qualification.get("runtime", {}).get("sha256") != self.raw["runtime"]["sha256"]:
+                return "the placement record cites no passing qualification of this runtime on this host"
+            for key in ("item4", "item5"):
+                if not placement.get(key) or read_pinned(placement[key]).get("pass") is not True:
+                    return f"the placement record cites no passing qualification {key} record"
         if block > g.STOP_RULE_BLOCK:
             item = self.raw.get("continuation")
             decision = read_pinned(item) if item else {}
@@ -306,6 +319,12 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
                 campaign.save_state(run, state)
                 campaign.event(run=run, block=block, kind="lease-stop", reason=reason, estimate_seconds=estimate)
                 return "stopped"
+        reason = campaign.wall_stop()  # every fresh native attempt fits the study's claim time
+        if reason:
+            state["stop_reason"] = reason
+            campaign.save_state(run, state)
+            campaign.event(run=run, block=block, kind="gate-stop", reason=reason)
+            return "stopped"
         attempt = len(entry["attempts"]) + 1
         folder = campaign.hot(run) / run / f"{label(block)}-a{attempt}"
         native, root = campaign.native(run) / run / f"{label(block)}-a{attempt}" / "native", folder / "dispatch"
@@ -465,9 +484,23 @@ def retire(campaign: Campaign, run: str, block: int, state: dict) -> None:
         if end > block - 2 or g.is_permanent(end) or entry.get("checkpoint_state") not in ("kept", "compressed", "deleting"):
             continue
         if entry["checkpoint_state"] == "compressed" and proof is None:
-            Path(entry["final_checkpoint"]["path"]).unlink(missing_ok=True)  # the raw file a stopped pass left
+            if not entry.get("compression_logged") or Path(entry["final_checkpoint"]["path"]).exists():
+                # finish the step a stopped pass left (the raw file, or its PRUNE entry)
+                retire_one(campaign, run, end, entry, proof, lambda: campaign.save_state(run, state))
             continue
         retire_one(campaign, run, end, entry, proof, lambda: campaign.save_state(run, state))
+
+
+def prune_once(campaign: Campaign, key: str, entry: dict) -> None:
+    """Append a PRUNE entry unless one with this key is already among the log's last entries (a retried step)."""
+    log = campaign.prune_log
+    if log.exists():
+        with log.open("rb") as stream:
+            stream.seek(max(0, log.stat().st_size - (1 << 20)))
+            tail = stream.read().decode("utf-8", errors="replace")
+        if f'"key": "{key}"' in tail:
+            return
+    append_jsonl(log, {"key": key, **entry})
 
 
 def gunzip_sha256(path: Path) -> str:
@@ -482,7 +515,7 @@ def retire_one(campaign: Campaign, run: str, end: int, entry: dict, proof: dict 
     nearest = max(block for block in g.PERMANENT_BLOCKS if block <= end)
     regenerate = {"from_permanent_block": nearest, "blocks_to_replay": end - nearest,
                   "configs": f"state/configs/{run}-b{nearest + 1:03d}..b{end:03d}", "runtime": campaign.raw["runtime"]}
-    if entry["checkpoint_state"] == "kept" and proof is None:
+    if entry["checkpoint_state"] in ("kept", "compressed") and proof is None:
         partial = packed.with_name(packed.name + ".partial")
         partial.unlink(missing_ok=True)
         if not (packed.exists() and gunzip_sha256(packed) == expected):
@@ -492,31 +525,33 @@ def retire_one(campaign: Campaign, run: str, end: int, entry: dict, proof: dict 
             os.replace(partial, packed)
             if gunzip_sha256(packed) != expected:
                 raise RuntimeError(f"compressed checkpoint differs: {packed}")
-        size = raw.stat().st_size
-        entry["checkpoint_state"], entry["compressed_checkpoint"] = "compressed", pin(packed)
+        if entry["checkpoint_state"] == "kept":
+            entry["checkpoint_state"], entry["compressed_checkpoint"] = "compressed", pin(packed)
+            entry["raw_bytes"] = raw.stat().st_size
+            save()
+        raw.unlink(missing_ok=True)
+        prune_once(campaign, f"{run}-b{end:03d}-compressed", {
+            "at": now(), "run": run, "block": end, "compressed": str(raw), "bytes": entry.get("raw_bytes"),
+            "kept": entry["compressed_checkpoint"], "checkpoint_sha256": expected,
+            "state_sha256": entry.get("final_state_sha256"),
+            "reason": "ancestry of the doses, kept compressed until a regeneration receipt exists "
+                      "(ARTIFACT-LAW clause 4)", "regenerate": regenerate})
+        entry["compression_logged"] = True
         save()
-        raw.unlink()
-        append_jsonl(campaign.prune_log, {"at": now(), "run": run, "block": end, "compressed": str(raw),
-                                          "bytes": size, "kept": entry["compressed_checkpoint"],
-                                          "checkpoint_sha256": expected,
-                                          "state_sha256": entry.get("final_state_sha256"),
-                                          "reason": "ancestry of the doses, kept compressed until a "
-                                                    "regeneration receipt exists (ARTIFACT-LAW clause 4)",
-                                          "regenerate": regenerate})
         return
     if entry["checkpoint_state"] != "deleting":
         entry["checkpoint_state"] = "deleting"
+        entry["deleting_bytes"] = sum(path.stat().st_size for path in (raw, packed) if path.exists())
         save()
-    size = sum(path.stat().st_size for path in (raw, packed) if path.exists())
     raw.unlink(missing_ok=True)
     packed.unlink(missing_ok=True)
+    prune_once(campaign, f"{run}-b{end:03d}-deleted", {
+        "at": now(), "run": run, "block": end, "pruned": [str(raw), str(packed)], "bytes": entry.get("deleting_bytes"),
+        "checkpoint_sha256": expected, "state_sha256": entry.get("final_state_sha256"),
+        "reason": "non-permanent ancestry; byte-identical regeneration receipt pinned", "receipt": proof,
+        "regenerate": regenerate})
     entry["checkpoint_state"] = "deleted"
     save()
-    append_jsonl(campaign.prune_log, {"at": now(), "run": run, "block": end, "pruned": [str(raw), str(packed)],
-                                      "bytes": size, "checkpoint_sha256": expected,
-                                      "state_sha256": entry.get("final_state_sha256"),
-                                      "reason": "non-permanent ancestry; byte-identical regeneration receipt pinned",
-                                      "receipt": proof, "regenerate": regenerate})
 
 
 def drive(campaign: Campaign, run: str) -> None:

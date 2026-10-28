@@ -237,18 +237,23 @@ class DriverTests(unittest.TestCase):
         self.write(raw)
         self.assertIsNone(self.campaign.admits(2))
         self.assertIn("placement", self.campaign.admits(3))
-        qualification = save(self.root / "q.json", json.dumps({"schema": driver.QUALIFICATION_SCHEMA, "host": "desktop",
-                                                                "pass": True}).encode())
-        failed = save(self.root / "qf.json", json.dumps({"schema": driver.QUALIFICATION_SCHEMA, "host": "desktop",
-                                                         "pass": False}).encode())
-        for cited, host, admitted in ((qualification, "desktop", True), (failed, "desktop", False),
-                                      (qualification, "runpod", False)):
-            raw["placement_record"] = save(self.root / f"p-{host}-{admitted}.json", json.dumps(
-                {"schema": driver.PLACEMENT_SCHEMA, "host": host, "qualification": cited}).encode())
+        runtime = {"path": "r", "sha256": "r" * 64}
+        record = lambda name, **fields: save(self.root / f"{name}.json", json.dumps(fields).encode())
+        qualification = record("q", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=runtime, **{"pass": True})
+        failed = record("qf", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=runtime, **{"pass": False})
+        other = record("qo", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=dict(runtime, sha256="o" * 64),
+                       **{"pass": True})
+        good4, good5, bad5 = record("i4", **{"pass": True}), record("i5", **{"pass": True}), record("b5", **{"pass": False})
+        for index, (cited, host, items, admitted) in enumerate((
+                (qualification, "desktop", (good4, good5), True), (failed, "desktop", (good4, good5), False),
+                (qualification, "runpod", (good4, good5), False), (other, "desktop", (good4, good5), False),
+                (qualification, "desktop", (good4, bad5), False), (qualification, "desktop", (good4, None), False))):
+            raw["placement_record"] = record(f"p{index}", schema=driver.PLACEMENT_SCHEMA, host=host,
+                                             qualification=cited, item4=items[0], item5=items[1])
             self.write(raw)
-            self.assertEqual(self.campaign.admits(3) is None, admitted)
-        raw["placement_record"] = save(self.root / "p.json", json.dumps(
-            {"schema": driver.PLACEMENT_SCHEMA, "host": "desktop", "qualification": qualification}).encode())
+            self.assertEqual(self.campaign.admits(3) is None, admitted, index)
+        raw["placement_record"] = record("p", schema=driver.PLACEMENT_SCHEMA, host="desktop",
+                                         qualification=qualification, item4=good4, item5=good5)
         self.write(raw)
         self.assertIsNone(self.campaign.admits(494))
         self.assertIn("continuation", self.campaign.admits(495))
@@ -269,6 +274,16 @@ class DriverTests(unittest.TestCase):
         clock.start()
         clock.stop()
         self.assertEqual(len(list(wall.glob("*.json"))), 2)
+
+    def test_only_the_synthetic_scratch_block_skips_the_placement_gate(self):
+        raw = json.loads(self.path.read_text())
+        raw.update(stop_after_block=4, qualification_synthetic_block=4)
+        self.write(raw)
+        self.assertIsNone(self.campaign.admits(4))
+        self.assertIn("placement", self.campaign.admits(3))
+        raw.update(stop_after_block=5)
+        self.write(raw)
+        self.assertIn("placement", self.campaign.admits(4))
 
     def test_retirement_finishes_a_stopped_pass(self):
         state = self.kept("G1", range(1, 8))

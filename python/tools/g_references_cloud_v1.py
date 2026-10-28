@@ -245,6 +245,13 @@ POD_RECOVER = cloud.POD_RECOVER.replace(
 assert POD_RECOVER != cloud.POD_RECOVER
 
 
+POD_RESULT = '''#pod:result
+import pathlib
+path = pathlib.Path(ARGS["result"])
+print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
+'''
+
+
 class Cycle(cloud.Cycle):
     """nine_deck_cloud_v1.Cycle with the G driver (or the qualification tool) and G statuses."""
 
@@ -253,10 +260,18 @@ class Cycle(cloud.Cycle):
         state finished at an earlier target (qualification's block 2, or D_b) is pending work for this lease."""
         snapshot = super().observe()
         target = self.manifest["stop_after_block"]
+        passed = self.qualification_passed() if self.manifest["mode"] == "qualification" else True
         for state in snapshot["runs"].values():
-            if state.get("status") == "complete" and max(state.get("blocks_done") or [0]) < target:
-                state["status"] = "pending"
+            if state.get("status") == "complete" and (max(state.get("blocks_done") or [0]) < target or not passed):
+                state["status"] = "pending"  # a qualification lease is done only when the tool's run passed
+        snapshot["qualification_passed"] = passed
         return snapshot
+
+    def qualification_passed(self) -> bool:
+        """The qualification tool's own result (campaign/qualification/RESULT.json), not the lineages' status."""
+        result = self.pod.run(POD_RESULT, {"result": str(self.base / "campaign" / "qualification" / "RESULT.json")},
+                              read_only=True)
+        return bool(result) and result.get("passed") is True
 
     def check_volume_inputs(self):
         if self.manifest["mode"] == "production":
@@ -276,6 +291,11 @@ class Cycle(cloud.Cycle):
         is final under DESIGN section 4); otherwise only a lease stop at a block boundary is expected."""
         runs = snapshot["runs"]
         self.count(runs)
+        if self.manifest["mode"] == "qualification":
+            self.result["qualification_passed"] = snapshot.get("qualification_passed") is True
+            require(self.result["qualification_passed"], "the qualification run ended without passing")
+            self.result["complete"] = True
+            return
         status = {run: (runs.get(run) or {}).get("status") for run in self.manifest["runs"]}
         reasons = {run: runs[run]["stop_reason"] for run in status if (runs.get(run) or {}).get("stop_reason")}
         failed = {run for run in status if status[run] == "stopped" and (runs.get(run) or {}).get("dispositions")}

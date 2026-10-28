@@ -167,6 +167,23 @@ class PlaceholderTests(unittest.TestCase):
             self.assertNotIn(pv.KEY_PLACEHOLDER, (name, size, data_center))
 
 
+    def test_study_volume_reaches_the_client_only_with_its_recorded_reason(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshot = snapshot_path(temporary)
+            prepared = Path(temporary) / 'prepared'
+            pv.prepare(spec(size_gb=200, size_reason='G(i): reserve plus peak'), prepared, now=NOW)
+            template = pv.prepared_template(prepared)
+            api = Mock(); api.create.return_value = volume(size=200)
+            with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+                pv.execute_create(template, prepared, snapshot, api=api, now=NOW)
+            self.assertEqual(api.create.call_args.kwargs['cap_gb'], pv.STUDY_VOLUME_SIZE_GB_CAP)
+            with self.assertRaises(ValueError):
+                pv.Provider('k').create('phase1-volume-test', 200, pv.DATA_CENTER_ID)
+            with self.assertRaises(ValueError):
+                pv.Provider('k').create('phase1-volume-test', 251, pv.DATA_CENTER_ID,
+                                        cap_gb=pv.STUDY_VOLUME_SIZE_GB_CAP)
+
+
 class SanitizedVerifyTests(unittest.TestCase):
     def test_sanitize_keeps_only_the_four_documented_fields(self):
         raw = volume(createdAt='2026-09-15T00:00:00Z', dataCenter={'id': 'EU-RO-1'}, extraField='drop-me')
@@ -331,7 +348,8 @@ class EndToEndExecuteTests(unittest.TestCase):
                  patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pv.main()
             provider_cls.assert_called_once_with('fake-sensitive-key')
-            fake_api.create.assert_called_once_with('phase1-volume-qualification-test', 2, 'EU-RO-1')
+            fake_api.create.assert_called_once_with('phase1-volume-qualification-test', 2, 'EU-RO-1',
+                                                    cap_gb=pv.VOLUME_SIZE_GB_CAP)
             created = read(output / 'created-volume.json')
             self.assertEqual(created['id'], 'agv6w2qcg7')
             self.assertNotIn('fake-sensitive-key', json.dumps(created))

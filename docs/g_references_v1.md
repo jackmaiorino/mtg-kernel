@@ -39,7 +39,7 @@ python -B python/tools/g_references_campaign_v1.py status --campaign C.json
 - `launch` takes the canonical host reservation with `host_slots_v1.py timed --cores` (the union of the lineages' slots) and detaches its supervisor. On Linux the supervisor's stdin, stdout and stderr are `/dev/null`.
 - Each lineage has its own pack slot (`placement_by_run`). Before every block, the driver reads the choice and the block family's verification from `choice_pins`.
 - Gates before a block starts:
-  - Blocks after 2 need `placement_record`: a placement on this host citing a passing qualification record from this host.
+  - Blocks after 2 need `placement_record`: a placement on this host citing three passing records. These are a qualification record from this host with this campaign's runtime, and the records of items 4 and 5 (the Windows evaluator and the Spellbench scorer). The only exception is the qualification tool's own synthetic block, in a scratch campaign that stops there.
   - Blocks after 494 need `continuation`, a pinned D_b "continue" decision.
   - On Jack's PC, the next block must fit the 60 wall hours of claim time (`state/wall/`).
   - The storage allowance must be at most 120 GB.
@@ -50,8 +50,8 @@ python -B python/tools/g_references_campaign_v1.py status --campaign C.json
   - A failed attempt's records (the top-level files and the small per-update records) are copied and hashed before its native tree is pruned.
 - Block ends:
   - The last two block ends stay, and the permanent ends stay for good.
-  - Older ends are gzip-compressed. They are deleted only once `ancestry_receipt` pins this recipe's interrupted-block regeneration receipt from this host.
-  - Each step saves its state before removing a file, and a restarted pass finishes a half-done step.
+  - Older ends are gzip-compressed. They are deleted only once `ancestry_receipt` pins this recipe's interrupted-block regeneration receipt from this host, with `byte_identical` true, meaning equal checkpoint file bytes as well. A rerun in another output root or attempt writes other paths into its checkpoint, so the qualification receipt normally records `byte_identical` false, and ancestry stays compressed.
+  - Each step saves its state before removing a file, and publishes its PRUNE entry once (keyed) before it is marked done. A restarted pass finishes a half-done step.
   - Every change is logged in PRUNE with the regeneration recipe.
 - At 247, 494 and 741 the driver writes `doses/G<k>-b<block>.json` with the checkpoint, the lineage's play import and the feature transfer.
 - On a pod, the guard's `progress.json` activity advances only when a native update completes or a driver step finishes.
@@ -65,12 +65,12 @@ python -B python/tools/g_references_qualify_v1.py launch --campaign C.json --pla
 python -B python/tools/g_references_qualify_v1.py record --campaign C.json --plan Q/plan.json --out Q/QUALIFICATION.json
 ```
 
-The campaign must stop after block 2 and name `choice_pins`. Inside one reservation, `run` does the following, and exits nonzero if any comparison fails:
+The campaign must stop after block 2 and name `choice_pins`. Inside one reservation, `run` does the following and writes `RESULT.json`. It exits nonzero if any comparison fails. Each finished stage is saved before its scratch payloads are pruned, so a restart resumes the remaining stages.
 1. Empty-pool family evidence:
    - launcher trials at 1 worker and at the slot width, then the eight-slot pack, on G1 block 1's payload;
    - the choice, from the spec's inventory (all three placements, at most 24 hours old), with one `check-choice` verification per family.
 2. G1's blocks 1 and 2 alone, then all eight lineages at once. G1 is rerun in a scratch campaign as the eighth, and its block ends must be identical.
-3. Block 2 rerun with its native process killed at update 81. It must be identical to the straight block: the same state hash, Adam step, and checkpoint content once output paths are set aside, as the launcher compares serial and parallel trials. The result is the regeneration receipt.
+3. Block 2 rerun with its native process killed at update 81. It must be identical to the straight block: the same state hash, Adam step, and checkpoint content once output paths are set aside, as the launcher compares serial and parallel trials. The regeneration receipt records both identities. It sets `byte_identical` only when the file bytes match too.
 4. History family evidence on block 4's schedule (pool {1, 2}) from block 2's end, followed by the choice again over both families.
 5. That synthetic block run straight and interrupted. The two runs must be identical and must draw both history checkpoints. The block is discarded afterwards.
 
@@ -90,7 +90,7 @@ python -B python/tools/g_references_cloud_v1.py ledger  --leases LEASES --volume
 ```
 
 The lease cycle, staging, recovery and release are `nine_deck_cloud_v1.py`'s (see `docs/nine_deck_cloud_v1.md`).
-- `qualification` mode carries the inventory and launches the qualification tool.
+- `qualification` mode carries the inventory and launches the qualification tool. The lease completes only when the tool's `RESULT.json` says it passed.
 - `production` mode launches the driver. It requires the choice pins and the placement record on the volume.
 - A lineage reported complete through an earlier target, qualification's block 2 or D_b, counts as pending work for a lease with a later target.
 

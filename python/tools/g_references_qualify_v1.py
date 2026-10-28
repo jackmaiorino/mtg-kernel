@@ -191,8 +191,10 @@ def make_choice(campaign: driver.Campaign, value: dict, evidence: dict) -> dict:
     return pins
 
 
-def scratch(campaign: driver.Campaign, name: str, stop_after: int, out: Path) -> driver.Campaign:
-    """A copy of the campaign with its own roots (state, outputs) under ``out/scratch/name``."""
+def scratch(campaign: driver.Campaign, name: str, stop_after: int, out: Path,
+            synthetic: bool = False) -> driver.Campaign:
+    """A copy of the campaign with its own roots (state, outputs) under ``out/scratch/name``; ``synthetic``
+    admits its stop block, the design's synthetic history block, without a placement record."""
     raw = copy.deepcopy(campaign.raw)
     base = out / "scratch" / name
     raw["roots"] = {key: str(base / key) for key in ("state", "cold", "retained", "checkpoints", "exposure", "hot",
@@ -200,8 +202,10 @@ def scratch(campaign: driver.Campaign, name: str, stop_after: int, out: Path) ->
     if "native" in campaign.raw["roots"]:
         raw["roots"]["native"] = str(Path(campaign.raw["roots"]["native"]) / "scratch" / name)
     raw["stop_after_block"] = stop_after
-    for key in ("ancestry_receipt", "placement_record", "continuation"):
+    for key in ("ancestry_receipt", "placement_record", "continuation", "qualification_synthetic_block"):
         raw.pop(key, None)
+    if synthetic:
+        raw["qualification_synthetic_block"] = stop_after
     path = base / "campaign.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(raw, indent=1), encoding="utf-8")
@@ -288,16 +292,30 @@ def compare(campaign: driver.Campaign, run: str, block: int, straight: dict) -> 
 
 def prune_scratch(campaign: driver.Campaign, out: Path, reason: str) -> dict:
     """Discard a scratch campaign's payloads (checkpoints, cold archives, native trees, retained trajectories),
-    keeping its state, configs, requests, dispatch records and exposure rows; logged in out/PRUNE.jsonl."""
+    keeping its state, configs, requests, dispatch records, exposure rows and every retained record (failed
+    attempts' records included); logged in out/PRUNE.jsonl."""
     removed = []
-    for path in (campaign.checkpoints, campaign.cold, campaign.retained, campaign.native("G1") / "G1"):
+    for path in (campaign.checkpoints, campaign.cold, campaign.native("G1") / "G1"):
         if path.exists():
             size = tree_bytes(path)
             shutil.rmtree(path)
             removed.append({"path": str(path), "bytes": size})
+    for path in sorted(campaign.retained.rglob("episode-*.json")) if campaign.retained.exists() else []:
+        removed.append({"path": str(path), "bytes": path.stat().st_size})
+        path.unlink()
     entry = {"at": now(), "campaign": str(campaign.path), "removed": removed, "reason": reason}
     driver.append_jsonl(out / "PRUNE.jsonl", entry)
     return entry
+
+
+def stage(out: Path, name: str, build) -> dict:
+    """A qualification stage's saved result (out/stages/<name>.json), computed by ``build`` only once."""
+    path = out / "stages" / f"{name}.json"
+    if path.exists():
+        return read(path)
+    value = build()
+    write_json(path, value)
+    return value
 
 
 def run(campaign_path: Path, plan_path: Path) -> int:
@@ -325,66 +343,90 @@ def run(campaign_path: Path, plan_path: Path) -> int:
     try:
         log(kind="start", host=campaign.host())
         evidence = {"empty-pool": trials_and_pack(value["families"]["empty-pool"], out, log)}
+        history = value["families"].get("history")
+        if history and (Path(read(history["pack"]["path"])["root"]) / "pack.json").exists():
+            evidence["history"] = trials_and_pack(history, out, log)  # a restart keeps both families' choice
         log(kind="choice", pins=make_choice(campaign, value, evidence))
         # Item 1: G1 alone, then the eight together (G1's rerun in a scratch campaign as the eighth).
-        log(kind="wave", wave="alone", runs=["G1"])
-        drive_all([(campaign, "G1")])
-        log(kind="wave-end", wave="alone")
-        eighth = scratch(campaign, "concurrent-g1", 2, out)
-        log(kind="wave", wave="eight", runs=list(g.RUNS))
-        drive_all([(eighth, "G1")] + [(campaign, run) for run in g.RUNS[1:]])
-        log(kind="wave-end", wave="eight")
-        repeat = {}
-        for block in (1, 2):
-            alone, concurrent = end_of(campaign, "G1", block), end_of(eighth, "G1", block)
-            repeat[str(block)] = {"alone": alone, "concurrent": concurrent,
-                                  "identical": all(alone[key] == concurrent[key] for key in IDENTITY_KEYS)}
-        write_json(out / "REPEAT-G1.json", {"schema": f"{g.PREFIX}/g1-alone-vs-concurrent", "blocks": repeat})
-        prune_scratch(eighth, out, "item 1 repeat compared; the main campaign keeps G1's block ends")
+        def waves():
+            log(kind="wave", wave="alone", runs=["G1"])
+            drive_all([(campaign, "G1")])
+            log(kind="wave-end", wave="alone")
+            eighth = scratch(campaign, "concurrent-g1", 2, out)
+            log(kind="wave", wave="eight", runs=list(g.RUNS))
+            drive_all([(eighth, "G1")] + [(campaign, run) for run in g.RUNS[1:]])
+            log(kind="wave-end", wave="eight")
+            repeat = {}
+            for block in (1, 2):
+                alone, concurrent = end_of(campaign, "G1", block), end_of(eighth, "G1", block)
+                repeat[str(block)] = {"alone": alone, "concurrent": concurrent,
+                                      "identical": all(alone[key] == concurrent[key] for key in IDENTITY_KEYS)}
+            value = {"schema": f"{g.PREFIX}/g1-alone-vs-concurrent", "blocks": repeat}
+            write_json(out / "REPEAT-G1.json", value)
+            return value
+        repeat = stage(out, "item1", waves)["blocks"]
+        prune_scratch(scratch(campaign, "concurrent-g1", 2, out), out,
+                      "item 1 repeat compared; the main campaign keeps G1's block ends")
+
         # Item 3: block 2 interrupted at its midpoint, rerun from its starting checkpoint.
-        rerun = scratch(campaign, "interrupt-b002", 2, out)
-        seeded(campaign, rerun, "G1", {1: 1})
-        kill3 = {}
-        killer(rerun, "G1", 2, value["interrupt_at_update"], kill3)
-        log(kind="item3-start")
-        drive_all([(rerun, "G1")])
-        item3 = compare(rerun, "G1", 2, end_of(campaign, "G1", 2)) | {"kill": kill3}
-        receipt = {"schema": driver.RECEIPT_SCHEMA, "runtime": campaign.raw["runtime"]["sha256"],
-                   "recipe": g.PREFIX, "host": campaign.host(), "run": "G1", "block": 2, **item3}
-        receipt["byte_identical"] = item3["identical"] and item3["interrupted"] and kill3.get("killed") is True
-        receipt_pin = write_json(out / "REGENERATION-RECEIPT.json", receipt)
-        log(kind="item3", receipt=receipt_pin, byte_identical=receipt["byte_identical"])
-        prune_scratch(rerun, out, "item 3 compared; the regeneration receipt keeps both identities")
+        def item3():
+            rerun = scratch(campaign, "interrupt-b002", 2, out)
+            seeded(campaign, rerun, "G1", {1: 1})
+            kill = {}
+            killer(rerun, "G1", 2, value["interrupt_at_update"], kill)
+            log(kind="item3-start")
+            drive_all([(rerun, "G1")])
+            result = compare(rerun, "G1", 2, end_of(campaign, "G1", 2)) | {"kill": kill}
+            result["pass"] = result["identical"] and result["interrupted"] and kill.get("killed") is True
+            # Ancestry deletion needs the stricter receipt: equal checkpoint file bytes too (DESIGN section 6).
+            # A rerun in another root or attempt writes other output paths into its checkpoint, so this is
+            # recorded, and without it ancestry stays compressed.
+            receipt = {"schema": driver.RECEIPT_SCHEMA, "runtime": campaign.raw["runtime"]["sha256"],
+                       "recipe": g.PREFIX, "host": campaign.host(), "run": "G1", "block": 2, **result}
+            receipt["byte_identical"] = result["pass"] and result["straight"]["file_sha256"] == result["rerun"]["file_sha256"]
+            pinned = write_json(out / "REGENERATION-RECEIPT.json", receipt)
+            log(kind="item3", receipt=pinned, passed=result["pass"], byte_identical=receipt["byte_identical"])
+            return receipt
+        receipt = stage(out, "item3", item3)
+        prune_scratch(scratch(campaign, "interrupt-b002", 2, out), out,
+                      "item 3 compared; the regeneration receipt keeps both identities")
         # The history family: launcher evidence on block 4's schedule (pool {1, 2}) from block 2's end.
-        straight = scratch(campaign, "synthetic-straight", 4, out)
         synthetic = {1: 1, 2: 2, 3: 2}
-        seeded(campaign, straight, "G1", synthetic)
-        config = g.block_config(driver.block_spec(straight, "G1", 4, straight.run_state("G1"), out / "unused-native"))
-        history_config = write_config(config, out / "g1-synthetic-b004-config.json")
-        if "history" not in value["families"]:
-            value["families"]["history"] = trial_plan(campaign, history_config, value["spec"], out, "history")
-            write_json(plan_path, value)
-        evidence["history"] = trials_and_pack(value["families"]["history"], out, log)
-        log(kind="choice", pins=make_choice(campaign, value, evidence))
-        # Item 6: the synthetic history block, straight and interrupted, discarded afterwards.
-        drive_all([(straight, "G1")])
-        broken = scratch(campaign, "synthetic-interrupted", 4, out)
-        seeded(campaign, broken, "G1", synthetic)
-        kill6 = {}
-        killer(broken, "G1", 4, value["interrupt_at_update"], kill6)
-        drive_all([(broken, "G1")])
-        attempt = straight.run_state("G1")["blocks"]["4"]["attempts"][-1]
-        drawn = sorted({item["opponent"].get("id") for update in read(attempt["config"]["path"])["iterations"]
-                        for item in update["episodes"] if item["opponent"]["kind"] == "fixed"})
-        item6 = compare(broken, "G1", 4, end_of(straight, "G1", 4)) | {"kill": kill6, "history_ids_drawn": drawn}
-        item6["pass"] = (item6["identical"] and item6["interrupted"] and kill6.get("killed") is True
-                         and drawn == ["G1-history-b001", "G1-history-b002"])
-        write_json(out / "ITEM6-SYNTHETIC.json", {"schema": f"{g.PREFIX}/synthetic-history-block", **item6})
-        log(kind="item6", passed=item6["pass"], drawn=drawn)
-        for discarded in (straight, broken):
-            prune_scratch(discarded, out, "item 6 synthetic block, discarded after its comparison (DESIGN section 6)")
-        passed = receipt["byte_identical"] and item6["pass"] and all(row["identical"] for row in repeat.values())
+
+        def item6():
+            straight = scratch(campaign, "synthetic-straight", 4, out, synthetic=True)
+            seeded(campaign, straight, "G1", synthetic)
+            config = g.block_config(driver.block_spec(straight, "G1", 4, straight.run_state("G1"),
+                                                      out / "unused-native"))
+            history_config = write_config(config, out / "g1-synthetic-b004-config.json")
+            if "history" not in value["families"]:
+                value["families"]["history"] = trial_plan(campaign, history_config, value["spec"], out, "history")
+                write_json(plan_path, value)
+            evidence["history"] = trials_and_pack(value["families"]["history"], out, log)
+            log(kind="choice", pins=make_choice(campaign, value, evidence))
+            # Item 6: the synthetic history block, straight and interrupted, discarded afterwards.
+            drive_all([(straight, "G1")])
+            broken = scratch(campaign, "synthetic-interrupted", 4, out, synthetic=True)
+            seeded(campaign, broken, "G1", synthetic)
+            kill = {}
+            killer(broken, "G1", 4, value["interrupt_at_update"], kill)
+            drive_all([(broken, "G1")])
+            attempt = straight.run_state("G1")["blocks"]["4"]["attempts"][-1]
+            drawn = sorted({item["opponent"].get("id") for update in read(attempt["config"]["path"])["iterations"]
+                            for item in update["episodes"] if item["opponent"]["kind"] == "fixed"})
+            result = compare(broken, "G1", 4, end_of(straight, "G1", 4)) | {"kill": kill, "history_ids_drawn": drawn}
+            result["pass"] = (result["identical"] and result["interrupted"] and kill.get("killed") is True
+                              and drawn == ["G1-history-b001", "G1-history-b002"])
+            write_json(out / "ITEM6-SYNTHETIC.json", {"schema": f"{g.PREFIX}/synthetic-history-block", **result})
+            log(kind="item6", passed=result["pass"], drawn=drawn)
+            return result
+        item6_result = stage(out, "item6", item6)
+        for name in ("synthetic-straight", "synthetic-interrupted"):
+            prune_scratch(scratch(campaign, name, 4, out, synthetic=True), out,
+                          "item 6 synthetic block, discarded after its comparison (DESIGN section 6)")
+        passed = receipt["pass"] and item6_result["pass"] and all(row["identical"] for row in repeat.values())
         log(kind="done", passed=passed)
+        write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed})
         return 0 if passed else 1
     finally:
         if campaign.lease:
@@ -449,11 +491,15 @@ def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120
     peak_cold = max(row["cold_bytes"] for row in rows)
     per_block_kept = max(row["retained_bytes"] + row["exposure_bytes"] + row["dispatch_bytes"] for row in rows)
     checkpoint = max(row["checkpoint_bytes"] for row in rows)
+    configs = [path.stat().st_size for folder in (campaign.state / "configs", campaign.state / "requests")
+               if folder.exists() for path in folder.glob("*.json")]
+    per_block_config = 2 * max(configs) if configs else 0  # the driver's copy and the launcher's copy
     lineages = len(g.RUNS)
     cold_blocks = campaign.raw["cold_keep_blocks"]
     projection = {"hot_peak_bytes": lineages * peak_native,
                   "cold_peak_bytes": lineages * (cold_blocks + 1) * peak_cold,
                   "records_bytes_study": lineages * g.BLOCKS * per_block_kept,
+                  "config_bytes_study": lineages * g.BLOCKS * per_block_config,
                   "checkpoint_bytes_study": lineages * (len(g.PERMANENT_BLOCKS) + 2) * checkpoint,
                   "qualification_bytes_kept": tree_bytes(root)}
     projection["study_peak_bytes"] = sum(projection.values())
@@ -477,7 +523,7 @@ def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120
     done = [event for event in events if event["kind"] == "done"]
     value_out["checks"] = {"run_completed": bool(done) and done[-1].get("passed") is True,
                            "item2_storage_admits_launch": not value_out["item2"]["launch_refused"],
-                           "item3_regeneration_receipt": value_out["item3"].get("byte_identical") is True,
+                           "item3_interrupted_block_equals_straight": value_out["item3"].get("pass") is True,
                            "item6_synthetic_history_block": value_out["item6"].get("pass") is True,
                            "item1_g1_alone_equals_concurrent": all(row["identical"] for row in
                                                                    value_out["repeat_g1"]["blocks"].values()),

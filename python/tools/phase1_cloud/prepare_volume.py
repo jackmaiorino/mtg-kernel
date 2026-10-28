@@ -230,10 +230,11 @@ class Provider:
         require(key, 'runtime API key missing')
         self.key = key
 
-    def create(self, name, size_gb, data_center_id):
+    def create(self, name, size_gb, data_center_id, cap_gb=VOLUME_SIZE_GB_CAP):
         require(re.fullmatch(VOLUME_NAME_PATTERN, name), 'invalid exact volume name')
+        require(cap_gb in (VOLUME_SIZE_GB_CAP, STUDY_VOLUME_SIZE_GB_CAP), 'unknown volume size cap')
         require(isinstance(size_gb, int) and not isinstance(size_gb, bool)
-                and 1 <= size_gb <= VOLUME_SIZE_GB_CAP, 'volume size out of qualification bound')
+                and 1 <= size_gb <= cap_gb, 'volume size out of qualification bound')
         body = json.dumps({'name': name, 'size': size_gb, 'dataCenterId': data_center_id}).encode()
         request = urllib.request.Request(VOLUMES_URL, data=body, method='POST',
             headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json',
@@ -290,8 +291,12 @@ def execute_create(template, output, funding_snapshot_path, api=None, now=None):
     require(funding_snapshot_path, '--funding-snapshot is required with --execute')
     require_fresh_funding_snapshot(funding_snapshot_path, now)
     body = template['body']
+    # A study volume above the default cap needs the reason its preparation recorded.
+    preparation = Path(output) / 'preparation.json'
+    reason = read(preparation).get('size_reason') if preparation.exists() else None
     api = api or Provider(key)
-    raw = api.create(body['name'], body['size'], body['dataCenterId'])
+    raw = api.create(body['name'], body['size'], body['dataCenterId'],
+                     cap_gb=STUDY_VOLUME_SIZE_GB_CAP if reason else VOLUME_SIZE_GB_CAP)
     sanitized = sanitize_volume(raw)
     result = {'schema': CREATED_SCHEMA, 'created_epoch': now, 'requested': body,
               **sanitized, 'cost_note': cost_note(sanitized['size_gb'])}

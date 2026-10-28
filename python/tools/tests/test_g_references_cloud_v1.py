@@ -129,19 +129,35 @@ class LeaseTests(unittest.TestCase):
 
     def conclude(self, runs):
         cycle = gcloud.Cycle.__new__(gcloud.Cycle)
-        cycle.manifest, cycle.before, cycle.result = {"runs": list(runs)}, {}, {}
+        cycle.manifest, cycle.before, cycle.result = {"runs": list(runs), "mode": "production"}, {}, {}
         cycle.conclude({"runs": runs})
         return cycle.result
 
     def test_a_state_complete_at_an_earlier_target_is_pending(self):
         cycle = gcloud.Cycle.__new__(gcloud.Cycle)
-        cycle.manifest = {"stop_after_block": 494}
+        cycle.manifest = {"stop_after_block": 494, "mode": "production"}
         snapshot = {"runs": {"G1": {"status": "complete", "blocks_done": [1, 2]},
                              "G2": {"status": "complete", "blocks_done": list(range(1, 495))}}}
         with patch.object(cloud.Cycle, "observe", return_value=snapshot):
             observed = cycle.observe()
         self.assertEqual(observed["runs"]["G1"]["status"], "pending")
         self.assertEqual(observed["runs"]["G2"]["status"], "complete")
+
+    def test_a_qualification_lease_is_done_only_when_the_tool_passed(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.manifest, cycle.before, cycle.result = {"stop_after_block": 2, "mode": "qualification",
+                                                      "runs": ["G1"]}, {}, {}
+        snapshot = {"runs": {"G1": {"status": "complete", "blocks_done": [1, 2]}}}
+        for passed, status in ((False, "pending"), (True, "complete")):
+            with patch.object(cloud.Cycle, "observe", return_value={"runs": {k: dict(v) for k, v in snapshot["runs"].items()}}),                     patch.object(gcloud.Cycle, "qualification_passed", return_value=passed):
+                observed = cycle.observe()
+            self.assertEqual(observed["runs"]["G1"]["status"], status)
+            if passed:
+                cycle.conclude(observed)
+                self.assertTrue(cycle.result["complete"])
+            else:
+                with self.assertRaises(ValueError):
+                    cycle.conclude(observed)
 
     def test_statuses(self):
         done = {"status": "complete", "blocks_done": [1, 2]}
