@@ -4039,7 +4039,12 @@ pub(crate) fn graveyard_cast_granted_without_retrace(
                     holder,
                     zone_change_count,
                 )
-                || crate::eternal_legacy_e8a_v1::statics::hogaak_permission(state, object, holder)))
+                || crate::eternal_legacy_e8a_v1::statics::hogaak_permission(
+                    state,
+                    object,
+                    holder,
+                    zone_change_count,
+                )))
 }
 
 /// The graveyard cast grants other than Lurrus of the Dream-Den's.

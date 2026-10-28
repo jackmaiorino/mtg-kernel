@@ -397,12 +397,22 @@ pub(crate) fn special_activation(
 
 // ---- Hogaak, Arisen Necropolis -----------------------------------------------------------
 
-/// Hogaak: "You may cast this card from your graveyard."
-pub(crate) fn hogaak_permission(state: &GameState, object: ObjectId, holder: PlayerId) -> bool {
+/// Hogaak: "You may cast this card from your graveyard." `zone_change_count`
+/// is the graveyard incarnation; the permission still covers that card once
+/// it moved to the stack to be cast.
+pub(crate) fn hogaak_permission(
+    state: &GameState,
+    object: ObjectId,
+    holder: PlayerId,
+    zone_change_count: u32,
+) -> bool {
     state.objects.try_get(object).is_some_and(|live| {
-        live.zone == Zone::Graveyard
+        ((live.zone == Zone::Graveyard && live.zone_change_count == zone_change_count)
+            || (live.zone == Zone::Stack
+                && zone_change_count.checked_add(1) == Some(live.zone_change_count)))
             && live.owner == holder
             && !live.v4.is_token
+            && live.spell_copy_origin.is_none()
             && CARD_DEFS
                 .get(usize::from(live.card_def))
                 .is_some_and(|def| def.name == HOGAAK && def.is_executable())

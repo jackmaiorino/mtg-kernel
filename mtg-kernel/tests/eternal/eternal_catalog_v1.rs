@@ -324,7 +324,8 @@ fn is_companion_action(action: &Value) -> bool {
 /// fails closed while an Escape cast stages its graveyard exile (Sleep of the
 /// Dead, and every nonland card under Underworld Breach) and once an extra
 /// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
-/// Time Vault's ability), so these games never begin either; the engine
+/// Time Vault's ability), and while any permanent has shroud (Sylvan
+/// Safekeeper's ability), so these games never begin either; the engine
 /// paths are covered by the rules tests. Every other action is admitted.
 fn session_can_follow(action: &Value, decision: &Value) -> bool {
     let s = &action["semantic"];
@@ -342,6 +343,9 @@ fn session_can_follow(action: &Value, decision: &Value) -> bool {
         CARD_DEFS[id].name,
         "Emrakul, the Aeons Torn" | "Time Walk" | "Time Vault"
     ) {
+        return false;
+    }
+    if s["action_kind"] == "activate_ability" && CARD_DEFS[id].name == "Sylvan Safekeeper" {
         return false;
     }
     s["action_kind"] != "cast_spell"

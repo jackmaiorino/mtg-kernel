@@ -281,6 +281,34 @@ fn settle_taking(state: &mut GameState) {
     });
 }
 
+/// Settles, answering only the order of a multi-card mill (each card in
+/// turn); any other choice fails.
+fn settle_ordering(state: &mut GameState) {
+    let mut chosen = Vec::new();
+    settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            selected_count,
+            can_finish: false,
+            ..
+        } => {
+            if selected_count == 0 {
+                chosen.clear();
+            }
+            let target = *legal_targets
+                .iter()
+                .find(|target| !chosen.contains(*target))
+                .expect("an unordered card");
+            chosen.push(target);
+            Action::ChooseEffectTarget(target)
+        }
+        Decision::ChooseEffectTargets {
+            can_finish: true, ..
+        } => Action::FinishEffectSelection,
+        other => panic!("unexpected choice: {other:?}"),
+    });
+}
+
 fn priority(state: &mut GameState) -> (Vec<ObjectId>, Vec<(ObjectId, u8)>) {
     match next(state) {
         Decision::CastSpellOrPass {
@@ -605,10 +633,7 @@ fn valgavoths_lair_enters_tapped_and_taps_for_the_chosen_color() {
     assert!(keyword(&state, lair, Keywords::HEXPROOF));
     state.objects.get_mut(lair).tapped = false;
     next(&mut state);
-    act(
-        &mut state,
-        Action::ActivateManaAbilityChoice(lair, ManaColor::B),
-    );
+    act(&mut state, Action::ActivateManaAbility(lair));
     assert_eq!(mana(&state, P0, ManaColor::B), 1);
 }
 
@@ -655,16 +680,13 @@ fn harbinger_of_the_seas_makes_nonbasic_lands_islands() {
     state.active_player = P0;
     state.priority_player = P0;
     next(&mut state);
-    assert!(engine::step(
-        &mut state,
-        Action::ActivateManaAbilityChoice(volcanic, ManaColor::R)
-    )
-    .is_err());
-    act(
-        &mut state,
-        Action::ActivateManaAbilityChoice(volcanic, ManaColor::U),
-    );
+    act(&mut state, Action::ActivateManaAbility(volcanic));
     assert_eq!(mana(&state, P0, ManaColor::U), 1);
+    assert_eq!(
+        mana(&state, P0, ManaColor::R),
+        0,
+        "its own abilities are gone"
+    );
 }
 
 // ---- Spells ------------------------------------------------------------------------
@@ -982,7 +1004,7 @@ fn dark_matter_manipulator_mills_three_and_grows_for_every_seven_cards() {
     let manipulator = put(&mut state, P0, "Dark Matter Manipulator", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 0);
     cast(&mut state, manipulator, &[]);
-    settled(&mut state);
+    settle_ordering(&mut state);
     assert_eq!(state.players[0].graveyard.len(), 3);
     assert_eq!(power_toughness(&state, manipulator), (1, 2));
     for _ in 0..4 {
@@ -1192,10 +1214,10 @@ fn stitchers_supplier_mills_three_on_entering_and_dying() {
     let supplier = put(&mut state, P0, "Stitcher's Supplier", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 0);
     cast(&mut state, supplier, &[]);
-    settled(&mut state);
+    settle_ordering(&mut state);
     assert_eq!(state.players[0].graveyard.len(), 3);
     to_graveyard(&mut state, supplier);
-    settled(&mut state);
+    settle_ordering(&mut state);
     assert_eq!(state.players[0].graveyard.len(), 7);
 }
 
@@ -1378,9 +1400,21 @@ fn lichs_relic_may_pay_two_to_destroy_and_equips_for_two_one() {
     let relic = put(&mut state, P0, "Lich's Relic", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 2);
     cast(&mut state, relic, &[]);
-    settle_picking(&mut state, 1, Some(angler));
-    assert_eq!(zone(&state, angler), Zone::Graveyard);
-    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    let mut seen = Vec::new();
+    settle_with(&mut state, |_, decision| {
+        seen.push(format!("{decision:?}"));
+        match decision {
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(angler)) =>
+            {
+                Action::ChooseTarget(Target::Object(angler))
+            }
+            other => first_answer(other),
+        }
+    });
+    assert_eq!(state.players[0].mana_pool, [0; 6], "{seen:?}");
+    assert_eq!(zone(&state, angler), Zone::Graveyard, "{seen:?}");
     let delver = put(&mut state, P0, "Delver of Secrets", Zone::Battlefield);
     pool(&mut state, P0, &[], 2);
     activate(&mut state, relic, 0, &[Target::Object(delver)]);
