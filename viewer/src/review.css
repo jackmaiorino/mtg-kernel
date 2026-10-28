@@ -1,0 +1,24 @@
+.review-games{display:flex;gap:8px;overflow-x:auto;padding:16px 0 14px}
+.review-games button{flex:0 0 auto;display:flex;flex-direction:column;gap:3px;text-align:left;padding:8px 11px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:10px;color:#b6bfc8;min-width:150px}
+.review-games button.active{border-color:var(--accent);color:#e8ebee}
+.review-games strong{font-size:11px;font-weight:600}
+.review-game-flags{color:#f0bdb2;min-height:12px}
+.review-toggle,.review-turn{display:flex;align-items:center;gap:6px;font-size:10px;color:#a9b5c0}
+.review-turn input{width:44px;padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:#0d1116;color:inherit}
+.review-value{font-size:10px;color:var(--accent)}
+.review-value span{color:var(--muted)}
+.review-flag-button{display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;margin-bottom:12px;border:1px dashed #754840;border-radius:5px;color:#f0bdb2;font-size:11px}
+.review-flag-button:hover{background:#2b1e1b}
+.studio kbd{font-family:inherit;font-size:9px;padding:1px 5px;border:1px solid #3a4652;border-radius:3px;color:#a9b5c0;margin-left:auto}
+.review-flagged{display:flex;align-items:center;gap:8px;padding:9px 12px;margin-bottom:12px;border:1px solid #754840;border-radius:5px;background:#2b1e1b;color:#f0bdb2;font-size:11px}
+.review-flagged span{flex:1}
+.review-flagged button{font-size:10px;color:#d9c3bd;text-decoration:underline}
+.review-flag-panel{display:flex;flex-direction:column;gap:9px;padding:12px;margin-bottom:12px;border:1px solid #754840;border-radius:6px;background:#211816;outline:none}
+.review-categories{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.review-categories button{display:flex;gap:7px;align-items:center;padding:7px 8px;border:1px solid var(--line);border-radius:4px;font-size:10px;text-align:left}
+.review-categories button kbd{margin-left:0}
+.review-categories button.active{border-color:#f0bdb2;background:#3a2522;color:#fff}
+.review-flag-panel textarea{resize:vertical;padding:7px;border:1px solid var(--line);border-radius:4px;background:#0d1116;color:inherit;font:inherit;font-size:11px}
+.review-flag-actions{display:flex;justify-content:flex-end;gap:10px;font-size:11px}
+.review-flag-actions button{display:flex;gap:6px;align-items:center}
+.timeline-mark.flag-mark{background:#f08a7a}

@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LayoutGroup, MotionConfig, motion, useReducedMotion } from 'motion/react';
-import { ArrowDown, ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronRight, CircleHelp, Cpu, ExternalLink, Eye, Focus, GitBranch, Layers, Maximize2, Pause, Play, RotateCcw, Shield, Sparkles, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, BookOpen, Check, Flag as FlagIcon, ChevronDown, ChevronRight, CircleHelp, Cpu, ExternalLink, Eye, Focus, GitBranch, Layers, Maximize2, Pause, Play, RotateCcw, Shield, Sparkles, Upload, X } from 'lucide-react';
 import { type Board, type CardObject, type Frame, type Recording, type Seat, MAX_BYTES, comparePolicyMasses, policyFavorite, isRoutine, objectList, probability, seatIndex } from './recording';
 import { initialPlayback, playbackReducer } from './playback';
 import { SearchReplayView } from './SearchReplay';
 import { UctSearchReplayView } from './UctSearchReplay';
 import { DecisionEvidence } from './DecisionEvidence';
 import { SearchLifecycle } from './SearchLifecycle';
+import { CATEGORIES, type Category, type Flag, type ReviewGame, currentFlags, flagRecord, isReviewable, step, turnIndex } from './review';
 import './style.css';
+import './review.css';
 
 const glossary: Record<string, string> = {
   Policy: 'The model assigns a score to each legal move. Its sampler turns those scores into a distribution and selects one move.',
@@ -89,7 +91,14 @@ function Connections({ board, refs, container }: { board: Board; refs: string[];
 function App() {
   const [recording, setRecording] = useState<Recording | null>(null);
   const [assetBase, setAssetBase] = useState('');
-  const [demoGames,setDemoGames]=useState<{id:string;title?:string}[]>([]);
+  const [demoGames,setDemoGames]=useState<ReviewGame[]>([]);
+  const [review,setReview]=useState<{flags:string}|null>(null);
+  const [flagRecords,setFlagRecords]=useState<Flag[]>([]);
+  const [skipTrivial,setSkipTrivial]=useState(true);
+  const [flagging,setFlagging]=useState<{category:Category|null;note:string}|null>(null);
+  const [turnText,setTurnText]=useState('');
+  const flagPanelRef=useRef<HTMLDivElement>(null);
+  const turnRef=useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState('Loading the studio');
   const [error, setError] = useState('');
   const [playback, dispatch] = useReducer(playbackReducer, initialPlayback);
@@ -139,8 +148,13 @@ function App() {
     fetch(`${import.meta.env.BASE_URL}demo/manifest.json`, { signal: abort.signal }).then(response => {
       if (!response.ok) throw new Error('Demo recording unavailable. Import a viewer recording to explore it locally.');
       return response.json();
-    }).then(async (manifest: { games: { id: string; file: string; sha256: string }[] }) => {
+    }).then(async (manifest: { games: (ReviewGame & { file: string; sha256: string })[]; review?: { flags: string } }) => {
       setDemoGames(manifest.games);
+      if (manifest.review && /^[a-z/]+$/.test(manifest.review.flags)) {
+        const flags = `${import.meta.env.BASE_URL}${manifest.review.flags}`;
+        setReview({ flags });
+        fetch(flags, { signal: abort.signal }).then(r => r.ok ? r.json() : []).then(setFlagRecords).catch(() => {});
+      }
       const game = manifest.games.find(g => g.id === params.get('game')) ?? manifest.games[0];
       if (!game || !/^[-a-zA-Z0-9_/]+\.json$/.test(game.file) || game.file.split('/').includes('..')) throw new Error('Invalid demo manifest');
       const response = await fetch(`${import.meta.env.BASE_URL}demo/${game.file}`, { signal: abort.signal });
@@ -155,7 +169,7 @@ function App() {
   }, []);
   useEffect(() => {
     if (!recording || !frame) return;
-    setSelectedAction(null); setSelectedCard(null); setShowAll(false); setActionPage(0); setZone(null);
+    setSelectedAction(null); setSelectedCard(null); setShowAll(false); setActionPage(0); setZone(null); setFlagging(null);
     if (frame?.search?.algorithm === 'persistent-uct' && !frame.policy) setView('search');
     const oldParams=new URLSearchParams(window.location.hash.slice(1));
     const nextParams=new URLSearchParams({game:recording.id,decision:frame.id});
@@ -172,14 +186,20 @@ function App() {
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setHelp(null); setSelectedCard(null); setZone(null); setShowAbout(false); return; }
-      if (event.target instanceof HTMLElement && (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(event.target.tagName) || event.target.isContentEditable)) return;
-      if (!recording) return;
-      if (event.code === 'Space') { event.preventDefault(); dispatch({ type: 'toggle' }); }
-      if (event.key === 'ArrowRight') { event.preventDefault(); dispatch({ type: 'seek', index: Math.min(recording.frames.length - 1, playback.index + 1) }); }
-      if (event.key === 'ArrowLeft') { event.preventDefault(); dispatch({ type: 'seek', index: Math.max(0, playback.index - 1) }); }
+      if (event.target instanceof HTMLElement && (['INPUT', 'SELECT', 'TEXTAREA', ...(review ? [] : ['BUTTON'])].includes(event.target.tagName) || event.target.isContentEditable)) return;
+      if (!recording || flagging || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.code === 'Space' && !(event.target instanceof HTMLButtonElement)) { event.preventDefault(); dispatch({ type: 'toggle' }); }
+      if (event.key === 'ArrowRight') { event.preventDefault(); dispatch({ type: 'seek', index: review ? step(recording, playback.index, 1, skipTrivial) : Math.min(recording.frames.length - 1, playback.index + 1) }); }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); dispatch({ type: 'seek', index: review ? step(recording, playback.index, -1, skipTrivial) : Math.max(0, playback.index - 1) }); }
+      if (review && event.key.toLowerCase() === 'm' && isReviewable(recording, recording.frames[playback.index])) { event.preventDefault(); setFlagging({ category: null, note: '' }); }
+      if (review && event.key.toLowerCase() === 't') { event.preventDefault(); turnRef.current?.focus(); turnRef.current?.select(); }
+      if (review && event.key.toLowerCase() === 's') { event.preventDefault(); setSkipTrivial(v => !v); }
     };
     window.addEventListener('keydown', listener); return () => window.removeEventListener('keydown', listener);
-  }, [recording, playback.index]);
+  }, [recording, playback.index, review, skipTrivial, flagging]);
+  useEffect(() => { if (flagging) flagPanelRef.current?.focus(); }, [Boolean(flagging)]);
+  // Review opens on the first decision worth reviewing.
+  useEffect(() => { if (recording && review && playback.index === 0 && !isReviewable(recording, recording.frames[0])) dispatch({ type: 'seek', index: step(recording, 0, 1, true) }); }, [recording, review]);
   useEffect(() => {
     if (!modalOpen) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -217,6 +237,26 @@ function App() {
       .sort((a, b) => !(view==='search' ? frame.search : frame.policy) ? Number(b.action.index===frame.executed)-Number(a.action.index===frame.executed)||a.action.index-b.action.index : view === 'search' && frame.search ? (b.stat?.visits ?? 0) - (a.stat?.visits ?? 0) || a.action.index - b.action.index : comparePolicyMasses(a.numerator, b.numerator) || a.action.index - b.action.index);
   }, [frame, view]);
   const mostLikely = frame?.policy ? policyFavorite(frame.policy.masses) : -1;
+  const flags = useMemo(() => currentFlags(flagRecords), [flagRecords]);
+  const currentFlag = recording && frame ? flags.get(`${recording.id}\u0000${frame.id}`) : undefined;
+  const reviewable = useMemo(() => recording ? recording.frames.flatMap((f, i) => isReviewable(recording, f) ? [i] : []) : [], [recording]);
+  const reviewDone = reviewable.filter(i => i <= playback.index).length;
+  const flagCount = (game: string) => [...flags.values()].filter(f => f.game === game).length;
+  async function saveFlag(category: Category, note: string, removed = false) {
+    if (!recording || !review || !frame) return;
+    const record = { ...flagRecord(recording, playback.index, category, note), ...(removed ? { removed: true } : {}) };
+    try {
+      const response = await fetch(review.flags, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(record) });
+      if (!response.ok) throw new Error(await response.text());
+      setFlagRecords(records => [...records, record as Flag]); setFlagging(null);
+    } catch (error) { setError(`Flag not saved: ${error instanceof Error ? error.message : 'server unavailable'}`); }
+  }
+  function jumpToTurn() {
+    if (!recording) return;
+    const index = turnIndex(recording, Number(turnText), skipTrivial);
+    if (index !== null) dispatch({ type: 'seek', index });
+    turnRef.current?.blur();
+  }
   const hasDiagnostic = view === 'policy' ? Boolean(frame?.policy) : Boolean(frame?.search);
   const visitTotal = frame?.search?.stats.reduce((n, s) => n + s.visits, 0) ?? 0;
   const featured = recording ? seatIndex(recording.perspective) : 0;
@@ -240,8 +280,9 @@ function App() {
   return <MotionConfig reducedMotion="user"><div className="studio">
     <header className="topbar" inert={modalOpen}><a className="brand" href={import.meta.env.BASE_URL} aria-label="MTG Kernel Decision Studio"><span className="brand-mark"><GitBranch size={20} /></span><span>MTG <b>KERNEL</b><small>DECISION STUDIO</small></span></a><div className="topbar-center"><span className="status-dot" /> Recorded gameplay</div><nav><button className="quiet-button" onClick={() => setShowAbout(true)}><BookOpen size={15} /><span>About the agent</span></button><button className="quiet-button" onClick={() => fileRef.current?.click()}><Upload size={15} /><span>Import recording</span></button><input ref={fileRef} hidden type="file" accept=".json,application/json" onChange={async event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > MAX_BYTES) { setError('Recording exceeds the 64 MiB viewer limit'); return; } openText(await file.text(), ''); event.target.value = ''; }} /></nav></header>
     <main inert={modalOpen}>
-      {recording&&demoGames.length>1&&<label className="game-selector">Recorded game <select aria-label="Recorded game" value={recording.id} onChange={e=>{const game=e.target.value;if(demoGames.some(g=>g.id===game))window.location.assign(`${import.meta.env.BASE_URL}?game=${encodeURIComponent(game)}#game=${encodeURIComponent(game)}`);}}>{!demoGames.some(g=>g.id===recording.id)&&<option value={recording.id}>Imported recording</option>}{demoGames.map(g=><option key={g.id} value={g.id}>{g.title??g.id.replace(/-/g,' ')}</option>)}</select></label>}
-      <div className="intro"><div><div className="eyebrow"><span className="little-line" /> MACHINE INTELLIGENCE, AT THE TABLE</div><h1>Every move is a decision.</h1><p>Watch the game. Explore the alternatives. See what the agent chose.</p></div><button className="perspective" onClick={() => setHelp('Perspective')}><Eye size={16} /> Agent’s perspective</button></div>
+      {review&&<nav className="review-games" aria-label="Games to review">{demoGames.map(g=><button key={g.id} className={recording?.id===g.id?'active':''} aria-current={recording?.id===g.id} onClick={()=>{if(recording?.id!==g.id)window.location.assign(`${import.meta.env.BASE_URL}?game=${encodeURIComponent(g.id)}#game=${encodeURIComponent(g.id)}`);}}><strong>{g.title??g.id}</strong>{g.subtitle&&<span>{g.subtitle}</span>}<span className="review-game-flags">{flagCount(g.id)?`${flagCount(g.id)} flagged`:''}</span></button>)}</nav>}
+      {!review&&recording&&demoGames.length>1&&<label className="game-selector">Recorded game <select aria-label="Recorded game" value={recording.id} onChange={e=>{const game=e.target.value;if(demoGames.some(g=>g.id===game))window.location.assign(`${import.meta.env.BASE_URL}?game=${encodeURIComponent(game)}#game=${encodeURIComponent(game)}`);}}>{!demoGames.some(g=>g.id===recording.id)&&<option value={recording.id}>Imported recording</option>}{demoGames.map(g=><option key={g.id} value={g.id}>{g.title??g.id.replace(/-/g,' ')}</option>)}</select></label>}
+      {!review&&<div className="intro"><div><div className="eyebrow"><span className="little-line" /> MACHINE INTELLIGENCE, AT THE TABLE</div><h1>Every move is a decision.</h1><p>Watch the game. Explore the alternatives. See what the agent chose.</p></div><button className="perspective" onClick={() => setHelp('Perspective')}><Eye size={16} /> Agent’s perspective</button></div>}
       {status && <div role="status" className="notice">{status}…</div>}
       {error && <div role="alert" className="notice error"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button></div>}
       {!recording && !status && <div className="empty-studio"><GitBranch size={42} /><h2>Your next decision awaits.</h2><p>Import a viewer recording to open the battlefield and decision explorer.</p><button className="primary-button" onClick={() => fileRef.current?.click()}><Upload size={16} /> Import recording</button></div>}
@@ -258,11 +299,18 @@ function App() {
               <Connections board={board} refs={refs} container={boardRef} />
               {playback.after && frame.terminal && <div className="terminal-result"><span className="eyebrow">GAME COMPLETE</span><strong>{frame.terminal.winner ? `${recording.seats[seatIndex(frame.terminal.winner)].name} wins` : 'Recorded terminal'}</strong><span>{frame.terminal.kind}</span></div>}
             </div></LayoutGroup>
-            <div className="transport"><div className="transport-top"><div className="transport-buttons"><button aria-label="First decision" onClick={() => dispatch({ type: 'seek', index: 0 })}><RotateCcw size={16} /></button><button aria-label="Previous decision" disabled={playback.index === 0} onClick={() => dispatch({ type: 'seek', index: playback.index - 1 })}><ArrowLeft size={17} /></button><button className="play-button" aria-label={playback.playing ? 'Pause playback' : 'Play recording'} onClick={() => dispatch({ type: 'toggle' })}>{playback.playing ? <Pause size={18} /> : <Play size={18} />}</button><button aria-label="Next decision" disabled={playback.index === recording.frames.length - 1} onClick={() => dispatch({ type: 'seek', index: playback.index + 1 })}><ArrowRight size={17} /></button></div><span className="decision-count">Decision <b>{playback.index + 1}</b> / {recording.frames.length}</span><label className="speed-select"><span className="sr-only">Playback speed</span><select value={playback.speed} onChange={e => dispatch({ type: 'speed', speed: Number(e.target.value) })}>{[.5,1,2,4].map(s => <option key={s} value={s}>{s}×</option>)}</select></label></div><div className="timeline"><input aria-label="Decision timeline" type="range" min={0} max={recording.frames.length - 1} value={playback.index} onChange={e => dispatch({ type: 'seek', index: Number(e.target.value) })} />{recording.bookmarks.map(b => <button key={b.frame} className="timeline-mark" style={{ left: `${recording.frames.findIndex(f => f.id === b.frame) / Math.max(1, recording.frames.length - 1) * 100}%` }} aria-label={`Jump to ${b.title}`} onClick={() => dispatch({ type: 'seek', index: recording.frames.findIndex(f => f.id === b.frame) })} />)}</div><div className="transport-caption"><span>{playback.after ? 'Observed result' : 'Before the choice'}</span><span>Space to play · ← → to step</span></div></div>
+            <div className="transport"><div className="transport-top"><div className="transport-buttons"><button aria-label="First decision" onClick={() => dispatch({ type: 'seek', index: 0 })}><RotateCcw size={16} /></button><button aria-label="Previous decision" disabled={playback.index === 0} onClick={() => dispatch({ type: 'seek', index: review ? step(recording, playback.index, -1, skipTrivial) : playback.index - 1 })}><ArrowLeft size={17} /></button><button className="play-button" aria-label={playback.playing ? 'Pause playback' : 'Play recording'} onClick={() => dispatch({ type: 'toggle' })}>{playback.playing ? <Pause size={18} /> : <Play size={18} />}</button><button aria-label="Next decision" disabled={playback.index === recording.frames.length - 1} onClick={() => dispatch({ type: 'seek', index: review ? step(recording, playback.index, 1, skipTrivial) : playback.index + 1 })}><ArrowRight size={17} /></button></div><span className="decision-count">Decision <b>{playback.index + 1}</b> / {recording.frames.length}{review && <> · model choice <b>{reviewDone}</b> / {reviewable.length}</>}</span>{review && <><label className="review-toggle"><input type="checkbox" checked={skipTrivial} onChange={e => setSkipTrivial(e.target.checked)} /> Skip trivial</label><label className="review-turn">Turn <input ref={turnRef} aria-label="Jump to turn" inputMode="numeric" value={turnText} placeholder={String(board.turn)} onChange={e => setTurnText(e.target.value.replace(/\D/g, ''))} onKeyDown={e => { if (e.key === 'Enter') jumpToTurn(); if (e.key === 'Escape') turnRef.current?.blur(); }} /></label></>}<label className="speed-select"><span className="sr-only">Playback speed</span><select value={playback.speed} onChange={e => dispatch({ type: 'speed', speed: Number(e.target.value) })}>{[.5,1,2,4].map(s => <option key={s} value={s}>{s}×</option>)}</select></label></div><div className="timeline"><input aria-label="Decision timeline" type="range" min={0} max={recording.frames.length - 1} value={playback.index} onChange={e => dispatch({ type: 'seek', index: Number(e.target.value) })} />{review && [...flags.values()].filter(f => f.game === recording.id).map(f => <button key={`flag-${f.decision}`} className="timeline-mark flag-mark" style={{ left: `${f.index / Math.max(1, recording.frames.length - 1) * 100}%` }} aria-label={`Jump to flagged decision ${f.index + 1}`} onClick={() => dispatch({ type: 'seek', index: f.index })} />)}{recording.bookmarks.map(b => <button key={b.frame} className="timeline-mark" style={{ left: `${recording.frames.findIndex(f => f.id === b.frame) / Math.max(1, recording.frames.length - 1) * 100}%` }} aria-label={`Jump to ${b.title}`} onClick={() => dispatch({ type: 'seek', index: recording.frames.findIndex(f => f.id === b.frame) })} />)}</div><div className="transport-caption"><span>{playback.after ? 'Observed result' : 'Before the choice'}</span><span>{review ? `← → step · M flag · T turn · S ${skipTrivial ? 'show every step' : 'skip trivial'}` : 'Space to play · ← → to step'}</span></div></div>
           </section>
           <aside className="inspector" aria-label="Decision explorer">
             <div className="inspector-header"><span className="inspector-icon"><Focus size={17} /></span><div><span className="eyebrow">INSIDE THE DECISION</span><h2>{frame.decisionSource ? 'A search-guided choice.' : frame.search ? 'Policy meets search.' : 'A choice, made visible.'}</h2></div></div>
-            <div className="decision-context"><span>{recording.seats[seatIndex(frame.key.actor)].name} · Round {board.turn}</span><strong>{cleanLabel(frame.actions[frame.executed].label)}</strong><span className="executed-label"><Check size={12} /> Recorded action</span></div>
+            <div className="decision-context"><span>{recording.seats[seatIndex(frame.key.actor)].name} · Round {board.turn}</span><strong>{cleanLabel(frame.actions[frame.executed].label)}</strong><span className="executed-label"><Check size={12} /> Recorded action</span>{review && frame.policy && <span className="review-value">Model value {frame.policy.value >= 0 ? '+' : ''}{frame.policy.value.toFixed(3)} <span>({frame.policy.valueScale})</span></span>}</div>
+            {review && isReviewable(recording, frame) && !flagging && (currentFlag ? <div className="review-flagged"><FlagIcon size={13} /><span><b>{CATEGORIES.find(c => c.key === currentFlag.category)?.label}</b>{currentFlag.note && ` · ${currentFlag.note}`}</span><button onClick={() => setFlagging({ category: currentFlag.category, note: currentFlag.note })}>Edit</button><button onClick={() => saveFlag(currentFlag.category, currentFlag.note, true)}>Remove</button></div> : <button className="review-flag-button" onClick={() => setFlagging({ category: null, note: '' })}><FlagIcon size={13} /> Flag misplay <kbd>M</kbd></button>)}
+            {review && flagging && <div className="review-flag-panel" ref={flagPanelRef} tabIndex={-1} role="group" aria-label="Flag this decision" onKeyDown={e => {
+              if (e.key === 'Escape') { e.preventDefault(); setFlagging(null); return; }
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (flagging.category) saveFlag(flagging.category, flagging.note.trim()); return; }
+              const n = Number(e.key);
+              if ((e.target as HTMLElement).tagName !== 'TEXTAREA' && n >= 1 && n <= CATEGORIES.length) { e.preventDefault(); setFlagging({ ...flagging, category: CATEGORIES[n - 1].key }); flagPanelRef.current?.querySelector('textarea')?.focus(); }
+            }}><span className="eyebrow">MISPLAY · CATEGORY 1-6, THEN ENTER</span><div className="review-categories">{CATEGORIES.map((c, i) => <button key={c.key} className={flagging.category === c.key ? 'active' : ''} aria-pressed={flagging.category === c.key} onClick={() => { setFlagging({ ...flagging, category: c.key }); flagPanelRef.current?.querySelector('textarea')?.focus(); }}><kbd>{i + 1}</kbd>{c.label}</button>)}</div><textarea aria-label="Note (optional)" placeholder="Optional: what should it have done?" rows={2} value={flagging.note} onChange={e => setFlagging({ ...flagging, note: e.target.value })} /><div className="review-flag-actions"><button onClick={() => setFlagging(null)}>Cancel <kbd>Esc</kbd></button><button className="primary-button" disabled={!flagging.category} onClick={() => flagging.category && saveFlag(flagging.category, flagging.note.trim())}>Save flag <kbd>Enter</kbd></button></div></div>}
             <DecisionEvidence frame={frame} fullTrace={Boolean(recording.frames.find(f=>f.id===frame.decisionSource?.root)?.search?.uctReplay)} onRoot={id=>{setView('search');dispatch({type:'seek',index:recording.frames.findIndex(f=>f.id===id)});}}/>
             <div className="inspector-tabs" role="tablist" aria-label="Decision diagnostics"><button role="tab" aria-selected={view === 'policy'} className={view === 'policy' ? 'active' : ''} onClick={() => setView('policy')}><Cpu size={14} /> Policy</button><button role="tab" aria-selected={view === 'search'} className={view === 'search' ? 'active' : ''} onClick={() => setView('search')}><GitBranch size={14} /> Search {frame.search && <span className="tab-dot" />}</button></div>
             <div className="diagnostic-caption"><span>{hasDiagnostic ? view === 'policy' ? 'Recorded selection probability' : 'Share of search visits' : 'Legal choices · scores unavailable'}</span><Help term={view === 'policy' ? 'Policy' : 'Search'} onHelp={setHelp} /></div>
@@ -281,7 +329,7 @@ function App() {
         {frame.search?.replay && <SearchReplayView key={`${recording.identity.sourceSha256}:${frame.id}`} frame={frame} recording={recording} assetBase={assetBase} onInteract={()=>{if(playback.playing||playback.after)dispatch({type:'seek',index:playback.index});}}/>}
         <SearchLifecycle recording={recording} frame={frame} after={playback.after} onDecision={id=>dispatch({type:'seek',index:recording.frames.findIndex(f=>f.id===id)})}/>
         {(()=>{const source=frame.search?.uctReplay?frame:recording.frames.find(f=>f.id===frame.decisionSource?.root&&f.search?.uctReplay);return source&&<UctSearchReplayView key={`${recording.identity.sourceSha256}:${source.id}:${frame.id}`} frame={source} actualFrame={frame} recording={recording} assetBase={assetBase} onInteract={()=>{if(playback.playing||playback.after)dispatch({type:'seek',index:playback.index});}}/>;})()}
-        <section className="guided-section" aria-label="Guided moments"><div className="section-heading"><div><span className="eyebrow">LOOK A LITTLE CLOSER</span><h2>Three moments worth exploring.</h2></div><span className="authored-label"><BookOpen size={13} /> Authored commentary</span></div><div className="moment-grid">{recording.bookmarks.map((b, i) => <button key={b.frame} className={`moment ${b.frame === frame.id ? 'moment-active' : ''}`} onClick={() => dispatch({ type: 'seek', index: recording.frames.findIndex(f => f.id === b.frame) })}><span className="moment-number">0{i + 1}</span><span className="moment-content"><strong>{b.title}</strong><span>{b.situation}</span></span><ChevronRight size={17} /></button>)}</div>{bookmark && <div className="commentary" aria-live="polite"><span><b>Alternatives</b>{bookmark.alternatives}</span><span><b>Observed consequence</b>{bookmark.consequence}</span></div>}</section>
+        {recording.bookmarks.length > 0 && <section className="guided-section" aria-label="Guided moments"><div className="section-heading"><div><span className="eyebrow">LOOK A LITTLE CLOSER</span><h2>Three moments worth exploring.</h2></div><span className="authored-label"><BookOpen size={13} /> Authored commentary</span></div><div className="moment-grid">{recording.bookmarks.map((b, i) => <button key={b.frame} className={`moment ${b.frame === frame.id ? 'moment-active' : ''}`} onClick={() => dispatch({ type: 'seek', index: recording.frames.findIndex(f => f.id === b.frame) })}><span className="moment-number">0{i + 1}</span><span className="moment-content"><strong>{b.title}</strong><span>{b.situation}</span></span><ChevronRight size={17} /></button>)}</div>{bookmark && <div className="commentary" aria-live="polite"><span><b>Alternatives</b>{bookmark.alternatives}</span><span><b>Observed consequence</b>{bookmark.consequence}</span></div>}</section>}
         <details className="event-log"><summary>Every recorded decision <span>{recording.frames.length} decisions</span><ChevronDown size={14} /></summary><div className="log-content">{(() => { const result = []; let i = 0; while (i < recording.frames.length) { const start = i; if (isRoutine(recording.frames[i])) { while (i < recording.frames.length && isRoutine(recording.frames[i])) i++; result.push(<details key={start}><summary>{i - start} routine priority passes</summary>{recording.frames.slice(start, i).map((f, offset) => <button key={f.id} onClick={() => dispatch({ type: 'seek', index: start + offset })}>#{start + offset + 1} · {cleanLabel(f.actions[f.executed].label)}</button>)}</details>); } else { const f = recording.frames[i]; result.push(<button key={f.id} onClick={() => dispatch({ type: 'seek', index: start })}>#{i + 1} · Round {f.board.turn} · {cleanLabel(f.actions[f.executed].label)}</button>); i++; } } return result; })()}</div></details>
       </>}
     </main>
