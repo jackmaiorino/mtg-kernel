@@ -74,6 +74,18 @@ pub struct Counters {
     pub soul: i32,
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub incubation: i32,
+    /// Nine-Lives Familiar's revival counter. The absent/zero value preserves
+    /// the historical snapshot and hash sequence exactly.
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub revival: i32,
+    /// Banner of Kinship's distinct counter kind. Counter storage alone grants
+    /// no consumer admission; zero retains every predecessor encoding.
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub fellowship: i32,
+    /// Tinybones' distinct stash counters. Absent/zero retains old bytes and
+    /// hashes; predecessor public counter rosters must explicitly refuse them.
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub stash: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -98,6 +110,9 @@ impl Counters {
             || self.bait != 0
             || self.soul != 0
             || self.incubation != 0
+            || self.revival != 0
+            || self.fellowship != 0
+            || self.stash != 0
     }
 }
 
@@ -141,6 +156,18 @@ impl std::hash::Hash for Counters {
         if self.soul != 0 {
             b"soul_counters_v1".hash(state);
             self.soul.hash(state);
+        }
+        if self.revival != 0 {
+            b"revival_counters_v1".hash(state);
+            self.revival.hash(state);
+        }
+        if self.fellowship != 0 {
+            b"fellowship_counters_v1".hash(state);
+            self.fellowship.hash(state);
+        }
+        if self.stash != 0 {
+            b"stash_counters_v1".hash(state);
+            self.stash.hash(state);
         }
     }
 }
@@ -188,11 +215,25 @@ pub struct GoadStateV4 {
 /// than assigning zero a meaning that would change when mechanics arrive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectStateV4 {
+    /// Copiable Electroduplicate exceptions on this incarnation. Each instance
+    /// adds haste and its own beginning-of-each-end-step sacrifice ability.
+    #[serde(default, skip_serializing_if = "u32_is_zero")]
+    pub copied_end_step_sacrifices_v1: u32,
+    /// Copiable layer-1 Nightmare addition. Not a continuous subtype grant.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub copied_nightmare_v1: bool,
+    /// Native Banner choice for this exact incarnation, committed before entry
+    /// observers. Zone-change reset erases it; absent snapshots stay unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kinship_type_v1: Option<crate::creature_types_v60::CreatureTypeV60>,
     pub is_token: bool,
     pub face_index: u8,
     pub effective_color_mask: u8,
     /// Sorted, unique `card_def::Subtype::stable_id()` values.
     pub effective_subtype_ids: Vec<u16>,
+    /// Incarnation-local additive layer-4 effect with its creation timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_subtype_v1: Option<(crate::card_def::Subtype, u64)>,
     pub chosen_color: Option<ManaColor>,
     pub entered_battlefield_turn: Option<u32>,
     /// Sorted by `(ability_kind, ability_index)`; absent abilities have zero uses.
@@ -325,6 +366,10 @@ impl Hash for ObjectStateV4 {
         self.face_index.hash(state);
         self.effective_color_mask.hash(state);
         self.effective_subtype_ids.hash(state);
+        if let Some(addition) = self.added_subtype_v1 {
+            "added-subtype/v1".hash(state);
+            addition.hash(state);
+        }
         self.chosen_color.hash(state);
         self.entered_battlefield_turn.hash(state);
         self.ability_uses_this_turn.hash(state);
@@ -396,6 +441,18 @@ impl Hash for ObjectStateV4 {
             "face_down/v1".hash(state);
             face_down.hash(state);
         }
+        if let Some(chosen) = self.kinship_type_v1 {
+            "kinship-type/v1".hash(state);
+            chosen.hash(state);
+        }
+        if self.copied_end_step_sacrifices_v1 != 0 {
+            "copied-end-step-sacrifices/v1".hash(state);
+            self.copied_end_step_sacrifices_v1.hash(state);
+        }
+        if self.copied_nightmare_v1 {
+            "copied-nightmare/v1".hash(state);
+            self.copied_nightmare_v1.hash(state);
+        }
     }
 }
 
@@ -417,10 +474,14 @@ impl ObjectStateV4 {
         subtype_ids.sort_unstable();
         subtype_ids.dedup();
         ObjectStateV4 {
+            copied_end_step_sacrifices_v1: 0,
+            copied_nightmare_v1: false,
+            kinship_type_v1: None,
             is_token: def.is_token,
             face_index: 0,
             effective_color_mask: crate::card_def::mana_colors_mask(def.colors),
             effective_subtype_ids: subtype_ids,
+            added_subtype_v1: None,
             chosen_color: None,
             entered_battlefield_turn: None,
             ability_uses_this_turn: Vec::new(),
@@ -883,6 +944,26 @@ pub enum SpellCastRouteV4 {
         holder: PlayerId,
         permission_zone_change_count: u32,
     },
+    GreatwurmGraveyardV1 {
+        holder: PlayerId,
+        graveyard_generation: u32,
+    },
+    SphinxLoreFlashbackV1 {
+        installation: u64,
+        holder: PlayerId,
+        graveyard_generation: u32,
+    },
+    OmniscienceHandV1 {
+        options_history_index: u64,
+        holder: PlayerId,
+        hand_generation: u32,
+    },
+    MuldrothaGraveyardV1 {
+        options_history_index: u64,
+    },
+    TinybonesExileV72 {
+        play_history_index: u64,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -1073,6 +1154,12 @@ pub struct PaidCostRefV4 {
 /// that exact battlefield incarnation leaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FinalizedCastBindingV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omniscience_cast_v1: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sphinx_lore_cast_v1: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greatwurm_payment_v1: Option<u64>,
     pub x_value: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen_creature_cost: Option<PaidCostRefV4>,
@@ -1086,6 +1173,10 @@ impl std::hash::Hash for FinalizedCastBindingV1 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.x_value.hash(state);
         self.chosen_creature_cost.hash(state);
+        if let Some(index) = self.greatwurm_payment_v1 {
+            "greatwurm_payment/v1".hash(state);
+            index.hash(state);
+        }
         if let Some(choice) = self.mandatory_additional_cost {
             "mandatory_additional_cost/v1".hash(state);
             choice.hash(state);
@@ -1093,6 +1184,14 @@ impl std::hash::Hash for FinalizedCastBindingV1 {
         if let Some(kicked) = self.variable_targeting_kicked {
             "variable_targeting_kicked/v1".hash(state);
             kicked.hash(state);
+        }
+        if let Some(index) = self.omniscience_cast_v1 {
+            "omniscience_cast/v1".hash(state);
+            index.hash(state);
+        }
+        if let Some(index) = self.sphinx_lore_cast_v1 {
+            "sphinx_lore_cast/v1".hash(state);
+            index.hash(state);
         }
     }
 }
@@ -1261,6 +1360,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     filter,
                     crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
                         | crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1
+                        | crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1
                 ) || filter.slot_kind(target_index) == Some(None)
             }
         };
@@ -1358,6 +1458,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureToughnessAtLeastFour
                     | TargetSpec::CreatureEnchantmentOrPlaneswalker
                     | TargetSpec::AnotherControlledCreature
+                    | TargetSpec::AnotherControlledNonlandPermanent
                     | TargetSpec::ControlledCreatureWithSubtype(_)
                     | TargetSpec::AttackingCreatureWithSubtype(_)
                     | TargetSpec::ControlledPermanentWithAnySubtype(_)
@@ -1386,6 +1487,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureCardInOwnGraveyard
                     | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+                    | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower
                     | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::PermanentCardInOwnGraveyard
                     | TargetSpec::CardInOwnGraveyardWithAnySubtype(_),
@@ -1549,6 +1651,8 @@ pub struct StackStateV4 {
     pub vampire_gourmand_started_v1: VampireGourmandStartedV1,
     #[serde(default, skip_serializing_if = "GorehornPublishedV1::is_empty")]
     pub gorehorn_published_v1: GorehornPublishedV1,
+    #[serde(default, skip_serializing_if = "DrakusethPublishedV76::is_empty")]
+    pub drakuseth_published_v76: DrakusethPublishedV76,
     #[serde(default, skip_serializing_if = "CrystalPreventionStartedV1::is_empty")]
     pub crystal_prevention_started_v1: CrystalPreventionStartedV1,
     #[serde(default, skip_serializing_if = "FixedDamagePaidV3::is_empty")]
@@ -1624,6 +1728,23 @@ impl Hash for GorehornPublishedV1 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if let Some(index) = self.0 {
             "gorehorn-publication/v1".hash(state);
+            index.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DrakusethPublishedV76(pub Option<u32>);
+impl DrakusethPublishedV76 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for DrakusethPublishedV76 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "drakuseth-publication/v76".hash(state);
             index.hash(state);
         }
     }
@@ -2229,6 +2350,31 @@ pub struct GameState {
     /// bytes and hashes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eternal_v1: Option<crate::eternal_cards_v1::EternalStateV1>,
+    /// Resolved Nine-Lives death triggers waiting for any future beginning of
+    /// an end step. Absent until the first such schedule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nine_lives_delayed_v1: Option<Vec<NineLivesDelayedReturnV1>>,
+    /// Native opening-hand action after London keeps, before turn one.
+    /// Historical games and hands without this printing retain absence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NineLivesDelayedReturnV1 {
+    pub source: AbilitySourceContractV4,
+    pub graveyard: ObjectLinkV4,
+    pub revival_counters: i32,
+    pub created_after_history_len: u64,
+}
+impl Hash for NineLivesDelayedReturnV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.graveyard.hash(state);
+        self.revival_counters.hash(state);
+        self.created_after_history_len.hash(state);
+    }
 }
 
 /// The round counter and active seat together identify the declaring turn.
@@ -2468,6 +2614,14 @@ impl Hash for GameState {
             "eternal-v1".hash(state);
             eternal.hash(state);
         }
+        if let Some(delayed) = &self.nine_lives_delayed_v1 {
+            "nine-lives-delayed/v1".hash(state);
+            delayed.hash(state);
+        }
+        if let Some(opening) = &self.leyline_opening_v1 {
+            "leyline-opening/v1".hash(state);
+            opening.hash(state);
+        }
     }
 }
 
@@ -2678,6 +2832,8 @@ impl GameState {
             wildwood_waiting_v1: None,
             raid_waiting_v1: None,
             eternal_v1: None,
+            nine_lives_delayed_v1: None,
+            leyline_opening_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
@@ -2926,6 +3082,9 @@ impl GameState {
             || target_live.zone != Zone::Battlefield
             || target_live.zone_change_count != target_zone_change_count
         {
+            return Err(source);
+        }
+        if crate::progenitus_v1::attachment_forbidden(self, source, target) {
             return Err(source);
         }
         let host_link = ObjectLinkV4 {
@@ -4893,6 +5052,9 @@ mod tests {
         let spell = state.players[0].library[0];
         let source_contract = StackSourceContractV4::capture(&state, spell, CastMethodV4::Normal);
         state.engine.pending_cast = Some(crate::engine::PendingCast {
+            omniscience_v1: None,
+            greatwurm_v1: None,
+            sphinx_lore_v1: None,
             spell,
             source_contract,
             controller: PlayerId::P0,
@@ -4910,6 +5072,7 @@ mod tests {
             optional_additional_cost_paid: Some(false),
             optional_additional_cost_chosen: Vec::new(),
             optional_additional_cost_selection_finished: false,
+            wide_x_value_v59: None,
             x_value: Some(0),
             chosen_creature_cost_zone: None,
             chosen_creature_cost: None,
@@ -4975,6 +5138,49 @@ mod soul_counter_storage_v1_tests {
         assert_eq!(serde_json::to_string(&counters).unwrap(), original);
         assert_eq!(bytes(counters), vec![0; 10]);
         assert!(!counters.any());
+    }
+    #[test]
+    fn absent_revival_preserves_counter_json_and_hash_while_positive_value_roundtrips() {
+        let legacy = r#"{"plus1_plus1":0,"minus1_minus1":0,"minus0_minus1":0,"stun":0,"lore":0}"#;
+        let empty: Counters = serde_json::from_str(legacy).unwrap();
+        assert_eq!(serde_json::to_string(&empty).unwrap(), legacy);
+        assert_eq!(bytes(empty), vec![0; 10]);
+        let revival = Counters {
+            revival: 8,
+            ..Default::default()
+        };
+        assert!(revival.any());
+        assert_eq!(serde_json::to_value(revival).unwrap()["revival"], 8);
+        assert_ne!(bytes(revival), bytes(empty));
+        assert_eq!(
+            serde_json::from_slice::<Counters>(&serde_json::to_vec(&revival).unwrap()).unwrap(),
+            revival
+        );
+    }
+    #[test]
+    fn sparse_stash_preserves_absent_counter_bytes_and_distinct_restorable_count() {
+        let legacy = r#"{"plus1_plus1":0,"minus1_minus1":0,"minus0_minus1":0,"stun":0,"lore":0}"#;
+        let empty: Counters = serde_json::from_str(legacy).unwrap();
+        assert_eq!(serde_json::to_string(&empty).unwrap(), legacy);
+        assert_eq!(bytes(empty), vec![0; 10]);
+        assert_eq!(empty.stash, 0);
+        let stash = Counters {
+            stash: i32::MAX,
+            ..Default::default()
+        };
+        assert!(stash.any());
+        assert_ne!(bytes(stash), bytes(empty));
+        assert_ne!(
+            bytes(stash),
+            bytes(Counters {
+                stash: i32::MAX - 1,
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            serde_json::from_slice::<Counters>(&serde_json::to_vec(&stash).unwrap()).unwrap(),
+            stash
+        );
     }
     #[test]
     fn soul_is_a_distinct_restorable_hashed_counter_and_zone_change_clears_it() {
@@ -5066,4 +5272,8 @@ mod soul_counter_storage_v1_tests {
         assert!(state.soul_count_for_ability_source_v1(next).is_err());
         assert_eq!(state, before);
     }
+}
+
+fn u32_is_zero(value: &u32) -> bool {
+    *value == 0
 }

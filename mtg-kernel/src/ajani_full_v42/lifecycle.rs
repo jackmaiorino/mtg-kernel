@@ -66,6 +66,14 @@ pub enum JournalV42 {
         active: PlayerId,
         boosts: Vec<UntilEndOfTurnEffect>,
     },
+    /// Cleanup reached without an EndStep, authenticated by the native
+    /// ending-turn transaction. Old CleanupInput bytes stay unchanged.
+    EndTurnCleanupInput {
+        index: u64,
+        epoch: u64,
+        boundary: crate::engine::time_stop_v1::CleanupBoundaryV1,
+        boosts: Vec<UntilEndOfTurnEffect>,
+    },
 }
 fn rows(state: &GameState) -> impl DoubleEndedIterator<Item = (u64, &JournalV42)> {
     state
@@ -98,7 +106,8 @@ fn index(j: &JournalV42) -> u64 {
         | JournalV42::Operation { index, .. }
         | JournalV42::Closed { index, .. }
         | JournalV42::Cleanup { index, .. }
-        | JournalV42::CleanupInput { index, .. } => *index,
+        | JournalV42::CleanupInput { index, .. }
+        | JournalV42::EndTurnCleanupInput { index, .. } => *index,
     }
 }
 fn append(state: &mut GameState, j: JournalV42) {
@@ -566,23 +575,38 @@ pub(crate) fn cleanup(state: &mut GameState) -> Result<(), String> {
         return Err("Ajani expiry is not an actual Cleanup entry".into());
     }
     let epoch = epoch(state)?;
-    let beginning = state.engine.event_history.scan_for_v1(&[EventKindV1::BeginningEndStep]).iter().enumerate().rev().find_map(|(i, event)|
-        matches!(event, CommittedEvent::BeginningEndStep { active_player, .. } if *active_player == state.active_player)
-            .then_some(i as u64)).ok_or("Ajani Cleanup lost its actual End occurrence")?;
-    if beginning <= epoch {
-        return Err("Ajani Cleanup belongs to another actual turn".into());
+    if let Some(boundary) = crate::engine::time_stop_v1::cleanup_boundary(state)? {
+        if boundary.entry <= epoch {
+            return Err("Ajani ending-turn Cleanup belongs to another actual turn".into());
+        }
+        append(
+            state,
+            JournalV42::EndTurnCleanupInput {
+                index: input,
+                epoch,
+                boundary,
+                boosts: boosts.clone(),
+            },
+        );
+    } else {
+        let beginning = state.engine.event_history.scan_for_v1(&[EventKindV1::BeginningEndStep]).iter().enumerate().rev().find_map(|(i, event)|
+            matches!(event, CommittedEvent::BeginningEndStep { active_player, .. } if *active_player == state.active_player)
+                .then_some(i as u64)).ok_or("Ajani Cleanup lost its actual End occurrence")?;
+        if beginning <= epoch {
+            return Err("Ajani Cleanup belongs to another actual turn".into());
+        }
+        append(
+            state,
+            JournalV42::CleanupInput {
+                index: input,
+                epoch,
+                beginning,
+                turn: state.turn_key_v1(),
+                active: state.active_player,
+                boosts: boosts.clone(),
+            },
+        );
     }
-    append(
-        state,
-        JournalV42::CleanupInput {
-            index: input,
-            epoch,
-            beginning,
-            turn: state.turn_key_v1(),
-            active: state.active_player,
-            boosts: boosts.clone(),
-        },
-    );
     append(
         state,
         JournalV42::Cleanup {
@@ -660,8 +684,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let removed = rows(state)
                     .filter(|(_, j)| matches!(j,JournalV42::RemovalInput{paid,..} if *paid==i))
                     .collect::<Vec<_>>();
-                if !((removed.is_empty() && live == [item.as_ref()])
-                    || (removed.len() == 1 && live.is_empty()))
+                let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+                if !((removed.is_empty() && live == [item.as_ref()] && !disposed)
+                    || (removed.len() == 1 && live.is_empty() && !disposed)
+                    || (removed.is_empty() && live.is_empty() && disposed))
                 {
                     return Err("Ajani mandatory paid owner erased/replayed".into());
                 }
@@ -803,9 +829,43 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
             JournalV42::Cleanup { input, boosts, .. } => {
                 if input.checked_add(1) != Some(i)
-                    || !matches!(at(state, *input)?, JournalV42::CleanupInput { boosts: original, .. } if original == boosts)
+                    || !matches!(at(state, *input)?, JournalV42::CleanupInput { boosts: original, .. } | JournalV42::EndTurnCleanupInput { boosts: original, .. } if original == boosts)
                 {
                     return Err("Ajani expiry lost its actual Cleanup input".into());
+                }
+            }
+            JournalV42::EndTurnCleanupInput {
+                epoch,
+                boundary,
+                boosts,
+                ..
+            } => {
+                crate::engine::time_stop_v1::validate_cleanup_boundary(state, boundary, i)?;
+                let prior_epoch = rows(state)
+                    .rev()
+                    .find(|(at, j)| *at < i && matches!(j, JournalV42::Turn { .. }))
+                    .map(|(at, _)| at);
+                if prior_epoch != Some(*epoch)
+                    || !matches!(at(state, *epoch)?, JournalV42::Turn { turn, active, .. }
+                        if *turn == boundary.turn && *active == boundary.active)
+                    || boundary.entry <= *epoch
+                    || boundary.entry >= i
+                    || boosts.is_empty()
+                    || *boosts != eligible_boosts_before(state, i)
+                    || boosts
+                        .iter()
+                        .enumerate()
+                        .any(|(n, boost)| boosts[..n].contains(boost))
+                    || rows(state).any(|(at, j)| {
+                        matches!(j, JournalV42::Operation { boost: Some(boost), .. }
+                        if boosts.contains(boost) && at >= boundary.entry && at < i)
+                    })
+                    || !matches!(at(state, i.checked_add(1).ok_or("Ajani Cleanup overflow")?)?,
+                        JournalV42::Cleanup { input, boosts: expired, .. } if *input == i && expired == boosts)
+                {
+                    return Err(
+                        "Ajani ending-turn Cleanup changed its actual entry/complete roster".into(),
+                    );
                 }
             }
             JournalV42::CleanupInput {

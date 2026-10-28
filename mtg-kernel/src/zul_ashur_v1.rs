@@ -561,9 +561,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         _ => None,
                     })
                     .collect();
-                match (live.as_slice(), removed.as_slice()) {
-                    ([item], []) if **item == *p.item => {}
-                    ([], [(removed_at, r)]) if *removed_at > at && r.item == p.item => {}
+                let disposed = crate::engine::time_stop_v1::disposed(state, &p.item)?;
+                match (live.as_slice(), removed.as_slice(), disposed) {
+                    ([item], [], false) if **item == *p.item => {}
+                    ([], [], true) => {}
+                    ([], [(removed_at, r)], false) if *removed_at > at && r.item == p.item => {}
                     _ => return Err("Zul mandatory original owner missing or replayed".into()),
                 }
             }

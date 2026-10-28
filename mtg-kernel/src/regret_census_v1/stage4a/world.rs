@@ -12,7 +12,9 @@
 //!    decks consistent with the opponent's publicly observed card
 //!    multiplicities. The true opponent deck is never read. Own registration
 //!    is known, so the actor's own unknown cards keep the true remaining
-//!    multiset (step 1).
+//!    multiset (step 1). A hidden object whose definition a live stack item
+//!    freezes in a public source contract (`contract_pinned`) keeps its
+//!    definition and counts as observed (mtg-kernel#380).
 //!
 //! The V4 sampler then rebuilds the live candidates and fails the sample if
 //! anything the actor observes changed. Every failure is a declared
@@ -190,6 +192,37 @@ fn prior_seed(seed: u64) -> u64 {
     u64::from_le_bytes(bytes[..8].try_into().expect("eight digest bytes"))
 }
 
+/// Objects whose definition a live stack item, or the pending effect's
+/// resolving item, freezes in a public source contract. The observation
+/// encoder checks each one's live `card_def` against that contract
+/// (`engine.rs` `validate_ability_source_contract` and
+/// `validate_historical_ability_source_contract`, `rl.rs` `stack_source_ref`),
+/// so the prior must not relabel them: their identity is public even when
+/// the object is back in a hidden zone (Lembas shuffling itself into its
+/// owner's library while its ability waits, mtg-kernel#380).
+fn contract_pinned(state: &GameState) -> HashSet<ObjectId> {
+    let mut pinned = HashSet::new();
+    let items = state.stack.iter().chain(
+        state
+            .engine
+            .pending_effect
+            .as_ref()
+            .map(|pending| &pending.resolving_item),
+    );
+    for item in items {
+        let v4 = &item.v4;
+        pinned.extend(v4.ability_source_contract.as_ref().map(|c| c.source));
+        pinned.extend(v4.source_contract.as_ref().map(|c| c.source));
+        pinned.extend(v4.madness_source_contract.as_ref().map(|c| c.source));
+        pinned.extend(v4.granted_by.as_ref().map(|c| c.source));
+        if let Some(grant) = &v4.cauldron_grant.0 {
+            pinned.insert(grant.host.source);
+            pinned.insert(grant.donor.source);
+        }
+    }
+    pinned
+}
+
 /// The opponent's unknown slots from `actor`'s view, in the V4 sampler's
 /// canonical order (hand indices, then library indices).
 fn unknown_slots(state: &GameState, actor: PlayerId, owner: PlayerId) -> Vec<ObjectId> {
@@ -253,7 +286,14 @@ pub(crate) fn apply_deck_prior(
     seed: u64,
 ) -> Result<usize, String> {
     let opp = actor.opponent();
-    let slots = unknown_slots(state, actor, opp);
+    // Contract-pinned objects keep their definition and count as observed.
+    // With none among the unknown slots this is the original prior, draw for
+    // draw; otherwise the remainder (and so every slot's draw) changes.
+    let pinned = contract_pinned(state);
+    let slots: Vec<ObjectId> = unknown_slots(state, actor, opp)
+        .into_iter()
+        .filter(|id| !pinned.contains(id))
+        .collect();
     let unknown: HashSet<ObjectId> = slots.iter().copied().collect();
     if unknown.len() != slots.len() {
         return Err("duplicate unknown slot".into());
@@ -338,6 +378,9 @@ pub(crate) fn sample_recorded(
         prior_deck: chosen.ok_or("deck prior hook did not run")?,
     })
 }
+
+#[cfg(test)]
+mod lembas_tests;
 
 #[cfg(test)]
 mod tests {

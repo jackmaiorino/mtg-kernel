@@ -101,7 +101,7 @@ pub(crate) fn source_at(
                     .objects
                     .try_get(died.object)
                     .is_none_or(|o| o.v4.is_token)
-                || !matches!(state.engine.event_history[..at].iter().rev().find(|e|!matches!(e,CommittedEvent::ControlledCreatureDeathCaptureV1{..})),
+                || !matches!(Some(crate::creature_death_capture_v1::validated_capture_death(state, at)?),
                     Some(CommittedEvent::ZoneChange{object,from:Zone::Battlefield,to:Zone::Graveyard,controller_before:actual})
                     if *object==died.object && actual==controller_before)
             {
@@ -653,6 +653,13 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             if state.engine.pending_effect.as_ref() != Some(expected) {
                 return Err("Hunter pending continuation changed or disappeared".into());
             }
+        }
+        let disposed = crate::engine::time_stop_v1::disposed(state, original)?;
+        if disposed {
+            if !live.is_empty() || !removed.is_empty() || owner.is_some() {
+                return Err("Hunter disposed publication has another owner/removal".into());
+            }
+            continue;
         }
         let authentic = match (live.as_slice(), owner.filter(|o| o.publication == *pub_at)) {
             ([live], None) => unstarted(live) == **original,

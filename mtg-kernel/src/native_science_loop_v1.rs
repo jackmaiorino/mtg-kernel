@@ -654,7 +654,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnFakePartialBatch
         | NativeRunCatalogProfileV1::FdnRavenousPartialBatch
         | NativeRunCatalogProfileV1::FdnDualFullBatch
-        | NativeRunCatalogProfileV1::FdnSevenFullBatch => {
+        | NativeRunCatalogProfileV1::FdnSevenFullBatch
+        | NativeRunCatalogProfileV1::FdnFullPoolProvisional => {
             if !crate::native_training_store_run_v2::current_profile_matches_live_build_identity_v1(
                 run.record().environment(),
             ) {

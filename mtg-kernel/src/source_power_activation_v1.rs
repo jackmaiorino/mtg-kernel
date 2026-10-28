@@ -53,10 +53,17 @@ pub(crate) fn capture_damage_source(
 }
 
 pub(crate) fn before_departure(state: &mut GameState, source: ObjectId) {
+    before_departure_with_pt(state, source, None);
+}
+pub(crate) fn before_departure_with_pt(
+    state: &mut GameState,
+    source: ObjectId,
+    frozen: Option<(i32, i32)>,
+) {
     if !needs_stats(state, source) {
         return;
     }
-    crate::creature_stats_lki_v1::record_creature_stats_lki(state, source);
+    crate::creature_stats_lki_v1::record_creature_stats_lki_with_pt(state, source, frozen);
     let damage_source = capture_damage_source(state, source);
     state
         .engine
@@ -328,9 +335,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|candidate| candidate.v4.stack_item_id == id)
             .collect::<Vec<_>>();
-        match (finishes, live.as_slice()) {
-            (0, [candidate]) => validate_item(state, candidate)?,
-            (1, []) => {}
+        let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+        match (finishes, live.as_slice(), disposed) {
+            (0, [candidate], false) => validate_item(state, candidate)?,
+            (1, [], false) => {}
+            (0, [], true) => {}
             _ => return Err("source-power activation ownership was erased or replayed".into()),
         }
     }
@@ -348,6 +357,12 @@ pub(crate) fn damage_source(
     source: ObjectId,
     id: StackItemId,
 ) -> Result<HistoricalDamageSourceV1, String> {
+    if crate::drakuseth_damage_source_v76::has_publication(state, id) {
+        return crate::drakuseth_damage_source_v76::damage_source(state, source, id);
+    }
+    if crate::effect::chandra_flameshaper_v1::has_damage_publication(state, id) {
+        return crate::effect::chandra_flameshaper_v1::damage_source(state, source, id);
+    }
     if crate::equipment_damage_source_v4::has_publication(state, id) {
         return crate::equipment_damage_source_v4::damage_source(state, source, id);
     }
@@ -445,6 +460,10 @@ pub(crate) fn protected(
             && (crate::engine::has_effective_keyword(
                 state,
                 target,
+                crate::card_def::Keywords::PROTECTION_FROM_EVERYTHING,
+            ) || crate::engine::has_effective_keyword(
+                state,
+                target,
                 crate::card_def::Keywords::PROTECTION_FROM_MONOCOLORED,
             ) && (facts.color_mask & 0x1f).count_ones() == 1
                 || crate::controlled_creature_grants_v1::protects_from_colors(
@@ -494,7 +513,8 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
         .expect("validated definition-owned source-power receipt")
         .max(0);
     if power > 0 {
-        let mut proposal = ProposedEvent::damage(ctx.source, Target::Object(target), power);
+        let mut proposal =
+            crate::event::damage_from_exec_ctx_v1(ctx, Target::Object(target), power);
         if let ProposedEvent::Damage(damage) = &mut proposal {
             damage.historical_source = ctx.stack_item_id;
         }

@@ -57,6 +57,386 @@ pub(crate) fn candidates_fake_scoped_v50(
     accept_conqueror: bool,
     accept_fake: bool,
 ) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope(
+        origin,
+        state,
+        surface,
+        (accept_hunter, accept_panda, accept_conqueror, accept_fake),
+        false,
+        false,
+        false,
+    )
+}
+pub(crate) fn candidates_next_five_v59(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        false,
+        false,
+    )
+}
+pub(crate) fn candidates_graveyard_return_v61(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        false,
+    )
+}
+pub(crate) fn candidates_call_v62(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::call_observation_v62::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+pub(crate) fn candidates_end_turn_v68(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::end_turn_observation_v68::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_end_turn_v68(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+pub(crate) fn candidates_genesis_wave_v69(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::genesis_wave_observation_v69::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_genesis_wave_v69(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+pub(crate) fn candidates_vivien_v70(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::vivien_observation_v70::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_vivien_v70(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+pub(crate) fn candidates_muldrotha_v71(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::muldrotha_observation_v71::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_muldrotha_v71(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+pub(crate) fn candidates_tinybones_v72(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::tinybones_observation_v72::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_tinybones_v72(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+pub(crate) fn candidates_liliana_v73(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::liliana_observation_v73::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_liliana_v73(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+pub(crate) fn candidates_chandra_v74(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::chandra_observation_v74::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_chandra_v74(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+pub(crate) fn candidates_kaito_v75(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_kaito_v75(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
+
+fn candidates_current_scope(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        None,
+    )
+}
+fn candidates_current_scope_end_turn_v68(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::EndTurnV68),
+    )
+}
+fn candidates_current_scope_genesis_wave_v69(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::GenesisWaveV69),
+    )
+}
+fn candidates_current_scope_vivien_v70(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::VivienV70),
+    )
+}
+fn candidates_current_scope_muldrotha_v71(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::MuldrothaV71),
+    )
+}
+fn candidates_current_scope_tinybones_v72(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::TinybonesV72),
+    )
+}
+fn candidates_current_scope_liliana_v73(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::LilianaV73),
+    )
+}
+fn candidates_current_scope_chandra_v74(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::ChandraV74),
+    )
+}
+fn candidates_current_scope_kaito_v75(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::KaitoV75),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn candidates_current_scope_inner_v68(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+    selected_scope: Option<crate::rl::CommonProjectionScopeV42>,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    let (accept_hunter, accept_panda, accept_conqueror, accept_fake) = capabilities;
+
     crate::divine_public_v44::validate_state(state).map_err(RlContractError)?;
     let context = crate::policy_observation_variable_cast_v1::variable_cast_context(state, origin)?;
     let priority_offer = matches!(origin,
@@ -69,15 +449,39 @@ pub(crate) fn candidates_fake_scoped_v50(
     if context.is_none() && !priority_offer {
         return Ok(None);
     }
-    let candidates = crate::rl_variable_cast_v1::candidates_fake_scoped_v50(
-        state,
-        surface,
-        origin,
-        accept_hunter,
-        accept_panda,
-        accept_conqueror,
-        accept_fake,
-    )?;
+    let candidates = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::KaitoV75) {
+        crate::rl_variable_cast_v1::candidates_kaito_v75(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::ChandraV74) {
+        crate::rl_variable_cast_v1::candidates_chandra_v74(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::LilianaV73) {
+        crate::rl_variable_cast_v1::candidates_liliana_v73(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::TinybonesV72) {
+        crate::rl_variable_cast_v1::candidates_tinybones_v72(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::MuldrothaV71) {
+        crate::rl_variable_cast_v1::candidates_muldrotha_v71(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::VivienV70) {
+        crate::rl_variable_cast_v1::candidates_vivien_v70(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::GenesisWaveV69) {
+        crate::rl_variable_cast_v1::candidates_genesis_wave_v69(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::EndTurnV68) {
+        crate::rl_variable_cast_v1::candidates_end_turn_v68(state, surface, origin)?
+    } else if accept_call {
+        crate::rl_variable_cast_v1::candidates_call_v62(state, surface, origin)?
+    } else if accept_graveyard_return {
+        crate::rl_variable_cast_v1::candidates_graveyard_return_v61(state, surface, origin)?
+    } else if accept_next_five {
+        crate::rl_variable_cast_v1::candidates_next_five_v59(state, surface, origin)?
+    } else {
+        crate::rl_variable_cast_v1::candidates_fake_scoped_v50(
+            state,
+            surface,
+            origin,
+            accept_hunter,
+            accept_panda,
+            accept_conqueror,
+            accept_fake,
+        )?
+    };
     candidates
         .into_iter()
         .map(|candidate| {

@@ -90,6 +90,183 @@ pub struct DamageProposed {
     /// path. Ordinary proposals leave this absent; committed Damage bytes
     /// and hashes remain unchanged.
     pub historical_source: Option<StackItemId>,
+    /// Private, in-flight origin carried by a genuine resolving permanent
+    /// ability. It is intentionally absent from proposal serialization; the
+    /// damage receipt is emitted only by Niv's final damage commit.
+    #[serde(skip)]
+    pub(crate) niv_damage_origin_v1: Option<NivDamageOriginV1>,
+}
+
+impl std::hash::Hash for DamageProposed {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.target.hash(state);
+        self.amount.hash(state);
+        self.touched_by.hash(state);
+        self.is_combat.hash(state);
+        self.historical_source.hash(state);
+        if let Some(origin) = self.niv_damage_origin_v1 {
+            0x6e69_765f_646d_676f_u64.hash(state);
+            origin.hash(state);
+        }
+    }
+}
+
+/// Narrow private handoff minted only from the actual resolving stack row.
+/// Resumable state is checked against that saved row before execution continues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NivDamageOriginV1 {
+    stack_item_id: StackItemId,
+    source: crate::state::AbilitySourceContractV4,
+}
+
+fn same_niv_source_incarnation_v1(
+    left: crate::state::AbilitySourceContractV4,
+    right: crate::state::AbilitySourceContractV4,
+) -> bool {
+    left.source == right.source
+        && left.card_def == right.card_def
+        && left.owner == right.owner
+        && left.zone == right.zone
+        && left.zone_change_count == right.zone_change_count
+}
+
+fn niv_departed_source_contract_v1(
+    state: &GameState,
+    wanted: crate::state::AbilitySourceContractV4,
+) -> Option<crate::state::AbilitySourceContractV4> {
+    let mut found = None;
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+            source,
+            departure_history_index,
+        } = event
+        else {
+            continue;
+        };
+        if !same_niv_source_incarnation_v1(*source, wanted) {
+            continue;
+        }
+        let departure = usize::try_from(*departure_history_index).ok()?;
+        if at != departure.checked_add(1)?
+            || !matches!(state.engine.event_history.get(departure),
+                Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
+                    if *object == source.source
+                        && *from == source.zone
+                        && *from == Zone::Battlefield
+                        && to != from
+                        && *controller_before == source.controller)
+        {
+            return None;
+        }
+        if found.replace(*source).is_some() {
+            return None;
+        }
+    }
+    found
+}
+
+fn niv_source_departure_before_v1(
+    state: &GameState,
+    wanted: crate::state::AbilitySourceContractV4,
+    before_history_index: usize,
+) -> Result<Option<crate::state::AbilitySourceContractV4>, ()> {
+    let mut found = None;
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+            source,
+            departure_history_index,
+        } = event
+        else {
+            continue;
+        };
+        if !same_niv_source_incarnation_v1(*source, wanted) {
+            continue;
+        }
+        let departure = usize::try_from(*departure_history_index).map_err(|_| ())?;
+        if at != departure.checked_add(1).ok_or(())?
+            || !matches!(state.engine.event_history.get(departure),
+                Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
+                    if *object == source.source
+                        && *from == source.zone
+                        && *from == Zone::Battlefield
+                        && to != from
+                        && *controller_before == source.controller)
+        {
+            return Err(());
+        }
+        if departure < before_history_index && found.replace(*source).is_some() {
+            return Err(());
+        }
+    }
+    Ok(found)
+}
+
+pub(crate) fn niv_mizzet_catalog_enabled_v1() -> bool {
+    crate::card_def::CARD_DEFS
+        .iter()
+        .any(|definition| definition.is_executable() && definition.name == "Niv-Mizzet, Visionary")
+}
+
+/// Validate the handoff expected for a native saved resolving row. Callers
+/// must already have authenticated this saved row through the owning resolver.
+pub(crate) fn niv_damage_origin_for_saved_item_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Option<NivDamageOriginV1> {
+    if !niv_mizzet_catalog_enabled_v1()
+        || !item
+            .inline_effect
+            .as_ref()
+            .is_some_and(crate::effect::crystal_prevention_v1::has_damage)
+        || !matches!(
+            item.kind,
+            crate::state::StackItemKind::TriggeredAbility
+                | crate::state::StackItemKind::ActivatedAbility
+        )
+    {
+        return None;
+    }
+    let source = item.v4.ability_source_contract?;
+    if source.source != item.source
+        || crate::engine::validate_historical_ability_source_contract(state, source).is_err()
+    {
+        return None;
+    }
+    Some(NivDamageOriginV1 {
+        stack_item_id: item.v4.stack_item_id,
+        source,
+    })
+}
+
+/// Mint only while the actual, unique stack-top row remains present.
+pub(crate) fn niv_damage_origin_for_resolving_item_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Option<NivDamageOriginV1> {
+    if state.stack.last() != Some(item)
+        || state
+            .stack
+            .iter()
+            .filter(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+            .count()
+            != 1
+    {
+        return None;
+    }
+    niv_damage_origin_for_saved_item_v1(state, item)
+}
+
+pub(crate) fn niv_damage_origin_matches_context_v1(
+    origin: NivDamageOriginV1,
+    stack_item_id: Option<StackItemId>,
+    source: ObjectId,
+    source_contract: Option<crate::state::AbilitySourceContractV4>,
+) -> bool {
+    stack_item_id == Some(origin.stack_item_id)
+        && source == origin.source.source
+        && source_contract == Some(origin.source)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,7 +303,22 @@ pub struct ZoneChangeProposed {
     /// Original X placement and optional actual host of an effect entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battlefield_x_v48: Option<crate::doubling_season_v48::EffectXEntryV48>,
+    /// A resolving entry effect adds this subtype simultaneously with entry (611.2e).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_added_subtype_v1: Option<crate::card_def::Subtype>,
     pub touched_by: Vec<ReplacementId>,
+    /// Revival counters installed simultaneously with a delayed return entry,
+    /// before entry-trigger collection and replacements.
+    /// Kept last so the existing serialized field prefix remains stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_revival_v1: Option<i32>,
+    /// Installs a resolving-entry flying grant on the new incarnation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub battlefield_grant_flying_v1: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +326,14 @@ pub struct LifeLossProposed {
     pub player: PlayerId,
     pub amount: i32,
     pub touched_by: Vec<ReplacementId>,
+}
+
+/// Only the distinct Limited life successor constructs these exact operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WideLifeProposedV59 {
+    pub(crate) player: PlayerId,
+    pub(crate) amount: u32,
+    touched_by: Vec<ReplacementId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,6 +402,8 @@ pub enum ProposedEvent {
     ManaAdd(ManaAddProposed),
     CreateToken(CreateTokenProposed),
     Transform(TransformProposed),
+    LifeLossWideV59(WideLifeProposedV59),
+    LifeGainWideV59(WideLifeProposedV59),
 }
 
 impl ProposedEvent {
@@ -213,6 +415,7 @@ impl ProposedEvent {
             touched_by: Vec::new(),
             is_combat: false,
             historical_source: None,
+            niv_damage_origin_v1: None,
         })
     }
     pub fn zone_change(object: ObjectId, to_zone: Zone) -> ProposedEvent {
@@ -228,6 +431,9 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -244,6 +450,9 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -260,6 +469,9 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -279,6 +491,9 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -308,6 +523,9 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -340,6 +558,9 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -354,6 +575,20 @@ impl ProposedEvent {
     /// printed amount checked for affordability (CR 118.11).
     pub fn life_payment(player: PlayerId, amount: i32) -> ProposedEvent {
         Self::life_loss(player, amount)
+    }
+    pub(crate) fn life_loss_wide_v59(player: PlayerId, amount: u32) -> Self {
+        Self::LifeLossWideV59(WideLifeProposedV59 {
+            player,
+            amount,
+            touched_by: Vec::new(),
+        })
+    }
+    pub(crate) fn life_gain_wide_v59(player: PlayerId, amount: u32) -> Self {
+        Self::LifeGainWideV59(WideLifeProposedV59 {
+            player,
+            amount,
+            touched_by: Vec::new(),
+        })
     }
     pub fn life_gain(player: PlayerId, amount: i32) -> ProposedEvent {
         ProposedEvent::LifeGain(LifeGainProposed {
@@ -417,6 +652,7 @@ impl ProposedEvent {
             ProposedEvent::Damage(e) => &e.touched_by,
             ProposedEvent::ZoneChange(e) => &e.touched_by,
             ProposedEvent::LifeLoss(e) => &e.touched_by,
+            ProposedEvent::LifeLossWideV59(e) | ProposedEvent::LifeGainWideV59(e) => &e.touched_by,
             ProposedEvent::LifeGain(e) => &e.touched_by,
             ProposedEvent::Draw(e) => &e.touched_by,
             ProposedEvent::Tap(e) => &e.touched_by,
@@ -431,6 +667,9 @@ impl ProposedEvent {
             ProposedEvent::Damage(e) => &mut e.touched_by,
             ProposedEvent::ZoneChange(e) => &mut e.touched_by,
             ProposedEvent::LifeLoss(e) => &mut e.touched_by,
+            ProposedEvent::LifeLossWideV59(e) | ProposedEvent::LifeGainWideV59(e) => {
+                &mut e.touched_by
+            }
             ProposedEvent::LifeGain(e) => &mut e.touched_by,
             ProposedEvent::Draw(e) => &mut e.touched_by,
             ProposedEvent::Tap(e) => &mut e.touched_by,
@@ -439,6 +678,37 @@ impl ProposedEvent {
             ProposedEvent::Transform(e) => &mut e.touched_by,
         };
         v.push(id);
+    }
+}
+
+/// Preserve the privately minted resolving-ability origin across every
+/// ordinary effect damage leaf. Unauthenticated direct proposals keep the
+/// historical `None` shape.
+pub(crate) fn damage_from_exec_ctx_v1(
+    ctx: &crate::effect::ExecCtx,
+    target: Target,
+    amount: i32,
+) -> ProposedEvent {
+    let mut proposal = ProposedEvent::damage(ctx.source, target, amount);
+    if let ProposedEvent::Damage(damage) = &mut proposal {
+        attach_niv_damage_origin_v1(ctx, damage);
+    }
+    proposal
+}
+
+pub(crate) fn attach_niv_damage_origin_v1(
+    ctx: &crate::effect::ExecCtx,
+    damage: &mut DamageProposed,
+) {
+    if niv_mizzet_catalog_enabled_v1() {
+        damage.niv_damage_origin_v1 = ctx.niv_damage_origin_v1.filter(|origin| {
+            niv_damage_origin_matches_context_v1(
+                *origin,
+                ctx.stack_item_id,
+                damage.source,
+                ctx.ability_source_contract,
+            )
+        });
     }
 }
 
@@ -1490,6 +1760,321 @@ pub enum CommittedEvent {
         input_history_index: u64,
         borrow: crate::linked_aura_operation_v1::PandaReplayBorrowV1,
     },
+    /// Engine-produced pre-departure power for one exact Alesha battlefield
+    /// incarnation. Structural validation binds this receipt to the matching
+    /// immediately preceding ZoneChange and effect payload. Because native
+    /// GameState/event history is mutable, coordinated edits to both receipt
+    /// and payload are outside this check; owning consumers must preserve the
+    /// state/snapshot trust boundary before admitting this route.
+    AleshaPowerLkiV1 {
+        source: ObjectId,
+        card_def: u16,
+        zone_change_count: u32,
+        departure_history_index: u64,
+        power: i32,
+    },
+    /// Definition-owned capture for Niv-Mizzet, Visionary's noncombat-damage
+    /// trigger. The indexed Damage event supplies the final amount/recipient;
+    /// both exact source incarnations were captured before that event changed
+    /// the world. Appended to preserve prior event discriminants.
+    NivMizzetVisionaryDamageV1 {
+        observer: crate::state::AbilitySourceContractV4,
+        damage_source: crate::state::AbilitySourceContractV4,
+        damage_history_index: u64,
+    },
+    /// Exact trigger stack item created from one Niv damage receipt. The draw
+    /// effect names only the damage-history index; this publication binds that
+    /// index and observer to the native stack item that may consume it.
+    NivMizzetVisionaryTriggerStackedV1 {
+        stack_item_id: crate::ids::StackItemId,
+        observer: crate::state::AbilitySourceContractV4,
+        damage_history_index: u64,
+    },
+    /// Exact source incarnation and controller immediately before it left
+    /// the battlefield. Emitted only when the Niv printing is present in the
+    /// selected catalog, including departures before Niv enters.
+    NivMizzetVisionaryDamageSourceDepartureV1 {
+        source: crate::state::AbilitySourceContractV4,
+        departure_history_index: u64,
+    },
+    KinshipEntryV1 {
+        journal: Box<crate::banner_of_kinship_v1::entry::JournalV1>,
+    },
+    /// Private event-time observer roster for one successful native draw.
+    SphinxsTutelageDrawV1 {
+        draw_history_index: u64,
+        observers: Vec<crate::state::AbilitySourceContractV4>,
+    },
+    SphinxsTutelageCollectedV1 {
+        capture_history_index: u64,
+    },
+    SphinxsTutelagePublishedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    /// Private original library, captured only after the trigger resolves.
+    SphinxsTutelageMillStartedV1 {
+        item: Box<crate::state::StackItem>,
+        library: Vec<crate::effect::EffectObjectBinding>,
+    },
+    SphinxsTutelageMillBatchV1 {
+        start_history_index: u64,
+        previous_batch: Option<u64>,
+        ordered: Vec<crate::effect::EffectObjectBinding>,
+        move_start: u64,
+    },
+    /// Only actual positive final combat damage to a player creates this receipt.
+    LathrilCombatDamageV1 {
+        damage_history_index: u64,
+        source: crate::state::AbilitySourceContractV4,
+        player: PlayerId,
+        amount: i32,
+    },
+    LathrilCombatCollectedV1 {
+        capture_history_index: u64,
+    },
+    LathrilCombatPublishedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    LathrilCombatResolvedV1 {
+        capture_history_index: u64,
+    },
+    LathrilCombatCounteredV1 {
+        capture_history_index: u64,
+    },
+    /// Bound only by the genuine private combat-finish callback, in packet order.
+    LathrilCombatObservedV1 {
+        capture_history_index: u64,
+        marker_history_index: u64,
+    },
+    CopiedTokenAbilitiesEnteredV1 {
+        source: crate::state::AbilitySourceContractV4,
+        creation_history_index: u64,
+        instances: u32,
+    },
+    CopiedTokenEndStepV1 {
+        end_step_history_index: u64,
+        sources: Vec<(crate::state::AbilitySourceContractV4, u32)>,
+    },
+    CopiedTokenEndStepCollectedV1 {
+        capture_history_index: u64,
+    },
+    CopiedTokenSacrificePublishedV1 {
+        capture_history_index: u64,
+        observer: u32,
+        ability: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    CopiedTokenSacrificeFinishedV1 {
+        stack_item_id: crate::ids::StackItemId,
+    },
+    CuratorEnteredV1 {
+        entry_history_index: u64,
+        source: crate::state::AbilitySourceContractV4,
+    },
+    CuratorCollectedV1 {
+        entry_history_index: u64,
+    },
+    CuratorPublishedV1 {
+        entry_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    CuratorFinishedV1 {
+        entry_history_index: u64,
+    },
+    CuratorProgressV1 {
+        entry_history_index: u64,
+        choice: Box<crate::effect::curator_v1::ChoiceV1>,
+    },
+    KykarExiledV1 {
+        source: crate::state::AbilitySourceContractV4,
+        exiled: crate::state::ObjectLinkV4,
+        owner: PlayerId,
+        departure_history_index: u64,
+    },
+    KykarDelayedCollectedV1 {
+        schedule_history_index: u64,
+        end_step_history_index: u64,
+    },
+    GreatwurmCounterPaymentV1 {
+        paid: Box<crate::engine::greatwurm_cast_v1::PaidV1>,
+        input_history_index: u64,
+    },
+    GreatwurmCombatCaptureV1 {
+        capture: Box<crate::effect::greatwurm_v1::CaptureV1>,
+    },
+    GreatwurmCombatBoundV1 {
+        capture_history_index: u64,
+        original: Box<crate::effect::greatwurm_v1::CaptureV1>,
+    },
+    GreatwurmCollectedV1 {
+        capture_history_index: u64,
+        observer: u32,
+    },
+    GreatwurmPublishedV1 {
+        capture_history_index: u64,
+        observer: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    GreatwurmFinishedV1 {
+        stack_item_id: crate::ids::StackItemId,
+    },
+    GreatwurmCounterInputV1 {
+        input: Box<crate::engine::greatwurm_cast_v1::PaidV1>,
+    },
+    SourceCopyDepartureV1 {
+        departure: Box<crate::effect::source_token_copy_v1::DepartureV1>,
+    },
+    SphinxLoreV1 {
+        journal: crate::effect::sphinx_lore_v1::JournalV1,
+    },
+    SphinxLoreCastOptionsV1 {
+        options: crate::engine::sphinx_lore_cast_v1::OptionsV1,
+    },
+    SphinxLoreCastSelectedV1 {
+        choice: crate::engine::sphinx_lore_cast_v1::ChoiceV1,
+        source: crate::state::StackSourceContractV4,
+        stack_item_id: crate::ids::StackItemId,
+    },
+    OmniscienceCastOptionsV1 {
+        options: crate::engine::omniscience_cast_v1::OptionsV1,
+    },
+    OmniscienceCastSelectedV1 {
+        choice: crate::engine::omniscience_cast_v1::ChoiceV1,
+        source: crate::state::StackSourceContractV4,
+        stack_item_id: crate::ids::StackItemId,
+    },
+    NightmareCopyEnteredV1 {
+        entry: crate::effect::harvester_v1::NightmareV1,
+    },
+    NightmareCopyLayerV1 {
+        layer: crate::effect::harvester_v1::NightmareLayerV1,
+    },
+    HarvesterGraveyardEntryV1 {
+        entry: crate::effect::harvester_v1::GraveyardEntryV1,
+    },
+    HarvesterResolvedV1 {
+        resolution: crate::effect::harvester_v1::ResolutionV1,
+    },
+    HarvesterCastAnnouncedV1 {
+        cast: crate::effect::harvester_v1::CastV1,
+    },
+    HarvesterCastReversedV1 {
+        announcement: u64,
+        restored: crate::effect::EffectObjectBinding,
+    },
+    ProgenitusInputV1 {
+        input: Box<crate::progenitus_v1::InputV1>,
+    },
+    ProgenitusShuffledV1 {
+        input_history_index: u64,
+        move_history_index: Option<u64>,
+        source: crate::state::AbilitySourceContractV4,
+    },
+    /// Private native pregame custody, never a public committed event.
+    LeylineOpeningV1 {
+        record: crate::leyline_axe_v1::RecordV1,
+    },
+    /// Native selected activation, captured before any payment mutation.
+    FiendArtisanInputV1 {
+        input: Box<crate::effect::fiend_artisan_v1::InputV1>,
+    },
+    /// Exact paid publication; independent of the editable public row X.
+    FiendArtisanPaidV1 {
+        input_index: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    FiendArtisanSearchStartedV1 {
+        stack_item_id: StackItemId,
+        library: Vec<crate::effect::EffectObjectBinding>,
+    },
+    FiendArtisanSearchFinishedV1 {
+        stack_item_id: StackItemId,
+    },
+    LifeLossWideV59 {
+        player: PlayerId,
+        amount: u32,
+    },
+    LifeGainWideV59 {
+        player: PlayerId,
+        amount: u32,
+    },
+    ConquerorObserverInputV59 {
+        input: Box<crate::snack_wide_life_v59::ObserverInputV59>,
+    },
+    ConquerorLossBatchV59 {
+        batch: Box<crate::snack_wide_life_v59::BatchV59>,
+    },
+    ConquerorCapturedV59 {
+        batch_history_index: u64,
+        observer_index: u64,
+    },
+    ConquerorCollectedV59 {
+        capture_history_index: u64,
+    },
+    ConquerorJournalV59 {
+        journal: Box<crate::snack_wide_life_v59::custody::JournalV59>,
+    },
+    FiendishPandaWideGainCaptureV59 {
+        source: crate::state::AbilitySourceContractV4,
+        gain_history_index: u64,
+        amount: u32,
+    },
+    ThousandYearStormV1 {
+        journal: crate::effect::thousand_year_storm_v1::JournalV1,
+    },
+    /// Exact native end-turn transaction, including terminal stack disposal.
+    TimeStopJournalV1 {
+        journal: Box<crate::engine::time_stop_v1::JournalV1>,
+    },
+    OrdinaryCleanupStageV1 {
+        stage: crate::engine::ordinary_cleanup_v1::StageV1,
+    },
+    GenesisWaveProgressV1 {
+        item: Box<crate::state::StackItem>,
+        choice: Box<crate::effect::genesis_wave_v1::ChoiceV1>,
+    },
+    GenesisWaveFinishedV1 {
+        stack_item_id: crate::ids::StackItemId,
+        remainder_history_index: u64,
+        departure_start: u64,
+        departure_end: u64,
+        // None is the original virtual-copy disposition, never a GY move.
+        departure: Option<Zone>,
+    },
+    /// Public identity of one finalized physical cast, captured before its
+    /// bare SpellCast marker. Concealed casts retain no private printing.
+    PublishedCastIdentityV1 {
+        receipt: crate::cast_identity_v1::ReceiptV1,
+    },
+    VivienReidV1 {
+        journal: Box<crate::effect::vivien_reid_v1::JournalV1>,
+    },
+    MuldrothaOptionsV1 {
+        options: crate::engine::muldrotha_v1::OptionsV1,
+    },
+    MuldrothaSelectedV1 {
+        pending: crate::engine::muldrotha_v1::PendingV1,
+    },
+    MuldrothaPlayedV1 {
+        played: crate::engine::muldrotha_v1::PlayedV1,
+    },
+    TinybonesV72 {
+        journal: Box<crate::engine::tinybones_v72::JournalV72>,
+    },
+    LilianaDreadhordeV1 {
+        journal: Box<crate::effect::liliana_dreadhorde_v1::JournalV1>,
+    },
+    ChandraFlameshaperV74 {
+        journal: Box<crate::effect::chandra_flameshaper_v1::JournalV74>,
+    },
+    KaitoCunningV75 {
+        journal: Box<crate::effect::kaito_cunning_v75::JournalV75>,
+    },
+    DrakusethDamageSourceV76 {
+        journal: Box<crate::drakuseth_damage_source_v76::JournalV76>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1503,16 +2088,420 @@ pub struct HistoricalDamageSourceV1 {
     pub werewolf: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NivMizzetVisionaryDamageCaptureV1 {
+    observer: crate::state::AbilitySourceContractV4,
+    damage_source: crate::state::AbilitySourceContractV4,
+}
+
+/// Capture only from the final replaceable damage proposal, before committing
+/// it. This intentionally lives in the already-hashed event source: the
+/// future card registration must not rely on an untracked child module.
+fn capture_niv_mizzet_visionary_damage_v1(
+    state: &GameState,
+    event: &ProposedEvent,
+) -> Vec<NivMizzetVisionaryDamageCaptureV1> {
+    let ProposedEvent::Damage(damage) = event else {
+        return Vec::new();
+    };
+    let Target::Player(recipient) = damage.target else {
+        return Vec::new();
+    };
+    if damage.amount <= 0 || damage.is_combat {
+        return Vec::new();
+    }
+    let bound_source = if let Some(stack_item) = damage.historical_source {
+        match crate::source_power_activation_v1::damage_source(state, damage.source, stack_item) {
+            Ok(facts) => facts.source,
+            Err(_) => return Vec::new(),
+        }
+    } else if let Some(origin) = damage.niv_damage_origin_v1 {
+        if origin.source.source != damage.source {
+            return Vec::new();
+        }
+        origin.source
+    } else {
+        let Some(live) = state.objects.try_get(damage.source) else {
+            return Vec::new();
+        };
+        if !matches!(live.zone, Zone::Battlefield | Zone::Stack) {
+            return Vec::new();
+        }
+        crate::source_power_activation_v1::capture_damage_source(state, damage.source).source
+    };
+    let Some(source_object) = state.objects.try_get(bound_source.source) else {
+        return Vec::new();
+    };
+    let source = if source_object.card_def == bound_source.card_def
+        && source_object.owner == bound_source.owner
+        && source_object.zone_change_count == bound_source.zone_change_count
+        && matches!(source_object.zone, Zone::Battlefield | Zone::Stack)
+    {
+        // A source still in its exact incarnation uses its controller at the
+        // damage event, even when control changed after its ability triggered.
+        crate::state::AbilitySourceContractV4::capture(state, bound_source.source)
+    } else if let Some(departed) = niv_departed_source_contract_v1(state, bound_source) {
+        // When the source has left, only the exact generation's adjacent
+        // departure receipt can supply its last controller. Never infer from
+        // owner/current controller of a reentered object.
+        departed
+    } else if damage.niv_damage_origin_v1.is_some() {
+        return Vec::new();
+    } else {
+        bound_source
+    };
+    let Some(source_object) = state.objects.try_get(source.source) else {
+        return Vec::new();
+    };
+    if source_object.owner != source.owner
+        || source_object.card_def != source.card_def
+        || source_object.zone_change_count < source.zone_change_count
+        || (damage.historical_source.is_none()
+            && damage.niv_damage_origin_v1.is_none()
+            && source.controller != state.objects.get(damage.source).controller)
+    {
+        return Vec::new();
+    }
+
+    let mut captures = Vec::new();
+    for (observer_id, observer) in state.objects.iter() {
+        if observer.zone != Zone::Battlefield
+            || observer.controller == recipient
+            || observer.controller != source.controller
+            || !crate::continuous_characteristics_v1::printed_abilities_active(state, observer_id)
+            || crate::card_def::CARD_DEFS
+                .get(usize::from(observer.card_def))
+                .is_none_or(|definition| {
+                    !definition.is_executable() || definition.name != "Niv-Mizzet, Visionary"
+                })
+        {
+            continue;
+        }
+        captures.push(NivMizzetVisionaryDamageCaptureV1 {
+            observer: crate::state::AbilitySourceContractV4::capture(state, observer_id),
+            damage_source: source,
+        });
+    }
+    captures
+}
+
+/// Build pending draws from the exact appended receipt and its committed
+/// damage. The receipt is definition-specific; it does not retrofit combat or
+/// controller metadata onto the legacy Damage event.
+pub(crate) fn niv_mizzet_visionary_triggers_v1(
+    state: &GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<crate::trigger::PendingTrigger>, ObjectId> {
+    let mut pending = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for event in events {
+        let CommittedEvent::NivMizzetVisionaryDamageV1 {
+            observer,
+            damage_source,
+            damage_history_index,
+        } = event
+        else {
+            continue;
+        };
+        if niv_mizzet_visionary_damage_amount_v1(
+            state,
+            *observer,
+            *damage_source,
+            *damage_history_index,
+        )
+        .is_err()
+            || !seen.insert((
+                observer.source,
+                observer.zone_change_count,
+                *damage_history_index,
+            ))
+        {
+            return Err(observer.source);
+        }
+        pending.push(crate::trigger::PendingTrigger {
+            controller: observer.controller,
+            source: observer.source,
+            effect: crate::effect::EffectOp::NivMizzetVisionaryDrawV1 {
+                damage_history_index: *damage_history_index,
+            },
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: crate::card_def::TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(*observer),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    }
+    Ok(pending)
+}
+
+/// Validate one engine-produced Niv damage receipt and return the original
+/// full-width committed amount. This follows the native mutable GameState /
+/// event-history trust boundary; coordinated edits to both remain outside
+/// structural validation.
+fn niv_mizzet_visionary_damage_amount_v1(
+    state: &GameState,
+    observer: crate::state::AbilitySourceContractV4,
+    damage_source: crate::state::AbilitySourceContractV4,
+    damage_history_index: u64,
+) -> Result<i32, ObjectId> {
+    let history_index = usize::try_from(damage_history_index).map_err(|_| observer.source)?;
+    let Some(CommittedEvent::Damage {
+        source,
+        target: Target::Player(recipient),
+        amount,
+    }) = state.engine.event_history.get(history_index)
+    else {
+        return Err(observer.source);
+    };
+    let Some((marker_index, _)) =
+        state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| {
+                matches!(entry,
+            CommittedEvent::NivMizzetVisionaryDamageV1 {
+                observer: found_observer,
+                damage_source: found_source,
+                damage_history_index: found_index,
+            } if *found_observer == observer
+                && *found_source == damage_source
+                && *found_index == damage_history_index)
+            })
+    else {
+        return Err(observer.source);
+    };
+    let Some(CommittedEvent::NivMizzetVisionaryDamageV1 { .. }) =
+        state.engine.event_history.get(marker_index)
+    else {
+        return Err(observer.source);
+    };
+    let marker_count = state
+        .engine
+        .event_history
+        .iter()
+        .filter(|entry| {
+            matches!(entry,
+            CommittedEvent::NivMizzetVisionaryDamageV1 {
+                observer: found_observer,
+                damage_source: found_source,
+                damage_history_index: found_index,
+            } if *found_observer == observer
+                && *found_source == damage_source
+                && *found_index == damage_history_index)
+        })
+        .count();
+    let observer_receipt_count = state
+        .engine
+        .event_history
+        .iter()
+        .filter(|entry| {
+            matches!(entry,
+            CommittedEvent::NivMizzetVisionaryDamageV1 {
+                observer: found_observer,
+                damage_history_index: found_index,
+                ..
+            } if *found_observer == observer && *found_index == damage_history_index)
+        })
+        .count();
+    let departed_source = niv_source_departure_before_v1(state, damage_source, history_index)
+        .map_err(|_| observer.source)?;
+    if marker_index <= history_index
+        || marker_count != 1
+        || observer_receipt_count != 1
+        || state.engine.event_history[history_index + 1..marker_index]
+            .iter()
+            .any(|entry| {
+                !matches!(entry, CommittedEvent::NivMizzetVisionaryDamageV1 { damage_history_index: linked, .. } if *linked == damage_history_index)
+            })
+        || *amount <= 0
+        || observer.zone != Zone::Battlefield
+        || observer.controller == *recipient
+        || damage_source.source != *source
+        || damage_source.controller != observer.controller
+        || departed_source.is_some_and(|departure| departure != damage_source)
+    {
+        return Err(observer.source);
+    }
+    let Some(observer_object) = state.objects.try_get(observer.source) else {
+        return Err(observer.source);
+    };
+    let Some(source_object) = state.objects.try_get(*source) else {
+        return Err(observer.source);
+    };
+    let observer_is_niv = crate::card_def::CARD_DEFS
+        .get(usize::from(observer.card_def))
+        .is_some_and(|definition| {
+            definition.is_executable() && definition.name == "Niv-Mizzet, Visionary"
+        });
+    if !observer_is_niv
+        || observer_object.card_def != observer.card_def
+        || observer_object.owner != observer.owner
+        || observer_object.zone_change_count < observer.zone_change_count
+        || source_object.card_def != damage_source.card_def
+        || source_object.owner != damage_source.owner
+        || source_object.zone_change_count < damage_source.zone_change_count
+    {
+        return Err(observer.source);
+    }
+    Ok(*amount)
+}
+
+pub(crate) fn validate_niv_mizzet_visionary_pending_v1(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    effect: &crate::effect::EffectOp,
+    source_contract: Option<crate::state::AbilitySourceContractV4>,
+) -> Result<u64, String> {
+    let crate::effect::EffectOp::NivMizzetVisionaryDrawV1 {
+        damage_history_index,
+    } = effect
+    else {
+        return Err("Niv-Mizzet trigger changed its receipt-bound draw effect".into());
+    };
+    let observer = source_contract.ok_or("Niv-Mizzet trigger lost its source contract")?;
+    if observer.source != source
+        || observer.controller != controller
+        || niv_mizzet_visionary_damage_amount_v1(
+            state,
+            observer,
+            find_niv_damage_source(state, observer, *damage_history_index)?,
+            *damage_history_index,
+        )
+        .is_err()
+    {
+        return Err("Niv-Mizzet trigger no longer matches its damage receipt".into());
+    }
+    Ok(*damage_history_index)
+}
+
+fn find_niv_damage_source(
+    state: &GameState,
+    observer: crate::state::AbilitySourceContractV4,
+    damage_history_index: u64,
+) -> Result<crate::state::AbilitySourceContractV4, String> {
+    state
+        .engine
+        .event_history
+        .iter()
+        .find_map(|entry| match entry {
+            CommittedEvent::NivMizzetVisionaryDamageV1 {
+                observer: found_observer,
+                damage_source,
+                damage_history_index: found_index,
+            } if *found_observer == observer && *found_index == damage_history_index => {
+                Some(*damage_source)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| "Niv-Mizzet damage receipt is missing".into())
+}
+
+pub(crate) fn publish_niv_mizzet_visionary_trigger_v1(
+    state: &mut GameState,
+    stack_item_id: crate::ids::StackItemId,
+    observer: crate::state::AbilitySourceContractV4,
+    damage_history_index: u64,
+) {
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::NivMizzetVisionaryTriggerStackedV1 {
+            stack_item_id,
+            observer,
+            damage_history_index,
+        });
+}
+
+pub(crate) fn resolve_niv_mizzet_visionary_draw_count_v1(
+    state: &GameState,
+    ctx: &crate::effect::ExecCtx,
+    damage_history_index: u64,
+) -> Result<i32, String> {
+    let stack_item_id = ctx
+        .stack_item_id
+        .ok_or("Niv-Mizzet draw lost its stack item")?;
+    let observer = ctx
+        .ability_source_contract
+        .ok_or("Niv-Mizzet draw lost its source binding")?;
+    if ctx.source != observer.source || ctx.controller != observer.controller {
+        return Err("Niv-Mizzet draw source/controller binding changed".into());
+    }
+    let bindings = state
+        .engine
+        .event_history
+        .iter()
+        .filter(|entry| {
+            matches!(entry,
+        CommittedEvent::NivMizzetVisionaryTriggerStackedV1 {
+            stack_item_id: found_stack,
+            observer: found_observer,
+            damage_history_index: found_index,
+        } if *found_stack == stack_item_id
+            && *found_observer == observer
+            && *found_index == damage_history_index)
+        })
+        .count();
+    let unique_stack_binding = state
+        .engine
+        .event_history
+        .iter()
+        .filter(|entry| {
+            matches!(entry,
+        CommittedEvent::NivMizzetVisionaryTriggerStackedV1 { stack_item_id: found, .. }
+        if *found == stack_item_id)
+        })
+        .count();
+    if bindings != 1 || unique_stack_binding != 1 {
+        return Err("Niv-Mizzet draw lacks its exact trigger-stack receipt".into());
+    }
+    let damage_source = find_niv_damage_source(state, observer, damage_history_index)?;
+    niv_mizzet_visionary_damage_amount_v1(state, observer, damage_source, damage_history_index)
+        .map_err(|_| "Niv-Mizzet draw damage receipt changed".to_string())
+}
+
+pub(crate) fn niv_mizzet_visionary_removes_hand_limit_v1(
+    state: &GameState,
+    player: PlayerId,
+) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .any(|id| {
+            let object = state.objects.get(id);
+            object.zone == Zone::Battlefield
+                && object.controller == player
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                && crate::card_def::CARD_DEFS
+                    .get(usize::from(object.card_def))
+                    .is_some_and(|definition| {
+                        definition.is_executable() && definition.name == "Niv-Mizzet, Visionary"
+                    })
+        })
+}
+
 /// Remembers the counters of a departing permanent whose own leave ability
 /// reads them. Each exact departing incarnation remains available to its triggers.
-fn record_counter_lki(state: &mut GameState, object: ObjectId) {
+pub(crate) fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
     #[cfg(feature = "standard-magezero-fixtures")]
     let reads_standard = crate::standard_statics_v1::reads_counter_lki(live.card_def);
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     let reads_standard = false;
     let reads_soul = live.counters.soul != 0 || definition_reads_soul_lki_v1(live.card_def);
-    if !reads_standard && !reads_soul {
+    let reads_revival = live.counters.revival != 0
+        || crate::card_def::CARD_DEFS[usize::from(live.card_def)].name == "Nine-Lives Familiar";
+    let reads_fellowship = live.counters.fellowship != 0;
+    let reads_stash = live.counters.stash != 0;
+    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship && !reads_stash {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
@@ -1525,7 +2514,7 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         time: live.v4.time_counters_v1,
         finality: live.v4.creature_upgrade.as_ref().map_or(0, |u| u.finality),
     };
-    if reads_soul || live.counters.any() || extras != Default::default() {
+    if reads_soul || reads_revival || live.counters.any() || extras != Default::default() {
         entries.push(crate::state::CounterLkiV1 {
             source: crate::state::ObjectLinkV4 {
                 object,
@@ -1810,6 +2799,10 @@ pub fn apply_replacements(
         if crate::eternal_legacy_e7a_v1::prevents_zone_change(state, change) {
             return None;
         }
+    }
+    if let Err(source) = crate::progenitus_v1::plan(state, &proposed, None) {
+        halt_zone_pt_v1(state, source);
+        return None;
     }
     if let ProposedEvent::ZoneChange(change) = &mut proposed {
         if change.to_zone == Zone::Graveyard
@@ -2400,7 +3393,41 @@ pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u
 /// Convenience: replace/prevent then commit if anything survived. Lifelink
 /// is evaluated from the final damage amount and source immediately before
 /// that damage is committed.
+fn preflight_wide_life_v59(state: &mut GameState, event: &ProposedEvent) -> bool {
+    let input = match event {
+        ProposedEvent::LifeLossWideV59(e) => Some((e, false)),
+        ProposedEvent::LifeGainWideV59(e) => Some((e, true)),
+        _ => None,
+    };
+    if let Some((e, gain)) = input {
+        if crate::snack_wide_life_v59::checked_life(
+            state.players[e.player.index()].life,
+            e.amount,
+            gain,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return false;
+        }
+    }
+    true
+}
+
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
+    if unsupported_partial_token_v1(&event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -2413,6 +3440,16 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
+    if unsupported_partial_token_v1(&event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if crate::effect::crystal_prevention_v1::validate(state).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -2529,6 +3566,7 @@ pub(crate) fn commit_twinflame_ordered_scalar(
             _ => unreachable!(),
         };
     damage.historical_source = choice.historical_source;
+    damage.niv_damage_origin_v1 = choice.niv_damage_origin_v1;
     damage.touched_by = choice.touched.clone();
     let proposed = ProposedEvent::Damage(damage);
     let gain = lifelink_gain_for(state, &proposed);
@@ -2710,6 +3748,80 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
         batch_without_linked_aura_v1(state, vec![event]);
         return;
     }
+    if needs_final_zone_pt_plan_v1(state, std::slice::from_ref(&event)) {
+        // Replace on a private proposal scene. A refused final PT must not
+        // consume a prevention shield or publish its bookkeeping either.
+        let mut replaced = state.clone();
+        let Some(final_event) = apply_replacements(&mut replaced, event) else {
+            if let Some((_, source)) = replaced.engine.halted {
+                halt_zone_pt_v1(state, source);
+            } else {
+                *state = replaced;
+            }
+            return;
+        };
+        if crate::doubling_season_v48::preflight_entry_roster(
+            &replaced,
+            std::slice::from_ref(&final_event),
+        )
+        .is_err()
+            || crate::doubling_season_v48::preflight_token_initialization(
+                &replaced,
+                std::slice::from_ref(&final_event),
+            )
+            .is_err()
+        {
+            halt_zone_pt_v1(state, ObjectId(0));
+            return;
+        }
+        match crate::linked_aura_operation_v1::prepare_entry_colors(
+            &mut replaced,
+            std::slice::from_ref(&final_event),
+        ) {
+            Ok(true) => {}
+            Ok(false) => {
+                *state = replaced;
+                return;
+            }
+            Err(_) => {
+                halt_zone_pt_v1(state, ObjectId(0));
+                return;
+            }
+        }
+        let input = crate::doubling_season_v48::entry_input(&replaced, &final_event);
+        let plan = match FinalZonePtPlanV1::capture(
+            &replaced,
+            std::slice::from_ref(&final_event),
+            None,
+            None,
+            std::slice::from_ref(&input),
+            &[],
+        ) {
+            Ok(plan) => plan,
+            Err(source) => {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
+        };
+        let lifelink_gain = lifelink_gain_for(&replaced, &final_event);
+        *state = replaced;
+        commit_with_entry_batch_and_source_color(
+            state,
+            final_event,
+            None,
+            None,
+            None,
+            (None, None),
+            ((None, false), None, input, None, Some(&plan)),
+            None,
+        );
+        if state.engine.halted.is_none() {
+            if let Some((player, amount)) = lifelink_gain {
+                commit(state, ProposedEvent::life_gain(player, amount));
+            }
+        }
+        return;
+    }
     // Quantum Riddler: "if you would draw one or more cards, you draw that
     // many cards plus one instead", read before the draw.
     #[cfg(feature = "eternal-fixtures")]
@@ -2836,6 +3948,16 @@ pub(crate) fn propose_and_commit_gorehorn_owned(
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
+    if unsupported_partial_token_v1(&event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -2848,6 +3970,16 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn commit_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
+    if unsupported_partial_token_v1(&event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     commit_with_ability_lki(state, event, None, None);
 }
 
@@ -2890,44 +4022,30 @@ fn commit_with_ability_lki_and_entry_batch(
         frozen_death_captures,
         authority_batch,
         entry_batches,
-        (entry_context, None, None, None),
+        (entry_context, None, None, None, None),
+        None,
     );
 }
-type EntryContextWithSourceColorV1 = (
-    (
-        Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
-        bool,
-    ),
-    Option<crate::controlled_creature_grants_v1::DepartureColorV1>,
-    Option<crate::doubling_season_v48::ReplacementInputV48>,
-    Option<u64>,
-);
-fn commit_with_entry_batch_and_source_color(
-    state: &mut GameState,
-    event: ProposedEvent,
-    abilities_removed_before: Option<bool>,
-    frozen_death_captures: Option<Vec<CommittedEvent>>,
-    mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
-    entry_batches: (
-        Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
-        Option<&mut crate::arahbo_v1::EntryBatchV1>,
-    ),
-    entry_context: EntryContextWithSourceColorV1,
-) {
-    let (mut entry_context, frozen_source_color, frozen_counter_input, token_input_index) =
-        entry_context;
-    if let ProposedEvent::ZoneChange(change) = &event {
+
+fn prepare_zone_entry_characteristics_v1(
+    event: &ProposedEvent,
+    entry_characteristics: &mut Option<(
+        ObjectId,
+        crate::garruks_uprising_v1::EntryCharacteristicsV1,
+    )>,
+) -> Result<(), ObjectId> {
+    if let ProposedEvent::ZoneChange(change) = event {
+        if let Some(revival) = change.battlefield_revival_v1 {
+            if revival < 0 {
+                return Err(change.object);
+            }
+        }
         if let Some(request) = change.battlefield_x_v48.as_ref() {
             if change.to_zone != Zone::Battlefield || request.original < 0 {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    change.object,
-                ));
-                return;
+                return Err(change.object);
             }
-            let entry = entry_context
-                .0
-                .get_or_insert_with(|| (change.object, Default::default()));
+            let entry =
+                entry_characteristics.get_or_insert_with(|| (change.object, Default::default()));
             if entry.0 != change.object
                 || entry
                     .1
@@ -2938,19 +4056,134 @@ fn commit_with_entry_batch_and_source_color(
                     .attached_to
                     .is_some_and(|host| Some(host) != request.host)
             {
+                return Err(change.object);
+            }
+            entry.1.x_counters = Some(request.original);
+            entry.1.attached_to = request.host;
+            entry.1.bestowed = request.host.is_some();
+        }
+        // A destination rewrite that does not enter the battlefield must not
+        // install the entry-only characteristic on the card in another zone.
+        if change.to_zone == Zone::Battlefield {
+            if let Some(subtype) = change.battlefield_added_subtype_v1 {
+                let entry = entry_characteristics
+                    .get_or_insert_with(|| (change.object, Default::default()));
+                if entry.0 != change.object {
+                    return Err(change.object);
+                }
+                entry.1.added_subtype_v1 = Some(subtype);
+            }
+            if change.battlefield_grant_flying_v1 {
+                let entry = entry_characteristics
+                    .get_or_insert_with(|| (change.object, Default::default()));
+                if entry.0 != change.object {
+                    return Err(change.object);
+                }
+                entry.1.grant_flying_v1 = true;
+            }
+        }
+    }
+    Ok(())
+}
+
+type EntryContextWithSourceColorV1<'a> = (
+    (
+        Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
+        bool,
+    ),
+    Option<crate::controlled_creature_grants_v1::DepartureColorV1>,
+    Option<crate::doubling_season_v48::ReplacementInputV48>,
+    Option<u64>,
+    Option<&'a FinalZonePtPlanV1>,
+);
+#[allow(clippy::too_many_arguments)]
+fn commit_with_entry_batch_and_source_color(
+    state: &mut GameState,
+    event: ProposedEvent,
+    abilities_removed_before: Option<bool>,
+    frozen_death_captures: Option<Vec<CommittedEvent>>,
+    mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    entry_batches: (
+        Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
+        Option<&mut crate::arahbo_v1::EntryBatchV1>,
+    ),
+    entry_context: EntryContextWithSourceColorV1<'_>,
+    mut progenitus_completions: Option<&mut Vec<crate::progenitus_v1::CompletionV1>>,
+) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
+    let wide_conqueror = matches!(&event, ProposedEvent::LifeLossWideV59(_))
+        .then(|| crate::snack_wide_life_v59::RecorderV59::capture(state))
+        .flatten();
+    let (
+        mut entry_context,
+        frozen_source_color,
+        frozen_counter_input,
+        token_input_index,
+        zone_plan,
+    ) = entry_context;
+    if let Err(source) = prepare_zone_entry_characteristics_v1(&event, &mut entry_context.0) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    }
+    let counter_input =
+        frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
+    if let ProposedEvent::ZoneChange(change) = &event {
+        if let Some(revival) = change.battlefield_revival_v1 {
+            let controller = change.battlefield_controller.unwrap_or_else(|| {
+                let object = state.objects.get(change.object);
+                if object.zone == Zone::Stack {
+                    object.controller
+                } else {
+                    object.owner
+                }
+            });
+            if crate::doubling_season_v48::entry_amount(
+                state,
+                counter_input.as_ref(),
+                controller,
+                revival,
+            )
+            .is_err()
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     change.object,
                 ));
                 return;
             }
-            entry.1.x_counters = Some(request.original);
-            entry.1.attached_to = request.host;
-            entry.1.bestowed = request.host.is_some();
+        }
+        let source = state.objects.get(change.object);
+        let cast_nine_lives = change.to_zone == Zone::Battlefield
+            && source.zone == Zone::Stack
+            && crate::card_def::CARD_DEFS[usize::from(source.card_def)].name
+                == "Nine-Lives Familiar"
+            && source.spell_copy_origin.is_none()
+            && !source.v4.is_token
+            && source
+                .v4
+                .spell_cast_origin
+                .is_some_and(|origin| origin.finalized_method.is_some());
+        if cast_nine_lives
+            && crate::doubling_season_v48::entry_amount(
+                state,
+                counter_input.as_ref(),
+                change.battlefield_controller.unwrap_or(source.controller),
+                8,
+            )
+            .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                change.object,
+            ));
+            return;
         }
     }
-    let counter_input =
-        frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
     let season_entry_active = crate::doubling_season_v48::requires_successor(state)
         || counter_input
             .as_ref()
@@ -3008,6 +4241,30 @@ fn commit_with_entry_batch_and_source_color(
         .then(|| crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state))
         .flatten();
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
+    let progenitus_plan = match crate::progenitus_v1::plan(state, &event, abilities_removed_before)
+    {
+        Ok(plan) => plan,
+        Err(source) => {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    };
+    if progenitus_plan
+        .as_ref()
+        .is_some_and(|plan| plan.same_library())
+    {
+        let plan = progenitus_plan.expect("private same-library plan");
+        let input = plan.record_input(state);
+        if let Some(queue) = progenitus_completions.as_mut() {
+            queue.push(crate::progenitus_v1::CompletionV1::new(plan, input, None));
+        } else if let Err(source) = plan.finish(state, input, None) {
+            halt_zone_pt_v1(state, source);
+        }
+        return;
+    }
+    let event = progenitus_plan
+        .as_ref()
+        .map_or(event, |plan| plan.rewritten());
     // Direct commits are also used for simultaneous state-based deaths. Apply
     // an installed Fiery shield before any zone bookkeeping or frozen death
     // capture is published. Unrelated direct commits retain their old path.
@@ -3038,6 +4295,29 @@ fn commit_with_entry_batch_and_source_color(
             change.to_zone = Zone::Exile;
         }
     }
+    let local_zone_plan = if zone_plan.is_none()
+        && needs_final_zone_pt_plan_v1(state, std::slice::from_ref(&event))
+    {
+        match FinalZonePtPlanV1::capture(
+            state,
+            std::slice::from_ref(&event),
+            authority_batch
+                .as_ref()
+                .map(|batch| batch.observers.as_slice()),
+            entry_context.0,
+            std::slice::from_ref(&counter_input),
+            &[],
+        ) {
+            Ok(plan) => Some(plan),
+            Err(source) => {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let zone_plan = zone_plan.or(local_zone_plan.as_ref());
     // A frozen observer may outlive its source, but a rewritten destination
     // is not a death. Finality and sacrifice replacements must not publish
     // a capture beside a battlefield-to-exile event.
@@ -3060,6 +4340,840 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         Vec::new()
     };
+    let kaito_single = (!entry_context.1).then(|| {
+        crate::effect::kaito_cunning_v75::capture_wave(state, std::slice::from_ref(&event))
+    });
+    let greatwurm_single = if !entry_context.1 {
+        match crate::effect::greatwurm_v1::capture_wave(state, std::slice::from_ref(&event)) {
+            Ok(wave) => Some(wave),
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let greatwurm_history_start = state.engine.event_history.len();
+    let chandra_departure = crate::effect::chandra_flameshaper_v1::departure_input(state, &event);
+    let source_copy_departure =
+        match crate::effect::source_token_copy_v1::departure_input(state, &event) {
+            Ok(input) => input,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        };
+    let niv_mizzet_damage_captures = capture_niv_mizzet_visionary_damage_v1(state, &event);
+    let tutelage_observers = match &event {
+        ProposedEvent::Draw(draw) => state
+            .objects
+            .iter()
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && object.controller == draw.player
+                    && object.v4.face_index == 0
+                    && crate::continuous_characteristics_v1::printed_abilities_active(state, *id)
+                    && is_sphinxs_tutelage_v1(object.card_def)
+            })
+            .map(|(id, _)| crate::state::AbilitySourceContractV4::capture(state, id))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let lathril_source = match &event {
+        ProposedEvent::Damage(d)
+            if d.is_combat && d.amount > 0 && matches!(d.target, Target::Player(_)) =>
+        {
+            state
+                .objects
+                .try_get(d.source)
+                .filter(|o| {
+                    o.zone == Zone::Battlefield
+                        && o.v4.face_index == 0
+                        && o.v4.face_down_v1.is_none()
+                        && is_lathril_v1(o.card_def)
+                        && crate::continuous_characteristics_v1::printed_abilities_active(
+                            state, d.source,
+                        )
+                })
+                .map(|_| {
+                    (
+                        crate::state::AbilitySourceContractV4::capture(state, d.source),
+                        d.target,
+                        d.amount,
+                    )
+                })
+        }
+        _ => None,
+    };
+    let progenitus_input = progenitus_plan
+        .as_ref()
+        .map(|plan| plan.record_input(state));
+    let Some(MaterializedEventV1 {
+        committed,
+        alesha_power_departure,
+        niv_source_departure,
+    }) = materialize_event_v1(
+        state,
+        event,
+        NativeMaterializationInputV1 {
+            authority_observers: authority_batch
+                .as_ref()
+                .map(|batch| batch.observers.as_slice()),
+            entering_characteristics,
+            counter_input: &counter_input,
+            season_entry_active,
+            token_input_index,
+            mode: NativeMaterializationV1::Commit(zone_plan),
+            abilities_removed_before,
+        },
+    )
+    else {
+        return;
+    };
+    let saga_source = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }
+        | CommittedEvent::CreateToken { object, .. }
+            if state.objects.get(*object).v4.face_index == 0
+                && (!season_entry_active
+                    || state.objects.get(*object).v4.face_down_v1.is_none())
+                && crate::card_def::CARD_DEFS[usize::from(state.objects.get(*object).card_def)]
+                    .saga
+                    .is_some()
+                && (matches!(&committed, CommittedEvent::ZoneChange { .. })
+                    || season_entry_active) =>
+        {
+            Some(*object)
+        }
+        _ => None,
+    };
+    let entry_counter_object = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }
+        | CommittedEvent::CreateToken { object, .. } => Some(*object),
+        _ => None,
+    };
+    if let Some(object) = entry_counter_object {
+        if let Err(source) =
+            initialize_materialized_entry_v1(state, &entry_color_proposal, object, &counter_input)
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return;
+        }
+    }
+    let left_battlefield = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            from: Zone::Battlefield,
+            to,
+            ..
+        } if *to != Zone::Battlefield => Some(*object),
+        _ => None,
+    };
+    let single_graveyard_entry = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }
+        | CommittedEvent::CreateToken { object, .. } => Some(*object),
+        _ => None,
+    };
+    if let Some(snapshot) = source_color.filter(|snapshot| {
+        matches!(&committed, CommittedEvent::ZoneChange { object, from, to, .. }
+            if *object == snapshot.source.source && *from == snapshot.source.zone && to != from)
+    }) {
+        crate::controlled_creature_grants_v1::log_departure_color(state, snapshot);
+    }
+    state.engine.event_log.push(committed.clone());
+    let committed_death = matches!(
+        committed,
+        CommittedEvent::ZoneChange {
+            from: Zone::Battlefield,
+            to: Zone::Graveyard,
+            ..
+        }
+    );
+    let entry_history_index = state.engine.event_history.len();
+    state.engine.event_history.push(committed);
+    record_copied_token_entry_v1(state, entry_history_index);
+    crate::effect::curator_v1::record_entry(state, entry_history_index);
+    if !tutelage_observers.is_empty()
+        && matches!(
+            state.engine.event_history.get(entry_history_index),
+            Some(CommittedEvent::Draw {
+                object: Some(_),
+                ..
+            })
+        )
+    {
+        let receipt = CommittedEvent::SphinxsTutelageDrawV1 {
+            draw_history_index: entry_history_index as u64,
+            observers: tutelage_observers,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
+    }
+    if let Some(source) = niv_source_departure {
+        if let Some(departure_history_index) = state
+            .engine
+            .event_history
+            .len()
+            .checked_sub(1)
+            .and_then(|index| u64::try_from(index).ok())
+        {
+            if matches!(state.engine.event_history.last(),
+                Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
+                    if *object == source.source
+                        && *from == source.zone
+                        && *from == Zone::Battlefield
+                        && to != from
+                        && *controller_before == source.controller)
+            {
+                let receipt = CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+                    source,
+                    departure_history_index,
+                };
+                state.engine.event_history.push(receipt);
+            }
+        }
+    }
+    if !niv_mizzet_damage_captures.is_empty() {
+        let damage_history_index = state.engine.event_history.len() - 1;
+        let Some(CommittedEvent::Damage {
+            source,
+            target: Target::Player(recipient),
+            amount,
+        }) = state.engine.event_history.get(damage_history_index)
+        else {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        };
+        let (source, recipient, amount) = (*source, *recipient, *amount);
+        for capture in niv_mizzet_damage_captures {
+            if capture.damage_source.source != source
+                || capture.observer.controller == recipient
+                || capture.damage_source.controller != capture.observer.controller
+                || amount <= 0
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    capture.observer.source,
+                ));
+                return;
+            }
+            let Ok(damage_history_index) = u64::try_from(damage_history_index) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    capture.observer.source,
+                ));
+                return;
+            };
+            let receipt = CommittedEvent::NivMizzetVisionaryDamageV1 {
+                observer: capture.observer,
+                damage_source: capture.damage_source,
+                damage_history_index,
+            };
+            state.engine.event_log.push(receipt.clone());
+            state.engine.event_history.push(receipt);
+        }
+    }
+    if let Some((source, Target::Player(player), amount)) = lathril_source {
+        let receipt = CommittedEvent::LathrilCombatDamageV1 {
+            damage_history_index: entry_history_index as u64,
+            source,
+            player,
+            amount,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
+    }
+    if let Some(wave) = greatwurm_single {
+        if wave.finish(state, greatwurm_history_start).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+    if let Some(wave) = kaito_single {
+        if wave.finish(state, entry_history_index).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+    if let Some((source, card_def, zone_change_count, power)) = alesha_power_departure {
+        if zone_change_count
+            .checked_add(1)
+            .is_some_and(|next| state.objects.get(source).zone_change_count == next)
+            && state.objects.get(source).zone != Zone::Battlefield
+        {
+            let receipt = CommittedEvent::AleshaPowerLkiV1 {
+                source,
+                card_def,
+                zone_change_count,
+                departure_history_index: entry_history_index as u64,
+                power,
+            };
+            state.engine.event_log.push(receipt.clone());
+            state.engine.event_history.push(receipt);
+        }
+    }
+    if let Some(object) = entry_counter_object {
+        if crate::linked_aura_operation_v1::commit_entry_color(
+            state,
+            &entry_color_proposal,
+            object,
+            entry_history_index,
+        )
+        .and_then(|_| {
+            crate::linked_aura_operation_v1::commit_kinship_entry(
+                state,
+                &entry_color_proposal,
+                object,
+                entry_history_index,
+            )
+        })
+        .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
+    }
+    crate::banishing_light_v1::record_entry(state, entry_history_index);
+    crate::life_loss_turn_v1::capture_committed_loss_at(state, entry_history_index);
+    if let Some(batch) = wide_conqueror {
+        batch.finish(state);
+    }
+    if let Some(batch) = conqueror_single {
+        batch.finish(state);
+    }
+    if committed_death {
+        for mut capture in death_captures {
+            crate::fiendish_panda_v1::bind_departure(&mut capture, entry_history_index);
+            if crate::fake_your_own_death_v50::spell_custody::bind_death_departure(
+                state,
+                &mut capture,
+                entry_history_index,
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+            state.engine.event_log.push(capture.clone());
+            state.engine.event_history.push(capture);
+        }
+    }
+    crate::effect::harvester_v1::record_entry(state, entry_history_index);
+    crate::effect::harvester_v1::record_graveyard_entry(state, entry_history_index);
+    if let Some(source) = single_graveyard_entry {
+        crate::soul_shackled_zombie_v1::record_entry(state, source, entry_history_index);
+    }
+    if let Some(capture) = crate::raid_entry_v1::record_entry(state, entry_history_index) {
+        if !defer_raid_entry {
+            crate::raid_entry_custody_v1::capture_entry(state, capture);
+        }
+    }
+    if let Some(batch) = garruk_batch.as_mut() {
+        batch.record(state, entry_history_index)
+    } else {
+        crate::garruks_uprising_v1::record_single_entry(state, entry_history_index)
+    }
+
+    if let Some(batch) = arahbo_batch.as_mut() {
+        batch.record(state, entry_history_index);
+    } else {
+        crate::arahbo_v1::record_single_entry(state, entry_history_index);
+    }
+    if let Some(batch) = authority_batch.as_mut() {
+        batch.record(entry_history_index);
+    } else {
+        crate::authority_of_the_consuls_v1::record_entry(state, entry_history_index);
+    }
+    if crate::effect::source_token_copy_v1::record_departure(
+        state,
+        source_copy_departure,
+        entry_history_index,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    if crate::effect::chandra_flameshaper_v1::record_departure(
+        state,
+        chandra_departure,
+        entry_history_index,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    if let Some(object) = left_battlefield {
+        crate::standard_legends_v1::return_lagrella_exiles(
+            state,
+            object,
+            state.objects.get(object).zone_change_count - 1,
+        );
+        if !state.engine.linked_exile_records.is_empty() {
+            let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
+            crate::effect::return_cards_exiled_until_source_leaves(
+                state,
+                object,
+                left_zone_change_count,
+            );
+        }
+        // Cloak and Dagger, Entwined's exile until it leaves (eternal wave
+        // E8a).
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
+            crate::eternal_legacy_e8a_v1::source_left_battlefield(
+                state,
+                object,
+                left_zone_change_count,
+            );
+        }
+    }
+    crate::life_gain_turn_v1::capture_committed_gain(state);
+    // The predecessor first-gain hook consumes the actual last LifeGain.
+    // Panda uses its original index and can then append its own markers.
+    crate::fiendish_panda_v1::record_gain(state, entry_history_index);
+    if let Some(object) = entry_counter_object {
+        if !season_entry_active {
+            crate::standard_cards_v1::initialize_entry_counters(
+                state,
+                object,
+                counter_input.as_ref(),
+            );
+        }
+        let live = state.objects.get(object);
+        let count = live.counters.plus1_plus1;
+        let controller = live.controller;
+        log_plus_one_counters_added(state, object, controller, count);
+    }
+    if let Some(source) = saga_source {
+        if season_entry_active {
+            let live = state.objects.get(source);
+            let chapters = crate::card_def::CARD_DEFS[usize::from(live.card_def)]
+                .saga
+                .as_ref()
+                .filter(|_| {
+                    crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+                })
+                .map_or(0, |saga| saga.chapter_effects.len());
+            let count = live
+                .counters
+                .lore
+                .min(i16::try_from(chapters).unwrap_or(i16::MAX));
+            for chapter in 1..=count {
+                log_saga_chapter(state, source, chapter as u8);
+            }
+        } else {
+            add_lore_counters(state, source, 1).expect("new Saga counters fit");
+        }
+    }
+    if let Some(plan) = progenitus_plan {
+        let input = progenitus_input.expect("private Progenitus input");
+        if let Some(queue) = progenitus_completions.as_mut() {
+            queue.push(crate::progenitus_v1::CompletionV1::new(
+                plan,
+                input,
+                Some(entry_history_index),
+            ));
+        } else if let Err(source) = plan.finish(state, input, Some(entry_history_index)) {
+            halt_zone_pt_v1(state, source);
+        }
+    }
+}
+
+fn initialize_materialized_entry_v1(
+    state: &mut GameState,
+    entry_color_proposal: &ProposedEvent,
+    object: ObjectId,
+    counter_input: &Option<crate::doubling_season_v48::ReplacementInputV48>,
+) -> Result<(), ObjectId> {
+    if crate::linked_aura_operation_v1::initialize_kinship_entry(
+        state,
+        entry_color_proposal,
+        object,
+    )
+    .is_err()
+    {
+        return Err(object);
+    }
+    // All fixed, X and token-entry counters already exist, while no entry
+    // event or observer has been published. Use the original batch input.
+    if crate::giada_v1::apply_entry_counters(state, object, counter_input.as_ref()).is_err() {
+        return Err(object);
+    }
+    Ok(())
+}
+
+/// A fresh, private numeric scene plan. It contains no executable permission and
+/// never survives this synchronous commit. Departures read the original scene.
+struct FinalZonePtPlanV1 {
+    departures: Vec<(crate::state::ObjectLinkV4, (i32, i32))>,
+}
+#[derive(Clone, Copy)]
+enum NativeMaterializationV1<'a> {
+    Commit(Option<&'a FinalZonePtPlanV1>),
+    FinalScene(&'a FinalZonePtPlanV1),
+}
+impl NativeMaterializationV1<'_> {
+    fn is_scene(self) -> bool {
+        matches!(self, Self::FinalScene(_))
+    }
+    fn departure_pt(self, state: &GameState, id: ObjectId) -> Option<(i32, i32)> {
+        let plan = match self {
+            Self::Commit(plan) => plan?,
+            Self::FinalScene(plan) => plan,
+        };
+        let generation = state.objects.get(id).zone_change_count;
+        plan.departures.iter().find_map(|(link, pt)| {
+            (link.object == id && link.zone_change_count == generation).then_some(*pt)
+        })
+    }
+}
+fn aberration_definition_v1(id: u16) -> bool {
+    crate::card_def::CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| {
+            d.is_executable()
+                && (crate::engine::consuming_aberration_cda_for_v1(d.name)
+                    || crate::effect::fiend_artisan_v1::definition(id))
+        })
+}
+/// Select only actual battlefield characteristics, including suppressed forms
+/// and reversible native copies. This is a cost guard, not an execution permit.
+pub(crate) fn has_potential_aberration_battlefield_v1(state: &GameState) -> bool {
+    state.objects.iter().any(|(_, o)| {
+        o.zone == Zone::Battlefield
+            && (aberration_definition_v1(o.card_def)
+                || crate::card_def::CARD_DEFS
+                    .get(usize::from(o.card_def))
+                    .is_some_and(|def| {
+                        def.attachment == Some(crate::card_def::AttachmentDef::AuraLandOverride)
+                    }))
+    }) || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, aberration_definition_v1)
+}
+fn needs_final_zone_pt_plan_v1(state: &GameState, events: &[ProposedEvent]) -> bool {
+    if !events.iter().any(|event| {
+        matches!(
+            event,
+            ProposedEvent::ZoneChange(_)
+                | ProposedEvent::CreateToken(_)
+                | ProposedEvent::Transform(_)
+        )
+    }) {
+        return false;
+    }
+    // Suppression and face-down characteristics do not exclude a source: this
+    // very zone batch can remove the Aura or copy that currently hides its CDA.
+    has_potential_aberration_battlefield_v1(state)
+        || events.iter().any(|event| match event {
+            ProposedEvent::ZoneChange(z) if z.to_zone == Zone::Battlefield => {
+                aberration_definition_v1(state.objects.get(z.object).card_def)
+            }
+            ProposedEvent::CreateToken(t) => aberration_definition_v1(t.token_def),
+            _ => false,
+        })
+}
+impl FinalZonePtPlanV1 {
+    fn capture(
+        original: &GameState,
+        events: &[ProposedEvent],
+        authority_observers: Option<&[crate::state::AbilitySourceContractV4]>,
+        characteristics: Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
+        counter_inputs: &[Option<crate::doubling_season_v48::ReplacementInputV48>],
+        attachments: &[(
+            crate::effect::EffectObjectBinding,
+            crate::effect::EffectObjectBinding,
+        )],
+    ) -> Result<Self, ObjectId> {
+        if events.len() != counter_inputs.len() {
+            return Err(ObjectId(0));
+        }
+        let progenitus_preview = crate::progenitus_v1::preview(original, events)?;
+        let events = progenitus_preview.as_deref().unwrap_or(events);
+        let mut plan = Self {
+            departures: Vec::new(),
+        };
+        for event in events {
+            if let ProposedEvent::ZoneChange(z) = event {
+                let object = original.objects.get(z.object);
+                if object.zone == Zone::Battlefield {
+                    let pt = crate::engine::checked_effective_pt(original, z.object)
+                        .map_err(|_| z.object)?;
+                    plan.departures.push((
+                        crate::state::ObjectLinkV4 {
+                            object: z.object,
+                            zone_change_count: object.zone_change_count,
+                        },
+                        pt,
+                    ));
+                }
+            }
+        }
+        // This is characteristic materialization, not event replay: no public
+        // step/resume, replacement consumption, committed-event observation
+        // or linked return runs here. Native entry initialization is shared;
+        // its private bookkeeping never escapes this discarded scene. All
+        // members exist before the one layer-7 query.
+        let mut scene = original.clone();
+        for (event, input) in events.iter().zip(counter_inputs) {
+            if matches!(event,ProposedEvent::ZoneChange(z)if z.to_zone==Zone::Library && original.objects.get(z.object).zone==Zone::Library && crate::progenitus_v1::definition(original.objects.get(z.object).card_def))
+            {
+                continue;
+            }
+            let mut entry = characteristics;
+            prepare_zone_entry_characteristics_v1(event, &mut entry)?;
+            let season = crate::doubling_season_v48::requires_successor(original)
+                || input
+                    .as_ref()
+                    .is_some_and(|input| !input.seasons.is_empty());
+            let Some(materialized) = materialize_event_v1(
+                &mut scene,
+                event.clone(),
+                NativeMaterializationInputV1 {
+                    authority_observers,
+                    entering_characteristics: entry,
+                    counter_input: input,
+                    season_entry_active: season,
+                    token_input_index: None,
+                    mode: NativeMaterializationV1::FinalScene(&plan),
+                    abilities_removed_before: None,
+                },
+            ) else {
+                return Err(scene
+                    .engine
+                    .halted
+                    .map_or(ObjectId(0), |(_, source)| source));
+            };
+            if let Some((_, source)) = scene.engine.halted {
+                return Err(source);
+            }
+            let entrant = match &materialized.committed {
+                CommittedEvent::ZoneChange {
+                    object,
+                    to: Zone::Battlefield,
+                    ..
+                }
+                | CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            };
+            if let Some(object) = entrant {
+                initialize_materialized_entry_v1(&mut scene, event, object, input)?;
+                // Native static boosts authenticate the actual chosen entry
+                // against its real materialized row. Reuse the existing private
+                // constructor in this discarded scene; do not approximate that
+                // boost by merely writing v4.chosen_color.
+                let entry_index = scene.engine.event_history.len();
+                scene
+                    .engine
+                    .event_history
+                    .push(materialized.committed.clone());
+                crate::linked_aura_operation_v1::commit_entry_color(
+                    &mut scene,
+                    event,
+                    object,
+                    entry_index,
+                )
+                .and_then(|_| {
+                    crate::linked_aura_operation_v1::commit_kinship_entry(
+                        &mut scene,
+                        event,
+                        object,
+                        entry_index,
+                    )
+                })
+                .map_err(|_| object)?;
+                if !season {
+                    crate::standard_cards_v1::initialize_entry_counters(
+                        &mut scene,
+                        object,
+                        input.as_ref(),
+                    );
+                }
+            }
+        }
+        for &(aura, host) in attachments {
+            if scene.objects.get(aura.object).zone == Zone::Battlefield {
+                let generation = scene.objects.get(aura.object).zone_change_count;
+                scene
+                    .attach_object_exact(
+                        aura.object,
+                        generation,
+                        host.object,
+                        host.expected_zone_change_count,
+                    )
+                    .map_err(|_| aura.object)?;
+            }
+        }
+        // Lifelink is simultaneous with the damage. The exact source/controller
+        // and replaced amount come from the original scene, as in actual commit.
+        for (_, player, amount) in batch_lifelink_gains_v1(original, events)? {
+            scene.players[player.index()].life = scene.players[player.index()]
+                .life
+                .checked_add(amount)
+                .ok_or(ObjectId(0))?;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(&mut scene, player, amount, 0);
+        }
+        if let Some((_, source)) = scene.engine.halted {
+            return Err(source);
+        }
+        crate::engine::validate_battlefield_pt(&scene)?;
+        Ok(plan)
+    }
+}
+fn batch_lifelink_gains_v1(
+    state: &GameState,
+    events: &[ProposedEvent],
+) -> Result<Vec<(ObjectId, PlayerId, i32)>, ObjectId> {
+    let mut gains: Vec<(ObjectId, PlayerId, i32)> = Vec::new();
+    for event in events {
+        let Some((player, amount)) = lifelink_gain_for(state, event) else {
+            continue;
+        };
+        let ProposedEvent::Damage(damage) = event else {
+            unreachable!("only damage causes lifelink");
+        };
+        if let Some((_, _, total)) = gains
+            .iter_mut()
+            .find(|(source, controller, _)| *source == damage.source && *controller == player)
+        {
+            *total = total.checked_add(amount).ok_or(damage.source)?;
+        } else {
+            gains.push((damage.source, player, amount));
+        }
+    }
+    Ok(gains)
+}
+fn direct_zone_scene_events_v1(state: &GameState, events: &[ProposedEvent]) -> Vec<ProposedEvent> {
+    events
+        .iter()
+        .cloned()
+        .map(|mut event| {
+            let fiery = state.engine.active_replacements.iter().any(|r| {
+                matches!(
+                    r.kind,
+                    ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+                ) && replacement_applies(r, &event, state)
+            });
+            if fiery {
+                // The only eligible replacement is destination-only, with no
+                // consumable shield bookkeeping. Other replacements remain owned
+                // by the caller's ordinary propose pass.
+                if let ProposedEvent::ZoneChange(z) = &mut event {
+                    z.to_zone = Zone::Exile;
+                }
+            }
+            if let ProposedEvent::ZoneChange(z) = &mut event {
+                if z.to_zone == Zone::Graveyard
+                    && state
+                        .objects
+                        .get(z.object)
+                        .v4
+                        .creature_upgrade
+                        .as_ref()
+                        .is_some_and(|u| u.finality > 0)
+                {
+                    z.to_zone = Zone::Exile;
+                }
+            }
+            event
+        })
+        .collect()
+}
+fn direct_zone_pt_plan_v1(
+    state: &GameState,
+    events: &[ProposedEvent],
+) -> Result<Option<FinalZonePtPlanV1>, ObjectId> {
+    crate::progenitus_v1::preview(state, events)?;
+    if !needs_final_zone_pt_plan_v1(state, events) {
+        return Ok(None);
+    }
+    let final_events = direct_zone_scene_events_v1(state, events);
+    let inputs = final_events
+        .iter()
+        .map(|event| crate::doubling_season_v48::entry_input(state, event))
+        .collect::<Vec<_>>();
+    FinalZonePtPlanV1::capture(state, &final_events, None, None, &inputs, &[]).map(Some)
+}
+
+fn halt_zone_pt_v1(state: &mut GameState, source: ObjectId) {
+    state.engine.halted = Some((
+        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+        source,
+    ));
+}
+
+/// The same native allocator/reset is used by commit and the final-scene check.
+/// Scene mode never publishes departure receipts or invokes event observers.
+struct NativeMaterializationInputV1<'a> {
+    authority_observers: Option<&'a [crate::state::AbilitySourceContractV4]>,
+    entering_characteristics:
+        Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
+    counter_input: &'a Option<crate::doubling_season_v48::ReplacementInputV48>,
+    season_entry_active: bool,
+    token_input_index: Option<u64>,
+    mode: NativeMaterializationV1<'a>,
+    abilities_removed_before: Option<bool>,
+}
+fn materialize_event_v1(
+    state: &mut GameState,
+    event: ProposedEvent,
+    input: NativeMaterializationInputV1<'_>,
+) -> Option<MaterializedEventV1> {
+    let NativeMaterializationInputV1 {
+        authority_observers,
+        entering_characteristics,
+        counter_input,
+        season_entry_active,
+        token_input_index,
+        mode,
+        abilities_removed_before,
+    } = input;
+    let mut alesha_power_departure = None;
+    let mut niv_source_departure = None;
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -3100,13 +5214,13 @@ fn commit_with_entry_batch_and_source_color(
                                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                                 d.source,
                             ));
-                            return;
+                            return None;
                         };
                         obj.damage = damage;
                         obj.v4.deathtouch_damage |= source_has_deathtouch;
                     }
                 }
-                Target::StackItem(_) => return,
+                Target::StackItem(_) => return None,
                 Target::Player(p) => {
                     let lost = d.amount;
                     #[cfg(feature = "standard-magezero-fixtures")]
@@ -3149,64 +5263,10 @@ fn commit_with_entry_batch_and_source_color(
             crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
-            crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
             let from = state.objects.get(z.object).zone;
-            if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
-                crate::engine::record_different_controller_target_departure(state, z.object);
-            }
-            crate::standard_cards_v1::before_departure(state, z.object);
-            if from == Zone::Battlefield
-                && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
-                    || crate::eternal_vintage_v1::active_copy(state, z.object)
-                    || crate::eternal_legacy_e7a_v1::active_copy(state, z.object))
-            {
-                let marker = CommittedEvent::LeftBattlefieldCopyV1 {
-                    source: crate::state::AbilitySourceContractV4::capture(state, z.object),
-                    face_index: state.objects.get(z.object).v4.face_index,
-                };
-                state.engine.event_log.push(marker.clone());
-                state.engine.event_history.push(marker);
-            }
+            let departure_pt = mode.departure_pt(state, z.object);
+            let departure_power = departure_pt.map(|pt| pt.0);
             let controller_before = state.objects.get(z.object).controller;
-            if from == Zone::Battlefield {
-                let live = state.objects.get(z.object);
-                if live.v4.face_index != 0
-                    && crate::standard_cards_v1::records_departure_face(
-                        &crate::card_def::CARD_DEFS[live.card_def as usize],
-                    )
-                {
-                    let marker = CommittedEvent::LeftBattlefieldFaceV1 {
-                        object: z.object,
-                        zone_change_count: live.zone_change_count,
-                        face_index: live.v4.face_index,
-                    };
-                    state.engine.event_log.push(marker.clone());
-                    state.engine.event_history.push(marker);
-                }
-            }
-            if from == Zone::Battlefield {
-                record_counter_lki(state, z.object);
-                #[cfg(feature = "standard-magezero-fixtures")]
-                crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
-                crate::ashroot_animist_v1::before_departure(state, z.object);
-                crate::source_power_activation_v1::before_departure(state, z.object);
-                crate::gorehorn_damage_v1::before_departure(state, z.object);
-                crate::equipment_damage_source_v4::before_departure(state, z.object);
-            }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
-            if from == Zone::Battlefield
-                && abilities_removed_before.unwrap_or_else(|| {
-                    !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
-                })
-            {
-                let marker = CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
-                    object: z.object,
-                    zone_change_count: state.objects.get(z.object).zone_change_count,
-                };
-                state.engine.event_log.push(marker.clone());
-                state.engine.event_history.push(marker);
-            }
             #[cfg(feature = "limited-fdn-fixtures")]
             let creature_died = from == Zone::Battlefield
                 && z.to_zone == Zone::Graveyard
@@ -3215,17 +5275,150 @@ fn commit_with_entry_batch_and_source_color(
                     z.object,
                     crate::card_def::CardType::Creature,
                 );
-            #[cfg(feature = "limited-fdn-fixtures")]
-            if from == Zone::Battlefield {
-                crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            if !mode.is_scene() {
+                crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
+                if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
+                    crate::engine::record_different_controller_target_departure(state, z.object);
+                }
+                crate::standard_cards_v1::before_departure(state, z.object);
+                if from == Zone::Battlefield
+                    && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
+                        || crate::eternal_vintage_v1::active_copy(state, z.object)
+                        || crate::eternal_legacy_e7a_v1::active_copy(state, z.object))
+                {
+                    let marker = CommittedEvent::LeftBattlefieldCopyV1 {
+                        source: crate::state::AbilitySourceContractV4::capture(state, z.object),
+                        face_index: state.objects.get(z.object).v4.face_index,
+                    };
+                    state.engine.event_log.push(marker.clone());
+                    state.engine.event_history.push(marker);
+                }
+                if from == Zone::Battlefield {
+                    let live = state.objects.get(z.object);
+                    if live.v4.face_index != 0
+                        && crate::standard_cards_v1::records_departure_face(
+                            &crate::card_def::CARD_DEFS[live.card_def as usize],
+                        )
+                    {
+                        let marker = CommittedEvent::LeftBattlefieldFaceV1 {
+                            object: z.object,
+                            zone_change_count: live.zone_change_count,
+                            face_index: live.v4.face_index,
+                        };
+                        state.engine.event_log.push(marker.clone());
+                        state.engine.event_history.push(marker);
+                    }
+                }
+                if from == Zone::Battlefield {
+                    record_counter_lki(state, z.object);
+                    if departure_pt.is_some() {
+                        crate::creature_stats_lki_v1::record_creature_stats_lki_with_pt(
+                            state,
+                            z.object,
+                            departure_pt,
+                        );
+                    } else {
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
+                    }
+                    if departure_power.is_some() {
+                        crate::ashroot_animist_v1::before_departure_with_power(
+                            state,
+                            z.object,
+                            departure_power,
+                        );
+                    } else {
+                        crate::ashroot_animist_v1::before_departure(state, z.object);
+                    }
+                    if departure_pt.is_some() {
+                        crate::source_power_activation_v1::before_departure_with_pt(
+                            state,
+                            z.object,
+                            departure_pt,
+                        );
+                    } else {
+                        crate::source_power_activation_v1::before_departure(state, z.object);
+                    }
+                    crate::gorehorn_damage_v1::before_departure(state, z.object);
+                    crate::drakuseth_damage_source_v76::before_departure(state, z.object);
+                    crate::equipment_damage_source_v4::before_departure(state, z.object);
+                }
+                #[cfg(feature = "standard-magezero-fixtures")]
+                if departure_power.is_some() {
+                    crate::standard_keywords_v1::before_zone_change_with_power(
+                        state,
+                        z.object,
+                        z.to_zone,
+                        departure_power,
+                    );
+                } else {
+                    crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
+                }
+                if from == Zone::Battlefield
+                    && abilities_removed_before.unwrap_or_else(|| {
+                        !crate::continuous_characteristics_v1::printed_abilities_active(
+                            state, z.object,
+                        )
+                    })
+                {
+                    let marker = CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                        object: z.object,
+                        zone_change_count: state.objects.get(z.object).zone_change_count,
+                    };
+                    state.engine.event_log.push(marker.clone());
+                    state.engine.event_history.push(marker);
+                }
+                #[cfg(feature = "limited-fdn-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+                }
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
+                }
+                if from == Zone::Battlefield
+                    && z.to_zone != Zone::Battlefield
+                    && crate::card_def::CARD_DEFS
+                        .get(usize::from(state.objects.get(z.object).card_def))
+                        .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+                {
+                    let source = state.objects.get(z.object);
+                    alesha_power_departure = Some((
+                        z.object,
+                        source.card_def,
+                        source.zone_change_count,
+                        departure_power
+                            .unwrap_or_else(|| crate::engine::effective_power(state, z.object)),
+                    ));
+                }
+                if from == Zone::Battlefield
+                    && z.to_zone != Zone::Battlefield
+                    && niv_mizzet_catalog_enabled_v1()
+                {
+                    niv_source_departure = Some(crate::state::AbilitySourceContractV4::capture(
+                        state, z.object,
+                    ));
+                }
+                refresh_creature_power_lki(state, z.object, from, departure_power);
+            } else {
+                #[cfg(feature = "standard-magezero-fixtures")]
+                crate::standard_keywords_v1::record_descended_zone_change_v1(
+                    state, z.object, z.to_zone,
+                );
+                #[cfg(feature = "limited-fdn-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+                }
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
+                }
             }
-            #[cfg(feature = "eternal-fixtures")]
-            if from == Zone::Battlefield {
-                crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
-                crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
-                crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
-            }
-            commit_zone_change(
+            materialize_zone_change_v1(
                 state,
                 z.object,
                 z.to_zone,
@@ -3236,9 +5429,7 @@ fn commit_with_entry_batch_and_source_color(
                 z.battlefield_face_index,
                 z.battlefield_controller,
                 (
-                    authority_batch
-                        .as_ref()
-                        .map(|batch| batch.observers.as_slice()),
+                    authority_observers,
                     {
                         let mut entry = entering_characteristics
                             .as_ref()
@@ -3251,10 +5442,14 @@ fn commit_with_entry_batch_and_source_color(
                         entry
                     },
                     counter_input.as_ref(),
+                    z.battlefield_revival_v1,
                 ),
             );
             #[cfg(feature = "limited-fdn-fixtures")]
-            if creature_died && state.objects.get(z.object).zone == Zone::Graveyard {
+            if !mode.is_scene()
+                && creature_died
+                && state.objects.get(z.object).zone == Zone::Graveyard
+            {
                 state.creature_death_turn_v1 = Some(crate::state::CreatureDeathTurnV1 {
                     turn: state.turn_key_v1(),
                     active_player: state.active_player,
@@ -3283,9 +5478,33 @@ fn commit_with_entry_batch_and_source_color(
                 amount,
             }
         }
+        ProposedEvent::LifeLossWideV59(l) => {
+            state.players[l.player.index()].life = crate::snack_wide_life_v59::checked_life(
+                state.players[l.player.index()].life,
+                l.amount,
+                false,
+            )
+            .expect("preflighted wide loss");
+            CommittedEvent::LifeLossWideV59 {
+                player: l.player,
+                amount: l.amount,
+            }
+        }
+        ProposedEvent::LifeGainWideV59(g) => {
+            state.players[g.player.index()].life = crate::snack_wide_life_v59::checked_life(
+                state.players[g.player.index()].life,
+                g.amount,
+                true,
+            )
+            .expect("preflighted wide gain");
+            CommittedEvent::LifeGainWideV59 {
+                player: g.player,
+                amount: g.amount,
+            }
+        }
         ProposedEvent::LifeGain(g) => {
             if g.amount <= 0 {
-                return;
+                return None;
             }
             state.players[g.player.index()].life += g.amount;
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -3364,6 +5583,22 @@ fn commit_with_entry_batch_and_source_color(
                     // Creation itself makes this object a token, including
                     // copies whose printed definition is an ordinary card.
                     v4.is_token = true;
+                    // Copy exceptions are copiable characteristics and must be
+                    // present before any entry characteristic is consulted.
+                    v4.copied_end_step_sacrifices_v1 = t
+                        .initialization_v48
+                        .as_ref()
+                        .map_or(0, |init| init.copied_end_step_sacrifices_v1);
+                    v4.copied_nightmare_v1 = t
+                        .initialization_v48
+                        .as_ref()
+                        .is_some_and(|init| init.copied_nightmare_v1);
+                    if v4.copied_nightmare_v1 {
+                        v4.effective_subtype_ids
+                            .push(crate::card_def::Subtype::Nightmare.stable_id());
+                        v4.effective_subtype_ids.sort_unstable();
+                        v4.effective_subtype_ids.dedup();
+                    }
                     v4.entered_battlefield_turn = Some(state.turn_key_v1());
                     v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
                     v4
@@ -3386,6 +5621,13 @@ fn commit_with_entry_batch_and_source_color(
                     face.subtypes.iter().map(|s| s.stable_id()).collect();
                 live.v4.effective_subtype_ids.sort_unstable();
                 live.v4.effective_subtype_ids.dedup();
+                if live.v4.copied_nightmare_v1 {
+                    live.v4
+                        .effective_subtype_ids
+                        .push(crate::card_def::Subtype::Nightmare.stable_id());
+                    live.v4.effective_subtype_ids.sort_unstable();
+                    live.v4.effective_subtype_ids.dedup();
+                }
                 live.name = face.name.to_string();
             }
             if cfg!(feature = "limited-fdn-fixtures") {
@@ -3395,7 +5637,7 @@ fn commit_with_entry_batch_and_source_color(
             state.players[t.controller.index()].battlefield.push(object);
             let enters_tapped = t.entry_tapped
                 || permanent_enters_battlefield_tapped(state, object, t.controller)
-                || authority_batch.as_ref().map_or_else(
+                || authority_observers.map_or_else(
                     || {
                         crate::authority_of_the_consuls_v1::enters_tapped(
                             state,
@@ -3403,12 +5645,12 @@ fn commit_with_entry_batch_and_source_color(
                             t.controller,
                         )
                     },
-                    |batch| {
+                    |observers| {
                         crate::authority_of_the_consuls_v1::enters_tapped_from_observers(
                             state,
                             object,
                             t.controller,
-                            &batch.observers,
+                            observers,
                         )
                     },
                 );
@@ -3425,7 +5667,7 @@ fn commit_with_entry_batch_and_source_color(
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             object,
                         ));
-                        return;
+                        return None;
                     }
                 }
                 if init.haste_until_end_of_turn {
@@ -3477,7 +5719,7 @@ fn commit_with_entry_batch_and_source_color(
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     object,
                 ));
-                return;
+                return None;
             }
             if let Some(init) = &t.initialization_v48 {
                 if init.plus_one_counters > 0 {
@@ -3553,199 +5795,16 @@ fn commit_with_entry_batch_and_source_color(
             }
         }
     };
-    let saga_source = match &committed {
-        CommittedEvent::ZoneChange {
-            object,
-            to: Zone::Battlefield,
-            ..
-        }
-        | CommittedEvent::CreateToken { object, .. }
-            if state.objects.get(*object).v4.face_index == 0
-                && (!season_entry_active
-                    || state.objects.get(*object).v4.face_down_v1.is_none())
-                && crate::card_def::CARD_DEFS[usize::from(state.objects.get(*object).card_def)]
-                    .saga
-                    .is_some()
-                && (matches!(&committed, CommittedEvent::ZoneChange { .. })
-                    || season_entry_active) =>
-        {
-            Some(*object)
-        }
-        _ => None,
-    };
-    let entry_counter_object = match &committed {
-        CommittedEvent::ZoneChange {
-            object,
-            to: Zone::Battlefield,
-            ..
-        }
-        | CommittedEvent::CreateToken { object, .. } => Some(*object),
-        _ => None,
-    };
-    let left_battlefield = match &committed {
-        CommittedEvent::ZoneChange {
-            object,
-            from: Zone::Battlefield,
-            to,
-            ..
-        } if *to != Zone::Battlefield => Some(*object),
-        _ => None,
-    };
-    let single_graveyard_entry = match &committed {
-        CommittedEvent::ZoneChange {
-            object,
-            to: Zone::Battlefield,
-            ..
-        }
-        | CommittedEvent::CreateToken { object, .. } => Some(*object),
-        _ => None,
-    };
-    if let Some(snapshot) = source_color.filter(|snapshot| {
-        matches!(&committed, CommittedEvent::ZoneChange { object, from, to, .. }
-            if *object == snapshot.source.source && *from == snapshot.source.zone && to != from)
-    }) {
-        crate::controlled_creature_grants_v1::log_departure_color(state, snapshot);
-    }
-    state.engine.event_log.push(committed.clone());
-    let committed_death = matches!(
+    Some(MaterializedEventV1 {
         committed,
-        CommittedEvent::ZoneChange {
-            from: Zone::Battlefield,
-            to: Zone::Graveyard,
-            ..
-        }
-    );
-    let entry_history_index = state.engine.event_history.len();
-    state.engine.event_history.push(committed);
-    if let Some(object) = entry_counter_object {
-        if crate::linked_aura_operation_v1::commit_entry_color(
-            state,
-            &entry_color_proposal,
-            object,
-            entry_history_index,
-        )
-        .is_err()
-        {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                object,
-            ));
-            return;
-        }
-    }
-    crate::banishing_light_v1::record_entry(state, entry_history_index);
-    crate::life_loss_turn_v1::capture_committed_loss_at(state, entry_history_index);
-    if let Some(batch) = conqueror_single {
-        batch.finish(state);
-    }
-    if committed_death {
-        for mut capture in death_captures {
-            crate::fiendish_panda_v1::bind_departure(&mut capture, entry_history_index);
-            if crate::fake_your_own_death_v50::spell_custody::bind_death_departure(
-                state,
-                &mut capture,
-                entry_history_index,
-            )
-            .is_err()
-            {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ObjectId(0),
-                ));
-                return;
-            }
-            state.engine.event_log.push(capture.clone());
-            state.engine.event_history.push(capture);
-        }
-    }
-    if let Some(source) = single_graveyard_entry {
-        crate::soul_shackled_zombie_v1::record_entry(state, source);
-    }
-    if let Some(capture) = crate::raid_entry_v1::record_entry(state, entry_history_index) {
-        if !defer_raid_entry {
-            crate::raid_entry_custody_v1::capture_entry(state, capture);
-        }
-    }
-    if let Some(batch) = garruk_batch.as_mut() {
-        batch.record(state, entry_history_index)
-    } else {
-        crate::garruks_uprising_v1::record_single_entry(state, entry_history_index)
-    }
-
-    if let Some(batch) = arahbo_batch.as_mut() {
-        batch.record(state, entry_history_index);
-    } else {
-        crate::arahbo_v1::record_single_entry(state, entry_history_index);
-    }
-    if let Some(batch) = authority_batch.as_mut() {
-        batch.record(entry_history_index);
-    } else {
-        crate::authority_of_the_consuls_v1::record_entry(state, entry_history_index);
-    }
-    if let Some(object) = left_battlefield {
-        crate::standard_legends_v1::return_lagrella_exiles(
-            state,
-            object,
-            state.objects.get(object).zone_change_count - 1,
-        );
-        if !state.engine.linked_exile_records.is_empty() {
-            let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
-            crate::effect::return_cards_exiled_until_source_leaves(
-                state,
-                object,
-                left_zone_change_count,
-            );
-        }
-        // Cloak and Dagger, Entwined's exile until it leaves (eternal wave
-        // E8a).
-        #[cfg(feature = "eternal-fixtures")]
-        {
-            let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
-            crate::eternal_legacy_e8a_v1::source_left_battlefield(
-                state,
-                object,
-                left_zone_change_count,
-            );
-        }
-    }
-    crate::life_gain_turn_v1::capture_committed_gain(state);
-    // The predecessor first-gain hook consumes the actual last LifeGain.
-    // Panda uses its original index and can then append its own markers.
-    crate::fiendish_panda_v1::record_gain(state, entry_history_index);
-    if let Some(object) = entry_counter_object {
-        if !season_entry_active {
-            crate::standard_cards_v1::initialize_entry_counters(
-                state,
-                object,
-                counter_input.as_ref(),
-            );
-        }
-        let live = state.objects.get(object);
-        let count = live.counters.plus1_plus1;
-        let controller = live.controller;
-        log_plus_one_counters_added(state, object, controller, count);
-    }
-    if let Some(source) = saga_source {
-        if season_entry_active {
-            let live = state.objects.get(source);
-            let chapters = crate::card_def::CARD_DEFS[usize::from(live.card_def)]
-                .saga
-                .as_ref()
-                .filter(|_| {
-                    crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-                })
-                .map_or(0, |saga| saga.chapter_effects.len());
-            let count = live
-                .counters
-                .lore
-                .min(i16::try_from(chapters).unwrap_or(i16::MAX));
-            for chapter in 1..=count {
-                log_saga_chapter(state, source, chapter as u8);
-            }
-        } else {
-            add_lore_counters(state, source, 1).expect("new Saga counters fit");
-        }
-    }
+        alesha_power_departure,
+        niv_source_departure,
+    })
+}
+struct MaterializedEventV1 {
+    committed: CommittedEvent,
+    alesha_power_departure: Option<(ObjectId, u16, u32, i32)>,
+    niv_source_departure: Option<crate::state::AbilitySourceContractV4>,
 }
 
 /// Runs the replace/prevent pass independently on every event in `events`
@@ -3756,7 +5815,41 @@ fn commit_with_entry_batch_and_source_color(
 /// all of it happens at once); the caller is responsible for running SBAs
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
+// The two genuine wide issuers are scalar Snack resolution and its exact
+// Conqueror successor. No native batch issuer currently owns a wide operation.
+// Refuse unsupported raw batches before replacement, entry or member writes.
+fn preflight_wide_batch_v59(state: &mut GameState, events: &[ProposedEvent]) -> bool {
+    if events.iter().any(|event| {
+        matches!(
+            event,
+            ProposedEvent::LifeLossWideV59(_) | ProposedEvent::LifeGainWideV59(_)
+        )
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return false;
+    }
+    true
+}
+
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    if !preflight_wide_batch_v59(state, &events) {
+        return;
+    }
+
+    if let Err(source) = crate::progenitus_v1::preview(state, &events) {
+        halt_zone_pt_v1(state, source);
+        return;
+    }
+    if events.iter().any(unsupported_partial_token_v1) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -3782,16 +5875,139 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    let (events, token_requests) = match crate::doubling_season_v48::expand_tokens(state, events) {
-        Ok(expanded) => expanded,
-        Err(_) => {
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        attachments,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+}
+
+/// The bound copy continuation supplies one untargeted host per actual expanded
+/// Aura. Expansion still records the original single request and replacement
+/// world; these entry choices never resubmit each member through replacement.
+pub(crate) fn batch_with_copied_aura_hosts_v1(
+    state: &mut GameState,
+    event: ProposedEvent,
+    hosts: Vec<crate::state::ObjectLinkV4>,
+) {
+    batch_with_aura_token_hosts_v1(
+        state,
+        vec![event],
+        Vec::new(),
+        Some(hosts),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+}
+/// Consumes one private genuine finishing permit. It cannot be reconstructed
+/// from serialized frames or reused for a second batch.
+pub(crate) fn commit_goblin_excess_tokens_owned(
+    state: &mut GameState,
+    permit: crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>,
+) -> Result<(), String> {
+    let events = permit.events()?;
+    if !permit.allows(state, &events) {
+        return Err("excess token batch lost exact continuation owner".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        Some(&permit),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    if state.engine.halted.is_some() {
+        return Err("excess token batch halted".into());
+    }
+    Ok(())
+}
+// Each distinct lexical permit authenticates its own native token producer.
+#[allow(clippy::too_many_arguments)]
+fn batch_with_aura_token_hosts_v1(
+    state: &mut GameState,
+    events: Vec<ProposedEvent>,
+    attachments: Vec<(
+        crate::effect::EffectObjectBinding,
+        crate::effect::EffectObjectBinding,
+    )>,
+    aura_hosts: Option<Vec<crate::state::ObjectLinkV4>>,
+    excess_permit: Option<&crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>>,
+    kykar_permit: Option<&crate::effect::kykar_v1::TokenPermitV1<'_, '_>>,
+    spirit_copy_permit: Option<&crate::effect::SpiritCopyPermitV1<'_, '_>>,
+    liliana_permit: Option<&crate::effect::liliana_dreadhorde_v1::TokenPermitV1<'_, '_>>,
+    chandra_copy_permit: Option<&crate::effect::chandra_flameshaper_v1::CopyPermitV74<'_, '_>>,
+    kaito_permit: Option<&crate::effect::kaito_cunning_v75::TokenPermitV75<'_, '_>>,
+) {
+    if !preflight_wide_batch_v59(state, &events) {
+        return;
+    }
+    if events.iter().any(unsupported_partial_token_v1)
+        && kykar_permit.is_none_or(|p| !p.allows(state, &events))
+        && spirit_copy_permit.is_none_or(|p| !p.allows(state, &events))
+        && liliana_permit.is_none_or(|p| !p.allows(state, &events))
+        && chandra_copy_permit.is_none_or(|p| !p.allows(state, &events))
+        && kaito_permit.is_none_or(|p| !p.allows(state, &events))
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    if excess_permit.is_some_and(|permit| !permit.allows(state, &events)) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    let (mut events, token_requests) =
+        match crate::doubling_season_v48::expand_tokens(state, events) {
+            Ok(expanded) => expanded,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        };
+    if let Some(hosts) = aura_hosts {
+        let valid = hosts.len() == events.len() && events.iter().all(|event| {
+            matches!(event, ProposedEvent::CreateToken(token)
+                if crate::card_def::CARD_DEFS[usize::from(token.token_def)].attachment.is_some()
+                && token.initialization_v48.as_ref().is_some_and(|init| init.copied && init.attached_to.is_none()))
+        });
+        if !valid {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
             ));
             return;
         }
-    };
+        for (event, host) in events.iter_mut().zip(hosts) {
+            let ProposedEvent::CreateToken(token) = event else {
+                unreachable!()
+            };
+            token.initialization_v48.as_mut().unwrap().attached_to = Some(host);
+        }
+    }
     if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
         || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
     {
@@ -3830,7 +6046,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
-    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+    if excess_permit.is_none() && crate::effect::crystal_prevention_v1::validate(state).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             crate::ids::ObjectId(0),
@@ -3852,6 +6068,64 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         return;
     }
     let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    if needs_final_zone_pt_plan_v1(state, &events) {
+        let mut replaced = state.clone();
+        let survivors = events
+            .into_iter()
+            .filter_map(|event| apply_replacements(&mut replaced, event))
+            .collect::<Vec<_>>();
+        if let Some((_, source)) = replaced.engine.halted {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+        match crate::linked_aura_operation_v1::prepare_entry_colors(&mut replaced, &survivors) {
+            Ok(true) => {}
+            Ok(false) => {
+                *state = replaced;
+                return;
+            }
+            Err(_) => {
+                halt_zone_pt_v1(state, ObjectId(0));
+                return;
+            }
+        }
+        let inputs = survivors
+            .iter()
+            .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
+            .collect::<Vec<_>>();
+        let plan = match FinalZonePtPlanV1::capture(
+            &replaced,
+            &survivors,
+            authority_batch
+                .as_ref()
+                .map(|batch| batch.observers.as_slice()),
+            None,
+            &inputs,
+            &attachments,
+        ) {
+            Ok(plan) => plan,
+            Err(source) => {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
+        };
+        *state = replaced;
+        commit_batch_survivors(
+            state,
+            survivors,
+            authority_batch,
+            EntryBatchCommitContextV1 {
+                garruk_batch,
+                arahbo_batch,
+                attachments,
+                raid_history_start,
+                token_input,
+                token_requests,
+            },
+            Some(plan),
+        );
+        return;
+    }
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
@@ -3868,6 +6142,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
             token_input,
             token_requests,
         },
+        None,
     );
 }
 /// The private owning driver has already finished every replacement choice.
@@ -3894,7 +6169,7 @@ pub(crate) fn commit_crystal_prepared_batch(
         token_input: None,
         token_requests: Vec::new(),
     };
-    commit_batch_survivors(state, survivors, authority_batch, context);
+    commit_batch_survivors(state, survivors, authority_batch, context, None);
 }
 pub(crate) fn commit_twinflame_prepared_combat(
     state: &mut GameState,
@@ -3913,7 +6188,7 @@ pub(crate) fn commit_twinflame_prepared_combat(
         token_input: None,
         token_requests: Vec::new(),
     };
-    commit_batch_survivors(state, survivors, authority, context);
+    commit_batch_survivors(state, survivors, authority, context, None);
     if state.engine.halted.is_some() {
         return Err("actual combat prepared commit halted".into());
     }
@@ -3935,7 +6210,11 @@ fn commit_batch_survivors(
     survivors: Vec<ProposedEvent>,
     mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
     context: EntryBatchCommitContextV1,
+    prepared_zone_plan: Option<FinalZonePtPlanV1>,
 ) {
+    if !preflight_wide_batch_v59(state, &survivors) {
+        return;
+    }
     if crate::doubling_season_v48::preflight_token_initialization(state, &survivors).is_err()
         || crate::doubling_season_v48::preflight_entry_roster(state, &survivors).is_err()
     {
@@ -3945,17 +6224,45 @@ fn commit_batch_survivors(
         ));
         return;
     }
-    match crate::linked_aura_operation_v1::prepare_entry_colors(state, &survivors) {
-        Ok(true) => {}
-        Ok(false) => return,
-        Err(_) => {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                ObjectId(0),
-            ));
-            return;
+    if prepared_zone_plan.is_none() {
+        match crate::linked_aura_operation_v1::prepare_entry_colors(state, &survivors) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
         }
     }
+    let planned_counter_inputs = survivors
+        .iter()
+        .map(|event| crate::doubling_season_v48::entry_input(state, event))
+        .collect::<Vec<_>>();
+    let zone_plan = if let Some(plan) = prepared_zone_plan {
+        Some(plan)
+    } else if needs_final_zone_pt_plan_v1(state, &survivors) {
+        match FinalZonePtPlanV1::capture(
+            state,
+            &survivors,
+            authority_batch
+                .as_ref()
+                .map(|batch| batch.observers.as_slice()),
+            None,
+            &planned_counter_inputs,
+            &context.attachments,
+        ) {
+            Ok(plan) => Some(plan),
+            Err(source) => {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let conqueror_batch = crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state);
     let EntryBatchCommitContextV1 {
         mut garruk_batch,
@@ -3977,6 +6284,7 @@ fn commit_batch_survivors(
         }
     }
     crate::gorehorn_damage_v1::before_batch_departures(state, &survivors);
+    crate::drakuseth_damage_source_v76::before_batch_departures(state, &survivors);
     crate::equipment_damage_source_v4::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
@@ -4034,11 +6342,20 @@ fn commit_batch_survivors(
     } else {
         None
     };
-    let mut counter_inputs = survivors
-        .iter()
-        .map(|event| crate::doubling_season_v48::entry_input(state, event))
-        .collect::<Vec<_>>()
-        .into_iter();
+    let kaito_wave = crate::effect::kaito_cunning_v75::capture_wave(state, &survivors);
+    let greatwurm_wave = match crate::effect::greatwurm_v1::capture_wave(state, &survivors) {
+        Ok(wave) => wave,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
+    let greatwurm_history_start = state.engine.event_history.len();
+    let mut progenitus_completions = Vec::new();
+    let mut counter_inputs = planned_counter_inputs.into_iter();
     crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
@@ -4069,7 +6386,14 @@ fn commit_batch_survivors(
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                ((None, true), frozen_color, counter_input, token_input_index),
+                (
+                    (None, true),
+                    frozen_color,
+                    counter_input,
+                    token_input_index,
+                    zone_plan.as_ref(),
+                ),
+                Some(&mut progenitus_completions),
             );
         }
     } else {
@@ -4089,11 +6413,41 @@ fn commit_batch_survivors(
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                ((None, true), frozen_color, counter_input, token_input_index),
+                (
+                    (None, true),
+                    frozen_color,
+                    counter_input,
+                    token_input_index,
+                    zone_plan.as_ref(),
+                ),
+                Some(&mut progenitus_completions),
             );
         }
     }
 
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    }
+    if greatwurm_wave
+        .finish(state, greatwurm_history_start)
+        .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    if kaito_wave.finish(state, greatwurm_history_start).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     for (aura, host) in attachments {
         if state.objects.get(aura.object).zone == Zone::Battlefield {
             let generation = state.objects.get(aura.object).zone_change_count;
@@ -4156,7 +6510,37 @@ fn commit_batch_survivors(
 /// Freeze only new death observers; retain the existing per-member sacrifice,
 /// replacement, zone-change and unrelated-event order exactly.
 pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[ObjectId]) {
+    let planned_events = chosen
+        .iter()
+        .copied()
+        .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
+        .collect::<Vec<_>>();
+    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
+        Ok(plan) => plan,
+        Err(source) => {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    };
+    let mut progenitus_completions = Vec::new();
+    let progenitus_removed = chosen
+        .iter()
+        .filter(|id| crate::progenitus_v1::definition(state.objects.get(**id).card_def))
+        .map(|id| {
+            (
+                *id,
+                !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &chosen
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
+    crate::drakuseth_damage_source_v76::before_batch_departures(
         state,
         &chosen
             .iter()
@@ -4208,23 +6592,63 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         if let Some(event) =
             apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
         {
+            let progenitus_ability_removed = match &event {
+                ProposedEvent::ZoneChange(z) => progenitus_removed.get(&z.object).copied(),
+                _ => None,
+            };
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
-                None,
+                progenitus_ability_removed,
                 Some(captures),
                 None,
                 (None, None),
-                ((None, false), frozen_color, None, None),
+                ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+                Some(&mut progenitus_completions),
             );
+        }
+    }
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
         }
     }
 }
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
 pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
+    let planned_events = dying
+        .iter()
+        .copied()
+        .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
+        .collect::<Vec<_>>();
+    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
+        Ok(plan) => plan,
+        Err(source) => {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    };
     crate::linked_aura_operation_v1::begin_batch(state);
+    let mut progenitus_completions = Vec::new();
+    let progenitus_removed = dying
+        .iter()
+        .filter(|id| crate::progenitus_v1::definition(state.objects.get(**id).card_def))
+        .map(|id| {
+            (
+                *id,
+                !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &dying
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
+    crate::drakuseth_damage_source_v76::before_batch_departures(
         state,
         &dying
             .iter()
@@ -4254,18 +6678,25 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
             let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
-            if frozen_color.is_some() {
+            if frozen_color.is_some() || zone_plan.is_some() {
+                let progenitus_ability_removed = progenitus_removed.get(&id).copied();
                 commit_with_entry_batch_and_source_color(
                     state,
                     ProposedEvent::zone_change(id, Zone::Graveyard),
-                    None,
+                    progenitus_ability_removed,
                     None,
                     None,
                     (None, None),
-                    ((None, false), frozen_color, None, None),
+                    ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+                    Some(&mut progenitus_completions),
                 );
             } else {
                 commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+            }
+        }
+        if state.engine.halted.is_none() {
+            if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+                halt_zone_pt_v1(state, source);
             }
         }
         crate::linked_aura_operation_v1::end_batch(state);
@@ -4291,15 +6722,25 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     };
     for (event, captures) in events.into_iter().zip(captures) {
         let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+        let progenitus_ability_removed = match &event {
+            ProposedEvent::ZoneChange(z) => progenitus_removed.get(&z.object).copied(),
+            _ => None,
+        };
         commit_with_entry_batch_and_source_color(
             state,
             event,
-            None,
+            progenitus_ability_removed,
             Some(captures),
             None,
             (None, None),
-            ((None, false), frozen_color, None, None),
+            ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+            Some(&mut progenitus_completions),
         );
+    }
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
+        }
     }
     crate::linked_aura_operation_v1::end_batch(state);
 }
@@ -4315,6 +6756,19 @@ pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: Player
     let committed = CommittedEvent::SpellCast { spell, controller };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    let kaito_cast = state.engine.event_history.len() - 1;
+    if crate::effect::thousand_year_storm_v1::record_cast(state, spell).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            spell,
+        ));
+    }
+    if crate::effect::kaito_cunning_v75::record_cast(state, kaito_cast).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            spell,
+        ));
+    }
 }
 
 /// Logs a crime committed by one completed targeting action.
@@ -4559,12 +7013,19 @@ fn permanent_enters_battlefield_tapped(
     controlled_other_count < usize::from(rule.minimum_count)
 }
 
+type MaterializedZoneEntryV1<'a> = (
+    Option<&'a [crate::state::AbilitySourceContractV4]>,
+    Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
+    Option<&'a crate::doubling_season_v48::ReplacementInputV48>,
+    Option<i32>,
+);
+
 /// Zone bookkeeping shared by every `MoveObject` effect leaf. "Hand ->
 /// Stack" (casting) is deliberately not reachable here: putting a spell on
 /// the stack is an engine action (see `engine::begin_cast`), never
 /// something a card's own effect program does.
 #[allow(clippy::too_many_arguments)]
-fn commit_zone_change(
+fn materialize_zone_change_v1(
     state: &mut GameState,
     id: ObjectId,
     to_zone: Zone,
@@ -4574,13 +7035,10 @@ fn commit_zone_change(
     force_battlefield_tapped: bool,
     battlefield_face_index: Option<u8>,
     battlefield_controller: Option<PlayerId>,
-    entry_context: (
-        Option<&[crate::state::AbilitySourceContractV4]>,
-        Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
-        Option<&crate::doubling_season_v48::ReplacementInputV48>,
-    ),
+    entry_context: MaterializedZoneEntryV1<'_>,
 ) {
-    let (authority_observers, entering_characteristics, counter_input) = entry_context;
+    let (authority_observers, entering_characteristics, counter_input, requested_revival) =
+        entry_context;
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
@@ -4593,13 +7051,24 @@ fn commit_zone_change(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    let nine_lives_cast_entry = to_zone == Zone::Battlefield
+        && from_zone == Zone::Stack
+        && crate::card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)].name
+            == "Nine-Lives Familiar"
+        && state.objects.get(id).spell_copy_origin.is_none()
+        && !state.objects.get(id).v4.is_token
+        && state
+            .objects
+            .get(id)
+            .v4
+            .spell_cast_origin
+            .is_some_and(|origin| origin.finalized_method.is_some());
     // A resolving permanent enters under its spell controller (608.3),
     // including a spell cast from another player's exile through Etali.
     let battlefield_controller = battlefield_controller.or_else(|| {
         (from_zone == Zone::Stack && to_zone == Zone::Battlefield)
             .then_some(state.objects.get(id).controller)
     });
-    refresh_paid_creature_power_lki(state, id, from_zone);
     let informed_observer_mask =
         if preserve_known_identity && from_zone == Zone::Library && to_zone == Zone::Hand {
             let position = state.players[owner.index()]
@@ -4661,6 +7130,13 @@ fn commit_zone_change(
     }
 
     let turn = state.turn_key_v1();
+    let entry_added_subtype = (to_zone == Zone::Battlefield)
+        .then(|| entering_characteristics.and_then(|entry| entry.added_subtype_v1))
+        .flatten()
+        .map(|subtype| (subtype, crate::engine::next_timestamp(state)));
+    let entry_flying_grant_timestamp = (to_zone == Zone::Battlefield
+        && entering_characteristics.is_some_and(|entry| entry.grant_flying_v1))
+    .then(|| crate::engine::next_timestamp(state));
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped
             || (entering_face_down.is_none()
@@ -4694,6 +7170,16 @@ fn commit_zone_change(
             }
         }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        // CR 611.2e: this resolving entry effect belongs to the new incarnation
+        // before entry statics, counter replacements, and committed observers.
+        obj.v4.added_subtype_v1 = entry_added_subtype;
+        if let Some(timestamp) = entry_flying_grant_timestamp {
+            obj.v4
+                .creature_upgrade
+                .get_or_insert_with(Default::default)
+                .keyword_grants
+                .push((crate::card_def::Keywords::FLYING, timestamp));
+        }
         // 707.10f: a resolving permanent spell copy becomes a token. This
         // is a zone entry, not token creation, so no creation replacement applies.
         if from_zone == Zone::Stack
@@ -4788,6 +7274,27 @@ fn commit_zone_change(
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         if entering_face_down.is_none() {
             initialize_entry_counters(state, id, kicked, counter_input);
+        }
+        if to_zone == Zone::Battlefield && (nine_lives_cast_entry || requested_revival.is_some()) {
+            if nine_lives_cast_entry && requested_revival.is_some() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    id,
+                ));
+                return;
+            }
+            let base = requested_revival.unwrap_or(8);
+            let controller = state.objects.get(id).controller;
+            match crate::doubling_season_v48::entry_amount(state, counter_input, controller, base) {
+                Ok(revival) if revival >= 0 => state.objects.get_mut(id).counters.revival = revival,
+                _ => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                }
+            }
         }
         if initialize_entry_lore_v48(state, id, counter_input).is_err() {
             state.engine.halted = Some((
@@ -4912,10 +7419,15 @@ fn commit_zone_change(
     }
 }
 
-/// Monstrous Emergence keeps the chosen battlefield creature's last-known
-/// power, not merely its power when the casting cost was announced. Capture
-/// that value immediately before the exact paid-cost incarnation leaves.
-fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+/// Refresh the exact battlefield generation's last-known power immediately
+/// before it leaves. Paid-cost bindings, Alesha's waiting Raid, and other
+/// authenticated consumers retain their own generation-scoped copy.
+fn refresh_creature_power_lki(
+    state: &mut GameState,
+    id: ObjectId,
+    from_zone: Zone,
+    frozen_power: Option<i32>,
+) {
     if from_zone != Zone::Battlefield {
         return;
     }
@@ -4923,7 +7435,8 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
         return;
     };
     let generation = object.zone_change_count;
-    let power = crate::engine::effective_power(state, id);
+    let card_def = object.card_def;
+    let power = frozen_power.unwrap_or_else(|| crate::engine::effective_power(state, id));
     let refresh = |references: &mut Vec<crate::state::PaidCostRefV4>| {
         for reference in references {
             if reference.object == id
@@ -4952,19 +7465,73 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
     };
     for item in &mut state.stack {
         refresh(&mut item.v4.paid_cost_refs);
+        let source_contract = item.v4.ability_source_contract;
+        if let Some(effect) = item.inline_effect.as_mut() {
+            refresh_alesha_raid_power_lki(effect, source_contract, id, card_def, generation, power);
+        }
         if let Some(contract) = item.v4.source_contract.as_mut() {
             refresh_binding(&mut contract.finalized_cast_binding);
         }
     }
     if let Some(pending) = state.engine.pending_effect.as_mut() {
         refresh(&mut pending.resolving_item.v4.paid_cost_refs);
+        let source_contract = pending.resolving_item.v4.ability_source_contract;
+        if let Some(effect) = pending.resolving_item.inline_effect.as_mut() {
+            refresh_alesha_raid_power_lki(effect, source_contract, id, card_def, generation, power);
+        }
         if let Some(contract) = pending.resolving_item.v4.source_contract.as_mut() {
             refresh_binding(&mut contract.finalized_cast_binding);
         }
         refresh(&mut pending.ctx.paid_cost_refs);
     }
+    for pending in &mut state.engine.pending_triggers {
+        let source_contract = pending.source_contract;
+        refresh_alesha_raid_power_lki(
+            &mut pending.effect,
+            source_contract,
+            id,
+            card_def,
+            generation,
+            power,
+        );
+    }
+    if let Some(pending) = state.legend_pending_v1.as_mut() {
+        for pending in pending {
+            let source_contract = pending.source_contract;
+            refresh_alesha_raid_power_lki(
+                &mut pending.effect,
+                source_contract,
+                id,
+                card_def,
+                generation,
+                power,
+            );
+        }
+    }
     for (_, object) in state.objects.iter_mut() {
         refresh_binding(&mut object.v4.finalized_cast_binding);
+    }
+}
+
+fn refresh_alesha_raid_power_lki(
+    effect: &mut crate::effect::EffectOp,
+    contract: Option<crate::state::AbilitySourceContractV4>,
+    object: ObjectId,
+    card_def: u16,
+    generation: u32,
+    power: i32,
+) {
+    let (Some(contract), crate::effect::EffectOp::AleshaRaidReturn { source_power_lki }) =
+        (contract, effect)
+    else {
+        return;
+    };
+    if contract.source == object
+        && contract.card_def == card_def
+        && contract.zone == Zone::Battlefield
+        && contract.zone_change_count == generation
+    {
+        *source_power_lki = power;
     }
 }
 
@@ -5289,6 +7856,7 @@ mod tests {
                 amount,
                 is_combat: true,
                 historical_source: None,
+                niv_damage_origin_v1: None,
                 touched_by: Vec::new(),
             })
         };
@@ -6958,5 +9526,1125 @@ pub(crate) mod ravenous_amulet_paid_future_tests {
             assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
             assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
         }
+    }
+}
+pub(crate) fn is_sphinxs_tutelage_v1(card_def: u16) -> bool {
+    crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.is_executable() && card.name == "Sphinx's Tutelage")
+}
+
+/// Native mutable-world structural validation, not authority over coordinated
+/// raw-history edits. Departed observers retain their event-time controller.
+pub(crate) fn tutelage_observers_v1(
+    state: &GameState,
+    capture_history_index: u64,
+) -> Result<&[crate::state::AbilitySourceContractV4], String> {
+    let index =
+        usize::try_from(capture_history_index).map_err(|_| "Tutelage capture index overflow")?;
+    let Some(CommittedEvent::SphinxsTutelageDrawV1 {
+        draw_history_index,
+        observers,
+    }) = state.engine.event_history.get(index)
+    else {
+        return Err("Tutelage draw capture missing".into());
+    };
+    let draw_index =
+        usize::try_from(*draw_history_index).map_err(|_| "Tutelage draw index overflow")?;
+    let Some(CommittedEvent::Draw {
+        player,
+        object: Some(drawn),
+    }) = state.engine.event_history.get(draw_index)
+    else {
+        return Err("Tutelage indexed draw changed".into());
+    };
+    if state
+        .engine
+        .event_history
+        .iter()
+        .filter(|entry| {
+            matches!(entry,
+        CommittedEvent::SphinxsTutelageDrawV1 { draw_history_index: found, .. }
+        if found == draw_history_index)
+        })
+        .count()
+        != 1
+        || draw_index.checked_add(1) != Some(index)
+        || observers.is_empty()
+        || state
+            .objects
+            .try_get(*drawn)
+            .is_none_or(|object| object.owner != *player)
+        || !observers
+            .windows(2)
+            .all(|pair| pair[0].source < pair[1].source)
+    {
+        return Err("Tutelage draw roster/index changed".into());
+    }
+    for source in observers {
+        let object = state
+            .objects
+            .try_get(source.source)
+            .ok_or("Tutelage source missing")?;
+        if !is_sphinxs_tutelage_v1(source.card_def)
+            || source.zone != Zone::Battlefield
+            || source.controller != *player
+            || source.owner != object.owner
+            || !crate::engine::source_card_def_matches(state, *source, object.card_def)
+            || object.zone_change_count < source.zone_change_count
+            || (object.zone_change_count == source.zone_change_count && object.zone != source.zone)
+        {
+            return Err("Tutelage captured source changed".into());
+        }
+    }
+    Ok(observers)
+}
+
+pub(crate) fn collect_tutelage_v1(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<crate::trigger::PendingTrigger>, String> {
+    let mut result = Vec::new();
+    let mut consumed = Vec::new();
+    for event in events {
+        let CommittedEvent::SphinxsTutelageDrawV1 {
+            draw_history_index, ..
+        } = event
+        else {
+            continue;
+        };
+        let index = draw_history_index
+            .checked_add(1)
+            .ok_or("Tutelage capture overflow")?;
+        if state.engine.event_history.get(usize::try_from(index).map_err(|_| "Tutelage index overflow")?) != Some(event)
+            || consumed.contains(&index)
+            || state.engine.event_history.iter().any(|entry| matches!(entry,
+                CommittedEvent::SphinxsTutelageCollectedV1 { capture_history_index } if *capture_history_index == index))
+        { return Err("Tutelage capture erased, duplicated or recollected".into()); }
+        for source in tutelage_observers_v1(state, index)? {
+            result.push(crate::trigger::PendingTrigger {
+                controller: source.controller,
+                source: source.source,
+                effect: crate::effect::EffectOp::SphinxsTutelageMillV1 {
+                    capture_history_index: index,
+                },
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: crate::card_def::TargetSpec::TargetOpponent,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(*source),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
+        }
+        consumed.push(index);
+    }
+    for capture_history_index in consumed {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::SphinxsTutelageCollectedV1 {
+                capture_history_index,
+            });
+    }
+    Ok(result)
+}
+
+pub(crate) fn validate_tutelage_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<u64, String> {
+    let Some(crate::effect::EffectOp::SphinxsTutelageMillV1 {
+        capture_history_index,
+    }) = item.inline_effect.as_ref()
+    else {
+        return Err("Tutelage trigger changed its captured program".into());
+    };
+    let source = item
+        .v4
+        .ability_source_contract
+        .ok_or("Tutelage lost original source")?;
+    if item.kind != crate::state::StackItemKind::TriggeredAbility
+        || source.source != item.source || source.controller != item.controller
+        || item.is_copy
+        || item.is_flashback
+        || item.v4.x_value != 0
+        || item.v4.activated_ability_index.is_some() || item.kicked || item.mode_chosen != 0 || item.madness_offer
+        || item.v4.granted_by.is_some() || item.v4.cauldron_grant.0.is_some()
+        || !item.discarded.is_empty() || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.optional_additional_cost_paid.is_some()
+        || item.v4.target_spec != Some(crate::card_def::TargetSpec::TargetOpponent)
+        || !tutelage_observers_v1(state, *capture_history_index)?.contains(&source)
+        || state.engine.event_history.iter().filter(|entry| matches!(entry,
+            CommittedEvent::SphinxsTutelageCollectedV1 { capture_history_index: found } if found == capture_history_index)).count() != 1
+    { return Err("Tutelage trigger source/controller/recipe changed".into()); }
+    Ok(*capture_history_index)
+}
+
+pub(crate) fn publish_tutelage_v1(
+    state: &mut GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    if !matches!(
+        item.inline_effect,
+        Some(crate::effect::EffectOp::SphinxsTutelageMillV1 { .. })
+    ) {
+        return Ok(());
+    }
+    let capture_history_index = validate_tutelage_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|entry| matches!(entry,
+        CommittedEvent::SphinxsTutelagePublishedV1 { capture_history_index: capture, item: old }
+        if *capture == capture_history_index && old.v4.ability_source_contract == item.v4.ability_source_contract))
+    { return Err("Tutelage trigger was already published".into()); }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::SphinxsTutelagePublishedV1 {
+            capture_history_index,
+            item: Box::new(item.clone()),
+        });
+    Ok(())
+}
+
+pub(crate) fn validate_published_tutelage_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    let capture = validate_tutelage_trigger_v1(state, item)?;
+    let publications = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|entry| match entry {
+            CommittedEvent::SphinxsTutelagePublishedV1 {
+                capture_history_index,
+                item: published,
+            } if published.v4.stack_item_id == item.v4.stack_item_id => {
+                Some((*capture_history_index, published.as_ref()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if publications.as_slice() != [(capture, item)] {
+        return Err("Tutelage publication/targets changed".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn is_lathril_v1(card_def: u16) -> bool {
+    crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.is_executable() && card.name == "Lathril, Blade of the Elves")
+}
+
+// Structural native restore validation. This is not a signature over a caller's
+// coordinated edits to an entire raw world/history.
+pub(crate) fn lathril_damage_v1(
+    state: &GameState,
+    capture_history_index: u64,
+) -> Result<(crate::state::AbilitySourceContractV4, u32), String> {
+    let index =
+        usize::try_from(capture_history_index).map_err(|_| "Lathril capture index overflow")?;
+    let Some(CommittedEvent::LathrilCombatDamageV1 {
+        damage_history_index,
+        source,
+        player,
+        amount: captured_amount,
+    }) = state.engine.event_history.get(index)
+    else {
+        return Err("Lathril capture missing".into());
+    };
+    let damage_index =
+        usize::try_from(*damage_history_index).map_err(|_| "Lathril damage index overflow")?;
+    let Some(CommittedEvent::Damage {
+        source: actual,
+        target: Target::Player(recipient),
+        amount,
+    }) = state.engine.event_history.get(damage_index)
+    else {
+        return Err("Lathril original damage changed".into());
+    };
+    // Only Niv's event-time observers can occur between this Damage and this
+    // capture. No unrelated event, second damage or substituted source is lent.
+    if damage_index >= index
+        || *actual != source.source
+        || *amount <= 0
+        || amount != captured_amount
+        || recipient != player
+        || !state.engine.event_history[damage_index + 1..index]
+            .iter()
+            .all(|entry| {
+                matches!(entry,
+            CommittedEvent::NivMizzetVisionaryDamageV1 { damage_history_index: other, .. }
+            if other == damage_history_index)
+            })
+        || state
+            .engine
+            .event_history
+            .iter()
+            .filter(|entry| {
+                matches!(entry,
+            CommittedEvent::LathrilCombatDamageV1 { damage_history_index: other, .. }
+            if other == damage_history_index)
+            })
+            .count()
+            != 1
+        || source.zone != Zone::Battlefield
+        || !is_lathril_v1(source.card_def)
+        || state.objects.try_get(source.source).is_none_or(|object| {
+            object.owner != source.owner
+                || !crate::engine::source_card_def_matches(state, *source, object.card_def)
+                || object.zone_change_count < source.zone_change_count
+                || (object.zone_change_count == source.zone_change_count
+                    && object.zone != source.zone)
+        })
+    {
+        return Err("Lathril original combat/source capture changed".into());
+    }
+    let markers = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|entry| match entry {
+            CommittedEvent::LathrilCombatObservedV1 {
+                capture_history_index: capture,
+                marker_history_index,
+            } if *capture == capture_history_index => Some(*marker_history_index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [marker] = markers.as_slice() else {
+        return Err("Lathril combat handoff missing or duplicated".into());
+    };
+    let marker_index =
+        usize::try_from(*marker).map_err(|_| "Lathril combat marker index overflow")?;
+    if marker_index <= index
+        || state.engine.event_history.get(marker_index) != Some(&CommittedEvent::CombatDamageToPlayer {
+            source: source.source, source_zone_change_count: source.zone_change_count,
+            player: *player, amount: *amount,
+        })
+        || state.engine.event_history.iter().filter(|entry| matches!(entry,
+            CommittedEvent::LathrilCombatObservedV1 { marker_history_index, .. } if marker_history_index == marker)).count() != 1 {
+        return Err("Lathril exact native combat marker changed".into());
+    }
+    Ok((
+        *source,
+        u32::try_from(*amount).map_err(|_| "Lathril damage width overflow")?,
+    ))
+}
+
+pub(crate) fn collect_lathril_v1(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<crate::trigger::PendingTrigger>, String> {
+    let mut captures = Vec::new();
+    let mut result = Vec::new();
+    for event in events {
+        if !matches!(event, CommittedEvent::LathrilCombatDamageV1 { .. }) {
+            continue;
+        }
+        let positions = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(index, actual)| (actual == event).then_some(index as u64))
+            .collect::<Vec<_>>();
+        let [index] = positions.as_slice() else {
+            return Err("Lathril capture erased or duplicated".into());
+        };
+        if captures.contains(index) || state.engine.event_history.iter().any(|entry| matches!(entry,
+            CommittedEvent::LathrilCombatCollectedV1 { capture_history_index } if capture_history_index == index))
+        { return Err("Lathril capture recollected".into()); }
+        let (source, _) = lathril_damage_v1(state, *index)?;
+        result.push(crate::trigger::PendingTrigger {
+            controller: source.controller,
+            source: source.source,
+            effect: crate::effect::EffectOp::LathrilCombatTokensV1 {
+                capture_history_index: *index,
+            },
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: crate::card_def::TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(source),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+        captures.push(*index);
+    }
+    for capture_history_index in captures {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::LathrilCombatCollectedV1 {
+                capture_history_index,
+            });
+    }
+    Ok(result)
+}
+
+pub(crate) fn validate_lathril_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<u64, String> {
+    let Some(crate::effect::EffectOp::LathrilCombatTokensV1 {
+        capture_history_index,
+    }) = item.inline_effect.as_ref()
+    else {
+        return Err("Lathril captured program changed".into());
+    };
+    let (source, _) = lathril_damage_v1(state, *capture_history_index)?;
+    if item.kind != crate::state::StackItemKind::TriggeredAbility
+        || item.source != source.source
+        || item.controller != source.controller
+        || item.v4.ability_source_contract != Some(source)
+        || item.is_copy
+        || item.is_flashback
+        || item.kicked
+        || item.madness_offer
+        || item.mode_chosen != 0
+        || item.v4.x_value != 0
+        || item.v4.activated_ability_index.is_some()
+        || item.v4.granted_by.is_some()
+        || item.v4.cauldron_grant.0.is_some()
+        || item.v4.hidden_ability_source.is_some()
+        || item.v4.source_contract.is_some()
+        || item.v4.madness_source_contract.is_some()
+        || item.v4.target_spec.is_some()
+        || !item.targets.is_empty()
+        || !item.v4.target_contracts.is_empty()
+        || !item.discarded.is_empty()
+        || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.optional_additional_cost_paid.is_some()
+        || state
+            .engine
+            .event_history
+            .iter()
+            .filter(|entry| {
+                matches!(entry,
+            CommittedEvent::LathrilCombatCollectedV1 { capture_history_index: other }
+            if other == capture_history_index)
+            })
+            .count()
+            != 1
+        || state.engine.event_history.iter().any(|entry| {
+            matches!(entry,
+            CommittedEvent::LathrilCombatResolvedV1 { capture_history_index: other }
+                | CommittedEvent::LathrilCombatCounteredV1 { capture_history_index: other }
+            if other == capture_history_index)
+        })
+    {
+        return Err("Lathril trigger source/controller/recipe changed or consumed".into());
+    }
+    Ok(*capture_history_index)
+}
+
+pub(crate) fn publish_lathril_v1(
+    state: &mut GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    if !matches!(
+        item.inline_effect,
+        Some(crate::effect::EffectOp::LathrilCombatTokensV1 { .. })
+    ) {
+        return Ok(());
+    }
+    let capture_history_index = validate_lathril_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|entry| matches!(entry,
+        CommittedEvent::LathrilCombatPublishedV1 { capture_history_index: other, .. } if *other == capture_history_index))
+    { return Err("Lathril damage trigger already published".into()); }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::LathrilCombatPublishedV1 {
+            capture_history_index,
+            item: Box::new(item.clone()),
+        });
+    Ok(())
+}
+
+pub(crate) fn validate_published_lathril_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    let capture = validate_lathril_trigger_v1(state, item)?;
+    let publications = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|entry| match entry {
+            CommittedEvent::LathrilCombatPublishedV1 {
+                capture_history_index,
+                item: row,
+            } if *capture_history_index == capture
+                || row.v4.stack_item_id == item.v4.stack_item_id =>
+            {
+                Some((*capture_history_index, row.as_ref()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if publications.as_slice() != [(capture, item)] {
+        return Err("Lathril original publication changed".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn lathril_counter_capture_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<Option<u64>, String> {
+    if !lathril_item_selected_v1(state, item) {
+        return Ok(None);
+    }
+    validate_published_lathril_v1(state, item)?;
+    validate_lathril_trigger_v1(state, item).map(Some)
+}
+
+pub(crate) fn lathril_item_selected_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
+    matches!(
+        item.inline_effect,
+        Some(crate::effect::EffectOp::LathrilCombatTokensV1 { .. })
+    ) || state.engine.event_history.iter().any(|entry| {
+        matches!(entry,
+            CommittedEvent::LathrilCombatPublishedV1 { item: original, .. }
+            if original.v4.stack_item_id == item.v4.stack_item_id)
+    })
+}
+
+/// Only the engine's already-committed combat batch calls this handoff. Equal
+/// packets consume matching event-time captures in their original native order.
+pub(crate) fn bind_lathril_combat_marker_v1(
+    state: &mut GameState,
+    captures: &[CommittedEvent],
+    marker_history_index: u64,
+) -> Result<(), String> {
+    let index =
+        usize::try_from(marker_history_index).map_err(|_| "Lathril marker index overflow")?;
+    let Some(CommittedEvent::CombatDamageToPlayer {
+        source,
+        source_zone_change_count,
+        player,
+        amount,
+    }) = state.engine.event_history.get(index)
+    else {
+        return Err("Lathril native combat marker missing".into());
+    };
+    let mut selected = None;
+    for capture in captures {
+        let CommittedEvent::LathrilCombatDamageV1 {
+            source: observer,
+            player: recipient,
+            amount: actual,
+            ..
+        } = capture
+        else {
+            return Err("Lathril handoff contains a foreign event".into());
+        };
+        if observer.source != *source
+            || observer.zone_change_count != *source_zone_change_count
+            || recipient != player
+            || actual != amount
+        {
+            continue;
+        }
+        let positions = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| (entry == capture).then_some(i as u64))
+            .collect::<Vec<_>>();
+        let [position] = positions.as_slice() else {
+            return Err("Lathril handoff capture erased or duplicated".into());
+        };
+        if !state.engine.event_history.iter().any(|entry| matches!(entry,
+            CommittedEvent::LathrilCombatObservedV1 { capture_history_index, .. } if capture_history_index == position)) {
+            selected = Some(*position);
+            break;
+        }
+    }
+    if let Some(capture_history_index) = selected {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::LathrilCombatObservedV1 {
+                capture_history_index,
+                marker_history_index,
+            });
+        lathril_damage_v1(state, capture_history_index)?;
+    }
+    Ok(())
+}
+
+// Persistent copiable token abilities. These receipts are native-only; no old
+// observer is allowed to discard their ability multiplicity or history.
+fn record_copied_token_entry_v1(state: &mut GameState, creation: usize) {
+    let Some(CommittedEvent::CreateToken { object, .. }) = state.engine.event_history.get(creation)
+    else {
+        return;
+    };
+    let object = *object;
+    let instances = state.objects.get(object).v4.copied_end_step_sacrifices_v1;
+    if instances == 0 {
+        return;
+    }
+    let source = crate::state::AbilitySourceContractV4::capture(state, object);
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
+            source,
+            creation_history_index: creation as u64,
+            instances,
+        });
+}
+fn copied_token_entry_v1(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+) -> Result<u32, String> {
+    let rows = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, e)| match e {
+            CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
+                source: actual,
+                creation_history_index,
+                instances,
+            } if actual.source == source.source
+                && actual.zone_change_count == source.zone_change_count =>
+            {
+                Some((at, *actual, *creation_history_index, *instances))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [(at, original, creation, count)] = rows.as_slice() else {
+        return Err("copied token abilities lost unique entry".into());
+    };
+    crate::engine::validate_historical_ability_source_contract(state, source)?;
+    if *count == 0
+        || source.zone != Zone::Battlefield
+        || source.zone_change_count != 0
+        || original.owner != source.owner
+        || original.card_def != source.card_def
+        || original.zone != Zone::Battlefield
+        || creation.checked_add(1) != Some(*at as u64)
+        || !matches!(state.engine.event_history.get(*creation as usize),Some(CommittedEvent::CreateToken {object,token_def,controller,..})
+            if *object == source.source && *token_def == source.card_def && *controller == original.controller)
+    {
+        return Err("copied token entry changed its actual creation/incarnation".into());
+    }
+    Ok(*count)
+}
+#[cfg(any(
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+))]
+pub(crate) fn record_copied_token_end_step_v1(
+    state: &mut GameState,
+    end_step: usize,
+) -> Result<(), String> {
+    if !matches!(
+        state.engine.event_history.get(end_step),
+        Some(CommittedEvent::BeginningEndStep { .. })
+    ) {
+        return Err("copied ability requires actual beginning end step".into());
+    }
+    let mut sources = Vec::new();
+    for (id, o) in state.objects.iter() {
+        if o.zone != Zone::Battlefield
+            || o.v4.copied_end_step_sacrifices_v1 == 0
+            || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        {
+            continue;
+        }
+        let source = crate::state::AbilitySourceContractV4::capture(state, id);
+        let count = copied_token_entry_v1(state, source)?;
+        if !o.v4.is_token || count != o.v4.copied_end_step_sacrifices_v1 {
+            return Err("copied ability count differs from original entry".into());
+        }
+        sources.push((source, count));
+    }
+    if !sources.is_empty() {
+        let receipt = CommittedEvent::CopiedTokenEndStepV1 {
+            end_step_history_index: end_step as u64,
+            sources,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
+    }
+    Ok(())
+}
+/// Immutable validated source/count query for successor public facts. This
+/// returns no interpreter owner and neither collects nor publishes a trigger.
+pub(crate) fn copied_end_sources_v1(
+    state: &GameState,
+    capture: u64,
+) -> Result<&[(crate::state::AbilitySourceContractV4, u32)], String> {
+    let Some(CommittedEvent::CopiedTokenEndStepV1 {
+        end_step_history_index,
+        sources,
+    }) = state.engine.event_history.get(capture as usize)
+    else {
+        return Err("copied end-step capture absent".into());
+    };
+    if sources.is_empty() || end_step_history_index.checked_add(1) != Some(capture) || !matches!(state.engine.event_history.get(*end_step_history_index as usize),Some(CommittedEvent::BeginningEndStep{..}))
+        || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenEndStepV1{end_step_history_index:other,..} if other==end_step_history_index)).count()!=1
+    {return Err("copied end-step capture changed actual event".into());}
+    for (i, (source, count)) in sources.iter().enumerate() {
+        if *count == 0
+            || copied_token_entry_v1(state, *source)? != *count
+            || sources[..i].iter().any(|(s, _)| s.source == source.source)
+        {
+            return Err("copied end-step source roster changed".into());
+        }
+    }
+    Ok(sources)
+}
+pub(crate) fn collect_copied_token_end_step_v1(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<crate::trigger::PendingTrigger>, String> {
+    let mut consumed = Vec::new();
+    let mut pending = Vec::new();
+    for event in events {
+        if !matches!(event, CommittedEvent::CopiedTokenEndStepV1 { .. }) {
+            continue;
+        }
+        let positions = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| (e == event).then_some(i as u64))
+            .collect::<Vec<_>>();
+        let [capture] = positions.as_slice() else {
+            return Err("copied end-step receipt erased or duplicated".into());
+        };
+        if consumed.contains(capture) || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenEndStepCollectedV1{capture_history_index} if capture_history_index==capture)) {return Err("copied end-step receipt replayed".into());}
+        for (observer, (source, count)) in
+            copied_end_sources_v1(state, *capture)?.iter().enumerate()
+        {
+            let observer = u32::try_from(observer).map_err(|_| "copied ability observer width")?;
+            pending
+                .try_reserve(*count as usize)
+                .map_err(|_| "copied ability roster allocation")?;
+            for ability in 0..*count {
+                pending.push(crate::trigger::PendingTrigger {
+                    controller: source.controller,
+                    source: source.source,
+                    effect: crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1 {
+                        capture_history_index: *capture,
+                        observer,
+                        ability,
+                    },
+                    is_madness_offer: false,
+                    kicked: false,
+                    target_spec: crate::card_def::TargetSpec::None,
+                    targets: Vec::new(),
+                    target_contracts: Vec::new(),
+                    placement_ordered: false,
+                    source_contract: Some(*source),
+                    granted_by: None,
+                    optional_additional_cost_paid: None,
+                    paid_cost_refs: Vec::new(),
+                });
+            }
+        }
+        consumed.push(*capture);
+    }
+    for capture_history_index in consumed {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::CopiedTokenEndStepCollectedV1 {
+                capture_history_index,
+            });
+    }
+    Ok(pending)
+}
+pub(crate) fn copied_token_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(u64, u32, u32, crate::state::AbilitySourceContractV4), String> {
+    let facts = copied_token_trigger_facts_v74(state, item)?;
+    if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificeFinishedV1{stack_item_id} if *stack_item_id==item.v4.stack_item_id && item.v4.stack_item_id!=crate::ids::StackItemId::default())) {
+        return Err("copied token trigger source/controller/instance changed or consumed".into());
+    }
+    Ok(facts)
+}
+// Historical read-only validation retains every original source/instance check.
+// The execution entry above separately rejects an already finished occurrence.
+fn copied_token_trigger_facts_v74(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(u64, u32, u32, crate::state::AbilitySourceContractV4), String> {
+    let Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1 {
+        capture_history_index,
+        observer,
+        ability,
+    }) = item.inline_effect.as_ref()
+    else {
+        return Err("copied token trigger root changed".into());
+    };
+    let (source, count) = *copied_end_sources_v1(state, *capture_history_index)?
+        .get(*observer as usize)
+        .ok_or("copied ability observer missing")?;
+    if *ability>=count || item.kind!=crate::state::StackItemKind::TriggeredAbility || item.source!=source.source || item.controller!=source.controller
+        || item.v4.ability_source_contract!=Some(source) || item.v4.source_contract.is_some() || item.v4.granted_by.is_some()
+        || item.v4.activated_ability_index.is_some() || item.v4.hidden_ability_source.is_some() || item.v4.madness_source_contract.is_some()
+        || item.v4.cauldron_grant.0.is_some() || item.v4.cast_method.is_some() || item.v4.target_spec.is_some() || item.v4.face_index!=0
+        || item.mode_chosen!=0 || item.is_copy || item.is_flashback || item.kicked || item.madness_offer || item.v4.x_value!=0
+        || !item.targets.is_empty() || !item.v4.target_contracts.is_empty() || !item.discarded.is_empty() || !item.v4.paid_cost_refs.is_empty() || item.v4.optional_additional_cost_paid.is_some()
+        || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenEndStepCollectedV1{capture_history_index:other} if other==capture_history_index)).count()!=1
+    {return Err("copied token trigger source/controller/instance changed or consumed".into());}
+    Ok((*capture_history_index, *observer, *ability, source))
+}
+/// Closed immutable receipt counts. This never returns an execution capability.
+pub(crate) fn copied_token_receipt_counts_v74(
+    state: &GameState,
+    capture: u64,
+) -> Result<(u32, u32), String> {
+    copied_end_sources_v1(state, capture)?;
+    let mut instances = std::collections::BTreeSet::new();
+    let mut ids = std::collections::BTreeSet::new();
+    let mut finished = 0u32;
+    for e in &state.engine.event_history {
+        let CommittedEvent::CopiedTokenSacrificePublishedV1 {
+            capture_history_index,
+            observer,
+            ability,
+            item,
+        } = e
+        else {
+            continue;
+        };
+        if *capture_history_index != capture {
+            continue;
+        }
+        let (original, original_observer, original_ability, _) =
+            copied_token_trigger_facts_v74(state, item)?;
+        if (original, original_observer, original_ability) != (capture,*observer,*ability)
+            || item.v4.stack_item_id == crate::ids::StackItemId::default()
+            || !instances.insert((*observer,*ability)) || !ids.insert(item.v4.stack_item_id)
+            || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{item:other,..} if other.v4.stack_item_id==item.v4.stack_item_id)).count()!=1 {
+            return Err("copied token historical publication source/instance changed or repeated".into());
+        }
+        let terminal=state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenSacrificeFinishedV1{stack_item_id} if *stack_item_id==item.v4.stack_item_id)).count();
+        if terminal > 1
+            || state.stack.iter().any(|r| {
+                r.v4.stack_item_id == item.v4.stack_item_id && (r != item.as_ref() || terminal != 0)
+            })
+            || state.engine.pending_effect.as_ref().is_some_and(|p| {
+                p.resolving_item.v4.stack_item_id == item.v4.stack_item_id
+                    && (p.resolving_item != **item || terminal != 0)
+            })
+        {
+            return Err("copied token historical terminal/current publication changed".into());
+        }
+        finished = finished
+            .checked_add(
+                u32::try_from(terminal).map_err(|_| "copied token terminal count overflow")?,
+            )
+            .ok_or("copied token finished count overflow")?;
+    }
+    Ok((
+        u32::try_from(instances.len()).map_err(|_| "copied token publication count overflow")?,
+        finished,
+    ))
+}
+
+pub(crate) fn publish_copied_token_trigger_v1(
+    state: &mut GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    if !matches!(
+        item.inline_effect,
+        Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1 { .. })
+    ) {
+        return Ok(());
+    }
+    let (capture_history_index, observer, ability, _) = copied_token_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{capture_history_index:c,observer:o,ability:a,item:row} if (*c,*o,*a)==(capture_history_index,observer,ability) || row.v4.stack_item_id==item.v4.stack_item_id)) {return Err("copied token trigger published twice".into());}
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CopiedTokenSacrificePublishedV1 {
+            capture_history_index,
+            observer,
+            ability,
+            item: Box::new(item.clone()),
+        });
+    Ok(())
+}
+pub(crate) fn copied_token_item_selected_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> bool {
+    matches!(item.inline_effect,Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1{..}))
+        || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{item:row,..} if row.v4.stack_item_id==item.v4.stack_item_id))
+}
+pub(crate) fn validate_published_copied_token_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    let (capture, observer, ability, _) = copied_token_trigger_v1(state, item)?;
+    let rows = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|e| match e {
+            CommittedEvent::CopiedTokenSacrificePublishedV1 {
+                capture_history_index: c,
+                observer: o,
+                ability: a,
+                item: row,
+            } if (*c, *o, *a) == (capture, observer, ability)
+                || row.v4.stack_item_id == item.v4.stack_item_id =>
+            {
+                Some(row.as_ref())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if rows.as_slice() != [item] {
+        return Err("copied token trigger changed original published row".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn historical_copiable_token_abilities_v1(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+) -> Result<u32, String> {
+    if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenAbilitiesEnteredV1{source: original,..} if original.source==source.source && original.zone_change_count==source.zone_change_count)) {
+        copied_token_entry_v1(state, source)
+    } else {
+        Ok(0)
+    }
+}
+pub(crate) fn copiable_token_abilities_v1(
+    state: &GameState,
+    object: ObjectId,
+) -> Result<u32, String> {
+    let live = state.objects.try_get(object).ok_or("copy source absent")?;
+    if live.v4.face_down_v1.is_some() {
+        return Ok(0);
+    }
+    if live.v4.copied_end_step_sacrifices_v1 == 0 {
+        if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenAbilitiesEnteredV1{source,..} if source.source==object && source.zone_change_count==live.zone_change_count)) {
+            return Err("copy source erased its copiable ability count".into());
+        }
+        return Ok(0);
+    }
+    let count = copied_token_entry_v1(
+        state,
+        crate::state::AbilitySourceContractV4::capture(state, object),
+    )?;
+    if live.zone != Zone::Battlefield
+        || !live.v4.is_token
+        || count != live.v4.copied_end_step_sacrifices_v1
+    {
+        return Err("copy source changed its copiable ability count".into());
+    }
+    Ok(count)
+}
+
+pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    if crate::linked_aura_operation_v1::locally_owned(state) {
+        return Ok(());
+    }
+    crate::progenitus_v1::validate(state)?;
+    crate::effect::harvester_v1::validate_state(state)?;
+    for (_, object) in state.objects.iter() {
+        if object.zone != Zone::Battlefield && object.v4.copied_end_step_sacrifices_v1 != 0 {
+            return Err("copied abilities survived an ordinary zone change".into());
+        }
+    }
+    for event in &state.engine.event_history {
+        let CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
+            source, instances, ..
+        } = event
+        else {
+            continue;
+        };
+        if copied_token_entry_v1(state, *source)? != *instances {
+            return Err("copied ability entry changed".into());
+        }
+        if let Some(live) = state.objects.try_get(source.source) {
+            if live.zone == Zone::Battlefield
+                && live.zone_change_count == source.zone_change_count
+                && (live.v4.copied_end_step_sacrifices_v1 != *instances || !live.v4.is_token)
+            {
+                return Err("live copied token lost its original ability multiplicity".into());
+            }
+        }
+        if state.engine.event_log.iter().any(|e| e == event) {
+            return Err("private copied entry receipt exposed as an event".into());
+        }
+    }
+    for (id, live) in state.objects.iter() {
+        if live.v4.copied_end_step_sacrifices_v1 != 0
+            && (copied_token_entry_v1(
+                state,
+                crate::state::AbilitySourceContractV4::capture(state, id),
+            )? != live.v4.copied_end_step_sacrifices_v1
+                || !live.v4.is_token)
+        {
+            return Err("native copied token count lacks its actual entry".into());
+        }
+    }
+    Ok(())
+}
+
+fn unsupported_partial_token_v1(event: &ProposedEvent) -> bool {
+    matches!(event,ProposedEvent::CreateToken(t) if crate::card_def::CARD_DEFS.get(usize::from(t.token_def)).is_none_or(|d| d.is_token && !d.has_full_support()))
+}
+pub(crate) fn commit_kykar_spirit_owned_v1(
+    state: &mut GameState,
+    permit: crate::effect::kykar_v1::TokenPermitV1<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Kykar Spirit lost genuine mode owner".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        Some(&permit),
+        None,
+        None,
+        None,
+        None,
+    );
+    if state.engine.halted.is_some() {
+        return Err("Kykar Spirit batch halted".into());
+    }
+    Ok(())
+}
+
+/// Consumes a distinct lexical spell-copy permit. Raw Partial-token events
+/// and Kykar's printed mode retain their original gates.
+pub(crate) fn commit_spirit_copy_owned_v1(
+    state: &mut GameState,
+    permit: crate::effect::SpiritCopyPermitV1<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Spirit copy lost its actual spell/target/proposal".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        None,
+        Some(&permit),
+        None,
+        None,
+        None,
+    );
+    if state.engine.halted.is_some() {
+        return Err("Spirit copy batch halted".into());
+    }
+    Ok(())
+}
+
+/// The exact native Liliana +1 owns the existing Partial Zombie dependency.
+/// No caller-authored token ID, event row or serialized marker mints this permit.
+pub(crate) fn commit_liliana_zombie_owned_v1(
+    state: &mut GameState,
+    permit: crate::effect::liliana_dreadhorde_v1::TokenPermitV1<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Liliana Zombie lost actual native +1 owner".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        None,
+        None,
+        Some(&permit),
+        None,
+        None,
+    );
+    if state.engine.halted.is_some() {
+        return Err("Liliana Zombie native batch halted".into());
+    }
+    Ok(())
+}
+
+/// Only the genuine paid Chandra copy row may cross the Partial-token gate.
+pub(crate) fn commit_chandra_copy_v74(
+    state: &mut GameState,
+    permit: crate::effect::chandra_flameshaper_v1::CopyPermitV74<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Chandra copy lost native source/target ownership".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(&permit),
+        None,
+    );
+    if state.engine.halted.is_some() {
+        Err("Chandra copy batch halted".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Only the original paid Kaito -2 or the exact captured emblem trigger may
+/// issue this Partial Ninja dependency. All raw/generic token paths refuse.
+pub(crate) fn commit_kaito_ninja_v75(
+    state: &mut GameState,
+    permit: crate::effect::kaito_cunning_v75::TokenPermitV75<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Kaito Ninja native owner lost".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        vec![],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(&permit),
+    );
+    if state.engine.halted.is_some() {
+        Err("Kaito Ninja batch halted".into())
+    } else {
+        Ok(())
     }
 }

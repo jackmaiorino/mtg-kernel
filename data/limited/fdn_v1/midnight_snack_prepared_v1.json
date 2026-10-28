@@ -1,0 +1,37 @@
+{
+  "schema": "midnight-snack-prepared-source/v1",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "primary_sources": [
+    {
+      "path": "Mage.Sets/src/mage/cards/m/MidnightSnack.java",
+      "sha256": "0f781369e09ef2437001ba948746519cf1006695e875d93c2e13a5e64ce8bab5"
+    },
+    {
+      "path": "Mage/src/main/java/mage/abilities/dynamicvalue/common/ControllerGainedLifeCount.java",
+      "sha256": "06b6225a857a623e5651806f49b75b4b55e99570818c8bccd12791342a322e58"
+    },
+    {
+      "path": "Mage/src/main/java/mage/watchers/common/PlayerGainedLifeWatcher.java",
+      "sha256": "675bf357c7d4ac2070d458899c0ff10c5dac7a6301b3ebd9e904b499453cc4b5"
+    },
+    {
+      "path": "Mage/src/main/java/mage/game/permanent/token/FoodToken.java",
+      "sha256": "67fca2eef5afc92dc08eefebb5d25489a0ab37ac22ab3b1b06556b17e5f0b53a"
+    }
+  ],
+  "printing": {
+    "name": "Midnight Snack",
+    "set": "FDN",
+    "collector_number": "65",
+    "scryfall_id": "c9b7543f-2a45-4db6-b560-d15507a58c91",
+    "oracle_id": "3ddcaee9-a11e-477a-bd19-f5ee10512549",
+    "rarity": "uncommon"
+  },
+  "provisional_id": 452,
+  "capability": "partial",
+  "model_admitted": false,
+  "runtime_qualified": false,
+  "generator_provenance": "Exact frozen printing + pinned primary sources, appended source metadata, named build.rs activation recipe and exact72-field runtime selector. Actual generated catalog/export hash pending; no guessed hash.",
+  "public_consumers": "Absent: ordered meaning, current facts, observations, owning backend, Human/wire/model/search. No old-family widening.",
+  "food_dependency": "Existing Food Token; no new token or alternate name."
+}

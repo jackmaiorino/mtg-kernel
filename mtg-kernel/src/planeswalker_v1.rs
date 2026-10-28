@@ -21,6 +21,17 @@ pub struct PlaneswalkersV1 {
     loyalty: BTreeMap<ObjectId, LoyaltyV1>,
 }
 
+impl PlaneswalkersV1 {
+    pub(crate) fn references_objects_v1(
+        &self,
+        mut referenced: impl FnMut(ObjectId) -> bool,
+    ) -> bool {
+        self.loyalty
+            .iter()
+            .any(|(id, entry)| referenced(*id) || referenced(entry.permanent.object))
+    }
+}
+
 pub fn loyalty(state: &GameState, object: ObjectId) -> Option<u32> {
     let live = state.objects.try_get(object)?;
     if live.zone != Zone::Battlefield {
@@ -123,9 +134,14 @@ pub(crate) fn quote_loyalty_change_v48(
     origin: crate::doubling_season_v48::CounterOriginV48,
 ) -> Result<u32, String> {
     let counters = loyalty(state, object).ok_or("loyalty ledger absent")?;
+    let exact = crate::doubling_season_v48::requires_successor(state)
+        || crate::effect::vivien_reid_v1::definition(state.objects.get(object).card_def)
+        || crate::effect::liliana_dreadhorde_v1::definition(state.objects.get(object).card_def)
+        || crate::effect::chandra_flameshaper_v1::definition(state.objects.get(object).card_def)
+        || crate::effect::kaito_cunning_v75::definition(state.objects.get(object).card_def);
     let counters = if delta >= 0 {
         let controller = state.objects.get(object).controller;
-        let original = if crate::doubling_season_v48::requires_successor(state) {
+        let original = if exact {
             crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, delta as u32)
         } else {
             Ok(crate::standard_cards_v1::scale_counters(state, controller, delta) as u32)
@@ -142,7 +158,7 @@ pub(crate) fn quote_loyalty_change_v48(
         });
         let amount = amount?;
         // Retain the legacy saturation only on catalogs without the new source.
-        if crate::doubling_season_v48::requires_successor(state) {
+        if exact {
             counters
                 .checked_add(amount)
                 .ok_or("loyalty counter storage overflow")?
@@ -280,16 +296,68 @@ pub(crate) fn add_loyalty_counters_u32_v48(
     Ok(())
 }
 
+/// New checked placements never narrow a Talent-modified unsigned amount
+/// through the historical signed placement path.
+pub(crate) fn add_loyalty_counters_checked_v1(
+    state: &mut GameState,
+    object: ObjectId,
+    amount: u32,
+) -> Result<(), String> {
+    if amount == 0 {
+        return Ok(());
+    }
+    let counters = quote_loyalty_counters_v48(state, object, amount)?;
+    let permanent = ObjectLinkV4 {
+        object,
+        zone_change_count: state.objects.get(object).zone_change_count,
+    };
+    state
+        .planeswalkers_v1
+        .get_or_insert_with(Default::default)
+        .loyalty
+        .insert(
+            object,
+            LoyaltyV1 {
+                permanent,
+                counters,
+            },
+        );
+    Ok(())
+}
+
 /// Scoped Human V12 recipient facts, not printed planeswalker admission.
-/// Inspect every stored ledger row so stale/hidden/foreign recipients cannot
-/// be silently omitted from the public observation.
+/// Inspect every stored ledger row so stale or foreign recipients cannot be
+/// silently omitted from the public observation.
 pub(crate) fn validate_heartfire_recipients_v12(state: &GameState) -> Result<(), String> {
-    validate_recipients_inner(state, false)
+    validate_recipients_inner(state, RecipientScopeV1::HeartfireV12)
 }
 pub(crate) fn validate_full_ajani_recipients_v42(state: &GameState) -> Result<(), String> {
-    validate_recipients_inner(state, true)
+    validate_recipients_inner(state, RecipientScopeV1::FullAjaniV42)
 }
-fn validate_recipients_inner(state: &GameState, accept_full: bool) -> Result<(), String> {
+/// Exact recipient definitions already represented by each complete DTO.
+/// Native family validation and the owner's supported-world guard remain required.
+#[derive(Clone, Copy)]
+pub(crate) enum RecipientScopeV1 {
+    HeartfireV12,
+    FullAjaniV42,
+    VivienV70,
+    MuldrothaV71,
+    TinybonesV72,
+    LilianaV73,
+    ChandraV74,
+    KaitoV75,
+}
+pub(crate) fn validate_complete_recipients_v70(
+    state: &GameState,
+    scope: RecipientScopeV1,
+) -> Result<(), String> {
+    validate_recipients_inner(state, scope)
+}
+fn validate_recipients_inner(state: &GameState, scope: RecipientScopeV1) -> Result<(), String> {
+    let complete_counters = !matches!(
+        scope,
+        RecipientScopeV1::HeartfireV12 | RecipientScopeV1::FullAjaniV42
+    );
     let recipient_ids = || {
         state
             .objects
@@ -320,24 +388,59 @@ fn validate_recipients_inner(state: &GameState, accept_full: bool) -> Result<(),
             .objects
             .try_get(*id)
             .ok_or("Heartfire V12 missing loyalty recipient")?;
+        if live.zone != Zone::Battlefield
+            || entry.permanent.object != *id
+            || entry.permanent.zone_change_count != live.zone_change_count
+        {
+            return Err("Heartfire V12 unsupported or stale loyalty recipient".into());
+        }
+        if live.v4.face_down_v1.is_none() && CARD_DEFS.get(usize::from(live.card_def)).is_none() {
+            return Err("Heartfire V12 unknown loyalty recipient definition".into());
+        }
+        let is_planeswalker = engine::object_has_type(state, *id, CardType::Planeswalker);
+        // Loyalty counters survive losing the planeswalker type, including
+        // becoming face down. Complete counter DTOs carry that public count on
+        // the current permanent without inspecting its concealed printing.
+        if complete_counters && !is_planeswalker {
+            continue;
+        }
         let definition = CARD_DEFS
             .get(usize::from(live.card_def))
             .ok_or("Heartfire V12 unknown loyalty recipient definition")?;
-        if live.zone != Zone::Battlefield
-            || live.v4.face_index != 0
-            || entry.permanent.object != *id
-            || entry.permanent.zone_change_count != live.zone_change_count
-            || definition.name != "Ajani, Caller of the Pride"
-            || !(definition.capability == crate::card_def::CardCapability::Partial
-                || accept_full && crate::ajani_full_v42::validate_definition(live.card_def).is_ok())
-            || definition.starting_loyalty != Some(4)
-            || !engine::object_has_type(state, *id, CardType::Planeswalker)
-        {
+        let supported_definition = definition.name == "Ajani, Caller of the Pride"
+            && (definition.capability == crate::card_def::CardCapability::Partial
+                || !matches!(scope, RecipientScopeV1::HeartfireV12)
+                    && crate::ajani_full_v42::validate_definition(live.card_def).is_ok())
+            && definition.starting_loyalty == Some(4)
+            || match scope {
+                RecipientScopeV1::HeartfireV12 | RecipientScopeV1::FullAjaniV42 => false,
+                RecipientScopeV1::VivienV70
+                | RecipientScopeV1::MuldrothaV71
+                | RecipientScopeV1::TinybonesV72 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::LilianaV73 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::ChandraV74 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                        || crate::effect::chandra_flameshaper_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::KaitoV75 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                        || crate::effect::chandra_flameshaper_v1::definition(live.card_def)
+                        || crate::effect::kaito_cunning_v75::definition(live.card_def)
+                }
+            };
+        if live.v4.face_index != 0 || !supported_definition || !is_planeswalker {
             return Err("Heartfire V12 unsupported or stale loyalty recipient".into());
         }
     }
     let recipients = recipient_ids();
-    if recipients.len() != ledger.loyalty.len()
+    if !complete_counters && recipients.len() != ledger.loyalty.len()
         || recipients.iter().any(|id| !ledger.loyalty.contains_key(id))
     {
         return Err("Heartfire V12 incomplete loyalty recipient ledger".into());
@@ -361,4 +464,98 @@ pub(crate) fn remove_loyalty_row_for_test_v1(
         .loyalty
         .remove(&object)
         .map(|entry| entry.counters)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod recipient_tests {
+    use super::*;
+    use crate::ids::PlayerId;
+
+    #[test]
+    fn paid_walker_concealment_and_nonwalker_counters_keep_incarnations_without_hidden_identity() {
+        let scopes = [
+            RecipientScopeV1::VivienV70,
+            RecipientScopeV1::MuldrothaV71,
+            RecipientScopeV1::TinybonesV72,
+            RecipientScopeV1::LilianaV73,
+            RecipientScopeV1::ChandraV74,
+            RecipientScopeV1::KaitoV75,
+        ];
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = crate::effect::vivien_reid_v1::tests::ready(
+                actor,
+                &["Forest"; 8],
+                &["Vivien Reid"],
+                "Island",
+            );
+            let walker = crate::effect::vivien_reid_v1::tests::walker(&mut state, actor);
+            // Labelled native permanent/counter setup, not a printed counter spell.
+            let creature = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            add_loyalty_counters_checked_v1(&mut state, creature, u32::MAX).unwrap();
+            assert_eq!(loyalty(&state, creature), Some(u32::MAX));
+            for scope in scopes {
+                validate_complete_recipients_v70(&state, scope).unwrap();
+                let mut missing = state.clone();
+                remove_loyalty_row_for_test_v1(&mut missing, walker).unwrap();
+                assert!(validate_complete_recipients_v70(&missing, scope).is_err());
+                let mut unknown = state.clone();
+                unknown.objects.get_mut(walker).card_def = u16::MAX;
+                assert!(validate_complete_recipients_v70(&unknown, scope).is_err());
+            }
+            // Native face-down boundary after the actual paid walker entry.
+            state.objects.get_mut(walker).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: false,
+                lookers: 0,
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            let mut other_hidden = state.clone();
+            other_hidden.objects.get_mut(walker).card_def =
+                crate::card_def::card_id_by_name("Forest").unwrap();
+            let public = crate::rl::card_ref(&state, walker).unwrap();
+            assert_eq!(
+                public.card_db_id,
+                crate::card_def::card_id_by_name("Face-down card").unwrap()
+            );
+            assert_eq!(public, crate::rl::card_ref(&other_hidden, walker).unwrap());
+            assert_eq!(loyalty(&state, walker), loyalty(&other_hidden, walker));
+            for world in [&state, &other_hidden] {
+                assert!(validate_heartfire_recipients_v12(world).is_err());
+                assert!(validate_full_ajani_recipients_v42(world).is_err());
+                for scope in scopes {
+                    let before = world.clone();
+                    validate_complete_recipients_v70(world, scope).unwrap();
+                    assert_eq!(world, &before);
+                    let mut stale = world.clone();
+                    stale
+                        .planeswalkers_v1
+                        .as_mut()
+                        .unwrap()
+                        .loyalty
+                        .get_mut(&walker)
+                        .unwrap()
+                        .permanent
+                        .zone_change_count += 1;
+                    assert!(validate_complete_recipients_v70(&stale, scope).is_err());
+                    let mut departed = world.clone();
+                    departed.objects.get_mut(walker).zone = Zone::Hand;
+                    assert!(validate_complete_recipients_v70(&departed, scope).is_err());
+                }
+            }
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for scope in scopes {
+                validate_complete_recipients_v70(&restored, scope).unwrap();
+            }
+        }
+    }
 }

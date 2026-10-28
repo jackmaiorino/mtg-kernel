@@ -203,6 +203,10 @@ fn campus_guide_puts_a_revealed_basic_land_on_top_after_shuffling() {
     }
     let hart = put(&mut state, PlayerId::P0, "Burnished Hart", Zone::Library);
     let guide = cast_campus_guide(&mut state);
+    assert!(
+        matches!(settle(&mut state),Decision::ChooseEffectOption { source, option_count:2, .. } if source==guide)
+    );
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
     let legal = expect_search(&mut state, 1);
     assert_eq!(legal.len(), 4);
     assert!(!legal.contains(&Target::Object(hart)));
@@ -224,13 +228,50 @@ fn campus_guide_puts_a_revealed_basic_land_on_top_after_shuffling() {
 #[test]
 fn campus_guide_may_decline_the_search() {
     let mut state = ready();
-    let plains = put(&mut state, PlayerId::P0, "Plains", Zone::Library);
+    for name in ["Plains", "Island", "Swamp", "Forest"] {
+        put(&mut state, PlayerId::P0, name, Zone::Library);
+    }
     let guide = cast_campus_guide(&mut state);
-    expect_search(&mut state, 1);
-    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    assert!(
+        matches!(settle(&mut state),Decision::ChooseEffectOption { source, option_count:2, .. } if source==guide)
+    );
+    let library = state.players[0].library.clone();
+    let rng = state.legacy_rng().copied();
+    let knowledge = state.library_knowledge.clone();
+    engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
     settle_to_priority(&mut state);
     assert_eq!(state.objects.get(guide).zone, Zone::Battlefield);
-    assert_eq!(state.objects.get(plains).zone, Zone::Library);
+    assert_eq!(state.players[0].library, library);
+    assert_eq!(
+        state.legacy_rng().copied(),
+        rng,
+        "declining must not consume shuffle randomness"
+    );
+    assert_eq!(state.library_knowledge, knowledge);
+}
+
+#[test]
+fn campus_guide_accepting_then_failing_to_find_still_shuffles() {
+    let mut state = ready();
+    for name in ["Plains", "Island", "Swamp", "Forest"] {
+        put(&mut state, PlayerId::P0, name, Zone::Library);
+    }
+    let guide = cast_campus_guide(&mut state);
+    assert!(
+        matches!(settle(&mut state),Decision::ChooseEffectOption { source, option_count:2,..} if source==guide)
+    );
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
+    expect_search(&mut state, 1);
+    let rng = state.legacy_rng().copied();
+    let hand = state.players[0].hand.clone();
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    settle_to_priority(&mut state);
+    assert_ne!(
+        state.legacy_rng().copied(),
+        rng,
+        "accepted search shuffles even after failing to find"
+    );
+    assert_eq!(state.players[0].hand, hand);
 }
 
 fn activate_hart(state: &mut GameState) -> ObjectId {

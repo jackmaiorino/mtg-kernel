@@ -3,41 +3,93 @@ use super::*;
 use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, SplitMix64, StackItem};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SamplingScopeV68 {
+    Legacy,
+    EndTurn,
+    Call,
+    GenesisWave,
+    Muldrotha,
+    Tinybones,
+    Liliana,
+    Chandra,
+    Kaito,
+}
+fn diagnose_refusal<T>(stage: &'static str, value: T) -> T {
+    #[cfg(test)]
+    eprintln!("hidden-slot sampling refused at {stage}");
+    #[cfg(not(test))]
+    let _ = stage;
+    value
+}
 fn conflicts(
     state: &GameState,
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    conflicts_in_scope(state, pool, plan, SamplingScopeV68::Legacy)
+}
+fn conflicts_in_scope(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    scope: SamplingScopeV68,
+) -> bool {
+    let op_conflicts = |op: &crate::effect::EffectOp| match scope {
+        SamplingScopeV68::Call => super::effect_refs::op_conflicts_call_v62(state, pool, op),
+        SamplingScopeV68::GenesisWave => {
+            super::effect_refs::op_conflicts_genesis_wave_v69(state, pool, op)
+        }
+        SamplingScopeV68::Muldrotha => {
+            super::effect_refs::op_conflicts_muldrotha_v71(state, pool, op)
+        }
+        SamplingScopeV68::Tinybones => {
+            super::effect_refs::op_conflicts_tinybones_v72(state, pool, op)
+        }
+        SamplingScopeV68::Liliana => super::effect_refs::op_conflicts_liliana_v73(state, pool, op),
+        SamplingScopeV68::Chandra => super::effect_refs::op_conflicts_chandra_v74(state, pool, op),
+        SamplingScopeV68::Kaito => super::effect_refs::op_conflicts_kaito_v75(state, pool, op),
+        SamplingScopeV68::EndTurn => super::effect_refs::op_conflicts_end_turn_v68(state, pool, op),
+        SamplingScopeV68::Legacy => super::effect_refs::op_conflicts(state, pool, op),
+    };
     if crate::bloodthirsty_conqueror_v49::has_history(state)
         || crate::soul_counters_v1::has_history(state)
     {
-        return true;
+        return diagnose_refusal("references.soul_or_conqueror", true);
     }
     if crate::ajani_full_v42::lifecycle::requires_successor(state) {
-        return true;
+        return diagnose_refusal("references.ajani", true);
     }
     if crate::fishing_pole_v39::lifecycle::requires_successor(state) {
-        return true;
+        return diagnose_refusal("references.fishing", true);
     }
     if crate::krenko_v1::requires_successor(state) {
-        return true;
+        return diagnose_refusal("references.krenko", true);
     }
-    if crate::arahbo_v1::requires_successor(state)
-        || state
-            .engine
-            .event_history
-            .iter()
-            .any(crate::arahbo_v1::is_history)
-    {
-        return true;
-    }
-    if state
-        .engine
-        .event_history
-        .iter()
-        .any(crate::garruks_uprising_v1::is_history)
-    {
-        return true;
+    // Frozen V4 search retains its historical refusal after either entry
+    // observer journal, including a passive entry with no actual observer.
+    // New owning scopes validate those passive records before the reference
+    // walk below, while still refusing actual unsupported observer roots.
+    let entry_conflict = if scope == SamplingScopeV68::Legacy {
+        crate::arahbo_v1::requires_successor(state)
+            || state
+                .engine
+                .event_history
+                .iter()
+                .any(crate::arahbo_v1::is_history)
+            || state
+                .engine
+                .event_history
+                .iter()
+                .any(crate::garruks_uprising_v1::is_history)
+    } else {
+        crate::arahbo_v1::validate_state(state).is_err()
+            || crate::garruks_uprising_v1::validate_state(state).is_err()
+            || crate::arahbo_v1::requires_successor(state)
+            || crate::garruks_uprising_v1::requires_successor(state)
+    };
+    if entry_conflict {
+        return diagnose_refusal("references.entry_observers", true);
     }
     // Retained linked duration and attack ownership need their qualified sampler.
     if crate::banishing_light_v1::requires_successor(state)
@@ -48,7 +100,7 @@ fn conflicts(
             )
         }) && !pool.is_empty())
     {
-        return true;
+        return diagnose_refusal("references.banishing_or_ashroot_dispatch", true);
     }
     // The source's old definition and power remain authoritative after it returns
     // to a hidden zone. This lane does not admit a historical resampling scheme.
@@ -57,7 +109,7 @@ fn conflicts(
         crate::event::CommittedEvent::AshrootPowerBeforeDepartureV1 { source, .. }
             if pool.contains(&source.object))
     }) {
-        return true;
+        return diagnose_refusal("references.ashroot_departure", true);
     }
     // Receipt-owned references remain binding through legend/deferred stages
     // and after the physical source or recipient returns to a hidden zone.
@@ -69,15 +121,31 @@ fn conflicts(
         Err(_) => return true,
         _ => {},
     }
-    if state.wildwood_waiting_v1.as_ref().is_some_and(|waiting| {
-        waiting
-            .iter()
-            .any(|row| super::effect_refs::op_conflicts(state, pool, &row.effect))
-    }) {
+    if state
+        .wildwood_waiting_v1
+        .as_ref()
+        .is_some_and(|waiting| waiting.iter().any(|row| op_conflicts(&row.effect)))
+    {
         return true;
     }
-    if super::effect_refs::conflicts(state, pool, plan) {
-        return true;
+    if match scope {
+        SamplingScopeV68::Legacy => super::effect_refs::conflicts(state, pool, plan),
+        SamplingScopeV68::EndTurn => super::effect_refs::conflicts_end_turn_v68(state, pool, plan),
+        SamplingScopeV68::Call => super::effect_refs::conflicts_call_v62(state, pool, plan),
+        SamplingScopeV68::GenesisWave => {
+            super::effect_refs::conflicts_genesis_wave_v69(state, pool, plan)
+        }
+        SamplingScopeV68::Muldrotha => {
+            super::effect_refs::conflicts_muldrotha_v71(state, pool, plan)
+        }
+        SamplingScopeV68::Tinybones => {
+            super::effect_refs::conflicts_tinybones_v72(state, pool, plan)
+        }
+        SamplingScopeV68::Liliana => super::effect_refs::conflicts_liliana_v73(state, pool, plan),
+        SamplingScopeV68::Chandra => super::effect_refs::conflicts_chandra_v74(state, pool, plan),
+        SamplingScopeV68::Kaito => super::effect_refs::conflicts_kaito_v75(state, pool, plan),
+    } {
+        return diagnose_refusal("references.effect_walk", true);
     }
     let same = |id: ObjectId, generation: u32| {
         pool.contains(&id) && state.objects.get(id).zone_change_count == generation
@@ -92,10 +160,24 @@ fn conflicts(
             pool.contains(&source.source)
                 && crate::creature_death_capture_v1::owns_program(source, effect)
         };
+    let active_call_source = |source: ObjectId, op: &crate::effect::EffectOp| {
+        scope != SamplingScopeV68::Legacy
+            && pool.contains(&source)
+            && matches!(
+                op,
+                crate::effect::EffectOp::BindAleshaRaidReturn
+                    | crate::effect::EffectOp::AleshaRaidReturn { .. }
+                    | crate::effect::EffectOp::BindNineLivesFamiliarReturnV1
+                    | crate::effect::EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
+                    | crate::effect::EffectOp::ReturnNineLivesFamiliarV1 { .. }
+                    | crate::effect::EffectOp::BindValkyriesCallDeathV1
+                    | crate::effect::EffectOp::ReturnValkyriesCallCreatureV1 { .. }
+            )
+    };
     let stack = |s: &StackItem| {
         s.inline_effect
             .as_ref()
-            .is_some_and(|op| super::effect_refs::op_conflicts(state, pool, op))
+            .is_some_and(|op| op_conflicts(op) || active_call_source(s.source, op))
             || s.v4.ability_source_contract.as_ref().is_some_and(&ability)
             || s.v4
                 .ability_source_contract
@@ -126,8 +208,11 @@ fn conflicts(
                 || upgrade.combat_impulse_donor.as_ref().is_some_and(&ability)
         })
     }) || e.pending_triggers.iter().any(|t| {
-        super::effect_refs::op_conflicts(state, pool, &t.effect)
+        op_conflicts(&t.effect)
             || t.source_contract.as_ref().is_some_and(&ability)
+            || t.source_contract
+                .as_ref()
+                .is_some_and(|source| active_call_source(source.source, &t.effect))
             || t.source_contract
                 .as_ref()
                 .is_some_and(|source| historical_death_source(source, &t.effect))
@@ -168,7 +253,7 @@ fn conflicts(
             .any(|r| same(r.object, r.zone_change_generation))
         || e.pending_kicked_source.is_some_and(|id| pool.contains(&id))
     {
-        return true;
+        return diagnose_refusal("references.current_native_binding", true);
     }
     // New committed authority must not be relabeled by hidden pool resampling,
     // including after Cleanup removed the active shield. Predecessor histories
@@ -269,7 +354,7 @@ pub(super) fn redeterminize_with_library_plan(
     seed: u64,
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> Result<(), Error> {
-    redeterminize_with_library_plan_inner(state, actor, seed, plan, false)
+    redeterminize_with_library_plan_inner(state, actor, seed, plan, false, SamplingScopeV68::Legacy)
 }
 pub(super) fn redeterminize_with_library_plan_classified(
     state: &mut GameState,
@@ -277,7 +362,225 @@ pub(super) fn redeterminize_with_library_plan_classified(
     seed: u64,
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> Result<(), Error> {
-    redeterminize_with_library_plan_inner(state, actor, seed, plan, true)
+    redeterminize_with_library_plan_inner(state, actor, seed, plan, true, SamplingScopeV68::Legacy)
+}
+pub(super) fn redeterminize_end_turn_v68(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    // Validate all new factual journals before either owner's first permutation.
+    crate::end_turn_observation_v68::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
+    if crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true) {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::EndTurn)
+}
+pub(super) fn redeterminize_call_v62(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::call_observation_v62::validate_state(state).map_err(|_| Error::HiddenStateContract)?;
+    redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::Call)
+}
+pub(super) fn redeterminize_genesis_wave_v69(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::genesis_wave_observation_v69::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
+    // Exact enclosing entry checkpoints retain a whole original operation.
+    // They need their own current-slot continuation, never a pinned old library.
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some() {
+        return crate::linked_aura_operation_v1::sample_genesis_checkpoint_v69(state, actor, seed)
+            .map_err(|_| Error::HiddenReferenceConflict);
+    }
+    if crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true) {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(
+        state,
+        actor,
+        seed,
+        None,
+        true,
+        SamplingScopeV68::GenesisWave,
+    )
+}
+pub(super) fn redeterminize_muldrotha_v71(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::muldrotha_observation_v71::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
+    // Entry checkpoints retain whole original worlds. V69's replay derivation
+    // cannot authenticate a V71 world, so this scope preserves that refusal.
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some() {
+        return Err(diagnose_refusal(
+            "v71.entry_checkpoint",
+            Error::HiddenReferenceConflict,
+        ));
+    }
+    if crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true) {
+        return Err(diagnose_refusal(
+            "v71.time_stop",
+            Error::HiddenReferenceConflict,
+        ));
+    }
+    if crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true) {
+        return Err(diagnose_refusal(
+            "v71.permission_history",
+            Error::HiddenReferenceConflict,
+        ));
+    }
+    redeterminize_with_library_plan_inner(
+        state,
+        actor,
+        seed,
+        None,
+        true,
+        SamplingScopeV68::Muldrotha,
+    )
+    .map_err(|error| diagnose_refusal("v71.current_slots", error))
+}
+pub(super) fn redeterminize_tinybones_v72(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::tinybones_observation_v72::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
+    // Entry checkpoints retain whole original worlds. V69's replay derivation
+    // cannot authenticate a V72 world, so this scope preserves that refusal.
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some()
+        || crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true)
+        || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true)
+        || crate::engine::tinybones_v72::sampler_conflicts_v72(state, &[]).unwrap_or(true)
+    {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(
+        state,
+        actor,
+        seed,
+        None,
+        true,
+        SamplingScopeV68::Tinybones,
+    )
+}
+pub(super) fn redeterminize_liliana_v73(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::liliana_observation_v73::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
+    // Entry checkpoints retain whole original worlds. V69's replay derivation
+    // cannot authenticate a V73 world, so this scope preserves that refusal.
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some()
+        || crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true)
+        || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true)
+        || crate::engine::tinybones_v72::sampler_conflicts_v72(state, &[]).unwrap_or(true)
+        || crate::effect::liliana_dreadhorde_v1::sampler_conflicts_v73(state, &[]).unwrap_or(true)
+    {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::Liliana)
+}
+pub(super) fn redeterminize_chandra_v74(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::chandra_observation_v74::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
+    // Entry checkpoints retain whole original worlds. V69's replay derivation
+    // cannot authenticate a V74 world, so this scope preserves that refusal.
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some()
+        || crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true)
+        || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true)
+        || crate::engine::tinybones_v72::sampler_conflicts_v72(state, &[]).unwrap_or(true)
+        || crate::effect::liliana_dreadhorde_v1::sampler_conflicts_v73(state, &[]).unwrap_or(true)
+        || crate::effect::chandra_flameshaper_v1::sampler_conflicts_v74(state, &[]).unwrap_or(true)
+    {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::Chandra)
+}
+pub(super) fn redeterminize_kaito_v75(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::kaito_observation_v75::validate_state(state).map_err(|_| Error::HiddenStateContract)?;
+    // Entry checkpoints retain whole original worlds. V69's replay derivation
+    // cannot authenticate a V75 world, so this scope preserves that refusal.
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some()
+        || crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true)
+        || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true)
+        || crate::engine::tinybones_v72::sampler_conflicts_v72(state, &[]).unwrap_or(true)
+        || crate::effect::liliana_dreadhorde_v1::sampler_conflicts_v73(state, &[]).unwrap_or(true)
+        || crate::effect::chandra_flameshaper_v1::sampler_conflicts_v74(state, &[]).unwrap_or(true)
+        || crate::effect::kaito_cunning_v75::sampler_conflicts_v75(state, &[]).unwrap_or(true)
+    {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::Kaito)
+}
+fn current_unknown_slots(
+    state: &GameState,
+    actor: PlayerId,
+    owner: PlayerId,
+) -> Vec<(Zone, usize, ObjectId)> {
+    let mut slots = Vec::new();
+    if owner != actor {
+        for (i, &id) in state.players[owner.index()].hand.iter().enumerate() {
+            let obj = state.objects.get(id);
+            if !state
+                .known_hand_cards(actor, owner)
+                .iter()
+                .any(|k| k.object == id && k.zone_change_count == obj.zone_change_count)
+            {
+                slots.push((Zone::Hand, i, id));
+            }
+        }
+    }
+    for (i, &id) in state.players[owner.index()].library.iter().enumerate() {
+        let obj = state.objects.get(id);
+        if !state.known_library_cards(actor, owner).iter().any(|k| {
+            k.position as usize == i
+                && k.object == id
+                && k.zone_change_count == obj.zone_change_count
+        }) {
+            slots.push((Zone::Library, i, id));
+        }
+    }
+    slots
+}
+pub(super) fn same_current_unknown_pool_v69(
+    before: &GameState,
+    current: &GameState,
+    actor: PlayerId,
+) -> bool {
+    [PlayerId::P0, PlayerId::P1].into_iter().all(|owner| {
+        let a = current_unknown_slots(before, actor, owner);
+        let b = current_unknown_slots(current, actor, owner);
+        let shape =
+            |v: &[(Zone, usize, ObjectId)]| v.iter().map(|(z, i, _)| (*z, *i)).collect::<Vec<_>>();
+        let pool = |s: &GameState, v: &[(Zone, usize, ObjectId)]| {
+            let mut ids = v
+                .iter()
+                .map(|(_, _, id)| (*id, s.objects.get(*id).zone_change_count))
+                .collect::<Vec<_>>();
+            ids.sort_unstable();
+            ids
+        };
+        shape(&a) == shape(&b) && pool(before, &a) == pool(current, &b)
+    })
 }
 fn redeterminize_with_library_plan_inner(
     state: &mut GameState,
@@ -285,6 +588,7 @@ fn redeterminize_with_library_plan_inner(
     seed: u64,
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     classified: bool,
+    scope: SamplingScopeV68,
 ) -> Result<(), Error> {
     // Refuse before even the first hidden-owner permutation, including empty pools.
     if crate::bloodthirsty_conqueror_v49::has_history(state)
@@ -323,38 +627,32 @@ fn redeterminize_with_library_plan_inner(
     {
         return Err(Error::UnsupportedActionContract);
     }
-    let mut rng = SplitMix64::seed(seed);
+    let observer = actor.opponent();
+    if !state.hand_knowledge[observer.index()][observer.index()].is_empty() {
+        return Err(Error::HiddenStateContract);
+    }
+    // Validate both owners against the original world before changing either
+    // pool. A historical reference in the second pool must refuse read-only.
+    let mut pools = Vec::with_capacity(2);
     for owner in [PlayerId::P0, PlayerId::P1] {
         // Slots are canonical: owner order, then hand indices, then library indices.
-        let mut slots = Vec::new();
-        if owner != actor {
-            for (i, &id) in state.players[owner.index()].hand.iter().enumerate() {
-                let obj = state.objects.get(id);
-                if !state
-                    .known_hand_cards(actor, owner)
-                    .iter()
-                    .any(|k| k.object == id && k.zone_change_count == obj.zone_change_count)
-                {
-                    slots.push((Zone::Hand, i, id));
-                }
-            }
-        }
-        for (i, &id) in state.players[owner.index()].library.iter().enumerate() {
-            let obj = state.objects.get(id);
-            if !state.known_library_cards(actor, owner).iter().any(|k| {
-                k.position as usize == i
-                    && k.object == id
-                    && k.zone_change_count == obj.zone_change_count
-            }) {
-                slots.push((Zone::Library, i, id));
-            }
-        }
+        let slots = current_unknown_slots(state, actor, owner);
         let mut pool: Vec<_> = slots.iter().map(|x| x.2).collect();
         pool.sort_unstable();
         if pool.windows(2).any(|x| x[0] == x[1]) {
             return Err(Error::HiddenStateContract);
         }
-        if conflicts(state, &pool, plan) {
+        if match scope {
+            SamplingScopeV68::Legacy => conflicts(state, &pool, plan),
+            SamplingScopeV68::EndTurn
+            | SamplingScopeV68::Call
+            | SamplingScopeV68::GenesisWave
+            | SamplingScopeV68::Muldrotha
+            | SamplingScopeV68::Tinybones
+            | SamplingScopeV68::Liliana
+            | SamplingScopeV68::Chandra
+            | SamplingScopeV68::Kaito => conflicts_in_scope(state, &pool, plan, scope),
+        } {
             return Err(if classified {
                 Error::HiddenReferenceConflict
             } else {
@@ -380,16 +678,16 @@ fn redeterminize_with_library_plan_inner(
                 return Err(Error::HiddenStateContract);
             }
         }
+        pools.push((owner, slots, pool));
+    }
+    let mut rng = SplitMix64::seed(seed);
+    for (owner, slots, mut pool) in pools {
         for i in (1..pool.len()).rev() {
             let j = draw(&mut rng, (i + 1) as u64);
             pool.swap(i, j);
         }
         // Only library knowledge needs rebinding: own-hand knowledge is implicit,
         // and the other observer's knowledge of actor's hand is never pooled.
-        let observer = actor.opponent();
-        if !state.hand_knowledge[observer.index()][observer.index()].is_empty() {
-            return Err(Error::HiddenStateContract);
-        }
         for ((zone, i, old), new) in slots.iter().copied().zip(pool.iter().copied()) {
             let old_generation = state.objects.get(old).zone_change_count;
             let new_generation = state.objects.get(new).zone_change_count;
@@ -420,6 +718,128 @@ fn redeterminize_with_library_plan_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn paid_observerless_entries_allow_scoped_sampling_but_keep_frozen_v4_and_actual_observers_bound(
+    ) {
+        use crate::engine::time_stop_v1::tests::{cast, finish, ready, restore};
+        use crate::event::{propose_and_commit, CommittedEvent, ProposedEvent};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let elf = cast(&mut state, actor, "Llanowar Elves", &[], 1);
+            finish(&mut state);
+            assert!(!crate::arahbo_v1::requires_successor(&state));
+            assert!(!crate::garruks_uprising_v1::requires_successor(&state));
+            let history = state.engine.event_history.clone();
+            assert!(history.iter().any(|event| matches!(
+                event,
+                CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
+            )));
+            assert!(!super::super::effect_refs::conflicts(&state, &[], None));
+            assert!(super::super::effect_refs::conflicts(&state, &[elf], None));
+            let mut legacy = restore(&state);
+            assert_eq!(
+                redeterminize_with_library_plan_classified(&mut legacy, actor, 8177, None),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(legacy, state);
+            let mut malformed = restore(&state);
+            let snapshot = malformed
+                .engine
+                .event_history
+                .iter_mut()
+                .find_map(|event| {
+                    if let CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event
+                    {
+                        Some(snapshot)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            snapshot.private_snapshot_json = "{}".into();
+            let unchanged = malformed.clone();
+            assert_eq!(
+                redeterminize_with_library_plan_inner(
+                    &mut malformed,
+                    actor,
+                    8177,
+                    None,
+                    true,
+                    SamplingScopeV68::EndTurn
+                ),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(malformed, unchanged);
+            let mut sampled = restore(&state);
+            let mut repeat = restore(&state);
+            redeterminize_with_library_plan_inner(
+                &mut sampled,
+                actor,
+                8177,
+                None,
+                true,
+                SamplingScopeV68::EndTurn,
+            )
+            .unwrap();
+            redeterminize_with_library_plan_inner(
+                &mut repeat,
+                actor,
+                8177,
+                None,
+                true,
+                SamplingScopeV68::EndTurn,
+            )
+            .unwrap();
+            assert_eq!(sampled, repeat);
+            assert_eq!(sampled.engine.event_history, history);
+
+            let mut departed = restore(&state);
+            propose_and_commit(
+                &mut departed,
+                ProposedEvent::zone_change(elf, Zone::Library),
+            );
+            assert!(conflicts(&departed, &[elf], None));
+
+            let mut malformed = restore(&state);
+            malformed
+                .engine
+                .event_history
+                .retain(|event| !matches!(event, CommittedEvent::GarrukEntryObservationV1 { .. }));
+            let before = malformed.clone();
+            assert_eq!(
+                redeterminize_with_library_plan_inner(
+                    &mut malformed,
+                    actor,
+                    8177,
+                    None,
+                    true,
+                    SamplingScopeV68::EndTurn
+                ),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(malformed, before);
+
+            cast(&mut state, actor, "Garruk's Uprising", &[], 3);
+            finish(&mut state);
+            let before = state.clone();
+            assert_eq!(
+                redeterminize_with_library_plan_inner(
+                    &mut state,
+                    actor,
+                    8177,
+                    None,
+                    true,
+                    SamplingScopeV68::EndTurn
+                ),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(state, before);
+        }
+    }
     #[test]
     fn retained_soul_world_refuses_before_any_hidden_owner_permutation_both_seats() {
         use crate::{

@@ -19,6 +19,17 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::RavenousV51
                 | FlatActionContractModeV1::ElendaV52
                 | FlatActionContractModeV1::PreparedV57
+                | FlatActionContractModeV1::NextFiveV59
+                | FlatActionContractModeV1::GraveyardReturnV61
+                | FlatActionContractModeV1::CallV62
+                | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
+                | FlatActionContractModeV1::VivienV70
+                | FlatActionContractModeV1::MuldrothaV71
+                | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
+                | FlatActionContractModeV1::ChandraV74
+                | FlatActionContractModeV1::KaitoV75
         )
     }
     #[cfg(all(
@@ -67,6 +78,10 @@ impl FastActorSessionV1 {
                 "invalid common Limited reset",
             ));
         }
+        preflight_declared_mainboards_for_scope(
+            crate::rl::CommonProjectionScopeV42::ExistingV40,
+            [&mainboards[0], &mainboards[1]],
+        )?;
         let mut state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
             env_seed,
             &mainboards[0],

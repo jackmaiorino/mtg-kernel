@@ -31,10 +31,47 @@ pub struct FactsV54 {
     pub stack: Vec<StackV54>,
 }
 pub fn capture(state: &GameState) -> Result<FactsV54, String> {
+    capture_scoped(state, public::CounterScopeV61::Legacy)
+}
+pub(crate) fn capture_complete_v61(state: &GameState) -> Result<FactsV54, String> {
+    capture_scoped(state, public::CounterScopeV61::CompleteV61)
+}
+pub(crate) fn capture_complete_call_v62(state: &GameState) -> Result<FactsV54, String> {
+    capture_scoped(state, public::CounterScopeV61::CallV62)
+}
+pub(crate) fn capture_tinybones_compat_v72(state: &GameState) -> Result<FactsV54, String> {
+    capture_scoped(state, public::CounterScopeV61::TinybonesV72)
+}
+pub(crate) fn capture_kaito_compat_v75(state: &GameState) -> Result<FactsV54, String> {
+    capture_for_consumer(
+        state,
+        public::CounterScopeV61::TinybonesV72,
+        crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+    )
+}
+pub(crate) fn capture_chandra_compat_v74(state: &GameState) -> Result<FactsV54, String> {
+    capture_for_consumer(
+        state,
+        public::CounterScopeV61::TinybonesV72,
+        crate::optional_trigger_public_v1::ConsumerV1::ChandraV74,
+    )
+}
+fn capture_scoped(state: &GameState, scope: public::CounterScopeV61) -> Result<FactsV54, String> {
+    capture_for_consumer(
+        state,
+        scope,
+        crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+    )
+}
+fn capture_for_consumer(
+    state: &GameState,
+    scope: public::CounterScopeV61,
+    consumer: crate::optional_trigger_public_v1::ConsumerV1,
+) -> Result<FactsV54, String> {
     let id =
         crate::card_def::card_id_by_name("Spinner of Souls").ok_or("Spinner printing absent")?;
     let meaning = meaning::printed_meaning(id)?;
-    public::validate_state(state)?;
+    public::validate_state_for_consumer(state, false, consumer)?;
     let printed_root = (crate::trigger::triggers_for(id)[0].effect)();
     let mut held = Vec::new();
     for pending in public::held(state) {
@@ -91,7 +128,15 @@ pub fn capture(state: &GameState) -> Result<FactsV54, String> {
         schema: SCHEMA.into(),
         producer_sha256: meaning::producer_sha256(),
         meaning,
-        current: public::current(state, id)?,
+        current: if scope == public::CounterScopeV61::TinybonesV72 {
+            public::current_tinybones_compat_v72(state, id)?
+        } else if scope == public::CounterScopeV61::CallV62 {
+            public::current_complete_call_v62(state, id)?
+        } else if scope == public::CounterScopeV61::CompleteV61 {
+            public::current_complete_v61(state, id)?
+        } else {
+            public::current(state, id)?
+        },
         held,
         stack,
     })

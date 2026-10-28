@@ -3,7 +3,15 @@ use crate::card_def::CardType;
 use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
+#[cfg(any(test, feature = "standard-magezero-fixtures"))]
 pub(crate) fn record_creature_stats_lki(state: &mut GameState, id: ObjectId) {
+    record_creature_stats_lki_with_pt(state, id, None);
+}
+pub(crate) fn record_creature_stats_lki_with_pt(
+    state: &mut GameState,
+    id: ObjectId,
+    frozen: Option<(i32, i32)>,
+) {
     if !crate::engine::object_has_type(state, id, CardType::Creature) {
         return;
     }
@@ -11,10 +19,16 @@ pub(crate) fn record_creature_stats_lki(state: &mut GameState, id: ObjectId) {
         object: id,
         zone_change_count: state.objects.get(id).zone_change_count,
     };
+    let (power, toughness) = frozen.unwrap_or_else(|| {
+        (
+            crate::engine::effective_power(state, id),
+            crate::engine::effective_toughness(state, id),
+        )
+    });
     let entry = crate::state::CreatureStatsLkiV1 {
         source,
-        power: crate::engine::effective_power(state, id),
-        toughness: crate::engine::effective_toughness(state, id),
+        power,
+        toughness,
     };
     let entries = state.creature_stats_lki_v1.get_or_insert_with(Vec::new);
     if !entries.iter().any(|old| old.source == source) {

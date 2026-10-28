@@ -126,7 +126,10 @@ fn next_turn_through_cleanup_and_untap(state: &mut GameState) {
     let previous = state.active_player;
     // End grants priority. Passing both seats enters Cleanup, then
     // the opponent's Untap, executing both entry actions normally.
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(state, active, Step::End);
+    }
     for _ in 0..8 {
         let decision = next(state);
         if state.active_player != previous {

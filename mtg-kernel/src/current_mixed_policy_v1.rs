@@ -1,11 +1,20 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
+mod call;
+mod end_turn;
+mod genesis_wave;
+pub use end_turn::{EndTurnDecision, EndTurnSession, EndTurnSnapshot};
+pub use genesis_wave::{GenesisWaveDecision, GenesisWaveSession, GenesisWaveSnapshot};
 mod canonical_semantic_booleans;
 mod elenda;
 mod fiery_public_operands;
 mod fishing_public_operands;
+mod graveyard_return;
+pub use call::{CallDecision, CallSession, CallSnapshot};
 mod kellan_public_operands;
 mod network;
+mod next_five;
+mod next_five_support;
 mod normalize;
 mod numeric;
 mod prepared;
@@ -15,7 +24,11 @@ use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionSnapshotV1, FastActorSessionV1,
 };
 pub use elenda::{ElendaDecision, ElendaSession, ElendaSnapshot};
+pub use graveyard_return::{
+    GraveyardReturnDecision, GraveyardReturnSession, GraveyardReturnSnapshot,
+};
 pub use network::{ModelConfig, NativeModel};
+pub use next_five::{NextFiveDecision, NextFiveSession, NextFiveSnapshot};
 pub use numeric::NumericTree;
 pub use prepared::{PreparedDecision, PreparedSession, PreparedSnapshot};
 use sha2::{Digest, Sha256};
@@ -49,6 +62,17 @@ pub enum Source {
     RavenousV51,
     ElendaV52,
     PreparedV57,
+    NextFiveV59,
+    GraveyardReturnV61,
+    CallV62,
+    EndTurnV68,
+    GenesisWaveV69,
+    VivienV70,
+    MuldrothaV71,
+    TinybonesV72,
+    LilianaV73,
+    ChandraV74,
+    KaitoV75,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -82,6 +106,42 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/canonical_semantic_booleans.rs"),
             include_str!("current_mixed_policy_v1/divine_printing.rs"),
             include_str!("current_mixed_policy_v1/roots.rs"),
+            include_str!("current_mixed_policy_v1/ordinary_removal_printing.rs"),
+            include_str!("current_mixed_policy_v1/targeted_spell_printing.rs"),
+            include_str!("current_mixed_policy_v1/simple_trigger_printing.rs"),
+            include_str!("current_mixed_policy_v1/observer_trigger_printing.rs"),
+            include_str!("current_mixed_policy_v1/attack_trigger_printing.rs"),
+            include_str!("current_mixed_policy_v1/ward_discount_creature_printing.rs"),
+            include_str!("current_mixed_policy_v1/ordinary_equipment_printing.rs"),
+            include_str!("current_mixed_policy_v1/ordinary_aura_printing.rs"),
+            include_str!("current_mixed_policy_v1/ordinary_batch_spell_printing.rs"),
+            include_str!("current_mixed_policy_v1/conditional_player_spell_printing.rs"),
+            include_str!("current_mixed_policy_v1/discard_cost_spell_printing.rs"),
+            include_str!("current_mixed_policy_v1/graveyard_batch_spell_printing.rs"),
+            include_str!("current_mixed_policy_v1/cost_reduced_spell_printing.rs"),
+            include_str!("current_mixed_policy_v1/creature_power_spell_printing.rs"),
+            include_str!("current_mixed_policy_v1/luminous_printing.rs"),
+            include_str!("current_mixed_policy_v1/team_static_printing.rs"),
+            include_str!("current_mixed_policy_v1/triggered_enchantment_printing.rs"),
+            include_str!("current_mixed_policy_v1/shivan_printing.rs"),
+            include_str!("current_mixed_policy_v1/sacrifice_printing.rs"),
+            include_str!("current_mixed_policy_v1/counter_return_creature_printing.rs"),
+            include_str!("current_mixed_policy_v1/utility_activation_printing.rs"),
+            include_str!("current_mixed_policy_v1/sailor_printing.rs"),
+            include_str!("current_mixed_policy_v1/lookout_printing.rs"),
+            include_str!("current_mixed_policy_v1/library_search_printing.rs"),
+            include_str!("current_mixed_policy_v1/solemn_printing.rs"),
+            include_str!("current_mixed_policy_v1/evolving_printing.rs"),
+            include_str!("current_mixed_policy_v1/surveil_one_printing.rs"),
+            include_str!("current_mixed_policy_v1/surveil_many_printing.rs"),
+            include_str!("current_mixed_policy_v1/threshold_loot_printing.rs"),
+            include_str!("current_mixed_policy_v1/bloodwitch_printing.rs"),
+            include_str!("current_mixed_policy_v1/paladin_printing.rs"),
+            include_str!("current_mixed_policy_v1/gnarlid_printing.rs"),
+            include_str!("current_mixed_policy_v1/targeted_entry_printing.rs"),
+            include_str!("current_mixed_policy_v1/entry_destruction_printing.rs"),
+            include_str!("current_mixed_policy_v1/entry_exile_printing.rs"),
+            include_str!("current_mixed_policy_v1/entry_branch_printing.rs"),
             include_str!("current_mixed_policy_v1/eaten_printing.rs"),
             include_str!("current_mixed_policy_v1/enchantment_hunter_printing.rs"),
             include_str!("current_mixed_policy_v1/faebloom_printing.rs"),
@@ -231,12 +291,174 @@ pub fn feature_identity() -> String {
             include_str!("zul_ashur_observation_v1.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("current_mixed_policy_v1/next_five.rs"),
+            include_str!("current_mixed_policy_v1/next_five_support.rs"),
+            include_str!("next_five_observation_v59.rs"),
+            include_str!("next_five_public_v59.rs"),
+            include_str!("snack_wide_public_v59.rs"),
+            include_str!("panda_public_v47.rs"),
+            include_str!("conqueror_public_v49.rs"),
+            include_str!("rules_meaning_next_five_v59.rs"),
+            include_str!("rules_meaning_midnight_snack_v58.rs"),
+            include_str!("midnight_snack_public_v58.rs"),
+            include_str!("midnight_snack_v1.rs"),
+            include_str!("extravagant_replication_v1.rs"),
+            include_str!("infernal_vessel_v1.rs"),
+            include_str!("giada_v1.rs"),
+            include_str!("goblin_negotiation_v1.rs"),
+            include_str!("goblin_negotiation_v1/owned.rs"),
+            include_str!("effect/nonland_copy_v1.rs"),
+            include_str!("effect/curator_v1.rs"),
+            include_str!("effect/loot_v1.rs"),
+            include_str!("effect/kykar_v1.rs"),
+            include_str!("effect/greatwurm_v1.rs"),
+            include_str!("effect/source_token_copy_v1.rs"),
+            include_str!("engine/greatwurm_cast_v1.rs"),
+            include_str!("effect/sphinx_lore_v1.rs"),
+            include_str!("effect/harvester_v1.rs"),
+            include_str!("leyline_axe_v1.rs"),
+            include_str!("london_mulligan_v1.rs"),
+            include_str!("soul_shackled_zombie_v1.rs"),
+            include_str!("engine/sphinx_lore_cast_v1.rs"),
+            include_str!("effect/squad_rallier_resolution_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("creature_death_capture_v1.rs"),
+            include_str!("rl_session/next_five_v59.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_legends_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("self_reflection_v1.rs"),
+            include_str!("life_loss_turn_v1.rs"),
+            include_str!("../build.rs"),
+            include_str!("standard_cast_convoke.rs"),
+            include_str!("banner_of_kinship_v1.rs"),
+            include_str!("banner_of_kinship_v1/entry.rs"),
+            include_str!("current_mixed_policy_v1/graveyard_return.rs"),
+            include_str!("graveyard_return_candidates_v61.rs"),
+            include_str!("graveyard_return_observation_v61.rs"),
+            include_str!("graveyard_return_public_v61.rs"),
+            include_str!("rules_meaning_graveyard_return_v61.rs"),
+            include_str!("alesha_v1.rs"),
+            include_str!("nine_lives_familiar_v1.rs"),
+            include_str!("rl_session/graveyard_return_v61.rs"),
+            include_str!("heraldic_banner_v1.rs"),
+            include_str!("creature_types_v60.rs"),
+            include_str!("../../data/rules/creature_types_v60.json"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
+            include_str!("current_mixed_policy_v1/call.rs"),
+            include_str!("human_bo3_v1/call_v62.rs"),
+            include_str!("limited_call_session_v8.rs"),
+            include_str!("human_bo3_v1/limited_call_v8.rs"),
+            include_str!("call_observation_v62.rs"),
+            include_str!("call_candidates_v62.rs"),
+            include_str!("rl_session/call_v62.rs"),
+            include_str!("rules_meaning_valkyries_call_v62.rs"),
+            include_str!("valkyries_call_public_v62.rs"),
+            include_str!("valkyries_call_v1.rs"),
+            include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("resolution_cast_v1.rs"),
+            include_str!("progenitus_v1.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+            include_str!("effect/inspiration_resolution_v1.rs"),
+            include_str!("effect/standard_exile.rs"),
+            include_str!("snack_wide_life_v59.rs"),
+            include_str!("snack_wide_life_v59/custody.rs"),
+            include_str!("fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1/custody.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("engine/mandatory_cast_cost_v1.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/standard_copy.rs"),
+            include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
+            include_str!("rules_meaning_vivien_v70.rs"),
+            include_str!("vivien_public_v70.rs"),
+            include_str!("vivien_observation_v70.rs"),
+            include_str!("vivien_candidates_v70.rs"),
+            include_str!("rl_session/vivien_v70.rs"),
+            include_str!("current_mixed_policy_v1/vivien.rs"),
+            include_str!("human_bo3_v1/vivien_v70.rs"),
+            include_str!("human_bo3_v1/limited_vivien_v11.rs"),
+            include_str!("limited_vivien_session_v11.rs"),
+            include_str!("bin/kernel_limited_vivien_env_v11.rs"),
+            include_str!("effect/vivien_reid_v1.rs"),
+            include_str!("effect/squad_rallier_resolution_v1.rs"),
+            crate::engine::time_stop_v1::source_sha256_v1(),
+            crate::effect::genesis_wave_v1::source_sha256_v1(),
+            include_str!("engine/tinybones_v72.rs"),
+            include_str!("muldrotha_public_v71.rs"),
+            include_str!("rules_meaning_muldrotha_v71.rs"),
+            include_str!("muldrotha_observation_v71.rs"),
+            include_str!("muldrotha_candidates_v71.rs"),
+            include_str!("rl_session/muldrotha_v71.rs"),
+            include_str!("current_mixed_policy_v1/muldrotha.rs"),
+            include_str!("human_bo3_v1/muldrotha_v71.rs"),
+            include_str!("human_bo3_v1/limited_muldrotha_v12.rs"),
+            include_str!("limited_muldrotha_session_v12.rs"),
+            include_str!("bin/kernel_limited_muldrotha_env_v12.rs"),
+            include_str!("rules_meaning_tinybones_v72.rs"),
+            include_str!("tinybones_public_v72.rs"),
+            include_str!("tinybones_observation_v72.rs"),
+            include_str!("tinybones_candidates_v72.rs"),
+            include_str!("rl_session/tinybones_v72.rs"),
+            include_str!("current_mixed_policy_v1/tinybones.rs"),
+            include_str!("current_mixed_policy_v1/liliana.rs"),
+            include_str!("rules_meaning_liliana_v73.rs"),
+            include_str!("liliana_public_v73.rs"),
+            include_str!("liliana_observation_v73.rs"),
+            include_str!("liliana_candidates_v73.rs"),
+            include_str!("rl_session/liliana_v73.rs"),
+            include_str!("human_bo3_v1/tinybones_v72.rs"),
+            include_str!("human_bo3_v1/limited_tinybones_v13.rs"),
+            include_str!("limited_tinybones_session_v13.rs"),
+            include_str!("bin/kernel_limited_tinybones_env_v13.rs"),
+            include_str!("../../python/tools/limited_tinybones_session_v13.py"),
+            include_str!("chandra_observation_v74.rs"),
+            include_str!("chandra_candidates_v74.rs"),
+            include_str!("rl_session/chandra_v74.rs"),
+            include_str!("current_mixed_policy_v1/chandra.rs"),
+            include_str!("chandra_public_v74.rs"),
+            include_str!("effect/chandra_flameshaper_public_v74.rs"),
+            include_str!("effect/chandra_flameshaper_v1.rs"),
+            include_str!("rules_meaning_chandra_v74.rs"),
+            include_str!("rl_session/flat_action_v4.rs"),
+            include_str!("rl_session/flat_action_v4/search_state.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
+            include_str!("kaito_observation_v75.rs"),
+            include_str!("kaito_candidates_v75.rs"),
+            include_str!("rl_session/kaito_v75.rs"),
+            include_str!("current_mixed_policy_v1/kaito.rs"),
+            include_str!("kaito_public_v75.rs"),
+            include_str!("effect/kaito_cunning_v75.rs"),
+            include_str!("rules_meaning_kaito_v75.rs"),
+            include_str!("human_bo3_v1/liliana_v73.rs"),
+            include_str!("human_bo3_v1/limited_liliana_v14.rs"),
+            include_str!("limited_liliana_session_v14.rs"),
+            include_str!("bin/kernel_limited_liliana_env_v14.rs"),
+            include_str!("../../python/tools/limited_liliana_session_v14.py"),
+            include_str!("human_bo3_v1/chandra_v74.rs"),
+            include_str!("human_bo3_v1/limited_chandra_v15.rs"),
+            include_str!("limited_chandra_session_v15.rs"),
+            include_str!("bin/kernel_limited_chandra_env_v15.rs"),
+            include_str!("../../python/tools/limited_chandra_session_v15.py"),
+            include_str!("effect/liliana_dreadhorde_v1.rs"),
+            include_str!("human_bo3_v1/kaito_v75.rs"),
+            include_str!("human_bo3_v1/limited_kaito_v16.rs"),
+            include_str!("limited_kaito_session_v16.rs"),
+            include_str!("bin/kernel_limited_kaito_env_v16.rs"),
+            include_str!("../../python/tools/limited_kaito_session_v16.py"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
         }
         hash.update(crate::card_def::KERNEL_CARDDB_HASH.to_le_bytes());
+        hash.update(b"legacy-graveyard-return-guard/v61\0");
+        hash.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
     })
     .clone()
@@ -413,3 +635,20 @@ mod tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod legendary_tests;
+
+mod vivien;
+pub use vivien::{VivienDecision, VivienSession, VivienSnapshot};
+
+mod muldrotha;
+pub use muldrotha::{MuldrothaDecision, MuldrothaSession, MuldrothaSnapshot};
+mod tinybones;
+pub use tinybones::{TinybonesDecision, TinybonesSession, TinybonesSnapshot};
+
+mod liliana;
+pub use liliana::{LilianaDecision, LilianaSession, LilianaSnapshot};
+
+mod chandra;
+pub use chandra::{ChandraDecision, ChandraSession, ChandraSnapshot};
+
+mod kaito;
+pub use kaito::{KaitoDecision, KaitoSession, KaitoSnapshot};

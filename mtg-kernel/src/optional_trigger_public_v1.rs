@@ -181,7 +181,44 @@ pub(crate) fn root(
         captured_controller: s.controller.into(),
     })
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CounterScopeV61 {
+    Legacy,
+    CompleteV61,
+    CallV62,
+    /// Prefix only inside the distinct V72 complete observation.
+    TinybonesV72,
+}
 pub(crate) fn current(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, form, CounterScopeV61::Legacy)
+}
+/// Successor-only current form query. The roster, concealment and printed-ID
+/// selection stay identical to the frozen helper; only selected public forms
+/// use the engine's shared checked final PT result.
+pub(crate) fn current_checked(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, checked_form, CounterScopeV61::Legacy)
+}
+pub(crate) fn current_complete_v61(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, checked_form, CounterScopeV61::CompleteV61)
+}
+pub(crate) fn current_complete_call_v62(
+    state: &GameState,
+    id: u16,
+) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, checked_form, CounterScopeV61::CallV62)
+}
+pub(crate) fn current_tinybones_compat_v72(
+    state: &GameState,
+    id: u16,
+) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, checked_form, CounterScopeV61::TinybonesV72)
+}
+fn current_with_form(
+    state: &GameState,
+    id: u16,
+    form: fn(&GameState, ObjectId) -> Result<FormV1, String>,
+    scope: CounterScopeV61,
+) -> Result<Vec<CurrentV1>, String> {
     let mut rows = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for (seat, p) in state.players.iter().enumerate() {
@@ -201,7 +238,7 @@ pub(crate) fn current(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, Stri
                     tapped: o.tapped,
                     summoning_sick: o.summoning_sick,
                     marked_damage: o.damage,
-                    counters: counters(state, object)?,
+                    counters: counters(state, object, scope)?,
                     form: form(state, object)?,
                 });
             }
@@ -237,13 +274,121 @@ pub(crate) fn held(state: &GameState) -> Vec<&crate::trigger::PendingTrigger> {
         )
         .collect()
 }
-pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+/// Keep all native root/pending checks while using the current engine's checked
+/// final PT envelope. Existing predecessor validators keep the frozen prefix.
+pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
+    validate_state_with_pt(state, true)
+}
+#[derive(Clone, Copy)]
+pub(crate) enum ConsumerV1 {
+    Legacy,
+    ChandraV74,
+    KaitoV75,
+}
+impl ConsumerV1 {
+    pub(crate) fn validate_copy_prefix(self, state: &GameState) -> Result<(), String> {
+        match self {
+            Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
+            Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
+            Self::KaitoV75 => crate::effect::require_no_copied_token_abilities_kaito_v75(state),
+        }
+    }
+}
+fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String> {
+    validate_state_for_consumer(state, checked, ConsumerV1::Legacy)
+}
+pub(crate) fn validate_state_for_consumer(
+    state: &GameState,
+    checked: bool,
+    consumer: ConsumerV1,
+) -> Result<(), String> {
+    crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
+    crate::effect::curator_v1::refuse_legacy(state)?;
+    crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
+    crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
+    crate::progenitus_v1::refuse_legacy(state)?;
+    crate::effect::greatwurm_v1::refuse_legacy(state)?;
+    crate::effect::kykar_v1::refuse_legacy(state)?;
+    crate::effect::loot_v1::refuse_legacy(state)?;
+    consumer.validate_copy_prefix(state)?;
+    if state.objects.iter().any(|(_, o)| {
+        matches!(o.zone, Zone::Battlefield | Zone::Stack)
+            && o.v4.face_down_v1.is_none()
+            && crate::event::is_lathril_v1(o.card_def)
+    }) || state.engine.event_history.iter().any(|entry| {
+        matches!(
+            entry,
+            crate::event::CommittedEvent::LathrilCombatDamageV1 { .. }
+        )
+    }) || state.stack.iter().any(|row| {
+        row.v4
+            .ability_source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    }) || held(state).iter().any(|row| {
+        row.source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    }) || state.engine.pending_effect.as_ref().is_some_and(|p| {
+        p.ctx
+            .ability_source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    }) {
+        return Err(
+            "Lathril native combat/cost history requires a distinct complete consumer".into(),
+        );
+    }
+
+    let aberration = |definition: u16| {
+        crate::card_def::CARD_DEFS
+            .get(usize::from(definition))
+            .is_some_and(|d| d.name == "Consuming Aberration")
+    };
+    if state.objects.iter().any(|(_, o)| {
+        matches!(o.zone, Zone::Battlefield | Zone::Stack)
+            && o.v4.face_down_v1.is_none()
+            && aberration(o.card_def)
+    }) || state.stack.iter().any(|row| {
+        row.v4
+            .ability_source_contract
+            .is_some_and(|s| aberration(s.card_def))
+    }) || held(state)
+        .iter()
+        .any(|row| row.source_contract.is_some_and(|s| aberration(s.card_def)))
+        || state.engine.pending_effect.as_ref().is_some_and(|p| {
+            p.ctx
+                .ability_source_contract
+                .is_some_and(|s| aberration(s.card_def))
+        })
+    {
+        return Err("Aberration CDA and mill require a distinct complete consumer".into());
+    }
+
+    if state.objects.iter().any(|(_, object)| {
+        matches!(object.zone, Zone::Battlefield | Zone::Stack)
+            && object.v4.face_down_v1.is_none()
+            && crate::event::is_sphinxs_tutelage_v1(object.card_def)
+    }) || state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+        )
+    }) {
+        return Err("Tutelage native history requires a distinct complete consumer".into());
+    }
+
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Err("public facts cannot project a private synchronous operation tail".into());
     }
     for (id, o) in state.objects.iter() {
         if o.zone == Zone::Battlefield {
-            native_pt_prefix(state, id)?;
+            if checked {
+                let has_pt = crate::engine::effective_base_power(state, id).is_some()
+                    || crate::engine::effective_base_toughness(state, id).is_some();
+                if has_pt {
+                    crate::engine::checked_effective_pt(state, id)?;
+                }
+            } else {
+                native_pt_prefix(state, id)?;
+            }
         }
     }
     crate::effect::validate_pending_effect_choice(state)?;
@@ -255,7 +400,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     Ok(())
 }
-fn counters(state: &GameState, id: ObjectId) -> Result<CountersV1, String> {
+fn counters(state: &GameState, id: ObjectId, scope: CounterScopeV61) -> Result<CountersV1, String> {
     let live = state.objects.get(id);
     // Exhaustive destructuring requires a deliberate optional trigger decision for any
     // newly added storage family, rather than silently losing its counters.
@@ -271,7 +416,37 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV1, String> {
         bait,
         soul,
         incubation,
+        revival,
+        fellowship,
+        stash,
     } = live.counters;
+    if stash != 0 && scope != CounterScopeV61::TinybonesV72 {
+        return Err(error("public projection does not expose stash counters"));
+    }
+    if fellowship != 0
+        && !matches!(
+            scope,
+            CounterScopeV61::CallV62 | CounterScopeV61::TinybonesV72
+        )
+    {
+        return Err(error(
+            "optional trigger public projection does not expose fellowship counters",
+        ));
+    }
+    if scope == CounterScopeV61::TinybonesV72 {
+        crate::graveyard_return_public_v61::counter_values_tinybones_compat_v72(state, id)?;
+    }
+    if scope == CounterScopeV61::CallV62 {
+        crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)?;
+    }
+    if scope == CounterScopeV61::CompleteV61 {
+        crate::graveyard_return_public_v61::counter_values(state, id)?;
+    }
+    if revival != 0 && scope == CounterScopeV61::Legacy {
+        return Err(error(
+            "optional trigger public projection does not expose revival counters",
+        ));
+    }
     let lifelink = live.v4.lifelink_keyword_counters;
     if [
         plus1_plus1,
@@ -334,9 +509,27 @@ fn native_pt_prefix(state: &GameState, id: ObjectId) -> Result<(Option<i32>, Opt
     Ok((power, toughness))
 }
 fn form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
+    form_inner(state, id, false)
+}
+pub(crate) fn checked_form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
+    form_inner(state, id, true)
+}
+fn form_inner(state: &GameState, id: ObjectId, checked: bool) -> Result<FormV1, String> {
     let live = state.objects.get(id);
-    let (base_power, base_toughness) = native_pt_prefix(state, id)?;
+    let (base_power, base_toughness) = if checked {
+        (
+            crate::engine::effective_base_power(state, id),
+            crate::engine::effective_base_toughness(state, id),
+        )
+    } else {
+        native_pt_prefix(state, id)?
+    };
     let has_pt = base_power.is_some() || base_toughness.is_some();
+    let checked_pt = if checked && has_pt {
+        Some(crate::engine::checked_effective_pt(state, id)?)
+    } else {
+        None
+    };
     let printed = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
     let removed = crate::continuous_characteristics_v1::removal_timestamp(state, id).is_some();
     let keyword_bits = (0..u32::BITS).fold(0, |bits, bit| {
@@ -377,8 +570,12 @@ fn form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
         color_mask: crate::engine::object_color_mask(state, id),
         base_power,
         base_toughness,
-        power: has_pt.then(|| crate::engine::effective_power(state, id)),
-        toughness: has_pt.then(|| crate::engine::effective_toughness(state, id)),
+        power: has_pt.then(|| {
+            checked_pt.map_or_else(|| crate::engine::effective_power(state, id), |pt| pt.0)
+        }),
+        toughness: has_pt.then(|| {
+            checked_pt.map_or_else(|| crate::engine::effective_toughness(state, id), |pt| pt.1)
+        }),
         keyword_bits,
         ward_generic: if live.v4.face_down_v1.is_some_and(|face| face.disguised) && !removed {
             2

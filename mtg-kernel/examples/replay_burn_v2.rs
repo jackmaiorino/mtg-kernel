@@ -1386,6 +1386,13 @@ fn run(
             skip_stale_forced_discards(&state, &mut ctx, player, outcome);
         }
         match decision {
+            SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { .. })
+            | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { .. }) => {
+                return Err(
+                    "creature-type entry and full-range cast-X require a separate replay successor"
+                        .into(),
+                );
+            }
             SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
                 return Err("unsupported-banner-entry-color-protocol".to_string());
             }
@@ -1788,6 +1795,8 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCostTargets { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareAttackers { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareBlockers { player, .. })
@@ -4169,6 +4178,10 @@ mod tests {
         state.engine.pending_cast = Some(mtg_kernel::engine::PendingCast {
             spell,
             source_contract,
+            omniscience_v1: None,
+            sphinx_lore_v1: None,
+            greatwurm_v1: None,
+            wide_x_value_v59: None,
             controller: PlayerId::P0,
             target_spec: mtg_kernel::card_def::TargetSpec::AnyTarget,
             targets_chosen: vec![mtg_kernel::state::Target::Player(PlayerId::P1)],

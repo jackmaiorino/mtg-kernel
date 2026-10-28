@@ -437,7 +437,10 @@ fn cleanup_removes_protection_and_leaves_equipped_flying_bonus() {
     let mut state = ready();
     let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
     let armor = attach(&mut state, target);
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(&mut state, active, Step::End);
+    }
     for _ in 0..30 {
         let decision = next(&mut state);
         if state.active_player == PlayerId::P1 {

@@ -985,7 +985,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     .collect::<Vec<_>>();
                 if removed.is_empty() && complete.is_empty() {
                     if rows(state).any(|(_,row)|matches!(row,JournalV39::OriginalRemoval {origin: saved,..} if saved==origin)) {return Err("Fishing actual removal lost mandatory operation/closure".into());}
-                    if live.as_slice() != [item.as_ref()] {
+                    let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+                    if (!disposed && live.as_slice() != [item.as_ref()])
+                        || (disposed && !live.is_empty())
+                    {
                         return Err("Fishing published mandatory row erased/rewritten".into());
                     }
                     continue;
@@ -1228,6 +1231,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     }
                     balance = after;
                 }
+            }
+            if let Some((before, after)) = crate::engine::greatwurm_cast_v1::bait_cost_balance(
+                state,
+                at,
+                object,
+                live.zone_change_count,
+            )? {
+                if before != balance {
+                    return Err("Greatwurm bait cost rewrote original balance".into());
+                }
+                balance = after;
             }
         }
         if live.counters.bait != balance {

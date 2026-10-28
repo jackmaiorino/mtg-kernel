@@ -83,6 +83,11 @@ impl FastActorSessionV1 {
                 .map_err(|_| RlContractError("invalid Librarian restored menu".into()))?;
             restored.current = Some(current);
         }
+        crate::graveyard_return_public_v61::require_legacy_visible(
+            &restored.state,
+            restored.current.as_ref().map(|c| c.actor),
+        )
+        .map_err(RlContractError)?;
         *self = restored;
         Ok(())
     }

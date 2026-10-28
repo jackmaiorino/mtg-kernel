@@ -79,6 +79,7 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseSpellMode { player, .. }
                     | Decision::ChooseTriggerMode { player, .. }
                     | Decision::ChooseEffectOption { player, .. }
+                    | Decision::ChooseFullRangeCastXValueV59 { player, .. }
                     | Decision::ChooseEffectTargets { player, .. }
                     | Decision::ChooseEffectBoolean { player, .. }
                     | Decision::ChooseCombatDamageRange { player, .. }
@@ -89,6 +90,7 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseVariableCastTargets { player, .. }
                     | Decision::ChooseVariableCastKicker { player, .. }
                     | Decision::ChooseEntryColorV36 { player, .. }
+                    | Decision::ChooseEntryCreatureTypeV1 { player, .. }
                     | Decision::ChooseOptionalCost { player, .. }
                     | Decision::ChooseSpellCopyPayment { player, .. }
                     | Decision::ChooseSpellCopyRetarget { player, .. }

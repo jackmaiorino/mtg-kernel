@@ -1837,7 +1837,9 @@ fn decision_texts(
     p1_name: &str,
 ) -> Option<(&'static str, Vec<String>)> {
     match decision {
-        SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => None,
+        SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { .. }) => None,
         SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => None,
         SurfaceDecision::Decision(Decision::CastSpellOrPass {
@@ -2022,6 +2024,10 @@ fn apply_by_indices(
         .first()
         .ok_or("apply_by_indices:no-chosen-indices")?;
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { .. }) => Err(
+            "creature-type entry and full-range cast-X require a separate replay successor".into(),
+        ),
         SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
             Err("apply_by_indices:unsupported-banner-entry-color-protocol".to_string())
         }

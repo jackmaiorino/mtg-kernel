@@ -1,0 +1,411 @@
+"""Schema-6 protocol tests. Every server/game state here is an explicit mock."""
+from __future__ import annotations
+
+from copy import deepcopy
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "python/tools"))
+from limited_next_five_session_v6 import (
+    LimitedNextFiveClientV6, WIDE_RULES, _validate_wide_life, _validate_next_five_visible, _expected_next_five_meanings, _validate_play_context,
+)
+from limited_prepared_session_v5 import _expected_prepared_meanings, COUNTERS
+from limited_decks_v1 import parse_dck
+from limited_session_v1 import LimitedSessionError
+from test_limited_prepared_session_v5 import ENGINE as PREPARED_MOCK
+
+
+def mock_facts(actor="p0"):
+    meaning=_expected_next_five_meanings()
+    return {"viewer":actor,"meanings":meaning,"snack":{
+        "viewer":actor,"meaning":deepcopy(meaning[0]["ordered_rules"][0]["Snack"]["meaning"]),
+        "attacked_this_turn":[False,False],"gained_this_turn":[{"limbs":[0,0,0,0]},{"limbs":[0,0,0,0]}],"authorized_printings":[],
+        "current":[],"current_food":[],"casts":[],"held_raid":[],"published_raid":[],"activations":[]},
+        "wide_life":{"ordered_rules":list(WIDE_RULES),"life":[],"conqueror":[],"panda":[],"trigger_order":[]},
+        "authorized":[],"current":[],"casts":[],"triggers":[],"aura_copy":None,"infernal_deaths":[],
+        "angel_replacements":[],"angel_mana":[[],[]],"goblin_quotes":[],"goblin_ordering":None,
+        "goblin_ordering_options":[],"goblin_completed":[]}
+
+
+def ref(handle,name="Mock public source",owner="p0",controller="p0",zone="Battlefield"):
+    return dict(handle=handle,name=name,owner=owner,controller=controller,zone=zone)
+
+
+def root(source):
+    return {"original_source":source,"current_original_source":None,"captured_controller":source["controller"]}
+
+
+# Reuse only the existing explicitly mocked inherited layout. New V59 facts are
+# appended before encoding; none of these bytes are native-engine evidence.
+INJECT = r'''
+    if reply.get("state",{}).get("state_type")=="decision":
+        d=reply["state"]["decision"]
+        f=copy.deepcopy(NEXT_FACTS)
+        f["viewer"]=f["snack"]["viewer"]=d["actor"]
+        d["state"]["next_five"]=f
+        if mode=="bad-next-viewer": f["viewer"]="p1" if d["actor"]=="p0" else "p0"
+        if mode=="bad-next-root": f["meanings"][4]["ordered_rules"][0]["Cast"]["ordered"].reverse()
+        if mode=="raw-next-id": f["authorized"]=[["Goblin",dict(handle="c9",name="Goblin",owner="p0",controller="p0",zone="Hand",arena_id=9)]]
+        if mode=="bad-episode": reply["state"]["episode_id"]+=1
+        if mode=="foreign-hand": d["state"]["common"]["predecessor"]["own_hand"]=[dict(stable=dict(handle="c9",name="Secret",owner="p1",controller="p1",zone="Hand"))]
+    if mode=="late-timeout" and op=="step": time.sleep(2)
+    if mode=="extra-reply": reply["private_world"]={}
+'''
+
+
+class LimitedNextFiveClientV6Test(unittest.TestCase):
+    def test_mock_goblin_paid_x_preserves_complete_native_u16_width(self):
+        from limited_next_five_session_v6 import CAST, _shape
+        # Closed DTO grammar only, not gameplay or a synthetic executable.
+        row = {"family":"Goblin", "source":ref("stack-goblin", "Goblin Negotiation", zone="Stack"),
+               "original_controller":"p0", "is_copy":False, "payment_pending":False,
+               "x":0, "targets":[{"Object":ref("target-cavalry", "Axgard Cavalry", owner="p1", controller="p1")}]}
+        for x in (0, 255, 256, 65535):
+            row["x"] = x
+            _shape(row, CAST, "cast")
+        for invalid in (-1, 65536, 256.0, True):
+            row["x"] = invalid
+            with self.assertRaises(LimitedSessionError): _shape(row, CAST, "cast")
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory()
+        self.engine=Path(self.temp.name)/"mock_engine.py"
+        source=PREPARED_MOCK.replace("kernel_limited_prepared_jsonl","kernel_limited_next_five_jsonl").replace("schema_version=5","schema_version=6").replace("mtg-kernel-limited-prepared-decision/v5","mtg-kernel-limited-next-five-decision/v6")
+        source=source.replace("    print(json.dumps(reply), flush=True)",INJECT+"\n    print(json.dumps(reply), flush=True)")
+        prelude="EXPECTED = "+repr(_expected_prepared_meanings())+"\nCOUNTER_KEYS = "+repr(tuple(COUNTERS))+"\nNEXT_FACTS = "+repr(mock_facts())+"\n"
+        self.engine.write_text(prelude+source,encoding="utf-8")
+        self.decks=(parse_dck("40 Forest"),parse_dck("40 Island"))
+    def tearDown(self):
+        self.temp.cleanup()
+    def client(self,mode="normal",**kwargs):
+        return LimitedNextFiveClientV6([sys.executable,str(self.engine),mode],expected_card_db_hash=123,**kwargs)
+    def visible(self):
+        with self.client() as client:
+            return client.reset(self.decks)["state"]["decision"]["state"]
+    def validate(self,visible,actor="p0"):
+        _validate_next_five_visible(visible,actor,[None,None],[{},{}])
+
+    def test_mock_protocol_actor_payment_receipt_and_terminal(self):
+        for actor in ("p0","p1"):
+            with self.subTest(actor=actor), self.client() as client:
+                reply=client.reset(self.decks,episode_id=7,starting_player=actor)
+                self.assertEqual(reply["state"]["decision"]["state"]["next_five"]["viewer"],actor)
+                end=client.step(reply,1)
+                self.assertEqual(end["receipt"],{"prompt_seq":1,"action_index":1})
+                self.assertEqual(end["state"]["classification"],"natural")
+                with self.assertRaises(LimitedSessionError): client.step(reply,1)
+
+    def test_mock_restore_new_generation_and_whole_issued_prompt(self):
+        with self.client() as client:
+            old=client.reset(self.decks)
+            saved=client.snapshot()
+            restored=client.restore(saved["snapshot_id"])
+            self.assertGreater(restored["state"]["authority_generation"],old["state"]["authority_generation"])
+            sent=client.next_request
+            with self.assertRaises(LimitedSessionError): client.step(old,0)
+            self.assertEqual(sent,client.next_request)
+            for replacement in (False,0.0,1<<32):
+                changed=deepcopy(restored)
+                changed["state"]["decision"]["state"]["prepared"]["drake"]["battlefield"][0][0]["marked_damage"]=replacement
+                with self.assertRaises(LimitedSessionError): client.step(changed,0)
+                self.assertEqual(sent,client.next_request)
+            client.step(deepcopy(restored),0)
+
+    def test_mock_foreign_and_reset_snapshot_refusal_before_request(self):
+        with self.client() as first, self.client() as second:
+            first.reset(self.decks)
+            saved=first.snapshot()
+            second.reset(self.decks)
+            sent=second.next_request
+            with self.assertRaises(LimitedSessionError): second.restore(saved["snapshot_id"])
+            self.assertEqual(sent,second.next_request)
+            first.reset(self.decks)
+            sent=first.next_request
+            with self.assertRaises(LimitedSessionError): first.restore(saved["snapshot_id"])
+            self.assertEqual(sent,first.next_request)
+
+    def test_mock_server_error_preserves_current_prompt_and_snapshot(self):
+        with self.client() as client:
+            old=client.reset(self.decks)
+            saved=client.snapshot()
+            with self.assertRaisesRegex(LimitedSessionError,"unsupported_deck"):
+                client.reset((self.decks[0],parse_dck("40 Missing")))
+            self.assertFalse(client.closed)
+            client.step(old,0)
+            client.restore(saved["snapshot_id"])
+
+    def test_mock_corruption_closes_owned_process(self):
+        modes=("wrong-protocol","wrong-request","wrong-catalog","wrong-catalog-error","bad-index","bad-actor",
+               "wrong-schema","schema2","duplicate","missing-exact","forged-width","bad-next-viewer",
+               "bad-next-root","raw-next-id","bad-episode","foreign-hand","extra-reply")
+        for mode in modes:
+            with self.subTest(mode=mode),self.client(mode,timeout_s=5) as client:
+                with self.assertRaises(LimitedSessionError): client.reset(self.decks)
+                self.assertTrue(client.closed)
+                self.assertIsNotNone(client.process.poll())
+
+    def test_mock_step_receipt_generation_terminal_and_response_deadline(self):
+        for mode,operation in (("bad-receipt","step"),("stuck-generation","restore"),("forged-terminal","step"),("late-timeout","step")):
+            with self.subTest(mode=mode),self.client(mode,timeout_s=5) as client:
+                reply=client.reset(self.decks)
+                saved=client.snapshot()
+                if mode=="late-timeout": client.timeout_s=0.05  # after the real mock-startup boundary
+                with self.assertRaises(LimitedSessionError):
+                    client.restore(saved["snapshot_id"]) if operation=="restore" else client.step(reply,0)
+                self.assertTrue(client.closed)
+
+    def test_ordered_rules_complete_printing_and_no_catalog_or_private_operands(self):
+        visible=self.visible()
+        self.validate(visible)
+        for family in range(5):
+            for mutation in ("order","field","type","id"):
+                changed=deepcopy(visible); meaning=changed["next_five"]["meanings"][family]
+                if mutation=="order": meaning["ordered_rules"]=[]
+                elif mutation=="field": del meaning["printed"]["mana"]
+                elif mutation=="type": meaning["printed"]["mana_value"]=float(meaning["printed"]["mana_value"])
+                else: meaning["card_id"]=452+family
+                with self.subTest(family=family,mutation=mutation),self.assertRaises(LimitedSessionError): self.validate(changed)
+        for path in (("meaning",),("meaning","food")):
+            changed=deepcopy(visible); node=changed["next_five"]["snack"]
+            for part in path: node=node[part]
+            node["selector"]={"private":"forged"}
+            with self.assertRaises(LimitedSessionError): self.validate(changed)
+
+    def test_exact_all_object_battlefield_widths_and_current_form_consistency(self):
+        visible=self.visible()
+        self.validate(visible)
+        for path,value in ((["soul"],1<<31),(["incubation"],-1),(["time"],256),(["finality"],65536),(["loyalty"],1<<32),(["plus_one"],True)):
+            changed=deepcopy(visible)
+            changed["prepared"]["drake"]["battlefield"][0][0]["counters"][path[0]]=value
+            with self.subTest(path=path,value=value),self.assertRaises(LimitedSessionError): self.validate(changed)
+        changed=deepcopy(visible); row=changed["prepared"]["drake"]["battlefield"][0][0]
+        current={key:deepcopy(row[key]) for key in ("source","is_token","tapped","summoning_sick","marked_damage","counters","form")}
+        current["family"]="Giada"; changed["next_five"]["current"]=[current]
+        self.validate(changed)
+        current["marked_damage"]=1
+        with self.assertRaises(LimitedSessionError): self.validate(changed)
+
+    def test_staged_goblin_x_target_selection_and_final_quote_are_distinct(self):
+        visible=self.visible(); f=visible["next_five"]
+        spell=ref("goblin-stack","Goblin Negotiation",zone="Stack")
+        target=ref("victim","Known creature",owner="p1",controller="p1")
+        row=dict(family="Goblin",source=spell,original_controller="p0",is_copy=False,payment_pending=True,x=None,targets=[])
+        f["casts"]=[row]; self.validate(visible)
+        row["targets"]=[{"Object":target}]; self.validate(visible)
+        row["x"]=3; self.validate(visible)
+        row["payment_pending"]=False
+        f["goblin_quotes"]=[dict(source=spell,original_controller="p0",original_x=3,target={"Object":target},
+            target_legal_now=True,creature_lethal_damage_now=1,quote_can_change_before_resolution=True)]
+        self.validate(visible)
+        for key,value in (("x",False),("x",65536),("x",None),("targets",[]),("targets",[{"Object":target}]*2)):
+            changed=deepcopy(visible);changed["next_five"]["casts"][0][key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(LimitedSessionError): self.validate(changed)
+        changed=deepcopy(visible);changed["next_five"]["goblin_quotes"][0]["creature_lethal_damage_now"]=1<<63
+        with self.assertRaises(LimitedSessionError): self.validate(changed)
+        f["goblin_quotes"][0].update(target_legal_now=False,creature_lethal_damage_now=None)
+        self.validate(visible)
+
+    def test_mock_goblin_intersection_keeps_creature_quote_and_closed_unsigned_formula(self):
+        visible=self.visible(); facts=visible["next_five"]
+        spell=ref("goblin-stack","Goblin Negotiation",zone="Stack")
+        target=ref("dual","Explicit mock creature planeswalker",owner="p1",controller="p1")
+        facts["casts"]=[dict(family="Goblin",source=spell,original_controller="p0",is_copy=False,
+                             payment_pending=False,x=3,targets=[{"Object":target}])]
+        input=dict(schema="mtg-kernel/goblin-excess-intersection/v1",creature_lethal_damage=4,
+                   predamage_loyalty=1,effective_lethal_damage=1)
+        facts["goblin_quotes"]=[dict(source=spell,original_controller="p0",original_x=3,target={"Object":target},
+            target_legal_now=True,creature_lethal_damage_now=4,quote_can_change_before_resolution=True,intersection=input)]
+        self.validate(visible)
+        for key,value in (("predamage_loyalty",False),("predamage_loyalty",1<<32),
+                          ("effective_lethal_damage",4),("creature_lethal_damage",3),
+                          ("schema","unknown"),("arena_id",9)):
+            changed=deepcopy(visible);changed["next_five"]["goblin_quotes"][0]["intersection"][key]=value
+            with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+        input.update(predamage_loyalty=(1<<32)-1,effective_lethal_damage=4)
+        self.validate(visible)
+        for kind in ("goblin_ordering","goblin_completed"):
+            changed=deepcopy(visible)
+            row=dict(source=spell,target=target,controller="p0",original_x=3,lethal_damage=4,intersection=deepcopy(input))
+            if kind=="goblin_ordering":
+                row.update(chooser="p1",remaining_damage=3)
+                changed["next_five"]["viewer"]="p1"
+                changed["next_five"]["snack"]["viewer"]="p1"
+                changed["next_five"]["goblin_ordering_options"]=[dict(kind="shield",source=target,shield_remaining=1)]
+            else:
+                row.update(actual_damage=6,excess=2,tokens_created=2)
+            changed["next_five"][kind]=row if kind=="goblin_ordering" else [row]
+            # Check the strict row grammar independently of unrelated actor mocks.
+            from limited_next_five_session_v6 import _shape, ORDERING, COMPLETED
+            _shape(row,ORDERING if kind=="goblin_ordering" else COMPLETED,kind)
+            row["lethal_damage"]=1
+            with self.assertRaises(LimitedSessionError):
+                _shape(row,ORDERING if kind=="goblin_ordering" else COMPLETED,kind)
+
+    def test_expanded_aura_each_host_may_repeat_and_accepted_answer_remains_pending(self):
+        visible=self.visible(); f=visible["next_five"]
+        source=ref("replica","Extravagant Replication")
+        host=deepcopy(visible["prepared"]["drake"]["battlefield"][0][0]["source"])
+        aura=dict(source=root(source),target={"Object":ref("aura","Witness Protection")},template_name="Witness Protection",
+            template_face=0,chooser="p0",expanded_count=4,chosen_hosts=[host,deepcopy(host)],candidate_hosts=[host],
+            accepted_host_awaiting_advance=deepcopy(host),remaining_count=2,untargeted=True)
+        f["aura_copy"]=aura;self.validate(visible)
+        for key,value in (("remaining_count",1),("candidate_hosts",[host,host]),("untargeted",False),
+                          ("accepted_host_awaiting_advance",ref("foreign")),("template_face",256),
+                          ("chooser","p1"),("expanded_count",4.0)):
+            changed=deepcopy(visible);changed["next_five"]["aura_copy"][key]=value
+            with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+        # Hostlessness has no fabricated host or attachment and remains representable.
+        aura.update(expanded_count=0,chosen_hosts=[],candidate_hosts=[],accepted_host_awaiting_advance=None,remaining_count=0)
+        self.validate(visible)
+
+    def test_infernal_owner_return_and_retained_death_controller_are_independent(self):
+        visible=self.visible(); f=visible["next_five"]
+        original=ref("original-vessel","Infernal Vessel",owner="p1",controller="p0")
+        grave=ref("grave-vessel","Infernal Vessel",owner="p1",controller="p1",zone="Graveyard")
+        death=dict(occurrence=0,source=root(original),captured_not_demon=True,collection_completed=True,
+            exact_graveyard_card_now=grave,owner_on_return="p1",return_incarnation_available_now=True)
+        f["infernal_deaths"]=[death];self.validate(visible)
+        for key,value in (("owner_on_return","p0"),("captured_not_demon",False),("occurrence",1),
+                          ("exact_graveyard_card_now",None),("collection_completed",1)):
+            changed=deepcopy(visible);changed["next_five"]["infernal_deaths"][0][key]=value
+            with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+        death.update(exact_graveyard_card_now=None,return_incarnation_available_now=False)
+        self.validate(visible)
+        f["triggers"]=[dict(family="Infernal",occurrence=0,source=root(original),stage="Published",placement_ordered=True,targets=[])]
+        self.validate(visible)
+        f["triggers"][0]["source"]["captured_controller"]="p1"
+        with self.assertRaises(LimitedSessionError): self.validate(visible)
+
+    def test_giada_original_angel_roster_and_departed_restricted_mana(self):
+        visible=self.visible();f=visible["next_five"]
+        giada=deepcopy(visible["prepared"]["drake"]["battlefield"][1][0]["source"])
+        other=deepcopy(giada);other.update(handle="angel",name="Public Angel")
+        extra=deepcopy(visible["prepared"]["drake"]["battlefield"][1][0]);extra["source"]=other
+        visible["prepared"]["drake"]["battlefield"][1].append(extra)
+        old=deepcopy(visible["common"]["predecessor"]["public"]["battlefield"][1][0]);old["card"]["stable"]=other
+        visible["common"]["predecessor"]["public"]["battlefield"][1].append(old)
+        f["angel_replacements"]=[dict(source=giada,controller="p1",current_angels=[giada,other],original_angel_count_now=2,self_entry_excluded=True)]
+        f["angel_mana"]=[[],[dict(color="W",only_cast_angel_spell=True,current_original_source=None)]]
+        self.validate(visible)
+        for key,value in (("original_angel_count_now",1),("controller","p0"),("self_entry_excluded",False)):
+            changed=deepcopy(visible);changed["next_five"]["angel_replacements"][0][key]=value
+            with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+        for key,value in (("color","U"),("only_cast_angel_spell",False),("current_original_source",{**giada,"zone":"Hand"})):
+            changed=deepcopy(visible);changed["next_five"]["angel_mana"][1][0][key]=value
+            with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+
+    def test_snack_original_controller_gains_and_each_payment_stage(self):
+        visible=self.visible();snack=visible["next_five"]["snack"]
+        snack["gained_this_turn"]=[{"limbs":[7,0,0,0]},{"limbs":[11,0,0,0]}]
+        original=ref("snack-old","Midnight Snack",owner="p0",controller="p1")
+        row=dict(source=root(original),stage="ChoosingOpponentBeforeCosts",target=None,target_legal_now=None,
+                 original_controller_gained_this_turn_now={"limbs":[11,0,0,0]})
+        snack["activations"]=[row]; self.validate(visible)
+        row.update(stage="OpponentChosenAwaitingCosts",target="p0"); self.validate(visible)
+        row.update(stage="PaidAndSacrificedOnStack",target_legal_now=False); self.validate(visible)
+        for key,value in (("target","p1"),("original_controller_gained_this_turn_now",{"limbs":[7,0,0,0]}),("target_legal_now",None)):
+            changed=deepcopy(visible);changed["next_five"]["snack"]["activations"][0][key]=value
+            with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+        snack["held_raid"]=[dict(source=root(original),placement_ordered=False,on_stack=False)]
+        snack["published_raid"]=[dict(source=root(original),placement_ordered=True,on_stack=True)]
+        self.validate(visible)
+
+    def test_snack_exact_gain_limbs_keep_above_i32_and_u64_and_reject_malformed_totals(self):
+        # Explicit wire mocks. They prove closed numeric grammar, not engine history.
+        for total in (3_000_000_000, (1 << 64) + 1, (1 << 94) - 1):
+            visible = self.visible()
+            limbs = [(total >> (32 * i)) & 0xffffffff for i in range(4)]
+            visible["next_five"]["snack"]["gained_this_turn"][0] = {"limbs": limbs}
+            self.validate(visible)
+            for invalid in (total, {"limbs": limbs[:3]}, {"limbs": limbs + [0]},
+                            {"limbs": [-1, 0, 0, 0]}, {"limbs": [1 << 32, 0, 0, 0]},
+                            {"limbs": [True, 0, 0, 0]}, {"limbs": limbs, "extra": 0}):
+                changed = deepcopy(visible)
+                changed["next_five"]["snack"]["gained_this_turn"][0] = invalid
+                with self.subTest(invalid=invalid), self.assertRaises(LimitedSessionError):
+                    self.validate(changed)
+
+    def test_goblin_affected_chooser_actual_excess_exact_width_and_safe_option_order(self):
+        visible=self.visible();f=visible["next_five"]
+        source=ref("goblin","Goblin Negotiation",owner="p1",controller="p1",zone="Stack")
+        target=ref("affected","Known Creature",owner="p1",controller="p0")
+        f["goblin_ordering"]=dict(source=source,target=target,controller="p1",chooser="p0",original_x=3,lethal_damage=2,remaining_damage=6)
+        f["goblin_ordering_options"]=[dict(kind="shield",source=ref("shield"),shield_remaining=2),dict(kind="multiplier",source=ref("tyrant"),shield_remaining=None)]
+        f["goblin_completed"]=[dict(source=source,target=target,controller="p1",original_x=65535,lethal_damage=0,
+            actual_damage=(1<<31)-1,excess=(1<<31)-1,tokens_created=(1<<64)-1)]
+        self.validate(visible)
+        for group,key,value in (("goblin_ordering","chooser","p1"),("goblin_ordering","lethal_damage",1<<63),
+                                ("goblin_completed","tokens_created",1<<64),("goblin_completed","actual_damage",True),
+                                ("goblin_completed","excess",3),("goblin_ordering_options","source",{**source,"arena_id":3})):
+            changed=deepcopy(visible);node=changed["next_five"][group]
+            if type(node) is list: node=node[0]
+            node[key]=value
+            with self.subTest(group=group,key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+        f["goblin_ordering"]=None
+        with self.assertRaises(LimitedSessionError): self.validate(visible)
+
+    def test_new_fact_grammar_is_closed_at_each_nested_record(self):
+        visible=self.visible();self.validate(visible)
+        for key in ("raw_world","producer_sha256","card_db_hash","event_history","native_index"):
+            changed=deepcopy(visible);changed["next_five"][key]={}
+            with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+        changed=deepcopy(visible)
+        changed["next_five"]["authorized"]=[["Infernal",{**ref("s"),"generation":7}]]
+        with self.assertRaises(LimitedSessionError): self.validate(changed)
+        changed=deepcopy(visible);changed["next_five"]["authorized"]=[["Infernal",ref("c1","Changed identity")]]
+        with self.assertRaises(LimitedSessionError): self.validate(changed)
+
+    def test_protocol_contexts_and_invalid_inputs_cannot_be_implicitly_coerced(self):
+        for catalog in (True,-1,1<<64):
+            with self.assertRaises(LimitedSessionError): LimitedNextFiveClientV6(["not-started"],expected_card_db_hash=catalog)
+        with self.client() as client:
+            reply=client.reset(self.decks);sent=client.next_request
+            for index in (True,0.0,-1,2):
+                with self.assertRaises(LimitedSessionError): client.step(reply,index)
+            self.assertEqual(client.next_request,sent)
+            client.step(reply,0)
+
+    def test_london_and_combat_context_use_complete_typed_safe_values(self):
+        decision={"london_mulligans":{"phase":"keep_or_mulligan","counts":[0,7],"kept":[True,False]},
+                  "foundations_combat":{"phase":"damage","assignments":[{"source":ref("attacker"),
+                    "recipient":{"target_kind":"player","player":"p1"},"amount":(1<<31)-1}]}}
+        _validate_play_context(decision)
+        decision["foundations_combat"]["assignments"][0]["recipient"]={"target_kind":"object","object":ref("blocker")}
+        _validate_play_context(decision)
+        for group,key,value in (("london_mulligans","counts",[False,7]),("london_mulligans","kept",[True]),
+                                ("foundations_combat","assignments",[dict(source=ref("attacker"),recipient={"target_kind":"player","player":"p1"},amount=1<<31)])):
+            changed=deepcopy(decision);changed[group][key]=value
+            with self.subTest(group=group,key=key),self.assertRaises(LimitedSessionError): _validate_play_context(changed)
+        changed=deepcopy(decision);changed["foundations_combat"]["assignments"][0]["recipient"]["object"]["arena_id"]=9
+        with self.assertRaises(LimitedSessionError): _validate_play_context(changed)
+
+
+class WideLifeGrammarTest(unittest.TestCase):
+    def test_exact_wide_occurrence_amount_and_counter_outcome_are_closed(self):
+        # Explicit protocol representation primitive, never native gameplay evidence.
+        facts=mock_facts()["wide_life"]
+        facts["life"]=[dict(operation=0,kind="Loss",player="p1",amount=2_200_000_000),
+                       dict(operation=1,kind="Gain",player="p0",amount=2_200_000_000)]
+        facts["conqueror"]=[dict(occurrence=0,loss_operations=[0],original_source=ref("wide-conq"),
+            current_original_source=None,original_controller="p0",losing_opponent="p1",
+            saved_actual_amount=2_200_000_000,phase="Resolved",actual_gain=2_200_000_000)]
+        facts["panda"]=[dict(occurrence=0,gain_operation=1,original_source=ref("wide-panda"),
+            current_original_source=None,original_controller="p0",life_gained=2_200_000_000,
+            phase="Resolved",operation_attempted=True,actual_counters_added=2)]
+        _validate_wide_life(facts)
+        for case in range(7):
+            changed=deepcopy(facts)
+            if case==0: changed["life"][0]["amount"]=1<<32
+            elif case==1: changed["conqueror"][0]["actual_gain"]-=1
+            elif case==2: changed["panda"][0]["gain_operation"]=0
+            elif case==3: changed["panda"][0]["actual_counters_added"]=-1
+            elif case==4: changed["ordered_rules"].reverse()
+            elif case==5: changed["life"][0]["history_index"]=0
+            else: changed["conqueror"][0]["loss_operations"]=[0,0]
+            with self.assertRaises(LimitedSessionError): _validate_wide_life(changed)
+
+if __name__ == "__main__":
+    unittest.main()

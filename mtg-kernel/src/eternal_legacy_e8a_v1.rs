@@ -761,7 +761,7 @@ pub fn once_upon_a_time() -> EffectOp {
             choose_rest_order: false,
             selection: Some(LibraryPickSelectionV1 {
                 without_mana_cost: crate::engine::FreeCastV1(false),
-                filter: LibraryPickFilterV1::CreatureOrLandV1,
+                filter: LibraryPickFilterV1::CreatureOrLandCardV1,
                 optional: true,
                 destination: Zone::Hand,
                 reveal_selected: true,

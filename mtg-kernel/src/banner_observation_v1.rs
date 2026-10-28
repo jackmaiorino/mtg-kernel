@@ -104,11 +104,48 @@ pub fn producer_sha256_v1() -> String {
             include_str!("standard_keywords_v1.rs"),
             include_str!("standard_legends_v1.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
+            include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("resolution_cast_v1.rs"),
+            include_str!("effect/harvester_v1.rs"),
+            include_str!("leyline_axe_v1.rs"),
+            include_str!("london_mulligan_v1.rs"),
+            include_str!("life_loss_turn_v1.rs"),
+            include_str!("soul_shackled_zombie_v1.rs"),
+            include_str!("progenitus_v1.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("effect/nonland_copy_v1.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+            include_str!("effect/inspiration_resolution_v1.rs"),
+            include_str!("effect/standard_exile.rs"),
+            include_str!("snack_wide_life_v59.rs"),
+            include_str!("snack_wide_life_v59/custody.rs"),
+            include_str!("bloodthirsty_conqueror_v49.rs"),
+            include_str!("fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1/custody.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            include_str!("midnight_snack_v1.rs"),
+            include_str!("mana.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("standard_cast_convoke.rs"),
+            include_str!("engine/mandatory_cast_cost_v1.rs"),
+            include_str!("rules_meaning_next_five_v59.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/standard_copy.rs"),
+            include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
+            crate::engine::time_stop_v1::source_sha256_v1(),
+            crate::effect::genesis_wave_v1::source_sha256_v1(),
+            include_str!("engine/tinybones_v72.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());
         }
+        hash.update(b"legacy-graveyard-return-guard/v61\0");
+        hash.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         hash.finalize()
             .iter()
             .map(|byte| format!("{byte:02x}"))
