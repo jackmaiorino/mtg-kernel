@@ -17,8 +17,10 @@ Commands:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -65,11 +67,12 @@ class MtgKernel:
     `command` is the binary path, or an argv prefix (tests use a Python stub)."""
 
     def __init__(self, command: Path | str | Sequence[str], decks: Path, pool: Path, *, max_turns: int = 100,
-                 max_decisions: int = 20000):
+                 max_decisions: int = 20000, session: str = "prepared"):
         self.command = [str(command)] if isinstance(command, (str, Path)) else [str(c) for c in command]
         self.decks = Path(decks).absolute()
         self.pool = Path(pool).absolute()
         self.max_turns, self.max_decisions = int(max_turns), int(max_decisions)
+        self.session = session  # prepared | rules-only | rules-only-all
 
     def _run(self, args: Sequence[str], timeout_s: float | None = None) -> subprocess.CompletedProcess:
         done = subprocess.run(self.command + [str(a) for a in args], capture_output=True, text=True,
@@ -86,7 +89,8 @@ class MtgKernel:
         supported: [deck names]}, the same shape as Gorge.coverage()."""
         with tempfile.TemporaryDirectory(prefix="mkcov-") as tmp:
             out = Path(tmp) / "supported.txt"
-            text = self._run(["coverage", "-decks", self.decks, "-pool", self.pool, "-out", out]).stdout
+            text = self._run(["coverage", "-decks", self.decks, "-pool", self.pool, "-out", out,
+                              "-session", self.session]).stdout
             supported = out.read_text().split() if out.exists() else []
         return parse_coverage(text, supported)
 
@@ -96,7 +100,8 @@ class MtgKernel:
         argv = ["play", "-decks", str(self.decks), "-pool", str(self.pool), "-split", split,
                 "-seed", str(int(seed)), "-first-pair", str(int(first_pair)), "-pairs", str(int(pairs)),
                 "-workers", str(int(workers)), "-a", a, "-b", b, "-out", str(out),
-                "-max-turns", str(self.max_turns), "-max-decisions", str(self.max_decisions)]
+                "-max-turns", str(self.max_turns), "-max-decisions", str(self.max_decisions),
+                "-session", self.session]
         if belief is not None:
             argv += ["-belief-decks", str(belief.decks), "-belief-pool", str(belief.pool),
                      "-belief-split", belief.split]
@@ -224,6 +229,101 @@ def smoke(binary: Path) -> dict:
         return report
 
 
+DRAFTZERO_SAMPLE = REPO_ROOT / "data/limited/draftzero_sample_v1"
+# Full cards whose engine cost makes games outlast any game timeout. A hung game holding one says nothing
+# about the other cards in it.
+KNOWN_SLOW_FULL = {"Drake Hatcher": "mtg-kernel#375"}
+ADMISSION_MIN_GAMES = 20
+ADMISSION_ALPHA = 0.05
+
+
+def binomial_tail(n: int, halted: int, rate: float) -> float:
+    """P(at least `halted` halts in `n` games) when each game halts with probability `rate`."""
+    return sum(math.comb(n, k) * rate ** k * (1 - rate) ** (n - k) for k in range(halted, n + 1))
+
+
+def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4, game_timeout_s: float = 60.0) -> dict:
+    """DraftZero's 80 sample decks: playable decks per session, then `pairs` random rules-only games on each of
+    the train and eval splits with every executable card admitted. Each game runs in its own process; one that
+    passes `game_timeout_s` is killed and counted as a hang. A halted or hung game counts against every
+    non-Full card in its two decks, except that a hung game holding a KNOWN_SLOW_FULL card is not counted for
+    any card. A card is an admission candidate when it has ADMISSION_MIN_GAMES counted games and its halt rate is
+    not significantly above the halt rate of games with only Full cards (one-sided binomial, ADMISSION_ALPHA)."""
+    decks, pool = DRAFTZERO_SAMPLE / "decks", DRAFTZERO_SAMPLE / "pool.tsv"
+    report: dict = {"coverage": {}}
+    non_full: set[str] = set()
+    for session in ("prepared", "rules-only", "rules-only-all"):
+        cov = MtgKernel(binary, decks, pool, session=session).coverage()
+        report["coverage"][session] = {"supported_decks": cov["supported_decks"], "decks": cov["decks"],
+                                       "unsupported_cards": cov["unsupported_cards"]}
+        if session == "prepared":
+            non_full = set(cov["unsupported"])
+    kernel = MtgKernel(binary, decks, pool, session="rules-only-all", max_decisions=6000)
+    # A zero decision cap stops at the first decision: it only reads a pair's deal.
+    dealer = MtgKernel(binary, decks, pool, session="rules-only-all", max_decisions=0)
+    started = time.monotonic()
+
+    def one(job: tuple[str, int, Path]) -> dict:
+        split, pair, tmp = job
+        out = tmp / f"{split}-{pair}"
+        try:
+            row = kernel.play("random", "random", pairs=1, seed=seed, out_dir=out, split=split, first_pair=pair,
+                              workers=1, single=True, timeout_s=game_timeout_s).games[0]
+        except subprocess.TimeoutExpired:
+            deal = dealer.play("random", "random", pairs=1, seed=seed, out_dir=out / "deal", split=split,
+                               first_pair=pair, workers=1, single=True).games[0]
+            row = {"pair": pair, "decks": deal["decks"], "result": "hang", "decisions": 0}
+        return {**row, "split": split}
+
+    with tempfile.TemporaryDirectory(prefix="mkdz-") as tmp:
+        jobs = [(split, pair, Path(tmp)) for split in ("train", "eval") for pair in range(pairs)]
+        with ThreadPoolExecutor(max(1, workers)) as pool_ex:
+            games = list(pool_ex.map(one, jobs))
+    wall = time.monotonic() - started
+    contents = {f.stem: {c["name"] for c in json.loads(f.read_text())["cards"]} for f in decks.glob("*.json")}
+    seen: dict[str, list[int]] = {}
+    inconclusive = 0
+    # Games whose decks hold only Full cards: their halts are engine faults no admission can cause.
+    full_only = [0, 0]
+    for g in games:
+        cards = set().union(*(contents[d] for d in g["decks"]))
+        if g["result"] == "hang" and cards & KNOWN_SLOW_FULL.keys():
+            inconclusive += 1
+            continue
+        halted = g["result"] in ("error", "hang")
+        if not cards & non_full:
+            full_only[0] += 1
+            full_only[1] += halted
+        for name in cards & non_full:
+            tally = seen.setdefault(name, [0, 0])
+            tally[0] += 1
+            tally[1] += halted
+    decisions = sum(g.get("decisions", 0) for g in games)
+    report["play"] = {"games": len(games),
+                      "results": {r: sum(g["result"] == r for g in games) for r in sorted(RESULTS | {"hang"})},
+                      "decisions": decisions, "wall_s": wall, "game_timeout_s": game_timeout_s,
+                      "decisions_per_s": decisions / wall if wall else 0,
+                      "games_per_hour": len(games) / wall * 3600 if wall else 0,
+                      "errors": sorted({g.get("error", "")[:200] for g in games if g["result"] == "error"}),
+                      "hangs": [{"split": g["split"], "pair": g["pair"], "decks": g["decks"]}
+                                for g in games if g["result"] == "hang"]}
+    report["full_only_baseline"] = {"games": full_only[0], "halted_games": full_only[1]}
+    report["known_slow_full"] = {"cards": KNOWN_SLOW_FULL, "hung_games_not_counted": inconclusive}
+    report["unplayed_non_full"] = sorted(non_full - set(seen))
+    base_rate = report["full_only_baseline"]["halted_games"] / max(1, report["full_only_baseline"]["games"])
+    report["partial_cards"] = {name: {"games": n, "halted_games": h, "p_above_baseline": binomial_tail(n, h, base_rate)}
+                               for name, (n, h) in sorted(seen.items())}
+    report["games"] = [[g["split"], g["pair"], *g["decks"], g["result"], g.get("error", "")[:120]] for g in games]
+    # Full-only games halt too (engine faults no admission causes), so a card is held only when its halt rate is
+    # clearly above that baseline, or when it has too few games to tell.
+    report["admission_rule"] = {"min_games": ADMISSION_MIN_GAMES, "alpha": ADMISSION_ALPHA,
+                                "baseline_halt_rate": base_rate}
+    report["admission_candidates"] = sorted(
+        name for name, v in report["partial_cards"].items()
+        if v["games"] >= ADMISSION_MIN_GAMES and v["p_above_baseline"] >= ADMISSION_ALPHA)
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -231,10 +331,18 @@ def main(argv: list[str] | None = None) -> int:
     fixture.add_argument("out", type=Path)
     check = sub.add_parser("smoke")
     check.add_argument("--binary", type=Path, required=True)
+    dz = sub.add_parser("draftzero")
+    dz.add_argument("--binary", type=Path, required=True)
+    dz.add_argument("--pairs", type=int, default=200)
+    dz.add_argument("--seed", type=int, default=1)
+    dz.add_argument("--workers", type=int, default=4)
+    dz.add_argument("--game-timeout", type=float, default=60.0)
     args = parser.parse_args(argv)
     if args.command == "fixture-pool":
         decks, pool = write_fixture_pool(args.out)
         print(json.dumps({"decks": str(decks), "pool": str(pool)}))
+    elif args.command == "draftzero":
+        print(json.dumps(draftzero(args.binary, args.pairs, args.seed, args.workers, args.game_timeout), indent=1))
     else:
         print(json.dumps(smoke(args.binary), indent=1))
     return 0

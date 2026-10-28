@@ -403,7 +403,7 @@ fn candidates_current_scope_chandra_v74(
         Some(crate::rl::CommonProjectionScopeV42::ChandraV74),
     )
 }
-fn candidates_current_scope_kaito_v75(
+pub(crate) fn candidates_current_scope_kaito_v75(
     origin: &PolicyDecisionV5,
     state: &GameState,
     surface: &PolicySurfaceV5,

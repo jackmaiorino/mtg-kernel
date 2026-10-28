@@ -278,6 +278,7 @@ fn random_games_finish_and_replay_exactly() {
         max_turns: 100,
         max_decisions: 20_000,
         full_validation: false,
+        session: SessionKindV1::PreparedV57,
     };
     for seed in [1, 2, 3] {
         let run = || {
@@ -319,6 +320,7 @@ fn fair_search_plays_a_bounded_game_without_errors() {
             max_turns: 100,
             max_decisions: 400,
             full_validation: false,
+            session: SessionKindV1::PreparedV57,
         },
     );
     assert!(
@@ -363,4 +365,124 @@ fn trusted_step_plays_exactly_like_the_full_step() {
             "seed {seed}: {steps} steps is too short to compare"
         );
     }
+}
+
+fn rules_only(admission: RulesAdmissionV1) -> GameLimitsV1 {
+    GameLimitsV1 {
+        max_turns: 100,
+        max_decisions: 20_000,
+        full_validation: false,
+        session: SessionKindV1::RulesOnly(admission),
+    }
+}
+
+/// The rules-only session (no consumer contract) plays the Full fixture decks
+/// to natural ends and replays exactly.
+#[test]
+fn rules_only_fixture_games_finish_and_replay() {
+    let (ug, wg) = (dck(UG), dck(WG));
+    for seed in [1, 2] {
+        let run = || {
+            play_game_v1(
+                [&ug, &wg],
+                [&PolicySpecV1::Random, &PolicySpecV1::Random],
+                [None, None],
+                seed,
+                PlayerId::P0,
+                rules_only(RulesAdmissionV1::Admitted),
+            )
+        };
+        let (first, second) = (run(), run());
+        assert!(
+            matches!(
+                first.outcome,
+                GameOutcomeV1::Winner(_) | GameOutcomeV1::Draw
+            ),
+            "seed {seed}: {:?}",
+            first.outcome
+        );
+        assert_eq!(first.outcome, second.outcome);
+        assert_eq!(
+            (first.turns, first.decisions),
+            (second.turns, second.decisions)
+        );
+    }
+}
+
+/// Admission is explicit: a Partial printing plays only when admitted.
+#[test]
+fn rules_only_admission_refuses_unlisted_partial_printings() {
+    let id = card_id_by_name("Curator of Destinies").unwrap();
+    assert!(!CARD_DEFS[id as usize].has_full_support());
+    let admitted = crate::limited_rules_only_v1::admitted_v1(id);
+    assert_eq!(
+        SessionKindV1::RulesOnly(RulesAdmissionV1::Admitted)
+            .refusal(id)
+            .is_none(),
+        admitted
+    );
+    assert_eq!(SessionKindV1::PreparedV57.refusal(id), Some("not full"));
+    assert_eq!(
+        SessionKindV1::RulesOnly(RulesAdmissionV1::AllExecutable).refusal(id),
+        None
+    );
+}
+
+/// Diagnostic for the admission list: each top DraftZero blocker's reference
+/// deck (four copies plus lands) against the WG fixture, every executable card
+/// admitted, random play.
+#[test]
+fn rules_only_blocker_reference_decks_play_natural_games() {
+    let wg = dck(WG);
+    let decks = [
+        include_str!("../../../data/limited/fdn_v1/FDN_reference_curator_of_destinies_partial.dck"),
+        include_str!("../../../data/limited/fdn_v1/FDN_reference_imprisoned_moon_partial.dck"),
+        include_str!("../../../data/limited/fdn_v1/FDN_reference_blasphemous_edict_partial.dck"),
+        include_str!("../../../data/limited/fdn_v1/FDN_reference_lathril_partial.dck"),
+        include_str!("../../../data/limited/fdn_v1/FDN_reference_leyline_axe_partial.dck"),
+    ];
+    let mut failures = Vec::new();
+    for (i, text) in decks.iter().enumerate() {
+        let deck = rules_only_dck(text);
+        for seed in [11u64, 12, 13] {
+            let result = play_game_v1(
+                [&deck, &wg],
+                [&PolicySpecV1::Random, &PolicySpecV1::Random],
+                [None, None],
+                seed,
+                PlayerId::P0,
+                rules_only(RulesAdmissionV1::AllExecutable),
+            );
+            if let GameOutcomeV1::Error(error) = &result.outcome {
+                failures.push(format!("deck {i} seed {seed}: {error}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// A .dck fixture resolved for rules-only play with every executable card.
+fn rules_only_dck(text: &str) -> Vec<u16> {
+    let rows: Vec<CustomCardCountV1> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("NAME:") && !l.starts_with("SB:"))
+        .map(|line| {
+            let (count, rest) = line.split_once(' ').expect("count and name");
+            let name = match rest.strip_prefix('[') {
+                Some(r) => r.split_once("] ").expect("set annotation").1,
+                None => rest,
+            };
+            CustomCardCountV1 {
+                name: name.to_string(),
+                count: count.parse().expect("count"),
+            }
+        })
+        .collect();
+    DeckFileV1 {
+        name: None,
+        cards: rows,
+    }
+    .resolve_for(SessionKindV1::RulesOnly(RulesAdmissionV1::AllExecutable))
+    .expect("reference decks are executable")
 }

@@ -39,6 +39,69 @@ elif args[0] == "play":
 '''
 
 
+# DraftZero report stub: pair 1 never finishes unless the decision cap is zero (a deal lookup).
+DZ_STUB = r'''
+import json, sys, time
+args = sys.argv[1:]
+flags = dict(zip(args[1::2], args[2::2]))
+if args[0] == "coverage":
+    print("unsupported: Arahbo, the First Fang in 1 decks missing [not full]")
+    print("unsupported: Brineborn Cutthroat in 1 decks missing [not full]")
+    print("80 distinct cards in 80 decks; 2 unsupported; 0 decks failed to resolve; 78 of 80 decks play only supported cards")
+    open(flags["-out"], "w").write("")
+elif args[0] == "play":
+    pair = int(flags["-first-pair"])
+    deck = "FDN_top_02819_WU" if pair == 1 else "FDN_top_21341_WU"
+    if pair == 1 and flags["-max-decisions"] != "0":
+        time.sleep(60)
+    row = {"game": 0, "pair": pair, "leg": 0, "seed": int(flags["-seed"]), "decks": [deck, deck],
+           "side": ["A", "B"], "pols": ["random", "random"], "winner": 0, "result": "A", "turns": 9, "ms": 5,
+           "decisions": 40}
+    open(flags["-out"], "w").write(json.dumps(row) + "\n")
+    json.dump({"games": 1, "wall_s": 0.1}, open(flags["-out"] + ".summary.json", "w"))
+'''
+
+
+class DraftZeroReportTest(unittest.TestCase):
+    def report(self, known_slow_full: dict) -> dict:
+        old = match.KNOWN_SLOW_FULL, match.ADMISSION_MIN_GAMES
+        match.KNOWN_SLOW_FULL, match.ADMISSION_MIN_GAMES = known_slow_full, 2
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                stub = Path(tmp) / "dz_stub.py"
+                stub.write_text(DZ_STUB)
+                return match.draftzero([sys.executable, stub], pairs=2, workers=4, game_timeout_s=3)
+        finally:
+            match.KNOWN_SLOW_FULL, match.ADMISSION_MIN_GAMES = old
+
+    def test_a_hung_game_counts_against_its_cards(self):
+        report = self.report({})
+        self.assertEqual(report["play"]["results"]["hang"], 2)
+        self.assertEqual(report["play"]["results"]["A"], 2)
+        self.assertEqual([(h["split"], h["pair"], h["decks"]) for h in report["play"]["hangs"]],
+                         [("train", 1, ["FDN_top_02819_WU"] * 2), ("eval", 1, ["FDN_top_02819_WU"] * 2)])
+        # Every stub game holds a non-Full card, so the Full-only baseline is empty and its rate is zero.
+        self.assertEqual(report["full_only_baseline"], {"games": 0, "halted_games": 0})
+        self.assertEqual(report["partial_cards"],
+                         {"Arahbo, the First Fang": {"games": 2, "halted_games": 2, "p_above_baseline": 0.0},
+                          "Brineborn Cutthroat": {"games": 2, "halted_games": 0, "p_above_baseline": 1.0}})
+        self.assertEqual(report["admission_candidates"], ["Brineborn Cutthroat"])
+        self.assertEqual(report["known_slow_full"]["hung_games_not_counted"], 0)
+
+    def test_binomial_tail(self):
+        self.assertAlmostEqual(match.binomial_tail(4, 0, 0.3), 1.0)
+        self.assertAlmostEqual(match.binomial_tail(2, 2, 0.5), 0.25)
+        self.assertAlmostEqual(match.binomial_tail(3, 2, 0.5), 0.5)
+
+    def test_a_hung_game_with_a_known_slow_full_card_counts_against_nothing(self):
+        # FDN_top_02819_WU holds Drake Hatcher, the default known slow Full card.
+        report = self.report(dict(match.KNOWN_SLOW_FULL))
+        self.assertEqual(report["play"]["results"]["hang"], 2)
+        self.assertEqual(report["known_slow_full"]["hung_games_not_counted"], 2)
+        self.assertNotIn("Arahbo, the First Fang", report["partial_cards"])
+        self.assertEqual(report["admission_candidates"], ["Brineborn Cutthroat"])
+
+
 class LimitedMatchV1Test(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
