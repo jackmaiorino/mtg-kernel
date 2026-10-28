@@ -24,6 +24,7 @@
 mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;
+mod build_eternal_e6b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -4607,6 +4608,9 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         "Giant's Boulder" | "Prophetic Prism" | "Energy Refractor" => vec![],
         // Dimir Aqueduct's one action identifies the whole {U}{B} bundle.
         "Dimir Aqueduct" => vec!["U"],
+        name if build_eternal_e6b_v1::primary_mana_ability_colors(name).is_some() => {
+            build_eternal_e6b_v1::primary_mana_ability_colors(name).unwrap_or_default()
+        }
         _ if standard_lands::overrides_primary_mana(&card.name) => {
             standard_lands::primary_mana_ability_colors(&card.name)
         }
@@ -4616,6 +4620,7 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
 
 fn mana_ability_includes_chosen_color(name: &str) -> bool {
     matches!(name, "Citadel Gate" | "Sea Gate")
+        || build_eternal_e6b_v1::mana_ability_includes_chosen_color(name)
         || (cfg!(all(
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
@@ -4679,7 +4684,7 @@ fn as_enters_choose_color_other_than(name: &str) -> &'static str {
     match name {
         "Citadel Gate" => "Some(ManaColor::W)",
         "Sea Gate" => "Some(ManaColor::U)",
-        _ => "None",
+        _ => build_eternal_e6b_v1::as_enters_choose_color_other_than(name),
     }
 }
 
@@ -4828,7 +4833,7 @@ fn enters_battlefield_tapped(card: &CardJson) -> bool {
 fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
     match name {
         "Gingerbread Cabin" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Forest, minimum_count: 3 })",
-        _ => "None",
+        _ => build_eternal_e6b_v1::enters_battlefield_tapped_unless_for(name),
     }
 }
 
@@ -7029,7 +7034,8 @@ fn plot_cost_for(name: &str) -> String {
 fn madness_cost_for(name: &str) -> String {
     match name {
         "Fiery Temper" => cost_src("{R}"),
-        _ => "None".to_string(),
+        _ => build_eternal_e6b_v1::madness_cost_for(name)
+            .map_or_else(|| "None".to_string(), cost_src),
     }
 }
 
@@ -7232,7 +7238,7 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         "Of One Mind" => {
             "Some(GenericCostReductionDef { generic_per_count: 2, count: DynamicCountDef::ControllerHasCreatureWithAndWithoutSubtype(Subtype::Human) })"
         }
-        _ => "None",
+        _ => build_eternal_e6b_v1::generic_cost_reduction_for(name),
     }
 }
 
@@ -11429,6 +11435,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Lair" => "Subtype::Lair",
         "Locus" => "Subtype::Locus",
         "Planet" => "Subtype::Planet",
+        "Imp" => "Subtype::Imp",
+        "Cartouche" => "Subtype::Cartouche",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

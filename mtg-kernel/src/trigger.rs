@@ -1283,6 +1283,10 @@ pub fn unselected_trigger_modes(
     if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
         return Some(apothecary_stomper_modes());
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(modes) = crate::eternal_pauper_e6b_v1::trigger_modes(card.name, effect) {
+        return Some(modes);
+    }
     if card.name == "Wardens of the Cycle" && *effect == wardens_of_the_cycle_effect() {
         return Some(wardens_of_the_cycle_modes());
     }
@@ -4918,6 +4922,10 @@ fn sba_fixed_point_with_protected_triggers(
         }
 
         changed |= crate::controlled_creature_grants_v1::detach_illegal_nonauras(state);
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            changed |= crate::eternal_pauper_e6b_v1::unattach_protected_equipment(state);
+        }
         // 704.5m: an Aura attached to an illegal object or player, or not
         // attached at all, is put into its owner's graveyard. The current
         // attachment grammar supports creature Auras only and requires both
@@ -4937,6 +4945,18 @@ fn sba_fixed_point_with_protected_triggers(
                             link.object,
                             crate::engine::object_color_mask(state, id),
                         )
+                }) && (definition.attachment.is_some()
+                    || crate::standard_cards_v1::is_aura(definition))
+                {
+                    return Some(id);
+                }
+                #[cfg(feature = "eternal-fixtures")]
+                if aura.v4.attached_to.is_some_and(|link| {
+                    crate::eternal_pauper_e6b_v1::protection_removes_attachment(
+                        state,
+                        id,
+                        link.object,
+                    )
                 }) && (definition.attachment.is_some()
                     || crate::standard_cards_v1::is_aura(definition))
                 {

@@ -286,6 +286,7 @@ fn authenticated_restricted_unit_v60(state: &GameState, unit: &RestrictedManaUni
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spell_floating_pool(
     state: &GameState,
     player: PlayerId,
@@ -315,6 +316,7 @@ fn spell_floating_pool(
     pool
 }
 
+#[allow(clippy::too_many_arguments)]
 fn separate_restricted_spending(
     plan: &mut PaymentPlan,
     state: &GameState,
@@ -1084,6 +1086,7 @@ fn restriction_permits(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn gather_sources_for_spell_restrictions_v1(
     player: PlayerId,
     state: &GameState,

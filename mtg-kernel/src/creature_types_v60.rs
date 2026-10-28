@@ -593,6 +593,8 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Lair => None,
         Subtype::Locus => None,
         Subtype::Planet => None,
+        Subtype::Imp => Some(CreatureTypeV60::Imp),
+        Subtype::Cartouche => None,
     }
 }
 

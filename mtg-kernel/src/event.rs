@@ -5240,6 +5240,8 @@ fn materialize_event_v1(
             // Yawgmoth's Will and Suplex exile instead.
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;

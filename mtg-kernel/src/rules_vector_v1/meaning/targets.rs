@@ -730,6 +730,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::PlayerThenGraveyardCardsV1 | S::CreatureThenGraveyardCardsV1 => ObjF::AnyCard,
         S::UpToOneColoredPermanentV1 => ObjF::Permanent,
         S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => ObjF::Permanent,
+        S::ForestV1 => typed(CardType::Land),
+        S::UpToOneOpponentCreatureV1 => creature(),
     }
 }
 
@@ -756,7 +758,8 @@ pub(super) fn standard_target_origin(
         | S::OpponentNonlandPermanent
         | S::OpponentArtifactOrCreature
         | S::TappedOpponentCreature
-        | S::OpponentSpellOrNonlandPermanentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        | S::OpponentSpellOrNonlandPermanentV1
+        | S::UpToOneOpponentCreatureV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
         S::InstantOrSorcerySpellV1
         | S::SpellWithSingleTargetV1
         | S::TriggeredAbilityOrColorlessSpellV1 => (Some(ZoneF::Stack), None),
@@ -781,6 +784,7 @@ pub(super) fn standard_target_origin(
         | S::CreatureThenGraveyardCardsV1
         | S::UpToOneColoredPermanentV1
         | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
+        | S::ForestV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -996,6 +1000,15 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.target(TargetAtom::MultipleTargets);
             // The power bound has no facet.
             out.atoms.push(Atom::Opaque);
+        }
+        S::ForestV1 => {
+            object(out, typed(CardType::Land), relation, zone);
+            // Vocabulary gap: the Forest subtype has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOneOpponentCreatureV1 => {
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::UpTo);
         }
     }
 }
