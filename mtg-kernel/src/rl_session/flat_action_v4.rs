@@ -97,6 +97,7 @@ pub(super) fn census_hidden_source_conflicts_v1(
 mod search_state;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
+pub(crate) use search_state::V4BoundaryEncodingFailureV1;
 pub(crate) use search_state::V4SearchActionTokenV1;
 pub(crate) use search_state::V4SearchSampleMode;
 pub(crate) use search_state::V4SearchStateErrorV1;
@@ -988,6 +989,108 @@ impl FastActorSessionV1 {
             current.substep_count,
         )
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
+    }
+
+    /// Recording-only diagnosis (mtg-kernel#380): the first check of the V4
+    /// decision input (`human_current_decision_input_v4`: action slice, then
+    /// observation) that fails for the live decision, as `<check> <detail>`.
+    /// Repeats those checks in their order without changing any state; the
+    /// encoder's own result is never replaced by this text.
+    pub(crate) fn diagnose_current_decision_input_v4(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> String {
+        let Some(current) = self.current.as_ref() else {
+            return "no_current_decision".into();
+        };
+        if let Err(e) = flat_validate_expected_decision_v1(self, current, expected) {
+            return format!("expected_decision {e:?}");
+        }
+        let extension =
+            match crate::rl::policy_observation_extensions_v6(&self.state, current.actor) {
+                Ok(x) => x,
+                Err(e) => return format!("extensions {e:?}"),
+            };
+        let raw = match crate::rl::core_policy_action_candidates_v5(
+            &current.origin_decision,
+            &self.state,
+        ) {
+            Ok(x) => x,
+            Err(e) => return format!("origin_candidates {e:?}"),
+        };
+        let mut original = current.clone();
+        original.flat_action_cache = None;
+        original.flat_action_cache_error = None;
+        original.flat_action_cache_v2 = None;
+        original.flat_action_cache_error_v2 = None;
+        original.candidates = raw;
+        if let Err(e) = flat_validate_current_binding_header_v1(self, &original) {
+            return format!("binding_header {e:?}");
+        }
+        if let Err(e) = flat_validate_origin_decision_v1(&original, &self.state) {
+            return format!("origin_decision {e:?}");
+        }
+        if let Err(e) = super::flat_action_v3::normalize_candidates(
+            &mut original.candidates,
+            &extension,
+            self,
+            &original.origin_decision,
+        ) {
+            return format!("normalize {e:?}");
+        }
+        if original.candidates != current.candidates {
+            let (fresh, live) = (&original.candidates, &current.candidates);
+            let i = fresh
+                .iter()
+                .zip(live)
+                .position(|(a, b)| a != b)
+                .unwrap_or(fresh.len().min(live.len()));
+            return format!(
+                "normalized_differs fresh={} live={} at {i}: fresh {:?} live {:?}",
+                fresh.len(),
+                live.len(),
+                fresh.get(i).map(|c| &c.semantic),
+                live.get(i).map(|c| &c.semantic)
+            );
+        }
+        let actor: PlayerSeatV1 = current.actor.into();
+        for (i, candidate) in current.candidates.iter().enumerate() {
+            if let Err(e) = flat_validate_semantic_policy_pair_v1(candidate) {
+                return format!("semantic_pair {e:?} at {i}: {:?}", candidate.semantic);
+            }
+            let semantic =
+                frozen_pending_trigger_semantic_v4(&self.state, candidate.semantic.clone());
+            let mut failed = None;
+            let core = flat_action_core_and_refs_v1(
+                &semantic,
+                actor,
+                0,
+                |role, order_index, _, reference| {
+                    flat_visible_action_object_extension_aware_v4(
+                        &self.state,
+                        current.actor,
+                        u32::from(order_index),
+                        role,
+                        reference,
+                        &extension,
+                    )
+                    .map(|_| ())
+                    .inspect_err(|_| failed = Some((role, reference.clone())))
+                },
+            );
+            if let Err(e) = core {
+                return match failed {
+                    Some((role, reference)) => format!(
+                        "action_ref {e:?} at {i} role {role:?} ref {reference:?}: {semantic:?}"
+                    ),
+                    None => format!("action_core {e:?} at {i}: {semantic:?}"),
+                };
+            }
+        }
+        if let Err(e) = self.flat_policy_observation_v4(expected) {
+            return format!("observation {e:?}");
+        }
+        "unlocated (the per-reference checks pass; a cross-action check failed)".into()
     }
 }
 

@@ -116,6 +116,13 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_legacy_e7a_v1::E7aStateV1::is_empty"
     )]
     pub e7a: crate::eternal_legacy_e7a_v1::E7aStateV1,
+    /// The Vintage graveyard and tempo lists' state
+    /// (`eternal_vintage_e7b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_vintage_e7b_v1::E7bStateV1::is_empty"
+    )]
+    pub e7b: crate::eternal_vintage_e7b_v1::E7bStateV1,
     /// Wave E8b's state (`eternal_pauper_e8b_v1`).
     #[serde(
         default,
@@ -188,6 +195,8 @@ pub enum EternalTriggerV1 {
     E6bV1(crate::eternal_pauper_e6b_v1::E6bTriggerV1),
     /// A condition owned by wave E7a's module.
     E7aV1(crate::eternal_legacy_e7a_v1::E7aTriggerV1),
+    /// A condition owned by the Vintage graveyard and tempo lists' module.
+    E7bV1(crate::eternal_vintage_e7b_v1::E7bTriggerV1),
     /// A condition owned by wave E8b's module.
     E8bV1(crate::eternal_pauper_e8b_v1::E8bTriggerV1),
 }
@@ -317,6 +326,8 @@ pub enum EternalOpV1 {
     E6bV1(crate::eternal_pauper_e6b_v1::E6bOpV1),
     /// A leaf owned by wave E7a's module.
     E7aV1(crate::eternal_legacy_e7a_v1::E7aOpV1),
+    /// A leaf owned by the Vintage graveyard and tempo lists' module.
+    E7bV1(crate::eternal_vintage_e7b_v1::E7bOpV1),
     /// A leaf owned by wave E8b's module.
     E8bV1(crate::eternal_pauper_e8b_v1::E8bOpV1),
 }
@@ -345,6 +356,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 }
                 EternalTriggerV1::E7aV1(condition) => {
                     crate::eternal_legacy_e7a_v1::arrival_condition(condition)
+                }
+                EternalTriggerV1::E7bV1(condition) => {
+                    crate::eternal_vintage_e7b_v1::arrival_condition(condition)
                 }
                 EternalTriggerV1::E8bV1(condition) => {
                     crate::eternal_pauper_e8b_v1::arrival_condition(condition)
@@ -852,6 +866,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E5aV1(op) => crate::eternal_e5a_v1::execute(op, ctx, state),
         EternalOpV1::E6bV1(op) => crate::eternal_pauper_e6b_v1::execute(op, ctx, state),
         EternalOpV1::E7aV1(op) => crate::eternal_legacy_e7a_v1::execute(op, ctx, state),
+        EternalOpV1::E7bV1(op) => crate::eternal_vintage_e7b_v1::execute(op, ctx, state),
         EternalOpV1::E8bV1(op) => crate::eternal_pauper_e8b_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
@@ -1281,12 +1296,13 @@ fn printed_battlefield_source(state: &GameState, source: ObjectId, name: &str) -
 
 /// Dragon's Rage Channeler's delirium flying.
 pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keywords {
+    let dash = crate::eternal_vintage_e7b_v1::statics::conditional_keywords(state, id);
     if printed_battlefield_source(state, id, DRAGONS_RAGE_CHANNELER)
         && controller_has_delirium(state.objects.get(id).controller, state)
     {
-        Keywords::FLYING
+        Keywords::FLYING | dash
     } else {
-        Keywords::NONE
+        dash
     }
 }
 
@@ -1321,6 +1337,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_e5a_v1::statics::blocker_allowed(state, attacker, blocker)
         && crate::eternal_pauper_e6b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_legacy_e7a_v1::blocker_allowed(state, attacker, blocker)
+        && !crate::eternal_vintage_e7b_v1::statics::protected_from_source(state, attacker, blocker)
         && crate::eternal_pauper_e8b_v1::blocker_allowed(state, attacker, blocker)
 }
 
@@ -1358,6 +1375,7 @@ pub(crate) fn apply_entry_counters(
     object: ObjectId,
     input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
 ) {
+    crate::eternal_vintage_e7b_v1::statics::apply_entry_counters(state, object, input);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -1515,6 +1533,9 @@ pub(crate) fn delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_legacy_e7a_v1::delayed_triggers(
+        state, events,
+    ));
+    triggers.extend(crate::eternal_vintage_e7b_v1::delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_pauper_e8b_v1::delayed_triggers(
@@ -1702,6 +1723,12 @@ pub(crate) fn trigger_matches(
             condition, events, index, source, state,
         );
     }
+    // These conditions check their own source, which may be in a graveyard.
+    if let EternalTriggerV1::E7bV1(condition) = condition {
+        return crate::eternal_vintage_e7b_v1::trigger_matches(
+            condition, events, index, source, state,
+        );
+    }
     if let EternalTriggerV1::E5bV1(condition) = condition {
         if crate::eternal_legacy_e5b_v1::functions_on_stack(condition) {
             return crate::eternal_legacy_e5b_v1::trigger_matches(
@@ -1732,7 +1759,7 @@ pub(crate) fn trigger_matches(
         EternalTriggerV1::E5aV1(condition) => {
             crate::eternal_e5a_v1::trigger_matches(condition, events, index, source, state)
         }
-        EternalTriggerV1::E6bV1(_) => false,
+        EternalTriggerV1::E6bV1(_) | EternalTriggerV1::E7bV1(_) => false,
         EternalTriggerV1::E7aV1(condition) => {
             crate::eternal_legacy_e7a_v1::trigger_matches(condition, events, index, source, state)
         }

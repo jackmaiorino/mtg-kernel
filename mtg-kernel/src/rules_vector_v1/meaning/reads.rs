@@ -459,6 +459,17 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             );
             AmtF::Dynamic
         }
+        DynamicCountDef::CardsCycledOrDiscardedThisTurnV1 => {
+            // Cards the caster cycled or discarded this turn. Vocabulary
+            // gap: no aggregate for discards as events this turn.
+            out.read(
+                RelF::You,
+                Some(ZoneF::Graveyard),
+                Some(ObjF::AnyCard),
+                AggF::EventThisTurn,
+            );
+            AmtF::Dynamic
+        }
         DynamicCountDef::ControllerDrawsThisTurn => {
             // The caster's draws this turn. Vocabulary gap: no aggregate
             // for the number of events this turn.

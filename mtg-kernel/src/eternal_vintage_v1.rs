@@ -1137,6 +1137,7 @@ pub(crate) fn activation_allowed(
         && crate::eternal_legacy_e5b_v1::activation_allowed(state, source)
         && crate::eternal_pauper_e6a_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_e5a_v1::statics::activation_allowed(state, source, name)
+        && crate::eternal_vintage_e7b_v1::statics::activation_allowed(state, source, name)
         && crate::eternal_pauper_e8b_v1::activation_allowed(state, name, ability_index)
 }
 
@@ -1189,7 +1190,7 @@ pub(crate) fn activation_tax(state: &GameState, source: ObjectId) -> u8 {
 
 /// Every name a player may choose: each executable nontoken definition's
 /// name once, grouped by first letter for a two-step choice.
-fn nameable_definitions() -> &'static [Vec<u16>] {
+pub fn nameable_definitions() -> &'static [Vec<u16>] {
     static TABLE: std::sync::OnceLock<Vec<Vec<u16>>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
         let mut seen: Vec<&str> = Vec::new();
@@ -1717,6 +1718,10 @@ pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: Pla
 /// planeswalkers can't be activated." Karn, the Great Creator: "Activated
 /// abilities of artifacts your opponents control can't be activated."
 pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> bool {
+    // Collector Ouphe and Phyrexian Revoker (wave E7b).
+    if crate::eternal_vintage_e7b_v1::statics::activations_prohibited(state, object) {
+        return true;
+    }
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };

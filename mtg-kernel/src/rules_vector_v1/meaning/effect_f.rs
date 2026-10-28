@@ -412,6 +412,17 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     }
                     out.effect(shuffle(player));
                 }
+                LibrarySearchDestinationV1::GraveyardV1 => {
+                    // The selected cards go to the graveyard as one batch,
+                    // then the library is shuffled.
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Graveyard)
+                            .player(player)
+                            .obj(obj)
+                            .amount(amount),
+                    );
+                    out.effect(shuffle(player));
+                }
                 LibrarySearchDestinationV1::LibraryTopAfterShuffle => {
                     // At most one card: the library is shuffled, the selected
                     // card is moved to the top and revealed to both players.

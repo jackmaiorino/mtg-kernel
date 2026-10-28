@@ -80,6 +80,7 @@ reserved.
 | E5a | Vintage Raker Shops, Oath of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy Mystic Forge, and with E5b's cards Legacy Eldrazi and Tron: Mystic Forge, Bolas's Citadel, Yawgmoth's Will, Chalice of the Void, Sensei's Divining Top, Oath of Druids, Oko, Ugin, Kozilek's Command, Talon Gates of Madara and the rest of the lists | 28 and a token | Vintage 62.3% to 80.0%, Legacy 49.4% to 59.6% (after E5b) |
 | E6b | Pauper Bogles, White Aggro, Rakdos Madness, Boros Moxite, Mono-White Aggro, Snacker Gates and Boros Synthesizer (and Azorius Faeries): Abundant Growth, Alms of the Vein, Ancestral Mask, Angelic Gift, Armadillo Cloak, Asgardian Citadel, Ash Barrens, Battle Screech, Benevolent Blessing, Boros Garrison, Bushwhack, Cartouche of Solidarity, Cliffgate, Dawnbringer Cleric, Demand Answers, Eagles of the North, Ethereal Armor, Fortress Kin-Guard, Gladecover Scout, Greatsword of Tyr, Guardians' Pledge, Heliod's Pilgrim, Idyllic Grange, Jagged Barrens, Kitchen Imp, Leonardo, Lunarch Veteran, Malevolent Rumble, Mana Tithe, Manor Gate, Martyr's Soul, Pursue the Past, Raffine's Informant, Ragged Short Spear, Rakdos Carnarium, Ramosian Rally, Rancor, Salt Road Packbeast, Search Party Captain, Sheltering Landscape, Silhana Ledgewalker, Slippery Bogle, Spider-Man, Spirit Link, Thraben Inspector, Utopia Sprawl, Vampire's Kiss, Wind-Scarred Crag | 48 and three tokens | Pauper 69.0% to 80.5% |
 | E7a | Legacy Sewer-Cam combo, Rakdos Reanimator, The Epic Storm, Stiflenought, Mardu Energy, Affinity Stompy and Lands: Abhorrent Oculus, Animate Dead, Arena of Glory, Archon of Cruelty, Badlands, Blast Zone, Burning Wish, Cabal Therapy, Chromatic Star, Curie, Dark Depths, Dress Down, Echo of Eons, Emry, Exploration, Gaea's Will, Galvanic Relay, Gamble, Ghost Quarter, Goblin Engineer, Goblin Welder, Grafdigger's Cage, Griselbrand, Icetill Explorer, Kappa Cannoneer, Legion Extruder, Life from the Loam, Maze of Ith, Memory Guardian, Mox Diamond, Patchwork Automaton, Phyrexian Dragon Engine, Phyrexian Dreadnought, Pinnacle Emissary, Raucous Theater, Reanimate, Shadowspear, Shadowy Backstreet, Shallow Grave, Silent Clearing, Skateboard, Song of Creation, Sphere of Resistance, Taiga, The Tabernacle at Pendrell Vale, Thespian's Stage, Unmask, Verdant Catacombs, Wooded Foothills, Yavimaya | 50 and two tokens | Legacy 59.6% to 73.4% |
+| E7b | Vintage Dredge, Counter-Vine, Blue Tempo, Lurrus DRS, Doomsday and RUG Control, and the artifact cards of Stiflenought, Sphere Shops and Sultai Psychic Frog: Abrupt Decay, Assassin's Trophy, Avatar of Burgeoning Echoes, Basking Rootwalla, Bayou, Bazaar of Baghdad, Blazing Rootwalla, Carnivorous Cultivator, Chain of Vapor, Collector Ouphe, Commandeer, Creeping Chill, Crucible of Worlds, Dack Fayden, Deathrite Shaman, Demonic Consultation, Golgari Grave-Troll, Golgari Thug, Golos, Grief, Hollow One, Ichorid, Karn, Argent Defender, Kishla Skimmer, Lodestone Golem, Master of Death, Mindbreak Trap, Minsc & Boo, Narcomoeba, Noxious Revival, Phyrexian Revoker, Prized Amalgam, Ragavan, Serum Powder, Shambling Shell, Silversmote Ghoul, Squee, Stinkweed Imp, Stonecoil Serpent, Subtlety, Thorn of Amethyst, Torpor Orb, Uro, Vengevine, Wrenn and Six | 45, two tokens and Enroot | Vintage 80.0% to 95.4% after E7a |
 | E8b | Pauper Ruby Storm, Golgari Gardens, Familiars, Jeskai Ephemerate, Glintblade, Izzet Terror, Burn and Boros Bully (and Izzet Faeries, 4c Synthesizer): Accursed Marauder, Azorius Chancery, Contaminated Landscape, Crimson Fleet Commodore, Crossover Collaboration, Crypt Rats, Defile, Desert, Desperate Ritual, First Day of Class, Geothermal Crevice, Glimpse the Impossible, Glorious Gale, God-Pharaoh's Faithful, Goblin Anarchomancer, Goldmire Bridge, Goliath Paladin, Golgari Rot Farm, Haunted Mire, Heaped Harvest, Hickory Woodlot, Khalni Garden, Lonely Arroyo, Manamorphose, Meeting of Minds, Mirran Banesplitter, Mortuary Mire, Oroku Saki, Orzhov Basilica, Perilous Landscape, Rally the Peasants, Rancid Earth, Reckless Lackey, Ride's End, Sandstone Needle, Sea Gate Oracle, Seething Song, Seize the Storm, Skred, Snow-Covered Mountain, Sunscape Familiar, Thornscape Familiar, Twinned Vision, Volatile Fjord, Witch's Cottage, Wrenn's Resolve | 46 and two tokens | Pauper 80.5% to 90.4% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
@@ -209,8 +210,9 @@ New, each built once in the first wave that needs it:
   keeps its draw trigger. Dark Depths' ice counters live in module state and its state
   trigger is pushed directly to the pending triggers. Animate Dead enters enchanting a
   graveyard card (an SBA exemption) and its entry trigger returns and attaches it.
-  Dredge 3 replaces only the draw-step draw, through an entry-choice decision; Mox
-  Diamond's land discard is the same decision, just after it enters. Suspend (Gaea's
+  Life from the Loam's dredge 3 is E7b's dredge (`eternal_vintage_e7b_v1::dredge`), and
+  Sphere of Resistance's tax shares E7b's spell-tax hook; Mox Diamond's land discard is
+  an entry-choice decision, just after it enters. Suspend (Gaea's
   Will) and Arena of Glory's exert mana are no-stack actions offered as ability 0;
   Arena's {R}{R} goes to the restricted pool so a creature spell paid with it gains
   haste. Manifest dread puts a face-down 2/2 without ward. Improvise is the convoke
@@ -289,6 +291,42 @@ New, each built once in the first wave that needs it:
   trigger; Greatsword of Tyr's attack trigger, Idyllic Grange's "enters untapped" and
   Martyr's Soul's "no tapped lands" are E6b trigger conditions. New target shapes: a
   Forest, and up to one creature the defending player controls.
+- E7b, built in `src/eternal_vintage_e7b_v1.rs` (with `dredge`, `statics` and `targets`
+  submodules) and `build_eternal_e7b_v1.rs`: dredge (702.52) replaces any draw an effect
+  makes inside the resumable interpreter (a drawing program moves there while some
+  player can dredge) with a typed choice, and the draw step's draw waits as an as-enters
+  style decision; the mill is one batch, then the card returns to hand. Cards milled from
+  the library trigger from the graveyard (Narcomoeba, Creeping Chill); graveyard upkeep
+  and end-step triggers return Ichorid, Squee, Master of Death and Silversmote Ghoul;
+  Prized Amalgam, Vengevine and Kishla Skimmer are hook-queued triggers, and "the next end
+  step" returns (Amalgam, dash) wait in state. Evoke by exiling a colored card is an
+  alternative cost plus E6a's evoked-entry sacrifice (Grief, Subtlety); dash and "an
+  opponent cast three spells" are new alternative-cost conditions, and
+  `CostComponent::ExileCardsFromHandWithColorV1` pays Commandeer. Commandeer changes a
+  spell's controller (its cast route keeps the caster) and offers each target slot again;
+  Mindbreak Trap exiles spells; Subtlety's spell departure can go to the library bottom;
+  Chain of Vapor copies the resolving spell for the permanent's controller. Statics:
+  Thorn of Amethyst and Lodestone Golem tax spells by type, Torpor Orb and Karn, Argent
+  Defender suppress entry triggers in the trigger collection, Collector Ouphe and
+  Phyrexian Revoker prohibit activations (mana abilities included), Crucible of Worlds
+  adds graveyard land plays, Stonecoil Serpent has protection from multicolored for
+  targeting, blocking and damage, and Golgari Grave-Troll's regeneration shield replaces
+  destruction by effects and by lethal damage. Planeswalkers: Dack Fayden's and Wrenn and
+  Six's emblems, Minsc & Boo's reflexive trigger, empower Jace's planeswalker token, and
+  Avatar of Burgeoning Echoes' -10 granted one index past a planeswalker's printed
+  abilities. Hollow One counts discards (cycling included) per turn. New target shapes
+  cover graveyard cards of a type, any number of spells, a creature or planeswalker spell,
+  a permanent an opponent controls and a creature with trample or haste. Serum Powder's
+  exile-and-redraw is offered before each London mulligan choice while it is in hand.
+  Carnivorous Cultivator enters prepared: a copy of its prepare spell (Enroot, a registry
+  card in no deck) is created in exile, castable by the creature's controller through an
+  exile play permission; casting it unprepares the creature, and the copy ceases to exist
+  when the creature leaves or the copy leaves exile and the stack. Library searches gained
+  a graveyard destination. Wrenn and Six's emblem grants retrace as a graveyard cast permission whose quote adds
+  `CostComponent::DiscardLandCardsV1` (a land card chosen privately from hand); a card
+  another permission already lets its owner cast (Snapcaster's flashback, Yawgmoth's
+  Will) is cast through that permission instead, and retrace is not combined with a
+  second object-choosing cost (an alternative or additional cost that picks objects).
 
 ## Card contract and verification
 

@@ -671,6 +671,30 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             out.cost(CostAtom::RemoveCounters);
             out.atoms.push(Atom::Opaque); // Counter kind and quantity.
         }
+        CostComponent::RemovePlusOneCounterFromSelfV1 => {
+            // Exactly one +1/+1 counter leaves the source as payment.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque); // Counter kind and quantity.
+        }
+        CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
+            // `count` cards of the color, other than the source, move from
+            // the payer's hand to exile. The color refinement has no facet.
+            let _ = color;
+            move_cost(out, ZoneF::Hand, ZoneF::Exile, ObjF::AnyCard, count);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::DiscardLandCardsV1(count) => {
+            // `count` land cards, other than the source, move from the
+            // payer's hand to their graveyard as a discard.
+            move_cost(
+                out,
+                ZoneF::Hand,
+                ZoneF::Graveyard,
+                ObjF::Typed(CardTypeF::Land),
+                count,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::Crew(required) => {
             // The payer selects untapped creatures, excluding the source,
             // whose total crew power meets the threshold, then taps them.

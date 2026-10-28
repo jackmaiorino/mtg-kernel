@@ -293,7 +293,7 @@ pub(super) fn escape_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_e7b_v1::escape_for(name),
     }
 }
 
