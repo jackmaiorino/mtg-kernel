@@ -14424,6 +14424,1461 @@
    "is_token": true
   },
   {
+   "name": "Ad Nauseam",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}",
+   "mana_value": 5,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beseech-storm",
+    "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "reveal_top",
+    "life_loss",
+    "repeat"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AdNauseam.java"
+  },
+  {
+   "name": "Aether Vial",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-merfolk",
+    "legacy-death-and-taxes-60-card"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "upkeep_trigger",
+    "charge_counters",
+    "activated_ability",
+    "put_onto_battlefield"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AetherVial.java"
+  },
+  {
+   "name": "Back to Basics",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control",
+    "legacy-dimir-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "static",
+    "doesnt_untap"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BackToBasics.java"
+  },
+  {
+   "name": "Bitter Triumph",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "additional_cost",
+    "discard_cost",
+    "pay_life_cost",
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BitterTriumph.java"
+  },
+  {
+   "name": "Cabal Ritual",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-cycle-storm",
+    "legacy-beseech-storm",
+    "legacy-necrodominance-combo",
+    "vintage-oops-all-spells"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "ritual",
+    "threshold"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CabalRitual.java"
+  },
+  {
+   "name": "Canoptek Scarab Swarm",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "etb_trigger",
+    "exile_graveyard",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CanoptekScarabSwarm.java"
+  },
+  {
+   "name": "Chandra, Chill of Compliance",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Chandra"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "surveil",
+    "restricted_mana",
+    "stun_counters",
+    "emblem"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ChandraChillOfCompliance.java",
+   "starting_loyalty": 3
+  },
+  {
+   "name": "Cloak and Dagger, Entwined",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{B}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Hero"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-60-card"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "deathtouch",
+    "lifelink",
+    "etb_trigger",
+    "reveal_hand",
+    "exile_until_leaves"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CloakAndDaggerEntwined.java"
+  },
+  {
+   "name": "Dark Matter Manipulator",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Warlock"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "mill",
+    "static_boost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DarkMatterManipulator.java"
+  },
+  {
+   "name": "Dryad Arbor",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Land",
+    "Creature"
+   ],
+   "subtypes": [
+    "Forest",
+    "Dryad"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": true,
+   "produces_mana": [
+    "G"
+   ],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-selesnya-depths",
+    "legacy-elves",
+    "legacy-jund"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "land_creature",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DryadArbor.java"
+  },
+  {
+   "name": "Emperor of Bones",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Skeleton",
+    "Noble"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "combat_trigger",
+    "exile_graveyard_card",
+    "adapt",
+    "counters_trigger",
+    "reanimate",
+    "finality_counter"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EmperorOfBones.java"
+  },
+  {
+   "name": "Erode",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control",
+    "legacy-azorius-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "destroy_target",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/Erode.java"
+  },
+  {
+   "name": "Flagstones of Trokair",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W"
+   ],
+   "decks": [
+    "legacy-selesnya-depths",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "dies_trigger",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FlagstonesOfTrokair.java"
+  },
+  {
+   "name": "Flickerwisp",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "etb_trigger",
+    "flicker",
+    "delayed_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/Flickerwisp.java"
+  },
+  {
+   "name": "Harbinger of the Seas",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Merfolk",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control",
+    "legacy-merfolk"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "static",
+    "land_type_change"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HarbingerOfTheSeas.java"
+  },
+  {
+   "name": "Hogaak, Arisen Necropolis",
+   "engine_capability": "full",
+   "mana_cost": "{5}{B/G}{B/G}",
+   "mana_value": 7,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Avatar"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 8,
+   "toughness": 8,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-loam-pox"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "convoke",
+    "delve",
+    "cant_spend_mana",
+    "cast_from_graveyard",
+    "trample"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HogaakArisenNecropolis.java"
+  },
+  {
+   "name": "Infernal Tutor",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beseech-storm",
+    "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "reveal_hand",
+    "library_search",
+    "hellbent"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/InfernalTutor.java"
+  },
+  {
+   "name": "Lich's Relic",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Equipment"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "equipment",
+    "etb_trigger",
+    "reflexive_trigger",
+    "destroy_target",
+    "equip"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LichsRelic.java"
+  },
+  {
+   "name": "Lion Sash",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Equipment",
+    "Cat"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "equipment",
+    "reconfigure",
+    "exile_graveyard_card",
+    "counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LionSash.java"
+  },
+  {
+   "name": "Loran of the Third Path",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Artificer"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "vigilance",
+    "etb_trigger",
+    "destroy_target",
+    "activated_ability",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LoranOfTheThirdPath.java"
+  },
+  {
+   "name": "Meteor Sword",
+   "engine_capability": "full",
+   "mana_cost": "{7}",
+   "mana_value": 7,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Equipment"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "equipment",
+    "etb_trigger",
+    "destroy_target",
+    "equip"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MeteorSword.java"
+  },
+  {
+   "name": "Mystic Sanctuary",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Island"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U"
+   ],
+   "decks": [
+    "legacy-dimir-control",
+    "legacy-high-tide"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped_unless",
+    "etb_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MysticSanctuary.java"
+  },
+  {
+   "name": "Once Upon a Time",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-elves",
+    "legacy-naya-initiative",
+    "legacy-jund"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "free_cast",
+    "look_top",
+    "library_selection"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OnceUponATime.java"
+  },
+  {
+   "name": "Overlord of the Balemurk",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}",
+   "mana_value": 5,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Enchantment",
+    "Creature"
+   ],
+   "subtypes": [
+    "Avatar",
+    "Horror"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-nic-fit",
+    "legacy-death-and-taxes-60-card"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "impending",
+    "etb_trigger",
+    "attack_trigger",
+    "mill",
+    "return_to_hand"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OverlordOfTheBalemurk.java"
+  },
+  {
+   "name": "Pre-War Formalwear",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Equipment"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "equipment",
+    "etb_trigger",
+    "reanimate",
+    "equip"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PreWarFormalwear.java"
+  },
+  {
+   "name": "Prismatic Vista",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-jeskai-control",
+    "legacy-dimir-control",
+    "legacy-death-and-taxes-60-card"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PrismaticVista.java"
+  },
+  {
+   "name": "Rain of Filth",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "granted_mana_ability",
+    "sacrifice_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RainOfFilth.java"
+  },
+  {
+   "name": "Recruiter of the Guard",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RecruiterOfTheGuard.java"
+  },
+  {
+   "name": "Skyclave Apparition",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Kor",
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "exile_target",
+    "leaves_trigger",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SkyclaveApparition.java"
+  },
+  {
+   "name": "Snow-Covered Swamp",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Swamp"
+   ],
+   "supertypes": [
+    "Basic",
+    "Snow"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B"
+   ],
+   "decks": [
+    "pauper-4c-ephemerate",
+    "legacy-reanimator",
+    "vintage-fastbond-lands"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SnowCoveredSwamp.java"
+  },
+  {
+   "name": "Solitude",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}{W}",
+   "mana_value": 5,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental",
+    "Incarnation"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "lifelink",
+    "evoke",
+    "etb_trigger",
+    "exile_target",
+    "exile_from_hand_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Solitude.java"
+  },
+  {
+   "name": "Stitcher's Supplier",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-hogaak-moonshadow"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "etb_trigger",
+    "dies_trigger",
+    "mill"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StitchersSupplier.java"
+  },
+  {
+   "name": "Stoneforge Mystic",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Kor",
+    "Artificer"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "library_search",
+    "activated_ability",
+    "put_onto_battlefield"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StoneforgeMystic.java"
+  },
+  {
+   "name": "Supreme Verdict",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{W}{U}",
+   "mana_value": 4,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "cant_be_countered",
+    "board_wipe"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SupremeVerdict.java"
+  },
+  {
+   "name": "Sylvan Safekeeper",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-selesnya-depths",
+    "legacy-jund",
+    "legacy-cradle-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "shroud"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SylvanSafekeeper.java"
+  },
+  {
+   "name": "Teferi, Time Raveler",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{U}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Teferi"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control",
+    "legacy-azorius-control",
+    "legacy-bant-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "static",
+    "bounce",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TeferiTimeRaveler.java",
+   "starting_loyalty": 4
+  },
+  {
+   "name": "Thought Monitor",
+   "engine_capability": "full",
+   "mana_cost": "{6}{U}",
+   "mana_value": 7,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Construct"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-8-cast"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "affinity",
+    "flying",
+    "etb_trigger",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThoughtMonitor.java"
+  },
+  {
+   "name": "Valgavoth's Lair",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Enchantment",
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "hexproof",
+    "enters_tapped",
+    "as_enters_choose_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/ValgavothsLair.java"
+  },
+  {
+   "name": "White Orchid Phantom",
+   "engine_capability": "full",
+   "mana_cost": "{W}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit",
+    "Knight"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "first_strike",
+    "etb_trigger",
+    "destroy_target",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WhiteOrchidPhantom.java"
+  },
+  {
+   "name": "Wight of the Reliquary",
+   "engine_capability": "full",
+   "mana_cost": "{B}{G}",
+   "mana_value": 2,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Knight"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-jund",
+    "legacy-cradle-control",
+    "vintage-fastbond-lands"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "vigilance",
+    "static_boost",
+    "activated_ability",
+    "sacrifice_cost",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WightOfTheReliquary.java"
+  },
+  {
+   "name": "Wishclaw Talisman",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beseech-storm",
+    "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "wish_counters",
+    "activated_ability",
+    "library_search",
+    "control_change"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WishclawTalisman.java"
+  },
+  {
+   "name": "Yorion, Sky Nomad",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W/U}{W/U}",
+   "mana_value": 5,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird",
+    "Serpent"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 4,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "companion",
+    "flying",
+    "etb_trigger",
+    "flicker",
+    "delayed_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/y/YorionSkyNomad.java"
+  },
+  {
+   "name": "Insect Artifact Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "flying"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectColorlessArtifactToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Illusion Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Illusion"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "token_creation",
+    "characteristic_defining"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/custom/CreatureToken.java",
+   "is_token": true
+  },
+  {
    "name": "Annoyed Altisaur",
    "engine_capability": "full",
    "mana_cost": "{5}{G}{G}",
@@ -15476,6 +16931,35 @@
    "java_file": "Mage.Sets/src/mage/cards/r/Respite.java"
   },
   {
+   "name": "Secluded Courtyard",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "vintage-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "choose_creature_type",
+    "restricted_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SecludedCourtyard.java"
+  },
+  {
    "name": "Simic Growth Chamber",
    "engine_capability": "full",
    "mana_cost": "",
@@ -15782,35 +17266,6 @@
     "pump_all"
    ],
    "java_file": "Mage.Sets/src/mage/cards/y/YouMeetInATavern.java"
-  },
-  {
-   "name": "Secluded Courtyard",
-   "engine_capability": "full",
-   "mana_cost": "",
-   "mana_value": 0,
-   "colors": [],
-   "types": [
-    "Land"
-   ],
-   "subtypes": [],
-   "supertypes": [],
-   "power": null,
-   "toughness": null,
-   "is_land": true,
-   "produces_mana": [
-    "C"
-   ],
-   "decks": [
-    "vintage-eldrazi"
-   ],
-   "sideboard_only": false,
-   "complexity": "complex",
-   "mechanics": [
-    "mana_ability",
-    "choose_creature_type",
-    "restricted_mana"
-   ],
-   "java_file": "Mage.Sets/src/mage/cards/s/SecludedCourtyard.java"
   }
  ]
 }

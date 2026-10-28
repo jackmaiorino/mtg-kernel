@@ -2259,6 +2259,9 @@ pub enum AltCostCondition {
     /// that tapping. The creatures are chosen through the convoke selection
     /// (`standard_cast_convoke`). Appended for the eternal catalog.
     TeamworkV1(u8),
+    /// "If this spell is the first spell you've cast this game" (Once Upon a
+    /// Time, `eternal_legacy_e8a_v1`). Appended for the eternal catalog.
+    FirstSpellThisGameV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -2536,6 +2539,9 @@ pub enum ManaSpendRestrictionDef {
     /// None is a definition-owned chosen-type template; floating units
     /// always bind Some to the original producing entry incarnation.
     ChosenCreatureTypeV60(Option<crate::creature_types_v60::CreatureTypeV60>),
+    /// "Spend this mana only to cast a noncreature spell" (Chandra, Chill of
+    /// Compliance). Appended for the eternal catalog.
+    NoncreatureSpellV1,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
@@ -3753,7 +3759,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xb65d_9c11_ebcb_1b06;
+        const EXPECTED_ETERNAL: u64 = 0x83f3_c3df_68ff_3fa8;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

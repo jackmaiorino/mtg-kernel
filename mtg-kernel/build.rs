@@ -27,6 +27,7 @@ mod build_eternal_e6a_v1;
 mod build_eternal_e6b_v1;
 mod build_eternal_e7a_v1;
 mod build_eternal_e7b_v1;
+mod build_eternal_e8a_v1;
 mod build_eternal_e8b_v1;
 mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;

@@ -4760,6 +4760,17 @@ fn commit_with_entry_batch_and_source_color(
                 left_zone_change_count,
             );
         }
+        // Cloak and Dagger, Entwined's exile until it leaves (eternal wave
+        // E8a).
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
+            crate::eternal_legacy_e8a_v1::source_left_battlefield(
+                state,
+                object,
+                left_zone_change_count,
+            );
+        }
     }
     crate::life_gain_turn_v1::capture_committed_gain(state);
     // The predecessor first-gain hook consumes the actual last LifeGain.

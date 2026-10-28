@@ -726,9 +726,12 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         RAFFINES_INFORMANT => &RAFFINES_INFORMANT_TRIGGERS,
         RAGGED_SHORT_SPEAR => &RAGGED_SHORT_SPEAR_TRIGGERS,
         GREATSWORD_OF_TYR => &GREATSWORD_TRIGGERS,
-        // Waves E7a and E7b name disjoint cards.
+        // Waves E7a, E7b and E8a name disjoint cards.
         _ => match crate::eternal_legacy_e7a_v1::triggers_for(name) {
-            [] => crate::eternal_vintage_e7b_v1::triggers_for(name),
+            [] => match crate::eternal_vintage_e7b_v1::triggers_for(name) {
+                [] => crate::eternal_legacy_e8a_v1::triggers_for(name),
+                triggers => triggers,
+            },
             triggers => triggers,
         },
     }
@@ -756,6 +759,9 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_vintage_e7b_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    if let Some(spec) = crate::eternal_legacy_e8a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }
@@ -781,6 +787,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     if crate::eternal_legacy_e7a_v1::delayed_effect_matches(name, effect)
         || crate::eternal_vintage_e7b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_legacy_e8a_v1::delayed_effect_matches(name, effect)
     {
         return true;
     }
@@ -1753,5 +1760,6 @@ pub(crate) fn quote_allowed(
 /// the discard: whether a cast of `definition` (for its alternative cost if
 /// `alternative`) skips its additional cost.
 pub(crate) fn alternative_skips_additional_cost(definition: &CardDef, alternative: bool) -> bool {
-    alternative && definition.name == DEMAND_ANSWERS
+    (alternative && definition.name == DEMAND_ANSWERS)
+        || crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(definition, alternative)
 }

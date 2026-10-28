@@ -281,6 +281,8 @@ pub enum E3ChoiceKindV1 {
     E7bV1(crate::eternal_vintage_e7b_v1::E7bChoiceV1),
     /// A wave E8b choice (`eternal_pauper_e8b_v1`).
     E8bV1(crate::eternal_pauper_e8b_v1::E8bChoiceV1),
+    /// A wave E8a choice (`eternal_legacy_e8a_v1`).
+    E8aV1(crate::eternal_legacy_e8a_v1::E8aChoiceV1),
     /// A wave E9b choice (`eternal_e9b_v1`).
     E9bV1(crate::eternal_e9b_v1::E9bChoiceV1),
 }
@@ -322,6 +324,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::E8bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::E8aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         if let E3ChoiceKindV1::E9bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
@@ -346,6 +351,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::DoomsdayV1 => true,
             E3ChoiceKindV1::E5aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E7aV1(kind) => kind.library_search(),
+            E3ChoiceKindV1::E8aV1(kind) => kind.library_search(),
             _ => false,
         }
     }
@@ -358,6 +364,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E7aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E7bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E8bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::E8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
@@ -407,6 +414,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E7aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E7bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E8bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::E8aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
@@ -628,6 +636,13 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
             selected,
+        ),
+        E3ChoiceKindV1::E8aV1(kind) => crate::eternal_legacy_e8a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
         ),
         E3ChoiceKindV1::AtraxaV1 { revealed, picked } => {
             let mut picked = picked.clone();
@@ -960,6 +975,9 @@ pub(crate) fn drive(
         EternalOpV1::E8bV1(op) => {
             crate::eternal_pauper_e8b_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::E8aV1(op) => {
+            crate::eternal_legacy_e8a_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::drive(state, continuation, op, path),
         other => {
             super::execute(other, &continuation.ctx, state);
@@ -988,6 +1006,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
         || matches!(op, EternalOpV1::E6aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::E6bV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::E7bV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::E8aV1(op) if op.contains_player_choice())
 }
 
 /// The cards (not tokens or copies) in `player`'s graveyard, in order.
@@ -1461,6 +1480,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_vintage_e7b_v1::statics::entry_choice_decision(state) {
         return Some(decision);
     }
+    // Valgavoth's Lair's color.
+    if let Some(decision) = crate::eternal_legacy_e8a_v1::statics::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1540,6 +1563,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_vintage_e7b_v1::statics::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_legacy_e8a_v1::statics::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;

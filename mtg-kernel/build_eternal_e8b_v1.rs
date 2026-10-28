@@ -179,7 +179,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Heaped Harvest" => &HEAPED_HARVEST,
         "Mirran Banesplitter" => &MIRRAN_BANESPLITTER,
         "Reckless Lackey" => &RECKLESS_LACKEY,
-        _ => super::build_eternal_e9b_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_e8a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -264,7 +264,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
         // "Exile the top two cards of your library. Until the end of your
         // next turn, you may play those cards." Reckless Impulse's program.
         "Wrenn's Resolve" => Special::RecklessImpulse,
-        _ => return super::build_eternal_e9b_v1::special_for(name),
+        _ => return super::build_eternal_e8a_v1::special_for(name),
     })
 }
 
@@ -277,7 +277,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Mirran Banesplitter" => &["Keywords::FLASH"],
         "Reckless Lackey" => &["Keywords::FIRST_STRIKE", "Keywords::HASTE"],
         "Red Elemental Token" => &["Keywords::TRAMPLE"],
-        _ => super::build_eternal_e9b_v1::keywords_for(name),
+        _ => super::build_eternal_e8a_v1::keywords_for(name),
     }
 }
 
@@ -291,7 +291,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Crossover Collaboration" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 })], condition: AltCostCondition::TeamworkV1(2) })",
         "Meeting of Minds" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 3, x_count: 0 })], condition: AltCostCondition::Always })",
         "Oroku Saki, Shredder Rising" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 1, x_count: 0 }), CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::UnblockedAttackingCreatureV1)], condition: AltCostCondition::SneakV1 })",
-        _ => "None",
+        _ => super::build_eternal_e8a_v1::alt_cost_for(name),
     }
 }
 
@@ -301,7 +301,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Twinned Vision" => "Some(&[CostComponent::DiscardCards(1)])",
-        _ => "None",
+        _ => super::build_eternal_e8a_v1::additional_cost_for(name),
     }
 }
 
@@ -330,7 +330,7 @@ pub(super) fn flashback_for(name: &str) -> String {
 pub(super) fn equipment_for(name: &str) -> &'static str {
     match name {
         "Mirran Banesplitter" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
-        _ => "None",
+        _ => super::build_eternal_e8a_v1::equipment_for(name),
     }
 }
 
@@ -339,7 +339,7 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
 pub(super) fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
         "Ride's End" => "Some(GenericCostReductionDef { generic_per_count: 3, count: DynamicCountDef::SpellTargetsTappedPermanentV1 })",
-        _ => "None",
+        _ => super::build_eternal_e8a_v1::generic_cost_reduction_for(name),
     }
 }
 
@@ -386,7 +386,7 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
 pub(super) fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
     match name {
         "Witch's Cottage" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Swamp, minimum_count: 3 })",
-        _ => "None",
+        _ => super::build_eternal_e8a_v1::enters_battlefield_tapped_unless_for(name),
     }
 }
 
@@ -439,6 +439,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Twinned Vision" => "spell:draw_1_or_2_if_not_cast_from_hand",
         "Desert" => "activate_only_during_end_of_combat_step",
         "Geothermal Crevice" => "mana:tap_sacrifice:add_bg",
-        _ => super::build_eternal_e9b_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_e8a_v1::trigger_recipe_for(name),
     }
 }
