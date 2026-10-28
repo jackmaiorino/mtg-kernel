@@ -486,3 +486,36 @@ fn rules_only_dck(text: &str) -> Vec<u16> {
     .resolve_for(SessionKindV1::RulesOnly(RulesAdmissionV1::AllExecutable))
     .expect("reference decks are executable")
 }
+
+/// A rules-only combat scan step offers only the answers the policy surface
+/// accepts (#376). Flamewake Phoenix attacks each combat if able, so its
+/// decline was offered and then refused ("selected action no longer matches
+/// the active policy environment") in random DraftZero sample games.
+#[test]
+fn rules_only_scan_steps_offer_only_accepted_answers() {
+    let phoenix: DeckFileV1 = serde_json::from_str(include_str!(
+        "../../../data/limited/draftzero_sample_v1/decks/FDN_top_15157_BR.json"
+    ))
+    .unwrap();
+    let phoenix = phoenix
+        .resolve_for(SessionKindV1::RulesOnly(RulesAdmissionV1::AllExecutable))
+        .expect("sample deck is executable");
+    let wg = dck(WG);
+    let mut refused = Vec::new();
+    for seed in 1..=12u64 {
+        let result = play_game_v1(
+            [&phoenix, &wg],
+            [&PolicySpecV1::Random, &PolicySpecV1::Random],
+            [None, None],
+            seed,
+            PlayerId::P0,
+            rules_only(RulesAdmissionV1::AllExecutable),
+        );
+        if let GameOutcomeV1::Error(error) = &result.outcome {
+            if error.contains("no longer matches") {
+                refused.push(format!("seed {seed}: {error}"));
+            }
+        }
+    }
+    assert!(refused.is_empty(), "{refused:#?}");
+}
