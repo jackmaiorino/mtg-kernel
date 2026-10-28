@@ -25,6 +25,7 @@ mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;
 mod build_eternal_e6b_v1;
+mod build_eternal_e7a_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -3578,7 +3579,8 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         "Chandra, Flameshaper" => program("None", "MoveObject(ThisSource,Battlefield);loyaltyStart6;+2addRedThreeThenSimultaneousTopThreeExileChooseOneOrdinaryPlayThisTurn;+1TargetControlledCreatureCopyWithCopiableHasteAndAtBeginningOfEndStepSacrifice;-4OriginalPrepaymentPositiveDivideEightZeroToEightCreatureOrPlaneswalkerTargets:OneReplacementOwnedSimultaneousDamageBatch", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Liliana, Dreadhorde General" => program("None", "MoveObject(ThisSource,Battlefield);loyaltyStart6;controlledCreatureDies:prebatchSourceControllerIncludingTokenAndCreatureSelf:drawOne;+1exactBlack2x2Zombie;-4APNAPChooseTwoCreaturesThenOneSacrificeBatch;-9OpponentChoosesOneEachEffectivePermanentTypeMayReuseOnePermanentThenSacrificeRest:nontargeting:originalController:ownerOrdersGraveyard", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Muldrotha, the Gravetide" => program("None", "MoveObject(ThisSource,Battlefield);static:ownTurn:ownGraveyard:ordinaryTimingAndCosts:explicitOriginalSourceIncarnationAndFinalPermanentSpellType:oneEachPerTurn:multipleSourcesIndependent:landUsesOnlyLand:normalLandAllowance:BestowEnchantmentOnly:noNonpermanentAdventureOrOmen", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
-        "Omniscience" => program("None", "MoveObject(ThisSource,Battlefield);static:originalControllerMayCastNonlandFromOwnHandWithoutManaCost:optionalDistinctPaidRoute:exactActiveSourceAndHandIncarnation:XZero:ordinaryTimingTargetsAndAllAdditionalCosts:noGraveyardOrExilePermission", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
+        // Eternal builds keep their own Omniscience (`eternal_cards_v1::e3`).
+        "Omniscience" if !eternal_fixtures() => program("None", "MoveObject(ThisSource,Battlefield);static:originalControllerMayCastNonlandFromOwnHandWithoutManaCost:optionalDistinctPaidRoute:exactActiveSourceAndHandIncarnation:XZero:ordinaryTimingTargetsAndAllAdditionalCosts:noGraveyardOrExilePermission", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Thousand-Year Storm" => program("None", "MoveObject(ThisSource,Battlefield);ownInstantSorceryCast:copyFrozenSpellForEachEarlierOwnInstantSorceryCastThisTurn;eachCopyMayRetargetEachSlot", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Genesis Wave" => program("None", "GenesisWaveV1:paidX_u16:revealTopX:mayChooseAnyNumberPermanentMVAtMostX:preentryAuraHosts:oneSimultaneousEntryBatch:asEntersReplay:ownerOrdersActualRemainingGraveyardEntrants:ordinaryReplacementAndTriggerCheckpoint", "EffectOp::GenesisWaveV1"),
         "Time Stop" => program("None", "EndTurn:exileAllStackObjectsIncludingResolver;removeCombat;skipToCleanup;discardThenExpire;nativeSBATriggerPriorityAndRepeatedCleanup", "EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EndTurnV1)"),
@@ -4833,6 +4835,9 @@ fn enters_battlefield_tapped(card: &CardJson) -> bool {
 fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
     match name {
         "Gingerbread Cabin" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Forest, minimum_count: 3 })",
+        // Eternal catalog: "This land enters tapped unless you control a
+        // Mountain."
+        "Arena of Glory" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Mountain, minimum_count: 1 })",
         _ => build_eternal_e6b_v1::enters_battlefield_tapped_unless_for(name),
     }
 }
@@ -7226,7 +7231,9 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         | "Thoughtcast"
         | "Refurbished Familiar"
         | "Utrom Monitor"
-        | "Gearseeker Serpent" => {
+        | "Gearseeker Serpent"
+        | "Emry, Lurker of the Loch"
+        | "Memory Guardian" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
         "Cryptic Serpent" | "Tolarian Terror" => {
@@ -7535,7 +7542,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         | "Undercity Sewers"
         | "Meticulous Archive"
         | "Hedge Maze"
-        | "Thundering Falls" => "etb:surveil:1",
+        | "Thundering Falls"
+        | "Raucous Theater"
+        | "Shadowy Backstreet" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
         "Banishing Light" => "self_etb:target_opponent_nonland_permanent:exile_until_exact_source_incarnation_leaves:no_exile_if_source_already_left:immediate_return_exact_exile_incarnation_under_owner:independent_of_removed_source_abilities",
@@ -10383,6 +10392,7 @@ fn codegen(cards: &[CardJson]) -> String {
             if c.is_land
                 && !has_mana_program
                 && activated_ability_recipes_for(activated_recipe_key(c)).is_empty()
+                && !build_eternal_e7a_v1::static_only_land(&c.name)
             {
                 panic!(
                     "cards_v1.json: executable land {:?} has no generated mana program",
@@ -11428,6 +11438,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Crab" => "Subtype::Crab",
         "Kor" => "Subtype::Kor",
         "Arcane" => "Subtype::Arcane",
+        "Eye" => "Subtype::Eye",
+        "Dreadnought" => "Subtype::Dreadnought",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

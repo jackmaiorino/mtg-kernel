@@ -2792,6 +2792,14 @@ pub fn apply_replacements(
             }
         }
     }
+    // Grafdigger's Cage: "Creature cards in graveyards and libraries can't
+    // enter the battlefield."
+    #[cfg(feature = "eternal-fixtures")]
+    if let ProposedEvent::ZoneChange(change) = &proposed {
+        if crate::eternal_legacy_e7a_v1::prevents_zone_change(state, change) {
+            return None;
+        }
+    }
     if let Err(source) = crate::progenitus_v1::plan(state, &proposed, None) {
         halt_zone_pt_v1(state, source);
         return None;
@@ -5264,7 +5272,8 @@ fn materialize_event_v1(
                 crate::standard_cards_v1::before_departure(state, z.object);
                 if from == Zone::Battlefield
                     && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
-                        || crate::eternal_vintage_v1::active_copy(state, z.object))
+                        || crate::eternal_vintage_v1::active_copy(state, z.object)
+                        || crate::eternal_legacy_e7a_v1::active_copy(state, z.object))
                 {
                     let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                         source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -5355,6 +5364,8 @@ fn materialize_event_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                 }
                 if from == Zone::Battlefield
                     && z.to_zone != Zone::Battlefield
@@ -5392,6 +5403,8 @@ fn materialize_event_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                 }
             }
             materialize_zone_change_v1(

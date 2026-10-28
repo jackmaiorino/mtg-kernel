@@ -114,7 +114,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Sheltering Landscape" => &SHELTERING_LANDSCAPE,
         "Greatsword of Tyr" => &GREATSWORD_OF_TYR,
         "Ragged Short Spear" => &RAGGED_SHORT_SPEAR,
-        _ => &[],
+        _ => super::build_eternal_e7a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -193,7 +193,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::ForestV1)",
             "crate::eternal_pauper_e6b_v1::utopia_sprawl",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e7a_v1::special_for(name),
     })
 }
 
@@ -206,7 +206,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Kitchen Imp" => &["Keywords::FLYING", "Keywords::HASTE"],
         "Bird Token" => &["Keywords::FLYING"],
         "White Warrior Token" => &["Keywords::VIGILANCE"],
-        _ => &[],
+        _ => super::build_eternal_e7a_v1::keywords_for(name),
     }
 }
 
@@ -223,7 +223,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Martyr's Soul" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 2, x_count: 0 })], condition: AltCostCondition::Always })",
         "Ramosian Rally" => "Some(AltCostDef { components: &[CostComponent::TapUntappedControlledPermanent(PermanentFilterDef::CreatureV1)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Plains) })",
         "Demand Answers" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }), CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Artifact }], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_e7a_v1::alt_cost_for(name),
     }
 }
 
@@ -232,7 +232,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Demand Answers" => "Some(&[CostComponent::DiscardCards(1)])",
-        _ => "None",
+        _ => super::build_eternal_e7a_v1::additional_cost_for(name),
     }
 }
 
@@ -248,7 +248,7 @@ pub(super) fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_e7a_v1::flashback_for(name),
     }
 }
 
@@ -331,7 +331,7 @@ pub(super) fn attachment_for(name: &str) -> &'static str {
         "Ethereal Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::FIRST_STRIKE, per_controlled_subtype: None }))",
         "Rancor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 2, toughness: 0, keywords: Keywords::TRAMPLE, per_controlled_subtype: None }))",
         "Spirit Link" | "Benevolent Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::NONE, per_controlled_subtype: None }))",
-        _ => "None",
+        _ => super::build_eternal_e7a_v1::attachment_for(name),
     }
 }
 
@@ -343,7 +343,7 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
         "Greatsword of Tyr" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "Ragged Short Spear" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "Cartouche of Solidarity" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::FIRST_STRIKE, other_turn_keywords: Keywords::FIRST_STRIKE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
-        _ => "None",
+        _ => super::build_eternal_e7a_v1::equipment_for(name),
     }
 }
 
@@ -409,6 +409,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "sneak:declare_blockers_step:enters_tapped_and_attacking;static:plus_1_plus_0_per_other_controlled_creature"
         }
         "Spider-Man, Web-Slinger" => "web_slinging:return_tapped_controlled_creature",
-        _ => "none",
+        _ => super::build_eternal_e7a_v1::trigger_recipe_for(name),
     }
 }

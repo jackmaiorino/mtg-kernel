@@ -721,6 +721,13 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
 /// Planning does not tap creatures or produce mana. The returned tap lists
 /// distinguish Convoke payment from mana-ability activation.
 /// The existing Alternative-cast interface requires at least one convoker.
+/// The cast path calls `plan_spell_mana_total_with_convoke_subtypes_with_grant_v72`
+/// directly.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 #[allow(clippy::too_many_arguments)]
 #[cfg(all(
     test,
@@ -812,9 +819,12 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
         None,
         false,
         false,
+        false,
     )
 }
 
+/// Convoke's planner, or with `improvise` improvise's: untapped artifacts
+/// instead of creatures, each paying only one generic mana.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
     pips: &[Pip],
@@ -830,7 +840,13 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
     grant: Option<&crate::engine::tinybones_v72::ManaGrantV72>,
     artifact_spell: bool,
     colorless_eldrazi_spell: bool,
+    improvise: bool,
 ) -> Option<(PaymentPlan, Vec<ObjectId>)> {
+    let tapper_type = if improvise {
+        crate::card_def::CardType::Artifact
+    } else {
+        crate::card_def::CardType::Creature
+    };
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
         return None;
@@ -845,7 +861,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
                 && object.zone == crate::state::Zone::Battlefield
                 && !object.tapped
                 && !excluded.contains(id)
-                && crate::engine::object_has_type(state, *id, crate::card_def::CardType::Creature)
+                && crate::engine::object_has_type(state, *id, tapper_type)
         })
         .collect::<Vec<_>>();
     creatures.sort_by_key(|id| !state.objects.get(*id).summoning_sick);
@@ -856,7 +872,12 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
         require_convoke: true,
     };
     for creature in creatures {
-        let colors = crate::engine::object_color_mask(state, creature);
+        // An improvising artifact pays only generic mana.
+        let colors = if improvise {
+            0
+        } else {
+            crate::engine::object_color_mask(state, creature)
+        };
         // Colorless is not a creature color. A colorless creature can pay
         // generic via Convoke, but cannot pay a {C} pip.
         let choices = [

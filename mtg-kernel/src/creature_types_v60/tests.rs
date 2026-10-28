@@ -79,13 +79,13 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
     assert_eq!(CreatureTypeV60::Sphinx.choice_index(), 271);
     assert!(!Subtype::CREATURE_TYPES.contains(&Subtype::Sphinx));
     assert!(!Subtype::Sphinx.is_creature_type());
-    assert_eq!(Subtype::Vivien.stable_id(), 185);
-    assert_eq!(native_subtype(185), Some(Subtype::Vivien));
+    assert_eq!(Subtype::Vivien.stable_id(), 187);
+    assert_eq!(native_subtype(187), Some(Subtype::Vivien));
     assert_eq!(canonical_native_type(Subtype::Vivien), None);
     assert_eq!(noncreature, 47);
-    assert_eq!(canonical.len(), 133);
-    assert!(native_subtype(186).is_none());
-    assert!(Subtype::from_stable_id(186).is_none());
+    assert_eq!(canonical.len(), 135);
+    assert!(native_subtype(188).is_none());
+    assert!(Subtype::from_stable_id(188).is_none());
     assert!(Subtype::from_stable_id(u16::MAX).is_none());
     for (alias, normal, expected) in [
         (Subtype::BirdAllCaps, Subtype::Bird, CreatureTypeV60::Bird),

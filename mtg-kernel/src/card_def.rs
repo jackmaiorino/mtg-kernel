@@ -400,6 +400,10 @@ pub enum Subtype {
     /// lists (Kitchen Imp, Cartouche of Solidarity's enchantment type).
     Imp,
     Cartouche,
+    /// Appended for the eternal catalog's wave E7a (Abhorrent Oculus,
+    /// Phyrexian Dreadnought).
+    Eye,
+    Dreadnought,
     /// Planeswalker type (Vivien Reid), appended after the eternal catalog's
     /// types; Sphinx (Curator of Destinies) is listed above.
     Vivien,
@@ -739,6 +743,10 @@ impl Subtype {
         Subtype::Kor,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Imp,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Eye,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Dreadnought,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -954,7 +962,9 @@ impl Subtype {
             182 => Subtype::Planet,
             183 => Subtype::Imp,
             184 => Subtype::Cartouche,
-            185 => Subtype::Vivien,
+            185 => Subtype::Eye,
+            186 => Subtype::Dreadnought,
+            187 => Subtype::Vivien,
             _ => return None,
         })
     }
@@ -1150,6 +1160,8 @@ impl Subtype {
             Subtype::Planet => false,
             Subtype::Imp => true,
             Subtype::Cartouche => false,
+            Subtype::Eye => true,
+            Subtype::Dreadnought => true,
         }
     }
 
@@ -1234,6 +1246,8 @@ impl Subtype {
                     | Subtype::Crab
                     | Subtype::Kor
                     | Subtype::Imp
+                    | Subtype::Eye
+                    | Subtype::Dreadnought
             )
         {
             return true;
@@ -3641,7 +3655,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x4e92_28fc_7cba_152f;
+        const EXPECTED_ETERNAL: u64 = 0x1b16_1470_5cf6_4b64;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

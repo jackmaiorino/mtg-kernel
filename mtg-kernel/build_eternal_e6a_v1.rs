@@ -251,7 +251,7 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
         "Prophetic Prism" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
         // Energy Refractor: "{2}: Add one mana of any color." No tap.
         "Energy Refractor" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 2, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::None, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
-        _ => "&[]",
+        _ => super::build_eternal_e7a_v1::additional_mana_abilities_for(name),
     }
 }
 

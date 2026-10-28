@@ -22,7 +22,9 @@
 
 use crate::card_def::CARD_DEFS;
 use crate::ids::{ObjectId, PlayerId};
-use crate::rl_session::{FastActorSessionV1, V4SearchSampleMode, V4SearchStateErrorV1};
+use crate::rl_session::{
+    FastActorSessionV1, V4BoundaryEncodingFailureV1, V4SearchSampleMode, V4SearchStateErrorV1,
+};
 use crate::runtime_decks::RUNTIME_DECKS;
 use crate::state::{GameState, ObjectStateV4, SplitMix64, Zone};
 use sha2::{Digest, Sha256};
@@ -297,6 +299,18 @@ pub(crate) fn sample(
     seed: u64,
     prior: &DeckPrior,
 ) -> Result<Sample, String> {
+    sample_recorded(session, seed, prior, &mut None)
+}
+
+/// `sample`, also handing back the encoder stage and inner error when the
+/// sampled world's boundary fails to encode (recording only, mtg-kernel#380).
+/// The returned result, including the rejection string, is `sample`'s.
+pub(crate) fn sample_recorded(
+    session: &FastActorSessionV1,
+    seed: u64,
+    prior: &DeckPrior,
+    encoding_failure: &mut Option<V4BoundaryEncodingFailureV1>,
+) -> Result<Sample, String> {
     let mut chosen = None;
     let mut hook_error = None;
     let world = session
@@ -313,6 +327,7 @@ pub(crate) fn sample(
                     Err(V4SearchStateErrorV1::SampleHookRejected)
                 }
             },
+            encoding_failure,
         )
         .map_err(|e| match &hook_error {
             Some(h) => format!("{e:?}: {h}"),
