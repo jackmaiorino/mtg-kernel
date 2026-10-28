@@ -21,7 +21,7 @@ fn pinned_slots(state: &GameState, actor: PlayerId) -> Vec<ObjectId> {
 /// unknown slots.
 fn assert_samples_keep_pinned(session: &FastActorSessionV1, actor: PlayerId, seeds: u64) {
     let prior = all_decks();
-    let pinned = pinned_slots(&session.state, actor);
+    let pinned = pinned_slots(&session.game_state(), actor);
     assert!(!pinned.is_empty(), "fixture must exercise a pinned slot");
     let mut relabeled = false;
     for seed in 1..=seeds {
@@ -31,8 +31,8 @@ fn assert_samples_keep_pinned(session: &FastActorSessionV1, actor: PlayerId, see
         assert!(failure.is_none(), "seed {seed}: {failure:?}");
         for &id in &pinned {
             let (root, sampled) = (
-                session.state.objects.get(id),
-                world.world.state.objects.get(id),
+                session.game_state().objects.get(id),
+                world.world.game_state().objects.get(id),
             );
             assert_eq!(
                 sampled.card_def, root.card_def,
@@ -41,10 +41,11 @@ fn assert_samples_keep_pinned(session: &FastActorSessionV1, actor: PlayerId, see
             assert_eq!(sampled.name, root.name);
             assert_eq!(sampled.zone_change_count, root.zone_change_count);
         }
-        relabeled |= unknown_slots(&session.state, actor, actor.opponent())
+        relabeled |= unknown_slots(&session.game_state(), actor, actor.opponent())
             .iter()
             .any(|&id| {
-                world.world.state.objects.get(id).card_def != session.state.objects.get(id).card_def
+                world.world.game_state().objects.get(id).card_def
+                    != session.game_state().objects.get(id).card_def
             });
     }
     assert!(relabeled, "the prior must still relabel unpinned slots");
