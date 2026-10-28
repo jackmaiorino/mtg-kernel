@@ -1597,7 +1597,7 @@ pub(crate) fn is_aura(def: &CardDef) -> bool {
     matches!(
         def.name,
         CARTOUCHE_OF_SOLIDARITY | ABUNDANT_GROWTH | UTOPIA_SPRAWL
-    )
+    ) || crate::eternal_e9b_v1::is_aura(def)
 }
 
 /// Whether this module's Aura `def`, controlled by `controller`, may enchant
@@ -1621,7 +1621,7 @@ pub(crate) fn aura_host_legal(
                 && land()
                 && crate::engine::has_effective_subtype(state, host, Subtype::Forest)
         }
-        _ => return None,
+        _ => return crate::eternal_e9b_v1::aura_host_legal(def, host, state),
     })
 }
 
@@ -1659,6 +1659,8 @@ pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<Ma
 pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
     // Hickory Woodlot and Sandstone Needle remove a depletion counter.
     crate::eternal_pauper_e8b_v1::after_tapped_for_mana(state, land);
+    // Wild Growth adds {G}.
+    crate::eternal_e9b_v1::after_tapped_for_mana(state, land);
     // Eumidian Hatchery gets a hatchling counter (wave E9a).
     crate::eternal_legacy_e9a_v1::statics::after_tapped_for_mana(state, land);
     if state.objects.get(land).zone != Zone::Battlefield {

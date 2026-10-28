@@ -89,18 +89,21 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
         Some(CreatureTypeV60::Ogre)
     );
     for (subtype, id, kind) in [
-        (Subtype::Barbarian, 196, CreatureTypeV60::Barbarian),
-        (Subtype::Villain, 197, CreatureTypeV60::Villain),
-        (Subtype::Nomad, 198, CreatureTypeV60::Nomad),
-        (Subtype::Scarecrow, 199, CreatureTypeV60::Scarecrow),
-        (Subtype::Peasant, 200, CreatureTypeV60::Peasant),
+        (Subtype::Dauthi, 196, CreatureTypeV60::Dauthi),
+        (Subtype::Ally, 197, CreatureTypeV60::Ally),
+        (Subtype::Fungus, 198, CreatureTypeV60::Fungus),
+        (Subtype::Barbarian, 199, CreatureTypeV60::Barbarian),
+        (Subtype::Villain, 200, CreatureTypeV60::Villain),
+        (Subtype::Nomad, 201, CreatureTypeV60::Nomad),
+        (Subtype::Scarecrow, 202, CreatureTypeV60::Scarecrow),
+        (Subtype::Peasant, 203, CreatureTypeV60::Peasant),
     ] {
         assert_eq!(subtype.stable_id(), id);
         assert_eq!(canonical_native_type(subtype), Some(kind));
     }
-    assert_eq!(canonical.len(), 144);
-    assert!(native_subtype(201).is_none());
-    assert!(Subtype::from_stable_id(201).is_none());
+    assert_eq!(canonical.len(), 147);
+    assert!(native_subtype(204).is_none());
+    assert!(Subtype::from_stable_id(204).is_none());
     assert!(Subtype::from_stable_id(u16::MAX).is_none());
     for (alias, normal, expected) in [
         (Subtype::BirdAllCaps, Subtype::Bird, CreatureTypeV60::Bird),

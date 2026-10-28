@@ -204,7 +204,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Eldrazi Confluence" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 2, permanents: 1 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_1 })",
-        _ => "None",
+        _ => super::build_eternal_e9b_v1::mode2_for(name),
     }
 }
 
@@ -212,7 +212,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Eldrazi Confluence" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 2, permanents: 0 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_2 })",
-        _ => "None",
+        _ => super::build_eternal_e9b_v1::mode3_for(name),
     }
 }
 

@@ -2971,8 +2971,14 @@ pub(crate) fn is_special_activation(state: &GameState, source: ObjectId, index: 
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => live.zone == Zone::Battlefield,
         Some(GAEAS_WILL) => live.zone == Zone::Hand,
-        // Simian Spirit Guide (wave E9a).
-        _ => crate::eternal_legacy_e9a_v1::statics::is_special_activation(state, source, index),
+        // Elvish Spirit Guide's (wave E9b) and Simian Spirit Guide's (wave
+        // E9a) mana abilities.
+        _ => {
+            crate::eternal_e9b_v1::is_special_activation(state, source, index)
+                || crate::eternal_legacy_e9a_v1::statics::is_special_activation(
+                    state, source, index,
+                )
+        }
     }
 }
 
@@ -2986,6 +2992,9 @@ pub(crate) fn special_activation(
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => activate_arena(state, player, source),
         Some(GAEAS_WILL) => suspend(state, player, source),
+        _ if crate::eternal_e9b_v1::is_special_activation(state, source, 0) => {
+            crate::eternal_e9b_v1::special_activation(state, player, source)
+        }
         _ => crate::eternal_legacy_e9a_v1::statics::special_activation(state, player, source),
     }
 }

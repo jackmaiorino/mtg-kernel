@@ -30,11 +30,12 @@ use crate::state::{
     StackItem, Target, Zone,
 };
 
-/// Definitions with "Start your engines!".
-fn has_start_your_engines(card_def: u16) -> bool {
-    CARD_DEFS
-        .get(usize::from(card_def))
-        .is_some_and(|def| def.name == "Burnout Bashtronaut")
+/// Definitions with "Start your engines!". The eternal catalog's Momentum
+/// Breaker has it too (`eternal_e9b_v1`).
+pub(crate) fn has_start_your_engines(card_def: u16) -> bool {
+    CARD_DEFS.get(usize::from(card_def)).is_some_and(|def| {
+        def.name == "Burnout Bashtronaut" || crate::eternal_e9b_v1::starts_engines(def.name)
+    })
 }
 
 /// The player's current speed; zero means the player has no speed.
@@ -138,7 +139,9 @@ pub(crate) fn note_life_loss(
 pub(crate) fn max_speed_keywords(state: &GameState, id: ObjectId) -> Keywords {
     let object = state.objects.get(id);
     if object.zone == Zone::Battlefield
-        && has_start_your_engines(object.card_def)
+        && CARD_DEFS
+            .get(usize::from(object.card_def))
+            .is_some_and(|def| def.name == "Burnout Bashtronaut")
         && speed(state, object.controller) >= SpeedV1::MAX
     {
         Keywords::DOUBLE_STRIKE

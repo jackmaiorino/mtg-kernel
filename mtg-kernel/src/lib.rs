@@ -266,6 +266,9 @@ pub mod eternal_cards_v1;
 /// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
 /// Mystic Forge).
 pub mod eternal_e5a_v1;
+/// Pauper and Vintage long-tail card programs of the eternal catalog (wave
+/// E9b).
+pub mod eternal_e9b_v1;
 /// Legacy aggro, Eldrazi and control card programs of the eternal catalog
 /// (wave E5b).
 pub mod eternal_legacy_e5b_v1;

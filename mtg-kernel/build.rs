@@ -30,6 +30,7 @@ mod build_eternal_e7b_v1;
 mod build_eternal_e8a_v1;
 mod build_eternal_e8b_v1;
 mod build_eternal_e9a_v1;
+mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -3319,6 +3320,9 @@ enum PermanentFilterRecipe {
     Desert,
     /// A controlled nonland permanent (Bolas's Citadel).
     Nonland,
+    /// A controlled Food other than the source (Cauldron Familiar's
+    /// "Sacrifice a Food", activated from its graveyard).
+    AnotherFood,
     /// Another controlled artifact or creature (Broadside Bombardiers'
     /// boast).
     AnotherArtifactOrCreature,
@@ -6543,6 +6547,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Land => "PermanentFilter::Land",
         PermanentFilterRecipe::Desert => "PermanentFilter::DesertV1",
         PermanentFilterRecipe::Nonland => "PermanentFilter::NonlandV1",
+        PermanentFilterRecipe::AnotherFood => "PermanentFilter::AnotherWithSubtype(Subtype::Food)",
         PermanentFilterRecipe::AnotherArtifactOrCreature => {
             "PermanentFilter::AnotherArtifactOrCreatureV1"
         }
@@ -6561,6 +6566,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Land => "land",
         PermanentFilterRecipe::Desert => "desert",
         PermanentFilterRecipe::Nonland => "nonland",
+        PermanentFilterRecipe::AnotherFood => "another_with_subtype:Food",
         PermanentFilterRecipe::AnotherArtifactOrCreature => "another_artifact_or_creature",
         PermanentFilterRecipe::ForestOrPlains => "forest_or_plains",
     }
@@ -10706,8 +10712,13 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(
             out,
             "        restricted_mana_abilities: {},",
-            if executable && c.name == "Secluded Courtyard" {
+            if executable && c.name == "Secluded Courtyard" && !eternal_fixtures() {
                 "&[RestrictedManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], restriction: ManaSpendRestrictionDef::ChosenCreatureTypeV60(None) }]"
+            } else if executable && c.name == "Secluded Courtyard" {
+                // The eternal catalog's copy chooses its type as Cavern of
+                // Souls does; its creature-ability spending is
+                // `eternal_e9b_v1::courtyard_permits_ability`.
+                "&[RestrictedManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], restriction: ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1 }]"
             } else { standard.restricted_mana_abilities.as_str() }
         )
         .unwrap();
@@ -10739,7 +10750,7 @@ fn codegen(cards: &[CardJson]) -> String {
             "        creature_type_entry_v1: {},",
             if executable && c.name == "Banner of Kinship" {
                 "Some(CreatureTypeEntryDefV1::FellowshipAndChosenTypeAnthem)"
-            } else if executable && c.name == "Secluded Courtyard" {
+            } else if executable && c.name == "Secluded Courtyard" && !eternal_fixtures() {
                 "Some(CreatureTypeEntryDefV1::ChosenTypeCreatureSpellOrAbilityMana)"
             } else {
                 "None"
@@ -11053,7 +11064,14 @@ fn codegen(cards: &[CardJson]) -> String {
             canon
                 .push_str("as_enters_color_choice_v1=AnyWubrg|chosen_color_creature_boost_v1=1,0|");
         }
-        if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Secluded Courtyard" {
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && c.name == "Secluded Courtyard"
+            && eternal_fixtures()
+        {
+            canon.push_str("restricted_mana_abilities=WUBRG:CreatureSpellOfChosenTypeV1:or_chosen_type_creature_source_ability|");
+        } else if c.engine_capability != EngineCapabilityJson::NoEffect
+            && c.name == "Secluded Courtyard"
+        {
             canon.push_str("creature_type_entry_v1=ChosenTypeCreatureSpellOrAbilityMana:domain324:original_entry_incarnation|tap:C_unrestricted_or_WUBRG_chosen_type_creature_spell_or_creature_card_activation|floating_restriction_retains_original_choice|");
         }
         if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Banner of Kinship" {
@@ -11465,6 +11483,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Eye" => "Subtype::Eye",
         "Dreadnought" => "Subtype::Dreadnought",
         "Ogre" => "Subtype::Ogre",
+        "Dauthi" => "Subtype::Dauthi",
+        "Ally" => "Subtype::Ally",
+        "Fungus" => "Subtype::Fungus",
         "Barbarian" => "Subtype::Barbarian",
         "Villain" => "Subtype::Villain",
         "Nomad" => "Subtype::Nomad",

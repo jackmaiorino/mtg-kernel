@@ -283,6 +283,8 @@ pub enum E3ChoiceKindV1 {
     E8bV1(crate::eternal_pauper_e8b_v1::E8bChoiceV1),
     /// A wave E8a choice (`eternal_legacy_e8a_v1`).
     E8aV1(crate::eternal_legacy_e8a_v1::E8aChoiceV1),
+    /// A wave E9b choice (`eternal_e9b_v1`).
+    E9bV1(crate::eternal_e9b_v1::E9bChoiceV1),
     /// A wave E9a choice (`eternal_legacy_e9a_v1`).
     E9aV1(crate::eternal_legacy_e9a_v1::E9aChoiceV1),
 }
@@ -327,6 +329,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::E8aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::E9bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         if let E3ChoiceKindV1::E9aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
@@ -366,6 +371,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E7bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E8bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E8aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
@@ -416,6 +422,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E7bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E8bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E8aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
@@ -683,6 +690,9 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
         ),
+        E3ChoiceKindV1::E9bV1(kind) => {
+            crate::eternal_e9b_v1::finish_selection(state, continuation, choice, kind, bindings)
+        }
     }
 }
 
@@ -983,6 +993,7 @@ pub(crate) fn drive(
         EternalOpV1::E8aV1(op) => {
             crate::eternal_legacy_e8a_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::drive(state, continuation, op, path),
         EternalOpV1::E9aV1(op) => {
             crate::eternal_legacy_e9a_v1::drive(state, continuation, op, path)
         }
@@ -1356,6 +1367,7 @@ pub fn sink_into_stupor() -> EffectOp {
 pub(crate) fn has_land_back_face(name: &str) -> bool {
     name == SINK_INTO_STUPOR
         || name == "Witch Enchanter"
+        || crate::eternal_e9b_v1::has_land_back_face(name)
         || crate::eternal_legacy_e9a_v1::statics::has_land_back_face(name)
 }
 
@@ -1511,7 +1523,10 @@ fn cavern_needing_type(state: &GameState) -> Option<ObjectId> {
         .into_iter()
         .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
         .find(|&object| {
-            state.objects.get(object).card_def == id && cavern_chosen_type(state, object).is_none()
+            let card_def = state.objects.get(object).card_def;
+            // Wave E9b's Secluded Courtyard chooses its type the same way.
+            (card_def == id || crate::eternal_e9b_v1::chooses_creature_type(card_def))
+                && cavern_chosen_type(state, object).is_none()
         })
 }
 

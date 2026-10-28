@@ -1830,8 +1830,9 @@ pub(crate) fn drive(
                             def.has_type(CardType::Creature)
                                 && (def.colors.iter().any(|&color| {
                                     crate::card_def::mana_color_mask(color) & black != 0
-                                }) || crate::eternal_legacy_e9a_v1::statics::painter_mask(state)
-                                    & black
+                                }) || crate::eternal_legacy_e9a_v1::statics::painter_mask(
+                                    state,
+                                ) & black
                                     != 0)
                         })
                 })
