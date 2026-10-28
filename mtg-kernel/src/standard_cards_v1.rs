@@ -282,6 +282,28 @@ pub enum StandardTargetV1 {
     /// "Target artifact a player controls and target artifact card in that
     /// player's graveyard" (Goblin Welder).
     ArtifactThenArtifactCardInItsControllersGraveyardV1,
+    /// "Target nonland permanent with mana value N or less", any
+    /// controller (Abrupt Decay). Wave E7b's filters follow
+    /// (`eternal_vintage_e7b_v1::targets`).
+    NonlandPermanentManaValueAtMostV1(u8),
+    /// "Target permanent an opponent controls" (Assassin's Trophy).
+    OpponentPermanentV1,
+    /// "Any number of target spells" (Mindbreak Trap): distinct spells,
+    /// none required.
+    AnyNumberOfSpellsV1,
+    /// "Up to one target creature spell or planeswalker spell" (Subtlety).
+    UpToOneCreatureOrPlaneswalkerSpellV1,
+    /// "Target land card from a graveyard" (Deathrite Shaman).
+    LandCardInAGraveyardV1,
+    /// "Target instant or sorcery card from a graveyard" (Deathrite
+    /// Shaman).
+    InstantOrSorceryCardInAGraveyardV1,
+    /// "Up to one target land card from your graveyard" (Wrenn and Six).
+    UpToOneLandCardInOwnGraveyardV1,
+    /// "Target land card from your graveyard" (Carnivorous Cultivator).
+    LandCardInOwnGraveyardV1,
+    /// "Up to one target creature with trample or haste" (Minsc & Boo).
+    UpToOneCreatureWithTrampleOrHasteV1,
     /// A mandatory first any-target, then zero to two OTHER any-targets.
     /// Slots remain ordered even when an earlier target becomes illegal.
     OneToThreeDistinctAnyTargetsV1,
@@ -325,6 +347,10 @@ impl StandardTargetV1 {
             Self::UpToOneOtherNonlandPermanentV1 => (1, 0),
             Self::TwoControlledArtifactsCreaturesOrLandsV1 => (2, 2),
             Self::UpToOneOpponentCreatureV1 => (1, 0),
+            Self::AnyNumberOfSpellsV1 => (64, 0),
+            Self::UpToOneCreatureOrPlaneswalkerSpellV1
+            | Self::UpToOneLandCardInOwnGraveyardV1
+            | Self::UpToOneCreatureWithTrampleOrHasteV1 => (1, 0),
             Self::CreaturesThenNonlandPermanentsV1 {
                 creatures,
                 permanents,
@@ -424,7 +450,7 @@ impl StandardTargetV1 {
                 | Self::ArtifactCardInOwnGraveyardManaValueAtMostV1(_)
                 | Self::CreatureCardInAGraveyardV1
                 | Self::UpToThreeLandCardsInOwnGraveyardV1
-        )
+        ) || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
     }
 
     /// Wave E7a's filters (`eternal_legacy_e7a_v1`).
@@ -446,7 +472,7 @@ impl StandardTargetV1 {
             Self::InstantOrSorcerySpellV1
                 | Self::SpellWithSingleTargetV1
                 | Self::TriggeredAbilityOrColorlessSpellV1
-        )
+        ) || crate::eternal_vintage_e7b_v1::targets::on_stack(self)
     }
 }
 
@@ -660,6 +686,11 @@ pub(crate) fn legal_targets(
     if let Some(targets) = eternal_e7a_legal_targets(target, controller, prefix, state) {
         return targets;
     }
+    if let Some(targets) = crate::eternal_vintage_e7b_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -849,6 +880,11 @@ pub(crate) fn target_matches(
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };
+    if let Some(matches) =
+        crate::eternal_vintage_e7b_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1 {
         return crate::effect::harvester_v1::eligible(state, object);
     }
@@ -1006,6 +1042,16 @@ pub(crate) fn target_matches(
         | StandardTargetV1::CreatureCardInAGraveyardV1
         | StandardTargetV1::UpToThreeLandCardsInOwnGraveyardV1
         | StandardTargetV1::ArtifactThenArtifactCardInItsControllersGraveyardV1 => false,
+        // Answered by `eternal_vintage_e7b_v1::targets` above.
+        StandardTargetV1::NonlandPermanentManaValueAtMostV1(_)
+        | StandardTargetV1::OpponentPermanentV1
+        | StandardTargetV1::AnyNumberOfSpellsV1
+        | StandardTargetV1::UpToOneCreatureOrPlaneswalkerSpellV1
+        | StandardTargetV1::LandCardInAGraveyardV1
+        | StandardTargetV1::InstantOrSorceryCardInAGraveyardV1
+        | StandardTargetV1::UpToOneLandCardInOwnGraveyardV1
+        | StandardTargetV1::LandCardInOwnGraveyardV1
+        | StandardTargetV1::UpToOneCreatureWithTrampleOrHasteV1 => false,
     }
 }
 
@@ -3899,6 +3945,19 @@ const CASE_OF_THE_UNEATEN_FEAST: &str = "Case of the Uneaten Feast";
 /// Whether `holder` may cast `object` from its graveyard incarnation
 /// `zone_change_count` this turn.
 pub(crate) fn graveyard_cast_granted(
+    state: &GameState,
+    object: ObjectId,
+    holder: PlayerId,
+    zone_change_count: u32,
+) -> bool {
+    graveyard_cast_granted_without_retrace(state, object, holder, zone_change_count)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_vintage_e7b_v1::retrace_permission(state, object, holder))
+}
+
+/// The graveyard cast grants other than retrace (Wrenn and Six's emblem),
+/// which adds a cost the others don't.
+pub(crate) fn graveyard_cast_granted_without_retrace(
     state: &GameState,
     object: ObjectId,
     holder: PlayerId,
