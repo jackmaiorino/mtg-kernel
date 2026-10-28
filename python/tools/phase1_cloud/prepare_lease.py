@@ -322,11 +322,13 @@ def _post_and_record(client, api, body, output, now, deadline, clock, sleep):
                                     output / 'ALERT-pod-not-released.json', sleep)
         if pod_id in released:
             raise RuntimeError('create handoff failed; the Pod was deleted and verified absent')
-        # The cleanup's own census or GET handed the ID off durably: the Pod is alive, billed and
-        # guarded. Say so, and continue so its receipt (created-pod.json) is written below.
+        # The cleanup's own census or GET handed the ID off durably, so the guardian owns it. The
+        # cleanup may already have sent a DELETE before that GET, so this proves ownership, not that
+        # the Pod is still alive. Say so, and continue so its receipt (created-pod.json) is written below.
         try:
             write(output / 'create-handoff-recovered.json', {'epoch': now, 'pod_id': pod_id,
-                  'state': 'alive and guarded: the handoff was recovered by the cleanup, not deleted'},
+                  'state': 'durable handoff recovered by the cleanup; the guardian owns the Pod and its '
+                           'current provider state requires rechecking (a DELETE may already have been sent)'},
                   replace=True)
         except Exception:  # noqa: BLE001 - the known-Pod record already hands it to the guardian
             pass

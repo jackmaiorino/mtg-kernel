@@ -351,8 +351,8 @@ class ResponsibilityTests(unittest.TestCase):
             self.assertNotIn('pod123', world.pods)
 
     def test_recovered_handoff_reports_a_guarded_pod_and_writes_the_receipt(self):
-        # round 9: the POST handoff fails, the cleanup's census hands the ID off durably: the Pod is
-        # alive and guarded, not deleted, and its receipt is written
+        # round 9: the POST handoff fails, the cleanup's census hands the ID off durably: the guardian
+        # owns the Pod, the cleanup deleted nothing, and its receipt is written
         from lease_test_support import FakeClock, World, no_network
         import external_guard
         with tempfile.TemporaryDirectory() as temporary:
@@ -377,7 +377,37 @@ class ResponsibilityTests(unittest.TestCase):
             self.assertEqual(world.deletes, [])
             self.assertEqual(read(output / 'created-pod.json')['id'], 'pod123')
             self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
-            self.assertIn('alive and guarded', read(output / 'create-handoff-recovered.json')['state'])
+            self.assertIn('requires rechecking', read(output / 'create-handoff-recovered.json')['state'])
+
+    def test_handoff_recovered_after_a_delete_attempt_claims_ownership_not_liveness(self):
+        # #388 item 1: the POST and census handoffs fail, the cleanup sends a DELETE (which fails here),
+        # and only the following GET hands the ID off durably. The record must not call the Pod alive.
+        from lease_test_support import FakeClock, World, no_network
+        import external_guard
+        with tempfile.TemporaryDirectory() as temporary:
+            output = prepared_output(temporary)
+            snapshot = snapshot_path(temporary)
+            world = World([pod_response()]); world.delete_failures = 1
+            api = Mock(); api.create.return_value = pod_response()
+            clock = FakeClock(lease()['deadline_epoch'] - 60)
+            release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
+            real = external_guard.handoff_in; calls = []
+
+            def handoff(folder, pod_id, role, epoch):
+                calls.append(list(world.deletes))
+                if not world.deletes:
+                    raise OSError('transient')
+                return real(folder, pod_id, role, epoch)
+            with no_network(), patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}),                     patch.object(external_guard, 'handoff_in', side_effect=handoff):
+                result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
+                                           now=NOW, release=release)
+            self.assertEqual(result['id'], 'pod123')
+            self.assertEqual(world.deletes, ['pod123'])            # the DELETE was sent before the handoff
+            self.assertEqual(calls[-1], ['pod123'])                 # the persisting handoff came after it
+            self.assertEqual(read(output / 'created-pod.json')['id'], 'pod123')
+            state = read(output / 'create-handoff-recovered.json')['state']
+            self.assertNotIn('alive', state)
+            self.assertIn('requires rechecking', state)
 
     def test_failed_handoff_and_failed_release_fail_loudly(self):
         from lease_test_support import World
