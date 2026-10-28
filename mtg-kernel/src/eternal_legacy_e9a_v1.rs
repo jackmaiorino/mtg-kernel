@@ -2025,7 +2025,7 @@ fn prune(state: &mut GameState) {
         .deeps_answered
         .iter()
         .copied()
-        .filter(|host| on_battlefield(host))
+        .filter(|host| link_live_in(state, *host, Zone::Battlefield))
         .collect::<Vec<_>>();
     let zenith_shuffles = e9a
         .zenith_shuffles

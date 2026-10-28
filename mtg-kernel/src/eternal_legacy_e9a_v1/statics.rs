@@ -39,12 +39,10 @@ pub(crate) const WUBRG: u8 = 0x1f;
 /// permanents are the chosen color in addition to their other colors." The
 /// colors every Painter's Servant whose ability applies adds, as a mask.
 pub(crate) fn painter_mask(state: &GameState) -> u8 {
-    static PAINTER: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
     if !cfg!(feature = "eternal-fixtures") {
         return 0;
     }
-    let Some(id) = *PAINTER.get_or_init(|| crate::card_def::card_id_by_name(PAINTERS_SERVANT))
-    else {
+    let Some(id) = painter_id() else {
         return 0;
     };
     let mut mask = 0;
@@ -62,6 +60,12 @@ pub(crate) fn painter_mask(state: &GameState) -> u8 {
     mask
 }
 
+/// Painter's Servant's definition id.
+fn painter_id() -> Option<u16> {
+    static PAINTER_ID: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    *PAINTER_ID.get_or_init(|| crate::card_def::card_id_by_name(PAINTERS_SERVANT))
+}
+
 /// The colors `object` has, Painter's Servant included.
 pub(crate) fn color_mask(state: &GameState, object: ObjectId) -> u8 {
     crate::engine::object_color_mask(state, object)
@@ -74,7 +78,7 @@ pub(crate) fn card_has_color(state: &GameState, object: ObjectId, color: ManaCol
 
 /// The Painter's Servant that entered without a chosen color.
 fn painter_needing_color(state: &GameState) -> Option<ObjectId> {
-    let id = crate::card_def::card_id_by_name(PAINTERS_SERVANT)?;
+    let id = painter_id()?;
     battlefield(state).find(|&object| {
         let live = state.objects.get(object);
         live.card_def == id
@@ -128,18 +132,17 @@ pub(crate) fn moon_timestamp(state: &GameState, object: ObjectId) -> Option<u64>
 /// Mountain, creatures you control have haste." Whether `object` gains
 /// haste from an Anger.
 pub(crate) fn grants_haste(state: &GameState, object: ObjectId) -> bool {
+    static ANGER_ID: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    let Some(anger) = *ANGER_ID.get_or_init(|| crate::card_def::card_id_by_name(ANGER)) else {
+        return false;
+    };
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };
-    if live.zone != Zone::Battlefield
-        || !crate::engine::object_has_type(state, object, CardType::Creature)
-    {
+    if live.zone != Zone::Battlefield {
         return false;
     }
     let controller = live.controller;
-    let Some(anger) = crate::card_def::card_id_by_name(ANGER) else {
-        return false;
-    };
     let in_graveyard = state.players[controller.index()]
         .graveyard
         .iter()
@@ -148,16 +151,12 @@ pub(crate) fn grants_haste(state: &GameState, object: ObjectId) -> bool {
             card_live.card_def == anger && card_live.owner == controller && !card_live.v4.is_token
         });
     in_graveyard
-        && state.players[controller.index()]
-            .battlefield
-            .iter()
-            .any(|&permanent| {
-                let permanent_live = state.objects.get(permanent);
-                permanent_live.zone == Zone::Battlefield
-                    && permanent_live.controller == controller
-                    && crate::engine::object_has_type(state, permanent, CardType::Land)
-                    && crate::engine::has_effective_subtype(state, permanent, Subtype::Mountain)
-            })
+        && crate::engine::object_has_type(state, object, CardType::Creature)
+        && battlefield(state).any(|permanent| {
+            state.objects.get(permanent).controller == controller
+                && crate::engine::object_has_type(state, permanent, CardType::Land)
+                && crate::engine::has_effective_subtype(state, permanent, Subtype::Mountain)
+        })
 }
 
 /// The keywords this module grants `object`.
@@ -225,7 +224,9 @@ pub(crate) fn blocker_allowed(state: &GameState, blocker: ObjectId) -> bool {
 /// Split second (702.61a): "As long as this spell is on the stack, players
 /// can't cast spells or activate abilities that aren't mana abilities."
 pub(crate) fn split_second_active(state: &GameState) -> bool {
-    let Some(legolas) = crate::card_def::card_id_by_name(LEGOLAS) else {
+    static LEGOLAS_ID: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    let Some(legolas) = *LEGOLAS_ID.get_or_init(|| crate::card_def::card_id_by_name(LEGOLAS))
+    else {
         return false;
     };
     state.stack.iter().any(|item| {
@@ -533,7 +534,8 @@ fn deeps_options(state: &GameState) -> Vec<u16> {
 /// entered since the last trigger collection, and a graveyard holds a land
 /// card it may copy.
 fn deeps_needing_choice(state: &GameState) -> Option<ObjectId> {
-    let id = crate::card_def::card_id_by_name(ECHOING_DEEPS)?;
+    static DEEPS_ID: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    let id = (*DEEPS_ID.get_or_init(|| crate::card_def::card_id_by_name(ECHOING_DEEPS)))?;
     let answered = read_state(state).map(|e9a| e9a.deeps_answered.as_slice());
     let entering = state.engine.event_log.iter().find_map(|event| {
         let CommittedEvent::ZoneChange {
