@@ -12,14 +12,16 @@
 //!
 //! Environment: `LABEL_JOBS` (jsonl), `WIN_NODES` (node budget per search,
 //! default 20000), `WIN_DEPTH` (decisions below the root, default 400),
-//! `WIN_WORLDS` (resampled worlds, default 4; 0 skips the robust search).
+//! `WIN_WORLDS` (resampled worlds, default 4; 0 skips the robust search),
+//! `WIN_INDEX` (optional comma list of decision indices to search; others
+//! are replayed without searching).
 
 use super::labels::{spy_defs, Suffix};
 use super::play::{acting, apply, decision, observe, Meter};
 use super::replay_labels::LabelJob;
 use crate::ids::PlayerId;
 use crate::rl_session::FastActorResponseV1;
-use crate::win_search_v1::{oracle_win_this_turn_v1, robust_win_this_turn_v1, WinSearchBoundsV1, WinSearchResultV1};
+use crate::win_search_v1::{oracle_win_this_turn_v1, robust_win_this_turn_v1, WinSearchBoundsV1, WinSearchResultV1, WinVerdictV1};
 use serde_json::{json, Value};
 
 fn env_u64(name: &str, default: u64) -> Result<u64, String> {
@@ -32,7 +34,7 @@ fn env_u64(name: &str, default: u64) -> Result<u64, String> {
 fn result_json(result: &WinSearchResultV1) -> Value {
     json!({"verdict": result.verdict.as_str(), "unknown_reason": result.unknown_reason.map(|r| r.as_str()),
         "nodes": result.nodes, "depth_cuts": result.depth_cuts, "refused_actions": result.refused_actions,
-        "forced_order_collapses": result.forced_order_collapses, "line": result.line})
+        "forced_order_collapses": result.forced_order_collapses, "expanded": result.expanded, "line": result.line})
 }
 
 /// Deterministic world seeds per job and decision.
@@ -51,7 +53,7 @@ fn world_seeds(id: &str, index: usize, count: u64) -> Vec<u64> {
         .collect()
 }
 
-fn check_job(job: &LabelJob, bounds: WinSearchBoundsV1, worlds: u64, out: &mut impl std::io::Write) -> Result<Value, String> {
+fn check_job(job: &LabelJob, bounds: WinSearchBoundsV1, worlds: u64, only: Option<&[usize]>, out: &mut impl std::io::Write) -> Result<Value, String> {
     let mut s = crate::learned_bo3_v1::replay_game_session_v1(
         &job.config,
         job.uses_v3,
@@ -77,12 +79,17 @@ fn check_job(job: &LabelJob, bounds: WinSearchBoundsV1, worlds: u64, out: &mut i
             return Err(format!("replay differs from the record at decision {i}"));
         }
         last_turn = s.game_state().turn;
-        if acting(&d) == focal && d.legal_action_count >= 2 {
-            focal_decisions += 1;
+        let is_focal = acting(&d) == focal && d.legal_action_count >= 2;
+        focal_decisions += u64::from(is_focal);
+        if is_focal && only.is_none_or(|list| list.contains(&i)) {
             let started = std::time::Instant::now();
             let oracle = oracle_win_this_turn_v1(&s, bounds).ok_or("focal decision has no pending decision")?;
+            // The true world is in every sample: an oracle refutation certifies
+            // robust none, and only an oracle win leaves a robust line to find.
             let robust = if worlds == 0 {
                 Value::Null
+            } else if oracle.verdict != WinVerdictV1::Proven {
+                json!({"verdict": oracle.verdict.as_str(), "unknown_reason": oracle.unknown_reason.map(|r| r.as_str()), "via": "oracle"})
             } else {
                 match robust_win_this_turn_v1(&s, &world_seeds(&job.id, i, worlds), bounds) {
                     Some(Ok(result)) => result_json(&result),
@@ -98,6 +105,8 @@ fn check_job(job: &LabelJob, bounds: WinSearchBoundsV1, worlds: u64, out: &mut i
                 "max_nodes": bounds.max_nodes, "max_depth": bounds.max_depth, "worlds": worlds,
                 "oracle": result_json(&oracle), "robust": robust, "seconds": started.elapsed().as_secs_f64()});
             writeln!(out, "{row}").map_err(|e| e.to_string())?;
+        }
+        if is_focal {
             observe(Some(&mut suffix), &s, r.selected, focal, &defs);
         }
         apply(&mut s, &d, r.selected, &mut meter, focal, Some(&mut suffix), &defs).map_err(|e| format!("{e:?}"))?;
@@ -124,11 +133,15 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
     let path = std::env::var("LABEL_JOBS").map_err(|_| "LABEL_JOBS is required")?;
     let bounds = WinSearchBoundsV1 { max_nodes: env_u64("WIN_NODES", 20_000)?, max_depth: env_u64("WIN_DEPTH", 400)? as u32 };
     let worlds = env_u64("WIN_WORLDS", 4)?;
+    let only: Option<Vec<usize>> = match std::env::var("WIN_INDEX") {
+        Ok(text) => Some(text.split(',').map(|x| x.trim().parse().map_err(|_| "WIN_INDEX must list integers".to_string())).collect::<Result<_, _>>()?),
+        Err(_) => None,
+    };
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     let mut out = std::io::BufWriter::new(std::fs::File::create(&cfg.out).map_err(|e| e.to_string())?);
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let job: LabelJob = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
-        let row = check_job(&job, bounds, worlds, &mut out).unwrap_or_else(|e| json!({"kind": "error", "id": job.id, "error": e}));
+        let row = check_job(&job, bounds, worlds, only.as_deref(), &mut out).unwrap_or_else(|e| json!({"kind": "error", "id": job.id, "error": e}));
         writeln!(out, "{row}").map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
     }

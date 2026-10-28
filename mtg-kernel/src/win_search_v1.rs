@@ -93,6 +93,8 @@ pub struct WinSearchResultV1 {
     pub depth_cuts: u64,
     pub refused_actions: u64,
     pub forced_order_collapses: u64,
+    /// Expanded nodes by acting side and action kind, e.g. "hero:CastSpell".
+    pub expanded: std::collections::BTreeMap<String, u64>,
     /// The searched seat's choices along a proving line (oracle: following the
     /// first legal reply at each AND node of that line).
     pub line: Vec<String>,
@@ -107,11 +109,12 @@ struct Search {
     depth_cuts: u64,
     refused: u64,
     collapses: u64,
+    expanded: std::collections::BTreeMap<String, u64>,
 }
 
 impl Search {
     fn new<S: WinSearchSessionV1>(root: &S, hero: PlayerSeatV1, bounds: WinSearchBoundsV1) -> Self {
-        Search { hero, turn: root.turn(), bounds, nodes: 0, exhausted: false, depth_cuts: 0, refused: 0, collapses: 0 }
+        Search { hero, turn: root.turn(), bounds, nodes: 0, exhausted: false, depth_cuts: 0, refused: 0, collapses: 0, expanded: Default::default() }
     }
 
     fn result(self, verdict: WinVerdictV1, mut line: Vec<String>) -> WinSearchResultV1 {
@@ -128,7 +131,7 @@ impl Search {
         });
         WinSearchResultV1 {
             verdict, unknown_reason, hero: self.hero, turn: self.turn, nodes: self.nodes, depth_cuts: self.depth_cuts,
-            refused_actions: self.refused, forced_order_collapses: self.collapses, line,
+            refused_actions: self.refused, forced_order_collapses: self.collapses, expanded: self.expanded, line,
         }
     }
 
@@ -184,6 +187,7 @@ impl Search {
             if !self.spend() {
                 return WinVerdictV1::Unknown;
             }
+            *self.expanded.entry(format!("{}:{}", if hero_moves { "hero" } else { "opponent" }, kind_name(action))).or_default() += 1;
             let Some(child) = self.child(session, index) else {
                 unknown = true;
                 continue;
@@ -302,6 +306,11 @@ impl Search {
             actions.len()
         }
     }
+}
+
+fn kind_name(action: &ActionSemanticV1) -> String {
+    let text = format!("{action:?}");
+    text.split([' ', '{', '(']).next().unwrap_or("").to_string()
 }
 
 /// Oracle search from the session's pending decision, for its acting seat.
