@@ -2861,6 +2861,10 @@ pub enum LibraryPickFilterV1 {
     /// Choices admit no responses, so the effective land scene remains fixed.
     CreatureManaValueAtMostControlledLands,
     CreatureOrLandV1,
+    /// A creature or land card in an ordinary program (Once Upon a Time);
+    /// `CreatureOrLandV1` is Vivien Reid's validated program. Appended for
+    /// the eternal catalog's wave E8a.
+    CreatureOrLandCardV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -19010,6 +19014,10 @@ fn library_partition_matching_prefix(
                     LibraryPickFilterV1::NoncreatureNonlandV1 => {
                         !definition.has_type(CardType::Creature)
                             && !definition.has_type(CardType::Land)
+                    }
+                    LibraryPickFilterV1::CreatureOrLandCardV1 => {
+                        definition.has_type(CardType::Creature)
+                            || definition.has_type(CardType::Land)
                     }
                 },
             },

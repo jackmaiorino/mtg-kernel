@@ -172,6 +172,11 @@ pub(super) struct SelectedSpellManaCostsV1 {
     /// creatures the caster controls with total power N or more are tapped
     /// along with the mana payment, and are not mana sources for it.
     pub(super) teamwork: Option<u8>,
+    /// "You can't spend mana to cast this spell" (Hogaak, Arisen
+    /// Necropolis): only its convoke and delve payment pays.
+    pub(super) no_mana: bool,
+    /// The spell's own card, which never pays for itself by delve.
+    pub(super) no_mana_source: Option<ObjectId>,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -434,6 +439,23 @@ impl SelectedSpellManaCostsV1 {
             pips.len(),
             generic,
         ));
+        // Hogaak: creatures and graveyard cards pay; mana never does.
+        if self.no_mana {
+            if !self.convoke {
+                return None;
+            }
+            let mut excluded = reserved.to_vec();
+            excluded.extend(self.no_mana_source);
+            let (convoke_tapped, delve_exiled) =
+                crate::eternal_legacy_e8a_v1::statics::hogaak_payment(
+                    &pips, generic, player, state, &excluded, None,
+                )?;
+            return Some(SpellManaPaymentV1 {
+                mana: crate::mana::PaymentPlan::default(),
+                convoke_tapped,
+                delve_exiled,
+            });
+        }
         let additional_life = self
             .component_groups
             .iter()
@@ -628,6 +650,9 @@ pub(super) fn selected_spell_mana_costs_v1(
         colorless_eldrazi: definition.colors.is_empty()
             && definition.subtypes.contains(&card_def::Subtype::Eldrazi),
         teamwork: None,
+        no_mana: cfg!(feature = "eternal-fixtures")
+            && crate::eternal_legacy_e8a_v1::statics::no_mana_spell(definition.name),
+        no_mana_source: None,
     };
     match method {
         CastMethodV4::Normal => {
@@ -842,6 +867,9 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         state,
     )?;
     selected.tinybones_mana_v72 = super::tinybones_v72::mana_grant(state, source, player);
+    if selected.no_mana {
+        selected.no_mana_source = Some(source);
+    }
     // Bilbo, Thief in the Night: "Spells you cast from anywhere other than
     // your hand cost {1} less to cast."
     #[cfg(feature = "eternal-fixtures")]

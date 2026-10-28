@@ -468,7 +468,7 @@ pub(super) fn ward_cost_for(name: &str) -> &'static str {
 /// Lands whose only printed ability is a static the runtime applies (The
 /// Tabernacle at Pendrell Vale's granted upkeep trigger).
 pub(super) fn static_only_land(name: &str) -> bool {
-    name == "The Tabernacle at Pendrell Vale"
+    name == "The Tabernacle at Pendrell Vale" || super::build_eternal_e8a_v1::static_only_land(name)
 }
 
 /// The tokens keep their printed names.

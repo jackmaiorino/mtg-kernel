@@ -927,7 +927,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 | crate::card_def::ManaSpendRestrictionDef::LegendarySpell
                 | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1
                 | crate::card_def::ManaSpendRestrictionDef::ArtifactSpellV1
-                | crate::card_def::ManaSpendRestrictionDef::ColorlessEldraziSpellV1 => {
+                | crate::card_def::ManaSpendRestrictionDef::ColorlessEldraziSpellV1
+                | crate::card_def::ManaSpendRestrictionDef::NoncreatureSpellV1 => {
                     out.control(ControlF::Conditional)
                 }
             }

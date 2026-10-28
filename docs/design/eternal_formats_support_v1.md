@@ -82,6 +82,7 @@ reserved.
 | E7a | Legacy Sewer-Cam combo, Rakdos Reanimator, The Epic Storm, Stiflenought, Mardu Energy, Affinity Stompy and Lands: Abhorrent Oculus, Animate Dead, Arena of Glory, Archon of Cruelty, Badlands, Blast Zone, Burning Wish, Cabal Therapy, Chromatic Star, Curie, Dark Depths, Dress Down, Echo of Eons, Emry, Exploration, Gaea's Will, Galvanic Relay, Gamble, Ghost Quarter, Goblin Engineer, Goblin Welder, Grafdigger's Cage, Griselbrand, Icetill Explorer, Kappa Cannoneer, Legion Extruder, Life from the Loam, Maze of Ith, Memory Guardian, Mox Diamond, Patchwork Automaton, Phyrexian Dragon Engine, Phyrexian Dreadnought, Pinnacle Emissary, Raucous Theater, Reanimate, Shadowspear, Shadowy Backstreet, Shallow Grave, Silent Clearing, Skateboard, Song of Creation, Sphere of Resistance, Taiga, The Tabernacle at Pendrell Vale, Thespian's Stage, Unmask, Verdant Catacombs, Wooded Foothills, Yavimaya | 50 and two tokens | Legacy 59.6% to 73.4% |
 | E7b | Vintage Dredge, Counter-Vine, Blue Tempo, Lurrus DRS, Doomsday and RUG Control, and the artifact cards of Stiflenought, Sphere Shops and Sultai Psychic Frog: Abrupt Decay, Assassin's Trophy, Avatar of Burgeoning Echoes, Basking Rootwalla, Bayou, Bazaar of Baghdad, Blazing Rootwalla, Carnivorous Cultivator, Chain of Vapor, Collector Ouphe, Commandeer, Creeping Chill, Crucible of Worlds, Dack Fayden, Deathrite Shaman, Demonic Consultation, Golgari Grave-Troll, Golgari Thug, Golos, Grief, Hollow One, Ichorid, Karn, Argent Defender, Kishla Skimmer, Lodestone Golem, Master of Death, Mindbreak Trap, Minsc & Boo, Narcomoeba, Noxious Revival, Phyrexian Revoker, Prized Amalgam, Ragavan, Serum Powder, Shambling Shell, Silversmote Ghoul, Squee, Stinkweed Imp, Stonecoil Serpent, Subtlety, Thorn of Amethyst, Torpor Orb, Uro, Vengevine, Wrenn and Six | 45, two tokens and Enroot | Vintage 80.0% to 95.4% after E7a |
 | E8b | Pauper Ruby Storm, Golgari Gardens, Familiars, Jeskai Ephemerate, Glintblade, Izzet Terror, Burn and Boros Bully (and Izzet Faeries, 4c Synthesizer): Accursed Marauder, Azorius Chancery, Contaminated Landscape, Crimson Fleet Commodore, Crossover Collaboration, Crypt Rats, Defile, Desert, Desperate Ritual, First Day of Class, Geothermal Crevice, Glimpse the Impossible, Glorious Gale, God-Pharaoh's Faithful, Goblin Anarchomancer, Goldmire Bridge, Goliath Paladin, Golgari Rot Farm, Haunted Mire, Heaped Harvest, Hickory Woodlot, Khalni Garden, Lonely Arroyo, Manamorphose, Meeting of Minds, Mirran Banesplitter, Mortuary Mire, Oroku Saki, Orzhov Basilica, Perilous Landscape, Rally the Peasants, Rancid Earth, Reckless Lackey, Ride's End, Sandstone Needle, Sea Gate Oracle, Seething Song, Seize the Storm, Skred, Snow-Covered Mountain, Sunscape Familiar, Thornscape Familiar, Twinned Vision, Volatile Fjord, Witch's Cottage, Wrenn's Resolve | 46 and two tokens | Pauper 80.5% to 90.4% |
+| E8a | Legacy Death and Taxes (Yorion, black-white and mono-white), Hogaak Moonshadow, Jeskai, Azorius and Dimir Control, Saga and Beseech Storm, Reanimator and 8-Cast: Ad Nauseam, Aether Vial, Back to Basics, Bitter Triumph, Cabal Ritual, Canoptek Scarab Swarm, Chandra, Chill of Compliance, Cloak and Dagger, Dark Matter Manipulator, Dryad Arbor, Emperor of Bones, Erode, Flagstones of Trokair, Flickerwisp, Harbinger of the Seas, Hogaak, Infernal Tutor, Lich's Relic, Lion Sash, Loran of the Third Path, Meteor Sword, Mystic Sanctuary, Once Upon a Time, Overlord of the Balemurk, Pre-War Formalwear, Prismatic Vista, Rain of Filth, Recruiter of the Guard, Skyclave Apparition, Snow-Covered Swamp, Solitude, Stitcher's Supplier, Stoneforge Mystic, Supreme Verdict, Sylvan Safekeeper, Teferi, Time Raveler, Thought Monitor, Valgavoth's Lair, White Orchid Phantom, Wight of the Reliquary, Wishclaw Talisman, Yorion | 42 and two tokens | Legacy 73.4% to 83.5% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -327,6 +328,28 @@ New, each built once in the first wave that needs it:
   another permission already lets its owner cast (Snapcaster's flashback, Yawgmoth's
   Will) is cast through that permission instead, and retrace is not combined with a
   second object-choosing cost (an alternative or additional cost that picks objects).
+- E8a, built in `src/eternal_legacy_e8a_v1.rs` (with `statics` and `targets` submodules)
+  and `build_eternal_e8a_v1.rs`: Yorion's companion condition (80 cards) reuses the Lurrus
+  companion action. "Return at the beginning of the next end step" (Flickerwisp, Yorion)
+  and Emperor of Bones' end-step sacrifice wait in module state and are queued as delayed
+  triggers; one created during an end step waits for the next. Hogaak's "you can't spend
+  mana" is a convoke alternative cost whose payment taps creatures for its hybrid pips and
+  generic mana and delves graveyard cards for the rest, plus a graveyard cast permission.
+  Teferi, Time Raveler restricts opponents' cast timing and gives sorcery flash; Harbinger
+  of the Seas reuses the removal timestamp and land subtype hooks and grants {U}; Back to
+  Basics is an untap-step prohibition; Rain of Filth grants its lands a sacrifice mana
+  ability one index past their printed abilities, performed without the stack. Chandra,
+  Chill of Compliance adds restricted mana (`ManaSpendRestrictionDef::NoncreatureSpellV1`),
+  stun counters and a spell-cast emblem. Once Upon a Time adds
+  `AltCostCondition::FirstSpellThisGameV1`. Reconfigure (Lion Sash) is attach and unattach
+  abilities with a type override while attached; Wishclaw Talisman's wish counters live in
+  module state and are removed as the ability is paid. Cloak and Dagger's target pair (an
+  opponent, then up to one of their creatures) is a per-slot target shape, and its exile
+  lasts until it leaves the battlefield; Skyclave Apparition's Illusion takes its power and
+  toughness from the exiled card's mana value. Resolution choices (Infernal Tutor,
+  Stoneforge Mystic, Recruiter of the Guard, Aether Vial, Yorion, Emperor of Bones, Erode,
+  Overlord of the Balemurk, Wishclaw Talisman) use `E3ChoiceKindV1::E8aV1`. Valgavoth's
+  Lair's color is an entry-choice decision.
 
 ## Card contract and verification
 

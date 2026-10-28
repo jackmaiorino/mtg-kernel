@@ -309,6 +309,10 @@ pub fn companion_condition_met(companion: u16, deck: &[u16]) -> Option<bool> {
                 .get(usize::from(id))
                 .is_some_and(|card| !is_permanent_card(card) || card.mana_value <= 2)
         })),
+        // Yorion, Sky Nomad (wave E8a): "Your starting deck contains at
+        // least twenty cards more than the minimum deck size", sixty for
+        // these constructed formats.
+        "Yorion, Sky Nomad" => Some(deck.len() >= 80),
         _ => None,
     }
 }

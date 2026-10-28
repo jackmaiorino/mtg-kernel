@@ -194,6 +194,26 @@ pub(super) fn payment(
         return None;
     }
     let excluded = chosen.iter().map(|b| b.object).collect::<Vec<_>>();
+    // Hogaak, Arisen Necropolis (eternal wave E8a): the chosen creatures
+    // pay, delve pays the generic rest, and no mana is spent.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_legacy_e8a_v1::statics::no_mana_spell(
+        card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize].name,
+    ) {
+        let (convoke_tapped, delve_exiled) = crate::eternal_legacy_e8a_v1::statics::hogaak_payment(
+            &pips,
+            generic,
+            p.controller,
+            state,
+            &[p.spell],
+            Some(excluded.as_slice()),
+        )?;
+        return Some(SpellManaPaymentV1 {
+            mana: mana::PaymentPlan::default(),
+            convoke_tapped,
+            delve_exiled,
+        });
+    }
     // Recursive payment search carries the chosen creatures and remaining colored pips.
     fn assign(
         state: &GameState,
