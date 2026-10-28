@@ -186,8 +186,15 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
                 family = dict(family, pack=write_json(Path(family["pack"]["path"]).with_name(
                     f"pack-plan-bounded-{limit}.json"), dict(plan_, base_request=base_pin,
                                                              timeout_seconds=min(plan_["timeout_seconds"], limit))))
-        done = subprocess.run([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
-                               family["pack"]["path"]], capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
+        # One absolute deadline for the whole pack (its launch retries and barrier waits included): ending the
+        # tool fails its waiting trials, and a running trial's own timeout is already inside the claim time.
+        deadline = None if left is None else max(1, math.floor(left - driver.base.LEASE_MARGIN_SECONDS))
+        try:
+            done = subprocess.run([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
+                                   family["pack"]["path"]], capture_output=True, text=True,
+                                   cwd=str(TOOLS.parents[1]), timeout=deadline)
+        except subprocess.TimeoutExpired:
+            raise SystemExit("study_wall_cap: the pack qualification reached the study's claim time") from None
         (pack_index.parent.parent / "pack.stdout").write_text(done.stdout, encoding="utf-8")
         if done.returncode != 0:
             raise RuntimeError("pack qualification failed: " + done.stderr.strip()[-2000:])

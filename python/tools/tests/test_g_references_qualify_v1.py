@@ -165,6 +165,13 @@ class QualifyTests(unittest.TestCase):
         with patch.object(qualify.subprocess, "run", side_effect=fake_run):
             qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         self.assertEqual(calls[0]["timeout_seconds"], (1800 - 600) // 9)
+        (pack_root / "pack.json").unlink()
+
+        def slow(args, **kwargs):  # busy retries outlasting the claim time end the whole pack
+            self.assertEqual(kwargs["timeout"], 1200)
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        with patch.object(qualify.subprocess, "run", side_effect=slow), self.assertRaises(SystemExit):
+            qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         self.assertLessEqual(json.loads(Path(calls[0]["base_request"]["path"]).read_text())["wall_seconds"], 133)
 
     def test_refuses_outside_a_reservation(self):
