@@ -686,11 +686,17 @@ pub(super) fn land_input(
     if state.objects.get(id).zone != Zone::Graveyard {
         return Ok(None);
     }
-    let p = state
-        .engine
-        .muldrotha_v1
-        .0
-        .ok_or("graveyard land lost original Muldrotha choice")?;
+    let Some(p) = state.engine.muldrotha_v1.0 else {
+        // Outside the FDN catalog build other permissions (Crucible of
+        // Worlds, Gaea's Will) play lands from graveyards too.
+        if cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) {
+            return Err("graveyard land lost original Muldrotha choice".into());
+        }
+        return Ok(None);
+    };
     validate_choice(state, p)?;
     let o = options(state, p.options_history_index)?;
     if !o.land || o.card.object != id || o.controller != player {
