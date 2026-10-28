@@ -21,7 +21,7 @@
 //! - "becomes a copy" of a permanent already on the battlefield (Thespian's
 //!   Stage keeping its own ability, Curie keeping its trigger);
 //! - Animate Dead's return and attachment, Reanimate, Shallow Grave;
-//! - draw-step dredge (Life from the Loam), suspend (Gaea's Will), manifest
+//! - suspend (Gaea's Will), manifest
 //!   dread (Abhorrent Oculus), improvise (Kappa Cannoneer, through the
 //!   convoke payment), exert (Arena of Glory) and "creatures lose all
 //!   abilities" (Dress Down).
@@ -111,9 +111,6 @@ pub struct E7aStateV1 {
     /// Mox Diamonds that entered and still owe their discard choice.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mox_entering: Vec<ObjectLinkV4>,
-    /// The player whose draw-step draw waits for their dredge choice.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dredge_draw: Option<PlayerId>,
 }
 
 impl E7aStateV1 {
@@ -387,7 +384,6 @@ const GRAFDIGGERS_CAGE: &str = "Grafdigger's Cage";
 const ICETILL_EXPLORER: &str = "Icetill Explorer";
 const KAPPA_CANNONEER: &str = "Kappa Cannoneer";
 const LEGION_EXTRUDER: &str = "Legion Extruder";
-const LIFE_FROM_THE_LOAM: &str = "Life from the Loam";
 const MOX_DIAMOND: &str = "Mox Diamond";
 const PATCHWORK_AUTOMATON: &str = "Patchwork Automaton";
 const PHYREXIAN_DRAGON_ENGINE: &str = "Phyrexian Dragon Engine";
@@ -396,7 +392,6 @@ const PINNACLE_EMISSARY: &str = "Pinnacle Emissary";
 const SHALLOW_GRAVE: &str = "Shallow Grave";
 const SKATEBOARD: &str = "Skateboard";
 const SONG_OF_CREATION: &str = "Song of Creation";
-const SPHERE_OF_RESISTANCE: &str = "Sphere of Resistance";
 const TABERNACLE: &str = "The Tabernacle at Pendrell Vale";
 const THESPIANS_STAGE: &str = "Thespian's Stage";
 const YAVIMAYA: &str = "Yavimaya, Cradle of Growth";
@@ -841,7 +836,7 @@ pub fn gamble() -> EffectOp {
 }
 
 /// Life from the Loam: "Return up to three target land cards from your
-/// graveyard to your hand." Dredge is the draw-step hook.
+/// graveyard to your hand." Its dredge 3 is `eternal_vintage_e7b_v1::dredge`.
 pub fn life_from_the_loam() -> EffectOp {
     EffectOp::MoveAllTargets {
         to_zone: Zone::Hand,
@@ -2659,12 +2654,6 @@ pub(crate) fn extra_land_candidates(state: &GameState, player: PlayerId) -> Vec<
         .collect()
 }
 
-/// Sphere of Resistance: "Spells cost {1} more to cast." The generic
-/// increase every spell gets.
-pub(crate) fn spell_tax(state: &GameState) -> u32 {
-    u32::try_from(active_permanents(state, SPHERE_OF_RESISTANCE, None).count()).unwrap_or(u32::MAX)
-}
-
 /// Grafdigger's Cage: "Players can't cast spells from graveyards or
 /// libraries." Gaea's Will has no mana cost, so it is cast only without
 /// paying one: from exile (suspend) or from a hand under a free-cast
@@ -3118,13 +3107,6 @@ pub(crate) fn retained_stage_ability_on_stack(
 /// it enters: option 0 puts it into the graveyard, option N discards its
 /// controller's Nth land card in hand.
 pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::Decision> {
-    if let Some(player) = read_state(state).and_then(|e7a| e7a.dredge_draw) {
-        return Some(crate::engine::Decision::ChooseEffectOption {
-            player,
-            source: dredge_cards(state, player).first().copied()?,
-            option_count: u16::try_from(dredge_cards(state, player).len() + 1).ok()?,
-        });
-    }
     let mox = live_mox_entry(state)?;
     let controller = state.objects.get(mox.object).controller;
     let lands = hand_land_cards(state, controller);
@@ -3152,13 +3134,9 @@ fn hand_land_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
         .collect()
 }
 
-/// Answers the pending Mox Diamond or dredge choice. `Ok(false)` when none
-/// is pending.
+/// Answers the pending Mox Diamond choice. `Ok(false)` when none is
+/// pending.
 pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<bool, String> {
-    if let Some(player) = read_state(state).and_then(|e7a| e7a.dredge_draw) {
-        answer_dredge(state, player, option)?;
-        return Ok(true);
-    }
     let Some(mox) = live_mox_entry(state) else {
         return Ok(false);
     };
@@ -3180,62 +3158,6 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         }
     }
     Ok(true)
-}
-
-// ---- Hooks: dredge ------------------------------------------------------------------
-
-/// The dredge cards in `player`'s graveyard they could dredge now: Life
-/// from the Loam ("Dredge 3") while their library has at least three cards.
-fn dredge_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
-    if state.players[player.index()].library.len() < 3 {
-        return Vec::new();
-    }
-    graveyard_cards(state, player)
-        .into_iter()
-        .filter(|&card| definition_name(state, card) == Some(LIFE_FROM_THE_LOAM))
-        .collect()
-}
-
-/// The draw step's draw: whether `player` may dredge instead, so the draw
-/// waits for their choice (option 0 draws, option N dredges their Nth
-/// dredge card).
-pub(crate) fn defer_draw_step_draw(state: &mut GameState, player: PlayerId) -> bool {
-    if dredge_cards(state, player).is_empty() {
-        return false;
-    }
-    e7a_state(state).dredge_draw = Some(player);
-    true
-}
-
-/// Dredge 3 (702.52a): "If you would draw a card, you may mill three cards
-/// instead. If you do, return this card from your graveyard to your hand."
-fn answer_dredge(state: &mut GameState, player: PlayerId, option: u16) -> Result<(), String> {
-    let cards = dredge_cards(state, player);
-    e7a_state(state).dredge_draw = None;
-    match usize::from(option) {
-        0 => {
-            event::propose_and_commit(state, ProposedEvent::draw(player));
-            crate::eternal_cards_v1::note_draw_step_draw(state, player);
-        }
-        index => {
-            let card = *cards
-                .get(index - 1)
-                .ok_or("the dredge option is out of range")?;
-            // Mill three: the top three cards go to the graveyard together,
-            // in library order.
-            let milled = state.players[player.index()]
-                .library
-                .iter()
-                .take(3)
-                .map(|&top| ProposedEvent::zone_change(top, Zone::Graveyard))
-                .collect::<Vec<_>>();
-            event::propose_and_commit_batch(state, milled);
-            if state.objects.get(card).zone == Zone::Graveyard {
-                event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Hand));
-            }
-        }
-    }
-    Ok(())
 }
 
 // ---- Static helpers read by the catalog's target filters -----------------------------

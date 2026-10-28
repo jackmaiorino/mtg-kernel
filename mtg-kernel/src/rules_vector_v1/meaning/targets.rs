@@ -726,6 +726,14 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::CreatureCardInAGraveyardV1 => creature(),
         S::UpToThreeLandCardsInOwnGraveyardV1 => typed(CardType::Land),
         S::ArtifactThenArtifactCardInItsControllersGraveyardV1 => typed(CardType::Artifact),
+        S::NonlandPermanentManaValueAtMostV1(_) => ObjF::NonlandPermanent,
+        S::OpponentPermanentV1 => ObjF::Permanent,
+        S::AnyNumberOfSpellsV1 | S::UpToOneCreatureOrPlaneswalkerSpellV1 => ObjF::Spell,
+        S::LandCardInAGraveyardV1
+        | S::UpToOneLandCardInOwnGraveyardV1
+        | S::LandCardInOwnGraveyardV1 => typed(CardType::Land),
+        S::InstantOrSorceryCardInAGraveyardV1 => ObjF::AnyCard,
+        S::UpToOneCreatureWithTrampleOrHasteV1 => creature(),
     }
 }
 
@@ -752,7 +760,17 @@ pub(super) fn standard_target_origin(
         | S::OpponentArtifactOrCreature
         | S::TappedOpponentCreature
         | S::OpponentSpellOrNonlandPermanentV1
-        | S::UpToOneOpponentCreatureV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        | S::UpToOneOpponentCreatureV1
+        | S::OpponentPermanentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        S::LandCardInAGraveyardV1 | S::InstantOrSorceryCardInAGraveyardV1 => {
+            (Some(ZoneF::Graveyard), None)
+        }
+        S::UpToOneLandCardInOwnGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
+            (Some(ZoneF::Graveyard), Some(RelF::You))
+        }
+        S::AnyNumberOfSpellsV1 | S::UpToOneCreatureOrPlaneswalkerSpellV1 => {
+            (Some(ZoneF::Stack), None)
+        }
         S::InstantOrSorcerySpellV1
         | S::SpellWithSingleTargetV1
         | S::TriggeredAbilityOrColorlessSpellV1 => (Some(ZoneF::Stack), None),
@@ -775,6 +793,8 @@ pub(super) fn standard_target_origin(
         | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
         | S::ForestV1
         | S::ArtifactThenArtifactCardInItsControllersGraveyardV1
+        | S::NonlandPermanentManaValueAtMostV1(_)
+        | S::UpToOneCreatureWithTrampleOrHasteV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -995,6 +1015,44 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Artifact), None, ZoneF::Graveyard);
             out.target(TargetAtom::MultipleTargets);
             // "That player's graveyard" has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::NonlandPermanentManaValueAtMostV1(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: ObjF::NonlandPermanent,
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+        }
+        S::OpponentPermanentV1 | S::LandCardInAGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
+            object(out, standard_target_obj(filter), relation, zone);
+        }
+        S::InstantOrSorceryCardInAGraveyardV1 => {
+            object(out, typed(CardType::Instant), relation, zone);
+            object(out, typed(CardType::Sorcery), relation, zone);
+        }
+        S::AnyNumberOfSpellsV1 => {
+            object(out, ObjF::Spell, relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+        }
+        S::UpToOneCreatureOrPlaneswalkerSpellV1 => {
+            object(out, ObjF::Spell, relation, zone);
+            out.target(TargetAtom::UpTo);
+            // The creature or planeswalker spell refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOneLandCardInOwnGraveyardV1 => {
+            object(out, typed(CardType::Land), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::UpToOneCreatureWithTrampleOrHasteV1 => {
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::UpTo);
+            // The trample or haste refinement has no facet.
             out.atoms.push(Atom::Opaque);
         }
     }

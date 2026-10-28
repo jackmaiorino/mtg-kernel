@@ -404,6 +404,17 @@ pub enum Subtype {
     /// Phyrexian Dreadnought).
     Eye,
     Dreadnought,
+    /// Appended for the eternal catalog's wave E7b: planeswalker types (Dack
+    /// Fayden, Minsc & Boo, Wrenn and Six), creature types (Grief and
+    /// Subtlety's Incarnation, Stonecoil Serpent, the Boo token's Hamster)
+    /// and Mindbreak Trap's spell type.
+    Dack,
+    Incarnation,
+    Trap,
+    Minsc,
+    Snake,
+    Wrenn,
+    Hamster,
 }
 
 impl Subtype {
@@ -744,6 +755,12 @@ impl Subtype {
         Subtype::Eye,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Dreadnought,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Incarnation,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Snake,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Hamster,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -853,6 +870,9 @@ impl Subtype {
                     | Subtype::Imp
                     | Subtype::Eye
                     | Subtype::Dreadnought
+                    | Subtype::Incarnation
+                    | Subtype::Snake
+                    | Subtype::Hamster
             )
         {
             return true;
@@ -1609,6 +1629,22 @@ pub enum CostComponent {
         count: u8,
         filter: PermanentFilterDef,
     },
+    /// "Exile two blue cards from your hand" (Commandeer): `count` distinct
+    /// cards of `color` from the payer's hand, other than the spell itself,
+    /// chosen privately one at a time through `Decision::ChooseCostTargets`.
+    /// Appended for the eternal catalog.
+    ExileCardsFromHandWithColorV1 {
+        count: u8,
+        color: ManaColor,
+    },
+    /// "Remove a +1/+1 counter from this creature" (Golgari Grave-Troll).
+    /// Appended for the eternal catalog.
+    RemovePlusOneCounterFromSelfV1,
+    /// "Discard a land card" (retrace, which Wrenn and Six's emblem grants):
+    /// `count` distinct land cards from the payer's hand, chosen privately
+    /// one at a time through `Decision::ChooseCostTargets`. Appended for the
+    /// eternal catalog.
+    DiscardLandCardsV1(u8),
 }
 
 impl CostComponent {
@@ -1745,6 +1781,14 @@ pub enum AltCostCondition {
     /// (Lunarch Veteran, `eternal_pauper_e6b_v1`). Appended for the eternal
     /// catalog.
     DisturbV1,
+    /// "If an opponent cast three or more spells this turn" (Mindbreak
+    /// Trap). Appended for the eternal catalog.
+    OpponentCastThreeSpellsThisTurnV1,
+    /// Dash (702.109): cast from hand for this cost; the permanent gains
+    /// haste and returns to its owner's hand at the beginning of the next
+    /// end step (Ragavan, `eternal_vintage_e7b_v1`). Appended for the
+    /// eternal catalog.
+    DashV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -2131,6 +2175,9 @@ pub enum DynamicCountDef {
     /// Negative powers contribute before the aggregate is floored at zero.
     ControllerCreatureTotalPower,
     CreaturesAttackedThisTurn,
+    /// Cards the caster cycled or discarded this turn (Hollow One).
+    /// Appended for the eternal catalog.
+    CardsCycledOrDiscardedThisTurnV1,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -3207,7 +3254,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x1b16_1470_5cf6_4b64;
+        const EXPECTED_ETERNAL: u64 = 0x4903_f6ed_284c_e60b;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

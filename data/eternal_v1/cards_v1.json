@@ -11338,6 +11338,1600 @@
     "block_restriction"
    ],
    "is_token": true
+  },
+  {
+   "name": "Abrupt Decay",
+   "engine_capability": "full",
+   "mana_cost": "{B}{G}",
+   "mana_value": 2,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-lurrus-drs",
+    "vintage-sultai-psychic-frog",
+    "vintage-fastbond-lands",
+    "legacy-beseech-storm",
+    "legacy-cradle-control",
+    "legacy-sultai-depths",
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "cant_be_countered",
+    "destroy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AbruptDecay.java"
+  },
+  {
+   "name": "Assassin's Trophy",
+   "engine_capability": "full",
+   "mana_cost": "{B}{G}",
+   "mana_value": 2,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-nic-fit",
+    "vintage-lurrus-drs",
+    "legacy-elves"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy",
+    "opponent_library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AssassinsTrophy.java"
+  },
+  {
+   "name": "Avatar of Burgeoning Echoes",
+   "engine_capability": "full",
+   "mana_cost": "{G}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Avatar"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-bant-control",
+    "vintage-blue-tempo",
+    "vintage-rug-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "landfall",
+    "empower_jace",
+    "planeswalker_token",
+    "granted_loyalty_ability"
+   ]
+  },
+  {
+   "name": "Basking Rootwalla",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Lizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "madness",
+    "activated_ability",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BaskingRootwalla.java"
+  },
+  {
+   "name": "Bayou",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Swamp",
+    "Forest"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B",
+    "G"
+   ],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-elves",
+    "legacy-beseech-storm",
+    "legacy-jund",
+    "legacy-cradle-control",
+    "legacy-nic-fit",
+    "legacy-sultai-depths",
+    "legacy-loam-pox",
+    "vintage-lurrus-drs",
+    "vintage-sultai-psychic-frog",
+    "vintage-fastbond-lands",
+    "vintage-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/Bayou.java"
+  },
+  {
+   "name": "Bazaar of Baghdad",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge",
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "draw_card",
+    "discard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BazaarOfBaghdad.java"
+  },
+  {
+   "name": "Blazing Rootwalla",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Lizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "madness",
+    "activated_ability",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BlazingRootwalla.java"
+  },
+  {
+   "name": "Carnivorous Cultivator",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Warlock"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-selesnya-depths",
+    "legacy-loam-pox",
+    "legacy-bant-control",
+    "vintage-red-prison",
+    "vintage-sultai-psychic-frog",
+    "vintage-fastbond-lands"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "deathtouch",
+    "prepared",
+    "combat_damage_trigger",
+    "return_from_graveyard"
+   ]
+  },
+  {
+   "name": "Chain of Vapor",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-doomsday",
+    "vintage-lurrus-vault-key",
+    "legacy-led-dredge",
+    "legacy-beseech-storm",
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "bounce",
+    "sacrifice_land",
+    "spell_copy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ChainOfVapor.java"
+  },
+  {
+   "name": "Collector Ouphe",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Ouphe"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jund",
+    "legacy-cradle-control",
+    "vintage-lurrus-drs",
+    "vintage-red-prison",
+    "vintage-sultai-psychic-frog",
+    "vintage-rug-control",
+    "legacy-hogaak-moonshadow",
+    "legacy-selesnya-depths",
+    "legacy-elves",
+    "vintage-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "static_ability",
+    "ability_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CollectorOuphe.java"
+  },
+  {
+   "name": "Commandeer",
+   "engine_capability": "full",
+   "mana_cost": "{5}{U}{U}",
+   "mana_value": 7,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine",
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "alt_cost",
+    "exile_from_hand_cost",
+    "gain_control_of_spell",
+    "retarget"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Commandeer.java"
+  },
+  {
+   "name": "Creeping Chill",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "damage",
+    "life_gain",
+    "milled_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CreepingChill.java"
+  },
+  {
+   "name": "Crucible of Worlds",
+   "engine_capability": "full",
+   "mana_cost": "{3}",
+   "mana_value": 3,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-stiflenought",
+    "vintage-sphere-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "static_ability",
+    "play_lands_from_graveyard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CrucibleOfWorlds.java"
+  },
+  {
+   "name": "Dack Fayden",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{R}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Dack"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-rug-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "gain_control",
+    "emblem"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DackFayden.java",
+   "starting_loyalty": 3
+  },
+  {
+   "name": "Deathrite Shaman",
+   "engine_capability": "full",
+   "mana_cost": "{B/G}",
+   "mana_value": 1,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Shaman"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-lurrus-drs",
+    "vintage-fastbond-lands",
+    "vintage-abzan-initiative",
+    "vintage-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "graveyard_exile",
+    "any_color_mana",
+    "drain",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DeathriteShaman.java"
+  },
+  {
+   "name": "Demonic Consultation",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-doomsday",
+    "vintage-grixis-lurrus-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "name_a_card",
+    "exile",
+    "reveal_until"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DemonicConsultation.java"
+  },
+  {
+   "name": "Golgari Grave-Troll",
+   "engine_capability": "full",
+   "mana_cost": "{4}{G}",
+   "mana_value": 5,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Troll",
+    "Skeleton"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-led-dredge",
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "dredge",
+    "enters_with_counters",
+    "regenerate"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GolgariGraveTroll.java"
+  },
+  {
+   "name": "Golgari Thug",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-led-dredge",
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "dredge",
+    "dies_trigger",
+    "library_top"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GolgariThug.java"
+  },
+  {
+   "name": "Golos, Tireless Pilgrim",
+   "engine_capability": "full",
+   "mana_cost": "{5}",
+   "mana_value": 5,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Scout"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 3,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-sphere-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "land_search",
+    "activated_ability",
+    "exile_play_free"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GolosTirelessPilgrim.java"
+  },
+  {
+   "name": "Grief",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental",
+    "Incarnation"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge",
+    "vintage-scam",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "menace",
+    "evoke",
+    "etb_trigger",
+    "discard",
+    "exile_from_hand_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Grief.java"
+  },
+  {
+   "name": "Hollow One",
+   "engine_capability": "full",
+   "mana_cost": "{5}",
+   "mana_value": 5,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Golem"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge",
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_reduction",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HollowOne.java"
+  },
+  {
+   "name": "Ichorid",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Horror"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "haste",
+    "end_step_sacrifice",
+    "graveyard_upkeep_trigger",
+    "return_from_graveyard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/Ichorid.java"
+  },
+  {
+   "name": "Karn, Argent Defender",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Golem"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-stiflenought"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "static_ability",
+    "trigger_suppression"
+   ]
+  },
+  {
+   "name": "Kishla Skimmer",
+   "engine_capability": "full",
+   "mana_cost": "{G}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird",
+    "Scout"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-lurrus-drs"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "graveyard_leave_trigger",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KishlaSkimmer.java"
+  },
+  {
+   "name": "Lodestone Golem",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Golem"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-stiflenought",
+    "vintage-sphere-shops",
+    "vintage-other-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "static_ability",
+    "cost_increase"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LodestoneGolem.java"
+  },
+  {
+   "name": "Master of Death",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{B}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "surveil",
+    "graveyard_upkeep_trigger",
+    "return_to_hand"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MasterOfDeath.java"
+  },
+  {
+   "name": "Mindbreak Trap",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Trap"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine",
+    "vintage-blue-tempo",
+    "vintage-doomsday",
+    "vintage-rug-control",
+    "legacy-boros-energy",
+    "legacy-sneak-and-show",
+    "legacy-selesnya-depths",
+    "legacy-omni-tell",
+    "legacy-mardu-energy",
+    "legacy-creative-technique",
+    "legacy-goblins",
+    "legacy-necrodominance-combo",
+    "vintage-lurrus-po",
+    "vintage-raker-shops",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-paradoxical-outcome",
+    "vintage-jeskai-lurrus",
+    "vintage-stiflenought",
+    "vintage-sphere-shops",
+    "vintage-scam",
+    "vintage-sultai-psychic-frog",
+    "vintage-eldrazi",
+    "vintage-lurrus-vault-key"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "alt_cost",
+    "exile_spells"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MindbreakTrap.java"
+  },
+  {
+   "name": "Minsc & Boo, Timeless Heroes",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}{G}",
+   "mana_value": 4,
+   "colors": [
+    "R",
+    "G"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Minsc"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-blue-tempo",
+    "vintage-goblins",
+    "legacy-naya-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "token_creation",
+    "reflexive_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MinscBooTimelessHeroes.java",
+   "starting_loyalty": 3
+  },
+  {
+   "name": "Narcomoeba",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Illusion"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-led-dredge",
+    "legacy-cephalid-breakfast",
+    "vintage-dredge",
+    "vintage-oops-all-spells"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "milled_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/Narcomoeba.java"
+  },
+  {
+   "name": "Noxious Revival",
+   "engine_capability": "full",
+   "mana_cost": "{G/P}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "phyrexian_mana",
+    "library_top"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NoxiousRevival.java"
+  },
+  {
+   "name": "Phyrexian Revoker",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Horror"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-stiflenought"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "name_a_card",
+    "ability_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianRevoker.java"
+  },
+  {
+   "name": "Prized Amalgam",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{B}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "graveyard_trigger",
+    "delayed_trigger",
+    "return_from_graveyard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PrizedAmalgam.java"
+  },
+  {
+   "name": "Ragavan, Nimble Pilferer",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Monkey",
+    "Pirate"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-blue-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "dash",
+    "combat_damage_trigger",
+    "token_creation",
+    "exile_cast"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RagavanNimblePilferer.java"
+  },
+  {
+   "name": "Serum Powder",
+   "engine_capability": "full",
+   "mana_cost": "{3}",
+   "mana_value": 3,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "vintage-dredge",
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "mulligan"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SerumPowder.java"
+  },
+  {
+   "name": "Shambling Shell",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{G}",
+   "mana_value": 3,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Plant",
+    "Zombie"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "dredge",
+    "sacrifice_cost",
+    "counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/ShamblingShell.java"
+  },
+  {
+   "name": "Silversmote Ghoul",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Vampire"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "graveyard_end_step_trigger",
+    "return_from_graveyard",
+    "sacrifice_cost",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SilversmoteGhoul.java"
+  },
+  {
+   "name": "Squee, Goblin Nabob",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "graveyard_upkeep_trigger",
+    "return_to_hand"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SqueeGoblinNabob.java"
+  },
+  {
+   "name": "Stinkweed Imp",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Imp"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dredge",
+    "legacy-led-dredge",
+    "vintage-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "dredge",
+    "combat_damage_trigger",
+    "destroy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StinkweedImp.java"
+  },
+  {
+   "name": "Stonecoil Serpent",
+   "engine_capability": "full",
+   "mana_cost": "{X}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Snake"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-stiflenought",
+    "vintage-sphere-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "reach",
+    "trample",
+    "protection_from_multicolored",
+    "enters_with_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StonecoilSerpent.java"
+  },
+  {
+   "name": "Subtlety",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental",
+    "Incarnation"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "flying",
+    "evoke",
+    "etb_trigger",
+    "spell_to_library",
+    "exile_from_hand_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Subtlety.java"
+  },
+  {
+   "name": "Thorn of Amethyst",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-stiflenought",
+    "vintage-sphere-shops",
+    "vintage-red-prison",
+    "vintage-eldrazi",
+    "vintage-other-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "static_ability",
+    "cost_increase"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThornOfAmethyst.java"
+  },
+  {
+   "name": "Torpor Orb",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-stiflenought",
+    "legacy-red-stompy",
+    "legacy-loam-pox",
+    "legacy-mono-black-pox"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "static_ability",
+    "trigger_suppression"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TorporOrb.java"
+  },
+  {
+   "name": "Uro, Titan of Nature's Wrath",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elder",
+    "Giant"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 6,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-bant-control",
+    "vintage-rug-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "attack_trigger",
+    "life_gain",
+    "draw_card",
+    "put_land",
+    "escape"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UroTitanOfNaturesWrath.java"
+  },
+  {
+   "name": "Vengevine",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "haste",
+    "graveyard_cast_trigger",
+    "return_from_graveyard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/Vengevine.java"
+  },
+  {
+   "name": "Wrenn and Six",
+   "engine_capability": "full",
+   "mana_cost": "{R}{G}",
+   "mana_value": 2,
+   "colors": [
+    "R",
+    "G"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Wrenn"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-blue-tempo",
+    "vintage-rug-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "return_to_hand",
+    "damage",
+    "emblem",
+    "retrace"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WrennAndSix.java",
+   "starting_loyalty": 3
+  },
+  {
+   "name": "Boo Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Hamster"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "trample",
+    "haste"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/BooToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Jace Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Jace"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "token_creation",
+    "planeswalker",
+    "loyalty_abilities",
+    "surveil",
+    "draw_card"
+   ],
+   "is_token": true,
+   "starting_loyalty": 0
+  },
+  {
+   "name": "Enroot",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "prepare_spell",
+    "library_search"
+   ]
   }
  ]
 }
