@@ -256,7 +256,7 @@ pub(super) fn flashback_for(name: &str) -> String {
 pub(super) fn madness_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Kitchen Imp" | "Alms of the Vein" => Some("{B}"),
-        _ => None,
+        _ => super::build_eternal_e7b_v1::madness_cost_for(name),
     }
 }
 
@@ -267,7 +267,7 @@ pub(super) fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
         "Salt Road Packbeast" => "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Creature]) })",
         "Search Party Captain" => "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::CreaturesAttackedThisTurn })",
-        _ => "None",
+        _ => super::build_eternal_e7b_v1::generic_cost_reduction_for(name),
     }
 }
 

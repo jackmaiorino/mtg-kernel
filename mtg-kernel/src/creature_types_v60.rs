@@ -597,6 +597,13 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Cartouche => None,
         Subtype::Eye => Some(CreatureTypeV60::Eye),
         Subtype::Dreadnought => Some(CreatureTypeV60::Dreadnought),
+        Subtype::Dack => None,
+        Subtype::Incarnation => Some(CreatureTypeV60::Incarnation),
+        Subtype::Trap => None,
+        Subtype::Minsc => None,
+        Subtype::Snake => Some(CreatureTypeV60::Snake),
+        Subtype::Wrenn => None,
+        Subtype::Hamster => Some(CreatureTypeV60::Hamster),
     }
 }
 
