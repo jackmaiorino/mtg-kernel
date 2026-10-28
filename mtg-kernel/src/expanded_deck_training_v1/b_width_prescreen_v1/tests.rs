@@ -1361,9 +1361,10 @@ fn a_cross_chain_entry_refusal_is_recorded_and_never_rerun() {
     });
     let (loaded, root) = (&fixture.loaded, fixture.root.as_path());
     let chains: Vec<&PrescreenChainV1> = loaded.config.chains.iter().collect();
-    let error = fit_stage_v1(loaded, root, &chains, 3, 1, FitSchedulerV1::CrossChain).unwrap_err();
+    // One worker, so the queue's first fit (chain 1's seed 1 w128) is the one
+    // that refuses.
+    let error = fit_stage_v1(loaded, root, &chains, 1, 1, FitSchedulerV1::CrossChain).unwrap_err();
     assert!(error.contains("fit-entry refusal recorded"), "{error}");
-    // The queue's first fit is chain 1's seed 1 w128.
     let refusal = refusal_path_v1(root, 1, 1, "w128");
     let record: Value = serde_json::from_slice(&read_v1(&refusal).unwrap()).unwrap();
     assert_eq!(record["schema"], json!(REFUSAL_SCHEMA_V1));
@@ -1371,7 +1372,74 @@ fn a_cross_chain_entry_refusal_is_recorded_and_never_rerun() {
         .as_str()
         .unwrap()
         .contains("BatchLargerThanFitSet"));
-    let again = fit_stage_v1(loaded, root, &chains, 3, 1, FitSchedulerV1::CrossChain).unwrap_err();
+    let again = fit_stage_v1(loaded, root, &chains, 1, 1, FitSchedulerV1::CrossChain).unwrap_err();
     assert!(again.contains("records a fit-entry refusal"), "{again}");
     assert!(!fit_path_v1(root, 1, 1, "w128").exists());
+}
+
+/// Runs `work` on its own thread and fails the test if it takes longer than
+/// `seconds` (a hung queue).
+fn within_v1<T: Send + 'static>(seconds: u64, work: impl FnOnce() -> T + Send + 'static) -> T {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(seconds))
+        .expect("the fit stage did not return: the queue hung")
+}
+
+/// A stopped queue wakes every waiting fit and the stage returns an error
+/// promptly: a worker that cannot be started while others wait for a chain
+/// slot, and a fit that refuses while others wait. The stage then resumes
+/// normally.
+#[test]
+fn a_stopped_cross_chain_queue_wakes_its_waiting_fits() {
+    let fixture = prepared_two_chain_root_v1("queue-stop", |_| {});
+    let (loaded, root) = (fixture.loaded.clone(), fixture.root.clone());
+    // One resident chain: while worker 0 loads chain 1, workers 1 and 2 wait;
+    // worker 3 cannot be started.
+    let error = within_v1(300, move || {
+        let chains: Vec<&PrescreenChainV1> = loaded.config.chains.iter().collect();
+        fit_cross_chain_queue_v1(&loaded, &root, &chains, 4, 1, 1, Some(3)).unwrap_err()
+    });
+    assert!(error.contains("could not be started"), "{error}");
+    let (loaded, root) = (&fixture.loaded, fixture.root.as_path());
+    let chains: Vec<&PrescreenChainV1> = loaded.config.chains.iter().collect();
+    fit_cross_chain_stage_v1(loaded, root, &chains, 4, 1, 1).unwrap();
+    for &(chain, seed, arm) in &all_fits_v1(loaded) {
+        assert!(fit_path_v1(root, chain, seed, arm).exists());
+    }
+
+    let refusing = prepared_two_chain_root_v1("queue-stop-refusal", |config| {
+        config.fitting.batch_groups = 1_000_000;
+        config.fitting.heldout_curve_points = 1;
+    });
+    let (loaded, root) = (refusing.loaded.clone(), refusing.root.clone());
+    let error = within_v1(300, move || {
+        let chains: Vec<&PrescreenChainV1> = loaded.config.chains.iter().collect();
+        fit_cross_chain_queue_v1(&loaded, &root, &chains, 3, 1, 1, None).unwrap_err()
+    });
+    assert!(error.contains("fit-entry refusal recorded"), "{error}");
+}
+
+/// A chain is selected at most once: the command line refuses a repeated
+/// chain for every stage, and the queue fits a repeated chain once.
+#[test]
+fn a_repeated_chain_is_refused_and_never_queued_twice() {
+    let fixture = prepared_two_chain_root_v1("queue-repeat", |_| {});
+    let (loaded, root) = (&fixture.loaded, fixture.root.as_path());
+    let error = select_chains_v1(&loaded.config, Some(&[1u32, 2, 1][..])).unwrap_err();
+    assert!(error.contains("chain 1 more than once"), "{error}");
+    assert_eq!(
+        select_chains_v1(&loaded.config, Some(&[2u32, 1][..]))
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(select_chains_v1(&loaded.config, None).unwrap().len(), 2);
+    let first = &loaded.config.chains[0];
+    let fitted = fit_cross_chain_stage_v1(loaded, root, &[first, first], 3, 1, 3).unwrap();
+    assert_eq!(fitted["fits_written"], json!(6));
+    assert_eq!(fitted["chains"].as_array().unwrap().len(), 1);
 }

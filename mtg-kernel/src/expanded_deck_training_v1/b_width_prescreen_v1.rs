@@ -95,7 +95,7 @@ use crate::native_policy_train_step_v1::{
     Net8W128DimsV1, NetDimsV1,
 };
 use crate::native_policy_value_net_v1::W_MODEL_ARCHITECTURE_VERSION_V1;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Instant;
@@ -2777,124 +2777,204 @@ fn load_fit_chain_state_v1(
     })
 }
 
-/// The cross-chain scheduler's resident chains: a chain's state is loaded by
-/// the first of its fits to start and dropped when its last fit ends, and at
-/// most `limit` chains are resident. Jobs are dispatched in queue order and a
-/// chain's jobs are contiguous in the queue, so a fit waiting for a slot only
-/// waits on chains whose every fit has already started; it cannot deadlock.
-struct ResidentChainsV1 {
-    limit: usize,
-    state: Mutex<ResidentStateV1>,
-    changed: Condvar,
-}
-
-struct ResidentStateV1 {
+/// The cross-chain queue's shared state, behind one lock. A worker takes the
+/// next queued fit only when its chain is resident or a residency slot is
+/// free, and in the same step reserves it, so no fit is ever reserved without
+/// being run. A chain's state is loaded by the first of its fits to start and
+/// dropped when its last fit ends; at most `limit` chains are resident. Every
+/// failure (a load, a fit, a panic, a worker that could not be started) stops
+/// the queue and wakes every waiting worker.
+struct QueueStateV1 {
+    next: usize,
     slots: BTreeMap<usize, Option<Arc<FitChainStateV1>>>,
     remaining: Vec<usize>,
-    aborted: bool,
+    failure: Option<String>,
     peak: usize,
 }
 
-/// One running fit's hold on its chain's state.
-struct ResidentLeaseV1<'a> {
-    owner: &'a ResidentChainsV1,
-    chain: usize,
-    state: Arc<FitChainStateV1>,
+/// What a worker does next.
+enum QueueStepV1 {
+    Run(usize, Arc<FitChainStateV1>),
+    Load(usize),
+    Wait,
+    Stop,
 }
 
-impl Drop for ResidentLeaseV1<'_> {
-    fn drop(&mut self) {
-        let mut guard = self.owner.lock_v1();
-        guard.remaining[self.chain] -= 1;
-        if guard.remaining[self.chain] == 0 {
-            guard.slots.remove(&self.chain);
-        }
-        self.owner.changed.notify_all();
-    }
+struct FitQueueV1 {
+    limit: usize,
+    state: Mutex<QueueStateV1>,
+    changed: Condvar,
 }
 
-impl ResidentChainsV1 {
+impl FitQueueV1 {
     fn new_v1(limit: usize, jobs_per_chain: Vec<usize>) -> Self {
         Self {
             limit: limit.max(1),
-            state: Mutex::new(ResidentStateV1 {
+            state: Mutex::new(QueueStateV1 {
+                next: 0,
                 slots: BTreeMap::new(),
                 remaining: jobs_per_chain,
-                aborted: false,
+                failure: None,
                 peak: 0,
             }),
             changed: Condvar::new(),
         }
     }
 
-    fn lock_v1(&self) -> std::sync::MutexGuard<'_, ResidentStateV1> {
+    fn lock_v1(&self) -> std::sync::MutexGuard<'_, QueueStateV1> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Stops every waiting fit (a fit failed: the stage refuses).
-    fn abort_v1(&self) {
-        self.lock_v1().aborted = true;
+    /// Stops the queue (the first failure is kept) and wakes every waiter.
+    fn fail_v1(&self, error: String) {
+        let mut guard = self.lock_v1();
+        guard.failure.get_or_insert(error);
+        drop(guard);
         self.changed.notify_all();
+    }
+
+    /// Ends one fit of `chain`, dropping the chain's state after its last.
+    fn finish_v1(&self, chain: usize) {
+        let mut guard = self.lock_v1();
+        guard.remaining[chain] -= 1;
+        if guard.remaining[chain] == 0 {
+            guard.slots.remove(&chain);
+        }
+        drop(guard);
+        self.changed.notify_all();
+    }
+
+    /// Reserves the next fit for this worker, or says to wait or stop.
+    fn next_step_v1(&self, queue: &[(usize, u32, &str)]) -> QueueStepV1 {
+        let mut guard = self.lock_v1();
+        loop {
+            if guard.failure.is_some() || guard.next >= queue.len() {
+                return QueueStepV1::Stop;
+            }
+            let index = guard.next;
+            let chain = queue[index].0;
+            let step = match guard.slots.get(&chain) {
+                Some(Some(state)) => QueueStepV1::Run(index, Arc::clone(state)),
+                Some(None) => QueueStepV1::Wait,
+                None if guard.slots.len() < self.limit => QueueStepV1::Load(index),
+                None => QueueStepV1::Wait,
+            };
+            match step {
+                QueueStepV1::Wait => {
+                    guard = self
+                        .changed
+                        .wait(guard)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+                QueueStepV1::Load(_) => {
+                    guard.next += 1;
+                    guard.slots.insert(chain, None);
+                    guard.peak = guard.peak.max(guard.slots.len());
+                    return step;
+                }
+                QueueStepV1::Run(..) => {
+                    guard.next += 1;
+                    return step;
+                }
+                QueueStepV1::Stop => return step,
+            }
+        }
+    }
+
+    /// Publishes a loaded chain state (or the load's failure).
+    fn loaded_v1(
+        &self,
+        chain: usize,
+        loaded: Result<FitChainStateV1, String>,
+    ) -> Option<Arc<FitChainStateV1>> {
+        let mut guard = self.lock_v1();
+        let state = match loaded {
+            Ok(state) => {
+                let state = Arc::new(state);
+                guard.slots.insert(chain, Some(Arc::clone(&state)));
+                Some(state)
+            }
+            Err(error) => {
+                guard.slots.remove(&chain);
+                guard.failure.get_or_insert(error);
+                None
+            }
+        };
+        drop(guard);
+        self.changed.notify_all();
+        state
+    }
+
+    /// One worker: takes fits in queue order until the queue is empty or
+    /// stopped. `load` builds a chain's state; `run` runs one fit.
+    fn work_v1(
+        &self,
+        queue: &[(usize, u32, &str)],
+        load: &(dyn Fn(usize) -> Result<FitChainStateV1, String> + Sync),
+        run: &(dyn Fn(usize, &FitChainStateV1) -> Result<(), String> + Sync),
+    ) {
+        loop {
+            let (index, state) = match self.next_step_v1(queue) {
+                QueueStepV1::Stop => return,
+                QueueStepV1::Wait => continue,
+                QueueStepV1::Run(index, state) => (index, state),
+                QueueStepV1::Load(index) => {
+                    let chain = queue[index].0;
+                    let loaded =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load(chain)))
+                            .unwrap_or_else(|_| Err("loading the chain panicked".into()));
+                    match self.loaded_v1(chain, loaded) {
+                        Some(state) => (index, state),
+                        None => return,
+                    }
+                }
+            };
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(index, &state)))
+                    .unwrap_or_else(|_| Err(format!("fit {index} panicked")));
+            drop(state);
+            if let Err(error) = result {
+                self.fail_v1(error);
+            }
+            self.finish_v1(queue[index].0);
+        }
+    }
+
+    /// Runs the queue on `workers` threads. A worker that cannot be started
+    /// stops the queue (`fail_spawn_at` simulates that in tests).
+    fn run_v1(
+        &self,
+        queue: &[(usize, u32, &str)],
+        workers: usize,
+        fail_spawn_at: Option<usize>,
+        load: &(dyn Fn(usize) -> Result<FitChainStateV1, String> + Sync),
+        run: &(dyn Fn(usize, &FitChainStateV1) -> Result<(), String> + Sync),
+    ) -> Result<(), String> {
+        std::thread::scope(|scope| {
+            for worker in 0..workers.max(1) {
+                let spawned = if fail_spawn_at == Some(worker) {
+                    Err(std::io::Error::other("simulated worker start failure"))
+                } else {
+                    std::thread::Builder::new()
+                        .name(format!("prescreen-fit-{worker}"))
+                        .stack_size(8 * 1024 * 1024)
+                        .spawn_scoped(scope, move || self.work_v1(queue, load, run))
+                        .map(|_| ())
+                };
+                if let Err(error) = spawned {
+                    self.fail_v1(format!("fit worker {worker} could not be started: {error}"));
+                    break;
+                }
+            }
+        });
+        match self.lock_v1().failure.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn peak_v1(&self) -> usize {
         self.lock_v1().peak
-    }
-
-    /// The chain's state for one fit, loading it (with `load`) if this is the
-    /// chain's first fit to start.
-    fn acquire_v1(
-        &self,
-        chain: usize,
-        load: impl FnOnce() -> Result<FitChainStateV1, String>,
-    ) -> Result<ResidentLeaseV1<'_>, String> {
-        let mut guard = self.lock_v1();
-        loop {
-            if guard.aborted {
-                return Err("another fit failed; the queue stopped".into());
-            }
-            let ready = match guard.slots.get(&chain) {
-                Some(Some(state)) => Some(Arc::clone(state)),
-                _ => None,
-            };
-            if let Some(state) = ready {
-                return Ok(ResidentLeaseV1 {
-                    owner: self,
-                    chain,
-                    state,
-                });
-            }
-            if !guard.slots.contains_key(&chain) && guard.slots.len() < self.limit {
-                guard.slots.insert(chain, None);
-                guard.peak = guard.peak.max(guard.slots.len());
-                drop(guard);
-                let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(load))
-                    .unwrap_or_else(|_| Err("loading the chain panicked".into()));
-                let mut guard = self.lock_v1();
-                return match loaded {
-                    Ok(state) => {
-                        let state = Arc::new(state);
-                        guard.slots.insert(chain, Some(Arc::clone(&state)));
-                        self.changed.notify_all();
-                        Ok(ResidentLeaseV1 {
-                            owner: self,
-                            chain,
-                            state,
-                        })
-                    }
-                    Err(error) => {
-                        guard.slots.remove(&chain);
-                        guard.aborted = true;
-                        self.changed.notify_all();
-                        Err(error)
-                    }
-                };
-            }
-            guard = self
-                .changed
-                .wait(guard)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
     }
 }
 
@@ -2904,7 +2984,7 @@ impl ResidentChainsV1 {
 /// preservation record, `FIT-LAUNCH.json`) are checked before any fit is
 /// queued. Results, publication, temporaries, refusals and mismatches are per
 /// fit, exactly as under the per-chain scheduler, and so are the reports'
-/// bytes.
+/// bytes. A chain selected twice is fitted once.
 pub(crate) fn fit_cross_chain_stage_v1(
     loaded: &LoadedConfigV1,
     root: &Path,
@@ -2913,16 +2993,46 @@ pub(crate) fn fit_cross_chain_stage_v1(
     forward_workers: usize,
     resident_limit: usize,
 ) -> Result<Value, String> {
+    fit_cross_chain_queue_v1(
+        loaded,
+        root,
+        chains,
+        fit_workers,
+        forward_workers,
+        resident_limit,
+        None,
+    )
+}
+
+/// [`fit_cross_chain_stage_v1`], with a simulated worker start failure for
+/// tests.
+pub(crate) fn fit_cross_chain_queue_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+    chains: &[&PrescreenChainV1],
+    fit_workers: usize,
+    forward_workers: usize,
+    resident_limit: usize,
+    fail_spawn_at: Option<usize>,
+) -> Result<Value, String> {
     ensure(
         (1..=64).contains(&forward_workers),
         "forward workers must be 1 to 64",
     )?;
+    // One (chain, seed, arm) is never queued twice: a repeated chain is
+    // dropped here (the command line refuses one).
+    let mut seen = BTreeSet::new();
+    let chains: Vec<&PrescreenChainV1> = chains
+        .iter()
+        .copied()
+        .filter(|chain| seen.insert(chain.index))
+        .collect();
     let section7 = read_section7_v1(root)?;
     // A chain's data record is checked here against SECTION7 and its
     // preservation record; its full data is loaded (and re-verified against
     // this record) only when its first fit starts.
     let mut data_sha256 = Vec::with_capacity(chains.len());
-    for chain in chains {
+    for chain in &chains {
         let digest = sha(&read_v1(&data_path_v1(root, chain.index))?);
         check_fit_prerequisites_v1(loaded, root, &section7, chain.index, &digest)
             .map_err(|error| format!("chain {}: {error}", chain.index))?;
@@ -2958,40 +3068,31 @@ pub(crate) fn fit_cross_chain_stage_v1(
         queue.extend(jobs.into_iter().map(|(seed, arm)| (position, seed, arm)));
     }
     let started = Instant::now();
-    let resident = ResidentChainsV1::new_v1(resident_limit, jobs_per_chain.clone());
+    let pool = FitQueueV1::new_v1(resident_limit, jobs_per_chain.clone());
     if !queue.is_empty() {
-        let contexts = vec![(); fit_workers.clamp(1, queue.len())];
-        ordered_parallel_jobs_v1(
-            contexts,
-            queue.len(),
-            |_, index| {
-                let (position, seed, arm) = queue[index];
-                let chain = chains[position];
-                let result = resident
-                    .acquire_v1(position, || {
-                        let data = load_chain_data_v1(loaded, root, chain)?;
-                        ensure(
-                            sha(&data.record_bytes) == data_sha256[position],
-                            "the chain's data record changed during the fit stage",
-                        )?;
-                        load_fit_chain_state_v1(loaded, chain, data)
-                    })
-                    .and_then(|lease| {
-                        let inputs =
-                            lease
-                                .state
-                                .inputs_v1(loaded, chain.index, forward_workers, &binary);
-                        stage.run_job_v1(&inputs, &data_sha256[position], seed, arm)
-                    });
-                if result.is_err() {
-                    resident.abort_v1();
-                }
-                result
-            },
-            || (),
+        let load = |position: usize| -> Result<FitChainStateV1, String> {
+            let chain = chains[position];
+            let data = load_chain_data_v1(loaded, root, chain)?;
+            ensure(
+                sha(&data.record_bytes) == data_sha256[position],
+                "the chain's data record changed during the fit stage",
+            )?;
+            load_fit_chain_state_v1(loaded, chain, data)
+        };
+        let run = |index: usize, state: &FitChainStateV1| -> Result<(), String> {
+            let (position, seed, arm) = queue[index];
+            let inputs = state.inputs_v1(loaded, chains[position].index, forward_workers, &binary);
+            stage.run_job_v1(&inputs, &data_sha256[position], seed, arm)
+        };
+        pool.run_v1(
+            &queue,
+            fit_workers.clamp(1, queue.len()),
+            fail_spawn_at,
+            &load,
+            &run,
         )?;
     }
-    for chain in chains {
+    for chain in &chains {
         step0_reports_identical_v1(root, chain.index, seeds)?;
     }
     let compared: Vec<&String> = retained.values().flatten().map(|(name, _)| name).collect();
@@ -3006,7 +3107,7 @@ pub(crate) fn fit_cross_chain_stage_v1(
     Ok(
         json!({"scheduler": CROSS_CHAIN_SCHEDULER_V1, "chains": per_chain,
         "fits_written": queue.len(), "fit_workers": fit_workers,
-        "resident_chains_limit": resident_limit, "resident_chains_peak": resident.peak_v1(),
+        "resident_chains_limit": resident_limit, "resident_chains_peak": pool.peak_v1(),
         "stale_temporaries_removed": removed, "evidence_temporaries_promoted": promoted,
         "complete_temporaries_compared": compared,
         "elapsed_seconds": started.elapsed().as_secs_f64()}),
@@ -3608,6 +3709,28 @@ const USAGE_V1: &str = "usage: b_width_prescreen_v1 STAGE --config ABS.json --ro
 [--chains 1,2,...] [--workers N] [--forward-workers N] [--qualification ABS.json] \
 [--candidates 1,2,...] [--scheduler per-chain|cross-chain]\nstages: staging-check qualify-collect qualify-fit collect convert preserve fit";
 
+/// The chains a stage runs on: `--chains` in its order, each at most once (a
+/// repeated chain is refused for every stage), or every chain.
+pub(crate) fn select_chains_v1<'a>(
+    config: &'a PrescreenConfigV1,
+    indices: Option<&[u32]>,
+) -> Result<Vec<&'a PrescreenChainV1>, String> {
+    let Some(indices) = indices else {
+        return Ok(config.chains.iter().collect());
+    };
+    let mut seen = BTreeSet::new();
+    indices
+        .iter()
+        .map(|&index| {
+            ensure(
+                seen.insert(index),
+                &format!("--chains lists chain {index} more than once"),
+            )?;
+            config.chain_v1(index)
+        })
+        .collect()
+}
+
 fn parse_list_v1<T: std::str::FromStr>(text: &str) -> Result<Vec<T>, String> {
     text.split(',')
         .map(|part| {
@@ -3651,14 +3774,8 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
         "config and root must be absolute",
     )?;
     let loaded = load_config_v1(&config_path)?;
+    let selected = select_chains_v1(&loaded.config, chains.as_deref())?;
     fs::create_dir_all(&root).map_err(err)?;
-    let selected: Vec<&PrescreenChainV1> = match &chains {
-        Some(indices) => indices
-            .iter()
-            .map(|&index| loaded.config.chain_v1(index))
-            .collect::<Result<_, _>>()?,
-        None => loaded.config.chains.iter().collect(),
-    };
     let guard = |stage: QualifiedStageV1,
                  forward: Option<usize>,
                  scheduler: Option<FitSchedulerV1>|
