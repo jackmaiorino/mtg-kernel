@@ -2,8 +2,10 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import g_references_campaign_v1 as driver
 import g_references_qualify_v1 as qualify
@@ -145,6 +147,25 @@ class QualifyTests(unittest.TestCase):
         (wall / "1-1.json").write_text(json.dumps({"start": 0, "last": 60 * 3600 - 630}))
         with self.assertRaises(SystemExit):
             qualify.bounded(self.campaign, request)
+        # The pack: nine sequential phases at most (eight solo slots, then all at once) share the time left.
+        (wall / "1-1.json").write_text(json.dumps({"start": 0, "last": 60 * 3600 - 1800}))
+        family = value["families"]["empty-pool"]
+        pack_root = Path(json.loads(Path(family["pack"]["path"]).read_text())["root"])
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(json.loads(Path(args[-1]).read_text()))
+            pack_root.mkdir(parents=True, exist_ok=True)
+            (pack_root / "pack.json").write_text("{}")
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        for name in family["trials"]:
+            report = Path(json.loads(Path(family["trials"][name]["path"]).read_text())["root"]) / "report.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("{}")
+        with patch.object(qualify.subprocess, "run", side_effect=fake_run):
+            qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+        self.assertEqual(calls[0]["timeout_seconds"], (1800 - 600) // 9)
+        self.assertLessEqual(json.loads(Path(calls[0]["base_request"]["path"]).read_text())["wall_seconds"], 133)
 
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):

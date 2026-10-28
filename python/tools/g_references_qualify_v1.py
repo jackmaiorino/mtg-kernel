@@ -172,9 +172,12 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
     if not pack_index.exists():
         plan_ = read(family["pack"]["path"])
         left = campaign.wall_left()
-        if left is not None:  # the pack's trial timeout and its base request end inside the claim time
+        if left is not None:
+            # The pack runs at most one solo trial per slot, one after another, then every slot at once: each
+            # trial's timeout is the remaining claim time shared over those phases, so the whole pack ends
+            # inside it.
             base_request = read(plan_["base_request"]["path"])
-            limit = math.floor(left - driver.base.LEASE_MARGIN_SECONDS)
+            limit = math.floor((left - driver.base.LEASE_MARGIN_SECONDS) / (len(plan_["slots"]) + 1))
             if limit < 60:
                 raise SystemExit("study_wall_cap: no claim time left for the pack qualification")
             if base_request["wall_seconds"] > limit or plan_["timeout_seconds"] > limit:
