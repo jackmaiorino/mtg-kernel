@@ -994,6 +994,7 @@ impl Subtype {
             192 => Subtype::Wrenn,
             193 => Subtype::Hamster,
             194 => Subtype::Vivien,
+            195 => Subtype::Ogre,
             _ => return None,
         })
     }
@@ -1198,6 +1199,7 @@ impl Subtype {
             Subtype::Snake => true,
             Subtype::Wrenn => false,
             Subtype::Hamster => true,
+            Subtype::Ogre => true,
         }
     }
 
