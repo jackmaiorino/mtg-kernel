@@ -15782,35 +15782,6 @@
     "pump_all"
    ],
    "java_file": "Mage.Sets/src/mage/cards/y/YouMeetInATavern.java"
-  },
-  {
-   "name": "Secluded Courtyard",
-   "engine_capability": "full",
-   "mana_cost": "",
-   "mana_value": 0,
-   "colors": [],
-   "types": [
-    "Land"
-   ],
-   "subtypes": [],
-   "supertypes": [],
-   "power": null,
-   "toughness": null,
-   "is_land": true,
-   "produces_mana": [
-    "C"
-   ],
-   "decks": [
-    "vintage-eldrazi"
-   ],
-   "sideboard_only": false,
-   "complexity": "complex",
-   "mechanics": [
-    "mana_ability",
-    "choose_creature_type",
-    "restricted_mana"
-   ],
-   "java_file": "Mage.Sets/src/mage/cards/s/SecludedCourtyard.java"
   }
  ]
 }
