@@ -352,7 +352,7 @@ pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str
         "Golgari Rot Farm" => Some(vec!["B"]),
         "Orzhov Basilica" => Some(vec!["W"]),
         "Geothermal Crevice" => Some(vec!["R"]),
-        _ => None,
+        _ => super::build_eternal_e9b_v1::primary_mana_ability_colors(name),
     }
 }
 
@@ -368,7 +368,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         // "{T}, Remove a depletion counter from this land: Add {G}{G}." The
         // counter and the sacrifice are `eternal_pauper_e8b_v1` hooks.
         "Hickory Woodlot" | "Sandstone Needle" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_e9b_v1::mana_ability_def_for(name),
     }
 }
 

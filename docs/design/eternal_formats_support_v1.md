@@ -83,6 +83,7 @@ reserved.
 | E7b | Vintage Dredge, Counter-Vine, Blue Tempo, Lurrus DRS, Doomsday and RUG Control, and the artifact cards of Stiflenought, Sphere Shops and Sultai Psychic Frog: Abrupt Decay, Assassin's Trophy, Avatar of Burgeoning Echoes, Basking Rootwalla, Bayou, Bazaar of Baghdad, Blazing Rootwalla, Carnivorous Cultivator, Chain of Vapor, Collector Ouphe, Commandeer, Creeping Chill, Crucible of Worlds, Dack Fayden, Deathrite Shaman, Demonic Consultation, Golgari Grave-Troll, Golgari Thug, Golos, Grief, Hollow One, Ichorid, Karn, Argent Defender, Kishla Skimmer, Lodestone Golem, Master of Death, Mindbreak Trap, Minsc & Boo, Narcomoeba, Noxious Revival, Phyrexian Revoker, Prized Amalgam, Ragavan, Serum Powder, Shambling Shell, Silversmote Ghoul, Squee, Stinkweed Imp, Stonecoil Serpent, Subtlety, Thorn of Amethyst, Torpor Orb, Uro, Vengevine, Wrenn and Six | 45, two tokens and Enroot | Vintage 80.0% to 95.4% after E7a |
 | E8b | Pauper Ruby Storm, Golgari Gardens, Familiars, Jeskai Ephemerate, Glintblade, Izzet Terror, Burn and Boros Bully (and Izzet Faeries, 4c Synthesizer): Accursed Marauder, Azorius Chancery, Contaminated Landscape, Crimson Fleet Commodore, Crossover Collaboration, Crypt Rats, Defile, Desert, Desperate Ritual, First Day of Class, Geothermal Crevice, Glimpse the Impossible, Glorious Gale, God-Pharaoh's Faithful, Goblin Anarchomancer, Goldmire Bridge, Goliath Paladin, Golgari Rot Farm, Haunted Mire, Heaped Harvest, Hickory Woodlot, Khalni Garden, Lonely Arroyo, Manamorphose, Meeting of Minds, Mirran Banesplitter, Mortuary Mire, Oroku Saki, Orzhov Basilica, Perilous Landscape, Rally the Peasants, Rancid Earth, Reckless Lackey, Ride's End, Sandstone Needle, Sea Gate Oracle, Seething Song, Seize the Storm, Skred, Snow-Covered Mountain, Sunscape Familiar, Thornscape Familiar, Twinned Vision, Volatile Fjord, Witch's Cottage, Wrenn's Resolve | 46 and two tokens | Pauper 80.5% to 90.4% |
 | E8a | Legacy Death and Taxes (Yorion, black-white and mono-white), Hogaak Moonshadow, Jeskai, Azorius and Dimir Control, Saga and Beseech Storm, Reanimator and 8-Cast: Ad Nauseam, Aether Vial, Back to Basics, Bitter Triumph, Cabal Ritual, Canoptek Scarab Swarm, Chandra, Chill of Compliance, Cloak and Dagger, Dark Matter Manipulator, Dryad Arbor, Emperor of Bones, Erode, Flagstones of Trokair, Flickerwisp, Harbinger of the Seas, Hogaak, Infernal Tutor, Lich's Relic, Lion Sash, Loran of the Third Path, Meteor Sword, Mystic Sanctuary, Once Upon a Time, Overlord of the Balemurk, Pre-War Formalwear, Prismatic Vista, Rain of Filth, Recruiter of the Guard, Skyclave Apparition, Snow-Covered Swamp, Solitude, Stitcher's Supplier, Stoneforge Mystic, Supreme Verdict, Sylvan Safekeeper, Teferi, Time Raveler, Thought Monitor, Valgavoth's Lair, White Orchid Phantom, Wight of the Reliquary, Wishclaw Talisman, Yorion | 42 and two tokens | Legacy 73.4% to 83.5% |
+| E9b | Pauper Turbo Fog, Gruul Ponza, Gruul Ramp, Food Gardens, 4c Pestilence and Esper Faeries, Pauper 4c Ephemerate (with E8a's cards), Vintage Scam, Eldrazi, Red Prison (with E8a's Once Upon a Time), Grixis Lurrus and Underworld Breach: Annoyed Altisaur, Arbor Elf, Arcane Denial, Bannerhide Krushok, Barrowgoyf, Black Dragon Gate, Boarding Party, Boggart Trawler, Boomerang Basics, Bridgeworks Battle, Castigate, Cauldron Familiar, Dauthi Voidwalker, Echoing Truth, Eldrazi Repurposer, Elvish Spirit Guide, Fog, Grapple with Death, Growth Spiral, Heritage Reclamation, Highland Forest, Jewel Thief, Mai, Momentum Breaker, Mwonvuli Acid-Moss, Mystical Tutor, Nutrient Block, Oswald Fiddlebender, Pestilence, Pieces of the Puzzle, Radiant Fountain, Ram Through, Respite, Secluded Courtyard, Simic Growth Chamber, Sowing Mycospawn, Step Through, Thermokarst, Thief of Existence, Thornwood Falls, Vampire Sovereign, Vraska's Final Mercy, Wild Growth, You Meet in a Tavern | 44 | Pauper 90.4% to 95.2%, Vintage 95.4% to 98.1% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -350,6 +351,31 @@ New, each built once in the first wave that needs it:
   Stoneforge Mystic, Recruiter of the Guard, Aether Vial, Yorion, Emperor of Bones, Erode,
   Overlord of the Balemurk, Wishclaw Talisman) use `E3ChoiceKindV1::E8aV1`. Valgavoth's
   Lair's color is an entry-choice decision.
+- E9b, built in `src/eternal_e9b_v1.rs` (with a `targets` submodule) and
+  `build_eternal_e9b_v1.rs`: cascade is a cast trigger that exiles until a nonland card
+  with a lower mana value, offers E5b's resolution cast without paying its mana cost,
+  then puts every card still exiled on the bottom in a random order. Dauthi Voidwalker's
+  replacement joins the zone-change hook Yawgmoth's Will uses and records void counters
+  by exile incarnation; its ability grants a free exile play permission (a land play for
+  a land). Shadow is a blocker rule (`blocker_allowed`). Elvish Spirit Guide's mana
+  ability is performed without the stack, offered as its hand ability 0 like Arena of
+  Glory's. Mai's "whenever a player casts", Barrowgoyf's combat damage mill, Pestilence's
+  end step sacrifice, Thief of Existence's gained leaves trigger and Arcane Denial's
+  next-upkeep draws are hook-queued triggers; Barrowgoyf's stats are a
+  characteristic-defining ability over all graveyards. Momentum Breaker's "Start your
+  engines!" is the Standard speed designation, so speed increases through its trigger.
+  Sowing Mycospawn's kicked cast trigger reuses E5b's kicked cast condition; Wild Growth
+  joins E6b's land Auras and Utopia Sprawl's mana hook; Boggart Trawler and Bridgeworks
+  Battle reuse E3's modal double-faced land backs. Secluded Courtyard chooses its creature
+  type as Cavern of Souls does (from the creature cards its controller owns) and its
+  restricted mana pays for creature spells of that type the same way, or for an ability of
+  a creature source of that type through the activation planner. New target shapes: a creature you
+  control then up to one you don't, two different creatures, and up to one opponent's
+  noncreature, nonland permanent with mana value N or less; new library filters: an
+  instant or sorcery card and a card with a subtype (wizardcycling). Resolution choices
+  use `E3ChoiceKindV1::E9bV1`. Arcum's Astrolabe is not in this wave (its {S} cost needs
+  mana from a snow source, which the mana pool does not track), so Vintage Lurrus Vault
+  Key stays unplayable.
 
 ## Card contract and verification
 

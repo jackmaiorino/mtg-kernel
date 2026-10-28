@@ -343,6 +343,15 @@ pub enum StandardTargetV1 {
     /// "For each opponent, up to one target creature or planeswalker that
     /// player controls" in a two-player game (Lich's Relic).
     UpToOneOpponentCreatureOrPlaneswalkerV1,
+    /// "Target creature you control" then "up to one target creature you
+    /// don't control" (Bridgeworks Battle). Wave E9b's filters follow
+    /// (`eternal_e9b_v1::targets`).
+    ControlledCreatureThenUpToOneOpponentCreatureV1,
+    /// "Two target creatures": two different creatures (Step Through).
+    TwoDistinctCreaturesV1,
+    /// "Up to one target noncreature, nonland permanent an opponent controls
+    /// with mana value N or less" (Thief of Existence).
+    UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(u8),
 }
 
 impl StandardTargetV1 {
@@ -355,7 +364,9 @@ impl StandardTargetV1 {
             Self::OneToThreeDistinctAnyTargetsV1 => (3, 1),
             Self::UpToOneCreature | Self::UpToOneControlledCreatureV1 => (1, 0),
             Self::UpToEightCreaturesOrPlaneswalkersV74 => (8, 0),
-            Self::TwoCreaturesV1 => (2, 2),
+            Self::TwoCreaturesV1 | Self::TwoDistinctCreaturesV1 => (2, 2),
+            Self::ControlledCreatureThenUpToOneOpponentCreatureV1 => (2, 1),
+            Self::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_) => (1, 0),
             Self::OneOrTwoAnyTargetsV1 => (2, 1),
             Self::AnyNumberControlledNonlandNontokenPermanentsV1 => (64, 0),
             Self::UpToOneNoncreatureArtifactV1 => (1, 0),
@@ -730,6 +741,11 @@ pub(crate) fn legal_targets(
     ) {
         return targets;
     }
+    if let Some(targets) =
+        crate::eternal_e9b_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -924,6 +940,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_e9b_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1 {
         return crate::effect::harvester_v1::eligible(state, object);
     }
@@ -1109,6 +1130,10 @@ pub(crate) fn target_matches(
         | StandardTargetV1::UpToOneOpponentNonlandNontokenManaValueAtMostV1(_)
         | StandardTargetV1::OpponentThenUpToOneTheirCreatureV1
         | StandardTargetV1::UpToOneOpponentCreatureOrPlaneswalkerV1 => false,
+        // Answered by `eternal_e9b_v1::targets` above.
+        StandardTargetV1::ControlledCreatureThenUpToOneOpponentCreatureV1
+        | StandardTargetV1::TwoDistinctCreaturesV1
+        | StandardTargetV1::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_) => false,
     }
 }
 

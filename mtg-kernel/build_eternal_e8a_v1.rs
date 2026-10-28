@@ -251,7 +251,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Wight of the Reliquary" => &WIGHT_OF_THE_RELIQUARY,
         "Wishclaw Talisman" => &WISHCLAW_TALISMAN,
         "Yorion, Sky Nomad" => &YORION,
-        _ => &[],
+        _ => super::build_eternal_e9b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -303,7 +303,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_legacy_e8a_v1::supreme_verdict",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e9b_v1::special_for(name),
     })
 }
 
@@ -320,7 +320,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Valgavoth's Lair" => &["Keywords::HEXPROOF"],
         "White Orchid Phantom" => &["Keywords::FLYING", "Keywords::FIRST_STRIKE"],
         "Insect Artifact Token" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_e9b_v1::keywords_for(name),
     }
 }
 
@@ -484,6 +484,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "companion:starting_deck_at_least_80_cards:special_action_pay_3_to_hand_as_sorcery_from_exile;etb:exile_any_number_other_own_nonland_permanents:return_next_end_step"
         }
         "Illusion Token" => "characteristic:power_toughness_equal_exiled_mana_value",
-        _ => "none",
+        _ => super::build_eternal_e9b_v1::trigger_recipe_for(name),
     }
 }

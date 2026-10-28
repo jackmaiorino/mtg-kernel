@@ -287,6 +287,7 @@ pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str
 /// Gates whose mana ability adds their chosen color.
 pub(super) fn mana_ability_includes_chosen_color(name: &str) -> bool {
     matches!(name, "Cliffgate" | "Manor Gate")
+        || super::build_eternal_e9b_v1::mana_ability_includes_chosen_color(name)
 }
 
 /// "As this land enters, choose a color other than red/green."
@@ -294,7 +295,7 @@ pub(super) fn as_enters_choose_color_other_than(name: &str) -> &'static str {
     match name {
         "Cliffgate" => "Some(ManaColor::R)",
         "Manor Gate" => "Some(ManaColor::G)",
-        _ => "None",
+        _ => super::build_eternal_e9b_v1::as_enters_choose_color_other_than(name),
     }
 }
 
@@ -352,14 +353,14 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Lunarch Veteran" => "Some(TransformFaceDef { name: \"Luminous Phantom\", types: &[CardType::Creature], subtypes: &[Subtype::Spirit, Subtype::Cleric], colors: &[ManaColor::W], power: Some(1), toughness: Some(1), keywords: Keywords::FLYING })",
-        _ => "None",
+        _ => super::build_eternal_e9b_v1::transform_face_for(name),
     }
 }
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Lunarch Veteran" => Some("Luminous Phantom"),
-        _ => None,
+        _ => super::build_eternal_e9b_v1::transform_face_name_for(name),
     }
 }
 

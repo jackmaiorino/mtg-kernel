@@ -56,7 +56,7 @@ fn pinned_legal_domain_is_complete_unique_and_index_stable() {
 fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
     let mut canonical = BTreeSet::new();
     let mut noncreature = 0;
-    for id in 0..=Subtype::Ogre.stable_id() {
+    for id in 0..=Subtype::Fungus.stable_id() {
         let native = native_subtype(id).expect("all native IDs have explicit mappings");
         assert_eq!(native.stable_id(), id);
         assert_eq!(
@@ -88,9 +88,17 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
         canonical_native_type(Subtype::Ogre),
         Some(CreatureTypeV60::Ogre)
     );
-    assert_eq!(canonical.len(), 139);
-    assert!(native_subtype(196).is_none());
-    assert!(Subtype::from_stable_id(196).is_none());
+    for (subtype, id, kind) in [
+        (Subtype::Dauthi, 196, CreatureTypeV60::Dauthi),
+        (Subtype::Ally, 197, CreatureTypeV60::Ally),
+        (Subtype::Fungus, 198, CreatureTypeV60::Fungus),
+    ] {
+        assert_eq!(subtype.stable_id(), id);
+        assert_eq!(canonical_native_type(subtype), Some(kind));
+    }
+    assert_eq!(canonical.len(), 142);
+    assert!(native_subtype(199).is_none());
+    assert!(Subtype::from_stable_id(199).is_none());
     assert!(Subtype::from_stable_id(u16::MAX).is_none());
     for (alias, normal, expected) in [
         (Subtype::BirdAllCaps, Subtype::Bird, CreatureTypeV60::Bird),
