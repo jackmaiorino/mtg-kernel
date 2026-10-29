@@ -1152,6 +1152,10 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to E9a's cards, so they answer first.
+    if let Some(spec) = crate::eternal_legacy_e9a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }

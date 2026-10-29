@@ -447,6 +447,29 @@ fn controls_stack_item(value: &Value, seat: &Value) -> bool {
     }
 }
 
+/// How many items on the public stack `seat` controls.
+fn stack_items_controlled(value: &Value, seat: &Value) -> usize {
+    match value {
+        Value::Object(map) => match map.get("stack").and_then(Value::as_array) {
+            Some(items) => items
+                .iter()
+                .filter(|item| &item["controller"] == seat)
+                .count(),
+            None => map
+                .values()
+                .map(|child| stack_items_controlled(child, seat))
+                .max()
+                .unwrap_or(0),
+        },
+        Value::Array(items) => items
+            .iter()
+            .map(|child| stack_items_controlled(child, seat))
+            .max()
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -580,7 +603,21 @@ last actions:
                 Some(pass) if controls_stack_item(decision, &pass["semantic"]["actor"]) => *pass,
                 _ => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
             },
+            // A random seat starts no new spell or ability while it controls
+            // two stack items, so a free ability (Nomads en-Kor's) cannot
+            // pile up faster than the stack resolves.
             Policy::Random(_) => {
+                let open: Vec<&Value> = actions
+                    .iter()
+                    .copied()
+                    .filter(|action| {
+                        !matches!(
+                            action["semantic"]["action_kind"].as_str(),
+                            Some("cast_spell" | "activate_ability")
+                        ) || stack_items_controlled(decision, &action["semantic"]["actor"]) < 2
+                    })
+                    .collect();
+                let actions = if open.is_empty() { &actions } else { &open };
                 actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }
         };

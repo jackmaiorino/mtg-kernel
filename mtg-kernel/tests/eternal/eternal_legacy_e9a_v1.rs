@@ -938,21 +938,17 @@ fn elvish_reclaimer_grows_and_trades_a_land_for_any_land() {
         put(&mut state, P0, "Island", Zone::Graveyard);
     }
     assert_eq!(power_toughness(&state, reclaimer), (1, 2));
+    let taiga = state.players[0]
+        .library
+        .iter()
+        .copied()
+        .find(|&card| name_of(&state, card) == "Taiga")
+        .unwrap();
     pool(&mut state, P0, &[], 2);
-    activate(&mut state, reclaimer, 0, &[]);
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseCostTargets { .. } => Action::ChooseCostTarget(forest),
-        Decision::ChooseEffectTargets {
-            legal_targets,
-            selected_count: 0,
-            ..
-        } if !legal_targets.is_empty() => Action::ChooseEffectTarget(legal_targets[0]),
-        other => first_answer(other),
-    });
+    act_activate_with_cost(&mut state, reclaimer, forest, Some(taiga));
     assert_eq!(zone(&state, forest), Zone::Graveyard);
-    let fetched = controls(&state, P0, "Taiga");
-    assert_eq!(fetched.len(), 1);
-    assert!(state.objects.get(fetched[0]).tapped);
+    assert_eq!(zone(&state, taiga), Zone::Battlefield);
+    assert!(state.objects.get(taiga).tapped);
     // Three land cards in the graveyard.
     assert_eq!(power_toughness(&state, reclaimer), (3, 4));
 }
@@ -1299,6 +1295,7 @@ fn legolas_quick_reflexes_has_split_second_and_grants_a_tapped_trigger() {
     let reflexes = put(&mut state, P0, "Legolas's Quick Reflexes", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::G], 0);
     cast(&mut state, reflexes, &[Target::Object(elves)]);
+    next(&mut state);
     act(&mut state, Action::Pass);
     assert_eq!(state.priority_player, P1);
     assert!(!castable(&mut state, bolt), "split second");

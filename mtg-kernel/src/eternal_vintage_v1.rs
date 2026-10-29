@@ -245,7 +245,8 @@ pub(crate) fn initiative_granter(name: &str) -> bool {
     name == "Avenging Hunter"
         || (cfg!(feature = "eternal-fixtures")
             && (matches!(name, SEASONED_DUNGEONEER | WHITE_PLUME_ADVENTURER)
-                || crate::eternal_pauper_e8b_v1::initiative_granter(name)))
+                || crate::eternal_pauper_e8b_v1::initiative_granter(name)
+                || crate::eternal_legacy_e9a_v1::initiative_granter(name)))
 }
 
 const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> TriggeredAbilityDef {

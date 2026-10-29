@@ -243,6 +243,7 @@ impl E9aOpV1 {
             self,
             Self::BreakthroughKeepV1
                 | Self::GrindstoneV1
+                | Self::GrindstoneCheckV1 { .. }
                 | Self::GreenSunsZenithV1
                 | Self::InquisitionV1
                 | Self::ResearchDeskV1
@@ -729,6 +730,12 @@ fn evoked_sacrifice() -> EffectOp {
 /// Ashen Rider: "exile target permanent."
 fn exile_target() -> EffectOp {
     e9a(E9aOpV1::ExileTargetV1)
+}
+
+/// Cards whose entry trigger takes the initiative, so they are the
+/// designation's source.
+pub(crate) fn initiative_granter(name: &str) -> bool {
+    matches!(name, CAVES_OF_CHAOS_ADVENTURER | UNDERMOUNTAIN_ADVENTURER)
 }
 
 /// "When this creature enters, you take the initiative."
