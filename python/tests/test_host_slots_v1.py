@@ -22,6 +22,7 @@ import host_slots_v1 as slots
 TOKEN = "0123456789abcdef0123456789abcdef"
 CPUS = slots.current_affinity()
 needs_two = unittest.skipIf(len(CPUS) < 2, "needs at least two usable CPUs")
+needs_three = unittest.skipIf(len(CPUS) < 3, "needs at least three usable CPUs")
 
 
 def lock(root, token=TOKEN, cores=None):
@@ -631,6 +632,294 @@ class BackgroundProcessTests(unittest.TestCase):
                 controller.terminate()
                 controller.wait(timeout=30)
 
+
+def config8(keep_free=0):
+    return {"cores": [7, 6, 5, 4, 3, 2, 1, 0], "keep_free": keep_free, "priority": "below_normal"}
+
+
+FREE = {"held": False, "cores": []}
+
+
+def ticket(name, wanted, max_seconds=60.0, **extra):
+    record = {"id": name, "cores_wanted": wanted, "background": False, **extra}
+    if max_seconds is not None:
+        record["max_seconds"] = max_seconds
+    return record
+
+
+def admits(config, timed, claims, tickets, claim_id):
+    """backfill_admits with the head queued under this config, as run() records it."""
+    tickets = [{**tickets[0], "config_sha256": slots.config_digest(config)}, *tickets[1:]]
+    return slots.backfill_admits(config, timed, claims, tickets, claim_id)
+
+
+class BackfillPolicyTests(unittest.TestCase):
+    """Backfill: a request may start before the queue head only if no release order of the running claims
+    lets the head start without backfills but not with them."""
+
+    def test_head_with_room_is_never_backfilled_around(self):
+        # the head fits now: a backfill that takes its room is refused (the empty release set)
+        claims = [{"cores": [7, 6, 5, 4]}]
+        assert admits(config8(), FREE, claims, [ticket("head", 4, None), ticket("t", 2)], "t") is None
+        assert admits(config8(), FREE, [], [ticket("head", 4, None)], "head") is None
+
+    def test_request_without_declared_limit_never_backfills(self):
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        tickets = [ticket("head", 4, None), ticket("t", 2, None)]
+        assert admits(config8(), FREE, claims, tickets, "t") is None
+        for bad in (0, -1, True, float("inf"), float("nan"), "60", 1e300, slots.BACKFILL_MAX_SECONDS + 1):
+            assert slots._backfill_cores(config8(), FREE, claims, tickets[0], ticket("t", 2, bad)) is None
+
+    def test_one_releasing_claim_admits_a_backfill_into_free_cores(self):
+        # the 18:17 case scaled down: one large claim, two free cores, the head wants four
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        tickets = [ticket("head", 4, None), ticket("t", 2)]
+        assert admits(config8(), FREE, claims, tickets, "t") == [0, 1]
+
+    def test_a_release_subset_that_the_backfill_would_delay_refuses(self):
+        # releasing either claim alone lets the head start (5 >= 4) without the backfill, not with it (3 < 4)
+        claims = [{"cores": [7, 6, 5]}, {"cores": [4, 3, 2]}]
+        tickets = [ticket("head", 4, None), ticket("t", 2)]
+        assert admits(config8(), FREE, claims, tickets, "t") is None
+        assert admits(config8(), FREE, claims, [tickets[0], ticket("t", 1)], "t") == [1]
+
+    def test_existing_backfills_count_cumulatively(self):
+        claims = [{"cores": [7, 6, 5, 4, 3]}, {"cores": [2], "backfill": True}]
+        head = ticket("head", 6, None)
+        assert admits(config8(), FREE, claims, [head, ticket("t", 2)], "t") is None
+        assert admits(config8(), FREE, claims, [head, ticket("t", 1)], "t") == [1]
+
+    def test_only_ordinary_requests_backfill_behind_an_ordinary_head(self):
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        head = ticket("head", 4, None)
+        assert admits(config8(), FREE, claims, [head, ticket("t", 2)], "t") == [0, 1]
+        assert admits(config8(), FREE, claims, [head, ticket("t", 2, background=True)], "t") is None
+        # review r3: later ordinary requests overtake a background head, so it is never backfilled around
+        background_head = ticket("head", 4, None, background=True)
+        assert admits(config8(), FREE, claims, [background_head, ticket("t", 2, background=True)], "t") is None
+        # an ordinary head ignores background claims, exactly as its own admission does, but a backfill
+        # never takes their cores (it would suspend them)
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}, {"cores": [1], "background": True}]
+        assert admits(config8(), FREE, claims, [head, ticket("t", 1)], "t") == [0]
+        assert admits(config8(), FREE, claims, [head, ticket("t", 2)], "t") is None
+
+    def test_no_backfill_while_a_timed_reservation_is_held(self):
+        # review r1: the reservation may end before the claim does, and the head would then need core 1
+        timed = {"held": True, "cores": [0]}
+        config = {"cores": [3, 2, 1, 0], "keep_free": 0, "priority": "below_normal"}
+        claims = [{"cores": [3, 2]}]
+        assert admits(config, timed, claims, [ticket("head", 2, None), ticket("t", 1)], "t") is None
+        assert admits(config, FREE, claims, [ticket("head", 2, None), ticket("t", 1)], "t") is None
+        assert admits(config, FREE, [{"cores": [3, 2, 1]}], [ticket("head", 3, None),
+                                                                           ticket("t", 1)], "t") == [0]
+
+    def test_core_pools_count_exactly(self):
+        # a head restricted to cores 0-3 never uses 7 and 6, so a backfill there cannot delay it
+        claims = [{"cores": [3, 2]}, {"cores": [5, 4]}]
+        head = ticket("head", 4, None, core_pool=[0, 1, 2, 3])
+        assert admits(config8(), FREE, claims, [head, ticket("t", 2)], "t") == [6, 7]
+        assert admits(config8(), FREE, claims, [head, ticket("t", 2, core_pool=[0, 1])], "t") is None
+
+    def test_keep_free_counts_exactly(self):
+        claims = [{"cores": [7, 6, 5, 4]}]
+        # keep_free 2: two cores hand out now; releasing the claim leaves room for six, so 2 + 3 fit
+        assert admits(config8(2), FREE, claims, [ticket("head", 3, None), ticket("t", 2)], "t") == [2, 3]
+        assert admits(config8(2), FREE, claims, [ticket("head", 5, None), ticket("t", 2)], "t") is None
+
+    def test_only_the_first_eligible_request_behind_the_head_starts(self):
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        tickets = [ticket("head", 4, None), ticket("big", 3), ticket("a", 1), ticket("b", 1)]
+        assert admits(config8(), FREE, claims, tickets, "big") is None  # does not fit
+        assert admits(config8(), FREE, claims, tickets, "a") == [1]
+        assert admits(config8(), FREE, claims, tickets, "b") is None
+
+    def test_more_live_claims_than_the_cap_refuses(self):
+        claims = [{"cores": [7, 6, 5]}, {"cores": [4, 3, 2]}]
+        tickets = [ticket("head", 2, None, core_pool=[7, 6, 5, 4, 3, 2]), ticket("t", 1)]
+        assert admits(config8(), FREE, claims, tickets, "t") == [1]
+        with patch.object(slots, "BACKFILL_MAX_RUNNING", 1):
+            assert admits(config8(), FREE, claims, tickets, "t") is None
+        # every live claim counts toward the cap: backfills and background claims too
+        with patch.object(slots, "BACKFILL_MAX_RUNNING", 2):
+            assert admits(config8(), FREE, claims, tickets, "t") == [1]
+            for extra in ({"cores": [0], "backfill": True}, {"cores": [0], "background": True}):
+                assert admits(config8(), FREE, claims + [extra], tickets, "t") is None
+
+    def test_only_a_head_queued_under_the_current_config_is_backfilled_around(self):
+        # review r2: the head admits with the config it read before queueing
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        head, small = ticket("head", 4, None), ticket("t", 2)
+        assert slots.backfill_admits(config8(), FREE, claims, [{**head, "config_sha256": slots.config_digest(
+            config8())}, small], "t") == [0, 1]
+        assert slots.backfill_admits(config8(), FREE, claims, [{**head, "config_sha256": slots.config_digest(
+            config8(1))}, small], "t") is None
+        # review r1: a ticket from an older launcher (no background field, no config) is never jumped
+        assert slots.backfill_admits(config8(), FREE, claims, [{"id": "head", "cores_wanted": 4}, small], "t") is None
+
+    def test_a_backfill_never_takes_or_moves_the_head_onto_background_cores(self):
+        # review r2: preference 0 to 4, ordinary C on 0, 1 and 4, background G on 3, a three-core head
+        config = {"cores": [0, 1, 2, 3, 4], "keep_free": 0, "priority": "below_normal"}
+        claims = [{"cores": [0, 1, 4]}, {"cores": [3], "background": True}]
+        head = ticket("head", 3, None)
+        assert admits(config, FREE, claims, [head, ticket("a", 1, core_pool=[3])], "a") is None  # G's core
+        # after C ends the head takes 0 to 2 alone, but 0, 1 and 3 beside a backfill on 2: it would wait for G
+        assert admits(config, FREE, claims, [head, ticket("b", 1, core_pool=[2])], "b") is None
+
+    def test_a_backfill_never_moves_an_ordinary_head_onto_background_cores(self):
+        # review r1: an ordinary head admitted onto a background claim's cores waits for it to suspend.
+        # Without the backfill the head takes 3, 2 and 1 at once; with it, it would need core 0.
+        config = {"cores": [3, 2, 1, 0], "keep_free": 0, "priority": "below_normal"}
+        claims = [{"cores": [0], "background": True, "state": "running"}]
+        assert admits(config, FREE, claims, [ticket("head", 3, None), ticket("t", 1)], "t") is None
+        # after the ordinary claim ends, the head takes 5 to 1 alone but would need core 0 beside the
+        # backfill; a four-core head fits on 5 to 2 either way
+        config6 = {"cores": [5, 4, 3, 2, 1, 0], "keep_free": 0, "priority": "below_normal"}
+        claims = [{"cores": [0], "background": True}, {"cores": [5, 4, 3, 2]}]
+        assert admits(config6, FREE, claims, [ticket("head", 5, None), ticket("t", 1)], "t") is None
+        assert admits(config6, FREE, claims, [ticket("head", 4, None), ticket("t", 1)], "t") == [1]
+
+
+class BackfillAdmissionTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    @needs_three
+    def test_run_records_the_backfill_and_the_head_it_jumped(self):
+        own = "a" * 32
+        head = {"id": "b" * 32, "cores_wanted": len(CPUS), "background": False,
+                "config_sha256": slots.config_digest(slots.load_config())}
+        tickets = [head, {"id": own, "cores_wanted": 1, "background": False, "max_seconds": 30.0}]
+        holder = {"id": "c" * 32, "cores": CPUS[1:], "background": False}
+        seen, announced = [], []
+        with patch.object(slots, "live_tickets", return_value=tickets), \
+                patch.object(slots, "live_claims", return_value=[holder]), \
+                patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                    slots.read_json(claim)) or 0):
+            # the head wants every CPU: with the backfill still running it could never start, so no backfill
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "small", 1, ["unused"], claim_id=own, max_seconds=30.0)
+            head["cores_wanted"] = len(CPUS) - 1
+            self.assertEqual(slots.run("probe", "small", 1, ["unused"], claim_id=own, max_seconds=30.0,
+                                       on_claim=announced.append), 0)
+        record = seen[0]
+        self.assertTrue(record["backfill"])
+        self.assertEqual((record["head_id"], record["max_seconds"], record["cores"]), ("b" * 32, 30.0, [CPUS[0]]))
+        self.assertTrue(announced[0]["backfill"])
+        self.assertFalse(list((self.host / "TESTHOST.slots").glob("claim-*.json")))
+
+    def test_an_invalid_limit_is_refused_before_queueing_or_launching(self):
+        for bad in (0, -1, float("nan"), slots.BACKFILL_MAX_SECONDS * 2):
+            with self.assertRaises(ValueError):
+                slots.run("probe", "bad", 1, ["unused"], max_seconds=bad)
+        self.assertFalse(list((self.host / "TESTHOST.slots").glob("queue-*.json")))
+        log = self.tmp_path / "submit.log"
+        out = subprocess.run([sys.executable, str(TOOLS / "host_slots_v1.py"), "submit", "--log", str(log),
+                              "--max-seconds", "0", "--lane", "l", "--work-id", "w", "--cores", "1", "--",
+                              sys.executable, "-c", "pass"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, slots.EXIT_USAGE, out.stderr)
+        self.assertFalse(log.exists())
+
+    def test_a_new_ticket_always_queues_after_every_published_ticket(self):
+        # review r4: the name is chosen under the mutex at publication, never earlier
+        ahead = f"queue-{time.time_ns() + 10**12:020d}-{'e' * 32}.json"
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()  # its ticket is reaped when read, so the new request can then enter
+        slots.write_json(self.host / "TESTHOST.slots" / ahead, {"id": "e" * 32, "pid": gone.pid, "creation_time": 1,
+                                                                "cores_wanted": 1})
+        background = f"queue-z-{time.time_ns() + 2 * 10**12:020d}-{'d' * 32}.json"
+        slots.write_json(self.host / "TESTHOST.slots" / background, {"id": "d" * 32, "pid": gone.pid,
+                                                                     "creation_time": 1, "cores_wanted": 1})
+        for queue_class in ("", "z-"):  # after every ticket, ordinary or background
+            stamp = slots._ticket_path(queue_class, "f" * 32).name.removeprefix("queue-").removeprefix("z-")
+            self.assertGreater(stamp, background.removeprefix("queue-z-"))
+        seen = []
+        real_path, real_write = slots._ticket_path, slots.write_json
+
+        def named_under_the_mutex(*args):
+            seen.append((self.host / "TESTHOST.slots" / ".mutex").is_dir())
+            return real_path(*args)
+        published = []
+        with patch.object(slots, "_ticket_path", side_effect=named_under_the_mutex), \
+                patch.object(slots, "write_json", side_effect=lambda path, value: (
+                    published.append(Path(path).name), real_write(path, value))[1]), \
+                patch.object(slots, "_run_claimed", return_value=0):
+            slots.run("probe", "late", 1, ["unused"], claim_id="f" * 32, wait=True)
+        self.assertEqual(seen, [True])
+        ticket = [name for name in published if name.startswith("queue-")][0]
+        self.assertGreater(ticket.removeprefix("queue-"), background.removeprefix("queue-z-"))
+
+    def test_ordinary_claim_records_are_unchanged(self):
+        seen = []
+        with patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                slots.read_json(claim)) or 0):
+            slots.run("probe", "plain", 1, ["unused"], claim_id="d" * 32)
+        self.assertEqual(set(seen[0]), {"schema", "id", "lane", "work_id", "pid", "creation_time", "background",
+                                        "cores", "priority", "state", "acquired_at"})
+
+    def test_status_flags_an_overdue_backfill_and_keeps_it(self):
+        pid, creation = slots.self_identity()
+        base = {"schema": slots.SCHEMA, "pid": pid, "creation_time": creation, "lane": "l", "work_id": "w",
+                "background": False, "priority": "below_normal", "state": "running", "acquired_at": slots.now_utc()}
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'e' * 32}.json", {
+            **base, "id": "e" * 32, "cores": [CPUS[-1]], "backfill": True, "max_seconds": 1.0,
+            "head_id": "f" * 32, "deadline_at": "2026-01-01T00:00:00.000+00:00"})
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'1' * 32}.json", {
+            **base, "id": "1" * 32, "cores": [CPUS[0]]})  # a record from before backfill: not a backfill
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'2' * 32}.json", {
+            **base, "id": "2" * 32, "cores": [CPUS[0]], "backfill": True, "max_seconds": 600.0,
+            "head_id": "f" * 32, "deadline_at": "9999-01-01T00:00:00.000+00:00"})
+        status = slots.status()
+        self.assertEqual(sorted((b["id"], b["overdue"], b["head_id"]) for b in status["backfill"]),
+                         [("2" * 32, False, "f" * 32), ("e" * 32, True, "f" * 32)])
+        self.assertEqual(len(status["claims"]), 3)  # flagged, never removed or stopped
+
+
+class BackfillProcessTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    @needs_three
+    def test_small_job_runs_while_the_head_waits_and_the_head_still_starts(self):
+        host, tmp_path = self.host, self.tmp_path
+        hold = script(tmp_path, "bf-hold.py", "Path = __import__('pathlib').Path\nPath(sys.argv[1]).write_text('up')\n"
+                                              "while not Path(sys.argv[2]).exists(): time.sleep(0.05)\n")
+        up, release = tmp_path / "up", tmp_path / "release"
+        small_up, small_release = tmp_path / "small-up", tmp_path / "small-release"
+        holder = cli("run", "--lane", "l", "--work-id", "holder", "--cores", str(len(CPUS) - 1), "--",
+                     sys.executable, hold, str(up), str(release))
+        waiters = []
+        try:
+            assert wait_for(up.exists)
+            head = cli("run", "--wait", "--lane", "l", "--work-id", "head", "--cores", str(len(CPUS) - 1),
+                       "--", sys.executable, "-c", "pass")
+            waiters.append(head)
+            assert wait_for(lambda: len(list((host / "TESTHOST.slots").glob("queue-*.json"))) == 1)
+            plain = cli("run", "--wait", "--lane", "l", "--work-id", "plain", "--cores", "1", "--",
+                        sys.executable, "-c", "pass")
+            waiters.append(plain)
+            assert wait_for(lambda: len(list((host / "TESTHOST.slots").glob("queue-*.json"))) == 2)
+            small = cli("run", "--wait", "--max-seconds", "120", "--lane", "l", "--work-id", "small", "--cores", "1",
+                        "--", sys.executable, hold, str(small_up), str(small_release))
+            waiters.append(small)
+            assert wait_for(small_up.exists)
+            self.assertTrue(json.loads(small.stdout.readline())["backfill"])
+            status = slots.status()
+            self.assertEqual([b["work_id"] for b in status["backfill"]], ["small"])
+            # the request without a declared limit is still queued behind the head
+            self.assertEqual([t["work_id"] for t in status["queue"]], ["head", "plain"])
+            # the holder ends while the backfill still runs: the head must start at once
+            release.write_text("go")
+            self.assertEqual(head.wait(timeout=60), 0)
+            self.assertIsNone(small.poll())
+            small_release.write_text("go")
+            for waiter in waiters:
+                self.assertEqual(waiter.wait(timeout=60), 0)
+        finally:
+            release.write_text("go")
+            small_release.write_text("go")
+            holder.wait(timeout=60)
+            for waiter in waiters:
+                if waiter.poll() is None:
+                    waiter.kill()
+                    waiter.wait(timeout=30)
 
 if __name__ == "__main__":
     unittest.main()
