@@ -26,6 +26,8 @@ use std::time::Instant;
 
 /// The seed model string of every EX1 search (RootSeeds' namespace).
 pub(crate) const EX1_SEED_MODEL_V1: &str = "ex1-search-v1";
+/// Each search's thread stack (the census binary's).
+const EX1_SEARCH_STACK_BYTES_V1: usize = 256 << 20;
 
 /// A node of the retained tree at a live decision, in live menu order.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,7 +99,18 @@ impl Ex1SearcherV1 {
         };
         let ctx = guide_ctx(s, self.focal, 0, &seeds, &self.prior, limits)?;
         let started = Instant::now();
-        let (sel, tree) = self.roles.select_e(&ctx);
+        // The search recurses deeply: it runs on its own thread with the
+        // census binary's stack, whatever thread collects the episode.
+        let roles = &mut self.roles;
+        let (sel, tree) = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .name("ex1-search".into())
+                .stack_size(EX1_SEARCH_STACK_BYTES_V1)
+                .spawn_scoped(scope, || roles.select_e(&ctx))
+                .map_err(|e| format!("ex1 search thread: {e}"))?
+                .join()
+                .map_err(|_| "ex1 search thread panicked".to_string())
+        })?;
         let wall = started.elapsed().as_secs_f64();
         let failed = sel.incomplete || !sel.faults.is_empty();
         let record = json!({"seed_root":seeds.root,"budget":budget,"transitions":sel.transitions,
