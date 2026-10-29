@@ -207,13 +207,39 @@ def native_ticks(root: Path) -> int | None:
         return -1
 
 
+def tree_ticks(pid: int) -> int:
+    """CPU clock ticks of a process and its live descendants, each with its reaped children's (-1 once unreadable)."""
+    try:
+        children, ticks = {}, {}
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            except OSError:  # exited while listing
+                continue
+            ticks[int(entry.name)] = sum(int(value) for value in fields[11:15])
+            children.setdefault(int(fields[1]), []).append(int(entry.name))
+    except (OSError, ValueError, IndexError):
+        return -1
+    if pid not in ticks:
+        return -1
+    total, pending = 0, [pid]
+    while pending:
+        current = pending.pop()
+        total += ticks.get(current, 0)
+        pending.extend(children.get(current, ()))
+    return total
+
+
 class LeaseProgress:
     """progress.json for the pod's resident lease guard (phase1_cloud/lease_guard.py).
 
     decision() latches controller_lost once the record is over 90 s old and
     native_work_stalled_or_idle after work_idle_seconds without activity, so it is
     rewritten every min(15 s, work_idle_seconds / 3). Activity is advancing native
-    CPU time, a driver step finishing (``touch``: a dispatch, a native run's end,
+    CPU time, the dispatcher's process tree advancing CPU time after the native
+    child exits (fingerprints and archive, until wait_block returns), a driver step finishing (``touch``: a dispatch, a native run's end,
     each kept file of a retention, each saved step of finishing a block), or the
     driver itself computing (at least DRIVER_BUSY_SHARE of a core since the last
     beat, as during a long collection or hash), never the beat alone, so a driver
@@ -266,9 +292,20 @@ class LeaseProgress:
                 self.activity = stamp
             self.cpu = (stamp, cpu)
             for entry in list(self.active.values()):
-                root = Path(entry["attempts"][-1]["root"]) if entry["attempts"] else None
+                attempt = entry["attempts"][-1] if entry["attempts"] else None
+                root = Path(attempt["root"]) if attempt else None
                 ticks = native_ticks(root) if root else None
-                if ticks is None:  # outside the native part only touch() counts
+                dispatcher = (attempt.get("dispatch") or {}).get("pid") if attempt else None
+                if (ticks is None and dispatcher and "finished" not in attempt and "outcome" not in attempt
+                        and (root / "execution.json").exists()):
+                    # The native child has exited; until wait_block returns, its dispatcher fingerprints and
+                    # archives the output, with fingerprint worker processes.
+                    ticks = tree_ticks(dispatcher)
+                    if ticks > self.ticks.get(str(root) + ":post", -1):
+                        self.activity = stamp
+                    self.ticks[str(root) + ":post"] = ticks
+                    continue
+                if ticks is None:  # otherwise outside the native part only touch() or the driver's CPU counts
                     continue
                 alive = alive or ticks >= 0
                 if ticks > self.ticks.get(str(root), -1):

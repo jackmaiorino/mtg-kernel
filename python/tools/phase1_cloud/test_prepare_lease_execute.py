@@ -71,14 +71,20 @@ class LiveFundingTests(unittest.TestCase):
             api.create.assert_not_called()
 
     def test_a_read_older_than_the_limit_at_the_attempt_refuses_without_an_attempt_record(self):
-        clock = iter([1000., 1000. + pl.FUNDING_MAX_AGE_SECONDS + 1])
+        import external_guard
+        stamp = [1000.]
+        setup = external_guard.LeaseClient.load_durable
+        def slow_setup(client):  # the client's setup is the last step before the attempt record and the POST
+            stamp[0] += pl.FUNDING_MAX_AGE_SECONDS + 1
+            return setup(client)
         api = funded(); api.create.return_value = pod_response()
         temporary = self.enterContext(tempfile.TemporaryDirectory())
         output = prepared_output(temporary)
         with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}), \
+             patch.object(external_guard.LeaseClient, 'load_durable', slow_setup), \
              self.assertRaisesRegex(ValueError, 'funding observation older than 120 s'):
             pl.execute_create(pl.prepared_template(output), output, snapshot_path(temporary), 'testvolume',
-                              api=api, now=NOW, release={'clock': lambda: next(clock)})
+                              api=api, now=NOW, release={'clock': lambda: stamp[0], 'sleep': lambda seconds: None})
         api.create.assert_not_called()
         self.assertFalse((output / 'create-attempt.json').exists())  # the external guard sees no attempt
         self.assertEqual(read(output / 'funding-at-create.json')['epoch'], 1000.)

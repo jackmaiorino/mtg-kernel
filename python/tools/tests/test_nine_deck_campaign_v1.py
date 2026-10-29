@@ -244,26 +244,43 @@ class DriverTests(unittest.TestCase):
         with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", driver.native_dispatch.LEASE_GUARD_ENV: str(folder)}):
             progress = driver.LeaseProgress(self.campaign)
         root = self.root / "attempt"; root.mkdir()
-        progress.active["r1"] = {"attempts": [{"root": str(root)}]}
-        def activity_after_beat(busy_seconds=0.0):
-            # An idle beat comes half a second after the last; a busy one right after it, so a loaded runner's
-            # slower spin still shows well over a quarter of a core.
-            progress.cpu = (time.time() - (0 if busy_seconds else 0.5), driver.driver_cpu_seconds())
-            end = time.process_time() + busy_seconds
-            while time.process_time() < end:
-                pass
-            progress.beat()
+        attempt = {"root": str(root)}
+        progress.active["r1"] = {"attempts": [attempt]}
+        clock = {"wall": 2000., "cpu": 10., "tree": 50}
+        def activity_after_beat(wall=15., cpu=0., tree=0):
+            clock["wall"] += wall; clock["cpu"] += cpu; clock["tree"] += tree
+            with patch.object(driver.time, "time", return_value=clock["wall"]), \
+                 patch.object(driver, "driver_cpu_seconds", return_value=clock["cpu"]), \
+                 patch.object(driver, "tree_ticks", return_value=clock["tree"]):
+                progress.beat()
             return json.loads((folder / "progress.json").read_text())["last_activity_epoch"]
+        progress.cpu, progress.activity = (clock["wall"], clock["cpu"]), 0
+        self.assertEqual(activity_after_beat(cpu=0.1), 0)  # dispatching, no started.json yet: a beat is not activity
+        self.assertEqual(activity_after_beat(cpu=3.5), 0)  # under a quarter of a core
+        self.assertEqual(activity_after_beat(cpu=4.0), clock["wall"])  # the driver computing (a collection, a hash)
         progress.activity = 0
-        self.assertEqual(activity_after_beat(), 0)  # dispatching, no started.json yet: the beat alone is not activity
         (root / "started.json").write_text(json.dumps({"pid": os.getpid()}))
         (root / "execution.json").write_text("{}")
-        self.assertEqual(activity_after_beat(), 0)  # finishing a block
-        self.assertGreater(activity_after_beat(busy_seconds=0.3), 0)  # the driver computing (a collection, a hash)
+        attempt["dispatch"] = {"state": "dispatched", "pid": 12345}
+        self.assertEqual(activity_after_beat(tree=1), clock["wall"])  # the dispatcher fingerprinting and archiving
         progress.activity = 0
-        self.assertEqual(activity_after_beat(), 0)
+        self.assertEqual(activity_after_beat(), 0)  # its process tree stopped advancing
+        attempt["finished"] = "now"
+        self.assertEqual(activity_after_beat(tree=5), 0)  # wait_block returned: the driver's own steps count
         progress.touch()  # a finished driver step
         self.assertGreater(activity_after_beat(), time.time() - 60)
+
+    @unittest.skipUnless(LINUX, "reads /proc")
+    def test_tree_ticks_counts_a_process_and_its_descendants(self):
+        import signal
+        child = subprocess.Popen([sys.executable, "-c", "import subprocess, sys; subprocess.run([sys.executable, '-c', "
+                                  "'while True: pass'])"], start_new_session=True)
+        self.addCleanup(child.wait)
+        self.addCleanup(os.killpg, child.pid, signal.SIGKILL)  # the spinning grandchild too
+        first = driver.tree_ticks(child.pid)
+        time.sleep(1.5)
+        self.assertGreater(driver.tree_ticks(child.pid), first + 20)  # the grandchild's spin counts
+        self.assertEqual(driver.tree_ticks(2 ** 22 + 7), -1)
 
 
     def test_busy_refusal_is_retried(self):

@@ -324,11 +324,6 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     os.close(lock)
     write(output / 'funding-at-create.json', {'epoch': observed_epoch, 'balance_usd': balance,
           'under_balance': under, 'account_spend_usd_hour': observed.get('account_spend_usd_hour')})
-    require(clock() - observed_epoch <= FUNDING_MAX_AGE_SECONDS,
-            'funding observation older than %d s at the create attempt' % FUNDING_MAX_AGE_SECONDS)
-    # The external guard treats an attempt without a receipt or a definite
-    # refusal as a create that may have allocated a Pod no receipt names.
-    write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
     try:
         deadline = float(read(output / 'lease.json')['deadline_epoch'])
     except Exception:  # noqa: BLE001
@@ -339,6 +334,12 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     with LeaseClient(output / 'known-pods', body.get('name'), key, options.get('provider'), options.get('pods'),
                      clock, sleep, output / 'ALERT-pod-not-released.json', lease_deadline=deadline,
                      min_release_seconds=MIN_RELEASE_SECONDS) as client:
+        # Last check before the POST, after the client's setup; only the attempt record comes between.
+        require(clock() - observed_epoch <= FUNDING_MAX_AGE_SECONDS,
+                'funding observation older than %d s at the create attempt' % FUNDING_MAX_AGE_SECONDS)
+        # The external guard treats an attempt without a receipt or a definite
+        # refusal as a create that may have allocated a Pod no receipt names.
+        write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
         return _post_and_record(client, api, body, output, now, deadline, clock, sleep)
 
 
