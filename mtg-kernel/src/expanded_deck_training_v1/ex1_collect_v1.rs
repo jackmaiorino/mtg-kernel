@@ -116,6 +116,24 @@ impl Ex1EpisodeHookV1 {
         episode: &ExpandedEpisodeV1,
     ) -> Result<Self, String> {
         options.validate_v1()?;
+        Self::with_any_budget_v1(options, learner, episode)
+    }
+
+    /// Tests only: a hook at a budget other than the frozen B.
+    #[cfg(test)]
+    pub(super) fn with_test_budget_v1(
+        options: &Ex1CollectOptionsV1,
+        learner: &FrozenPlayPolicyV1,
+        episode: &ExpandedEpisodeV1,
+    ) -> Result<Self, String> {
+        Self::with_any_budget_v1(options, learner, episode)
+    }
+
+    fn with_any_budget_v1(
+        options: &Ex1CollectOptionsV1,
+        learner: &FrozenPlayPolicyV1,
+        episode: &ExpandedEpisodeV1,
+    ) -> Result<Self, String> {
         Ok(Self {
             options: options.clone(),
             seed: episode.seed,
@@ -287,7 +305,8 @@ impl Ex1EpisodeHookV1 {
             self.offers.push(json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"turn":pending.turn,"self_index":index,
                 "p_self":p.probabilities[index],"chosen":selected as usize == index,
-                "searched":pending.kind.is_some(),"row":row_index}));
+                "searched":pending.kind,"row":row_index,
+                "tree":pending.node.as_ref().map(|node| offer_tree_json_v1(node, index))}));
         }
         if pending.looked_up {
             self.searcher.advance(selected);
@@ -344,6 +363,30 @@ fn row_json_v1(
         row["self_target"] = self_target_json_v1(target, index, node.counts[index].wins);
     }
     row
+}
+
+/// The tree's view of a searched self-target offer, target or not: whether
+/// its Q-hat favors the self-target over the best other supported edge, or
+/// "unsupported" when the self edge or every other edge has under 8 backups.
+fn offer_tree_json_v1(node: &Ex1NodeV1, index: usize) -> Value {
+    let supported = |c: &crate::ex1_v1::Ex1EdgeCountsV1| c.n >= crate::ex1_v1::EX1_SUPPORT_MIN_V1;
+    let own = &node.counts[index];
+    let best_other = node
+        .counts
+        .iter()
+        .enumerate()
+        .filter(|&(a, c)| a != index && supported(c))
+        .map(|(_, c)| crate::ex1_v1::ex1_qhat_v1(c))
+        .fold(None, |best: Option<f64>, q| Some(best.map_or(q, |b| b.max(q))));
+    match (supported(own), best_other) {
+        (true, Some(other)) => {
+            let margin = crate::ex1_v1::ex1_qhat_v1(own) - other;
+            json!({"unsupported":false,"margin":margin,"favors":margin > 0.0,"self_n":own.n,
+                "self_wins":own.wins})
+        }
+        _ => json!({"unsupported":true,"margin":null,"favors":null,"self_n":own.n,
+            "self_wins":own.wins}),
+    }
 }
 
 /// Section 5's self-target fields at a taught row: the margin (Q-hat(self)

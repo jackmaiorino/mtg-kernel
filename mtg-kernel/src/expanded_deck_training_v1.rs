@@ -7629,6 +7629,77 @@ pub(crate) mod tests {
         );
     }
 
+    /// EX1 section 7 item 7: the hook never changes the trajectory (same
+    /// frozen parameters and seeds, hook on against off), and its rows carry
+    /// targets that recompute from the trajectory's own logits.
+    #[test]
+    fn ex1_hook_leaves_the_trajectory_unchanged_and_records_its_rows() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("ex1-hook", 2_026_102_901, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let mut searched = 0;
+        for update in 0..6 {
+            let options = ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "ex1-hook-test".into(),
+                update,
+                budget: 1_500,
+            };
+            assert!(options.validate_v1().is_err(), "only B = 64k is admitted");
+            let mut hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::with_test_budget_v1(&options, &policy, &episode)
+                    .unwrap();
+            let hooked =
+                collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
+                    .unwrap();
+            assert_eq!(
+                serde_json::to_vec(&plain).unwrap(),
+                serde_json::to_vec(&hooked).unwrap(),
+                "update {update}"
+            );
+            let record = hook.finish_v1(&episode, true);
+            let strata = record["strata"].as_object().unwrap();
+            let decisions: u64 = strata.values().map(|c| c["decisions"].as_u64().unwrap()).sum();
+            let learner_multi = hooked
+                .decisions
+                .iter()
+                .filter(|d| d.actor == 0 && d.logits.len() >= 2)
+                .count() as u64;
+            assert_eq!(decisions, learner_multi);
+            let searches = record["searches"].as_array().unwrap();
+            let triggers: u64 = strata.values().map(|c| c["triggers"].as_u64().unwrap()).sum();
+            assert_eq!(triggers, searches.len() as u64);
+            searched += searches.len();
+            for row in record["rows"].as_array().unwrap() {
+                let d = hooked
+                    .decisions
+                    .iter()
+                    .find(|d| json!(d.step) == row["step"])
+                    .unwrap();
+                assert_eq!(row["selected"], json!(d.selected));
+                let n: Vec<u64> = serde_json::from_value(row["n"].clone()).unwrap();
+                let wins: Vec<u64> = serde_json::from_value(row["wins"].clone()).unwrap();
+                let draws: Vec<u64> = serde_json::from_value(row["draws"].clone()).unwrap();
+                let counts: Vec<crate::ex1_v1::Ex1EdgeCountsV1> = (0..n.len())
+                    .map(|a| crate::ex1_v1::Ex1EdgeCountsV1 {
+                        n: n[a],
+                        wins: wins[a],
+                        draws: draws[a],
+                    })
+                    .collect();
+                let target = crate::ex1_v1::ex1_target_v1(&d.logits, &counts)
+                    .unwrap()
+                    .unwrap();
+                let q: Vec<u64> = target.target.probabilities.iter().map(|x| x.to_bits()).collect();
+                assert_eq!(row["q_bits"], json!(q));
+            }
+            if searched > 0 {
+                break;
+            }
+        }
+        assert!(searched > 0, "no update of the test triggered a search");
+    }
+
     #[test]
     fn tolerant_collection_default_off_still_aborts_on_first_attempt_with_no_ledger() {
         let mut policy = FrozenPlayPolicyV1::training_fixture_v3();

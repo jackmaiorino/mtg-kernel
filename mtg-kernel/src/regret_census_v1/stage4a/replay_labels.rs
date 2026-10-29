@@ -110,3 +110,82 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// EX1 label qualification (design v3.3 section 7 item 7): builds a scripted
+/// known-positive label job when no recorded evaluator game completes the
+/// line. The recorded job is replayed to decision `EX1_LABEL_INDEX`, then the
+/// focal seat plays the checker's certified oracle line (`EX1_LABEL_LINE`,
+/// action semantics) and the other seat passes when it can, else plays its
+/// first action (the oracle's reported reply order), to the terminal. The
+/// job is written to `EX1_LABEL_OUT` and labelled here. Run by hand:
+/// `cargo test --release ex1_scripted_known_positive -- --ignored`.
+#[cfg(test)]
+mod ex1_scripted {
+    use super::*;
+
+    #[test]
+    #[ignore = "builds the EX1 label-qualification job from a recorded game"]
+    fn ex1_scripted_known_positive() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is required"));
+        let text = std::fs::read_to_string(var("EX1_LABEL_JOBS")).unwrap();
+        let id = var("EX1_LABEL_ID");
+        let index: usize = var("EX1_LABEL_INDEX").parse().unwrap();
+        let line: Vec<String> = serde_json::from_str(&var("EX1_LABEL_LINE")).unwrap();
+        let mut document: Value = text
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .find(|j| j["id"] == json!(id))
+            .expect("the recorded job");
+        let job: LabelJob = serde_json::from_value(document.clone()).unwrap();
+        let mut s = crate::learned_bo3_v1::replay_game_session_v1(
+            &job.config,
+            job.uses_v3,
+            job.game_index,
+            job.environment_seed,
+            job.mainboards.clone(),
+            PlayerId(job.starting_player),
+        )
+        .unwrap();
+        let focal = PlayerId(job.focal);
+        let mut decisions = Vec::new();
+        let mut remaining = line.iter();
+        loop {
+            let FastActorResponseV1::Decision(d) = s.current_response() else {
+                break;
+            };
+            let selected = if decisions.len() < index {
+                job.decisions[decisions.len()].selected
+            } else {
+                let menu = s.diagnostic_current_action_semantics().unwrap();
+                if acting(&d) == focal {
+                    let want = remaining.next().expect("the line ends before the terminal");
+                    menu.iter()
+                        .position(|a| &format!("{a:?}") == want)
+                        .expect("a line action is not on the menu") as u32
+                } else {
+                    menu.iter()
+                        .position(|a| matches!(a, crate::rl::ActionSemanticV1::Pass { .. }))
+                        .unwrap_or(0) as u32
+                }
+            };
+            decisions.push(json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+                "actor":acting(&d).0,"legal_action_count":d.legal_action_count,"selected":selected}));
+            s.step(d.episode_id, d.step, selected).unwrap();
+        }
+        let FastActorResponseV1::Terminal(t) = s.current_response() else {
+            unreachable!()
+        };
+        let winner = t.winner.map(|w| match w {
+            crate::rl::PlayerSeatV1::P0 => 0u8,
+            crate::rl::PlayerSeatV1::P1 => 1u8,
+        });
+        document["id"] = json!(format!("{id}/ex1-scripted-line-at-{index}"));
+        document["decisions"] = json!(decisions);
+        document["winner"] = json!(winner);
+        let scripted: LabelJob = serde_json::from_value(document.clone()).unwrap();
+        let row = label_job(&scripted).unwrap();
+        assert_eq!(row["combo_resolved"], true, "{row}");
+        assert_eq!(row["combo_won"], true, "{row}");
+        std::fs::write(var("EX1_LABEL_OUT"), format!("{document}\n")).unwrap();
+    }
+}

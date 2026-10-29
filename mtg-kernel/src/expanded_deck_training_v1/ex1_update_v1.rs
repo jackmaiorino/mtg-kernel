@@ -260,7 +260,8 @@ pub(super) fn ex1_teach_v1(
         .iter()
         .skip(EX1_ROW_CAP_V1)
         .map(|row| json!({"slot":row.record["slot"],"step":row.record["step"],
-            "kind":row.record["kind"],"stratum":row.record["stratum"]}))
+            "kind":row.record["kind"],"stratum":row.record["stratum"],
+            "learner_deck":row.record["learner_deck"]}))
         .collect();
     rows.truncate(EX1_ROW_CAP_V1);
     let receipt = json!({"method":EX1_METHOD_V1,"collection":options.collection,
@@ -339,4 +340,59 @@ pub(super) fn ex1_movement_v1(
 /// The useful-row lift threshold, recorded beside the movement rows.
 pub(super) fn ex1_thresholds_v1() -> Value {
     json!({"useful_lift":EX1_USEFUL_LIFT_V1})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn options(coefficient: f64, cap: SearchTargetCapV1, update: u64) -> Ex1UpdateOptionsV1 {
+        Ex1UpdateOptionsV1 {
+            run: "ex1-test".into(),
+            update,
+            coefficient,
+            cap,
+            collection: PinnedFileV1 {
+                path: PathBuf::from(format!("collection-{update}.json")),
+                sha256: String::new(),
+            },
+        }
+    }
+
+    /// The identity binds the target, every frozen constant, the dose and
+    /// the cap, never the update or its collection; an EX1 checkpoint
+    /// refuses an ordinary continuation, an ordinary parent admits EX1.
+    #[test]
+    fn continuations_preserve_target_dose_and_cap() {
+        let capped = SearchTargetCapV1::Ratio { kappa: 1.0 };
+        let saved_options = options(2.5, capped, 7);
+        let saved = json!({"continuation":continuation_identity(&saved_options)});
+        assert!(check_continuation_v1(Some(&saved), Some(&options(2.5, capped, 8))).is_ok());
+        for changed in [
+            options(2.0, capped, 8),
+            options(2.5, SearchTargetCapV1::Ratio { kappa: 2.0 }, 8),
+            options(2.5, SearchTargetCapV1::Off, 8),
+            Ex1UpdateOptionsV1 {
+                run: "other".into(),
+                ..options(2.5, capped, 8)
+            },
+        ] {
+            assert!(check_continuation_v1(Some(&saved), Some(&changed))
+                .unwrap_err()
+                .contains("must preserve"));
+        }
+        assert!(check_continuation_v1(Some(&saved), None).is_err());
+        assert!(check_continuation_v1(None, Some(&saved_options)).is_ok());
+        let identity = continuation_identity(&saved_options);
+        assert_eq!(identity["target"], "ex1-target-v1");
+        assert_eq!(identity["divergence"], "forward-kl");
+        assert_eq!(identity["row_cap"], 128);
+        assert_eq!(identity["denominator"], 128);
+        assert_eq!(identity["budget"], 64_000);
+        assert_eq!(identity["rollout"], "SELF");
+        assert!(options(0.0, capped, 0).validate_v1().is_err());
+        assert!(options(1.0, SearchTargetCapV1::Ratio { kappa: 0.0 }, 0)
+            .validate_v1()
+            .is_err());
+    }
 }
