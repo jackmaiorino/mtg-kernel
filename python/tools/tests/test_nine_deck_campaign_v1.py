@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import nine_deck_campaign_v1 as driver
 
@@ -84,10 +84,12 @@ class DriverTests(unittest.TestCase):
             (base / "update" / "update.json").write_text("{}")
             (base / "update" / "checkpoint.json").write_text("big")
         (native / "run.json").write_text("{}")
+        self.campaign.lease = Mock()
         manifest = driver.retain_block(self.campaign, "r1", 1, native, {"retained_updates": [1]})
         self.assertFalse(native.exists())
         kept = {Path(item["to"]).relative_to(self.root / "retained" / "r1" / "b01").as_posix()
                 for item in json.loads(Path(manifest["path"]).read_text())["files"]}
+        self.assertEqual(self.campaign.lease.touch.call_count, len(kept))  # each kept file is lease activity
         self.assertIn("run.json", kept)
         self.assertIn("iterations/000001/attempt-000000/collect/episode-0000.json", kept)
         self.assertNotIn("iterations/000000/attempt-000000/collect/episode-0000.json", kept)
@@ -189,6 +191,10 @@ class DriverTests(unittest.TestCase):
         lease = lease_guard_files(folder)
         with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", driver.native_dispatch.LEASE_GUARD_ENV: str(folder)}):
             progress = driver.LeaseProgress(self.campaign)
+        # The stand-in native processes below are this process's children, not a supervisor's: native ticks only.
+        table = patch.object(driver, "process_table", return_value={})
+        table.start()
+        self.addCleanup(table.stop)
         self.assertEqual(progress.interval, driver.HEARTBEAT_SECONDS)
         def record():
             value = json.loads((folder / "progress.json").read_text())
@@ -234,6 +240,62 @@ class DriverTests(unittest.TestCase):
         self.runpod()
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(SystemExit):
             driver.LeaseProgress(self.campaign)
+
+    def test_outside_the_native_part_only_a_step_or_real_work_is_activity(self):
+        self.runpod()
+        folder = self.root / "guard"
+        lease_guard_files(folder)
+        with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", driver.native_dispatch.LEASE_GUARD_ENV: str(folder)}):
+            progress = driver.LeaseProgress(self.campaign)
+        root = self.root / "attempt"; root.mkdir()
+        attempt = {"root": str(root)}
+        progress.active["r1"] = {"attempts": [attempt]}
+        me, clock = os.getpid(), {"wall": 2000., "cpu": 10.}
+        ticks = {"command": 0, "supervisor": 0, "executor": 0, "worker": 0}
+        def table():  # the dispatch command and the reservation supervisor are the driver's children
+            return {me: (1, 0), 800: (me, ticks["command"]), 900: (me, ticks["supervisor"]),
+                    901: (900, ticks["executor"]), 902: (901, ticks["worker"])}
+        def activity_after_beat(wall=15., cpu=0., **advance):
+            clock["wall"] += wall; clock["cpu"] += cpu
+            for name, value in advance.items():
+                ticks[name] += value
+            with patch.object(driver.time, "time", return_value=clock["wall"]),                  patch.object(driver, "driver_cpu_seconds", return_value=clock["cpu"]),                  patch.object(driver, "process_table", side_effect=table):
+                progress.beat()
+            return json.loads((folder / "progress.json").read_text())["last_activity_epoch"]
+        progress.cpu, progress.activity = (clock["wall"], clock["cpu"]), 0
+        self.assertEqual(activity_after_beat(cpu=0.1), 0)  # a beat alone is not activity
+        self.assertEqual(activity_after_beat(cpu=3.5), 0)  # under a quarter of a core
+        self.assertEqual(activity_after_beat(cpu=4.0), clock["wall"])  # the driver computing (a collection, a hash)
+        progress.activity = 0
+        self.assertEqual(activity_after_beat(command=3), clock["wall"])  # the dispatch command's checks
+        progress.activity = 0
+        attempt["dispatch"] = {"state": "dispatched", "pid": 900}
+        self.assertEqual(activity_after_beat(), 0)  # the supervised baseline
+        self.assertEqual(activity_after_beat(supervisor=2), 0)  # the supervisor only waits and polls
+        self.assertEqual(activity_after_beat(executor=2), clock["wall"])  # preparation before the native start
+        progress.activity = 0
+        (root / "started.json").write_text(json.dumps({"pid": 2 ** 22 + 7}))  # a native child no longer readable
+        self.assertEqual(activity_after_beat(executor=2), 0)  # in the native part only native CPU counts
+        (root / "execution.json").write_text("{}")
+        self.assertEqual(activity_after_beat(), 0)  # the supervised baseline again
+        self.assertEqual(activity_after_beat(worker=4), clock["wall"])  # fingerprints and archive
+        progress.activity = 0
+        self.assertEqual(activity_after_beat(supervisor=1), 0)  # a stalled dispatcher behind a polling supervisor
+        attempt["finished"] = "now"
+        self.assertEqual(activity_after_beat(executor=5), 0)  # wait_block returned: the driver's own work counts
+        progress.touch()  # a finished driver step
+        self.assertGreater(activity_after_beat(), time.time() - 60)
+
+    def test_descendant_ticks(self):
+        table = {1: (0, 5), 10: (1, 100), 11: (10, 7), 12: (11, 3), 20: (1, 9), 21: (20, 4)}
+        self.assertEqual(driver.descendant_ticks(table, 10), 10)  # 11 and 12, never 10 itself
+        self.assertEqual(driver.descendant_ticks(table, 1, frozenset({20})), 110)  # not into a stopped subtree
+        self.assertEqual(driver.descendant_ticks(table, 12), 0)
+        self.assertEqual(driver.descendant_ticks(table, 99), -1)
+
+    @unittest.skipUnless(LINUX, "reads /proc")
+    def test_process_table_reads_this_process(self):
+        self.assertEqual(driver.process_table()[os.getpid()][0], os.getppid())
 
 
     def test_busy_refusal_is_retried(self):
