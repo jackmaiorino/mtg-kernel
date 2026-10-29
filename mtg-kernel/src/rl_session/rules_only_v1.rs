@@ -12,8 +12,20 @@
 use super::*;
 
 /// The newest cumulative core candidate chain (Kaito V75) without the
-/// consumer `validate_state` calls its public wrappers make.
+/// consumer `validate_state` calls its public wrappers make. A combat scan
+/// step offers only the answers the surface accepts ([`flat_scan_menu_v2`]),
+/// as the public projections do: declining an attacker that must attack, or
+/// a blocker answer that leaves no legal block, is not offered (#376).
 fn rules_only_candidates_v1(
+    origin: &PolicyDecisionV5,
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    let candidates = rules_only_origin_candidates_v1(origin, state, surface)?;
+    flat_scan_menu_v2(surface, state, origin, candidates).map_err(RlContractError)
+}
+
+fn rules_only_origin_candidates_v1(
     origin: &PolicyDecisionV5,
     state: &crate::state::GameState,
     surface: &PolicySurfaceV5,
