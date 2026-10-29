@@ -44,6 +44,9 @@ pub(crate) struct LineBAuxiliaryResultV1 {
     /// The Adam step norms of the ordinary and combined gradients, when
     /// requested (filled by the update after its Adam step).
     pub(crate) adam_steps: Option<serde_json::Value>,
+    /// The parameters after the ordinary-only Adam step from the same
+    /// state, beside `adam_steps` (EX1's paired-step telemetry).
+    pub(crate) ordinary_only_parameters: Option<Vec<NativeNamedParameterV1>>,
 }
 
 pub(super) struct LineBAuxiliaryTermsV1 {
@@ -250,6 +253,7 @@ impl LineBAuxiliaryTermsV1 {
             auxiliary_bias_residual,
             cap,
             adam_steps: None,
+            ordinary_only_parameters: None,
         })
     }
 

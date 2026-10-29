@@ -6,6 +6,10 @@ use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
     ESupportedTeacherOptionsV1,
 };
+use crate::expanded_deck_training_v1::ex1_collect_v1::{Ex1CollectOptionsV1, EX1_BUDGET_V1};
+use crate::expanded_deck_training_v1::ex1_update_v1::{
+    continuation_identity as ex1_continuation_identity_v1, Ex1UpdateOptionsV1,
+};
 use crate::expanded_deck_training_v1::no_state_digest_v1::{
     is_converted_source_v1, policy_contract_record_v1,
 };
@@ -127,6 +131,42 @@ impl SoftQRunOptionsV1 {
             prior_deck_indices: self.prior_deck_indices.clone(),
             teacher_workers: self.teacher_workers,
             engineering_zero_treatment: self.engineering_zero_treatment,
+        }
+    }
+}
+
+/// EX1 (collab LANES/spy-primary-direction-20261028/EX1-DESIGN-DRAFT.md v3.3):
+/// RT1 with the collection hook at every learner decision and the EX1 update
+/// (forward-KL rows of this update's own episodes in the same Adam step).
+/// Every constant of the target, placement, burst and row cap is frozen in
+/// the engine; the run chooses only its id, the dose and the cap.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ex1RunOptionsV1 {
+    pub run: String,
+    /// The global update index of this config's first iteration.
+    pub update_offset: u64,
+    pub coefficient: f64,
+    #[serde(default)]
+    pub cap: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1,
+}
+
+impl Ex1RunOptionsV1 {
+    fn collect_options_v1(&self, index: usize) -> Ex1CollectOptionsV1 {
+        Ex1CollectOptionsV1 {
+            run: self.run.clone(),
+            update: self.update_offset + index as u64,
+            budget: EX1_BUDGET_V1,
+        }
+    }
+
+    fn update_options_v1(&self, index: usize, collection: PinnedFileV1) -> Ex1UpdateOptionsV1 {
+        Ex1UpdateOptionsV1 {
+            run: self.run.clone(),
+            update: self.update_offset + index as u64,
+            coefficient: self.coefficient,
+            cap: self.cap,
+            collection,
         }
     }
 }
@@ -279,6 +319,9 @@ pub struct NativeExpandedTrainingRunV1 {
     /// TP1 Stage B searched-game targets; omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search_targets: Option<SearchTargetsRunOptionsV1>,
+    /// EX1's search in the training loop; omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ex1: Option<Ex1RunOptionsV1>,
     /// TP1 Stage B's CPU ledger: each iteration receipt records this driver
     /// process's CPU seconds at the iteration boundary. Off by default, so
     /// every existing config and receipt is unchanged.
@@ -347,6 +390,7 @@ impl NativeExpandedTrainingRunV1 {
                     && self.e_supported.is_none()
                     && self.soft_q.is_none()
                     && self.search_targets.is_none()
+                    && self.ex1.is_none()
                     && !matches!(
                         self.loss_selection,
                         ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { .. }
@@ -421,6 +465,33 @@ impl NativeExpandedTrainingRunV1 {
                     )?;
                 }
             }
+        }
+        if let Some(options) = &self.ex1 {
+            check(
+                self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.update_backend.is_cpu()
+                    && self.update_backward_execution.is_sequential()
+                    && self.preparation_workers == 1
+                    && self.collection_sampler.is_legacy()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    ),
+                "ex1 requires ordinary sequential CPU GAE, serial preparation and the legacy sampler",
+            )?;
+            options.collect_options_v1(0).validate_v1()?;
+            options
+                .update_options_v1(
+                    0,
+                    PinnedFileV1 {
+                        path: PathBuf::new(),
+                        sha256: String::new(),
+                    },
+                )
+                .validate_v1()?;
         }
         if let Some(options) = &self.search_targets {
             check(
@@ -1012,6 +1083,7 @@ fn validate_update(
     e_supported: Option<&ESupportedTeacherOptionsV1>,
     soft_q: Option<&SoftQTeacherOptionsV1>,
     search_targets: Option<(&SearchTargetsRunOptionsV1, usize)>,
+    ex1: Option<(&Ex1RunOptionsV1, usize, &PinnedFileV1)>,
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
@@ -1023,6 +1095,7 @@ fn validate_update(
     validate_e_supported_update(&document, e_supported)?;
     validate_soft_q_update(&document, soft_q)?;
     validate_search_targets_update(&document, search_targets)?;
+    validate_ex1_update(&document, ex1)?;
     check(
         document.get("training_math").and_then(Value::as_str) == training_math.identity_v1(),
         "update training math differs from the run config",
@@ -1158,12 +1231,43 @@ fn validate_search_targets_update(
     )
 }
 
+/// An EX1 run's update binds this iteration's collection with the run's
+/// continuation identity; any other run's update carries no EX1 receipt.
+fn validate_ex1_update(
+    document: &Value,
+    ex1: Option<(&Ex1RunOptionsV1, usize, &PinnedFileV1)>,
+) -> Result<(), String> {
+    let Some((options, index, collection)) = ex1 else {
+        return check(
+            document.get("ex1").is_none(),
+            "a run without ex1 recovered an ex1 update",
+        );
+    };
+    let receipt = document
+        .get("ex1")
+        .ok_or("ex1 run update lacks its receipt")?;
+    let checkpoint = read_pin_bounded(&parse_pin(document, "checkpoint")?, ARTIFACT_CAP)?;
+    let expected = options.update_options_v1(index, collection.clone());
+    check(
+        checkpoint["ex1"]["continuation"] == ex1_continuation_identity_v1(&expected)
+            && checkpoint["ex1"]["collection"] == value(collection)?
+            && receipt["collection"] == value(collection)?,
+        "ex1 update does not bind this run's collection and options",
+    )?;
+    read_pin_bounded(&parse_pin(receipt, "receipt")?, ARTIFACT_CAP).map(|_| ())
+}
+
 fn collection_command(
     config: &NativeExpandedTrainingRunV1,
+    index: usize,
     source: &ExpandedModelSourceV1,
     episodes: &[ExpandedEpisodeV1],
     output_directory: PathBuf,
 ) -> ExpandedTrainingCommandV1 {
+    let ex1 = config
+        .ex1
+        .as_ref()
+        .map(|options| options.collect_options_v1(index));
     if config.collection_workers == 1 {
         ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -1171,6 +1275,7 @@ fn collection_command(
             max_non_natural_episode_fraction: config.max_non_natural_episode_fraction,
             collection_sampler: config.collection_sampler,
             training_math: config.training_math,
+            ex1,
             output_directory,
         }
     } else {
@@ -1181,6 +1286,7 @@ fn collection_command(
             max_non_natural_episode_fraction: config.max_non_natural_episode_fraction,
             collection_sampler: config.collection_sampler,
             training_math: config.training_math,
+            ex1,
             output_directory,
         }
     }
@@ -1468,6 +1574,7 @@ pub fn run_native_expanded_training_v1(
                 e_options.as_ref(),
                 sq_options.as_ref(),
                 config.search_targets.as_ref().map(|o| (o, index)),
+                config.ex1.as_ref().map(|o| (o, index, &collection)),
                 config.training_math,
                 input_contract.as_ref(),
             )?;
@@ -1522,7 +1629,7 @@ pub fn run_native_expanded_training_v1(
                 continue;
             }
             let collect_command =
-                collection_command(config, &current, &episodes, attempt.join("collect"));
+                collection_command(config, index, &current, &episodes, attempt.join("collect"));
             check(
                 read_json(&saved_command, SMALL_CAP)? == value(&collect_command)?,
                 "interrupted attempt collection command differs",
@@ -1577,6 +1684,10 @@ pub fn run_native_expanded_training_v1(
                     e_options.as_ref(),
                     sq_options.as_ref(),
                     config.search_targets.as_ref().map(|o| (o, index)),
+                    config
+                        .ex1
+                        .as_ref()
+                        .map(|o| (o, index, &referenced_collection)),
                     config.training_math,
                     input_contract.as_ref(),
                 )?;
@@ -1603,7 +1714,7 @@ pub fn run_native_expanded_training_v1(
                 log.sync_all().map_err(err)?;
             }
             let collect_command =
-                collection_command(config, &current, &episodes, attempt.join("collect"));
+                collection_command(config, index, &current, &episodes, attempt.join("collect"));
             publish(&attempt, "collect-command.json", &collect_command)?;
             if collection_pin.is_none() {
                 let started = Instant::now();
@@ -1629,8 +1740,17 @@ pub fn run_native_expanded_training_v1(
                 "update-input.json",
                 &json!({"collection":collection}),
             )?;
-            let update_command = match &config.search_targets {
-                Some(options) => ExpandedTrainingCommandV1::SearchTargetsUpdate {
+            let update_command = match (&config.search_targets, &config.ex1) {
+                (_, Some(options)) => ExpandedTrainingCommandV1::Ex1Update {
+                    source: current.clone(),
+                    trajectories,
+                    learning_rate: config.learning_rate,
+                    value_coefficient: config.value_coefficient,
+                    loss_selection: config.loss_selection,
+                    ex1: options.update_options_v1(index, collection.clone()),
+                    output_directory: attempt.join("update"),
+                },
+                (Some(options), None) => ExpandedTrainingCommandV1::SearchTargetsUpdate {
                     source: current.clone(),
                     trajectories,
                     learning_rate: config.learning_rate,
@@ -1639,7 +1759,7 @@ pub fn run_native_expanded_training_v1(
                     targets: options.options_v1(index, options.wait_for_packet_v1(index)?),
                     output_directory: attempt.join("update"),
                 },
-                None => update_command(
+                (None, None) => update_command(
                     config,
                     index,
                     &current,
@@ -1688,6 +1808,7 @@ pub fn run_native_expanded_training_v1(
             e_options.as_ref(),
             sq_options.as_ref(),
             config.search_targets.as_ref().map(|o| (o, index)),
+            config.ex1.as_ref().map(|o| (o, index, &collection)),
             config.training_math,
             input_contract.as_ref(),
         )?;
@@ -1919,6 +2040,7 @@ mod tests {
             e_supported: None,
             soft_q: None,
             search_targets: None,
+            ex1: None,
             record_process_cpu: false,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
@@ -1941,6 +2063,7 @@ mod tests {
         let output = serial.output_directory.join("collect");
         let serial_command = value(&collection_command(
             &serial,
+            0,
             &serial.initial_source,
             &episodes,
             output.clone(),
@@ -1954,6 +2077,7 @@ mod tests {
         assert_ne!(identity(&serial).unwrap(), identity(&parallel).unwrap());
         let parallel_command = value(&collection_command(
             &parallel,
+            0,
             &parallel.initial_source,
             &episodes,
             output,
@@ -2124,6 +2248,7 @@ mod tests {
         tolerant.max_non_natural_episode_fraction = 0.2;
         let command = value(&collection_command(
             &tolerant,
+            0,
             &tolerant.initial_source,
             &episodes,
             tolerant.output_directory.join("collect"),
@@ -2690,6 +2815,7 @@ mod tests {
             e_supported: None,
             soft_q: None,
             search_targets: None,
+            ex1: None,
             record_process_cpu: false,
             output_directory: root.join("run"),
         }

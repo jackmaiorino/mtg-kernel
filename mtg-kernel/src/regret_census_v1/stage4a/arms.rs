@@ -339,7 +339,7 @@ impl Discovery {
         self.self_target_resolved += u64::from(s.self_target_resolved);
         self.dr_giant_resolved += u64::from(s.dr_giant_resolved);
         self.dr_giant_stacked += u64::from(s.dr_giant_stacked);
-        if let Some(End::Natural { win }) = end {
+        if let Some(End::Natural { win, .. }) = end {
             self.natural += 1;
             if s.complete() {
                 self.completions_natural += 1;
@@ -432,8 +432,8 @@ impl EvalOut {
 
 fn finish(end: Result<End, PlayErr>, suffix: Suffix, meter: &Meter, c: &Counters) -> EvalOut {
     let (end_label, w, unknown, fault) = match &end {
-        Ok(End::Natural { win: true }) => ("win", true, false, None),
-        Ok(End::Natural { win: false }) => ("nonwin", false, false, None),
+        Ok(End::Natural { win: true, .. }) => ("win", true, false, None),
+        Ok(End::Natural { win: false, .. }) => ("nonwin", false, false, None),
         Ok(End::NonNatural) => ("nonnatural", false, true, None),
         Err(PlayErr::Truncated) => ("truncated", false, true, None),
         Err(PlayErr::Fault(e)) => ("fault", false, true, Some(e.clone())),
@@ -578,7 +578,7 @@ impl Roles {
                 None,
                 &ctx.defs,
             )? {
-                End::Natural { win } => means.push(f64::from(u8::from(win))),
+                End::Natural { win, .. } => means.push(f64::from(u8::from(win))),
                 End::NonNatural => {
                     stats.inner_nonnatural += 1;
                     return Ok(sampled);
@@ -732,9 +732,9 @@ impl Roles {
                 );
                 sel.d.add(&dstats);
                 match r {
-                    Ok(End::Natural { win }) => {
+                    Ok(End::Natural { win, draw }) => {
                         sel.discovery
-                            .add(&suffix, Some(End::Natural { win }), index);
+                            .add(&suffix, Some(End::Natural { win, draw }), index);
                         scores.push(u64::from(win));
                     }
                     Ok(End::NonNatural) => {
@@ -1344,8 +1344,8 @@ impl Roles {
             rec.transitions = meter.spent - spent0;
             rec.policy_calls = c.inference - calls0;
             rec.outcome = match &r {
-                Ok((_, _, End::Natural { win: true })) => 1,
-                Ok((_, _, End::Natural { win: false })) => 2,
+                Ok((_, _, End::Natural { win: true, .. })) => 1,
+                Ok((_, _, End::Natural { win: false, .. })) => 2,
                 Ok((_, _, End::NonNatural)) => 3,
                 Err(PlayErr::Truncated) => 4,
                 Err(PlayErr::Fault(_)) => 5,
@@ -1361,8 +1361,10 @@ impl Roles {
             }
             if let Some(t) = trace.as_deref_mut() {
                 let (end, new) = match &r {
-                    Ok((_, new, End::Natural { win: true })) => ("win", new.first().map(|x| &x.0)),
-                    Ok((_, new, End::Natural { win: false })) => {
+                    Ok((_, new, End::Natural { win: true, .. })) => {
+                        ("win", new.first().map(|x| &x.0))
+                    }
+                    Ok((_, new, End::Natural { win: false, .. })) => {
                         ("loss", new.first().map(|x| &x.0))
                     }
                     Ok((_, _, End::NonNatural)) => ("nonnatural", None),
@@ -1372,16 +1374,16 @@ impl Roles {
                 t.sim_end(end, meter.spent, new);
             }
             match r {
-                Ok((path, new, End::Natural { win })) => {
+                Ok((path, new, End::Natural { win, draw })) => {
                     sel.discovery
-                        .add(&suffix, Some(End::Natural { win }), index);
+                        .add(&suffix, Some(End::Natural { win, draw }), index);
                     let _span =
                         crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
                     diag.before_backup(&tree, &path, &new, win, sel.completed);
                     if let Some(log) = diag.path_log.as_mut() {
                         log.natural(index, &path, &new, win, &rec);
                     }
-                    tree.backup_observed(&path, new, win, rec.rollout_choices == 0);
+                    tree.backup_observed(&path, new, win, draw, rec.rollout_choices == 0);
                     if let Some(sharing) = sharing.as_mut() {
                         sharing.backup(&sharing_cursor, index, win);
                     }

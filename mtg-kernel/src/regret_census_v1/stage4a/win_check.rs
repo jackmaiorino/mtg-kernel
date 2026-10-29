@@ -43,23 +43,10 @@ fn result_json(result: &WinSearchResultV1) -> Value {
         "forced_order_collapses": result.forced_order_collapses, "expanded": result.expanded, "line": result.line})
 }
 
-/// EX1 menu stratum: a target choice, else a cast or activation, else other.
+/// EX1 menu stratum (the shared rule the EX1 collection hook also calls).
 fn stratum(s: &crate::rl_session::FastActorSessionV1) -> &'static str {
-    use crate::rl::ActionSemanticV1 as A;
-    let menu = s.diagnostic_current_action_semantics().unwrap_or_default();
-    if menu
-        .iter()
-        .any(|a| matches!(a, A::ChooseTarget { .. } | A::ChooseEffectTarget { .. }))
-    {
-        "target"
-    } else if menu
-        .iter()
-        .any(|a| matches!(a, A::CastSpell { .. } | A::ActivateAbility { .. }))
-    {
-        "cast_or_activate"
-    } else {
-        "other"
-    }
+    crate::ex1_v1::ex1_stratum_v1(&s.diagnostic_current_action_semantics().unwrap_or_default())
+        .as_str()
 }
 
 /// Deterministic world seeds per job and decision.

@@ -99,6 +99,7 @@ fn write_checkpoint(
         e_supported: None,
         soft_q: None,
         search_targets: None,
+        ex1: None,
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: as_bits(&snapshot.parameters),

@@ -5,6 +5,8 @@
 pub mod archive_distillation_v1;
 pub mod b_width_prescreen_v1;
 pub mod e_supported_teacher_v1;
+pub mod ex1_collect_v1;
+pub mod ex1_update_v1;
 pub mod exploration_probe_v1;
 pub mod no_state_digest_v1;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
@@ -1415,6 +1417,9 @@ pub(crate) struct ExpandedCheckpointV1 {
     /// TP1 Stage B's continuation identity and packet pin; absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     search_targets: Option<Value>,
+    /// EX1's continuation identity and collection pin; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ex1: Option<Value>,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
     parameters: Vec<ParameterBitsV1>,
@@ -1496,6 +1501,8 @@ struct CheckpointESupportedProbeV1 {
     soft_q: Option<Value>,
     #[serde(default, deserialize_with = "present_value_v1")]
     search_targets: Option<Value>,
+    #[serde(default, deserialize_with = "present_value_v1")]
+    ex1: Option<Value>,
 }
 
 fn present_value_v1<'de, D: serde::Deserializer<'de>>(
@@ -2050,8 +2057,20 @@ pub(crate) fn restore_reset_cut_v1(
 fn collect_episode(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
+    opponent: Option<&mut LoadedOpponentV1>,
+    episode: &ExpandedEpisodeV1,
+) -> Result<ExpandedTrajectoryV1, CollectEpisodeErrorV1> {
+    collect_episode_hooked_v1(policy, learner, opponent, episode, None)
+}
+
+/// `collect_episode` with EX1's collection hook (`ex1_collect_v1`), which
+/// reads the live decision and never changes the trajectory.
+fn collect_episode_hooked_v1(
+    policy: &mut FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
     mut opponent: Option<&mut LoadedOpponentV1>,
     episode: &ExpandedEpisodeV1,
+    mut hook: Option<&mut ex1_collect_v1::Ex1EpisodeHookV1>,
 ) -> Result<ExpandedTrajectoryV1, CollectEpisodeErrorV1> {
     let configs = episode.configurations()?;
     ensure(
@@ -2152,6 +2171,10 @@ fn collect_episode(
                 // `NativeFlatDecisionTensorV2`), so only this selection point
                 // differs.
                 let acting_sampler = acting.collection_sampler_identity_v1();
+                let pending = match hook.as_deref_mut() {
+                    Some(hook) if hook.hooks_v1(&d) => Some(hook.before_select_v1(&session, d)?),
+                    _ => None,
+                };
                 let (selected, scores, tensor_bits) =
                     if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
                         let (selected, scores, tensor) =
@@ -2176,6 +2199,9 @@ fn collect_episode(
                         .or_else(|| decision_sampler_identity_v1(scores.logits.len()))
                         .map(str::to_owned),
                 };
+                if let (Some(hook), Some(pending)) = (hook.as_deref_mut(), pending) {
+                    hook.after_select_v1(pending, d, &record.logits, selected)?;
+                }
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
                 decisions.push(record);
             }
@@ -2404,6 +2430,14 @@ fn seed_is_forced_non_natural_for_test_v1(_seed: u64) -> bool {
 /// exhausted -- the plan's existing fatal error, with the ledger entries
 /// gathered so far returned alongside it so a caller can still preserve them
 /// before aborting.
+/// A slot's trajectory, its failed attempts' ledger entries and, with EX1,
+/// the hook's record of every attempt.
+type TolerantCollectionV1 = (
+    ExpandedTrajectoryV1,
+    Vec<NonNaturalLedgerEntryV1>,
+    Option<Value>,
+);
+
 fn collect_episode_tolerant_v1(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
@@ -2411,23 +2445,43 @@ fn collect_episode_tolerant_v1(
     episode: &ExpandedEpisodeV1,
     slot: usize,
     max_non_natural_episode_fraction: f32,
-) -> Result<
-    (ExpandedTrajectoryV1, Vec<NonNaturalLedgerEntryV1>),
-    (String, Vec<NonNaturalLedgerEntryV1>),
-> {
+    ex1: Option<&ex1_collect_v1::Ex1CollectOptionsV1>,
+) -> Result<TolerantCollectionV1, (String, Vec<NonNaturalLedgerEntryV1>)> {
     let mut ledger = Vec::new();
     let mut attempt_episode = episode.clone();
+    // EX1: one record per attempt; a non-natural attempt's searches are kept
+    // and counted, its rows are never taught.
+    let mut ex1_attempts = Vec::new();
     for attempt in 1..=NON_NATURAL_RETRY_LIMIT {
+        let mut hook = ex1
+            .map(|options| ex1_collect_v1::Ex1EpisodeHookV1::new(options, policy, &attempt_episode))
+            .transpose()
+            .map_err(|error| (error, std::mem::take(&mut ledger)))?;
         let reborrowed_opponent = opponent.as_deref_mut();
-        let outcome = collect_episode(policy, learner, reborrowed_opponent, &attempt_episode);
+        let outcome = collect_episode_hooked_v1(
+            policy,
+            learner,
+            reborrowed_opponent,
+            &attempt_episode,
+            hook.as_mut(),
+        );
         let outcome = match outcome {
             Ok(trajectory) if seed_is_forced_non_natural_for_test_v1(attempt_episode.seed) => Err(
                 CollectEpisodeErrorV1::NonNatural(Box::new(trajectory.terminal.clone())),
             ),
             other => other,
         };
+        if let Some(hook) = hook {
+            ex1_attempts.push(hook.finish_v1(&attempt_episode, outcome.is_ok()));
+        }
         match outcome {
-            Ok(trajectory) => return Ok((trajectory, ledger)),
+            Ok(trajectory) => {
+                let record = ex1.map(|_| {
+                    json!({"schema":ex1_collect_v1::EX1_COLLECT_SCHEMA_V1,"slot":slot,
+                        "attempts":ex1_attempts})
+                });
+                return Ok((trajectory, ledger, record));
+            }
             Err(CollectEpisodeErrorV1::NonNatural(terminal))
                 if max_non_natural_episode_fraction > 0.0 =>
             {
@@ -2923,6 +2977,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// platform's libm, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
         training_math: TrainingMathV1,
+        /// EX1's collection hook; omitted when absent, so every existing
+        /// command keeps its bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ex1: Option<ex1_collect_v1::Ex1CollectOptionsV1>,
         output_directory: PathBuf,
     },
     /// Explicit execution-only successor. The legacy Collect command and its
@@ -2940,6 +2998,9 @@ pub enum ExpandedTrainingCommandV1 {
         /// platform's libm, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
         training_math: TrainingMathV1,
+        /// EX1's collection hook; omitted when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ex1: Option<ex1_collect_v1::Ex1CollectOptionsV1>,
         output_directory: PathBuf,
     },
     Update {
@@ -3043,6 +3104,18 @@ pub enum ExpandedTrainingCommandV1 {
         value_coefficient: f32,
         loss_selection: ExpandedLossSelectionV1,
         targets: SearchTargetsOptionsV1,
+        output_directory: PathBuf,
+    },
+    /// EX1 (collab LANES/spy-primary-direction-20261028): ordinary CPU GAE
+    /// with full Adam plus forward-KL rows from the collection hook's
+    /// records of this update's own episodes (`ex1_update_v1`).
+    Ex1Update {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        loss_selection: ExpandedLossSelectionV1,
+        ex1: ex1_update_v1::Ex1UpdateOptionsV1,
         output_directory: PathBuf,
     },
     /// SQ1's target diagnostic (design section 6.1): construction and
@@ -3224,6 +3297,33 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             None,
             Some(targets),
+            None,
+            TrainingMathV1::PlatformLibm,
+        ),
+        ExpandedTrainingCommandV1::Ex1Update {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            loss_selection,
+            ex1,
+            output_directory,
+        } => execute_update_inner_v1(
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            ExpandedUpdateBackendV1::Cpu,
+            UpdateBackwardExecutionV1::Sequential,
+            loss_selection,
+            output_directory,
+            None,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            None,
+            None,
+            None,
+            None,
+            Some(ex1),
             TrainingMathV1::PlatformLibm,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
@@ -3334,6 +3434,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             max_non_natural_episode_fraction,
             collection_sampler,
             training_math,
+            ex1,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
@@ -3342,6 +3443,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             max_non_natural_episode_fraction,
             collection_sampler,
             training_math,
+            ex1,
             output_directory,
         ),
         ExpandedTrainingCommandV1::Collect {
@@ -3350,6 +3452,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             max_non_natural_episode_fraction,
             collection_sampler,
             training_math,
+            ex1,
             output_directory,
         } => {
             let collection_started = std::time::Instant::now();
@@ -3393,6 +3496,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let initialization_seconds = collection_started.elapsed().as_secs_f64();
             fs::create_dir(&output_directory).map_err(err)?;
             let mut outputs = Vec::new();
+            let mut ex1_outputs = Vec::new();
             let mut ledger = Vec::new();
             // IIFE: the loop body needs `?` for ordinary per-episode errors,
             // but a non-Natural terminal (see `collect_episode_tolerant_v1`)
@@ -3412,13 +3516,14 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                         .as_ref()
                         .map(|s| opponent_cache.load(s))
                         .transpose()?;
-                    let (trajectory, entries) = collect_episode_tolerant_v1(
+                    let (trajectory, entries, ex1_record) = collect_episode_tolerant_v1(
                         &mut policy,
                         &learner,
                         opponent,
                         episode,
                         index,
                         max_non_natural_episode_fraction,
+                        ex1.as_ref(),
                     )
                     .map_err(|(collection_error, entries)| {
                         ledger.extend(entries);
@@ -3427,6 +3532,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                     ledger.extend(entries);
                     let name = format!("episode-{index:04}.json");
                     outputs.push(publish_json(&output_directory, &name, &trajectory)?);
+                    if let Some(record) = ex1_record {
+                        let name = format!("ex1-{index:04}.json");
+                        ex1_outputs.push(publish_json(&output_directory, &name, &record)?);
+                    }
                 }
                 Ok(())
             })();
@@ -3465,6 +3574,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             }
             if let Some(pin) = non_natural_ledger_pin {
                 result["non_natural_ledger"] = json!(pin);
+            }
+            if let Some(options) = &ex1 {
+                result["ex1"] = json!({"options":options,"episodes":ex1_outputs});
             }
             publish_json(&output_directory, "collection.json", &result)?;
             Ok(result)
@@ -3688,6 +3800,7 @@ fn execute_update_v1(
         e_supported,
         soft_q,
         None,
+        None,
         training_math,
     )
 }
@@ -3711,6 +3824,7 @@ fn execute_update_inner_v1(
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
     search_targets: Option<SearchTargetsOptionsV1>,
+    ex1: Option<ex1_update_v1::Ex1UpdateOptionsV1>,
     training_math: TrainingMathV1,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
@@ -3721,8 +3835,24 @@ fn execute_update_inner_v1(
         update_backend,
         &loss_selection,
         line_b.is_some(),
-        e_supported.is_some() || soft_q.is_some() || search_targets.is_some(),
+        e_supported.is_some() || soft_q.is_some() || search_targets.is_some() || ex1.is_some(),
     )?;
+    if let Some(options) = &ex1 {
+        options.validate_v1()?;
+        ensure(
+            line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && backward_execution.is_sequential(),
+            "ex1 requires ordinary sequential CPU GAE with full Adam",
+        )?;
+    }
     if let Some(options) = &search_targets {
         options.validate_v1()?;
         ensure(
@@ -3783,6 +3913,7 @@ fn execute_update_inner_v1(
                 serde_json::from_value(identity["packet"].clone()).map_err(err)?;
             read_pinned_bytes(&packet)?;
         }
+        ex1_update_v1::check_continuation_v1(saved.ex1.as_ref(), ex1.as_ref())?;
         if let Some(identity) = &saved.search_targets {
             search_targets_v1::check_continuation_v1(identity, search_targets.as_ref())?;
             let packet: PinnedFileV1 =
@@ -3841,7 +3972,8 @@ fn execute_update_inner_v1(
                 && line_b.is_none()
                 && e_supported.is_none()
                 && soft_q.is_none()
-                && search_targets.is_none(),
+                && search_targets.is_none()
+                && ex1.is_none(),
             "the no-state-digest contract admits only the ordinary CPU update",
         )?;
     }
@@ -4075,6 +4207,13 @@ fn execute_update_inner_v1(
         .map(|options| search_targets_v1::teach(&source, &state, options))
         .transpose()?;
     let mut st_auxiliary = None;
+    let ex1_teacher = ex1
+        .as_ref()
+        .map(|options| {
+            ex1_update_v1::ex1_teach_v1(options, &trajectories, &episodes, &state, generation)
+        })
+        .transpose()?;
+    let mut ex1_auxiliary = None;
     let teacher_seconds = teacher_started.elapsed().as_secs_f64();
     // Each trajectory's learner list, for the receipt's census by list
     // (review change 10).
@@ -4282,6 +4421,48 @@ fn execute_update_inner_v1(
                 .as_ref()
                 .expect("computed above whenever loss_selection is gae_advantage_value/v1");
             match (update_backend, generation) {
+                (ExpandedUpdateBackendV1::Cpu, _) if ex1_teacher.is_some() => {
+                    // Every EX1 update takes the external auxiliary path with
+                    // step telemetry; with no rows it is the inactive path,
+                    // bit-identical to ordinary.
+                    let (_, rows) = ex1_teacher.as_ref().expect("guarded");
+                    let options = ex1.as_ref().expect("teacher implies options");
+                    let input = ex1_update_v1::ex1_auxiliary_input_v1(rows, options, generation);
+                    let (result, auxiliary) = state
+                        .train_step_gae_external_auxiliary_v1(
+                            generation,
+                            &groups,
+                            &gae.value_targets,
+                            &gae.advantages,
+                            value_coefficient,
+                            learning_rate,
+                            None,
+                            &input,
+                        )
+                        .map_err(err)?;
+                    let model = state.model_v1();
+                    let combined = model.parameter_snapshot_v1();
+                    let movement = ex1_update_v1::ex1_movement_v1(
+                        rows,
+                        model,
+                        generation,
+                        &combined,
+                        auxiliary.ordinary_only_parameters.as_deref(),
+                    )?;
+                    ex1_auxiliary = Some(json!({"rows":rows.len(),
+                        "denominator":crate::ex1_v1::EX1_DENOMINATOR_V1,
+                        "coefficient":options.coefficient,
+                        "kl_before":auxiliary.divergences_before,
+                        "auxiliary_loss":auxiliary.auxiliary_loss,
+                        "total_loss":f64::from(result.loss) + auxiliary.auxiliary_loss,
+                        "gradient_components":auxiliary.gradient_components,
+                        "auxiliary_head_l2":auxiliary.auxiliary_head_l2,
+                        "ordinary_head_l2":auxiliary.ordinary_head_l2,
+                        "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual,
+                        "cap":auxiliary.cap,"adam_steps":auxiliary.adam_steps,
+                        "movement":movement,"thresholds":ex1_update_v1::ex1_thresholds_v1()}));
+                    result
+                }
                 (ExpandedUpdateBackendV1::Cpu, _)
                     if st_teacher.as_ref().is_some_and(|(_, rows)| {
                         !rows.is_empty()
@@ -4603,6 +4784,20 @@ fn execute_update_inner_v1(
         .as_ref()
         .map(|(census, _)| publish_json(&output_directory, "search-targets.json", census))
         .transpose()?;
+    let ex1_pin = match (&ex1_teacher, &ex1_auxiliary) {
+        (Some((receipt, _)), Some(exposure)) => {
+            let mut document = receipt.clone();
+            document["schema"] = json!("ex1-update/v1");
+            document["gradient_exposure"] = exposure.clone();
+            Some(publish_json(
+                &output_directory,
+                "ex1-update.json",
+                &document,
+            )?)
+        }
+        (None, None) => None,
+        _ => return Err("ex1 update lacks its auxiliary step".into()),
+    };
     let checkpoint = ExpandedCheckpointV1 {
         schema: match &transfer {
             Some(context) if context.is_fresh_v1() => {
@@ -4630,6 +4825,9 @@ fn execute_update_inner_v1(
         search_targets:search_targets.as_ref().map(|options|json!({
             "continuation":search_targets_v1::continuation_identity(options),
             "packet":options.packet,"census":st_census_pin})),
+        ex1: ex1.as_ref().map(|options| json!({
+            "continuation":ex1_update_v1::continuation_identity(options),
+            "collection":options.collection,"receipt":ex1_pin})),
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: snapshot
@@ -4802,6 +5000,14 @@ fn execute_update_inner_v1(
             "packet":options.packet,"census":st_census_pin,"rows":census["rows"],
             "denominator":options.denominator,"coefficient_bits":options.coefficient.to_bits(),
             "gradient_exposure":st_auxiliary,"teacher_seconds":teacher_seconds});
+    }
+    if let (Some((receipt, _)), Some(options)) = (&ex1_teacher, &ex1) {
+        let exposure = ex1_auxiliary.as_ref().expect("an ex1 step");
+        result["ex1"] = json!({"method":ex1_update_v1::EX1_METHOD_V1,"receipt":ex1_pin,
+            "collection":options.collection,"rows":receipt["rows"],
+            "rows_dropped":receipt["rows_dropped"],"searches":receipt["searches"],
+            "searches_failed":receipt["searches_failed"],"cap":exposure["cap"],
+            "adam_steps":exposure["adam_steps"],"teacher_seconds":teacher_seconds});
     }
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
@@ -5816,6 +6022,7 @@ pub(crate) mod tests {
             e_supported: None,
             soft_q: None,
             search_targets: None,
+            ex1: None,
             adam_step: snapshot.adam_step,
             scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
             parameters: snapshot
@@ -7425,13 +7632,110 @@ pub(crate) mod tests {
         );
     }
 
+    /// EX1 section 7 item 7: the hook never changes the trajectory (same
+    /// frozen parameters and seeds, hook on against off), and its rows carry
+    /// targets that recompute from the trajectory's own logits.
+    #[test]
+    fn ex1_hook_leaves_the_trajectory_unchanged_and_records_its_rows() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("ex1-hook", 2_026_102_901, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let mut searched = 0;
+        for update in 0..6 {
+            let options = ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "ex1-hook-test".into(),
+                update,
+                budget: 1_500,
+            };
+            assert!(options.validate_v1().is_err(), "only B = 64k is admitted");
+            let mut hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::with_test_budget_v1(&options, &policy, &episode)
+                    .unwrap();
+            let hooked =
+                collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
+                    .unwrap();
+            assert_eq!(
+                serde_json::to_vec(&plain).unwrap(),
+                serde_json::to_vec(&hooked).unwrap(),
+                "update {update}"
+            );
+            let record = hook.finish_v1(&episode, true);
+            let strata = record["strata"].as_object().unwrap();
+            let decisions: u64 = strata
+                .values()
+                .map(|c| c["decisions"].as_u64().unwrap())
+                .sum();
+            let learner_multi = hooked
+                .decisions
+                .iter()
+                .filter(|d| d.actor == 0 && d.logits.len() >= 2)
+                .count() as u64;
+            assert_eq!(decisions, learner_multi);
+            let searches = record["searches"].as_array().unwrap();
+            let triggers: u64 = strata
+                .values()
+                .map(|c| c["triggers"].as_u64().unwrap())
+                .sum();
+            assert_eq!(triggers, searches.len() as u64);
+            searched += searches.len();
+            // A burst row lies in its trigger's game turn (round and active
+            // player), never in the other player's turn of the same round.
+            for row in record["rows"].as_array().unwrap() {
+                if row["kind"] == "burst" {
+                    let trigger = searches
+                        .iter()
+                        .rfind(|s| s["step"].as_u64() < row["step"].as_u64())
+                        .unwrap();
+                    assert_eq!(
+                        (&trigger["turn"], &trigger["active_player"]),
+                        (&row["turn"], &row["active_player"])
+                    );
+                }
+            }
+            for row in record["rows"].as_array().unwrap() {
+                let d = hooked
+                    .decisions
+                    .iter()
+                    .find(|d| json!(d.step) == row["step"])
+                    .unwrap();
+                assert_eq!(row["selected"], json!(d.selected));
+                let n: Vec<u64> = serde_json::from_value(row["n"].clone()).unwrap();
+                let wins: Vec<u64> = serde_json::from_value(row["wins"].clone()).unwrap();
+                let draws: Vec<u64> = serde_json::from_value(row["draws"].clone()).unwrap();
+                let counts: Vec<crate::ex1_v1::Ex1EdgeCountsV1> = (0..n.len())
+                    .map(|a| crate::ex1_v1::Ex1EdgeCountsV1 {
+                        n: n[a],
+                        wins: wins[a],
+                        draws: draws[a],
+                    })
+                    .collect();
+                let target = crate::ex1_v1::ex1_target_v1(&d.logits, &counts)
+                    .unwrap()
+                    .unwrap();
+                let q: Vec<u64> = target
+                    .target
+                    .probabilities
+                    .iter()
+                    .map(|x| x.to_bits())
+                    .collect();
+                assert_eq!(row["q_bits"], json!(q));
+            }
+            if searched > 0 {
+                break;
+            }
+        }
+        assert!(searched > 0, "no update of the test triggered a search");
+    }
+
     #[test]
     fn tolerant_collection_default_off_still_aborts_on_first_attempt_with_no_ledger() {
         let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
         let learner = test_behavior(&policy, false);
         let episode = fast_self_play_episode_v1("tolerant-off", 2_026_091_701, 0);
         set_force_non_natural_seeds_for_test_v1([episode.seed]);
-        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 0, 0.0);
+        let outcome =
+            collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 0, 0.0, None);
         clear_force_non_natural_seeds_for_test_v1([episode.seed]);
         let (error, ledger) = outcome.unwrap_err();
         assert_eq!(
@@ -7453,9 +7757,10 @@ pub(crate) mod tests {
         let retry_seed = derived_retry_seed_v1(&episode.id, episode.seed, 1);
         assert_ne!(retry_seed, episode.seed);
         set_force_non_natural_seeds_for_test_v1([episode.seed]);
-        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 3, 0.5);
+        let outcome =
+            collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 3, 0.5, None);
         clear_force_non_natural_seeds_for_test_v1([episode.seed]);
-        let (trajectory, ledger) = outcome.unwrap();
+        let (trajectory, ledger, _) = outcome.unwrap();
         assert_eq!(
             trajectory.terminal.terminal_classification,
             TerminalClassificationV1::Natural
@@ -7685,7 +7990,8 @@ pub(crate) mod tests {
         let retry_1 = derived_retry_seed_v1(&episode.id, episode.seed, 1);
         let retry_2 = derived_retry_seed_v1(&episode.id, episode.seed, 2);
         set_force_non_natural_seeds_for_test_v1([episode.seed, retry_1, retry_2]);
-        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 7, 0.9);
+        let outcome =
+            collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 7, 0.9, None);
         clear_force_non_natural_seeds_for_test_v1([episode.seed, retry_1, retry_2]);
         let (error, ledger) = outcome.unwrap_err();
         assert_eq!(
@@ -7759,6 +8065,7 @@ pub(crate) mod tests {
             max_non_natural_episode_fraction: 0.5,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -7791,6 +8098,7 @@ pub(crate) mod tests {
             max_non_natural_episode_fraction: 0.1,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -8569,6 +8877,7 @@ pub(crate) mod tests {
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
                 training_math,
+                ex1: None,
                 output_directory: root.join(format!("collect-{iteration}")),
             })?;
             let trajectories: Vec<PinnedFileV1> =
@@ -8872,6 +9181,7 @@ pub(crate) mod tests {
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
                 training_math: math,
+                ex1: None,
                 output_directory: root.join(name),
             })
         };
@@ -9297,6 +9607,7 @@ pub(crate) mod tests {
                     max_non_natural_episode_fraction: 0.0,
                     collection_sampler: CollectionSamplerV1::Legacy,
                     training_math: TrainingMathV1::PlatformLibm,
+                    ex1: None,
                     output_directory: root.join(format!("collect-{iteration}")),
                 })
                 .unwrap();
@@ -10028,6 +10339,7 @@ pub(crate) mod tests {
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1,
             training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -10498,6 +10810,7 @@ pub(crate) mod tests {
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -10642,6 +10955,7 @@ pub(crate) mod tests {
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
             output_directory: root.join("collect"),
         })
         .unwrap();

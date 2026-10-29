@@ -62,6 +62,7 @@ mod canon2;
 mod diag;
 pub(crate) mod e_supported;
 pub(crate) mod e_teacher_diagnostic;
+mod ex1_search;
 mod identity;
 mod interchange;
 mod labels;
@@ -81,6 +82,10 @@ mod tree;
 mod utility_root;
 mod win_check;
 mod wm_dump;
+pub(crate) use ex1_search::{
+    ex1_node_covers_v1, ex1_search_identity_v1, ex1_self_target_v1, Ex1LookupV1, Ex1NodeV1,
+    Ex1SearcherV1,
+};
 #[cfg(feature = "gameplay-decision-trace-v1")]
 pub(crate) use utility_root::{authenticated_roots_v1, validate_searched_game_v1, SearchedRootV1};
 #[cfg(feature = "viewer-recording-v1")]

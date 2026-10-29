@@ -747,6 +747,7 @@ pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
 pub(crate) mod combat_static_rules_v1;
 mod counter_target_effects_v1;
+pub mod ex1_v1;
 mod extravagant_replication_v1;
 pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;

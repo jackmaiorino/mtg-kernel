@@ -1159,6 +1159,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             }
             result.adam_steps = Some(serde_json::json!({"combined_l2":combined.sqrt(),
                 "ordinary_l2":ordinary_step.sqrt(),"difference_l2":difference.sqrt()}));
+            result.ordinary_only_parameters = Some(alone);
         }
 
         phase_recorder.finish_v1(adam_timer);

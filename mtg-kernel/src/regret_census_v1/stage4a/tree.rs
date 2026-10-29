@@ -835,6 +835,9 @@ pub(crate) struct Node {
     pub(crate) visits: u64,
     pub(crate) n: Vec<u64>,
     pub(crate) wins: Vec<u64>,
+    /// Natural draws among `n` (EX1's Q-hat; counted as non-wins in `wins`
+    /// and never read by selection).
+    pub(crate) draws: Vec<u64>,
     pub(crate) depth: u32,
     /// Edges merged into an interchangeable sibling (`interchange.rs`), never
     /// selected or executed; empty when merging is off.
@@ -953,6 +956,7 @@ impl Node {
             visits: 0,
             n: vec![0; k],
             wins: vec![0; k],
+            draws: vec![0; k],
             depth,
             skip: Vec::new(),
             bl: None,
@@ -1146,6 +1150,7 @@ impl Tree {
         path: &[(Key, usize)],
         new: Vec<(Key, Node)>,
         win: bool,
+        draw: bool,
         world_only: bool,
     ) {
         for (k, n) in new {
@@ -1156,6 +1161,7 @@ impl Tree {
             n.visits += 1;
             n.n[*a] += 1;
             n.wins[*a] += u64::from(win);
+            n.draws[*a] += u64::from(draw);
         }
         self.best_line_backup(path, win, world_only);
     }
@@ -1672,7 +1678,7 @@ mod tests {
                     nodes[i].take()
                 })
                 .collect();
-            t.backup_observed(&path, new, win, world_only);
+            t.backup_observed(&path, new, win, false, world_only);
         }
         (t, keys)
     }

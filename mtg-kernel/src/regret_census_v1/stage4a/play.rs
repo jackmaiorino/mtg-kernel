@@ -46,8 +46,8 @@ pub(crate) enum PlayErr {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum End {
     /// Natural terminal outcome for the focal player (a natural draw is a
-    /// natural non-win).
-    Natural { win: bool },
+    /// natural non-win; `draw` marks it for the tree's separate draw count).
+    Natural { win: bool, draw: bool },
     /// The engine ended the game without a natural result.
     NonNatural,
 }
@@ -75,6 +75,7 @@ pub(crate) fn terminal(s: &FastActorSessionV1, focal: PlayerId) -> Option<End> {
         win: t
             .winner
             .is_some_and(|w| crate::rl::PlayerSeatV1::from(focal) == w),
+        draw: t.winner.is_none(),
     })
 }
 

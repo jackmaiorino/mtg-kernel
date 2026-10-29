@@ -2116,6 +2116,7 @@ fn collect_pins(
         max_non_natural_episode_fraction: 0.0,
         collection_sampler: CollectionSamplerV1::Legacy,
         training_math: TrainingMathV1::PlatformLibm,
+        ex1: None,
         output_directory: out,
     })
     .unwrap();
@@ -2972,6 +2973,7 @@ fn retention_run_config_v1(
         e_supported: None,
         soft_q: None,
         search_targets: None,
+        ex1: None,
         record_process_cpu: false,
         output_directory: root.join("run"),
     }

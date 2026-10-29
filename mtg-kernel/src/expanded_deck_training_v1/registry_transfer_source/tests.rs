@@ -351,6 +351,7 @@ fn phase1_registry_trainer_rejects_scalars_and_serial_parallel_schedule_before_p
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
                 training_math: TrainingMathV1::PlatformLibm,
+                ex1: None,
                 output_directory: output.clone(),
             }
         } else {
@@ -360,6 +361,7 @@ fn phase1_registry_trainer_rejects_scalars_and_serial_parallel_schedule_before_p
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
                 training_math: TrainingMathV1::PlatformLibm,
+                ex1: None,
                 output_directory: output.clone(),
             }
         };
