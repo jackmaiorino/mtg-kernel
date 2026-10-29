@@ -283,7 +283,10 @@ impl Search {
             let mut next = Vec::with_capacity(live.len());
             for world in &live {
                 let (_, actions) = world.decision().expect("live worlds are decisions");
-                let Some(matching) = actions.iter().position(|a| a == action) else { break };
+                // Match what the seat sees: resampling relabels hidden objects,
+                // so object ids and zone-change counts are not part of the key.
+                let key = public_key(action);
+                let Some(matching) = actions.iter().position(|a| public_key(a) == key) else { break };
                 if !self.spend() {
                     return WinVerdictV1::Unknown;
                 }
@@ -351,6 +354,21 @@ pub fn robust_win_this_turn_v1<S: WinSearchSessionV1>(session: &S, seeds: &[u64]
         _ => WinVerdictV1::Unknown,
     };
     Some(Ok(search.result(verdict, line)))
+}
+
+/// An action as the acting seat identifies it across sampled worlds: its
+/// debug form without object ids or zone-change counts.
+fn public_key(action: &ActionSemanticV1) -> String {
+    let text = format!("{action:?}");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(at) = ["arena_id: ", "zone_change_count: "].iter().filter_map(|p| rest.find(p).map(|i| (i, p.len()))).min() {
+        out.push_str(&rest[..at.0]);
+        let tail = &rest[at.0 + at.1..];
+        rest = tail.trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Every candidate selects a target of one effect, and the picks still

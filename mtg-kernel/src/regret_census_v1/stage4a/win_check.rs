@@ -12,7 +12,8 @@
 //!
 //! Environment: `LABEL_JOBS` (jsonl), `WIN_NODES` (node budget per search,
 //! default 20000), `WIN_DEPTH` (decisions below the root, default 400),
-//! `WIN_WORLDS` (resampled worlds, default 4; 0 skips the robust search),
+//! `WIN_WORLDS` (resampled worlds, default 4; 0 skips the robust search;
+//! the robust search gets `WIN_NODES` per world),
 //! `WIN_INDEX` (optional comma list of decision indices to search; others
 //! are replayed without searching).
 
@@ -110,7 +111,9 @@ fn check_job(job: &LabelJob, bounds: WinSearchBoundsV1, worlds: u64, only: Optio
             } else if oracle.verdict != WinVerdictV1::Proven {
                 json!({"verdict": oracle.verdict.as_str(), "unknown_reason": oracle.unknown_reason.map(|r| r.as_str()), "via": "oracle"})
             } else {
-                match robust_win_this_turn_v1(&s, &world_seeds(&job.id, i, worlds), bounds) {
+                // One node budget per world of the sample.
+                let robust_bounds = WinSearchBoundsV1 { max_nodes: bounds.max_nodes * (worlds + 1), ..bounds };
+                match robust_win_this_turn_v1(&s, &world_seeds(&job.id, i, worlds), robust_bounds) {
                     Some(Ok(result)) => result_json(&result),
                     Some(Err(error)) => json!({"verdict": "unknown", "unknown_reason": "world_sampling_failed", "error": error}),
                     None => Value::Null,
