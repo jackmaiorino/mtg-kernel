@@ -44,31 +44,37 @@ def seed(parts):
     return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "little") & MASK
 
 
-def config(args):
-    base = read(args.base)
-    dose = read(args.parent)
+def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None):
+    """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
+    episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given."""
     source = dose["source"]
     assert sha(source["checkpoint"]["path"]) == source["checkpoint"]["sha256"], "parent differs from its dose pin"
     plan = base["iterations"]
     iterations = []
-    for i in range(args.updates):
-        update = args.offset + i
+    for i in range(updates):
+        update = offset + i
         item = copy.deepcopy(plan[update % len(plan)])
         for j, entry in enumerate(item["episodes"]):
             episode = entry["episode"]
-            episode["id"] = f"{args.namespace}-{args.run}-u{update}-j{j}-s{episode['learner_seat']}"
-            episode["seed"] = seed([args.namespace, args.run, update, j])
+            episode["id"] = f"{namespace}-{run}-u{update}-j{j}-s{episode['learner_seat']}"
+            episode["seed"] = seed([namespace, run, update, j])
         iterations.append(item)
     cfg = {k: copy.deepcopy(v) for k, v in base.items() if k != "iterations"}
     cfg["initial_source"] = source
     cfg["iterations"] = iterations
-    cfg["collection_workers"] = args.workers
+    cfg["collection_workers"] = workers
     cfg["record_process_cpu"] = True
-    cfg["output_directory"] = Path(args.root).as_posix()
-    if args.ex1:
+    cfg["output_directory"] = Path(root).as_posix()
+    if coefficient is not None:
         cfg["preparation_workers"] = 1
-        cfg["ex1"] = {"run": args.run, "update_offset": args.offset, "coefficient": args.coefficient,
-                      "cap": {"mode": "off"} if args.kappa is None else {"mode": "ratio", "kappa": args.kappa}}
+        cfg["ex1"] = {"run": run, "update_offset": offset, "coefficient": coefficient,
+                      "cap": {"mode": "off"} if kappa is None else {"mode": "ratio", "kappa": kappa}}
+    return cfg
+
+
+def config(args):
+    cfg = build_config(read(args.base), read(args.parent), args.root, args.run, args.namespace, args.offset,
+                       args.updates, args.workers, args.coefficient if args.ex1 else None, args.kappa)
     Path(args.out).write_text(json.dumps(cfg, indent=1) + "\n", encoding="utf-8")
 
 
