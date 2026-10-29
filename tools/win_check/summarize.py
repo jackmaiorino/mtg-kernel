@@ -67,10 +67,14 @@ def main(argv=None) -> int:
     parser.add_argument("--labels", type=Path, nargs="*", default=[], help="panel labels.jsonl for the agreement check")
     parser.add_argument("--json", type=Path)
     args = parser.parse_args(argv)
-    games, decisions, errors = {}, defaultdict(list), []
+    games, decisions, errors, torn = {}, defaultdict(list), [], 0
     for path in args.rows:
         for line in path.read_text(encoding="utf-8").splitlines():
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                torn += 1  # a line cut by an interrupted writer
+                continue
             if row["kind"] == "game":
                 games[row["id"]] = row
             elif row["kind"] == "decision":
@@ -82,7 +86,7 @@ def main(argv=None) -> int:
         for line in path.read_text(encoding="utf-8").splitlines():
             row = json.loads(line)
             panel[row["id"]] = row
-    report = {"games": len(games), "replay_errors": len(errors), "runtime": sorted({json.dumps(g["runtime"]) for g in games.values()})}
+    report = {"games": len(games), "replay_errors": len(errors), "torn_lines": torn, "runtime": sorted({json.dumps(g["runtime"]) for g in games.values()})}
     focal = [d for g in games for d in decisions[g]]
     spy_taken = set()
     for estimand in ("oracle", "robust"):
@@ -121,9 +125,26 @@ def main(argv=None) -> int:
                          "miss_rate": round(cell["missed"] / cell["available"], 4), "miss_rate_ci": wilson(cell["missed"], cell["available"]),
                          "missed_per_1000_games": round(1000 * cell["missed"] / n, 1),
                          "taken_refs": cell["taken_refs"][:20], "missed_refs": cell["missed_refs"][:20]})
+        by_type = defaultdict(Counter)
+        for d in focal:
+            kind = ("own_turn" if d["active"] == d["focal"] else "opponent_turn", "legal>=5" if d["legal"] >= 5 else "legal<5")
+            ok = (d["robust"] and (d["robust"]["verdict"] == "proven" or d["oracle"]["verdict"] == "refuted")) if estimand == "robust" else d["oracle"]["verdict"] != "unknown"
+            by_type["/".join(kind)]["certified" if ok else "unknown"] += 1
+        certified_by_type = {k: {"decisions": v["certified"] + v["unknown"], "certified_share": round(v["certified"] / (v["certified"] + v["unknown"]), 4)}
+                             for k, v in sorted(by_type.items())}
         report[estimand] = {"focal_decisions": len(focal), "verdicts": dict(verdicts), "unknown_reasons": dict(reasons),
+                            "certified_by_type": certified_by_type,
                             "certified_share": round(certified / max(1, len(focal)), 4), "table": rows,
                             "not_measured": sorted(d for d in scheduled if not any(r["deck"] == d for r in rows))}
+    # EX1 menu strata (decisions with two or more legal actions) per deck and seat role.
+    strata = defaultdict(Counter)
+    for g in games.values():
+        decks = [d.split("/")[0] for d in g["deck_ids"]]
+        for key, n in (g.get("strata") or {}).items():
+            role, stratum = key.split(":")
+            deck = decks[g["focal"]] if role == "focal" else decks[1 - g["focal"]]
+            strata[f"{deck} ({role})"][stratum] += n
+    report["ex1_strata"] = {k: dict(v) for k, v in sorted(strata.items())}
     # Agreement: combo_won games must have a taken spy_line opportunity, and vice versa (oracle).
     disagree = []
     for game_id, game in games.items():
