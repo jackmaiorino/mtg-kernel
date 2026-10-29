@@ -44,7 +44,8 @@ def cards_in(line: list[str]) -> set[str]:
 
 
 def attacks(line: list[str]) -> bool:
-    return any(re.search(r"DeclareAttackers \{[^}]*attackers: \[[^\]]", step) for step in line)
+    return any(re.search(r"DeclareAttackers \{[^}]*attackers: \[[^\]]|ChooseAttackerInclusion \{.*include: true", step)
+               for step in line)
 
 
 def classify(line: list[str], deck: str) -> str:
