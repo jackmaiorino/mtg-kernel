@@ -16,12 +16,12 @@
   "repository": "jackmaiorino/mtg-kernel",
   "pr": 410,
   "branch": "claude/ex1-engineering-20261029",
-  "qualification_commit": "ffa9903e474ca3eb847bb993a2d067604539b5d5",
+  "qualification_commit": "63a6e55df6f897977f2d6c315eed91aa8b23843c",
   "toolchain": "1.94.1",
   "features": "default (none)",
   "binaries": {
-   "native_expanded_training_run_v1": "fd2e5df85e110412554c95e28234976284f63502fd2220d628915d83ba5752db",
-   "regret_census_v1": "961aef6934c84b0a9f08a538e6e321de1e88e842e728b07b16dad7b6350944db"
+   "native_expanded_training_run_v1": "2d68c061792dd31e649d986aa864a3cb82a6c5c0a70001643064c0276d5f67cc",
+   "regret_census_v1": "d8c22dfa0ff1ec850b62192c3260c3332b94bc0fa7b27c3d96962b60a04a024d"
   },
   "later_commits": "formatting, lints, tests and tooling only (no change to collection, search, target or update code)"
  },
@@ -30,7 +30,7 @@
   "haleyspc": "not used: HALEYSPC.lock held by another session from 08:50 EDT through the window (never preempted)",
   "runpod": "not used for qualification",
   "launch": "the binary directly under host_slots claims; no guarded EX1 launcher exists yet, so Stage P's driver needs the throughput check",
-  "window_edt": "2026-10-29 09:40 to 12:55"
+  "window_edt": "2026-10-29 09:40 to 12:55 (first pass, ffa9903e4) and 13:45 to 16:30 (final binary)"
  },
  "parents": {
   "r2": {
@@ -64,7 +64,7 @@
    "detail": "det-b stopped after update 1 and resumed; states, trajectory content, EX1 records and step telemetry are equal",
    "states": [
     "c76dec76a2df3e25d01582fb3b9d29a779cce914b11258b90e74bb0738dfb532",
-    "afc0849fbeef3248919f52b09cde170acd88658dfc7c31d9c95ce5e7d61b2b2b"
+    "8f9412283d987780e4b803cdec4016cd7a73f57cbbe5e73126856dc526afdc28"
    ]
   },
   "hook_on_off": {
@@ -80,27 +80,28 @@
   },
   "worker_count_determinism": {
    "pass": true,
-   "detail": "the same update at 1, 2, 5 and 10 workers gives one state"
+   "detail": "the same update at 1, 2, 5 and 10 workers gives one state (ffa9903e4); on the final binary 5 and 10 workers give the same state as before",
+   "final_binary_5_vs_10": true
   },
   "target_bit_equality": {
    "pass": true,
    "fixtures": "mtg-kernel/src/ex1_v1/target_fixtures_v1.json (12 targets, 3 hashes); engine test and python/tests/test_ex1_target_ref.py",
-   "recorded_rows_mirrored": 4815,
+   "recorded_rows_mirrored": 4535,
    "detail": "every recorded row recomputed by the Python mirror; the update also recomputes each target and checks the training forward against the deployed logits"
   },
   "substep_menu_correspondence": {
    "pass": true,
-   "searches": 2326,
+   "searches": 2203,
    "detail": "every root and burst lookup checks that the node's edges biject onto the live substep menu, or the episode fails; none failed"
   },
   "issue_393": {
    "pass": true,
    "detail": "lembas_tests (S1 roots and the synthetic case) pass on this build; boundary-encoding rejections counted in every qualification search",
-   "searches": 2326,
+   "searches": 2203,
    "boundary_encoding_failures": 0
   },
   "failure_rule": {
-   "searches": 2326,
+   "searches": 2203,
    "failed": 0,
    "detail": "no search failed in these runs; the rule (no target, counted, the episode continues) is covered by code and tests"
   },
@@ -128,35 +129,35 @@
  },
  "measurements": {
   "cpu_per_x_update": {
-   "updates": 59,
-   "mean": 927.9,
-   "median": 807.1,
-   "min": 249.3,
-   "max": 2235.1,
-   "searches_mean": 31.3,
-   "cpu_per_search": 29.6
+   "updates": 60,
+   "mean": 924.0,
+   "median": 858.1,
+   "min": 223.2,
+   "max": 1971.7,
+   "searches_mean": 31.1,
+   "cpu_per_search": 29.7
   },
   "cpu_note": "process CPU-s per update over the calibration chains (every update but each process's first); B = 64k transitions",
   "collection_wall_per_update_seconds": {
    "k1-r2": {
-    "cores": "6, then 12",
-    "mean": 336,
-    "max": 1319
+    "cores": 9,
+    "mean": 363,
+    "max": 845
    },
    "k1-r1": {
-    "cores": 6,
-    "mean": 262,
-    "max": 739
+    "cores": 7,
+    "mean": 230,
+    "max": 722
    },
    "k2-r2": {
     "cores": 12,
-    "mean": 232,
-    "max": 386
+    "mean": 226,
+    "max": 371
    },
    "k2-r1": {
     "cores": 12,
-    "mean": 204,
-    "max": 711
+    "mean": 198,
+    "max": 701
    }
   },
   "scaling": [
@@ -189,10 +190,10 @@
     "process_cpu_seconds": 1065.6
    }
   ],
-  "scaling_note": "the same update (39 searches); wall is bounded by the longest episode's sequential searches, so chains are the next parallel axis",
+  "scaling_note": "the same update (39 searches) on the ffa9903e4 binary (search cost is unchanged by the burst fix); wall is bounded by the longest episode's sequential searches, so chains are the next parallel axis",
   "storage_per_update_mb": 50,
   "rows_per_update": {
-   "max_eligible": 107,
+   "max_eligible": 108,
    "row_cap": 128,
    "cap_bound": false
   }
@@ -204,40 +205,40 @@
     "decisions_per_episode": 7.24,
     "n_s": 6.46,
     "p_s": 0.155,
-    "triggers": 732,
-    "expected_triggers": 718.0,
-    "root_rows": 732,
-    "burst_rows": 298,
+    "triggers": 729,
+    "expected_triggers": 718.6,
+    "root_rows": 729,
+    "burst_rows": 291,
     "no_target_support": 0,
-    "no_target_mass": 4,
+    "no_target_mass": 5,
     "searches_failed": 0
    },
    "cast_or_activate": {
-    "decisions_per_episode": 30.04,
+    "decisions_per_episode": 30.27,
     "n_s": 32.17,
     "p_s": 0.0311,
-    "triggers": 610,
-    "expected_triggers": 597.9,
-    "root_rows": 609,
-    "burst_rows": 623,
+    "triggers": 611,
+    "expected_triggers": 602.5,
+    "root_rows": 610,
+    "burst_rows": 587,
     "no_target_support": 0,
-    "no_target_mass": 54,
+    "no_target_mass": 52,
     "searches_failed": 0
    },
    "other": {
-    "decisions_per_episode": 42.76,
+    "decisions_per_episode": 42.74,
     "n_s": 38.3,
     "p_s": 0.0261,
-    "triggers": 704,
-    "expected_triggers": 714.2,
-    "root_rows": 704,
-    "burst_rows": 1253,
+    "triggers": 700,
+    "expected_triggers": 714.0,
+    "root_rows": 700,
+    "burst_rows": 1258,
     "no_target_support": 0,
-    "no_target_mass": 6,
+    "no_target_mass": 5,
     "searches_failed": 0
    }
   },
-  "searches_per_episode": 3.197
+  "searches_per_episode": 3.188
  },
  "calibration": {
   "r2": {
@@ -247,34 +248,34 @@
     "c0": 1.0,
     "cap": "off",
     "updates_with_rows": 16,
-    "median_raw_ratio": 6.63970151497538,
-    "c_star": 0.0452,
+    "median_raw_ratio": 7.746473154502606,
+    "c_star": 0.0387,
     "raw_ratios": [
-     12.5946,
-     11.9767,
-     10.1005,
-     5.1211,
-     6.1542,
-     8.4368,
-     13.8655,
-     7.7638,
-     5.7546,
-     5.9281,
-     5.4112,
-     7.1252,
-     5.0412,
-     13.6831,
-     3.6314,
-     3.5925
+     12.5741,
+     11.8694,
+     10.6315,
+     5.1871,
+     6.2759,
+     8.1878,
+     11.5219,
+     14.7276,
+     5.7095,
+     7.3052,
+     8.4995,
+     9.6925,
+     6.9684,
+     6.9029,
+     2.4154,
+     2.8355
     ]
    },
    "k2": {
     "run": "k2-r2",
     "updates": 16,
-    "coefficient": 0.0452,
+    "coefficient": 0.0387,
     "kappa": 1.0,
     "updates_with_rows": 16,
-    "median_applied_ratio": 0.4410935010290086,
+    "median_applied_ratio": 0.3563489590848257,
     "band": [
      0.1,
      0.9
@@ -282,22 +283,22 @@
     "pass": true,
     "cap_binding_updates": 0,
     "applied_ratios": [
-     0.7893,
-     0.3011,
-     0.4245,
-     0.3119,
-     0.4027,
-     0.6357,
-     0.3282,
-     0.4804,
-     0.479,
-     0.8098,
-     0.2874,
-     0.5674,
-     0.3317,
-     0.7027,
-     0.2664,
-     0.4577
+     0.6758,
+     0.2625,
+     0.3261,
+     0.2592,
+     0.3494,
+     0.5442,
+     0.2686,
+     0.4288,
+     0.4102,
+     0.6477,
+     0.2284,
+     0.5975,
+     0.2895,
+     0.4997,
+     0.2832,
+     0.3633
     ]
    }
   },
@@ -308,8 +309,8 @@
     "c0": 1.0,
     "cap": "off",
     "updates_with_rows": 16,
-    "median_raw_ratio": 6.415271200975754,
-    "c_star": 0.0468,
+    "median_raw_ratio": 6.378092629040723,
+    "c_star": 0.047,
     "raw_ratios": [
      6.4439,
      5.496,
@@ -320,22 +321,22 @@
      12.2802,
      15.3838,
      4.8094,
-     6.3866,
-     3.2781,
-     2.521,
-     8.2937,
-     1.5006,
-     4.5146,
-     1.8578
+     6.3122,
+     3.0909,
+     2.5384,
+     9.1006,
+     1.5045,
+     2.9672,
+     2.2039
     ]
    },
    "k2": {
     "run": "k2-r1",
     "updates": 16,
-    "coefficient": 0.0468,
+    "coefficient": 0.047,
     "kappa": 1.0,
     "updates_with_rows": 16,
-    "median_applied_ratio": 0.5058489940795438,
+    "median_applied_ratio": 0.4923066315592536,
     "band": [
      0.1,
      0.9
@@ -343,28 +344,42 @@
     "pass": true,
     "cap_binding_updates": 0,
     "applied_ratios": [
-     0.8783,
-     0.5487,
-     0.2101,
-     0.7211,
-     0.5044,
-     0.7467,
-     0.392,
-     0.4075,
-     0.5573,
-     0.5073,
-     0.3475,
-     0.6711,
-     0.4396,
-     0.5948,
-     0.2056,
-     0.4022
+     0.8821,
+     0.5511,
+     0.211,
+     0.7242,
+     0.4921,
+     0.7469,
+     0.394,
+     0.4093,
+     0.5549,
+     0.4925,
+     0.3509,
+     0.6701,
+     0.4497,
+     0.5976,
+     0.2079,
+     0.3984
     ]
    }
   }
  },
  "calibration_rule": "B2 section 3: c* = r* / median raw ratio over updates with rows, 3 significant figures, r* = 0.3; check at c* with kappa = 1, median applied ratio in [r*/3, 3 r*]",
- "known_issue": "mtg-kernel#336 (open): resume refuses an iteration interrupted after its collection command was saved; k1-r2's interrupted update 2 was rerun fresh, as Stage B does",
- "evidence_root": "D:/e-scratch/ex1-qual-20261029 (4.1 GB: runs, configs, logs, labels, chart)",
+ "known_issue": "mtg-kernel#336 (open): resume refuses an iteration interrupted after its collection command was saved; in the first pass k1-r2's interrupted update 2 was rerun fresh, as Stage B does. Stage P's driver needs the same workaround or the fix",
+ "evidence_root": "D:/e-scratch/ex1-qual-20261029 (runs2 = final binary; runs = first pass, superseded)",
+ "review": {
+  "reviewer": "Fable max, read-only adversarial review of the diff against sections 3, 4, 5 and 7",
+  "verdict": "proceed with required changes (1)",
+  "required": "the burst was keyed to the engine's round counter, so it outlived the trigger's game turn into the other player's turn; fixed at 63a6e55df (round, active player and the extra-turn counts), with a test, and every check rerun on that binary",
+  "optional_applied": [
+   "a root miss after a successful search counts as a failed search and the episode continues",
+   "a self-target offer at any matched node keeps its tree classification",
+   "the search's seeds, key mode, coverage rule and limits are in the continuation identity"
+  ],
+  "optional_noted": [
+   "substeps of one physical decision share one placement uniform (as the key is frozen), so a cast trigger followed by a target substep retriggers; marginal rates still match n(S)",
+   "EX1 runs serial preparation; for Stage F run O at preparation_workers 1 too, so both arms share the update path"
+  ]
+ },
  "nothing_read_as_a_result": "calibration and qualification runs are qualification only (design section 3)"
 }

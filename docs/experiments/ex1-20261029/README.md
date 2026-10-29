@@ -2,7 +2,7 @@
 
 Qualification of the EX1 engine (search targets in RT1 collection). Numbers and evidence paths are in `QUALIFICATION.json`; this note says what each check is.
 
-- **Binary:** `native_expanded_training_run_v1` and `regret_census_v1` built at ffa9903e4, default features. Later branch commits are formatting, lints, tests and tooling only.
+- **Binary:** `native_expanded_training_run_v1` and `regret_census_v1` built at 63a6e55df, default features. Later branch commits are tests, lints, tooling and records only. A first pass at ffa9903e4 is superseded: review found that its burst outlived the trigger's turn, so every check was rerun on the fixed binary (scaling excepted, since search cost did not change).
 - **Host:** Jack's PC under `host_slots` claims. HaleysPC was held by another session's reservation for the whole window. RunPod was not used.
 - **Parents:** r2 is OH2 r2-s1 at dose 512. r1 is OH1 r1-s1 at dose 256, the nearest stored dose below 512 (design section 5). Hashes, Adam steps and states are in the manifest.
 
