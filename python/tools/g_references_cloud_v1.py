@@ -17,6 +17,10 @@ LANES/g-references-20261028/DESIGN.md v1.2, section 6, and FROZEN.md):
   Both are storage accounting roots, each with the dispatcher's 60 GiB reserve,
   so the lease preparation sizes the container disk (prepare_lease
   ``container_disk_gb``).
+* A qualification trial runs one update, and a pack admits its packed trials'
+  storage projections together, so the qualification spec carries its own
+  per-trial projection (spec ``trial_projected_additional_bytes``, at most a
+  block's; default the block's).
 * ``mode`` "qualification" launches g_references_qualify_v1.py (plan then
   run, items 1, 2, 3 and 6 of section 6) with the package's inventory;
   "production" launches the campaign driver, which reads the choice pins on
@@ -169,7 +173,13 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
         data = encoded(inventory)
         path = objects / hashlib.sha256(data).hexdigest() / "inventory.json"
         bundle.data(path, data)
-        qualification = {"slots": spec["slots"], "storage": storage, "wall_seconds": template["wall_seconds"],
+        # A trial is one update, and a pack admits its packed trials' projections together: the trials take their
+        # own per-request projection (spec trial_projected_additional_bytes), at most a block's.
+        trial = spec.get("trial_projected_additional_bytes", storage["projected_additional_bytes"])
+        require(type(trial) is int and 0 < trial <= storage["projected_additional_bytes"],
+                "a trial's projection is positive and at most a block's")
+        trial_storage = {**storage, "projected_additional_bytes": trial, "projected_volume_bytes": {"": trial}}
+        qualification = {"slots": spec["slots"], "storage": trial_storage, "wall_seconds": template["wall_seconds"],
                          "inventory": {"path": str(base / path), "sha256": hashlib.sha256(data).hexdigest()},
                          "interrupt_at_update": spec.get("interrupt_at_update", 81)}
         data = encoded(qualification)

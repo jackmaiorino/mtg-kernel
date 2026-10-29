@@ -101,6 +101,29 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(command[1], "start")
         self.assertEqual(command[command.index("--out") + 1], f"/workspace/{ROOT}/campaign/qualification")
 
+    def test_trials_take_their_own_storage_projection(self):
+        def trial_storage(out):
+            manifest = json.loads((out / "package.json").read_text())
+            members = {item["path"]: item for archive in manifest["archives"].values() for item in archive["members"]}
+            name = manifest["qualification_spec"]["path"].removeprefix(f"/workspace/{ROOT}/")
+            with tarfile.open(out / "inputs.tar.gz") as tar:
+                spec = json.loads(tar.extractfile(name).read())
+            self.assertEqual(members[name]["sha256"], manifest["qualification_spec"]["sha256"])
+            return manifest["storage"], spec["storage"]
+        gcloud.package(self.fixture.spec(), Path(self.temp.name) / "p1")
+        block, trial = trial_storage(Path(self.temp.name) / "p1")
+        self.assertEqual(trial, block)  # default: the block's projection
+        gcloud.package(self.fixture.spec(trial_projected_additional_bytes=10**9), Path(self.temp.name) / "p2")
+        block, trial = trial_storage(Path(self.temp.name) / "p2")
+        self.assertEqual(block["projected_additional_bytes"], 20 << 30)
+        self.assertEqual((trial["projected_additional_bytes"], trial["projected_volume_bytes"]), (10**9, {"": 10**9}))
+        self.assertEqual({k: v for k, v in trial.items() if not k.startswith("projected")},
+                         {k: v for k, v in block.items() if not k.startswith("projected")})
+        for bad in (0, (20 << 30) + 1, 1.5):
+            with self.assertRaises(ValueError):
+                gcloud.package(self.fixture.spec(trial_projected_additional_bytes=bad),
+                               Path(self.temp.name) / f"bad-{bad}")
+
     def test_production_package_and_refusals(self):
         out = Path(self.temp.name) / "production"
         placement = {"path": f"/workspace/{ROOT}/campaign/qualification/PLACEMENT.json", "sha256": "d" * 64}
