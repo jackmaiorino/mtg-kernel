@@ -207,28 +207,36 @@ def native_ticks(root: Path) -> int | None:
         return -1
 
 
-def tree_ticks(pid: int) -> int:
-    """CPU clock ticks of a process and its live descendants, each with its reaped children's (-1 once unreadable)."""
+def process_table() -> dict[int, tuple[int, int]]:
+    """pid -> (parent pid, CPU clock ticks including its reaped children's) from /proc; empty off Linux."""
+    table = {}
     try:
-        children, ticks = {}, {}
-        for entry in Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return table
+    for entry in entries:
+        if entry.name.isdigit():
             try:
                 fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            except OSError:  # exited while listing
+                table[int(entry.name)] = (int(fields[1]), sum(int(value) for value in fields[11:15]))
+            except (OSError, ValueError, IndexError):  # exited while listing
                 continue
-            ticks[int(entry.name)] = sum(int(value) for value in fields[11:15])
-            children.setdefault(int(fields[1]), []).append(int(entry.name))
-    except (OSError, ValueError, IndexError):
+    return table
+
+
+def descendant_ticks(table: dict[int, tuple[int, int]], root: int, stop=frozenset()) -> int:
+    """CPU ticks of root's live descendants, root itself excluded, not descending into ``stop`` (-1 once root is gone)."""
+    if root not in table:
         return -1
-    if pid not in ticks:
-        return -1
-    total, pending = 0, [pid]
+    children = {}
+    for pid, (parent, _) in table.items():
+        children.setdefault(parent, []).append(pid)
+    total, pending = 0, list(children.get(root, ()))
     while pending:
-        current = pending.pop()
-        total += ticks.get(current, 0)
-        pending.extend(children.get(current, ()))
+        pid = pending.pop()
+        if pid not in stop:
+            total += table[pid][1]
+            pending.extend(children.get(pid, ()))
     return total
 
 
@@ -237,9 +245,10 @@ class LeaseProgress:
 
     decision() latches controller_lost once the record is over 90 s old and
     native_work_stalled_or_idle after work_idle_seconds without activity, so it is
-    rewritten every min(15 s, work_idle_seconds / 3). Activity is advancing native
-    CPU time, the dispatcher's process tree advancing CPU time after the native
-    child exits (fingerprints and archive, until wait_block returns), a driver step finishing (``touch``: a dispatch, a native run's end,
+    rewritten every min(15 s, work_idle_seconds / 3). Activity is advancing CPU
+    time in an attempt's processes under its reservation supervisor (preparation,
+    the native run, fingerprints and archive, until wait_block returns) or in the
+    driver's own child processes, a driver step finishing (``touch``: a dispatch, a native run's end,
     each kept file of a retention, each saved step of finishing a block), or the
     driver itself computing (at least DRIVER_BUSY_SHARE of a core since the last
     beat, as during a long collection or hash), never the beat alone, so a driver
@@ -291,21 +300,29 @@ class LeaseProgress:
             if cpu - self.cpu[1] >= DRIVER_BUSY_SHARE * (stamp - self.cpu[0]) > 0:
                 self.activity = stamp
             self.cpu = (stamp, cpu)
-            for entry in list(self.active.values()):
-                attempt = entry["attempts"][-1] if entry["attempts"] else None
-                root = Path(attempt["root"]) if attempt else None
-                ticks = native_ticks(root) if root else None
-                dispatcher = (attempt.get("dispatch") or {}).get("pid") if attempt else None
-                if (ticks is None and dispatcher and "finished" not in attempt and "outcome" not in attempt
-                        and (root / "execution.json").exists()):
-                    # The native child has exited; until wait_block returns, its dispatcher fingerprints and
-                    # archives the output, with fingerprint worker processes.
-                    ticks = tree_ticks(dispatcher)
-                    if ticks > self.ticks.get(str(root) + ":post", -1):
-                        self.activity = stamp
-                    self.ticks[str(root) + ":post"] = ticks
-                    continue
-                if ticks is None:  # otherwise outside the native part only touch() or the driver's CPU counts
+            # Work in child processes: the driver's own children (the dispatch command's checks), and, outside
+            # the native part, an in-flight attempt's processes under its reservation supervisor (preparation
+            # before the native start; fingerprints and archive after it, until wait_block returns). The
+            # supervisors only wait and poll, so they are left out; during the native part only the native
+            # child's CPU counts, so the dispatcher's polling never hides a stalled native run.
+            attempts = [entry["attempts"][-1] for entry in list(self.active.values()) if entry["attempts"]]
+            native = {attempt["root"]: native_ticks(Path(attempt["root"])) for attempt in attempts}
+            supervisors = {attempt["root"]: (attempt.get("dispatch") or {}).get("pid") for attempt in attempts}
+            supervisors = {root: pid for root, pid in supervisors.items() if isinstance(pid, int)}
+            in_flight = {attempt["root"] for attempt in attempts if "finished" not in attempt and "outcome" not in attempt}
+            table = process_table()
+            observed = {"driver-children": descendant_ticks(table, os.getpid(), frozenset(supervisors.values()))}
+            observed |= {root + ":supervised": descendant_ticks(table, pid) for root, pid in supervisors.items()
+                         if root in in_flight and native[root] is None}
+            for root in supervisors:  # unobserved during the native part: a fresh baseline when it ends
+                if root + ":supervised" not in observed:
+                    self.ticks.pop(root + ":supervised", None)
+            for key, ticks in observed.items():
+                if ticks > self.ticks.get(key, ticks):
+                    self.activity = stamp
+                self.ticks[key] = ticks
+            for root, ticks in native.items():
+                if ticks is None:
                     continue
                 alive = alive or ticks >= 0
                 if ticks > self.ticks.get(str(root), -1):
