@@ -83,7 +83,8 @@ mod utility_root;
 mod win_check;
 mod wm_dump;
 pub(crate) use ex1_search::{
-    ex1_node_covers_v1, ex1_self_target_v1, Ex1LookupV1, Ex1NodeV1, Ex1SearcherV1,
+    ex1_node_covers_v1, ex1_search_identity_v1, ex1_self_target_v1, Ex1LookupV1, Ex1NodeV1,
+    Ex1SearcherV1,
 };
 #[cfg(feature = "gameplay-decision-trace-v1")]
 pub(crate) use utility_root::{authenticated_roots_v1, validate_searched_game_v1, SearchedRootV1};

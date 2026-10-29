@@ -7679,6 +7679,21 @@ pub(crate) mod tests {
                 .sum();
             assert_eq!(triggers, searches.len() as u64);
             searched += searches.len();
+            // A burst row lies in its trigger's game turn (round and active
+            // player), never in the other player's turn of the same round.
+            for row in record["rows"].as_array().unwrap() {
+                if row["kind"] == "burst" {
+                    let trigger = searches
+                        .iter()
+                        .filter(|s| s["step"].as_u64() < row["step"].as_u64())
+                        .last()
+                        .unwrap();
+                    assert_eq!(
+                        (&trigger["turn"], &trigger["active_player"]),
+                        (&row["turn"], &row["active_player"])
+                    );
+                }
+            }
             for row in record["rows"].as_array().unwrap() {
                 let d = hooked
                     .decisions

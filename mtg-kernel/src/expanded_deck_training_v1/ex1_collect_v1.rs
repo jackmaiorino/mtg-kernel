@@ -7,8 +7,10 @@
 //!   below its menu stratum's p(S). A trigger searches the live state through
 //!   `guide_ctx` and `select_e` with SELF rollouts at B transitions, seeded
 //!   from the placement hash, and its tree replaces any retained tree.
-//! - **Burst:** the tree is retained until the engine turn of its trigger
-//!   ends. Every later learner decision of that turn is looked up along the
+//! - **Burst:** the tree is retained until the game turn of its trigger
+//!   ends: one player's turn, identified by the round, the active player and
+//!   (when extra turns exist) each player's count of turns started, since
+//!   the engine's `turn` counts rounds. Every later learner decision of that turn is looked up along the
 //!   visible history; a matched node with at least 8 backups and two
 //!   supported edges gives that row its target.
 //! - **One target per row**, computed at the live row from the deployed
@@ -61,14 +63,31 @@ impl Ex1CollectOptionsV1 {
     }
 }
 
+/// One player's game turn: the round, the active player and, once extra
+/// turns exist, each player's count of turns started.
+type TurnKeyV1 = (u32, u8, Option<[u32; 2]>);
+
+fn turn_key_v1(session: &FastActorSessionV1) -> TurnKeyV1 {
+    let state = session.game_state();
+    (
+        state.turn,
+        state.active_player.0,
+        state.extra_turn_v1.as_ref().map(|e| e.own_turns_started),
+    )
+}
+
 /// What one learner decision brought to the select step.
 pub(super) struct Ex1PendingV1 {
     stratum: Ex1StratumV1,
     kind: Option<&'static str>,
+    /// The node that gives this row its target (a root, or a covered burst
+    /// node).
     node: Option<Ex1NodeV1>,
+    /// Any matched node, covered or not (the offer's tree classification).
+    matched: Option<Ex1NodeV1>,
     looked_up: bool,
     self_target: Option<usize>,
-    turn: u32,
+    turn: TurnKeyV1,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -102,7 +121,7 @@ pub(super) struct Ex1EpisodeHookV1 {
     seed: u64,
     learner_seat: u8,
     searcher: Ex1SearcherV1,
-    burst_turn: Option<u32>,
+    burst_turn: Option<TurnKeyV1>,
     counts: BTreeMap<Ex1StratumV1, StratumCountsV1>,
     searches: Vec<Value>,
     rows: Vec<Value>,
@@ -168,7 +187,7 @@ impl Ex1EpisodeHookV1 {
                 .diagnostic_current_action_semantics()
                 .ok_or("ex1: no live menu at a decision")?,
         );
-        let turn = session.game_state().turn;
+        let turn = turn_key_v1(session);
         if self.burst_turn.is_some_and(|t| t != turn) {
             self.searcher.clear();
             self.burst_turn = None;
@@ -195,34 +214,41 @@ impl Ex1EpisodeHookV1 {
             record["physical_decision_id"] = json!(d.physical_decision_id);
             record["substep"] = json!(d.substep_index);
             record["stratum"] = json!(stratum.as_str());
-            record["turn"] = json!(turn);
+            record["turn"] = json!(turn.0);
+            record["active_player"] = json!(turn.1);
             record["uniform"] = json!(ex1_uniform_v1(hash));
+            // A search whose tree lacks its own root counts as failed too.
+            let root = if ok {
+                match self.searcher.lookup(session, d)? {
+                    Ex1LookupV1::Node(node) => Some(node),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            record["root_miss"] = json!(ok && root.is_none());
+            record["failed"] = json!(root.is_none());
             self.searches.push(record);
-            if !ok {
+            let Some(node) = root else {
                 counts.searches_failed += 1;
+                self.searcher.clear();
                 self.burst_turn = None;
                 return Ok(Ex1PendingV1 {
                     stratum,
                     kind: None,
                     node: None,
+                    matched: None,
                     looked_up: false,
                     self_target,
                     turn,
                 });
-            }
-            self.burst_turn = Some(turn);
-            let node = match self.searcher.lookup(session, d)? {
-                Ex1LookupV1::Node(node) => node,
-                other => {
-                    return Err(format!(
-                        "ex1: a new search's root is not its tree's: {other:?}"
-                    ))
-                }
             };
+            self.burst_turn = Some(turn);
             return Ok(Ex1PendingV1 {
                 stratum,
                 kind: Some("root"),
-                node: Some(node),
+                node: Some(node.clone()),
+                matched: Some(node),
                 looked_up: true,
                 self_target,
                 turn,
@@ -233,27 +259,27 @@ impl Ex1EpisodeHookV1 {
                 stratum,
                 kind: None,
                 node: None,
+                matched: None,
                 looked_up: false,
                 self_target,
                 turn,
             });
         }
         counts.burst_lookups += 1;
-        let node = match self.searcher.lookup(session, d)? {
-            Ex1LookupV1::Node(node) if ex1_node_covers_v1(&node) => Some(node),
-            Ex1LookupV1::Node(_) => {
-                counts.burst_uncovered += 1;
-                None
-            }
+        let matched = match self.searcher.lookup(session, d)? {
+            Ex1LookupV1::Node(node) => Some(node),
             Ex1LookupV1::Miss(_) | Ex1LookupV1::NoTree => {
                 counts.burst_misses += 1;
                 None
             }
         };
+        let node = matched.clone().filter(ex1_node_covers_v1);
+        counts.burst_uncovered += u64::from(matched.is_some() && node.is_none());
         Ok(Ex1PendingV1 {
             stratum,
             kind: node.is_some().then_some("burst"),
             node,
+            matched,
             looked_up: true,
             self_target,
             turn,
@@ -311,10 +337,10 @@ impl Ex1EpisodeHookV1 {
             let p = line_b_softmax_v1(&z).map_err(|e| format!("ex1: {e}"))?;
             self.offers.push(
                 json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
-                "substep":d.substep_index,"turn":pending.turn,"self_index":index,
-                "p_self":p.probabilities[index],"chosen":selected as usize == index,
-                "searched":pending.kind,"row":row_index,
-                "tree":pending.node.as_ref().map(|node| offer_tree_json_v1(node, index))}),
+                "substep":d.substep_index,"turn":pending.turn.0,"active_player":pending.turn.1,
+                "self_index":index,"p_self":p.probabilities[index],
+                "chosen":selected as usize == index,"searched":pending.kind,"row":row_index,
+                "tree":pending.matched.as_ref().map(|node| offer_tree_json_v1(node, index))}),
             );
         }
         if pending.looked_up {
@@ -345,7 +371,7 @@ fn row_json_v1(
     options: &Ex1CollectOptionsV1,
     seed: u64,
     d: FastActorDecisionV1,
-    turn: u32,
+    turn: TurnKeyV1,
     node: &Ex1NodeV1,
     target: &Ex1TargetV1,
     selected: u32,
@@ -357,7 +383,8 @@ fn row_json_v1(
     // Q-hat at the played edge, only when the played edge is supported.
     let advantage = target.qhat[played].map(|q| target.qhat[argmax].expect("in S") - q);
     let mut row = json!({"kind":kind,"stratum":stratum.as_str(),"step":d.step,
-        "physical_decision_id":d.physical_decision_id,"substep":d.substep_index,"turn":turn,
+        "physical_decision_id":d.physical_decision_id,"substep":d.substep_index,"turn":turn.0,
+        "active_player":turn.1,
         "rowcap_key":ex1_rowcap_key_v1(&options.run, options.update, seed, d.physical_decision_id),
         "n":node.counts.iter().map(|c| c.n).collect::<Vec<_>>(),
         "wins":node.counts.iter().map(|c| c.wins).collect::<Vec<_>>(),

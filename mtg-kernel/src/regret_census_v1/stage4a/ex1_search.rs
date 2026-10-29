@@ -188,6 +188,14 @@ impl Ex1SearcherV1 {
     }
 }
 
+/// The search's fixed settings, bound into an EX1 run's continuation
+/// identity: seeds, keys, the coverage rule and the formal limits it extends.
+pub(crate) fn ex1_search_identity_v1() -> Value {
+    json!({"seed_model":EX1_SEED_MODEL_V1,"entry":"guide_ctx+select_e","key_mode":"legacy",
+        "interchange":false,"coverage_min_visits":EX1_SUPPORT_MIN_V1,
+        "coverage_min_supported_edges":2,"limits":Limits::FORMAL.json()})
+}
+
 /// Section 4's burst coverage rule for a matched node: at least 8 backups and
 /// at least two supported edges.
 pub(crate) fn ex1_node_covers_v1(node: &Ex1NodeV1) -> bool {
