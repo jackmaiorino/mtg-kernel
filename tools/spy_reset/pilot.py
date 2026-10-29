@@ -66,9 +66,13 @@ OH2_SCREEN_NS = "oh2-screen-20261024"
 D1_PANEL_NS_A = "d1-panel-20261025a"
 D1_PANEL_NS_B = "d1-panel-20261025b"
 D1_H2H_NS = "d1-h2h-20261025"
+# G(i) fresh-init reference lineages (collab LANES/g-references-20261028, DESIGN.md section 5): one namespace per
+# panel, so the panel name is in every seed key and the mirror and cross-deck panels never share a game.
+G_MIRROR_NS = "g-references-v1/panel/mirror"
+G_CROSS_NS = "g-references-v1/panel/cross"
 PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS,
                     OH1_PANEL_NS, OH2_PANEL_NS_A, OH2_PANEL_NS_B, OH2_SCREEN_NS, D1_PANEL_NS_A, D1_PANEL_NS_B,
-                    D1_H2H_NS)
+                    D1_H2H_NS, G_MIRROR_NS, G_CROSS_NS)
 
 
 def key(parts: list) -> bytes:

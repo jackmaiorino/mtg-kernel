@@ -121,6 +121,20 @@ class GuardTests(unittest.TestCase):
             self.assertIn('resident guard remains active', boot)
             self.assertFalse(result['guard_armed'])
 
+    def test_container_disk_is_40_gb_unless_the_spec_sizes_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            spec = {'schema': 'phase1-cloud-lease-preparation/v1', 'lease': lease(),
+                'account_observed_epoch': 1000, 'quote_observed_epoch': 1000,
+                'quoted_cpu_usd_hour': .96, 'observed_pods': 0,
+                'autopay_enabled': False, 'public_ssh_key': 'ssh-ed25519 AAAATEST public'}
+            result = prepare_lease(spec, Path(temporary) / 'default', now=1001)
+            self.assertEqual(read(result['create_request_template']['path'])['containerDiskInGb'], 40)
+            result = prepare_lease(spec | {'container_disk_gb': 200}, Path(temporary) / 'sized', now=1001)
+            self.assertEqual(read(result['create_request_template']['path'])['containerDiskInGb'], 200)
+            for bad in (10, 401, 100.5):
+                with self.assertRaises(ValueError):
+                    prepare_lease(spec | {'container_disk_gb': bad}, Path(temporary) / f'bad-{bad}', now=1001)
+
     def test_guard_deadline_requests_delete_then_verifies_absence(self):
         import lease_guard
         from lease_test_support import FakeClock, World, guard_time, no_network
