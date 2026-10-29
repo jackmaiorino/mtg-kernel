@@ -174,6 +174,13 @@ pub struct LineBDivergenceValueV1 {
 /// 1) / (m + 1))`. `m - 1` is exact; the series is truncated after `t^23/23`.
 pub(crate) fn ln_v1(x: f64) -> f64 {
     debug_assert!(x.is_finite() && x >= 1.0);
+    ln_normal_v1(x)
+}
+
+/// `ln_v1`'s arithmetic for any positive normal `x` (EX1's student mass on
+/// its supported set, which is at most 1).
+pub(crate) fn ln_normal_v1(x: f64) -> f64 {
+    debug_assert!(x.is_normal() && x > 0.0);
     let bits = x.to_bits();
     let mut exponent = ((bits >> 52) & 0x7ff) as i64 - 1023;
     let mut mantissa = f64::from_bits((bits & ((1_u64 << 52) - 1)) | (1023_u64 << 52));

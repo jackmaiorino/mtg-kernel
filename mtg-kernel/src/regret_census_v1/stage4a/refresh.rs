@@ -115,7 +115,7 @@ pub(super) enum Lookup {
 }
 
 impl Lookup {
-    fn reason(self) -> &'static str {
+    pub(super) fn reason(self) -> &'static str {
         match self {
             Self::Supported(_) => "supported",
             Self::Unsupported => "unsupported",
@@ -301,12 +301,13 @@ pub(super) fn rule(
 }
 
 /// The current tree and where the actual history stands in it; keys use the
-/// same version and mapping as the search that built the tree.
-struct Cursor {
-    tree: Tree,
+/// same version and mapping as the search that built the tree (EX1's turn
+/// burst reuses it through `ex1_search`).
+pub(super) struct Cursor {
+    pub(super) tree: Tree,
     keyer: Keyer<KeyStats>,
     advanced: bool,
-    matching: bool,
+    pub(super) matching: bool,
     depth: u32,
     last_phys: Option<u64>,
     search: usize,
@@ -316,17 +317,17 @@ struct Cursor {
 
 /// A looked-up decision: the keyed step and, on a hit, the supported edge's
 /// prior natural backups.
-struct Hit {
+pub(super) struct Hit {
     step: KeyStep,
     backups: Option<u64>,
     /// The matched node's key (Supported or Unsupported lookups).
-    key: Option<super::tree::Key>,
+    pub(super) key: Option<super::tree::Key>,
     /// The matched node's per-edge backups, wins and seeded order.
     stats: Option<(Vec<u64>, Vec<u64>, Vec<usize>)>,
 }
 
 impl Cursor {
-    fn new(tree: Tree, search: usize, mode: KeyMode, interchange: bool) -> Self {
+    pub(super) fn new(tree: Tree, search: usize, mode: KeyMode, interchange: bool) -> Self {
         Self {
             tree,
             keyer: Keyer::new(mode, KeyStats::default()).with_interchange(interchange),
@@ -345,7 +346,7 @@ impl Cursor {
     }
 
     /// Looks up the current decision.
-    fn lookup(
+    pub(super) fn lookup(
         &mut self,
         s: &FastActorSessionV1,
         d: crate::rl_session::FastActorDecisionV1,
@@ -390,7 +391,7 @@ impl Cursor {
     }
 
     /// The live candidate of storage edge `e` at a looked-up decision.
-    fn live(&self, hit: &Hit, e: usize) -> Result<u32, String> {
+    pub(super) fn live(&self, hit: &Hit, e: usize) -> Result<u32, String> {
         let (_, _, _, cn) = self.keyer.storage(&hit.step);
         live_index(cn, &cn.edges[e]).map_err(err)
     }
@@ -433,7 +434,7 @@ impl Cursor {
     }
 
     /// Advances along the chosen live action (a matched node, any chooser).
-    fn advance(&mut self, hit: Hit, live: u32) {
+    pub(super) fn advance(&mut self, hit: Hit, live: u32) {
         self.keyer.advance(hit.step, live);
         self.advanced = true;
     }

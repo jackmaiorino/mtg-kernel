@@ -109,6 +109,7 @@ fn checkpoint_of(
         e_supported: None,
         soft_q: None,
         search_targets: None,
+        ex1: None,
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: as_bits(&snapshot.parameters),
@@ -1544,6 +1545,7 @@ fn run_config(
         e_supported: None,
         soft_q: None,
         search_targets: None,
+        ex1: None,
         record_process_cpu: false,
         output_directory,
     }
@@ -1579,6 +1581,7 @@ fn converted_run_end_to_end_v1() {
         max_non_natural_episode_fraction: 0.0,
         collection_sampler: CollectionSamplerV1::Legacy,
         training_math: TrainingMathV1::PlatformLibm,
+        ex1: None,
         output_directory: root.join("parent-collect"),
     })
     .unwrap();
@@ -1624,6 +1627,7 @@ fn converted_run_end_to_end_v1() {
         max_non_natural_episode_fraction: 0.0,
         collection_sampler: CollectionSamplerV1::Legacy,
         training_math: TrainingMathV1::PlatformLibm,
+        ex1: None,
         output_directory: root.join("mixed"),
     })
     .unwrap_err();

@@ -158,6 +158,7 @@ pub(super) fn collect_parallel_v1(
     max_non_natural_episode_fraction: f32,
     collection_sampler: CollectionSamplerV1,
     training_math: TrainingMathV1,
+    ex1: Option<super::ex1_collect_v1::Ex1CollectOptionsV1>,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = Instant::now();
@@ -255,13 +256,14 @@ pub(super) fn collect_parallel_v1(
                 .as_ref()
                 .map(|opponent| collector.opponent_cache.load(opponent))
                 .transpose()?;
-            let (trajectory, entries) = collect_episode_tolerant_v1(
+            let (trajectory, entries, ex1_record) = collect_episode_tolerant_v1(
                 &mut collector.policy,
                 &learner,
                 opponent,
                 episode,
                 index,
                 max_non_natural_episode_fraction,
+                ex1.as_ref(),
             )
             .map_err(|(collection_error, entries)| {
                 ledger
@@ -282,7 +284,10 @@ pub(super) fn collect_parallel_v1(
             let bytes = serialize_json_v1(&name, &trajectory)?;
             let pin = publish_json_bytes_v1(&output_directory, &name, &bytes)?;
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
-            Ok(pin)
+            let ex1_pin = ex1_record
+                .map(|record| publish_json(&output_directory, &format!("ex1-{index:04}.json"), &record))
+                .transpose()?;
+            Ok((pin, ex1_pin))
         },
         trajectory_parse_ahead_v1::start_helper_v1,
     );
@@ -306,6 +311,8 @@ pub(super) fn collect_parallel_v1(
         None
     };
     let (outputs, worker_timings) = collection_result?;
+    let (outputs, ex1_outputs): (Vec<PinnedFileV1>, Vec<Option<PinnedFileV1>>) =
+        outputs.into_iter().unzip();
     if max_non_natural_episode_fraction > 0.0 {
         ensure(
             failed_fraction <= max_non_natural_episode_fraction,
@@ -335,6 +342,10 @@ pub(super) fn collect_parallel_v1(
     }
     if let Some(pin) = non_natural_ledger_pin {
         result["non_natural_ledger"] = json!(pin);
+    }
+    if let Some(options) = &ex1 {
+        let episodes: Vec<PinnedFileV1> = ex1_outputs.into_iter().flatten().collect();
+        result["ex1"] = json!({"options":options,"episodes":episodes});
     }
     publish_json(&output_directory, "collection.json", &result)?;
     Ok(result)
@@ -526,6 +537,7 @@ mod tests {
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -680,6 +692,7 @@ mod tests {
             max_non_natural_episode_fraction: 0.5,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -709,6 +722,7 @@ mod tests {
             max_non_natural_episode_fraction: 0.1,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -876,6 +890,7 @@ mod tests {
                     max_non_natural_episode_fraction: 0.0,
                     collection_sampler: sampler,
                     training_math: TrainingMathV1::PlatformLibm,
+                    ex1: None,
                     output_directory,
                 }
             } else {
@@ -886,6 +901,7 @@ mod tests {
                     max_non_natural_episode_fraction: 0.0,
                     collection_sampler: sampler,
                     training_math: TrainingMathV1::PlatformLibm,
+                    ex1: None,
                     output_directory,
                 }
             };

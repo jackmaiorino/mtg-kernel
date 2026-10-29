@@ -755,6 +755,7 @@ pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
 pub(crate) mod private_physical_trajectory_v1;
 pub(crate) mod private_physical_trajectory_v2;
+pub mod ex1_v1;
 pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;
