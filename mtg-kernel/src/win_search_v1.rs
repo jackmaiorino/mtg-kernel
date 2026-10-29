@@ -117,7 +117,17 @@ struct Search {
 
 impl Search {
     fn new<S: WinSearchSessionV1>(root: &S, hero: PlayerSeatV1, bounds: WinSearchBoundsV1) -> Self {
-        Search { hero, turn: root.turn(), bounds, nodes: 0, exhausted: false, depth_cuts: 0, refused: 0, collapses: 0, expanded: Default::default() }
+        Search {
+            hero,
+            turn: root.turn(),
+            bounds,
+            nodes: 0,
+            exhausted: false,
+            depth_cuts: 0,
+            refused: 0,
+            collapses: 0,
+            expanded: Default::default(),
+        }
     }
 
     fn result(self, verdict: WinVerdictV1, mut line: Vec<String>) -> WinSearchResultV1 {
@@ -126,15 +136,27 @@ impl Search {
         }
         // An oracle unknown always meets one of the first three; a robust one
         // that met none failed only for lack of a line common to every world.
-        let unknown_reason = (verdict == WinVerdictV1::Unknown).then(|| {
-            if self.exhausted { UnknownReasonV1::Budget }
-            else if self.refused > 0 { UnknownReasonV1::UnsupportedAction }
-            else if self.depth_cuts > 0 { UnknownReasonV1::Depth }
-            else { UnknownReasonV1::InformationBoundary }
-        });
+        let reason = if self.exhausted {
+            UnknownReasonV1::Budget
+        } else if self.refused > 0 {
+            UnknownReasonV1::UnsupportedAction
+        } else if self.depth_cuts > 0 {
+            UnknownReasonV1::Depth
+        } else {
+            UnknownReasonV1::InformationBoundary
+        };
+        let unknown_reason = (verdict == WinVerdictV1::Unknown).then_some(reason);
         WinSearchResultV1 {
-            verdict, unknown_reason, hero: self.hero, turn: self.turn, nodes: self.nodes, depth_cuts: self.depth_cuts,
-            refused_actions: self.refused, forced_order_collapses: self.collapses, expanded: self.expanded, line,
+            verdict,
+            unknown_reason,
+            hero: self.hero,
+            turn: self.turn,
+            nodes: self.nodes,
+            depth_cuts: self.depth_cuts,
+            refused_actions: self.refused,
+            forced_order_collapses: self.collapses,
+            expanded: self.expanded,
+            line,
         }
     }
 
@@ -151,7 +173,11 @@ impl Search {
     /// Settled value of a session without expanding it, if any.
     fn settled<S: WinSearchSessionV1>(&mut self, session: &S, depth: u32) -> Option<WinVerdictV1> {
         match session.decision() {
-            Err(winner) => Some(if winner == Some(self.hero) { WinVerdictV1::Proven } else { WinVerdictV1::Refuted }),
+            Err(winner) => Some(if winner == Some(self.hero) {
+                WinVerdictV1::Proven
+            } else {
+                WinVerdictV1::Refuted
+            }),
             Ok(_) if session.turn() != self.turn => Some(WinVerdictV1::Refuted),
             Ok(_) if depth >= self.bounds.max_depth => {
                 self.depth_cuts += 1;
@@ -172,7 +198,12 @@ impl Search {
         }
     }
 
-    fn oracle<S: WinSearchSessionV1>(&mut self, session: &S, depth: u32, line: &mut Vec<String>) -> WinVerdictV1 {
+    fn oracle<S: WinSearchSessionV1>(
+        &mut self,
+        session: &S,
+        depth: u32,
+        line: &mut Vec<String>,
+    ) -> WinVerdictV1 {
         if let Some(verdict) = self.settled(session, depth) {
             return verdict;
         }
@@ -197,7 +228,14 @@ impl Search {
             if !self.spend() {
                 return WinVerdictV1::Unknown;
             }
-            *self.expanded.entry(format!("{}:{}", if hero_moves { "hero" } else { "opponent" }, kind_name(action))).or_default() += 1;
+            *self
+                .expanded
+                .entry(format!(
+                    "{}:{}",
+                    if hero_moves { "hero" } else { "opponent" },
+                    kind_name(action)
+                ))
+                .or_default() += 1;
             let Some(child) = self.child(session, index) else {
                 unknown = true;
                 continue;
@@ -231,7 +269,12 @@ impl Search {
 
     /// Open-loop line over a set of worlds. Proven means one line wins in all
     /// of them; anything else is reported as unknown by the caller.
-    fn robust<S: WinSearchSessionV1>(&mut self, worlds: Vec<S>, depth: u32, line: &mut Vec<String>) -> WinVerdictV1 {
+    fn robust<S: WinSearchSessionV1>(
+        &mut self,
+        worlds: Vec<S>,
+        depth: u32,
+        line: &mut Vec<String>,
+    ) -> WinVerdictV1 {
         let mut live = Vec::with_capacity(worlds.len());
         let mut unknown = false;
         for world in worlds {
@@ -249,8 +292,14 @@ impl Search {
             return WinVerdictV1::Proven;
         }
         // Opponent decisions first, one world at a time, as AND nodes.
-        if let Some(position) = live.iter().position(|w| w.decision().map(|(actor, _)| actor != self.hero).unwrap_or(false)) {
-            let (_, actions) = live[position].decision().expect("live worlds are decisions");
+        if let Some(position) = live.iter().position(|w| {
+            w.decision()
+                .map(|(actor, _)| actor != self.hero)
+                .unwrap_or(false)
+        }) {
+            let (_, actions) = live[position]
+                .decision()
+                .expect("live worlds are decisions");
             let count = self.searched_count(&actions);
             let mut unknown = false;
             for index in 0..count {
@@ -273,7 +322,11 @@ impl Search {
                     line.truncate(mark);
                 }
             }
-            return if unknown { WinVerdictV1::Unknown } else { WinVerdictV1::Proven };
+            return if unknown {
+                WinVerdictV1::Unknown
+            } else {
+                WinVerdictV1::Proven
+            };
         }
         // Every live world awaits the searched seat: one action for all of them.
         let (_, first) = live[0].decision().expect("live worlds are decisions");
@@ -286,7 +339,9 @@ impl Search {
                 // Match what the seat sees: resampling relabels hidden objects,
                 // so object ids and zone-change counts are not part of the key.
                 let key = public_key(action);
-                let Some(matching) = actions.iter().position(|a| public_key(a) == key) else { break };
+                let Some(matching) = actions.iter().position(|a| public_key(a) == key) else {
+                    break;
+                };
                 if !self.spend() {
                     return WinVerdictV1::Unknown;
                 }
@@ -308,7 +363,11 @@ impl Search {
             }
             line.truncate(mark);
         }
-        if unknown { WinVerdictV1::Unknown } else { WinVerdictV1::Refuted }
+        if unknown {
+            WinVerdictV1::Unknown
+        } else {
+            WinVerdictV1::Refuted
+        }
     }
 
     fn searched_count(&mut self, actions: &[ActionSemanticV1]) -> usize {
@@ -327,7 +386,10 @@ fn kind_name(action: &ActionSemanticV1) -> String {
 }
 
 /// Oracle search from the session's pending decision, for its acting seat.
-pub fn oracle_win_this_turn_v1<S: WinSearchSessionV1>(session: &S, bounds: WinSearchBoundsV1) -> Option<WinSearchResultV1> {
+pub fn oracle_win_this_turn_v1<S: WinSearchSessionV1>(
+    session: &S,
+    bounds: WinSearchBoundsV1,
+) -> Option<WinSearchResultV1> {
     let (hero, _) = session.decision().ok()?;
     let mut search = Search::new(session, hero, bounds);
     let mut line = Vec::new();
@@ -338,7 +400,11 @@ pub fn oracle_win_this_turn_v1<S: WinSearchSessionV1>(session: &S, bounds: WinSe
 /// Robust search over the true world plus `seeds.len()` resampled worlds.
 /// Only a proven verdict is a certificate; a failure is reported as unknown
 /// (a world without a win is the oracle's to certify).
-pub fn robust_win_this_turn_v1<S: WinSearchSessionV1>(session: &S, seeds: &[u64], bounds: WinSearchBoundsV1) -> Option<Result<WinSearchResultV1, String>> {
+pub fn robust_win_this_turn_v1<S: WinSearchSessionV1>(
+    session: &S,
+    seeds: &[u64],
+    bounds: WinSearchBoundsV1,
+) -> Option<Result<WinSearchResultV1, String>> {
     let (hero, _) = session.decision().ok()?;
     let mut worlds = vec![session.clone()];
     for &seed in seeds {
@@ -362,7 +428,11 @@ fn public_key(action: &ActionSemanticV1) -> String {
     let text = format!("{action:?}");
     let mut out = String::with_capacity(text.len());
     let mut rest = text.as_str();
-    while let Some(at) = ["arena_id: ", "zone_change_count: "].iter().filter_map(|p| rest.find(p).map(|i| (i, p.len()))).min() {
+    while let Some(at) = ["arena_id: ", "zone_change_count: "]
+        .iter()
+        .filter_map(|p| rest.find(p).map(|i| (i, p.len())))
+        .min()
+    {
         out.push_str(&rest[..at.0]);
         let tail = &rest[at.0 + at.1..];
         rest = tail.trim_start_matches(|c: char| c.is_ascii_digit());
@@ -376,7 +446,13 @@ fn public_key(action: &ActionSemanticV1) -> String {
 fn forced_order_only(actions: &[ActionSemanticV1]) -> bool {
     let mut first = None;
     for action in actions {
-        let ActionSemanticV1::ChooseEffectTarget { source, selected_count, min_targets, max_targets, .. } = action
+        let ActionSemanticV1::ChooseEffectTarget {
+            source,
+            selected_count,
+            min_targets,
+            max_targets,
+            ..
+        } = action
         else {
             return false;
         };
@@ -390,7 +466,9 @@ fn forced_order_only(actions: &[ActionSemanticV1]) -> bool {
         }
     }
     match first {
-        Some((_, selected, required)) => usize::from(required.saturating_sub(selected)) == actions.len() && actions.len() > 1,
+        Some((_, selected, required)) => {
+            usize::from(required.saturating_sub(selected)) == actions.len() && actions.len() > 1
+        }
         None => false,
     }
 }
@@ -414,7 +492,8 @@ impl WinSearchSessionV1 for crate::rl_session::FastActorSessionV1 {
     }
 
     fn apply(&mut self, index: usize) -> Result<(), String> {
-        let crate::rl_session::FastActorResponseV1::Decision(decision) = self.current_response() else {
+        let crate::rl_session::FastActorResponseV1::Decision(decision) = self.current_response()
+        else {
             return Err("the session is terminal".to_string());
         };
         self.step(decision.episode_id, decision.step, index as u32)
@@ -437,7 +516,14 @@ mod tests {
     const OPP: PlayerSeatV1 = PlayerSeatV1::P1;
 
     fn card(arena_id: u32, card_db_id: u16, zone: Zone) -> CardStableRefV1 {
-        CardStableRefV1 { arena_id, card_db_id, owner: HERO, controller: HERO, zone, zone_change_count: arena_id }
+        CardStableRefV1 {
+            arena_id,
+            card_db_id,
+            owner: HERO,
+            controller: HERO,
+            zone,
+            zone_change_count: arena_id,
+        }
     }
 
     /// A toy game: each node names its actor and children; leaves are a win
@@ -459,34 +545,63 @@ mod tests {
     impl WinSearchSessionV1 for Toy {
         fn decision(&self) -> Result<(PlayerSeatV1, Vec<ActionSemanticV1>), Option<PlayerSeatV1>> {
             match &self.nodes[self.at] {
-                Node::Decide(actor, edges) => Ok((*actor, edges.iter().map(|(a, _)| a.clone()).collect())),
+                Node::Decide(actor, edges) => {
+                    Ok((*actor, edges.iter().map(|(a, _)| a.clone()).collect()))
+                }
                 Node::Won(winner) => Err(*winner),
                 Node::NextTurn => Ok((OPP, vec![ActionSemanticV1::Pass { actor: OPP }])),
             }
         }
         fn turn(&self) -> (u32, PlayerSeatV1) {
-            (1, if matches!(self.nodes[self.at], Node::NextTurn) { OPP } else { HERO })
+            (
+                1,
+                if matches!(self.nodes[self.at], Node::NextTurn) {
+                    OPP
+                } else {
+                    HERO
+                },
+            )
         }
         fn apply(&mut self, index: usize) -> Result<(), String> {
-            let Node::Decide(_, edges) = &self.nodes[self.at] else { return Err("not a decision".into()) };
+            let Node::Decide(_, edges) = &self.nodes[self.at] else {
+                return Err("not a decision".into());
+            };
             self.at = edges[index].1;
             Ok(())
         }
         fn resampled_world(&self, seed: u64) -> Result<Self, String> {
-            let nodes = self.worlds.get(seed as usize).ok_or("no such world")?.clone();
-            Ok(Toy { nodes: std::rc::Rc::new(nodes), at: self.at, worlds: self.worlds.clone() })
+            let nodes = self
+                .worlds
+                .get(seed as usize)
+                .ok_or("no such world")?
+                .clone();
+            Ok(Toy {
+                nodes: std::rc::Rc::new(nodes),
+                at: self.at,
+                worlds: self.worlds.clone(),
+            })
         }
     }
 
     fn toy(nodes: Vec<Node>) -> Toy {
-        Toy { nodes: std::rc::Rc::new(nodes), at: 0, worlds: std::rc::Rc::new(Vec::new()) }
+        Toy {
+            nodes: std::rc::Rc::new(nodes),
+            at: 0,
+            worlds: std::rc::Rc::new(Vec::new()),
+        }
     }
 
     fn play(id: u32) -> ActionSemanticV1 {
-        ActionSemanticV1::PlayLand { actor: HERO, source: card(id, 7, Zone::Hand) }
+        ActionSemanticV1::PlayLand {
+            actor: HERO,
+            source: card(id, 7, Zone::Hand),
+        }
     }
 
-    const BOUNDS: WinSearchBoundsV1 = WinSearchBoundsV1 { max_nodes: 1_000, max_depth: 50 };
+    const BOUNDS: WinSearchBoundsV1 = WinSearchBoundsV1 {
+        max_nodes: 1_000,
+        max_depth: 50,
+    };
 
     #[test]
     fn oracle_needs_one_winning_choice_and_every_reply() {
@@ -495,7 +610,10 @@ mod tests {
         let nodes = vec![
             Node::Decide(HERO, vec![(play(1), 1), (play(2), 2)]),
             Node::NextTurn,
-            Node::Decide(OPP, vec![(ActionSemanticV1::Pass { actor: OPP }, 3), (play(9), 3)]),
+            Node::Decide(
+                OPP,
+                vec![(ActionSemanticV1::Pass { actor: OPP }, 3), (play(9), 3)],
+            ),
             Node::Won(Some(HERO)),
         ];
         let result = oracle_win_this_turn_v1(&toy(nodes.clone()), BOUNDS).unwrap();
@@ -503,40 +621,89 @@ mod tests {
         assert_eq!(result.line.len(), 1);
         // One reply that escapes refutes the line.
         let mut refuted = nodes;
-        refuted[2] = Node::Decide(OPP, vec![(ActionSemanticV1::Pass { actor: OPP }, 3), (play(9), 1)]);
+        refuted[2] = Node::Decide(
+            OPP,
+            vec![(ActionSemanticV1::Pass { actor: OPP }, 3), (play(9), 1)],
+        );
         let result = oracle_win_this_turn_v1(&toy(refuted), BOUNDS).unwrap();
-        assert_eq!((result.verdict, result.unknown_reason), (WinVerdictV1::Refuted, None));
+        assert_eq!(
+            (result.verdict, result.unknown_reason),
+            (WinVerdictV1::Refuted, None)
+        );
     }
 
     #[test]
     fn budget_and_depth_give_unknown_never_a_guess() {
-        let nodes = vec![Node::Decide(HERO, vec![(play(1), 1), (play(2), 2)]), Node::NextTurn, Node::Won(Some(HERO))];
-        let tight = WinSearchBoundsV1 { max_nodes: 1, max_depth: 50 };
+        let nodes = vec![
+            Node::Decide(HERO, vec![(play(1), 1), (play(2), 2)]),
+            Node::NextTurn,
+            Node::Won(Some(HERO)),
+        ];
+        let tight = WinSearchBoundsV1 {
+            max_nodes: 1,
+            max_depth: 50,
+        };
         let result = oracle_win_this_turn_v1(&toy(nodes.clone()), tight).unwrap();
-        assert_eq!((result.verdict, result.unknown_reason), (WinVerdictV1::Unknown, Some(UnknownReasonV1::Budget)));
-        let shallow = WinSearchBoundsV1 { max_nodes: 1_000, max_depth: 0 };
+        assert_eq!(
+            (result.verdict, result.unknown_reason),
+            (WinVerdictV1::Unknown, Some(UnknownReasonV1::Budget))
+        );
+        let shallow = WinSearchBoundsV1 {
+            max_nodes: 1_000,
+            max_depth: 0,
+        };
         let result = oracle_win_this_turn_v1(&toy(nodes), shallow).unwrap();
-        assert_eq!((result.verdict, result.unknown_reason), (WinVerdictV1::Unknown, Some(UnknownReasonV1::Depth)));
+        assert_eq!(
+            (result.verdict, result.unknown_reason),
+            (WinVerdictV1::Unknown, Some(UnknownReasonV1::Depth))
+        );
     }
 
     #[test]
     fn robust_line_must_win_in_every_world_with_one_choice() {
         // The true world wins by playing land 1; world 0 wins by land 2 only.
-        let truth = vec![Node::Decide(HERO, vec![(play(1), 1), (play(2), 2)]), Node::Won(Some(HERO)), Node::NextTurn];
-        let other = vec![Node::Decide(HERO, vec![(play(1), 2), (play(2), 1)]), Node::Won(Some(HERO)), Node::NextTurn];
-        let session = Toy { worlds: std::rc::Rc::new(vec![other.clone(), truth.clone()]), ..toy(truth.clone()) };
-        assert_eq!(oracle_win_this_turn_v1(&session, BOUNDS).unwrap().verdict, WinVerdictV1::Proven);
-        let robust = robust_win_this_turn_v1(&session, &[0], BOUNDS).unwrap().unwrap();
+        let truth = vec![
+            Node::Decide(HERO, vec![(play(1), 1), (play(2), 2)]),
+            Node::Won(Some(HERO)),
+            Node::NextTurn,
+        ];
+        let other = vec![
+            Node::Decide(HERO, vec![(play(1), 2), (play(2), 1)]),
+            Node::Won(Some(HERO)),
+            Node::NextTurn,
+        ];
+        let session = Toy {
+            worlds: std::rc::Rc::new(vec![other.clone(), truth.clone()]),
+            ..toy(truth.clone())
+        };
+        assert_eq!(
+            oracle_win_this_turn_v1(&session, BOUNDS).unwrap().verdict,
+            WinVerdictV1::Proven
+        );
+        let robust = robust_win_this_turn_v1(&session, &[0], BOUNDS)
+            .unwrap()
+            .unwrap();
         assert_eq!(robust.verdict, WinVerdictV1::Unknown);
-        let robust = robust_win_this_turn_v1(&session, &[1], BOUNDS).unwrap().unwrap();
+        let robust = robust_win_this_turn_v1(&session, &[1], BOUNDS)
+            .unwrap()
+            .unwrap();
         assert_eq!(robust.verdict, WinVerdictV1::Proven);
     }
 
     #[test]
     fn public_key_ignores_hidden_object_identity() {
-        let a = ActionSemanticV1::CastSpell { actor: HERO, source: card(10, 151, Zone::Graveyard) };
-        let b = ActionSemanticV1::CastSpell { actor: HERO, source: card(77, 151, Zone::Graveyard) };
-        let c = ActionSemanticV1::CastSpell { actor: HERO, source: card(10, 152, Zone::Graveyard) };
+        let a = ActionSemanticV1::CastSpell {
+            actor: HERO,
+            source: card(10, 151, Zone::Graveyard),
+        };
+        let b = ActionSemanticV1::CastSpell {
+            actor: HERO,
+            source: card(77, 151, Zone::Graveyard),
+        };
+        let c = ActionSemanticV1::CastSpell {
+            actor: HERO,
+            source: card(10, 152, Zone::Graveyard),
+        };
         assert_eq!(public_key(&a), public_key(&b));
         assert_ne!(public_key(&a), public_key(&c));
     }
