@@ -79,6 +79,7 @@ mod seeds;
 mod sharing;
 mod tree;
 mod utility_root;
+mod win_check;
 mod wm_dump;
 #[cfg(feature = "gameplay-decision-trace-v1")]
 pub(crate) use utility_root::{authenticated_roots_v1, validate_searched_game_v1, SearchedRootV1};
@@ -105,6 +106,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
+/// `s4a-win-check` needs no policy, so `run_v1` calls it before loading one.
+pub(super) fn run_win_check(cfg: &super::CensusConfigV1) -> Result<(), String> {
+    win_check::run(cfg)
+}
+
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
@@ -115,6 +121,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-bank"
             | "s4a-bank-parity"
             | "s4a-label-replay"
+            | "s4a-win-check"
             | "s4a-bank-trace"
             | "s4a-refresh"
             | "s4a-branch"
