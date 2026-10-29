@@ -7685,8 +7685,7 @@ pub(crate) mod tests {
                 if row["kind"] == "burst" {
                     let trigger = searches
                         .iter()
-                        .filter(|s| s["step"].as_u64() < row["step"].as_u64())
-                        .last()
+                        .rfind(|s| s["step"].as_u64() < row["step"].as_u64())
                         .unwrap();
                     assert_eq!(
                         (&trigger["turn"], &trigger["active_player"]),
