@@ -3,7 +3,8 @@
 //! Oracle estimand: from a clone of the pending decision, the searched seat's
 //! choices are OR nodes and the other seat's are AND nodes, on the true game
 //! state with hidden zones. A natural win for the searched seat proves a
-//! node; the game ending otherwise, or the turn number advancing, refutes it.
+//! node; the game ending otherwise, or the turn passing to the other seat,
+//! refutes it.
 //! A node past the depth bound, any node after the node budget runs out, and
 //! an action the engine refuses make the result unknown, never a guess.
 //!
@@ -72,7 +73,9 @@ pub trait WinSearchSessionV1: Clone {
     /// `Err(winner)` when terminal, else the acting seat and the semantics of
     /// its legal actions in engine order (empty when they cannot be read).
     fn decision(&self) -> Result<(PlayerSeatV1, Vec<ActionSemanticV1>), Option<PlayerSeatV1>>;
-    fn turn(&self) -> u32;
+    /// The current turn: the engine's round number with the active seat (a
+    /// round holds both players' turns, so the round alone is not a turn).
+    fn turn(&self) -> (u32, PlayerSeatV1);
     /// Applies the action at `index` of `decision()`'s list.
     fn apply(&mut self, index: usize) -> Result<(), String>;
     /// A world consistent with the acting seat's information, from `seed`.
@@ -88,7 +91,7 @@ pub struct WinSearchResultV1 {
     pub verdict: WinVerdictV1,
     pub unknown_reason: Option<UnknownReasonV1>,
     pub hero: PlayerSeatV1,
-    pub turn: u32,
+    pub turn: (u32, PlayerSeatV1),
     pub nodes: u64,
     pub depth_cuts: u64,
     pub refused_actions: u64,
@@ -102,7 +105,7 @@ pub struct WinSearchResultV1 {
 
 struct Search {
     hero: PlayerSeatV1,
-    turn: u32,
+    turn: (u32, PlayerSeatV1),
     bounds: WinSearchBoundsV1,
     nodes: u64,
     exhausted: bool,
@@ -183,7 +186,14 @@ impl Search {
         // OR at the searched seat (any proven child proves), AND at the other
         // seat (any refuted child refutes); otherwise unknown children decide.
         let mut unknown = false;
-        for (index, action) in actions.iter().enumerate().take(count) {
+        // At the other seat's decisions try a pass first: it is usually the
+        // refutation, and an AND node stops at its first refuted child.
+        let mut order: Vec<usize> = (0..count).collect();
+        if !hero_moves {
+            order.sort_by_key(|&i| !matches!(actions[i], ActionSemanticV1::Pass { .. }));
+        }
+        for (position, index) in order.into_iter().enumerate() {
+            let action = &actions[index];
             if !self.spend() {
                 return WinVerdictV1::Unknown;
             }
@@ -196,8 +206,8 @@ impl Search {
             if hero_moves {
                 line.push(session.label(index, action));
             }
-            // The reported line follows the first reply at AND nodes.
-            let verdict = if hero_moves || index == 0 {
+            // The reported line follows the first reply tried at AND nodes.
+            let verdict = if hero_moves || position == 0 {
                 self.oracle(&child, depth + 1, line)
             } else {
                 self.oracle(&child, depth + 1, &mut Vec::new())
@@ -380,8 +390,9 @@ impl WinSearchSessionV1 for crate::rl_session::FastActorSessionV1 {
         }
     }
 
-    fn turn(&self) -> u32 {
-        self.game_state().turn
+    fn turn(&self) -> (u32, PlayerSeatV1) {
+        let state = self.game_state();
+        (state.turn, state.active_player.into())
     }
 
     fn apply(&mut self, index: usize) -> Result<(), String> {
