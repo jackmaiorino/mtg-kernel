@@ -68,10 +68,11 @@ jobs:
             [ -z "$f" ] && continue
             # Python jobs care about python sources/tools/tests, the data
             # artifacts they validate, workflow changes, and the pinned
-            # interpreter/lock config. The lease adapter's tests run in the
-            # Python job's lease guard step.
+            # interpreter/lock config. Top-level tools/** is Python only;
+            # python/tests imports several of its packages, and the lease
+            # adapter's tests run in the Python job's lease guard step.
             case "$f" in
-              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version|tools/search_sharing_allocation/*)
+              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version|tools/*)
                 python_relevant=true ;;
             esac
             # Rust jobs run unless a file is provably outside the crate's
@@ -79,11 +80,13 @@ jobs:
             # (embedded authorities: features.py and twins); data/** stays
             # rust-relevant (include_str goldens). Native CI runners are
             # also relevant because they determine which tests execute.
-            # Other non-embedded python, docs, and markdown are irrelevant.
+            # Other non-embedded python, top-level tools/** (Python and
+            # PowerShell scripts that no crate embeds or builds), docs, and
+            # markdown are irrelevant.
             case "$f" in
               python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
-              python/tests/*|python/tools/*|docs/*|*.md) : ;;
+              python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
             esac
           done <<< "$files"
@@ -95,8 +98,9 @@ jobs:
     name: Rust formatting and lint
     needs: detect-changes
     # Same path rule as the Rust test groups: a change that touches only
-    # docs, markdown, Python tests or non-embedded Python tools cannot
-    # change what rustfmt or Clippy see. Pushes to main always run it.
+    # docs, markdown, Python tests, non-embedded Python tools or top-level
+    # tools/** cannot change what rustfmt or Clippy see. Pushes to main
+    # always run it.
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
