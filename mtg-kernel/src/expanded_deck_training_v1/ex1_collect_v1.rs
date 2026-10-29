@@ -21,8 +21,6 @@
 //! changes.
 
 use super::*;
-use crate::rl_session::FastActorDecisionV1;
-use std::collections::BTreeMap;
 use crate::ex1_v1::{
     ex1_hash_u64_v1, ex1_placement_v1, ex1_rowcap_key_v1, ex1_stratum_v1, ex1_target_v1,
     ex1_uniform_v1, Ex1StratumV1, Ex1TargetV1,
@@ -31,6 +29,8 @@ use crate::line_b_teacher_target_v1::line_b_softmax_v1;
 use crate::regret_census_v1::stage4a::{
     ex1_node_covers_v1, ex1_self_target_v1, Ex1LookupV1, Ex1NodeV1, Ex1SearcherV1,
 };
+use crate::rl_session::FastActorDecisionV1;
+use std::collections::BTreeMap;
 
 pub const EX1_COLLECT_SCHEMA_V1: &str = "ex1-collect-episode/v1";
 /// The frozen per-search budget B, in raw selection transitions.
@@ -213,7 +213,11 @@ impl Ex1EpisodeHookV1 {
             self.burst_turn = Some(turn);
             let node = match self.searcher.lookup(session, d)? {
                 Ex1LookupV1::Node(node) => node,
-                other => return Err(format!("ex1: a new search's root is not its tree's: {other:?}")),
+                other => {
+                    return Err(format!(
+                        "ex1: a new search's root is not its tree's: {other:?}"
+                    ))
+                }
             };
             return Ok(Ex1PendingV1 {
                 stratum,
@@ -265,7 +269,10 @@ impl Ex1EpisodeHookV1 {
         logit_bits: &[u32],
         selected: u32,
     ) -> Result<(), String> {
-        let counts = self.counts.get_mut(&pending.stratum).expect("every stratum");
+        let counts = self
+            .counts
+            .get_mut(&pending.stratum)
+            .expect("every stratum");
         let mut row_index = None;
         if let (Some(kind), Some(node)) = (pending.kind, &pending.node) {
             match ex1_target_v1(logit_bits, &node.counts)? {
@@ -302,11 +309,13 @@ impl Ex1EpisodeHookV1 {
                 .map(|&b| f64::from(f32::from_bits(b)))
                 .collect();
             let p = line_b_softmax_v1(&z).map_err(|e| format!("ex1: {e}"))?;
-            self.offers.push(json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+            self.offers.push(
+                json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"turn":pending.turn,"self_index":index,
                 "p_self":p.probabilities[index],"chosen":selected as usize == index,
                 "searched":pending.kind,"row":row_index,
-                "tree":pending.node.as_ref().map(|node| offer_tree_json_v1(node, index))}));
+                "tree":pending.node.as_ref().map(|node| offer_tree_json_v1(node, index))}),
+            );
         }
         if pending.looked_up {
             self.searcher.advance(selected);
@@ -377,7 +386,9 @@ fn offer_tree_json_v1(node: &Ex1NodeV1, index: usize) -> Value {
         .enumerate()
         .filter(|&(a, c)| a != index && supported(c))
         .map(|(_, c)| crate::ex1_v1::ex1_qhat_v1(c))
-        .fold(None, |best: Option<f64>, q| Some(best.map_or(q, |b| b.max(q))));
+        .fold(None, |best: Option<f64>, q| {
+            Some(best.map_or(q, |b| b.max(q)))
+        });
     match (supported(own), best_other) {
         (true, Some(other)) => {
             let margin = crate::ex1_v1::ex1_qhat_v1(own) - other;
@@ -402,7 +413,9 @@ fn self_target_json_v1(target: &Ex1TargetV1, index: usize, self_wins: u64) -> Va
         .iter()
         .filter(|&&a| a != index)
         .filter_map(|&a| target.qhat[a])
-        .fold(None, |best: Option<f64>, q| Some(best.map_or(q, |b| b.max(q))));
+        .fold(None, |best: Option<f64>, q| {
+            Some(best.map_or(q, |b| b.max(q)))
+        });
     match (target.qhat[index], best_other) {
         (Some(q), Some(other)) => {
             let margin = q - other;

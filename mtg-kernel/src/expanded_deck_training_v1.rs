@@ -2453,9 +2453,7 @@ fn collect_episode_tolerant_v1(
     let mut ex1_attempts = Vec::new();
     for attempt in 1..=NON_NATURAL_RETRY_LIMIT {
         let mut hook = ex1
-            .map(|options| {
-                ex1_collect_v1::Ex1EpisodeHookV1::new(options, policy, &attempt_episode)
-            })
+            .map(|options| ex1_collect_v1::Ex1EpisodeHookV1::new(options, policy, &attempt_episode))
             .transpose()
             .map_err(|error| (error, std::mem::take(&mut ledger)))?;
         let reborrowed_opponent = opponent.as_deref_mut();
@@ -4790,7 +4788,11 @@ fn execute_update_inner_v1(
             let mut document = receipt.clone();
             document["schema"] = json!("ex1-update/v1");
             document["gradient_exposure"] = exposure.clone();
-            Some(publish_json(&output_directory, "ex1-update.json", &document)?)
+            Some(publish_json(
+                &output_directory,
+                "ex1-update.json",
+                &document,
+            )?)
         }
         (None, None) => None,
         _ => return Err("ex1 update lacks its auxiliary step".into()),
@@ -7659,7 +7661,10 @@ pub(crate) mod tests {
             );
             let record = hook.finish_v1(&episode, true);
             let strata = record["strata"].as_object().unwrap();
-            let decisions: u64 = strata.values().map(|c| c["decisions"].as_u64().unwrap()).sum();
+            let decisions: u64 = strata
+                .values()
+                .map(|c| c["decisions"].as_u64().unwrap())
+                .sum();
             let learner_multi = hooked
                 .decisions
                 .iter()
@@ -7667,7 +7672,10 @@ pub(crate) mod tests {
                 .count() as u64;
             assert_eq!(decisions, learner_multi);
             let searches = record["searches"].as_array().unwrap();
-            let triggers: u64 = strata.values().map(|c| c["triggers"].as_u64().unwrap()).sum();
+            let triggers: u64 = strata
+                .values()
+                .map(|c| c["triggers"].as_u64().unwrap())
+                .sum();
             assert_eq!(triggers, searches.len() as u64);
             searched += searches.len();
             for row in record["rows"].as_array().unwrap() {
@@ -7690,7 +7698,12 @@ pub(crate) mod tests {
                 let target = crate::ex1_v1::ex1_target_v1(&d.logits, &counts)
                     .unwrap()
                     .unwrap();
-                let q: Vec<u64> = target.target.probabilities.iter().map(|x| x.to_bits()).collect();
+                let q: Vec<u64> = target
+                    .target
+                    .probabilities
+                    .iter()
+                    .map(|x| x.to_bits())
+                    .collect();
                 assert_eq!(row["q_bits"], json!(q));
             }
             if searched > 0 {
@@ -7706,7 +7719,8 @@ pub(crate) mod tests {
         let learner = test_behavior(&policy, false);
         let episode = fast_self_play_episode_v1("tolerant-off", 2_026_091_701, 0);
         set_force_non_natural_seeds_for_test_v1([episode.seed]);
-        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 0, 0.0, None);
+        let outcome =
+            collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 0, 0.0, None);
         clear_force_non_natural_seeds_for_test_v1([episode.seed]);
         let (error, ledger) = outcome.unwrap_err();
         assert_eq!(
@@ -7728,7 +7742,8 @@ pub(crate) mod tests {
         let retry_seed = derived_retry_seed_v1(&episode.id, episode.seed, 1);
         assert_ne!(retry_seed, episode.seed);
         set_force_non_natural_seeds_for_test_v1([episode.seed]);
-        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 3, 0.5, None);
+        let outcome =
+            collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 3, 0.5, None);
         clear_force_non_natural_seeds_for_test_v1([episode.seed]);
         let (trajectory, ledger, _) = outcome.unwrap();
         assert_eq!(
@@ -7960,7 +7975,8 @@ pub(crate) mod tests {
         let retry_1 = derived_retry_seed_v1(&episode.id, episode.seed, 1);
         let retry_2 = derived_retry_seed_v1(&episode.id, episode.seed, 2);
         set_force_non_natural_seeds_for_test_v1([episode.seed, retry_1, retry_2]);
-        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 7, 0.9, None);
+        let outcome =
+            collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 7, 0.9, None);
         clear_force_non_natural_seeds_for_test_v1([episode.seed, retry_1, retry_2]);
         let (error, ledger) = outcome.unwrap_err();
         assert_eq!(

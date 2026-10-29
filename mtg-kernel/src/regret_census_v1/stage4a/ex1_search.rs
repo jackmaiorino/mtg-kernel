@@ -136,7 +136,9 @@ impl Ex1SearcherV1 {
                 let h = hit.as_ref().expect("a matched node has a hit");
                 let width = node.n.len();
                 if width != d.legal_action_count as usize {
-                    return Err("ex1: the matched node's menu differs from the live substep menu".into());
+                    return Err(
+                        "ex1: the matched node's menu differs from the live substep menu".into(),
+                    );
                 }
                 let mut counts = vec![None; width];
                 for e in 0..width {
@@ -177,7 +179,12 @@ impl Ex1SearcherV1 {
 /// at least two supported edges.
 pub(crate) fn ex1_node_covers_v1(node: &Ex1NodeV1) -> bool {
     node.visits >= EX1_SUPPORT_MIN_V1
-        && node.counts.iter().filter(|c| c.n >= EX1_SUPPORT_MIN_V1).count() >= 2
+        && node
+            .counts
+            .iter()
+            .filter(|c| c.n >= EX1_SUPPORT_MIN_V1)
+            .count()
+            >= 2
 }
 
 /// The Spy self-target offer at a live learner decision: the live index of

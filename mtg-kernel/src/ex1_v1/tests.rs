@@ -83,7 +83,10 @@ fn stratum_follows_the_checker_precedence() {
         (vec![mana.clone(), activate.clone()], CastOrActivate),
         (vec![cast.clone(), target.clone()], Target),
         (vec![pass.clone(), effect_target.clone()], Target),
-        (vec![activate, cast, effect_target, target, mana, plot, pass], Target),
+        (
+            vec![activate, cast, effect_target, target, mana, plot, pass],
+            Target,
+        ),
     ];
     for (menu, want) in cases {
         assert_eq!(ex1_stratum_v1(&menu), want, "{menu:?}");
@@ -173,7 +176,10 @@ fn targets_equal_the_mirrored_reference_bit_for_bit() {
     }
     let by_name = |name: &str| rows.iter().find(|f| f["name"] == name).unwrap();
     // A large common logit offset leaves the target unchanged.
-    assert_eq!(by_name("large_offset")["q_bits"], by_name("zero_offset")["q_bits"]);
+    assert_eq!(
+        by_name("large_offset")["q_bits"],
+        by_name("zero_offset")["q_bits"]
+    );
     assert_eq!(by_name("mass_below_floor")["no_target"], "mass");
     assert_eq!(by_name("one_supported")["no_target"], "support");
 }
@@ -195,7 +201,10 @@ fn hashes_equal_the_mirrored_reference() {
             f["rowcap"]
         );
         assert_ne!(f["placement"], f["rowcap"]);
-        assert_eq!(json!(ex1_uniform_v1(placement).to_bits()), f["uniform_bits"]);
+        assert_eq!(
+            json!(ex1_uniform_v1(placement).to_bits()),
+            f["uniform_bits"]
+        );
     }
     assert_eq!(ex1_uniform_v1(0), 0.0);
     assert!(ex1_uniform_v1(u64::MAX) < 1.0);

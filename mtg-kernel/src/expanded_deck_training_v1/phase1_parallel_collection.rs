@@ -285,7 +285,9 @@ pub(super) fn collect_parallel_v1(
             let pin = publish_json_bytes_v1(&output_directory, &name, &bytes)?;
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             let ex1_pin = ex1_record
-                .map(|record| publish_json(&output_directory, &format!("ex1-{index:04}.json"), &record))
+                .map(|record| {
+                    publish_json(&output_directory, &format!("ex1-{index:04}.json"), &record)
+                })
                 .transpose()?;
             Ok((pin, ex1_pin))
         },

@@ -20,7 +20,6 @@ use super::archive_distillation_v1::view_v1;
 use super::ex1_collect_v1::{Ex1CollectOptionsV1, EX1_BUDGET_V1, EX1_USEFUL_LIFT_V1};
 use super::search_targets_v1::SearchTargetCapV1;
 use super::*;
-use std::collections::BTreeMap;
 use crate::ex1_v1::{
     ex1_target_v1, Ex1EdgeCountsV1, Ex1StratumV1, EX1_DENOMINATOR_V1, EX1_DIVERGENCE_V1,
     EX1_MASS_FLOOR_V1, EX1_ROW_CAP_V1, EX1_SUPPORT_MIN_V1, EX1_TARGET_VERSION_V1,
@@ -31,6 +30,7 @@ use crate::native_policy_train_step_v1::{
     training_forward_v1, ExternalAuxiliaryInputV1, ExternalAuxiliaryRowV1,
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+use std::collections::BTreeMap;
 
 pub const EX1_METHOD_V1: &str = "ex1-search-in-training-v1-20261029";
 
@@ -136,8 +136,8 @@ pub(super) fn ex1_teach_v1(
     generation: FreshLineageGenerationV1,
 ) -> Result<(Value, Vec<Ex1TaughtRowV1>), String> {
     options.validate_v1()?;
-    let collection: Value = serde_json::from_slice(&read_pinned_bytes(&options.collection)?)
-        .map_err(err)?;
+    let collection: Value =
+        serde_json::from_slice(&read_pinned_bytes(&options.collection)?).map_err(err)?;
     let expected = Ex1CollectOptionsV1 {
         run: options.run.clone(),
         update: options.update,
@@ -210,8 +210,9 @@ pub(super) fn ex1_teach_v1(
                 "ex1 row differs from its trajectory decision",
             )?;
             let counts = counts_v1(row)?;
-            let target = ex1_target_v1(&decision.logits, &counts)?
-                .map_err(|reason| format!("ex1 row recomputes to no target ({})", reason.as_str()))?;
+            let target = ex1_target_v1(&decision.logits, &counts)?.map_err(|reason| {
+                format!("ex1 row recomputes to no target ({})", reason.as_str())
+            })?;
             let q_bits: Vec<u64> = target
                 .target
                 .probabilities
@@ -259,9 +260,11 @@ pub(super) fn ex1_teach_v1(
     let dropped: Vec<Value> = rows
         .iter()
         .skip(EX1_ROW_CAP_V1)
-        .map(|row| json!({"slot":row.record["slot"],"step":row.record["step"],
+        .map(|row| {
+            json!({"slot":row.record["slot"],"step":row.record["step"],
             "kind":row.record["kind"],"stratum":row.record["stratum"],
-            "learner_deck":row.record["learner_deck"]}))
+            "learner_deck":row.record["learner_deck"]})
+        })
         .collect();
     rows.truncate(EX1_ROW_CAP_V1);
     let receipt = json!({"method":EX1_METHOD_V1,"collection":options.collection,
@@ -316,9 +319,14 @@ pub(super) fn ex1_movement_v1(
     ordinary: Option<&[NativeNamedParameterV1]>,
 ) -> Result<Value, String> {
     let forward = |parameters: &[NativeNamedParameterV1], row: &Ex1TaughtRowV1| {
-        training_forward_v1(model, generation, parameters, view_v1(&row.tensor, generation))
-            .map_err(|e| format!("ex1 movement forward: {e:?}"))
-            .and_then(|(logits, _)| log_softmax_v1(&logits))
+        training_forward_v1(
+            model,
+            generation,
+            parameters,
+            view_v1(&row.tensor, generation),
+        )
+        .map_err(|e| format!("ex1 movement forward: {e:?}"))
+        .and_then(|(logits, _)| log_softmax_v1(&logits))
     };
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {

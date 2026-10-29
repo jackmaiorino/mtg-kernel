@@ -1361,7 +1361,9 @@ impl Roles {
             }
             if let Some(t) = trace.as_deref_mut() {
                 let (end, new) = match &r {
-                    Ok((_, new, End::Natural { win: true, .. })) => ("win", new.first().map(|x| &x.0)),
+                    Ok((_, new, End::Natural { win: true, .. })) => {
+                        ("win", new.first().map(|x| &x.0))
+                    }
                     Ok((_, new, End::Natural { win: false, .. })) => {
                         ("loss", new.first().map(|x| &x.0))
                     }

@@ -6,12 +6,12 @@ use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
     ESupportedTeacherOptionsV1,
 };
-use crate::expanded_deck_training_v1::no_state_digest_v1::{
-    is_converted_source_v1, policy_contract_record_v1,
-};
 use crate::expanded_deck_training_v1::ex1_collect_v1::{Ex1CollectOptionsV1, EX1_BUDGET_V1};
 use crate::expanded_deck_training_v1::ex1_update_v1::{
     continuation_identity as ex1_continuation_identity_v1, Ex1UpdateOptionsV1,
+};
+use crate::expanded_deck_training_v1::no_state_digest_v1::{
+    is_converted_source_v1, policy_contract_record_v1,
 };
 use crate::expanded_deck_training_v1::search_targets_v1::{
     continuation_identity as search_targets_continuation_identity_v1, SearchTargetsOpponentV1,
@@ -1243,7 +1243,9 @@ fn validate_ex1_update(
             "a run without ex1 recovered an ex1 update",
         );
     };
-    let receipt = document.get("ex1").ok_or("ex1 run update lacks its receipt")?;
+    let receipt = document
+        .get("ex1")
+        .ok_or("ex1 run update lacks its receipt")?;
     let checkpoint = read_pin_bounded(&parse_pin(document, "checkpoint")?, ARTIFACT_CAP)?;
     let expected = options.update_options_v1(index, collection.clone());
     check(
@@ -1682,7 +1684,10 @@ pub fn run_native_expanded_training_v1(
                     e_options.as_ref(),
                     sq_options.as_ref(),
                     config.search_targets.as_ref().map(|o| (o, index)),
-                    config.ex1.as_ref().map(|o| (o, index, &referenced_collection)),
+                    config
+                        .ex1
+                        .as_ref()
+                        .map(|o| (o, index, &referenced_collection)),
                     config.training_math,
                     input_contract.as_ref(),
                 )?;

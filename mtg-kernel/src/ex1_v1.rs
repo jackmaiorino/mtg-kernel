@@ -115,8 +115,13 @@ pub fn ex1_placement_v1(
     decision: u64,
     stratum: Ex1StratumV1,
 ) -> bool {
-    ex1_uniform_v1(ex1_hash_u64_v1("ex1/placement", run, update, seed, decision))
-        < stratum.placement_rate_v1()
+    ex1_uniform_v1(ex1_hash_u64_v1(
+        "ex1/placement",
+        run,
+        update,
+        seed,
+        decision,
+    )) < stratum.placement_rate_v1()
 }
 
 /// Section 3's row-cap order key (lowest kept first), independent of the
