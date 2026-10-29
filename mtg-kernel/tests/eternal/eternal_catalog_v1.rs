@@ -17,7 +17,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 105] = [
+const PLAYABLE: [(&str, &str); 113] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -125,6 +125,11 @@ const PLAYABLE: [(&str, &str); 105] = [
     ("legacy", "legacy-dimir-control"),
     ("legacy", "legacy-azorius-control"),
     ("legacy", "legacy-8-cast"),
+    ("legacy", "legacy-selesnya-depths"),
+    ("legacy", "legacy-red-stompy"),
+    ("legacy", "legacy-led-dredge"),
+    ("legacy", "legacy-cephalid-breakfast"),
+    ("legacy", "legacy-painter"),
     ("vintage", "vintage-jewel-shops"),
     ("vintage", "vintage-mono-white-initiative"),
     ("vintage", "vintage-esper-lurrus-control"),
@@ -165,6 +170,9 @@ const PLAYABLE: [(&str, &str); 105] = [
     ("vintage", "vintage-eldrazi"),
     ("vintage", "vintage-red-prison"),
     ("pauper", "pauper-4c-ephemerate"),
+    ("legacy", "legacy-naya-initiative"),
+    ("legacy", "legacy-mono-black-midrange"),
+    ("legacy", "legacy-death-and-taxes-60-card"),
 ];
 
 fn read_json(relative: &str) -> Value {
@@ -439,6 +447,29 @@ fn controls_stack_item(value: &Value, seat: &Value) -> bool {
     }
 }
 
+/// How many items on the public stack `seat` controls.
+fn stack_items_controlled(value: &Value, seat: &Value) -> usize {
+    match value {
+        Value::Object(map) => match map.get("stack").and_then(Value::as_array) {
+            Some(items) => items
+                .iter()
+                .filter(|item| &item["controller"] == seat)
+                .count(),
+            None => map
+                .values()
+                .map(|child| stack_items_controlled(child, seat))
+                .max()
+                .unwrap_or(0),
+        },
+        Value::Array(items) => items
+            .iter()
+            .map(|child| stack_items_controlled(child, seat))
+            .max()
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -572,7 +603,21 @@ last actions:
                 Some(pass) if controls_stack_item(decision, &pass["semantic"]["actor"]) => *pass,
                 _ => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
             },
+            // A random seat starts no new spell or ability while it controls
+            // two stack items, so a free ability (Nomads en-Kor's) cannot
+            // pile up faster than the stack resolves.
             Policy::Random(_) => {
+                let open: Vec<&Value> = actions
+                    .iter()
+                    .copied()
+                    .filter(|action| {
+                        !matches!(
+                            action["semantic"]["action_kind"].as_str(),
+                            Some("cast_spell" | "activate_ability")
+                        ) || stack_items_controlled(decision, &action["semantic"]["actor"]) < 2
+                    })
+                    .collect();
+                let actions = if open.is_empty() { &actions } else { &open };
                 actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }
         };

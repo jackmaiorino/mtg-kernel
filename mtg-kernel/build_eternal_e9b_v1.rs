@@ -172,7 +172,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Oswald Fiddlebender" => &OSWALD_FIDDLEBENDER,
         "Pestilence" => &PESTILENCE,
         "Step Through" => &STEP_THROUGH,
-        _ => &[],
+        _ => super::build_eternal_e9a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -250,7 +250,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_e9b_v1::you_meet_in_a_tavern_party",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e9a_v1::special_for(name),
     })
 }
 
@@ -286,7 +286,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Jewel Thief" => &["Keywords::VIGILANCE", "Keywords::TRAMPLE"],
         "Mai, Scornful Striker" => &["Keywords::FIRST_STRIKE"],
         "Vampire Sovereign" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_e9a_v1::keywords_for(name),
     }
 }
 
@@ -294,7 +294,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Sowing Mycospawn" => Some("{1}{C}"),
-        _ => None,
+        _ => super::build_eternal_e9a_v1::kicker_cost_for(name),
     }
 }
 
@@ -303,7 +303,7 @@ pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Boggart Trawler" => "Some(TransformFaceDef { name: \"Boggart Bog\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
         "Bridgeworks Battle" => "Some(TransformFaceDef { name: \"Tanglespan Bridgeworks\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
-        _ => "None",
+        _ => super::build_eternal_e9a_v1::transform_face_for(name),
     }
 }
 
@@ -311,7 +311,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Boggart Trawler" => Some("Boggart Bog"),
         "Bridgeworks Battle" => Some("Tanglespan Bridgeworks"),
-        _ => None,
+        _ => super::build_eternal_e9a_v1::transform_face_name_for(name),
     }
 }
 
@@ -344,7 +344,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         // "{T}: Add {G}{U}." One activation adds both colors at once.
         "Simic Growth Chamber" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::G, ManaColor::U]), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_e9a_v1::mana_ability_def_for(name),
     }
 }
 
@@ -401,6 +401,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Vampire Sovereign" => "etb:target_opponent_loses_3:gain_3",
         "Wild Growth" => "enchanted_land_tapped_for_mana:add_g",
         "You Meet in a Tavern" => "spell:look_top_5:reveal_creatures_to_hand:rest_bottom_random;mode2:creatures_you_control_plus_2_2",
-        _ => "none",
+        _ => super::build_eternal_e9a_v1::trigger_recipe_for(name),
     }
 }

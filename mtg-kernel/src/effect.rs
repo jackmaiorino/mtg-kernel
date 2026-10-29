@@ -18712,10 +18712,17 @@ fn library_filter_matches(
                 && def.cost.generic <= 1
         }
         LibraryCardFilter::BlueInstantV1 => {
-            def.has_type(CardType::Instant) && def.colors.contains(&crate::mana::ManaColor::U)
+            // Painter's Servant may make every card blue (eternal wave E9a).
+            def.has_type(CardType::Instant)
+                && (def.colors.contains(&crate::mana::ManaColor::U)
+                    || crate::eternal_legacy_e9a_v1::statics::painter_mask(state)
+                        & crate::card_def::mana_color_mask(crate::mana::ManaColor::U)
+                        != 0)
         }
         LibraryCardFilter::ColorlessCreatureV1 => {
-            def.has_type(CardType::Creature) && def.colors.is_empty()
+            def.has_type(CardType::Creature)
+                && def.colors.is_empty()
+                && crate::eternal_legacy_e9a_v1::statics::painter_mask(state) == 0
         }
         LibraryCardFilter::InstantOrFlashV1 => {
             def.has_type(CardType::Instant) || def.keywords.has(crate::card_def::Keywords::FLASH)
@@ -24391,9 +24398,13 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         EffectCond::TargetIsColor(idx, color) => match ctx.targets.get(*idx as usize) {
             Some(Target::Object(id)) => {
                 let def_idx = state.objects.get(*id).card_def;
+                // Painter's Servant's added color (eternal wave E9a).
                 crate::card_def::CARD_DEFS[def_idx as usize]
                     .colors
                     .contains(color)
+                    || crate::eternal_legacy_e9a_v1::statics::painter_mask(state)
+                        & crate::card_def::mana_color_mask(*color)
+                        != 0
             }
             _ => false,
         },

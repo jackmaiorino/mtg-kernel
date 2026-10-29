@@ -785,7 +785,9 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
         CostComponent::SacrificeControlled { count, filter } => {
             if matches!(
                 filter,
-                PermanentFilter::AnotherArtifact | PermanentFilter::AnotherWithSubtype(_)
+                PermanentFilter::AnotherArtifact
+                    | PermanentFilter::AnotherWithSubtype(_)
+                    | PermanentFilter::AnotherArtifactOrCreatureV1
             ) {
                 out.atoms.push(Atom::Opaque);
             }

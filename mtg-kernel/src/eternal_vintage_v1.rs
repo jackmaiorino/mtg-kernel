@@ -245,7 +245,8 @@ pub(crate) fn initiative_granter(name: &str) -> bool {
     name == "Avenging Hunter"
         || (cfg!(feature = "eternal-fixtures")
             && (matches!(name, SEASONED_DUNGEONEER | WHITE_PLUME_ADVENTURER)
-                || crate::eternal_pauper_e8b_v1::initiative_granter(name)))
+                || crate::eternal_pauper_e8b_v1::initiative_granter(name)
+                || crate::eternal_legacy_e9a_v1::initiative_granter(name)))
 }
 
 const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> TriggeredAbilityDef {
@@ -1151,6 +1152,12 @@ pub(crate) fn activation_allowed(
             name,
             ability_index,
         )
+        && crate::eternal_legacy_e9a_v1::statics::activation_allowed(
+            state,
+            source,
+            name,
+            ability_index,
+        )
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
@@ -1708,6 +1715,7 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
             .next()
             .is_some())
         || crate::eternal_legacy_e5b_v1::cast_prohibited(state, player)
+        || crate::eternal_legacy_e9a_v1::statics::cast_prohibited(state, player)
 }
 
 /// Archon of Emeria: "Nonbasic lands your opponents control enter tapped."

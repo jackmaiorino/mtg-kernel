@@ -1714,7 +1714,7 @@ fn goblin_welder_effect(ctx: &ExecCtx, state: &mut GameState) {
 
 /// `host` becomes a copy of `copied` (shown with `face`), keeping its own
 /// identity and any copy record for when it leaves.
-fn become_copy(state: &mut GameState, host: ObjectId, copied: u16, face: u8) {
+pub(crate) fn become_copy(state: &mut GameState, host: ObjectId, copied: u16, face: u8) {
     let link = live_link(state, host);
     let recorded =
         read_state(state).is_some_and(|e7a| e7a.copies.iter().any(|copy| copy.host == link));
@@ -2971,8 +2971,14 @@ pub(crate) fn is_special_activation(state: &GameState, source: ObjectId, index: 
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => live.zone == Zone::Battlefield,
         Some(GAEAS_WILL) => live.zone == Zone::Hand,
-        // Elvish Spirit Guide's mana ability (wave E9b).
-        _ => crate::eternal_e9b_v1::is_special_activation(state, source, index),
+        // Elvish Spirit Guide's (wave E9b) and Simian Spirit Guide's (wave
+        // E9a) mana abilities.
+        _ => {
+            crate::eternal_e9b_v1::is_special_activation(state, source, index)
+                || crate::eternal_legacy_e9a_v1::statics::is_special_activation(
+                    state, source, index,
+                )
+        }
     }
 }
 
@@ -2986,7 +2992,10 @@ pub(crate) fn special_activation(
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => activate_arena(state, player, source),
         Some(GAEAS_WILL) => suspend(state, player, source),
-        _ => crate::eternal_e9b_v1::special_activation(state, player, source),
+        _ if crate::eternal_e9b_v1::is_special_activation(state, source, 0) => {
+            crate::eternal_e9b_v1::special_activation(state, player, source)
+        }
+        _ => crate::eternal_legacy_e9a_v1::statics::special_activation(state, player, source),
     }
 }
 

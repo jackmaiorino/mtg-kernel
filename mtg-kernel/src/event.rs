@@ -2833,6 +2833,9 @@ pub fn apply_replacements(
             return None;
         }
         crate::standard_cards_v1::replace_damage(state, damage);
+        // Nomads en-Kor's redirection (eternal wave E9a).
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_legacy_e9a_v1::statics::redirect_damage(state, damage);
     }
     if let ProposedEvent::Damage(damage) = &proposed {
         if crate::effect::crystal_prevention_v1::needs_choice(state, damage) {

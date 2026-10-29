@@ -141,6 +141,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_e9b_v1::E9bStateV1::is_empty"
     )]
     pub e9b: crate::eternal_e9b_v1::E9bStateV1,
+    /// Wave E9a's state (`eternal_legacy_e9a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_legacy_e9a_v1::E9aStateV1::is_empty"
+    )]
+    pub e9a: crate::eternal_legacy_e9a_v1::E9aStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -348,6 +354,8 @@ pub enum EternalOpV1 {
     E8aV1(crate::eternal_legacy_e8a_v1::E8aOpV1),
     /// A leaf owned by wave E9b's module.
     E9bV1(crate::eternal_e9b_v1::E9bOpV1),
+    /// A leaf owned by wave E9a's module.
+    E9aV1(crate::eternal_legacy_e9a_v1::E9aOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -400,6 +408,7 @@ impl EternalOpV1 {
             EternalOpV1::E8bV1(op) => op.contains_player_choice(),
             EternalOpV1::E8aV1(op) => op.contains_player_choice(),
             EternalOpV1::E9bV1(op) => op.contains_player_choice(),
+            EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -699,6 +708,10 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // Legolas's Quick Reflexes' trigger, granted to any creature (wave E9a).
+    if let Some(spec) = crate::eternal_legacy_e9a_v1::granted_trigger_target_spec(effect) {
+        return Some(spec);
+    }
     match name {
         INVENTORS_AXE => Some(if *effect == attach_to_target() {
             TargetSpec::ControlledCreature
@@ -893,6 +906,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E8bV1(op) => crate::eternal_pauper_e8b_v1::execute(op, ctx, state),
         EternalOpV1::E8aV1(op) => crate::eternal_legacy_e8a_v1::execute(op, ctx, state),
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::execute(op, ctx, state),
+        EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1337,6 +1351,21 @@ pub(crate) fn combat_static_rules(
     state: &GameState,
     source: ObjectId,
 ) -> Option<CombatStaticRulesDef> {
+    let rules = dragons_rage_combat_rules(state, source);
+    // Goblin Rabblemaster: "Other Goblin creatures you control attack each
+    // combat if able." (wave E9a)
+    let printed = rules.unwrap_or_else(|| {
+        let def = &CARD_DEFS[state.objects.get(source).card_def as usize];
+        if crate::continuous_characteristics_v1::printed_abilities_active(state, source) {
+            def.combat_static_rules
+        } else {
+            CombatStaticRulesDef::NONE
+        }
+    });
+    crate::eternal_legacy_e9a_v1::statics::combat_static_rules(state, source, printed).or(rules)
+}
+
+fn dragons_rage_combat_rules(state: &GameState, source: ObjectId) -> Option<CombatStaticRulesDef> {
     if definition_name(state, source)? != DRAGONS_RAGE_CHANNELER {
         return None;
     }
@@ -1365,6 +1394,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && !crate::eternal_vintage_e7b_v1::statics::protected_from_source(state, attacker, blocker)
         && crate::eternal_pauper_e8b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_e9b_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_legacy_e9a_v1::statics::blocker_allowed(state, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1417,6 +1447,7 @@ pub(crate) fn apply_entry_counters(
 ) {
     crate::eternal_vintage_e7b_v1::statics::apply_entry_counters(state, object, input);
     crate::eternal_legacy_e8a_v1::statics::apply_entry_counters(state, object);
+    crate::eternal_legacy_e9a_v1::statics::apply_entry_counters(state, object, input);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -1586,6 +1617,9 @@ pub(crate) fn delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_e9b_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_legacy_e9a_v1::delayed_triggers(
+        state, events,
+    ));
     triggers
 }
 
@@ -1631,6 +1665,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     // Pendrell Vale), or that a Curie keeps as a copy of any creature.
     if crate::eternal_legacy_e7a_v1::granted_trigger_effect(effect)
         || crate::eternal_pauper_e8b_v1::granted_trigger_effect(effect)
+        || crate::eternal_legacy_e9a_v1::granted_trigger_effect(effect)
     {
         return true;
     }
@@ -1688,6 +1723,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_e5a_v1::begin_turn(state, player);
     crate::eternal_legacy_e7a_v1::begin_turn(state, player);
     crate::eternal_legacy_e8a_v1::begin_turn(state, player);
+    crate::eternal_legacy_e9a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

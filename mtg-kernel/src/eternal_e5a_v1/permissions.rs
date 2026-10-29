@@ -43,8 +43,10 @@ pub(crate) fn library_top_cast(
         return Some(true);
     }
     (controls_active(state, player, MYSTIC_FORGE)
-        && (def.has_type(CardType::Artifact) || def.colors.is_empty()))
-    .then_some(false)
+        && (def.has_type(CardType::Artifact)
+            || (def.colors.is_empty()
+                && crate::eternal_legacy_e9a_v1::statics::painter_mask(state) == 0)))
+        .then_some(false)
 }
 
 /// Mystic Forge and Bolas's Citadel: "You may look at the top card of your

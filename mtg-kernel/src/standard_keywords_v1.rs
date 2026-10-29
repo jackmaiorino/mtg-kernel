@@ -353,10 +353,13 @@ pub(crate) fn convoke_plan(
                 unreachable!("checked above")
             };
             let mask = crate::card_def::mana_color_mask(*color);
-            let Some(position) = available
-                .iter()
-                .position(|&id| state.objects.get(id).v4.effective_color_mask & mask != 0)
-            else {
+            let Some(position) = available.iter().position(|&id| {
+                // Painter's Servant's added color (eternal wave E9a).
+                (state.objects.get(id).v4.effective_color_mask
+                    | crate::eternal_legacy_e9a_v1::statics::painter_mask(state))
+                    & mask
+                    != 0
+            }) else {
                 pip_payers.clear();
                 available = creatures.clone();
                 break;

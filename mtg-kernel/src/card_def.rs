@@ -426,6 +426,14 @@ pub enum Subtype {
     Dauthi,
     Ally,
     Fungus,
+    /// Appended for the eternal catalog's wave E9a (Caves of Chaos
+    /// Adventurer, Loki, God of Mischief, Nomads en-Kor, Painter's Servant
+    /// and Samwise the Stouthearted).
+    Barbarian,
+    Villain,
+    Nomad,
+    Scarecrow,
+    Peasant,
 }
 
 impl Subtype {
@@ -780,6 +788,16 @@ impl Subtype {
         Subtype::Ally,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Fungus,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Barbarian,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Villain,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Nomad,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Scarecrow,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Peasant,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1009,6 +1027,11 @@ impl Subtype {
             196 => Subtype::Dauthi,
             197 => Subtype::Ally,
             198 => Subtype::Fungus,
+            199 => Subtype::Barbarian,
+            200 => Subtype::Villain,
+            201 => Subtype::Nomad,
+            202 => Subtype::Scarecrow,
+            203 => Subtype::Peasant,
             _ => return None,
         })
     }
@@ -1217,6 +1240,11 @@ impl Subtype {
             Subtype::Dauthi => true,
             Subtype::Ally => true,
             Subtype::Fungus => true,
+            Subtype::Barbarian => true,
+            Subtype::Villain => true,
+            Subtype::Nomad => true,
+            Subtype::Scarecrow => true,
+            Subtype::Peasant => true,
         }
     }
 
@@ -1310,6 +1338,11 @@ impl Subtype {
                     | Subtype::Dauthi
                     | Subtype::Ally
                     | Subtype::Fungus
+                    | Subtype::Barbarian
+                    | Subtype::Villain
+                    | Subtype::Nomad
+                    | Subtype::Scarecrow
+                    | Subtype::Peasant
             )
         {
             return true;
@@ -1915,6 +1948,12 @@ pub enum PermanentFilter {
     NonlandV1,
     /// A controlled permanent with this effective subtype, excluding the cost source.
     AnotherWithSubtype(Subtype),
+    /// A controlled artifact or creature other than the cost source
+    /// (Broadside Bombardiers' boast). Appended for the eternal catalog.
+    AnotherArtifactOrCreatureV1,
+    /// A controlled Forest or Plains (Knight of the Reliquary). Appended for
+    /// the eternal catalog.
+    ForestOrPlainsV1,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -2440,6 +2479,9 @@ pub enum DynamicValueDef {
     /// number of Urza's lands the evaluating controller controls.
     /// Appended for the eternal catalog.
     UrzasLandsIfMetalcraftV1,
+    /// Undermountain Adventurer: 2, or 6 once the evaluating controller has
+    /// completed a dungeon. Appended for the eternal catalog.
+    SixIfDungeonCompletedElseTwoV1,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -3759,7 +3801,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x1d81_3684_65be_65ad;
+        const EXPECTED_ETERNAL: u64 = 0x80d1_a3d4_079a_d2e9;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

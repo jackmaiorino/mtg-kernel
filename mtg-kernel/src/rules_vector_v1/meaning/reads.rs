@@ -334,6 +334,12 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::SixIfDungeonCompletedElseTwoV1 => {
+            // Two, or six once the controller completed a dungeon.
+            // Vocabulary gap: no dungeon read.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicValueDef::UrzasLandsIfMetalcraftV1 => {
             // One, or with three artifacts the controller's Urza's lands.
             // Vocabulary gap: no conditional count or subtype class.
@@ -708,6 +714,12 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
             (ObjF::Permanent, None)
         }
         PermanentFilter::NonlandV1 => (ObjF::NonlandPermanent, None),
+        // Vocabulary gap: ObjF has no artifact-or-creature union.
+        PermanentFilter::AnotherArtifactOrCreatureV1 => (ObjF::Permanent, None),
+        PermanentFilter::ForestOrPlainsV1 => {
+            // Vocabulary gap: ObjF has no subtype class.
+            (ObjF::Typed(CardTypeF::Land), None)
+        }
     }
 }
 

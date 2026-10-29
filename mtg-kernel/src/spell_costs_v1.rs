@@ -647,8 +647,10 @@ pub(super) fn selected_spell_mana_costs_v1(
         // Splice onto Arcane is paid like replicate: once per spliced card.
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name)
             .or_else(|| crate::eternal_pauper_e8b_v1::splice_cost(definition)),
+        // Painter's Servant colors every spell (eternal wave E9a).
         colorless_eldrazi: definition.colors.is_empty()
-            && definition.subtypes.contains(&card_def::Subtype::Eldrazi),
+            && definition.subtypes.contains(&card_def::Subtype::Eldrazi)
+            && crate::eternal_legacy_e9a_v1::statics::painter_mask(state) == 0,
         teamwork: None,
         no_mana: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e8a_v1::statics::no_mana_spell(definition.name),
@@ -1201,6 +1203,7 @@ fn selected_spell_quote_branch_grant_v1(
     let mut discard_count = 0usize;
     let mut needs_creature = false;
     let mut reveals_hand = false;
+    let mut graveyard_family = false;
     for component in selected
         .component_groups
         .iter()
@@ -1219,10 +1222,13 @@ fn selected_spell_quote_branch_grant_v1(
                 usize::from(*count),
                 super::sacrificeable_other_controlled_creatures(player, source, state, &[]),
             )),
-            CostComponent::ExileOtherCardsFromOwnGraveyard(count) => Some((
-                usize::from(*count),
-                super::checked_graveyard_exile_candidates(player, source, state, &[])?,
-            )),
+            CostComponent::ExileOtherCardsFromOwnGraveyard(count) => {
+                graveyard_family = true;
+                Some((
+                    usize::from(*count),
+                    super::checked_graveyard_exile_candidates(player, source, state, &[])?,
+                ))
+            }
             CostComponent::TapUntappedControlledPermanent(filter) => Some((
                 1,
                 super::tap_permanent_cost_candidates(player, state, *filter, &[]),
@@ -1381,6 +1387,21 @@ fn selected_spell_quote_branch_grant_v1(
         .filter(|object| !chosen_prefix.contains(object))
         .collect::<Vec<_>>();
     let mut chosen = chosen_prefix.to_vec();
+    // Graveyard cards are never mana sources, and Delve pays from whatever
+    // remains, so every same-size set of graveyard cards pays alike. Quote
+    // only the first set clear of separately reserved cards, the one the
+    // search below would accept first, instead of every combination of a
+    // large graveyard.
+    if graveyard_family && !selected.no_mana {
+        chosen.extend(
+            candidates
+                .iter()
+                .copied()
+                .filter(|object| !reserved_graveyard.contains(object))
+                .take(needed - chosen.len()),
+        );
+        return (chosen.len() == needed).then(|| quote(&chosen)).flatten();
+    }
     fn complete(
         candidates: &[ObjectId],
         needed: usize,

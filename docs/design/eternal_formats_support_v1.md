@@ -84,6 +84,7 @@ reserved.
 | E8b | Pauper Ruby Storm, Golgari Gardens, Familiars, Jeskai Ephemerate, Glintblade, Izzet Terror, Burn and Boros Bully (and Izzet Faeries, 4c Synthesizer): Accursed Marauder, Azorius Chancery, Contaminated Landscape, Crimson Fleet Commodore, Crossover Collaboration, Crypt Rats, Defile, Desert, Desperate Ritual, First Day of Class, Geothermal Crevice, Glimpse the Impossible, Glorious Gale, God-Pharaoh's Faithful, Goblin Anarchomancer, Goldmire Bridge, Goliath Paladin, Golgari Rot Farm, Haunted Mire, Heaped Harvest, Hickory Woodlot, Khalni Garden, Lonely Arroyo, Manamorphose, Meeting of Minds, Mirran Banesplitter, Mortuary Mire, Oroku Saki, Orzhov Basilica, Perilous Landscape, Rally the Peasants, Rancid Earth, Reckless Lackey, Ride's End, Sandstone Needle, Sea Gate Oracle, Seething Song, Seize the Storm, Skred, Snow-Covered Mountain, Sunscape Familiar, Thornscape Familiar, Twinned Vision, Volatile Fjord, Witch's Cottage, Wrenn's Resolve | 46 and two tokens | Pauper 80.5% to 90.4% |
 | E8a | Legacy Death and Taxes (Yorion, black-white and mono-white), Hogaak Moonshadow, Jeskai, Azorius and Dimir Control, Saga and Beseech Storm, Reanimator and 8-Cast: Ad Nauseam, Aether Vial, Back to Basics, Bitter Triumph, Cabal Ritual, Canoptek Scarab Swarm, Chandra, Chill of Compliance, Cloak and Dagger, Dark Matter Manipulator, Dryad Arbor, Emperor of Bones, Erode, Flagstones of Trokair, Flickerwisp, Harbinger of the Seas, Hogaak, Infernal Tutor, Lich's Relic, Lion Sash, Loran of the Third Path, Meteor Sword, Mystic Sanctuary, Once Upon a Time, Overlord of the Balemurk, Pre-War Formalwear, Prismatic Vista, Rain of Filth, Recruiter of the Guard, Skyclave Apparition, Snow-Covered Swamp, Solitude, Stitcher's Supplier, Stoneforge Mystic, Supreme Verdict, Sylvan Safekeeper, Teferi, Time Raveler, Thought Monitor, Valgavoth's Lair, White Orchid Phantom, Wight of the Reliquary, Wishclaw Talisman, Yorion | 42 and two tokens | Legacy 73.4% to 83.5% |
 | E9b | Pauper Turbo Fog, Gruul Ponza, Gruul Ramp, Food Gardens, 4c Pestilence and Esper Faeries, Pauper 4c Ephemerate (with E8a's cards), Vintage Scam, Eldrazi, Red Prison (with E8a's Once Upon a Time), Grixis Lurrus and Underworld Breach: Annoyed Altisaur, Arbor Elf, Arcane Denial, Bannerhide Krushok, Barrowgoyf, Black Dragon Gate, Boarding Party, Boggart Trawler, Boomerang Basics, Bridgeworks Battle, Castigate, Cauldron Familiar, Dauthi Voidwalker, Echoing Truth, Eldrazi Repurposer, Elvish Spirit Guide, Fog, Grapple with Death, Growth Spiral, Heritage Reclamation, Highland Forest, Jewel Thief, Mai, Momentum Breaker, Mwonvuli Acid-Moss, Mystical Tutor, Nutrient Block, Oswald Fiddlebender, Pestilence, Pieces of the Puzzle, Radiant Fountain, Ram Through, Respite, Secluded Courtyard, Simic Growth Chamber, Sowing Mycospawn, Step Through, Thermokarst, Thief of Existence, Thornwood Falls, Vampire Sovereign, Vraska's Final Mercy, Wild Growth, You Meet in a Tavern | 44 | Pauper 90.4% to 95.2%, Vintage 95.4% to 98.1% |
+| E9a | Legacy Selesnya Depths, Red Stompy, LED Dredge, Cephalid Breakfast and Painter, and with E9b's cards Naya Initiative, Mono-Black Midrange and 60-card Death and Taxes: Anger, Ashen Rider, Blood Moon, Breakthrough, Bridge from Below, Broadside Bombardiers, Caves of Chaos Adventurer, Cephalid Coliseum, Cephalid Illusionist, Chaos Defiler, Echoing Deeps, Elvish Reclaimer, Endurance, Ensnaring Bridge, Eumidian Hatchery, Fury, Goblin Rabblemaster, Green Sun's Zenith, Grindstone, Horizon Canopy, Inquisition of Kozilek, Knight of the Reliquary, Legolas's Quick Reflexes, Loki, God of Mischief, Magus of the Moon, Mishra's Research Desk, Nomads en-Kor, Orim's Chant, Otherworldly Gaze, Ox of Agonas, Painter's Servant, Poxwalkers, Samwise the Stouthearted, Sejiri Steppe, Shatterskull Smashing, Shuko, Simian Spirit Guide, Sundering Eruption, Super Shredder, Tolaria, Undermountain Adventurer | 41 and two tokens | Legacy 83.5% to 90.0% (88.3% before E9b merged) |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -376,6 +377,32 @@ New, each built once in the first wave that needs it:
   use `E3ChoiceKindV1::E9bV1`. Arcum's Astrolabe is not in this wave (its {S} cost needs
   mana from a snow source, which the mana pool does not track), so Vintage Lurrus Vault
   Key stays unplayable.
+
+- E9a, built in `src/eternal_legacy_e9a_v1.rs` (with `statics` and `targets` submodules)
+  and `build_eternal_e9a_v1.rs`: divided damage is announced with the targets, one point
+  per pick (601.2d): Fury picks four times among creatures and planeswalkers, a creature
+  picked again taking another point; Shatterskull Smashing, whose X is announced after its
+  targets here, picks its first target k times and may pick a second target once, which is
+  dealt the rest, and X may not leave the second target nothing (`minimum_x`; at most 16
+  picks). Blood Moon and Magus of the Moon share wave E8a's land-type change with Harbinger
+  of the Seas, the later timestamp winning. Painter's Servant's color is an as-enters choice
+  (Valgavoth's Lair's) that `object_color_mask`, the Blasts' color checks and the other
+  direct color reads add. Split second blocks casting and every activation but mana
+  abilities and special actions. Cephalid Illusionist's and Loki's "becomes the target"
+  triggers read each finished targeting, players included; Legolas's Quick Reflexes grants a
+  "becomes tapped" trigger to any creature. Nomads en-Kor's shield moves one point of the
+  next damage to its target; Cephalid Illusionist reuses the fog-style combat prevention;
+  Sejiri Steppe adds to Benevolent Blessing's protection mask. Ensnaring Bridge and kicked
+  Orim's Chant are attack restrictions, Orim's Chant and split second cast prohibitions,
+  Goblin Rabblemaster a combat requirement and Sundering Eruption a block restriction.
+  Echoing Deeps' copy is chosen before trigger collection, so the copied land's entry
+  triggers and counters apply. Eumidian Hatchery's hatchling counters, Ox of Agonas' escape
+  counter, Green Sun's Zenith's shuffle into the library (a spell-departure hook), Simian
+  Spirit Guide's hand mana (a special action like Elvish Spirit Guide's), Grindstone's
+  repeated mill, Breakthrough's keep and Mishra's Research Desk's play permission are
+  module hooks; Anger's haste works from the graveyard. Resolution choices use
+  `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
+  banding.
 
 ## Card contract and verification
 

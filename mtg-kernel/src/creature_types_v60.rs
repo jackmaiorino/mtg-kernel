@@ -608,6 +608,11 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Dauthi => Some(CreatureTypeV60::Dauthi),
         Subtype::Ally => Some(CreatureTypeV60::Ally),
         Subtype::Fungus => Some(CreatureTypeV60::Fungus),
+        Subtype::Barbarian => Some(CreatureTypeV60::Barbarian),
+        Subtype::Villain => Some(CreatureTypeV60::Villain),
+        Subtype::Nomad => Some(CreatureTypeV60::Nomad),
+        Subtype::Scarecrow => Some(CreatureTypeV60::Scarecrow),
+        Subtype::Peasant => Some(CreatureTypeV60::Peasant),
     }
 }
 

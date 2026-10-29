@@ -322,7 +322,7 @@ pub(super) fn flashback_for(name: &str) -> String {
         "Rally the Peasants" => mana_flashback("{2}{R}"),
         "Seize the Storm" => mana_flashback("{6}{R}"),
         "Twinned Vision" => mana_flashback("{1}{U/R}{U/R}"),
-        _ => "None".to_string(),
+        _ => super::build_eternal_e9a_v1::flashback_for(name),
     }
 }
 
@@ -377,7 +377,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
 pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
     match name {
         "Geothermal Crevice" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::B], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapAndSacrificeSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::B, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None } }]",
-        _ => "&[]",
+        _ => super::build_eternal_e9a_v1::additional_mana_abilities_for(name),
     }
 }
 

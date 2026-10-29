@@ -341,7 +341,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Once Upon a Time" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 0, x_count: 0 })], condition: AltCostCondition::FirstSpellThisGameV1 })",
         "Bitter Triumph" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 1, x_count: 0 }), CostComponent::PayLife(3)], condition: AltCostCondition::Always })",
         "Hogaak, Arisen Necropolis" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Hybrid(ManaColor::B, ManaColor::G), Pip::Hybrid(ManaColor::B, ManaColor::G)], generic: 5, x_count: 0 })], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_e9a_v1::alt_cost_for(name),
     }
 }
 
@@ -374,7 +374,7 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
         "Lion Sash" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "Meteor Sword" => "Some(EquipmentDef { power_delta: 3, toughness_delta: 3, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "Pre-War Formalwear" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 2, add_subtype: None, controller_turn_keywords: Keywords::VIGILANCE, other_turn_keywords: Keywords::VIGILANCE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
-        _ => "None",
+        _ => super::build_eternal_e9a_v1::equipment_for(name),
     }
 }
 

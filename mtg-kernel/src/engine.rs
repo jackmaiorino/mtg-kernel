@@ -2046,6 +2046,14 @@ fn pending_cast_targeting_is_complete(pending: &PendingCast, spec: TargetSpec) -
 
 fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
     let def_idx = state.objects.get(id).card_def;
+    // Painter's Servant adds its chosen color to every card, spell and
+    // permanent (eternal wave E9a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_legacy_e9a_v1::statics::painter_mask(state) & card_def::mana_color_mask(color)
+        != 0
+    {
+        return true;
+    }
     card_def::CARD_DEFS[def_idx as usize]
         .colors
         .contains(&color)
@@ -5484,6 +5492,17 @@ pub(crate) fn evaluate_dynamic_value(
         DynamicValueDef::UrzasLandsIfMetalcraftV1 => {
             return crate::eternal_e5a_v1::statics::urzas_workshop_yield(state, controller)
         }
+        DynamicValueDef::SixIfDungeonCompletedElseTwoV1 => {
+            return if state.players[controller.index()]
+                .dungeon
+                .completed_dungeons
+                .is_empty()
+            {
+                2
+            } else {
+                6
+            }
+        }
         DynamicValueDef::BattlefieldPermanentsWithSubtype(subtype) => state
             .objects
             .iter()
@@ -7847,7 +7866,9 @@ fn sacrificeable_lands(
 fn permanent_filter_excludes_source(filter: PermanentFilter) -> bool {
     matches!(
         filter,
-        PermanentFilter::AnotherArtifact | PermanentFilter::AnotherWithSubtype(_)
+        PermanentFilter::AnotherArtifact
+            | PermanentFilter::AnotherWithSubtype(_)
+            | PermanentFilter::AnotherArtifactOrCreatureV1
     )
 }
 
@@ -7879,6 +7900,14 @@ pub(crate) fn permanent_matches_filter(
             object_color_mask(state, id) & (1 << ManaColor::U.pool_index()) != 0
         }
         PermanentFilter::NonlandV1 => !object_has_type(state, id, CardType::Land),
+        PermanentFilter::AnotherArtifactOrCreatureV1 => {
+            object_has_type(state, id, CardType::Artifact)
+                || object_has_type(state, id, CardType::Creature)
+        }
+        PermanentFilter::ForestOrPlainsV1 => {
+            has_effective_subtype(state, id, card_def::Subtype::Forest)
+                || has_effective_subtype(state, id, card_def::Subtype::Plains)
+        }
     }
 }
 
@@ -8414,8 +8443,12 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         | PermanentFilter::Creature
         | PermanentFilter::AnotherWithSubtype(_)
         | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
-        PermanentFilter::NonlandV1 => CostKind::SacrificePermanents,
-        PermanentFilter::Land | PermanentFilter::DesertV1 => CostKind::SacrificeLands,
+        PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
+            CostKind::SacrificePermanents
+        }
+        PermanentFilter::Land | PermanentFilter::DesertV1 | PermanentFilter::ForestOrPlainsV1 => {
+            CostKind::SacrificeLands
+        }
     }
 }
 
@@ -11320,6 +11353,12 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
     if let Some(companion) = crate::eternal_lurrus_v1::companion_action(state, player) {
         out.push((companion, 0));
     }
+    // Split second (Legolas's Quick Reflexes): only mana abilities and
+    // special actions while it is on the stack.
+    #[cfg(feature = "eternal-fixtures")]
+    out.retain(|&(source, index)| {
+        !crate::eternal_legacy_e9a_v1::statics::split_second_blocks(state, source, index)
+    });
     out
 }
 
@@ -12374,6 +12413,12 @@ fn reset_priority(state: &mut GameState) {
 
 fn collect_and_queue_triggers(state: &mut GameState) {
     if resolution_cast_v1::defer_triggers(state) {
+        return;
+    }
+    // Echoing Deeps' entry copy is chosen before the triggers of the land it
+    // copies see it enter (eternal wave E9a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_legacy_e9a_v1::statics::defer_triggers(state) {
         return;
     }
     let resolving_discard = state
@@ -14861,8 +14906,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     | PermanentFilter::Token
                     | PermanentFilter::AnotherWithSubtype(_)
                     | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
-                    PermanentFilter::NonlandV1 => CostKind::SacrificePermanents,
-                    PermanentFilter::Land | PermanentFilter::DesertV1 => CostKind::SacrificeLands,
+                    PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
+                        CostKind::SacrificePermanents
+                    }
+                    PermanentFilter::Land
+                    | PermanentFilter::DesertV1
+                    | PermanentFilter::ForestOrPlainsV1 => CostKind::SacrificeLands,
                 },
                 remaining,
                 candidates,
@@ -16382,6 +16431,10 @@ fn log_final_targeting_events(
         let targeted_event = state.engine.event_history.len() - 1;
         crate::faebloom_trick_v43::record_target_input(state, stack_item_id, targeted_event)?;
     }
+    // "Becomes the target" triggers of players and permanents (Cephalid
+    // Illusionist, Loki, God of Mischief; eternal wave E9a).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_legacy_e9a_v1::note_targeting(state, item);
     // A copy is neither cast nor put on the stack by its controller's
     // announcement, so retargeting one never commits a crime.
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -18250,6 +18303,12 @@ fn plan_spell_departure(
                     && crate::eternal_cards_v1::exiled_instead_of_graveyard(state, item))
             {
                 Zone::Exile
+            } else if cfg!(feature = "eternal-fixtures")
+                && requested_zone == Zone::Graveyard
+                && crate::eternal_legacy_e9a_v1::shuffles_into_library(state, item)
+            {
+                // Green Sun's Zenith shuffles itself into its owner's library.
+                Zone::Library
             } else {
                 requested_zone
             },
@@ -18279,6 +18338,8 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
                 ProposedEvent::zone_change(source, to_zone)
             };
             event::propose_and_commit(state, proposed);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_legacy_e9a_v1::after_spell_departure(state, source);
         }
         SpellDeparture::Cease { source } => {
             // Resolution pops its item before applying the final
@@ -21250,6 +21311,20 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
 /// Effective W/U/B/R/G/C mask already materialized on the object's current
 /// incarnation. Missing objects fail closed as colorless.
 pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
+    // Painter's Servant: "All cards that aren't on the battlefield, spells,
+    // and permanents are the chosen color in addition to their other
+    // colors." (eternal wave E9a)
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        let painted = crate::eternal_legacy_e9a_v1::statics::painter_mask(state);
+        if painted != 0 {
+            return unpainted_object_color_mask(state, id) | painted;
+        }
+    }
+    unpainted_object_color_mask(state, id)
+}
+
+fn unpainted_object_color_mask(state: &GameState, id: ObjectId) -> u8 {
     if crate::continuous_characteristics_v1::land_colorless(state, id) {
         return 0;
     }
@@ -21889,6 +21964,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if printed_active && crate::eternal_cards_v1::conditional_self_keywords(state, id).has(kw) {
         return true;
     }
+    // Anger's haste from its owner's graveyard (eternal wave E9a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id).has(kw) {
+        return true;
+    }
     if printed_active
         && obj.zone == Zone::Battlefield
         && static_graveyard_threshold_keyword_for(def.name).is_some_and(|(minimum, keyword)| {
@@ -22168,6 +22248,11 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
             found = found | crate::standard_keywords_v1::max_speed_keywords(state, id);
         }
         found = found | crate::standard_statics_v1::conditional_self_keywords(state, id);
+    }
+    // Anger's haste from its owner's graveyard (eternal wave E9a).
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        found = found | crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id);
     }
     if printed_active && obj.zone == Zone::Battlefield {
         if let Some((minimum, keyword)) = static_graveyard_threshold_keyword_for(def.name) {

@@ -29,6 +29,7 @@ mod build_eternal_e7a_v1;
 mod build_eternal_e7b_v1;
 mod build_eternal_e8a_v1;
 mod build_eternal_e8b_v1;
+mod build_eternal_e9a_v1;
 mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
@@ -3322,6 +3323,11 @@ enum PermanentFilterRecipe {
     /// A controlled Food other than the source (Cauldron Familiar's
     /// "Sacrifice a Food", activated from its graveyard).
     AnotherFood,
+    /// Another controlled artifact or creature (Broadside Bombardiers'
+    /// boast).
+    AnotherArtifactOrCreature,
+    /// A controlled Forest or Plains (Knight of the Reliquary).
+    ForestOrPlains,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6542,6 +6548,10 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Desert => "PermanentFilter::DesertV1",
         PermanentFilterRecipe::Nonland => "PermanentFilter::NonlandV1",
         PermanentFilterRecipe::AnotherFood => "PermanentFilter::AnotherWithSubtype(Subtype::Food)",
+        PermanentFilterRecipe::AnotherArtifactOrCreature => {
+            "PermanentFilter::AnotherArtifactOrCreatureV1"
+        }
+        PermanentFilterRecipe::ForestOrPlains => "PermanentFilter::ForestOrPlainsV1",
     }
 }
 
@@ -6557,6 +6567,8 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Desert => "desert",
         PermanentFilterRecipe::Nonland => "nonland",
         PermanentFilterRecipe::AnotherFood => "another_with_subtype:Food",
+        PermanentFilterRecipe::AnotherArtifactOrCreature => "another_artifact_or_creature",
+        PermanentFilterRecipe::ForestOrPlains => "forest_or_plains",
     }
 }
 
@@ -11474,6 +11486,11 @@ fn subtype_variant(t: &str) -> &'static str {
         "Dauthi" => "Subtype::Dauthi",
         "Ally" => "Subtype::Ally",
         "Fungus" => "Subtype::Fungus",
+        "Barbarian" => "Subtype::Barbarian",
+        "Villain" => "Subtype::Villain",
+        "Nomad" => "Subtype::Nomad",
+        "Scarecrow" => "Subtype::Scarecrow",
+        "Peasant" => "Subtype::Peasant",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",
