@@ -2430,6 +2430,14 @@ fn seed_is_forced_non_natural_for_test_v1(_seed: u64) -> bool {
 /// exhausted -- the plan's existing fatal error, with the ledger entries
 /// gathered so far returned alongside it so a caller can still preserve them
 /// before aborting.
+/// A slot's trajectory, its failed attempts' ledger entries and, with EX1,
+/// the hook's record of every attempt.
+type TolerantCollectionV1 = (
+    ExpandedTrajectoryV1,
+    Vec<NonNaturalLedgerEntryV1>,
+    Option<Value>,
+);
+
 fn collect_episode_tolerant_v1(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
@@ -2438,14 +2446,7 @@ fn collect_episode_tolerant_v1(
     slot: usize,
     max_non_natural_episode_fraction: f32,
     ex1: Option<&ex1_collect_v1::Ex1CollectOptionsV1>,
-) -> Result<
-    (
-        ExpandedTrajectoryV1,
-        Vec<NonNaturalLedgerEntryV1>,
-        Option<Value>,
-    ),
-    (String, Vec<NonNaturalLedgerEntryV1>),
-> {
+) -> Result<TolerantCollectionV1, (String, Vec<NonNaturalLedgerEntryV1>)> {
     let mut ledger = Vec::new();
     let mut attempt_episode = episode.clone();
     // EX1: one record per attempt; a non-natural attempt's searches are kept

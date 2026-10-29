@@ -151,6 +151,10 @@ where
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the collection command's fields, plus EX1's hook"
+)]
 pub(super) fn collect_parallel_v1(
     source: ExpandedModelSourceV1,
     episodes: Vec<ExpandedEpisodeV1>,
