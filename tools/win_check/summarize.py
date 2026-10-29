@@ -3,9 +3,10 @@
 usage: summarize.py ROWS.jsonl... [--labels LABELS.jsonl...] [--json OUT]
 
 Opportunity: one (game, turn) in which at least one focal decision is
-certified a win available this turn; the class and line come from its first
-certified decision. Taken: the focal seat won the game in that turn. Missed:
-otherwise. Oracle and robust estimands are counted separately; a robust
+certified a win available this turn; the class and line come from the first
+certified decision's line (the line the search found first, not every line).
+Won that turn: the focal seat won the game before the turn ended, by any
+means. Missed: it did not. Oracle and robust estimands are counted separately; a robust
 "none" is certified only through the oracle (a world without a win).
 
 Classes (declared, from the certified line and the focal deck), first match:
@@ -97,7 +98,7 @@ def main(argv=None) -> int:
             certified = sum(d["robust"] and (d["robust"]["verdict"] == "proven" or d["oracle"]["verdict"] == "refuted") for d in focal)
         else:
             certified = sum(d["oracle"]["verdict"] != "unknown" for d in focal)
-        table = defaultdict(lambda: {"available": 0, "taken": 0, "missed": 0, "games_with": set(), "missed_refs": [], "taken_refs": []})
+        table = defaultdict(lambda: {"available": 0, "won_that_turn": 0, "missed": 0, "games_with": set(), "missed_refs": [], "won_refs": []})
         for game_id, game in games.items():
             deck = game["deck_ids"][game["focal"]].split("/")[0]
             turns = defaultdict(list)
@@ -109,11 +110,11 @@ def main(argv=None) -> int:
                 cell = table[(deck, cls)]
                 cell["available"] += 1
                 cell["games_with"].add(game_id)
-                taken = game["win"] and game["final_turn"] == turn
-                cell["taken" if taken else "missed"] += 1
-                if taken and cls == "spy_line" and estimand == "oracle":
+                won = game["win"] and game["final_turn"] == turn
+                cell["won_that_turn" if won else "missed"] += 1
+                if won and cls == "spy_line" and estimand == "oracle":
                     spy_taken.add(game_id)
-                cell["taken_refs" if taken else "missed_refs"].append({"game": game_id, "turn": turn, "decision": rows[0]["index"]})
+                cell["won_refs" if won else "missed_refs"].append({"game": game_id, "turn": turn, "decision": rows[0]["index"]})
         scheduled = Counter(g["deck_ids"][g["focal"]].split("/")[0] for g in games.values())
         rows = []
         for (deck, cls), cell in sorted(table.items()):
@@ -121,10 +122,10 @@ def main(argv=None) -> int:
             rows.append({"deck": deck, "class": cls, "scheduled_games": n, "opportunities": cell["available"],
                          "availability_per_1000_games": round(1000 * len(cell["games_with"]) / n, 1),
                          "availability_ci": [round(1000 * x, 1) for x in wilson(len(cell["games_with"]), n)],
-                         "taken": cell["taken"], "missed": cell["missed"],
+                         "won_that_turn": cell["won_that_turn"], "missed": cell["missed"],
                          "miss_rate": round(cell["missed"] / cell["available"], 4), "miss_rate_ci": wilson(cell["missed"], cell["available"]),
                          "missed_per_1000_games": round(1000 * cell["missed"] / n, 1),
-                         "taken_refs": cell["taken_refs"][:20], "missed_refs": cell["missed_refs"][:20]})
+                         "won_refs": cell["won_refs"][:20], "missed_refs": cell["missed_refs"][:20]})
         by_type = defaultdict(Counter)
         for d in focal:
             kind = ("own_turn" if d["active"] == d["focal"] else "opponent_turn", "legal>=5" if d["legal"] >= 5 else "legal<5")
