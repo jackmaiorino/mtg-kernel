@@ -253,8 +253,8 @@ pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameStat
 }
 
 /// Only the new end-turn borrow compares the same original-world framing.
-pub(crate) fn original_sha256_for_end_turn_v1(state: &GameState) -> String {
-    original_sha256(state)
+pub(crate) fn origin_digest_matches_for_end_turn_v1(recorded: &str, state: &GameState) -> bool {
+    origin_digest_matches(recorded, state)
 }
 
 /// An opaque input for speculative Panda verification. It cannot install a
@@ -436,11 +436,7 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
     if enclosing.operation != OperationV1::Advance
         || enclosing.had_checkpoint
         || enclosing.original_history_len > removed.index as usize
-        || enclosing.original_sha256.len() != 64
-        || !enclosing
-            .original_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
+        || !origin_digest_well_formed(&enclosing.original_sha256)
         || enclosing
             .original_stack
             .iter()
@@ -747,9 +743,24 @@ fn operation_has_color_entry(state: &GameState, operation: &OperationV1) -> bool
     }
 }
 
+thread_local! {
+    /// Set while an operation recorded before origin digest v2 is replayed.
+    static ORIGIN_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The digest an operation records for its original world: v2, or v1 while
+/// replaying an operation recorded before v2 ([`as_recorded`]).
 fn original_sha256(state: &GameState) -> String {
-    // The same canonical bytes, streamed instead of materialized: a history
-    // holding saved worlds can serialize to tens of megabytes.
+    if ORIGIN_V1.with(std::cell::Cell::get) {
+        origin_digest_v1(state)
+    } else {
+        origin_digest_v2(state)
+    }
+}
+
+/// Streams canonical JSON into a digest instead of materializing it: a
+/// history holding saved worlds can serialize to tens of megabytes.
+fn stream_json(digest: &mut Sha256, value: &impl Serialize) {
     struct DigestWriter<'a>(&'a mut Sha256);
     impl std::io::Write for DigestWriter<'_> {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -760,16 +771,101 @@ fn original_sha256(state: &GameState) -> String {
             Ok(())
         }
     }
-    let mut digest = Sha256::new();
-    let mut writer = std::io::BufWriter::with_capacity(1 << 16, DigestWriter(&mut digest));
-    serde_json::to_writer(&mut writer, state).expect("genuine origin serializes");
+    let mut writer = std::io::BufWriter::with_capacity(1 << 16, DigestWriter(digest));
+    serde_json::to_writer(&mut writer, value).expect("genuine origin serializes");
     std::io::Write::flush(&mut writer).expect("digest writes never fail");
-    drop(writer);
-    digest
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// v1: SHA-256 of the whole state's canonical JSON, history included, so
+/// every operation rehashed the whole history.
+fn origin_digest_v1(state: &GameState) -> String {
+    let mut digest = Sha256::new();
+    stream_json(&mut digest, state);
+    hex(&digest.finalize())
+}
+
+/// v2: SHA-256 of a domain tag, the history length (u64, little-endian), the
+/// history's v2 chain and the canonical JSON of the state with its own
+/// history written as `[]`. The chain hashes each event once per history
+/// lineage, so an operation's digest no longer grows with the game.
+fn origin_digest_v2(state: &GameState) -> String {
+    let history = &state.engine.event_history;
+    let mut digest = Sha256::new();
+    digest.update(b"mtg-kernel/linked-aura-origin/v2");
+    digest.update(
+        u64::try_from(history.len())
+            .expect("history length")
+            .to_le_bytes(),
+    );
+    digest.update(history.chain_digest_v2());
+    history.omitted_v2(|| stream_json(&mut digest, state));
+    format!("v2:{}", hex(&digest.finalize()))
+}
+
+/// A recorded origin digest of either version: 64 hex digits (v1), or `v2:`
+/// and 64 hex digits.
+pub(crate) fn origin_digest_well_formed(digest: &str) -> bool {
+    let hex = digest.strip_prefix("v2:").unwrap_or(digest);
+    hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Whether `state` is the original world of a recorded digest, checked in
+/// the recorded digest's own version.
+fn origin_digest_matches(recorded: &str, state: &GameState) -> bool {
+    if recorded.starts_with("v2:") {
+        recorded == origin_digest_v2(state)
+    } else {
+        recorded == origin_digest_v1(state)
+    }
+}
+
+/// Runs `run` as code before origin digest v2 did: every new digest is v1.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn with_origin_v1_for_test<T>(run: impl FnOnce() -> T) -> T {
+    let previous = ORIGIN_V1.with(|v1| v1.replace(true));
+    let result = run();
+    ORIGIN_V1.with(|v1| v1.set(previous));
+    result
+}
+
+/// The v1 and v2 origin digests of `state`.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn origin_digests_for_test(state: &GameState) -> (String, String) {
+    (origin_digest_v1(state), origin_digest_v2(state))
+}
+
+/// Checks a replay of a recorded operation as it was recorded: under v2, and
+/// only when that fails, once more with v1 digests, so an operation recorded
+/// before v2 still replays to its recorded bytes. A v1 failure reports the
+/// v2 error.
+pub(crate) fn as_recorded<T>(check: impl Fn() -> Result<T, String>) -> Result<T, String> {
+    let current = check();
+    if current.is_ok() || ORIGIN_V1.with(std::cell::Cell::get) {
+        return current;
+    }
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ORIGIN_V1.with(|v1| v1.set(false));
+        }
+    }
+    ORIGIN_V1.with(|v1| v1.set(true));
+    let restore = Restore;
+    let v1 = check();
+    drop(restore);
+    v1.or(current)
 }
 
 fn replay(
@@ -803,6 +899,8 @@ fn replay_general_current_slots_v69(
         return Err("entry operation cannot recursively own another public checkpoint".into());
     }
     crate::effect::validate_pending_effect_choice(original)?;
+    // Before any clone, so the staged world inherits the history's chain.
+    let origin = original_sha256(original);
     let mut staged = match current_slots {
         Some(input) => genesis_current_slots_v69::materialize(original, operation, input)?,
         None => original.clone(),
@@ -818,7 +916,7 @@ fn replay_general_current_slots_v69(
         cursor: 0,
         checkpoint: None,
         operation: operation.clone(),
-        original_sha256: original_sha256(original),
+        original_sha256: origin.clone(),
         banner_start: None,
         color_plans: Vec::new(),
         used_banner,
@@ -837,7 +935,7 @@ fn replay_general_current_slots_v69(
             .event_history
             .push(CommittedEvent::BanishingAuraOperationStartedV1 {
                 operation: Box::new(operation.clone()),
-                original_sha256: original_sha256(original),
+                original_sha256: origin,
             });
     }
     let result = invoke(&mut staged, operation);
@@ -1232,21 +1330,26 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         return Err("entry checkpoint has multiple or synchronous owners".into());
     }
     if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
-        if !matches!(crate::banner_of_kinship_v1::entry::journal(state,p.operation_history_index),Some(crate::banner_of_kinship_v1::entry::JournalV1::Started{operation,original_sha256:digest}) if **operation==p.operation && *digest==original_sha256(&p.original))
+        if !matches!(crate::banner_of_kinship_v1::entry::journal(state,p.operation_history_index),Some(crate::banner_of_kinship_v1::entry::JournalV1::Started{operation,original_sha256:digest}) if **operation==p.operation && origin_digest_matches(digest, &p.original))
         {
             return Err("Kinship checkpoint lost independently committed operation".into());
         }
-        let (expected, _) = replay_general(&p.original, &p.operation, &p.answers, p.used_banner)?;
-        if expected != *state
-            || expected
-                .engine
-                .linked_aura_operation_v1
-                .pending_kinship_v1
-                .is_none()
-        {
-            return Err("Kinship checkpoint/source/proposal/scene/stack/answers changed".into());
-        }
-        return Ok(());
+        return as_recorded(|| {
+            let (expected, _) =
+                replay_general(&p.original, &p.operation, &p.answers, p.used_banner)?;
+            if expected != *state
+                || expected
+                    .engine
+                    .linked_aura_operation_v1
+                    .pending_kinship_v1
+                    .is_none()
+            {
+                return Err(
+                    "Kinship checkpoint/source/proposal/scene/stack/answers changed".into(),
+                );
+            }
+            Ok(())
+        });
     }
     if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
         if !matches!(state.engine.event_history.get(pending.input as usize),
@@ -1259,21 +1362,23 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         {
             return Err("Fake Aura checkpoint lost independently committed original input".into());
         }
-        let (expected, _) = replay_general(
-            &pending.original,
-            &pending.operation,
-            &pending.answers,
-            pending.used_banner,
-        )?;
-        if expected != *state
-            || crate::fake_your_own_death_v50::return_aura::pending(&expected).is_none()
-        {
-            return Err(
-                "Fake Aura checkpoint changed original operation, source, menu or prior answers"
-                    .into(),
-            );
-        }
-        return Ok(());
+        return as_recorded(|| {
+            let (expected, _) = replay_general(
+                &pending.original,
+                &pending.operation,
+                &pending.answers,
+                pending.used_banner,
+            )?;
+            if expected != *state
+                || crate::fake_your_own_death_v50::return_aura::pending(&expected).is_none()
+            {
+                return Err(
+                    "Fake Aura checkpoint changed original operation, source, menu or prior answers"
+                        .into(),
+                );
+            }
+            Ok(())
+        });
     }
     if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
         if locally_owned(state)
@@ -1290,18 +1395,23 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         {
             return Err("token attachment checkpoint lost independent original input".into());
         }
-        let (expected, _) = replay_general(
-            &pending.original,
-            &pending.operation,
-            &pending.answers,
-            pending.used_banner,
-        )?;
-        if expected != *state || crate::season_token_attachment_v48::pending(&expected).is_none() {
-            return Err(
-                "token attachment checkpoint changed original operation or confirmed answers"
-                    .into(),
-            );
-        }
+        as_recorded(|| {
+            let (expected, _) = replay_general(
+                &pending.original,
+                &pending.operation,
+                &pending.answers,
+                pending.used_banner,
+            )?;
+            if expected != *state
+                || crate::season_token_attachment_v48::pending(&expected).is_none()
+            {
+                return Err(
+                    "token attachment checkpoint changed original operation or confirmed answers"
+                        .into(),
+                );
+            }
+            Ok(())
+        })?;
         return Ok(());
     }
     if let Some(pending) = state
@@ -1313,21 +1423,23 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         if locally_owned(state) || state.engine.linked_aura_operation_v1.pending.is_some() {
             return Err("Banner checkpoint has foreign runtime/second owner".into());
         }
-        if !matches!(state.engine.event_history.get(pending.operation_history_index as usize), Some(CommittedEvent::BannerEntryOperationStartedV1 { operation, original_sha256: digest }) if **operation == pending.operation && *digest == original_sha256(&pending.original))
+        if !matches!(state.engine.event_history.get(pending.operation_history_index as usize), Some(CommittedEvent::BannerEntryOperationStartedV1 { operation, original_sha256: digest }) if **operation == pending.operation && origin_digest_matches(digest, &pending.original))
         {
             return Err("Banner checkpoint lost independently committed operation".into());
         }
-        let (expected, _) = replay_general_current_slots_v69(
-            &pending.original,
-            &pending.operation,
-            &pending.answers,
-            true,
-            pending.genesis_current_slots_v69.as_ref(),
-        )?;
-        if expected != *state || !has_banner_pending(&expected) {
-            return Err("Banner checkpoint/original operation changed".into());
-        }
-        return Ok(());
+        return as_recorded(|| {
+            let (expected, _) = replay_general_current_slots_v69(
+                &pending.original,
+                &pending.operation,
+                &pending.answers,
+                true,
+                pending.genesis_current_slots_v69.as_ref(),
+            )?;
+            if expected != *state || !has_banner_pending(&expected) {
+                return Err("Banner checkpoint/original operation changed".into());
+            }
+            Ok(())
+        });
     }
     let Some(pending) = state.engine.linked_aura_operation_v1.pending.as_ref() else {
         return Ok(());
@@ -1337,17 +1449,19 @@ pub fn validate(state: &GameState) -> Result<(), String> {
     }
     let start = pending.original.engine.event_history.len();
     if !matches!(state.engine.event_history.get(start),Some(CommittedEvent::BanishingAuraOperationStartedV1 {operation,original_sha256:digest})
-        if **operation==pending.operation && *digest==original_sha256(&pending.original))
+        if **operation==pending.operation && origin_digest_matches(digest, &pending.original))
     {
         return Err(
             "linked Aura checkpoint lost its independently committed original operation".into(),
         );
     }
-    let (expected, _) = replay(&pending.original, &pending.operation, &pending.answers)?;
-    if expected != *state || !has_pending(&expected) {
-        return Err("linked Aura checkpoint or genuine operation binding changed".into());
-    }
-    Ok(())
+    as_recorded(|| {
+        let (expected, _) = replay(&pending.original, &pending.operation, &pending.answers)?;
+        if expected != *state || !has_pending(&expected) {
+            return Err("linked Aura checkpoint or genuine operation binding changed".into());
+        }
+        Ok(())
+    })
 }
 fn decision(state: &GameState) -> Result<Decision, String> {
     validate(state)?;
