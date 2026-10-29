@@ -426,3 +426,118 @@ impl WinSearchSessionV1 for crate::rl_session::FastActorSessionV1 {
         self.census_redeterminized_clone_v1(seed)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rl::CardStableRefV1;
+    use crate::state::Zone;
+
+    const HERO: PlayerSeatV1 = PlayerSeatV1::P0;
+    const OPP: PlayerSeatV1 = PlayerSeatV1::P1;
+
+    fn card(arena_id: u32, card_db_id: u16, zone: Zone) -> CardStableRefV1 {
+        CardStableRefV1 { arena_id, card_db_id, owner: HERO, controller: HERO, zone, zone_change_count: arena_id }
+    }
+
+    /// A toy game: each node names its actor and children; leaves are a win
+    /// for one seat, the end of the turn, or more of the same turn.
+    #[derive(Clone, Debug)]
+    enum Node {
+        Decide(PlayerSeatV1, Vec<(ActionSemanticV1, usize)>),
+        Won(Option<PlayerSeatV1>),
+        NextTurn,
+    }
+
+    #[derive(Clone)]
+    struct Toy {
+        nodes: std::rc::Rc<Vec<Node>>,
+        at: usize,
+        worlds: std::rc::Rc<Vec<Vec<Node>>>,
+    }
+
+    impl WinSearchSessionV1 for Toy {
+        fn decision(&self) -> Result<(PlayerSeatV1, Vec<ActionSemanticV1>), Option<PlayerSeatV1>> {
+            match &self.nodes[self.at] {
+                Node::Decide(actor, edges) => Ok((*actor, edges.iter().map(|(a, _)| a.clone()).collect())),
+                Node::Won(winner) => Err(*winner),
+                Node::NextTurn => Ok((OPP, vec![ActionSemanticV1::Pass { actor: OPP }])),
+            }
+        }
+        fn turn(&self) -> (u32, PlayerSeatV1) {
+            (1, if matches!(self.nodes[self.at], Node::NextTurn) { OPP } else { HERO })
+        }
+        fn apply(&mut self, index: usize) -> Result<(), String> {
+            let Node::Decide(_, edges) = &self.nodes[self.at] else { return Err("not a decision".into()) };
+            self.at = edges[index].1;
+            Ok(())
+        }
+        fn resampled_world(&self, seed: u64) -> Result<Self, String> {
+            let nodes = self.worlds.get(seed as usize).ok_or("no such world")?.clone();
+            Ok(Toy { nodes: std::rc::Rc::new(nodes), at: self.at, worlds: self.worlds.clone() })
+        }
+    }
+
+    fn toy(nodes: Vec<Node>) -> Toy {
+        Toy { nodes: std::rc::Rc::new(nodes), at: 0, worlds: std::rc::Rc::new(Vec::new()) }
+    }
+
+    fn play(id: u32) -> ActionSemanticV1 {
+        ActionSemanticV1::PlayLand { actor: HERO, source: card(id, 7, Zone::Hand) }
+    }
+
+    const BOUNDS: WinSearchBoundsV1 = WinSearchBoundsV1 { max_nodes: 1_000, max_depth: 50 };
+
+    #[test]
+    fn oracle_needs_one_winning_choice_and_every_reply() {
+        // Hero: line 1 loses to the turn ending, line 2 reaches an opponent
+        // choice where both replies still lose for the opponent.
+        let nodes = vec![
+            Node::Decide(HERO, vec![(play(1), 1), (play(2), 2)]),
+            Node::NextTurn,
+            Node::Decide(OPP, vec![(ActionSemanticV1::Pass { actor: OPP }, 3), (play(9), 3)]),
+            Node::Won(Some(HERO)),
+        ];
+        let result = oracle_win_this_turn_v1(&toy(nodes.clone()), BOUNDS).unwrap();
+        assert_eq!(result.verdict, WinVerdictV1::Proven);
+        assert_eq!(result.line.len(), 1);
+        // One reply that escapes refutes the line.
+        let mut refuted = nodes;
+        refuted[2] = Node::Decide(OPP, vec![(ActionSemanticV1::Pass { actor: OPP }, 3), (play(9), 1)]);
+        let result = oracle_win_this_turn_v1(&toy(refuted), BOUNDS).unwrap();
+        assert_eq!((result.verdict, result.unknown_reason), (WinVerdictV1::Refuted, None));
+    }
+
+    #[test]
+    fn budget_and_depth_give_unknown_never_a_guess() {
+        let nodes = vec![Node::Decide(HERO, vec![(play(1), 1), (play(2), 2)]), Node::NextTurn, Node::Won(Some(HERO))];
+        let tight = WinSearchBoundsV1 { max_nodes: 1, max_depth: 50 };
+        let result = oracle_win_this_turn_v1(&toy(nodes.clone()), tight).unwrap();
+        assert_eq!((result.verdict, result.unknown_reason), (WinVerdictV1::Unknown, Some(UnknownReasonV1::Budget)));
+        let shallow = WinSearchBoundsV1 { max_nodes: 1_000, max_depth: 0 };
+        let result = oracle_win_this_turn_v1(&toy(nodes), shallow).unwrap();
+        assert_eq!((result.verdict, result.unknown_reason), (WinVerdictV1::Unknown, Some(UnknownReasonV1::Depth)));
+    }
+
+    #[test]
+    fn robust_line_must_win_in_every_world_with_one_choice() {
+        // The true world wins by playing land 1; world 0 wins by land 2 only.
+        let truth = vec![Node::Decide(HERO, vec![(play(1), 1), (play(2), 2)]), Node::Won(Some(HERO)), Node::NextTurn];
+        let other = vec![Node::Decide(HERO, vec![(play(1), 2), (play(2), 1)]), Node::Won(Some(HERO)), Node::NextTurn];
+        let session = Toy { worlds: std::rc::Rc::new(vec![other.clone(), truth.clone()]), ..toy(truth.clone()) };
+        assert_eq!(oracle_win_this_turn_v1(&session, BOUNDS).unwrap().verdict, WinVerdictV1::Proven);
+        let robust = robust_win_this_turn_v1(&session, &[0], BOUNDS).unwrap().unwrap();
+        assert_eq!(robust.verdict, WinVerdictV1::Unknown);
+        let robust = robust_win_this_turn_v1(&session, &[1], BOUNDS).unwrap().unwrap();
+        assert_eq!(robust.verdict, WinVerdictV1::Proven);
+    }
+
+    #[test]
+    fn public_key_ignores_hidden_object_identity() {
+        let a = ActionSemanticV1::CastSpell { actor: HERO, source: card(10, 151, Zone::Graveyard) };
+        let b = ActionSemanticV1::CastSpell { actor: HERO, source: card(77, 151, Zone::Graveyard) };
+        let c = ActionSemanticV1::CastSpell { actor: HERO, source: card(10, 152, Zone::Graveyard) };
+        assert_eq!(public_key(&a), public_key(&b));
+        assert_ne!(public_key(&a), public_key(&c));
+    }
+}
