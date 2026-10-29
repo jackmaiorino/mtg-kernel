@@ -174,11 +174,14 @@ def check(args):
 TIMING_KEYS = {"wall", "search_wall_seconds", "teacher_seconds", "seconds"}
 
 
-def strip(value):
+PATH_KEYS = TIMING_KEYS | {"path", "sha256", "checkpoint_sha256"}
+
+
+def strip(value, keys=TIMING_KEYS):
     if isinstance(value, dict):
-        return {k: strip(v) for k, v in value.items() if k not in TIMING_KEYS}
+        return {k: strip(v, keys) for k, v in value.items() if k not in keys}
     if isinstance(value, list):
-        return [strip(v) for v in value]
+        return [strip(v, keys) for v in value]
     return value
 
 
@@ -210,7 +213,11 @@ def compare(args):
     assert len(a) == len(b), "different iteration counts"
     for (ra, ua, ca), (rb, ub, cb) in zip(a, b):
         assert ua["after_state_sha256"] == ub["after_state_sha256"], f"state differs at {ra['iteration']}"
-        assert [p["sha256"] for p in ca["trajectories"]] == [p["sha256"] for p in cb["trajectories"]]
+        # Later trajectories name the run's own previous checkpoint file (run-local path and bytes); the model
+        # state is compared above, so file identities are left out here.
+        ta = [strip(read(p["path"]), PATH_KEYS) for p in ca["trajectories"]]
+        tb = [strip(read(p["path"]), PATH_KEYS) for p in cb["trajectories"]]
+        assert ta == tb, f"trajectories differ at {ra['iteration']}"
         assert strip(ex1_records(ca)) == strip(ex1_records(cb)), f"ex1 records differ at {ra['iteration']}"
         ea, eb = ex1_receipt(ua), ex1_receipt(ub)
         keys = ("strata", "searches", "searches_failed", "rows", "rows_eligible", "rows_dropped", "gradient_exposure")
