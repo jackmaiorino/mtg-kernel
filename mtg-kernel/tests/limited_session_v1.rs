@@ -12,6 +12,7 @@ fn deck(name: &str, count: u32) -> CustomDeckV1 {
             name: name.to_string(),
             count,
         }],
+        companion: None,
     }
 }
 
@@ -52,6 +53,7 @@ fn deck_resolution_preserves_order_and_accepts_large_copy_counts() {
                 count: 21,
             },
         ],
+        companion: None,
     };
     let expected: Vec<u16> = [
         vec![card_id_by_name("Island").unwrap(); 20],

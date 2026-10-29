@@ -5,10 +5,16 @@ second successful draw each turn creates a token copy. The token has the
 same name, mana cost, color, type, subtype, printed 2/2 and second-draw
 ability. It is a token and cannot be admitted to a mainboard.
 
-The supported pool has no permanent-copy modifications to Horde's
-copiable values. A distinct token definition with the original object name
-therefore represents those values exactly. Counters, damage, tapped state,
-temporary boosts and attachments are not copied. Existing draw-event
+Electroduplicate can add copiable haste and end step sacrifice abilities.
+The second-draw ability therefore copies its source's current copiable
+definition, face and authenticated added abilities at resolution. When the
+original battlefield incarnation has departed, its private departure
+snapshot supplies those last-known values. The trigger retains its captured
+controller. The native resolving row owns this atomic copy; a public effect
+call cannot substitute a source-copy root or reuse a waiting Horde row.
+Doubling Season expands the initialized copy batch normally.
+Counters, damage, tapped state, temporary boosts and attachments are not
+copied. Existing draw-event
 ordinals and entry snapshots ensure a newly created copy does not trigger
 retroactively for the draw that created it. On a later turn, each copy can
 trigger and create another copy. A queued trigger retains its controller
@@ -19,6 +25,12 @@ Tests must cover printed and token characteristics, ordinary casting,
 multi-card draws, no retroactive triggers, subsequent turns, multiple
 sources, counters/damage/tapped state, departed sources and pending-trigger
 restore. Matching XMage comparisons must execute before parity is claimed.
+
+Three appended native source fixtures use paid Horde, Electroduplicate,
+Think Twice, Unsummon, Giant Growth and Doubling Season in both seats.
+They cover copy-of-copy abilities, real end step sacrifices, departed-source
+restore, private snapshot corruption and uncopied temporary boosts. These
+fixtures remain uncompiled and unrun at this source checkpoint.
 
 The rules reference is the pinned XMage `HomunculusHorde.java` and
 `CreateTokenCopySourceEffect.java` at

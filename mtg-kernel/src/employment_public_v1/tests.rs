@@ -57,7 +57,8 @@ fn primitive_with_face(actor: PlayerId, face: Option<bool>) -> (GameState, Objec
     (state, source, recipient)
 }
 pub(crate) fn cleanup(state: &mut GameState) {
-    state.step = Step::End;
+    // Native advancement must publish the End-step entry used by cleanup.
+    state.step = Step::Main2;
     state.engine.priority_passes = [false; 2];
     for _ in 0..24 {
         let decision = engine::advance_until_decision(state);

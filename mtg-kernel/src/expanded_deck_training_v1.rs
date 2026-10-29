@@ -3,6 +3,7 @@
 //! or resumes its own checkpoint. It never reads or writes a legacy Store.
 
 pub mod archive_distillation_v1;
+pub mod b_width_prescreen_v1;
 pub mod e_supported_teacher_v1;
 pub mod exploration_probe_v1;
 pub mod no_state_digest_v1;
@@ -21,14 +22,14 @@ use crate::fast_sampler::{
 };
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
-use crate::native_flat_tensorizer_v3::{
-    NativeFlatDecisionTensorV3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3,
-};
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+use crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3;
 #[cfg(test)]
 use crate::native_flat_tensorizer_v3::{FEATURES_SOURCE_SHA256_V3, FEATURE_DESCRIPTOR_SHA256_V3};
-use crate::native_flat_tensorizer_v4::{
-    NativeFlatDecisionTensorV4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
-};
+use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+use crate::native_flat_tensorizer_v4::NativeFlatDecisionTensorV4;
+use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::native_policy_train_step_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
@@ -108,6 +109,7 @@ mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
 mod trajectory_parse_ahead_v1;
+pub(crate) mod verified_bytes_cache_v1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
@@ -572,22 +574,40 @@ pub(crate) fn inference_identity_v1(
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
+    let state_sha256 = hex(&state.state_sha256_v1().map_err(err)?);
+    Ok(inference_identity_with_state_sha256_v1(
+        source,
+        policy,
+        state,
+        state_sha256,
+    ))
+}
+
+/// `inference_identity_v1` for a caller that has just hashed this same,
+/// unmutated `state` (`state_sha256`). The state hash is that function's only
+/// fallible step; every other field is a pure accessor.
+fn inference_identity_with_state_sha256_v1(
+    source: &ExpandedModelSourceV1,
+    policy: &FrozenPlayPolicyV1,
+    state: &NativePolicyValueTrainStateV1,
+    state_sha256: String,
+) -> ExpandedInferenceIdentityV1 {
     // Single accessor, not a hand-picked constant: a fresh-V4 policy must
     // stamp the V4 schema/registry/source/descriptor identity here, never
     // the V3 one, and this is the one place that decides which.
     let feature_identity = policy.feature_identity_v1();
-    Ok(ExpandedInferenceIdentityV1 {
+    ExpandedInferenceIdentityV1 {
         schema: inference_schema_v1(policy.identity_v1()).into(),
         source_import: policy.identity_v1().clone(),
         checkpoint_sha256: source.checkpoint.as_ref().map(|pin| pin.sha256.clone()),
         model: policy.actual_model_identity_v1(),
-        state_sha256: hex(&state.state_sha256_v1().map_err(err)?),
+        state_sha256,
         adam_step: state.adam_step_v1(),
         feature_schema_version: feature_identity.feature_schema_version.into(),
         feature_registry_version: feature_identity.feature_registry_version.into(),
         features_source_sha256: feature_identity.features_source_sha256.into(),
         feature_descriptor_sha256: feature_identity.feature_descriptor_sha256.into(),
-    })
+    }
 }
 
 /// Narrow objective-transition seam. An existing game-terminal checkpoint
@@ -717,7 +737,7 @@ impl OpponentCacheV1 {
                 self.entries.remove(0);
             }
             let mut opponent = if self.verified_sources.contains(source) {
-                ordered_update_preparation::load_opponent_cached_v1(source)?.0
+                ordered_update_preparation::load_opponent_cached_v1(source, false)?.0
             } else {
                 // Unrecognized import schemas retain their original complete
                 // loader validation rather than trusting a process cache hit.
@@ -756,55 +776,141 @@ fn verify_collection_opponent_sources_v1(
         }
         checked.push(source.clone());
         let bytes = read_pinned_bytes(&source.play_import)?;
-        if let Some(pin) = &source.checkpoint {
-            read_pinned_bytes(pin)?;
-        }
+        let checkpoint_bytes = source
+            .checkpoint
+            .as_ref()
+            .map(read_pinned_bytes)
+            .transpose()?;
         let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
         let schema = probe.get("schema").and_then(Value::as_str);
-        if schema == Some(fresh_initialization_source::SOURCE_SCHEMA) {
-            let descriptor = fresh_initialization_source::parse_source_v1(&bytes)?;
-            read_pinned_bytes(&descriptor.initialization)?;
-            read_pinned_bytes(&descriptor.parameters)?;
-        } else if schema.is_none() {
-            let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
-            let metadata = read_pinned_bytes(&PinnedFileV1 {
-                path: import.export_directory.join("metadata.json"),
-                sha256: import.expected_metadata_sha256,
-            })?;
-            let metadata: Value = serde_json::from_slice(&metadata).map_err(err)?;
-            for (path, expected) in [
-                (
-                    import.source_run_path,
-                    metadata
-                        .pointer("/identity/loaded_run_sha256")
-                        .and_then(Value::as_str)
-                        .ok_or("source run pin missing")?
-                        .to_owned(),
-                ),
-                (
-                    import.source_registry_path,
-                    import.expected_source_registry_sha256,
-                ),
-                (
-                    import.export_directory.join("parameters.f32le"),
-                    metadata
-                        .pointer("/parameter_section_sha256")
-                        .and_then(Value::as_str)
-                        .ok_or("parameter pin missing")?
-                        .to_owned(),
-                ),
-            ] {
-                read_pinned_bytes(&PinnedFileV1 {
-                    path,
-                    sha256: expected,
-                })?;
-            }
+        // A converted source whose base trains verifies the conversion's
+        // pins and the base's own, then is served like its base.
+        let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
+            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes.as_deref())?
         } else {
+            let mut pins_ok = verify_import_pins_v1(&bytes)?;
+            // A checkpoint that names a further file (a phase-1
+            // archive-distillation parent), or that the probe cannot read,
+            // keeps its full load, which reads it and reports its own error.
+            // The process cache holds only sources whose checkpoint the same
+            // probe found clean, and this pin was just verified, so a held
+            // source needs no probe.
+            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes.as_deref()) {
+                pins_ok = ordered_update_preparation::holds_source_v1(source)
+                    || no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
+            }
+            pins_ok
+        };
+        if !verified_pins {
             continue;
         }
         verified.push(source.clone());
     }
     Ok(verified)
+}
+
+/// Files read in full, each with its bytes verified against its pin.
+pub(super) type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
+
+/// Every file a full opponent load of `source` reads, read again and
+/// verified against its pin, for the process opponent cache: the import, its
+/// own inputs and the checkpoint, or for a converted source over a trainable
+/// base the conversion record, the base's files, the base checkpoint and the
+/// artifact or continuation checkpoint. `None` for any other kind of source,
+/// and for one whose base or source checkpoint names a further file (a
+/// phase-1 archive-distillation parent): those load in full every time.
+pub(super) fn opponent_cache_files_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<Option<VerifiedFilesV1>, String> {
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    let (pins, checkpoints) = if probe.get("schema").and_then(Value::as_str)
+        == Some(no_state_digest_v1::IMPORT_SCHEMA_V1)
+    {
+        match no_state_digest_v1::source_pins_v1(source, &bytes)? {
+            Some(pins) => pins,
+            None => return Ok(None),
+        }
+    } else {
+        let Some(mut pins) = import_pins_v1(&bytes)? else {
+            return Ok(None);
+        };
+        let checkpoints: Vec<PinnedFileV1> = source.checkpoint.iter().cloned().collect();
+        pins.extend(checkpoints.iter().cloned());
+        (pins, checkpoints)
+    };
+    let mut files = vec![(source.play_import.path.clone(), bytes)];
+    for pin in &pins {
+        let read = read_pinned_bytes(pin)?;
+        if checkpoints.contains(pin) && no_state_digest_v1::names_another_file_v1(&read)? {
+            return Ok(None);
+        }
+        files.push((pin.path.clone(), read));
+    }
+    Ok(Some(files))
+}
+
+/// The pins of the files a full load of an import reads besides the import
+/// itself: a fresh-initialization source's manifest and parameters, or an
+/// ordinary import's metadata, source run, source registry and parameters
+/// (the metadata, read and verified here, names two of them). `None` for any
+/// other schema.
+fn import_pins_v1(bytes: &[u8]) -> Result<Option<Vec<PinnedFileV1>>, String> {
+    let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
+    let schema = probe.get("schema").and_then(Value::as_str);
+    if schema == Some(fresh_initialization_source::SOURCE_SCHEMA) {
+        let descriptor = fresh_initialization_source::parse_source_v1(bytes)?;
+        return Ok(Some(vec![descriptor.initialization, descriptor.parameters]));
+    }
+    if schema.is_some() {
+        return Ok(None);
+    }
+    let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(bytes).map_err(err)?;
+    let metadata_pin = PinnedFileV1 {
+        path: import.export_directory.join("metadata.json"),
+        sha256: import.expected_metadata_sha256,
+    };
+    let metadata: Value =
+        serde_json::from_slice(&read_pinned_bytes(&metadata_pin)?).map_err(err)?;
+    let source_run = PinnedFileV1 {
+        path: import.source_run_path,
+        sha256: metadata
+            .pointer("/identity/loaded_run_sha256")
+            .and_then(Value::as_str)
+            .ok_or("source run pin missing")?
+            .to_owned(),
+    };
+    let source_registry = PinnedFileV1 {
+        path: import.source_registry_path,
+        sha256: import.expected_source_registry_sha256,
+    };
+    let parameters = PinnedFileV1 {
+        path: import.export_directory.join("parameters.f32le"),
+        sha256: metadata
+            .pointer("/parameter_section_sha256")
+            .and_then(Value::as_str)
+            .ok_or("parameter pin missing")?
+            .to_owned(),
+    };
+    Ok(Some(vec![
+        metadata_pin,
+        source_run,
+        source_registry,
+        parameters,
+    ]))
+}
+
+/// The external pins of a fresh-initialization source or an ordinary import,
+/// read once; `false` for any other schema, whose loader keeps its own full
+/// validation.
+fn verify_import_pins_v1(bytes: &[u8]) -> Result<bool, String> {
+    let Some(pins) = import_pins_v1(bytes)? else {
+        return Ok(false);
+    };
+    for pin in &pins {
+        read_pinned_bytes(pin)?;
+    }
+    Ok(true)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -855,7 +961,7 @@ fn is_false_v1(value: &bool) -> bool {
     !*value
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandedEpisodeV1 {
     pub id: String,
@@ -1018,7 +1124,7 @@ impl ExpandedEpisodeV1 {
 
 /// Raw binary32 bits keep JSON round trips exact, including signed zero.
 /// All fields are actor-visible tensors. No private bindings or GameState.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TensorBitsV1 {
     state: Vec<u32>,
@@ -1121,7 +1227,7 @@ impl TensorBitsV1 {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DecisionRecordV1 {
     step: u64,
@@ -1213,7 +1319,7 @@ pub(crate) fn line_b_frozen_sha256_v1(source: &ExpandedModelSourceV1) -> Result<
     Ok(hex(&mask.frozen_sha256_v1(&snapshot)))
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExpandedTrajectoryV1 {
     schema: String,
@@ -1236,6 +1342,17 @@ struct ExpandedTrajectoryV1 {
     /// absent for the platform's libm, preserving archived bytes.
     #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
     training_math: TrainingMathV1,
+    /// The no-state-digest input contract its learner ran under
+    /// (`no_state_digest_v1`); absent for the original inputs, preserving
+    /// archived bytes. `feature_contract_digest` is then the converted one.
+    /// An explicit `null` is not absence and is refused, as the strict reader
+    /// refused this unknown member before.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
+    )]
+    input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1336,6 +1453,18 @@ pub(crate) struct ExpandedCheckpointV1 {
     /// training command refuses a checkpoint recorded under other math.
     #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
     training_math: TrainingMathV1,
+    /// The no-state-digest input contract these parameters trained under
+    /// (`no_state_digest_v1`); absent for the original inputs, so every
+    /// existing checkpoint keeps its bytes. Only the same conversion's
+    /// converted source resumes it.
+    /// An explicit `null` is not absence and is refused, as the strict reader
+    /// refused this unknown member before.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
+    )]
+    input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
 }
 
 /// Whole-pair V3-or-V4 admission: a stored trajectory/checkpoint's
@@ -1442,6 +1571,11 @@ fn initialize_from_source_bytes_v1(
     }
     if probe.get("schema").and_then(Value::as_str) == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) {
         return Err(REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1.into());
+    }
+    if probe.get("schema").and_then(Value::as_str) == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
+        // Cached under its own exact reverification (the lookup above);
+        // returned directly, so its policy locals stay out of this frame.
+        return no_state_digest_v1::initialize_training_v1(source, bytes, inputs);
     }
     let mut policy = load_ordinary_policy_v1(source, bytes)?;
     // The validated policy already owns the exact contract model. A private
@@ -1686,11 +1820,15 @@ fn restore_checkpoint_fields_v1(
     policy: &mut FrozenPlayPolicyV1,
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
-    identity_valid(
+    // An ordinary source refuses a converted checkpoint, and a converted
+    // source an unconverted one or another conversion's.
+    no_state_digest_v1::resolve_contract_v1(
         &saved.feature_contract_digest,
         &saved.feature_encoding_digest,
         &saved.card_db_hash,
-    )?;
+        saved.input_contract.as_ref(),
+    )?
+    .require_policy_contract_v1(policy)?;
     ensure(
         saved.source_import == *policy.identity_v1(),
         "checkpoint warm-start provenance differs",
@@ -1935,7 +2073,13 @@ fn collect_episode(
             policy.training_math_v1() == other.policy.training_math_v1(),
             "learner and opponent use different training math",
         )?;
+        // And one input contract, the learner's.
+        ensure(
+            policy.input_contract_v1() == other.policy.input_contract_v1(),
+            "learner and opponent use different no-state-digest contracts",
+        )?;
     }
+    let input_contract = no_state_digest_v1::policy_contract_record_v1(policy)?;
     let seat_behaviors = opponent.as_ref().map(|other| {
         std::array::from_fn(|actor| {
             if actor == episode.learner_seat as usize {
@@ -1965,11 +2109,15 @@ fn collect_episode(
                 // Read the digests actually stamped by this loaded policy's
                 // generation, never a hardcoded V3 constant: a fresh-V4
                 // policy must produce a V4-labeled trajectory.
+                // A converted learner stamps its converted contract digest
+                // beside the base encoding, with the contract member.
                 let feature_identity = policy.feature_identity_v1();
                 let result = ExpandedTrajectoryV1 {
                     schema: trajectory_schema_v1(policy.identity_v1(), seat_behaviors.as_ref())
                         .into(),
-                    feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                    feature_contract_digest: no_state_digest_v1::effective_contract_digest_v1(
+                        policy,
+                    ),
                     feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
                     card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
                     source_import: policy.identity_v1().clone(),
@@ -1981,6 +2129,7 @@ fn collect_episode(
                     terminal,
                     learner_sampler: policy.collection_sampler_identity_v1().map(str::to_owned),
                     training_math: policy.training_math_v1(),
+                    input_contract,
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -2402,11 +2551,10 @@ fn validate_actual_behaviors_v1(
 
 fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     validate_behavior_shape_v1(t)?;
-    identity_valid(
-        &t.feature_contract_digest,
-        &t.feature_encoding_digest,
-        &t.card_db_hash,
-    )?;
+    let contract = trajectory_contract_v1(t)?;
+    if contract.input_contract_digest_v1().is_some() {
+        no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
+    }
     validate_episode_records_with_learner_sampler_v1(
         &t.episode,
         &t.configuration_sha256,
@@ -2641,16 +2789,23 @@ type LearnerTensorGroupV1<'a> = (
 
 /// The trajectory's own recorded whole-pair generation, never a caller flag.
 /// `validate_trajectory` (called by every caller of this) already proved the
-/// pair is a legitimate V3-or-V4 whole pair via `identity_valid`, so
-/// anything that is not the V4 pair here is therefore the V3 pair.
+/// identity resolves (`trajectory_contract_v1`), so a converted V4 identity
+/// dispatches as V4; anything that does not resolve here is the V3 pair.
 fn trajectory_generation_v1(t: &ExpandedTrajectoryV1) -> FreshLineageGenerationV1 {
-    if t.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V4
-        && t.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V4
-    {
-        FreshLineageGenerationV1::V4
-    } else {
-        FreshLineageGenerationV1::V3
-    }
+    trajectory_contract_v1(t).map_or(FreshLineageGenerationV1::V3, |contract| contract.generation)
+}
+
+/// The trajectory's validated identity and input contract
+/// (`no_state_digest_v1::resolve_contract_v1`).
+fn trajectory_contract_v1(
+    t: &ExpandedTrajectoryV1,
+) -> Result<no_state_digest_v1::ResolvedContractV1, String> {
+    no_state_digest_v1::resolve_contract_v1(
+        &t.feature_contract_digest,
+        &t.feature_encoding_digest,
+        &t.card_db_hash,
+        t.input_contract.as_ref(),
+    )
 }
 
 /// A `NativeEncodedDecisionViewV1` over the shared common tensor, stamped
@@ -2700,7 +2855,15 @@ fn replay_learner_groups_v1<'a>(
         t.episode.opponent.is_some() == opponent.is_some(),
         "opponent replay source missing",
     )?;
-    let generation = trajectory_generation_v1(t);
+    let contract = trajectory_contract_v1(t)?;
+    contract.require_policy_contract_v1(learner)?;
+    if let Some(opponent) = opponent {
+        ensure(
+            opponent.input_contract_v1() == learner.input_contract_v1(),
+            "learner and opponent use different no-state-digest contracts",
+        )?;
+    }
+    let generation = contract.generation;
     let mut groups = Vec::new();
     let mut index = 0;
     while index < t.decisions.len() {
@@ -2714,18 +2877,7 @@ fn replay_learner_groups_v1<'a>(
             } else {
                 opponent.unwrap_or(learner)
             };
-            let output = match generation {
-                FreshLineageGenerationV1::V3 => {
-                    acting.score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
-                        common: common.clone(),
-                    })?
-                }
-                FreshLineageGenerationV1::V4 => {
-                    acting.score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
-                        common: common.clone(),
-                    })?
-                }
-            };
+            let output = acting.score_replay_tensor_v1(generation, common.clone())?;
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
@@ -3226,8 +3378,14 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
             let learner = ExpandedSeatBehaviorV1 {
                 source: source.clone(),
-                identity: inference_identity_v1(&source, &policy, &state)?,
+                identity: inference_identity_with_state_sha256_v1(
+                    &source,
+                    &policy,
+                    &state,
+                    state_hash.clone(),
+                ),
             };
+            let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
             drop(state);
             let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
             let mut opponent_cache = OpponentCacheV1::for_collection(verified_sources)
@@ -3302,6 +3460,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 "collection_initialization_seconds":initialization_seconds});
             collection_sampler.record_v1(&mut result);
             training_math.record_v1(&mut result);
+            if let Some(record) = &input_contract {
+                result["input_contract"] = json!(record);
+            }
             if let Some(pin) = non_natural_ledger_pin {
                 result["non_natural_ledger"] = json!(pin);
             }
@@ -3666,6 +3827,24 @@ fn execute_update_inner_v1(
             )?;
         }
     }
+    // The no-state-digest contract admits only the audited ordinary CPU
+    // update: the terminal or GAE loss without any auxiliary term or teacher.
+    let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
+    if input_contract.is_some() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::TerminalReinforceValueV3
+                        | ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none(),
+            "the no-state-digest contract admits only the ordinary CPU update",
+        )?;
+    }
     if let Some(context) = &transfer {
         context.validate_scalars(learning_rate, value_coefficient)?;
         // Risk (design section 6, "Registry-transfer scalar pinning"): the
@@ -3682,7 +3861,7 @@ fn execute_update_inner_v1(
     let before = hex(&state.state_sha256_v1().map_err(err)?);
     let learner = ExpandedSeatBehaviorV1 {
         source: source.clone(),
-        identity: inference_identity_v1(&source, &policy, &state)?,
+        identity: inference_identity_with_state_sha256_v1(&source, &policy, &state, before.clone()),
     };
     let mut ids = BTreeSet::new();
     let mut hashes = BTreeSet::new();
@@ -3715,6 +3894,10 @@ fn execute_update_inner_v1(
         ensure(
             episode.training_math == training_math,
             "trajectory training math differs from the command's",
+        )?;
+        ensure(
+            episode.input_contract == input_contract,
+            "trajectory no-state-digest contract differs from the learner's",
         )?;
     }
     if let Some(context) = &transfer {
@@ -4433,7 +4616,9 @@ fn execute_update_inner_v1(
         // V3 constant on a fresh-V4 policy (the single-accessor mitigation).
         // The update arithmetic above now dispatches on this same
         // `generation` value, so this label matches what actually ran.
-        feature_contract_digest: policy.feature_identity_v1().feature_contract_digest.into(),
+        // Under the no-state-digest contract, the converted digest beside the
+        // base encoding, with the contract member.
+        feature_contract_digest: no_state_digest_v1::effective_contract_digest_v1(&policy),
         feature_encoding_digest: policy.feature_identity_v1().feature_encoding_digest.into(),
         card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         source_import: policy.identity_v1().clone(),
@@ -4502,6 +4687,7 @@ fn execute_update_inner_v1(
             .transpose()?,
         archive_distillation: None,
         training_math,
+        input_contract: input_contract.clone(),
     };
     let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
     // Readback exercises the real same-format continuation loader.
@@ -4532,6 +4718,9 @@ fn execute_update_inner_v1(
     }
     update_backend.record_update_execution_v1(&mut result);
     training_math.record_v1(&mut result);
+    if let Some(record) = &input_contract {
+        result["input_contract"] = json!(record);
+    }
     if let Some(frozen) = frozen_tensor_sha256 {
         // The update's scorer-bias gauge (the step refuses a residual beyond
         // its derived bound, so a published update is within it).
@@ -4665,14 +4854,26 @@ fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, St
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
+    read_pinned_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_bytes` against the verified-bytes cache `cache`.
+fn read_pinned_bytes_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<Vec<u8>, String> {
     let metadata = fs::metadata(&pin.path).map_err(err)?;
     ensure(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
         "input is not a bounded regular file",
     )?;
     let bytes = fs::read(&pin.path).map_err(err)?;
+    // Bytes equal to bytes this process already verified against this pin
+    // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
+    // before.
     ensure(
-        bytes.len() as u64 <= MAX_FILE_BYTES && sha(&bytes) == pin.sha256,
+        bytes.len() as u64 <= MAX_FILE_BYTES
+            && cache.digest_matches_v1(&pin.path, &pin.sha256, &bytes, sha),
         "input file SHA differs",
     )?;
     Ok(bytes)
@@ -4683,12 +4884,53 @@ fn publish_json<T: Serialize>(
     name: &str,
     value: &T,
 ) -> Result<PinnedFileV1, String> {
-    let bytes = serde_json::to_vec(value).map_err(err)?;
+    let bytes = serialize_json_v1(name, value)?;
     publish_json_bytes_v1(directory, name, &bytes)
+}
+
+/// Distinct document names whose serialized length is remembered.
+const SERIALIZED_LENGTH_NAMES_V1: usize = 4096;
+
+/// `serde_json::to_vec(value)`, which is `to_writer` into a 128-byte buffer,
+/// with the buffer presized from the last serialization of the same document
+/// name in this process, so a 20 MB checkpoint is not regrown from 128 bytes
+/// at every update. The bytes and any error are `to_vec`'s.
+fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock, PoisonError};
+    static LENGTHS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+    let lengths = LENGTHS.get_or_init(Default::default);
+    let previous = lengths
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(name)
+        .copied()
+        .unwrap_or(0);
+    // A little headroom: float text makes a document's length vary slightly.
+    let capacity = previous
+        .saturating_add(previous / 16)
+        .clamp(128, MAX_FILE_BYTES as usize);
+    let mut bytes = Vec::with_capacity(capacity);
+    serde_json::to_writer(&mut bytes, value).map_err(err)?;
+    let mut lengths = lengths.lock().unwrap_or_else(PoisonError::into_inner);
+    if lengths.len() < SERIALIZED_LENGTH_NAMES_V1 || lengths.contains_key(name) {
+        lengths.insert(name.to_owned(), bytes.len());
+    }
+    Ok(bytes)
 }
 
 /// `publish_json` for a document already serialized to `bytes`.
 fn publish_json_bytes_v1(
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<PinnedFileV1, String> {
+    publish_json_bytes_in_v1(verified_bytes_cache_v1::global_v1(), directory, name, bytes)
+}
+
+/// `publish_json_bytes_v1` recording into the verified-bytes cache `cache`.
+fn publish_json_bytes_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     directory: &Path,
     name: &str,
     bytes: &[u8],
@@ -4700,10 +4942,15 @@ fn publish_json_bytes_v1(
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
     let receipt =
         publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, bytes).map_err(err)?;
-    Ok(PinnedFileV1 {
+    let pin = PinnedFileV1 {
         path: directory.join(name),
         sha256: hex(&receipt.sha256()),
-    })
+    };
+    // The receipt's digest was computed from `bytes`, and the publication
+    // recaptured the file byte for byte: this process's later reads of the
+    // pin compare instead of hashing (`verified_bytes_cache_v1`).
+    cache.record_verified_v1(&pin.path, &pin.sha256, bytes);
+    Ok(pin)
 }
 
 #[cfg(test)]
@@ -4912,7 +5159,7 @@ pub(crate) mod tests {
         };
         let initialization = write_pin("initialization.json", b"initialization fixture");
         let parameters = write_pin("parameters.f32le", b"parameter fixture");
-        let checkpoint = write_pin("checkpoint.json", b"checkpoint fixture");
+        let checkpoint = write_pin("checkpoint.json", br#"{"fixture": "checkpoint"}"#);
         let descriptor = json!({
             "schema": fresh_initialization_source::SOURCE_SCHEMA,
             "initialization": initialization,
@@ -5322,6 +5569,7 @@ pub(crate) mod tests {
             seat_behaviors,
             learner_sampler: None,
             training_math: TrainingMathV1::PlatformLibm,
+            input_contract: None,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -5596,6 +5844,7 @@ pub(crate) mod tests {
             registry_transfer: None,
             archive_distillation: None,
             training_math: TrainingMathV1::PlatformLibm,
+            input_contract: None,
         };
         (policy, model, saved)
     }
@@ -9708,20 +9957,20 @@ pub(crate) mod tests {
         );
     }
 
-    /// The published state after the reverse and after the forward treatment
-    /// update of this fixture (FABLE-REVIEW-20260927 change 4), pinned from
-    /// the runs of 2026-09-27 at dbab4cd0; the CUDA values are GPU 1's (RTX
-    /// 3050). Each backend is deterministic run to run (acceptance-001).
-    // Current rules/catalog baseline: exact outputs from CI run 36807239038.
+    /// CPU regression states after the caster-priority correction in b752c044c
+    /// (CR 117.3c/117.5). Paired Native235/236 inputs first differ at the actual
+    /// off-turn Ward trigger; initial parameters match. Both-seat paid Ward/
+    /// Mystic tests also verify native restore and the following priority pass.
+    // Exact CPU outputs: Native236 (Windows), CI39598628050 (Linux).
     #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "210f9027d1423e2c84615be12fc66a2623a750ebff681553089e326fd96bdb0b",
-        "cf5b62f634e083c8f81d2ea3f9409481eef95d626147fddd8be0b9bdc4408317",
+        "6f8c26c98ed04629736de73f66fda34079e6608c7a42c1e2a4de2dc0fbe0c63e",
+        "81a23cc9045ed28b0630ea34f9b4bc379d49faeef120e606d617b8450ad5dcc7",
     ];
     #[cfg(not(target_os = "windows"))]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "4fe193c8baaabf0fe5b4db8e09c14f165d02df67d665a336fa826b5feaf3afe3",
-        "579e90b83826148aefa7c17cfae19471b6c92e151962c410792c141a8a80873e",
+        "edaa78f4aa822d845aacc5cf829577cc832dc64109bbee1574671662f366b3a5",
+        "2ffea00f50926f435738cf80c5fabc1e4ad01b991e9c3328471b87f6e6e4b7d5",
     ];
     // Current GPU1 outputs: cuda_teacher_witness_bba7779a.json, 2026-10-01.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
@@ -10475,4 +10724,5 @@ pub(crate) mod tests {
     }
 
     mod reset_start_tests;
+    mod widening_b512_tests;
 }

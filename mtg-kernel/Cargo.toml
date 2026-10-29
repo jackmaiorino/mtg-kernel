@@ -34,6 +34,10 @@ limited-fdn-fixtures = []
 # the FDN one. It enables `limited-fdn-fixtures` only for that feature's rules
 # behavior; build.rs selects the Standard card file and catalog identity.
 standard-magezero-fixtures = ["limited-fdn-fixtures"]
+# Pauper, Legacy and Vintage metagame cards (docs/design/eternal_formats_support_v1.md).
+# The registry is the frozen Pauper prefix, the Standard registry unchanged, then
+# `data/eternal_v1/cards_v1.json`, so every Standard card keeps its id and program.
+eternal-fixtures = ["standard-magezero-fixtures"]
 # PERFORMANCE-ONLY instrumentation for examples/bench_kernel.rs (section 5,
 # allocator profile): installs a counting global allocator wrapping the
 # system allocator. Off by default; no effect on any normal build/test.
@@ -189,6 +193,69 @@ required-features = ["limited-fdn-fixtures"]
 name = "standard_integration"
 required-features = ["standard-magezero-fixtures"]
 
+[[test]]
+name = "eternal_integration"
+required-features = ["eternal-fixtures"]
+
+[[test]]
+name = "retain_freed_memory"
+harness = false
+
 [[bin]]
 name = "kernel_limited_prepared_env_v5"
 path = "src/bin/kernel_limited_prepared_env_v5.rs"
+
+[[bin]]
+name = "kernel_limited_next_five_env_v6"
+path = "src/bin/kernel_limited_next_five_env_v6.rs"
+
+[[bin]]
+name = "kernel_limited_graveyard_return_env_v7"
+path = "src/bin/kernel_limited_graveyard_return_env_v7.rs"
+
+[[bin]]
+name = "kernel_limited_call_env_v8"
+path = "src/bin/kernel_limited_call_env_v8.rs"
+
+[[bin]]
+name = "kernel_limited_end_turn_env_v9"
+path = "src/bin/kernel_limited_end_turn_env_v9.rs"
+
+[[bin]]
+name = "kernel_limited_genesis_wave_env_v10"
+path = "src/bin/kernel_limited_genesis_wave_env_v10.rs"
+
+[[bin]]
+name = "kernel_limited_vivien_env_v11"
+path = "src/bin/kernel_limited_vivien_env_v11.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_muldrotha_env_v12"
+path = "src/bin/kernel_limited_muldrotha_env_v12.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_tinybones_env_v13"
+path = "src/bin/kernel_limited_tinybones_env_v13.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_liliana_env_v14"
+path = "src/bin/kernel_limited_liliana_env_v14.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_chandra_env_v15"
+path = "src/bin/kernel_limited_chandra_env_v15.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_kaito_env_v16"
+path = "src/bin/kernel_limited_kaito_env_v16.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_match_v1"
+path = "src/bin/kernel_limited_match_v1.rs"
+required-features = ["limited-fdn-fixtures"]

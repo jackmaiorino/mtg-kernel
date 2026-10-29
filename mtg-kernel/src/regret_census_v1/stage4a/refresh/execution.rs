@@ -259,7 +259,7 @@ mod tests {
         let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game"});
         ExecutionMode::RootOnly.annotate_row(&mut row);
         // This gate runs before replay or policy access, even with no deck input.
-        let rebuilt = root_rebuild::game(&spec, &row, None);
+        let rebuilt = root_rebuild::game(&spec, &row, None, None);
         assert_eq!(rebuilt["void"], "not a search-arm record");
     }
 }

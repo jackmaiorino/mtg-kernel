@@ -18,7 +18,7 @@ pub(crate) fn validate_collection_workers_v1(workers: usize) -> Result<(), Strin
 }
 
 #[derive(Debug, Serialize)]
-struct WorkerTimingV1 {
+pub(super) struct WorkerTimingV1 {
     worker: usize,
     completed_episodes: usize,
     busy_seconds: f64,
@@ -36,7 +36,7 @@ struct CollectorV1 {
 /// alive on return. A failed job or panic cancels new dispatch; already active
 /// jobs join before the caller can attempt an update or publish completion.
 /// A worker that finds no job left calls `on_idle` once before it stops.
-fn ordered_parallel_jobs_v1<W, T, F, I>(
+pub(super) fn ordered_parallel_jobs_v1<W, T, F, I>(
     contexts: Vec<W>,
     job_count: usize,
     work: F,
@@ -192,8 +192,14 @@ pub(super) fn collect_parallel_v1(
     let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
     let learner = ExpandedSeatBehaviorV1 {
         source: source.clone(),
-        identity: inference_identity_v1(&source, &policy, &state)?,
+        identity: inference_identity_with_state_sha256_v1(
+            &source,
+            &policy,
+            &state,
+            state_hash.clone(),
+        ),
     };
+    let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
     drop(state);
     let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
     let worker_count = workers.min(episodes.len());
@@ -269,16 +275,13 @@ pub(super) fn collect_parallel_v1(
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .extend(entries);
             // Publish directly from each private worker. The published bytes,
-            // at most one batch of them, wait for idle workers to parse them
-            // ahead of validation and the update (`trajectory_parse_ahead_v1`).
-            let bytes = serde_json::to_vec(&trajectory).map_err(err)?;
-            drop(trajectory);
-            let pin = publish_json_bytes_v1(
-                &output_directory,
-                &format!("episode-{index:04}.json"),
-                &bytes,
-            )?;
-            trajectory_parse_ahead_v1::offer_v1(&pin.sha256, bytes);
+            // at most one batch of them, are kept with the trajectory they were
+            // serialized from for validation and the update
+            // (`trajectory_parse_ahead_v1`).
+            let name = format!("episode-{index:04}.json");
+            let bytes = serialize_json_v1(&name, &trajectory)?;
+            let pin = publish_json_bytes_v1(&output_directory, &name, &bytes)?;
+            trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             Ok(pin)
         },
         trajectory_parse_ahead_v1::start_helper_v1,
@@ -327,6 +330,9 @@ pub(super) fn collect_parallel_v1(
     });
     collection_sampler.record_v1(&mut result);
     training_math.record_v1(&mut result);
+    if let Some(record) = &input_contract {
+        result["input_contract"] = json!(record);
+    }
     if let Some(pin) = non_natural_ledger_pin {
         result["non_natural_ledger"] = json!(pin);
     }

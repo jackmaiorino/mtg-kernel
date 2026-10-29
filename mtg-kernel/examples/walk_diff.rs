@@ -1736,7 +1736,15 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::RemoveNetCounterFromSelf
             | card_def::CostComponent::TapFishingPoleAttachedToSource
             | card_def::CostComponent::SacrificeCreatureOrPayMana(_)
-            | card_def::CostComponent::RemoveSourceCountersV1 { .. }) => {
+            | card_def::CostComponent::RemoveSourceCountersV1 { .. }
+            | card_def::CostComponent::PayEnergyV1(_)
+            | card_def::CostComponent::ExileCardFromHandWithColorV1(_)
+            | card_def::CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+            | card_def::CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
+            | card_def::CostComponent::TapUntappedControlledPermanentsV1 { .. }
+            | card_def::CostComponent::ExileCardsFromHandWithColorV1 { .. }
+            | card_def::CostComponent::RemovePlusOneCounterFromSelfV1
+            | card_def::CostComponent::DiscardLandCardsV1(_)) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }
@@ -1829,7 +1837,9 @@ fn decision_texts(
     p1_name: &str,
 ) -> Option<(&'static str, Vec<String>)> {
     match decision {
-        SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => None,
+        SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { .. }) => None,
         SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => None,
         SurfaceDecision::Decision(Decision::CastSpellOrPass {
@@ -2014,6 +2024,10 @@ fn apply_by_indices(
         .first()
         .ok_or("apply_by_indices:no-chosen-indices")?;
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { .. }) => Err(
+            "creature-type entry and full-range cast-X require a separate replay successor".into(),
+        ),
         SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
             Err("apply_by_indices:unsupported-banner-entry-color-protocol".to_string())
         }

@@ -1060,6 +1060,11 @@ fn load_policy_v1(path: &str) -> Result<FrozenPlayPolicyV1, String> {
 
 pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     stage4a::validate_executor_mode(&cfg.mode)?;
+    stage4a::exact_cost_defaults_v1(&cfg.mode);
+    // The win check replays recorded actions and loads no model.
+    if cfg.mode == "s4a-win-check" {
+        return stage4a::run_win_check(&cfg);
+    }
     let policy = load_policy_v1(&cfg.source)?;
     if stage4a::is_mode(&cfg.mode) {
         return stage4a::run(&cfg, &policy);

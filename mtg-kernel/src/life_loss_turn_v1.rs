@@ -1,5 +1,7 @@
 //! Selected Limited life-loss history. Standard keeps its original recording path.
 //! Opt-in uses public catalog definitions, never hidden roster identities.
+//! Midnight Snack also reads this authenticated turn boundary and existing gains;
+//! it adds neither loss flags nor first-gain captures of its own.
 use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
 use crate::ids::PlayerId;
@@ -10,10 +12,10 @@ pub(crate) fn enabled() -> bool {
     *ENABLED.get_or_init(|| {
         cfg!(all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))
             && CARD_DEFS.iter().enumerate().any(|(id, definition)| {
-                definition.is_executable() && crate::trigger::triggers_for(id as u16).iter().any(|ability| {
+                definition.is_executable() && (crate::midnight_snack_v1::definition(id as u16) || crate::trigger::triggers_for(id as u16).iter().any(|ability| {
                     ability.condition == crate::trigger::TriggerCondition::BeginningControllerEndStepIfOpponentLostLife
                         && ability.home_zone == crate::state::Zone::Battlefield
-                })
+                }))
             })
     })
 }
@@ -44,6 +46,7 @@ pub(crate) fn reset_at_untap(state: &mut GameState) {
 pub(crate) fn committed_loss_player(event: &CommittedEvent) -> Option<PlayerId> {
     match event {
         CommittedEvent::LifeLoss { player, amount } if *amount > 0 => Some(*player),
+        CommittedEvent::LifeLossWideV59 { player, amount } if *amount > 0 => Some(*player),
         CommittedEvent::Damage {
             target: crate::state::Target::Player(player),
             amount,

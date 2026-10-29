@@ -68,9 +68,10 @@ jobs:
             [ -z "$f" ] && continue
             # Python jobs care about python sources/tools/tests, the data
             # artifacts they validate, workflow changes, and the pinned
-            # interpreter/lock config.
+            # interpreter/lock config. The lease adapter's tests run in the
+            # Python job's lease guard step.
             case "$f" in
-              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version)
+              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version|tools/search_sharing_allocation/*)
                 python_relevant=true ;;
             esac
             # Rust jobs run unless a file is provably outside the crate's
@@ -80,7 +81,7 @@ jobs:
             # also relevant because they determine which tests execute.
             # Other non-embedded python, docs, and markdown are irrelevant.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -213,6 +214,7 @@ jobs:
           - workspace-lib
           - workspace-targets
           - standard
+          - eternal
           - cuda
           - native-store
           - trace
@@ -223,7 +225,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -337,16 +339,36 @@ jobs:
       - name: Validate MageZero Standard catalog
         if: matrix.group == 'standard'
         run: |
-          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: rl_session::heartfire_v12:: human_bo3_v1::sower_v14:: human_bo3_v1::heartfire_v12:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: human_bo3_v1::frenzied_v15:: human_bo3_v1::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: human_bo3_v1::authority_v17:: human_bo3_v1::employment_v18:: human_bo3_v1::cerberus_v19::
+          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cast_identity_v1:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: rl_session::heartfire_v12:: human_bo3_v1::sower_v14:: human_bo3_v1::heartfire_v12:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: human_bo3_v1::frenzied_v15:: human_bo3_v1::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: human_bo3_v1::authority_v17:: human_bo3_v1::employment_v18:: human_bo3_v1::cerberus_v19::
           python python/tools/run_rust_integration_tests.py standard_integration --features standard-magezero-fixtures
+
+      # Pauper, Legacy and Vintage catalog: the Standard catalog plus
+      # data/eternal_v1. The Standard suite also runs on it, since every
+      # Standard card keeps its id and program in this build.
+      - name: Validate the eternal catalog
+        if: matrix.group == 'eternal'
+        run: |
+          cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
+          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def::
+          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
+          python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
 
       # The library tests and all other targets compile disjoint units, so
       # the two halves of the workspace suite run as parallel jobs.
       - name: Run Rust release tests
         if: startsWith(matrix.group, 'workspace-')
-        run: python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
+        run: |
+          # The hosted Ubuntu runner ran out of memory compiling every
+          # non-library target with full parallelism (shutdown signal, exit
+          # 143, from 2026-10-27), and with the FDN catalog also at two units
+          # at a time, so that half builds one unit at a time.
+          if [ "$MATRIX_GROUP" = workspace-targets ] && [ "$MATRIX_OS" = ubuntu-24.04 ]; then
+            export CARGO_BUILD_JOBS=1
+          fi
+          python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
         env:
           MATRIX_GROUP: ${{ matrix.group }}
+          MATRIX_OS: ${{ matrix.os }}
 
       - name: Check opt-in gameplay decision tracing
         if: matrix.group == 'trace'
@@ -493,11 +515,15 @@ jobs:
         group:
           - limited
           - limited-only
+          - limited-only-1
           - limited-v2
           - limited-v5
           - limited-v3
           - limited-v1
           - limited-v4
+          - limited-v6
+          - limited-v7
+          - limited-v8
           - limited-model
           - limited-model-1
           - limited-model-2
@@ -728,9 +754,30 @@ jobs:
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures prepared_observation_v57:: rl_session::prepared_v57:: human_bo3_v1::prepared_v57::
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases limited_prepared_session_v5::
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases own_registration_v1::tests::
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures flamewake_phoenix_v1::v57_genuine_paid_phoenix_and_juggernaut_keep_distinct_combat_facts_and_legacy_refusal_both_seats
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures midnight_snack_v1:: flamewake_phoenix_v1::v57_genuine_paid_phoenix_and_juggernaut_keep_distinct_combat_facts_and_legacy_refusal_both_seats
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_prepared_env_v5
           MTG_LIMITED_PREPARED_TIMING_V5=1 python python/tools/check_limited_prepared_client_v5.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_prepared_env_v5$binary_suffix"
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_match_v1:: limited_rules_only_v1::
+          cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_match_v1
+          python python/tools/limited_match_v1.py smoke --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_match_v1$binary_suffix"
+          python python/tools/limited_match_v1.py draftzero --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_match_v1$binary_suffix"
+
+      - name: Validate successor Limited process plumbing
+        if: ${{ !cancelled() && (matrix.group == 'limited-v6' || matrix.group == 'limited-v7' || matrix.group == 'limited-v8') }}
+        run: |
+          binary_suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then
+            binary_suffix=".exe"
+          fi
+          case '${{ matrix.group }}' in
+            limited-v6) binary=kernel_limited_next_five_env_v6; client=check_limited_next_five_client_v6.py ;;
+            limited-v7) binary=kernel_limited_graveyard_return_env_v7; client=check_limited_graveyard_return_client_v7.py ;;
+            limited-v8) binary=kernel_limited_call_env_v8; client=check_limited_call_client_v8.py ;;
+          esac
+          cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin "$binary"
+          # Seed-123 Full-basic-deck plumbing. Paid Partial-family gameplay
+          # remains covered by the complete Limited-only library inventory.
+          python "python/tools/$client" --binary "${CARGO_TARGET_DIR:-target}/release/$binary$binary_suffix"
 
       # Enumerate both compiled subtrees in each job and partition their exact
       # names by recorded duration (python/tools/rust_case_seconds.json).
@@ -750,9 +797,34 @@ jobs:
       # suite. The runner lists the default build too and runs every such case
       # that no Limited filter above selects, so a new one cannot fall outside
       # CI (known failures: python/tools/rust_limited_only_known_failures.json).
-      - name: Validate every other Limited-only library case
+      # Run this existing whole case once through the same bounded runner,
+      # retaining a sample with an unambiguous native producer. The inventory
+      # scanner excludes this exact covered name from the following step.
+      - name: Validate Drakuseth attack and retain its actual event sample
         if: ${{ !cancelled() && matrix.group == 'limited-only' }}
-        run: python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
+        env:
+          MTG_EVENT_SAMPLES_V1: ${{ github.workspace }}/fdn-event-samples
+        run: |
+          mkdir -p "$MTG_EVENT_SAMPLES_V1"
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored standard_cards_v1::drakuseth_tests::paid_attack_mandatory_first_zero_one_two_other_targets_and_every_target_checkpoint_restore_both_seats
+
+      - name: Retain actual Drakuseth event sample
+        if: ${{ always() && matrix.group == 'limited-only' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drakuseth-event-sample-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fdn-event-samples/DrakusethDamageSourceV76.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Validate every other Limited-only library case
+        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
+        run: |
+          shard=0
+          if [ '${{ matrix.group }}' = limited-only-1 ]; then
+            shard=1
+          fi
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 2 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})
@@ -873,6 +945,15 @@ jobs:
       - name: Validate canonical Pauper manifests
         if: matrix.shard == 0
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .
+
+      # Offline RunPod lease tools: bounded fakes, no provider, network or subprocess call.
+      - name: Lease guard tests
+        if: matrix.shard == 0 && runner.os == 'Linux'
+        run: |
+          uv run --no-sync python -m unittest discover -v -s python/tools/phase1_cloud -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/search_sharing_allocation -p 'test_cloud_lease.py'
+          cd python/tools/tests && PYTHONPATH=.. uv run --no-sync python -m unittest -v \
+            test_nine_deck_cloud_v1.PackageTests.test_tooling_closure_is_complete_from_a_copy
 
       - name: Use the runner's persistent Python environment build
         if: runner.environment == 'self-hosted'

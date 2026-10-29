@@ -463,6 +463,85 @@ fn batch_qualifies(state: &GameState, id: ObjectId, predicate: ExileCastPredicat
             }
         }
 }
+fn top_batch_definition(id: u16) -> bool {
+    id == 481
+        && card_def::CARD_DEFS
+            .get(usize::from(id))
+            .is_some_and(|d| d.name == "Etali, Primal Storm")
+}
+
+pub(super) fn refuse_top_batch_legacy(state: &GameState) -> Result<(), String> {
+    if crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, top_batch_definition)
+        || state.objects.iter().any(|(_, o)| {
+            matches!(
+                o.zone,
+                Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile
+            ) && o.v4.face_down_v1.is_none()
+                && top_batch_definition(o.card_def)
+        })
+        || state.stack.iter().any(top_batch_item)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(top_batch_pending)
+    {
+        return Err("Etali top-card free casting requires a complete successor".into());
+    }
+    Ok(())
+}
+
+pub(super) fn top_batch_item(item: &StackItem) -> bool {
+    item.inline_effect == Some(EffectOp::ExileTopEachPlayerThenCastV1)
+}
+
+pub(super) fn top_batch_pending(pending: &EffectContinuation) -> bool {
+    top_batch_item(&pending.resolving_item)
+}
+
+pub(super) fn top_batch_waiting(state: &GameState, ctx: &ExecCtx) -> bool {
+    state
+        .stack
+        .iter()
+        .any(|item| top_batch_item(item) && item.source == ctx.source)
+        || state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            top_batch_pending(pending) && pending.resolving_item.source == ctx.source
+        })
+}
+
+// The continuation's serialized shape is unchanged. Its exact definition-owned
+// root distinguishes the original until-hit scan from the new top-only batch.
+fn batch_top_only(
+    state: &GameState,
+    pending: &EffectContinuation,
+    players: &[PlayerRef],
+    predicate: ExileCastPredicateV1,
+    return_rest_to_bottom: bool,
+    path: &[u16],
+) -> Result<bool, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    match effect_op_at_path(&root, path) {
+        Some(EffectOp::ExileUntilThenCastV1 {
+            players: expected_players,
+            predicate: expected_predicate,
+            return_rest_to_bottom: expected_return,
+        }) if expected_players == players
+            && *expected_predicate == predicate
+            && *expected_return == return_rest_to_bottom =>
+        {
+            Ok(false)
+        }
+        Some(EffectOp::ExileTopEachPlayerThenCastV1)
+            if players == [PlayerRef::Controller, PlayerRef::Opponent]
+                && predicate == ExileCastPredicateV1::Nonland
+                && !return_rest_to_bottom =>
+        {
+            Ok(true)
+        }
+        _ => Err("exile continuation changed definition-owned root".into()),
+    }
+}
+
 pub(super) fn start_batch(
     state: &mut GameState,
     pending: &mut EffectContinuation,
@@ -471,53 +550,94 @@ pub(super) fn start_batch(
     return_rest_to_bottom: bool,
     path: Vec<u16>,
 ) -> Result<bool, String> {
-    check_root(
+    let top_only = batch_top_only(
         state,
         pending,
+        &players,
+        predicate,
+        return_rest_to_bottom,
         &path,
-        EffectOp::ExileUntilThenCastV1 {
-            players: players.clone(),
-            predicate,
-            return_rest_to_bottom,
-        },
     )?;
     let mut staged = state.clone();
     let mut scans = Vec::new();
-    for player in &players {
-        let player = pending.ctx.resolve_player(*player, &staged);
-        if scans.iter().any(|scan: &ExileScanV1| scan.player == player) {
-            return Err("exile scan repeats a player".into());
+    if top_only {
+        let history_start = staged.engine.event_history.len();
+        for player in &players {
+            let player = pending.ctx.resolve_player(*player, &staged);
+            let original_library = staged.players[player.index()]
+                .library
+                .iter()
+                .map(|id| bind(&staged, *id))
+                .collect::<Vec<_>>();
+            scans.push(ExileScanV1 {
+                player,
+                original_library,
+                exiled: vec![],
+                hit: None,
+                history_start,
+                history_end: 0,
+            });
         }
-        let original_library = staged.players[player.index()]
-            .library
+        let tops = scans
             .iter()
-            .map(|id| bind(&staged, *id))
+            .filter_map(|scan| scan.original_library.first().copied())
             .collect::<Vec<_>>();
-        let mut scan = ExileScanV1 {
-            player,
-            original_library,
-            exiled: vec![],
-            hit: None,
-            history_start: staged.engine.event_history.len(),
-            history_end: 0,
-        };
-        for original in &scan.original_library {
-            event::propose_and_commit(
-                &mut staged,
-                event::ProposedEvent::zone_change(original.object, Zone::Exile),
-            );
-            let card = bind(&staged, original.object);
-            if card.expected_zone != Zone::Exile {
-                return Err("exile-until encountered unsupported replacement".into());
-            }
-            scan.exiled.push(card);
-            if batch_qualifies(&staged, card.object, predicate) {
-                scan.hit = Some(card);
-                break;
+        // One native batch, not a succession of player-specific transitions.
+        commit_zone_change_batch(&mut staged, &tops, Zone::Exile, false)?;
+        let history_end = staged.engine.event_history.len();
+        if staged.engine.halted.is_some() {
+            return Err("top-card exile batch halted".into());
+        }
+        for scan in &mut scans {
+            scan.history_end = history_end;
+            if let Some(original) = scan.original_library.first() {
+                let card = bind(&staged, original.object);
+                if card.expected_zone != Zone::Exile {
+                    return Err("top-card exile encountered unsupported replacement".into());
+                }
+                scan.exiled.push(card);
+                if batch_qualifies(&staged, card.object, predicate) {
+                    scan.hit = Some(card);
+                }
             }
         }
-        scan.history_end = staged.engine.event_history.len();
-        scans.push(scan);
+    } else {
+        for player in &players {
+            let player = pending.ctx.resolve_player(*player, &staged);
+            if scans.iter().any(|scan: &ExileScanV1| scan.player == player) {
+                return Err("exile scan repeats a player".into());
+            }
+            let original_library = staged.players[player.index()]
+                .library
+                .iter()
+                .map(|id| bind(&staged, *id))
+                .collect::<Vec<_>>();
+            let mut scan = ExileScanV1 {
+                player,
+                original_library,
+                exiled: vec![],
+                hit: None,
+                history_start: staged.engine.event_history.len(),
+                history_end: 0,
+            };
+            for original in &scan.original_library {
+                event::propose_and_commit(
+                    &mut staged,
+                    event::ProposedEvent::zone_change(original.object, Zone::Exile),
+                );
+                let card = bind(&staged, original.object);
+                if card.expected_zone != Zone::Exile {
+                    return Err("exile-until encountered unsupported replacement".into());
+                }
+                scan.exiled.push(card);
+                if batch_qualifies(&staged, card.object, predicate) {
+                    scan.hit = Some(card);
+                    break;
+                }
+            }
+            scan.history_end = staged.engine.event_history.len();
+            scans.push(scan);
+        }
     }
     let choice = ExileBatchChoice {
         players,
@@ -537,15 +657,13 @@ pub(super) fn validate_batch(
     pending: &EffectContinuation,
     choice: &ExileBatchChoice,
 ) -> Result<(), String> {
-    check_root(
+    let top_only = batch_top_only(
         state,
         pending,
+        &choice.players,
+        choice.predicate,
+        choice.return_rest_to_bottom,
         &choice.path,
-        EffectOp::ExileUntilThenCastV1 {
-            players: choice.players.clone(),
-            predicate: choice.predicate,
-            return_rest_to_bottom: choice.return_rest_to_bottom,
-        },
     )?;
     if pending.frames != choice.remaining || choice.players.len() != choice.scans.len() {
         return Err("exile batch continuation changed".into());
@@ -574,7 +692,14 @@ pub(super) fn validate_batch(
         if scan.hit.is_some() && scan.hit != scan.exiled.last().copied() {
             return Err("exile batch hit was not final".into());
         }
-        if scan.hit.is_none() && scan.exiled.len() != scan.original_library.len() {
+        if top_only {
+            if scan.exiled.len() != usize::from(!scan.original_library.is_empty())
+                || scan.history_start != choice.scans[0].history_start
+                || scan.history_end != choice.scans[0].history_end
+            {
+                return Err("top-card exile batch extent changed".into());
+            }
+        } else if scan.hit.is_none() && scan.exiled.len() != scan.original_library.len() {
             return Err("exile batch stopped before a hit".into());
         }
         let history = state
@@ -594,13 +719,20 @@ pub(super) fn validate_batch(
                 _ => None,
             })
             .collect::<Vec<_>>();
-        if moves
-            != scan
-                .exiled
+        let expected_moves = if top_only {
+            choice
+                .scans
+                .iter()
+                .flat_map(|scan| scan.exiled.iter())
+                .map(|card| card.object)
+                .collect::<Vec<_>>()
+        } else {
+            scan.exiled
                 .iter()
                 .map(|card| card.object)
                 .collect::<Vec<_>>()
-        {
+        };
+        if moves != expected_moves {
             return Err("exile batch transition history changed".into());
         }
         for (index, card) in scan.exiled.iter().enumerate() {
@@ -721,3 +853,11 @@ fn finish_batch(state: &mut GameState, choice: &ExileBatchChoice) -> Result<(), 
     *state = staged;
     Ok(())
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "etali_primal_storm_v1_tests.rs"]
+mod etali_primal_storm_tests;

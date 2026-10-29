@@ -60,7 +60,8 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::SorcerySpellOnStack
         | TargetSpec::NoncreatureSpellOnStack
         | TargetSpec::ArtifactSpellOnStack
-        | TargetSpec::CreatureSpellOnStack => (STACK, None),
+        | TargetSpec::CreatureSpellOnStack
+        | TargetSpec::SpellWithManaValueV1(_) => (STACK, None),
         TargetSpec::SpellYouDontControl => (STACK, Some(RelF::Opponent)),
         TargetSpec::SpellManaValueAtMostControlledSubtypes { first, second } => {
             // The subtypes bound the legal mana value; that is a target
@@ -100,7 +101,8 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::CreatureToughnessAtLeastFour
         | TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker
         | TargetSpec::CreatureEnchantmentOrPlaneswalker => (BATTLEFIELD, None),
-        TargetSpec::ControlledNoncreatureArtifactPermanent
+        TargetSpec::AnotherControlledNonlandPermanent
+        | TargetSpec::ControlledNoncreatureArtifactPermanent
         | TargetSpec::ControlledCreature
         | TargetSpec::CounterDistribution
         | TargetSpec::AnotherControlledCreature
@@ -145,7 +147,8 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
             let _ = mana_value;
             (GRAVEYARD, Some(RelF::You))
         }
-        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => {
+        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => {
             (GRAVEYARD, Some(RelF::You))
         }
         TargetSpec::PermanentCardInOwnGraveyard => (GRAVEYARD, Some(RelF::You)),
@@ -270,6 +273,12 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .obj(ObjF::AnyCard)
                     .amount(amount),
             );
+        }
+        EffectOp::NivMizzetVisionaryDrawV1 { .. } => {
+            // The amount is bound to a definition-specific committed damage
+            // receipt. This legacy meaning slice has no receipt operand, so
+            // keep the new leaf opaque rather than inventing a loose count.
+            out.atoms.push(Atom::Opaque);
         }
         EffectOp::RevealTopAndPartitionByType {
             player,

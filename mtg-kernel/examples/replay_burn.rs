@@ -515,6 +515,13 @@ fn run(
             skip_stale_forced_discards(&state, &mut ctx, player, outcome);
         }
         match decision {
+            SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { .. })
+            | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { .. }) => {
+                return Err(
+                    "creature-type entry and full-range cast-X require a separate replay successor"
+                        .into(),
+                );
+            }
             SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
                 return Err("unsupported-banner-entry-color-protocol".to_string());
             }
@@ -822,6 +829,8 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareAttackers { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareBlockers { player, .. })
         | SurfaceDecision::Decision(Decision::Discard { player, .. })

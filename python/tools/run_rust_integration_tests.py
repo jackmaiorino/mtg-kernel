@@ -11,7 +11,7 @@ import sys
 
 
 SUITES = {"fdn_integration": "fdn", "standard_integration": "standard",
-          "pauper_integration": "pauper"}
+          "pauper_integration": "pauper", "eternal_integration": "eternal"}
 
 
 def suite_modules(root: Path, suite: str) -> list[str]:

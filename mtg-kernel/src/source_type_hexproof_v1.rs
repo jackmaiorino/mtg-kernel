@@ -79,6 +79,26 @@ impl SourceTypeInputProjectionV1 {
     pub fn is_empty(&self) -> bool {
         self.0.is_none()
     }
+
+    /// Original physical references remain bound even after their incarnation
+    /// departs. Scalar arena bounds and type facts do not name current slots.
+    pub(crate) fn references_objects_v1(
+        &self,
+        mut referenced: impl FnMut(ObjectId) -> bool,
+        mut object_references: impl FnMut(&crate::state::GameObject) -> bool,
+    ) -> bool {
+        self.0.as_ref().is_some_and(|input| {
+            input
+                .dependencies
+                .iter()
+                .any(|(id, object)| referenced(*id) || object_references(object))
+                || input
+                    .planeswalkers
+                    .as_ref()
+                    .is_some_and(|ledger| ledger.references_objects_v1(&mut referenced))
+                || input.crewed.iter().any(|(id, _)| referenced(*id))
+        })
+    }
 }
 impl Hash for SourceTypeInputProjectionV1 {
     fn hash<H: Hasher>(&self, h: &mut H) {
@@ -244,6 +264,9 @@ fn validate_snapshot_types_full(
     let expected = current_types(&replay, snapshot.source.source)?;
     if snapshot.source_types_v1.0 != Some(expected) {
         return Err("source type projection differs from original prebatch inputs".into());
+    }
+    if snapshot.color_mask != crate::engine::object_color_mask(&replay, snapshot.source.source) {
+        return Err("source color projection differs from original prebatch inputs".into());
     }
     Ok(())
 }

@@ -141,7 +141,10 @@ fn resolve(surface: &mut HarnessSurfaceV2, state: &mut GameState) {
     panic!("spell failed to resolve");
 }
 fn cleanup(surface: &mut HarnessSurfaceV2, state: &mut GameState) {
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(state, active, Step::End);
+    }
     let ending_player = state.active_player;
     for _ in 0..40 {
         let decision = next(surface, state);
@@ -764,7 +767,10 @@ fn employment_cast_during_real_madness_cleanup_priority_expires_before_turn_chan
         assert_eq!(state.players[actor.index()].hand.len(), 9);
         let forest = *state.players[actor.index()].hand.last().unwrap();
         assert_eq!(state.objects.get(forest).name, "Forest");
-        state.step = Step::End;
+        {
+            let active = state.active_player;
+            super::fixture_turn_v1::reach(&mut state, active, Step::End);
+        }
         let ending_round = state.turn;
         let mut surface = surface();
         let mut discarded = false;

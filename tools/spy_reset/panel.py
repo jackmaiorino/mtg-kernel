@@ -12,6 +12,11 @@ seeds (collab LANES/search-evidence-distillation-20261016 section 6); the plan
 then records its namespace. Without it every plan is as before. ``--capture-all``
 captures decisions in every shard, not only the Spy-own ones (the no-state-digest
 panel compares every case's game-one actions); the plan then records it.
+``--shape mirror`` builds G(i)'s mirror panel (collab LANES/g-references-20261028,
+DESIGN.md section 5): the eight Terror-free mirrors, 48 seed families, both seats
+(768 cases); the plan then records its shape. ``annotations`` (``build`` only)
+adds lane fields to the plan, never replacing one of its own. Without either,
+every plan is as before.
 
 Spy-own cases (216 per checkpoint and opponent) run in their own shards with
 captured decisions, so ``labels`` can replay their game one through the
@@ -23,7 +28,7 @@ reservation).
 
 CLI:
   build   --id ID --candidate SRC.json --opponent-name T1|H --opponent OPP.json --decks DECKS --out DIR --shards N
-          [--seed-namespace sd1-panel-v1] [--capture-all]
+          [--seed-namespace sd1-panel-v1] [--capture-all] [--shape mirror]
   jobs    --plan DIR/plan.json --out JOBS.jsonl     label-replay jobs for Spy-own cases
 """
 from __future__ import annotations
@@ -41,6 +46,11 @@ import pilot  # noqa: E402
 
 SCHEMA = "spy-reset-pilot-v1/public-panel"
 MAX_DECISIONS = npp.MAX_DECISIONS
+SHAPES = ("cross", "mirror")
+# G(i)'s mirror panel: the board's eight Terror-free mirror matchups, 48 seed families each.
+TERROR = pilot.ndb.DECK_NAMES.index("Terror")
+MIRROR_DECKS = tuple(d for d in range(pilot.DECKS) if d != TERROR)
+MIRROR_FAMILIES = 48
 
 
 def cases(namespace: str = pilot.PANEL_NS) -> list[dict]:
@@ -48,6 +58,20 @@ def cases(namespace: str = pilot.PANEL_NS) -> list[dict]:
              "starting_player": (k + o + t) % 2}
             for o in range(pilot.DECKS) for t in range(pilot.DECKS)
             for k in range(pilot.PANEL_REPEATS) for seat in (0, 1)]
+
+
+def mirror_cases(namespace: str) -> list[dict]:
+    """The mirror shape: deck d against itself for each Terror-free d, seed family k in 0..47 (the case's
+    ``repeat``), both seats, the starting player and seed rules of ``cases``."""
+    return [{"own": d, "other": d, "repeat": k, "seat": seat, "seed": pilot.panel_seed(d, d, k, namespace),
+             "starting_player": (k + d + d) % 2}
+            for d in MIRROR_DECKS for k in range(MIRROR_FAMILIES) for seat in (0, 1)]
+
+
+def shape_cases(shape: str, namespace: str) -> list[dict]:
+    if shape not in SHAPES:
+        raise ValueError(f"unknown panel shape {shape!r}")
+    return cases(namespace) if shape == "cross" else mirror_cases(namespace)
 
 
 def case_match(case: dict, decks: list[dict]) -> dict:
@@ -62,9 +86,10 @@ def wrap(source: dict) -> dict:
 
 
 def build(checkpoint_id: str, candidate: dict, opponent_name: str, opponent: dict, decks: list[dict],
-          out: Path, shards: int, namespace: str = pilot.PANEL_NS, capture_all: bool = False) -> dict:
+          out: Path, shards: int, namespace: str = pilot.PANEL_NS, capture_all: bool = False,
+          shape: str = "cross", annotations: dict | None = None) -> dict:
     out = Path(out)
-    all_cases = cases(namespace)
+    all_cases = shape_cases(shape, namespace)
     requests = []
     for seat in (0, 1):
         for spy, count in ((True, 2), (False, shards)):
@@ -93,6 +118,12 @@ def build(checkpoint_id: str, candidate: dict, opponent_name: str, opponent: dic
         plan["seed_namespace"] = namespace
     if capture_all:
         plan["capture_all"] = True
+    if shape != "cross":
+        plan["shape"] = shape
+    for key, value in (annotations or {}).items():
+        if key in plan:
+            raise ValueError(f"annotation {key!r} would replace a plan field")
+        plan[key] = value
     npp.write_json(out / "plan.json", plan)
     return plan
 
@@ -147,13 +178,14 @@ def main(argv=None) -> int:
     b.add_argument("--shards", type=int, required=True)
     b.add_argument("--seed-namespace", choices=pilot.PANEL_NAMESPACES, default=pilot.PANEL_NS)
     b.add_argument("--capture-all", action="store_true")
+    b.add_argument("--shape", choices=SHAPES, default="cross")
     j = sub.add_parser("jobs")
     j.add_argument("--plan", type=Path, required=True)
     j.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     if a.op == "build":
         plan = build(a.id, json.loads(a.candidate.read_text()), a.opponent_name, json.loads(a.opponent.read_text()),
-                     json.loads(a.decks.read_text()), a.out, a.shards, a.seed_namespace, a.capture_all)
+                     json.loads(a.decks.read_text()), a.out, a.shards, a.seed_namespace, a.capture_all, a.shape)
         print(json.dumps({"requests": len(plan["requests"]), "cases": plan["cases"]}))
     else:
         jobs = label_jobs(a.plan)

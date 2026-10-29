@@ -100,14 +100,14 @@ pub(super) fn branches(state: &GameState, pending: &PendingCast) -> Vec<bool> {
     [false, true]
         .into_iter()
         .filter(|branch| {
-            super::spell_costs_v1::selected_spell_quote_branch_v1(
+            super::spell_costs_v1::selected_spell_quote_branch_wide_x_v59(
                 def,
                 pending.spell,
                 pending.origin_zone,
                 finalized_cast_method(pending, pending.source_contract.cast_method, def),
                 pending.kicked == Some(true),
                 pending.mode_chosen.unwrap_or(0),
-                pending.x_value.unwrap_or(0),
+                pending.selected_x_v59().unwrap_or(0),
                 &pending.targets_chosen,
                 &pending.sacrifice_chosen,
                 pending.controller,
@@ -342,7 +342,7 @@ pub(super) fn validate_finalized(
         || original.target_contracts != item.v4.target_contracts
         || original.mode_chosen != Some(item.mode_chosen)
         || original.kicked != Some(item.kicked)
-        || original.x_value.map(u16::from) != Some(item.v4.x_value)
+        || original.selected_x_v59() != Some(item.v4.x_value)
         || original.is_flashback != item.is_flashback
         || original.mandatory_additional_cost
             != Some(ChoiceV1 {

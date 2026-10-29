@@ -1,6 +1,7 @@
 //! Separate schema-tree forward. No predecessor model/checkpoint loader is used.
 use super::{numeric::NumericTree, Error, Packet, Result};
 pub const INPUT: usize = super::numeric::NODE_WIDTH + 8;
+const _: () = assert!(INPUT <= u32::BITS as usize);
 pub const HIDDEN: usize = 16;
 pub const MODEL_CONTRACT: &str = "current-mixed-schema-tree-native/v1/input20/hidden16";
 
@@ -30,6 +31,7 @@ struct Layout {
     input: [[f64; HIDDEN]; INPUT],
     hidden: [[f64; HIDDEN]; HIDDEN],
     bias: [f64; HIDDEN],
+    positive_zero_columns: [u32; HIDDEN],
     finite: bool,
 }
 const WEIGHTS: usize = HIDDEN * INPUT + HIDDEN * HIDDEN + HIDDEN + HIDDEN * 3 + 1;
@@ -68,6 +70,13 @@ impl NativeModel {
             }),
             bias: std::array::from_fn(|h| {
                 f64::from(self.weights[HIDDEN * INPUT + HIDDEN * HIDDEN + h])
+            }),
+            // Numeric features are unsigned u16 limbs, so every zero input is
+            // +0. Its product's sign depends only on the weight's sign bit.
+            positive_zero_columns: std::array::from_fn(|h| {
+                (0..INPUT).fold(0, |mask, i| {
+                    mask | (u32::from(self.weights[h * INPUT + i].is_sign_positive()) << i)
+                })
             }),
             // Constructors admit only finite weights; zero features are
             // skipped only under that condition, rechecked here.
@@ -117,20 +126,18 @@ impl NativeModel {
             // zero never changes a sum's value, and a sum is -0 only when every
             // addend is -0, so a skipped +0 matters only by turning a final -0
             // sum into +0. That correction is applied once the features are in.
-            let mut skipped_positive_zero = [false; HIDDEN];
-            for (feature, weights) in features.iter().zip(&layout.input) {
+            let mut skipped_zero_columns = 0u32;
+            for (i, (feature, weights)) in features.iter().zip(&layout.input).enumerate() {
                 if *feature == 0. && layout.finite {
-                    for (positive, weight) in skipped_positive_zero.iter_mut().zip(weights) {
-                        *positive |= (weight * feature).is_sign_positive();
-                    }
+                    skipped_zero_columns |= 1 << i;
                     continue;
                 }
                 for (value, weight) in next.iter_mut().zip(weights) {
                     *value += weight * feature / 65535.;
                 }
             }
-            for (value, positive) in next.iter_mut().zip(skipped_positive_zero) {
-                if positive && *value == 0. {
+            for (value, positive_columns) in next.iter_mut().zip(layout.positive_zero_columns) {
+                if *value == 0. && skipped_zero_columns & positive_columns != 0 {
                     *value = 0.;
                 }
             }
@@ -242,7 +249,11 @@ mod tests {
             seed ^= seed << 17;
             seed
         };
-        let mut models = vec![NativeModel::deterministic_fixture().unwrap()];
+        let mut models = vec![
+            NativeModel::deterministic_fixture().unwrap(),
+            // No skipped positive zero exists with all negative-zero weights.
+            NativeModel::from_parameters(ModelConfig::current(), vec![-0.; WEIGHTS]).unwrap(),
+        ];
         for _ in 0..4 {
             let weights = (0..WEIGHTS)
                 .map(|_| (random() % 4001) as f32 / 1000. - 2.)
@@ -261,6 +272,7 @@ mod tests {
             serde_json::json!({"kind": "divine", "targets": [1, 2, 65535, 4_294_967_296_u64]}),
             serde_json::json!([{"a": -7, "b": "text", "c": [true, false, -3]}, {"d": {"e": [[], {}]}}]),
             serde_json::json!({"wide": (0..64).collect::<Vec<_>>(), "name": "Llanowar Elves"}),
+            serde_json::json!({"full_width": [u64::MAX, 65535_u64 << 48], "signed_min": i64::MIN}),
         ];
         for model in &models {
             for value in &values {

@@ -3,6 +3,7 @@ mtg_kernel::fast_global_allocator!();
 use mtg_kernel::expanded_deck_training_v1::{execute_v1, ExpandedTrainingCommandV1};
 
 fn main() {
+    mtg_kernel::opt_out_of_power_throttling_v1();
     if let Err(error) = run() {
         eprintln!("expanded-deck training: {error}");
         std::process::exit(1);

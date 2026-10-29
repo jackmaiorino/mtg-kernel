@@ -216,3 +216,38 @@ fn a_card_token_outside_the_embedding_panics_like_the_sequential_sink() {
     }));
     assert!(sequential.is_err() && recorded.is_err());
 }
+
+/// Under the no-state-digest contract every helper verifies its own MXCSR
+/// before taking an item: a dirty helper takes none, the remaining threads
+/// drain every item, and its error is returned once all threads stop.
+#[test]
+fn a_dirty_helper_mxcsr_takes_no_item_and_fails_the_drain() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for (check, dirty) in [
+        (ThreadMxcsrCheckV1::Off, false),
+        (ThreadMxcsrCheckV1::Verify, false),
+        (ThreadMxcsrCheckV1::DirtyWorkersForTest, true),
+    ] {
+        let done = AtomicUsize::new(0);
+        let result = drain_in_parallel_v1(
+            (0..64).collect::<Vec<usize>>(),
+            4,
+            check,
+            || (),
+            |_, _| {
+                done.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        assert_eq!(done.load(Ordering::SeqCst), 64);
+        if dirty {
+            assert!(matches!(
+                result,
+                Err(NativePolicyTrainErrorV1::MxcsrPinnedState { observed })
+                    if observed & (1 << 15) != 0
+            ));
+        } else {
+            assert_eq!(result, Ok(()));
+        }
+    }
+    assert!(crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_ok());
+}

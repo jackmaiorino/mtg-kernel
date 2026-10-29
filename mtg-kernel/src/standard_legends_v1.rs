@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub mod jodah;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+// Preserve the existing Copy program payload and its serialized representation.
+#[allow(clippy::large_enum_variant)]
 pub enum LegendEffectV1 {
     CountersOnControlledCreatures,
     ProtectControlledLegendaryCreatures,
@@ -292,6 +294,38 @@ pub(crate) fn katilda_mana_colors(
     object: ObjectId,
 ) -> Vec<crate::mana::ManaColor> {
     use crate::mana::ManaColor;
+    // Chrome Mox's "add one mana of any of the exiled card's colors" uses
+    // the same granted-color activation (tap, add one).
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        let colors = crate::eternal_cards_v1::e3::imprint_mana_colors(state, object);
+        if !colors.is_empty() {
+            return colors;
+        }
+        // Petrified Hamlet: 'Lands with the chosen name have "{T}: Add
+        // {C}."' Yavimaya, Cradle of Growth makes each land a Forest.
+        let mut colors = crate::eternal_legacy_e5b_v1::granted_mana_colors(state, object);
+        for color in crate::eternal_legacy_e7a_v1::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
+        // Harbinger of the Seas' Islands; Valgavoth's Lair's chosen color.
+        for color in crate::eternal_legacy_e8a_v1::statics::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
+        if !colors.is_empty() {
+            return colors;
+        }
+        // Abundant Growth: 'Enchanted land has "{T}: Add one mana of any
+        // color."'
+        let colors = crate::eternal_pauper_e6b_v1::granted_mana_colors(state, object);
+        if !colors.is_empty() {
+            return colors;
+        }
+    }
     let Some(live) = state.objects.try_get(object) else {
         return Vec::new();
     };

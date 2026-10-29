@@ -285,6 +285,31 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             out.cost(CostAtom::PayLife(life));
         }
         ManaAbilityCostDef::None => {}
+        ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
+            out.cost(CostAtom::Tap);
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Battlefield,
+                to: ZoneF::Graveyard,
+                obj: ObjF::Typed(CardTypeF::Creature),
+                amount: AmtF::Unit,
+            });
+        }
+        ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Hand,
+                to: ZoneF::Graveyard,
+                obj: ObjF::AnyCard,
+                amount: AmtF::Dynamic,
+            });
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Battlefield,
+                to: ZoneF::Graveyard,
+                obj: ObjF::ThisObject,
+                amount: AmtF::Unit,
+            });
+            // "Activate only as an instant" has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
     }
     let amount = match amount {
         ManaAbilityAmountDef::Fixed(n) => AmtF::fixed(i64::from(n)),
@@ -302,6 +327,11 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             // The frozen vocabulary cannot express a simultaneous color set.
             out.atoms.push(Atom::Opaque);
             AmtF::Dynamic
+        }
+        ManaAbilityAmountDef::FixedColorsV1(colors) => {
+            // A fixed simultaneous color set has no color facet either.
+            out.atoms.push(Atom::Opaque);
+            AmtF::fixed(colors.len() as i64)
         }
     };
     out.effect(
@@ -425,7 +455,25 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
 
 /// Extracts every rules source of one card definition.
 pub fn card_rules(card_id: u16) -> CardRulesV1 {
+    assert!(
+        !crate::trigger::triggers_for(card_id)
+            .iter()
+            .any(|t| matches!(
+                (t.effect)(),
+                EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+                    | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
+                    | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
+            )),
+        "nonland token copy or departed-subtype death return requires its precise successor"
+    );
     let def: &CardDef = &CARD_DEFS[usize::from(card_id)];
+    assert!(
+        !matches!(
+            (def.spell_effect)(),
+            Some(EffectOp::DealXDamageThenCreateTokensForExcess { .. })
+        ),
+        "rules-vector-v1 cannot bind actual excess damage to token creation; successor required"
+    );
     assert!(!def.activated_abilities.iter().any(|a| a.cost.iter().any(|c| matches!(c, crate::card_def::CostComponent::RemoveSourceCountersV1 { .. }))), "rules-vector-v1 cannot represent exact typed source-counter costs or saved combat-damage incubation; successor required");
     let CardDef {
         // Identity, not rules.
@@ -497,6 +545,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         combat_static_rules,
         as_enters_color_choice_v1,
         chosen_color_creature_boost_v1,
+        creature_type_entry_v1,
         damage_replacement_v1,
         token_counter_replacement_v48,
         starting_life_self_bonuses_v1,
@@ -526,6 +575,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         "damage multiplier requires its exact successor"
     );
     let mut printed = Vec::new();
+    assert!(
+        creature_type_entry_v1.is_none(),
+        "creature type entry and fellowship anthem require their precise successor"
+    );
     assert!(
         game_outcome_protection_v1.is_none(),
         "game-outcome prohibition requires its precise successor"
@@ -718,6 +771,18 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             Value::String(format!("{:?}", alt.condition)),
         );
         walk.costs(CtxF::AltForm, "alt_cost", alt.components, None);
+        if let crate::card_def::AltCostCondition::BattlefieldCreatureCountAtLeast(minimum) =
+            alt.condition
+        {
+            walk.ability(CtxF::AltForm, |out| {
+                out.read(
+                    RelF::EachPlayer,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Typed(CardTypeF::Creature)),
+                    AggF::AtLeast(u8::try_from(minimum).unwrap_or(u8::MAX)),
+                )
+            });
+        }
         if let crate::card_def::AltCostCondition::ControlsPermanentWithSubtype(_) = alt.condition {
             walk.ability(CtxF::AltForm, |out| {
                 out.read(
@@ -852,10 +917,18 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
             match restricted.restriction {
+                crate::card_def::ManaSpendRestrictionDef::SpellWithSubtype(_)
+                | crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(_) => {
+                    panic!("subtype-only spell mana requires its precise successor");
+                }
                 crate::card_def::ManaSpendRestrictionDef::Unrestricted => {}
                 crate::card_def::ManaSpendRestrictionDef::CreatureSpell
                 | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
-                | crate::card_def::ManaSpendRestrictionDef::LegendarySpell => {
+                | crate::card_def::ManaSpendRestrictionDef::LegendarySpell
+                | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1
+                | crate::card_def::ManaSpendRestrictionDef::ArtifactSpellV1
+                | crate::card_def::ManaSpendRestrictionDef::ColorlessEldraziSpellV1
+                | crate::card_def::ManaSpendRestrictionDef::NoncreatureSpellV1 => {
                     out.control(ControlF::Conditional)
                 }
             }
@@ -1074,6 +1147,23 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
 
     // Static abilities the engine keys by name outside `CardDef`.
+    if def
+        .keywords
+        .has(crate::card_def::Keywords::PROTECTION_FROM_EVERYTHING)
+    {
+        walk.opaque.push(
+            "all-source protection and mandatory graveyard replacement require a native successor",
+        );
+        walk.ability(CtxF::Static, |out| out.atoms.push(Atom::Opaque));
+    }
+    if crate::engine::consuming_aberration_cda_for_v1(name) {
+        walk.rec("native_all_zone_cda", json!({"power_and_toughness": "all_opponents_graveyard_physical_cards", "layer": "7a", "native_width": "checked_i32"}));
+        walk.opaque
+            .push("all-zone opponent-graveyard CDA requires its exact native successor");
+        walk.ability(CtxF::Static, |out| {
+            out.atoms.push(Atom::Opaque);
+        });
+    }
     if let Some((minimum, keywords, subtype)) =
         crate::engine::static_plus_one_counter_characteristics_for(name)
     {
@@ -1544,6 +1634,7 @@ fn optional_cost_facts(cost: crate::card_def::OptionalAdditionalCostDef, out: &m
 
 fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
     match aura {
+        AttachmentDef::AuraLandOverride => out.atoms.push(Atom::Opaque),
         AttachmentDef::AuraArtifactAnimation(animation) => {
             out.effect(EffectAtom::new(EvF::Attach).obj(ObjF::Typed(CardTypeF::Artifact)));
             out.effect(

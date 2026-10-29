@@ -44,6 +44,108 @@ macro_rules! fast_global_allocator {
     };
 }
 
+/// mimalloc's `mi_option_purge_delay` in the vendored v3 `mimalloc.h`
+/// (libmimalloc-sys 0.1.49, mimalloc 3.3.2), which the bindings do not name.
+const MI_OPTION_PURGE_DELAY_V1: std::ffi::c_int = 15;
+
+unsafe extern "C" {
+    fn mi_option_get(option: std::ffi::c_int) -> std::ffi::c_long;
+    fn mi_option_set(option: std::ffi::c_int, value: std::ffi::c_long);
+}
+
+/// Makes [`FastAllocatorV1`] keep freed memory for reuse instead of returning
+/// it to the system (purge delay -1), unless the environment names a purge
+/// delay (`MIMALLOC_PURGE_DELAY` or its legacy alias `MIMALLOC_RESET_DELAY`,
+/// in any letter case, as mimalloc reads them), in which case mimalloc's own
+/// reading stands. Like the allocator itself it changes cost, not results. A
+/// training process otherwise faults its large per-update buffers back in
+/// from zeroed pages on every reuse; it holds its peak memory instead (about
+/// 140 MB more per process measured for an 18-update ordinary segment; there
+/// is no byte cap).
+///
+/// # Safety
+///
+/// mimalloc's option fields are plain, unsynchronized memory that every
+/// allocating thread reads. Call this first in `main`, before the process
+/// starts any other thread, and never again.
+pub unsafe fn retain_freed_memory_v1() {
+    let named = std::env::vars_os().any(|(name, _)| {
+        name.to_str().is_some_and(|name| {
+            name.eq_ignore_ascii_case("MIMALLOC_PURGE_DELAY")
+                || name.eq_ignore_ascii_case("MIMALLOC_RESET_DELAY")
+        })
+    });
+    if !named {
+        // SAFETY: the caller guarantees no other thread exists yet.
+        unsafe { mi_option_set(MI_OPTION_PURGE_DELAY_V1, -1) };
+    }
+}
+
+/// mimalloc's current purge delay in milliseconds (-1: never purge).
+pub fn purge_delay_ms_v1() -> std::ffi::c_long {
+    // SAFETY: a read of the option; the only writer in this crate,
+    // `retain_freed_memory_v1`, runs before any other thread exists.
+    unsafe { mi_option_get(MI_OPTION_PURGE_DELAY_V1) }
+}
+
+/// Opts this process out of Windows power throttling (EcoQoS): execution
+/// speed controlled and off, so the scheduler may run its threads on any core
+/// its affinity allows. Started through a host reservation, compute processes
+/// are otherwise throttled at normal priority too, and on a hybrid CPU Windows
+/// keeps them on the efficiency cores (measured 2026-10-25 on an i7-13700K:
+/// panel requests 2.4x and 8 training runs 1.6x faster opted out, with every
+/// match hash and per-update state hash identical). A scheduling hint: it
+/// changes no priority or affinity, and a run that does a fixed amount of work
+/// gives the same results. Work bounded by time instead (the census's
+/// CPU-second search profile, the searched-target packet timeout) is
+/// timing-dependent, as it is under host load, so faster cores can fit more
+/// into it; timing fields in receipts differ as they always do. The setting is
+/// not inherited by child processes. Returns whether the system accepted it;
+/// elsewhere than Windows it does nothing.
+pub fn opt_out_of_power_throttling_v1() -> bool {
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct ProcessPowerThrottlingStateV1 {
+            version: u32,
+            control_mask: u32,
+            state_mask: u32,
+        }
+        const PROCESS_POWER_THROTTLING_INFORMATION_CLASS_V1: i32 = 4;
+        const PROCESS_POWER_THROTTLING_CURRENT_VERSION_V1: u32 = 1;
+        const PROCESS_POWER_THROTTLING_EXECUTION_SPEED_V1: u32 = 0x1;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn SetProcessInformation(
+                process: *mut std::ffi::c_void,
+                class: i32,
+                information: *const std::ffi::c_void,
+                size: u32,
+            ) -> i32;
+        }
+        let state = ProcessPowerThrottlingStateV1 {
+            version: PROCESS_POWER_THROTTLING_CURRENT_VERSION_V1,
+            control_mask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED_V1,
+            state_mask: 0,
+        };
+        // SAFETY: the pseudo handle of this process and a correctly sized,
+        // live `PROCESS_POWER_THROTTLING_STATE`; the call keeps no pointer.
+        unsafe {
+            SetProcessInformation(
+                GetCurrentProcess(),
+                PROCESS_POWER_THROTTLING_INFORMATION_CLASS_V1,
+                (&raw const state).cast(),
+                std::mem::size_of::<ProcessPowerThrottlingStateV1>() as u32,
+            ) != 0
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
@@ -67,6 +169,7 @@ pub mod async_rollout_v2;
 pub mod attack_target_v1;
 pub mod banishing_light_v1;
 pub mod banner_observation_v1;
+pub mod banner_of_kinship_v1;
 pub mod bloodthirsty_conqueror_v49;
 pub mod bo3_match;
 pub mod bo3_session;
@@ -79,8 +182,10 @@ pub(crate) mod continuous_characteristics_v1;
 pub(crate) mod continuous_source_frame_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
+pub mod creature_types_v60;
 pub mod elenda_observation_v52;
 pub mod elenda_public_v52;
+pub mod embercleave_public_v65;
 pub mod fake_your_own_death_v50;
 pub mod fiendish_panda_v1;
 pub mod game_outcome_observation_v41;
@@ -97,17 +202,27 @@ pub mod linked_aura_return_v1;
 pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
+pub mod niv_mizzet_public_v63;
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod niv_mizzet_visionary_v1;
 pub mod panda_observation_v47;
 pub mod panda_public_v47;
 pub mod phoenix_public_v56;
 pub mod planeswalker_v1;
+pub(crate) mod progenitus_v1;
 pub(crate) mod retained_world_parse_v1;
 pub mod rules_meaning_elenda_v52;
+pub mod rules_meaning_embercleave_v65;
 pub mod rules_meaning_fake_your_own_death_v50;
 pub mod rules_meaning_fiendish_panda_v1;
 pub mod rules_meaning_game_outcome_protection_v1;
 pub mod rules_meaning_heraldic_banner_v1;
 pub mod rules_meaning_librarian_v1;
+pub mod rules_meaning_niv_mizzet_v63;
 pub mod rules_meaning_phoenix_v56;
 mod soul_shackled_zombie_v1;
 pub mod source_type_hexproof_v1;
@@ -140,10 +255,48 @@ pub mod crystal_public_v1;
 mod divine_actions_v44;
 pub mod divine_observation_v44;
 pub mod divine_public_v44;
+mod drakuseth_damage_source_v76;
 pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
 mod equipment_damage_source_v4;
+/// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
+pub mod eternal_cards_v1;
+/// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
+/// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
+/// Mystic Forge).
+pub mod eternal_e5a_v1;
+/// Pauper and Vintage long-tail card programs of the eternal catalog (wave
+/// E9b).
+pub mod eternal_e9b_v1;
+/// Legacy aggro, Eldrazi and control card programs of the eternal catalog
+/// (wave E5b).
+pub mod eternal_legacy_e5b_v1;
+/// Legacy Lands, Reanimator, Storm and artifact card programs of the
+/// eternal catalog (wave E7a).
+pub mod eternal_legacy_e7a_v1;
+/// Legacy Death and Taxes, Hogaak, control and storm card programs of the
+/// eternal catalog (wave E8a).
+pub mod eternal_legacy_e8a_v1;
+/// Legacy long-tail card programs of the eternal catalog (wave E9a).
+pub mod eternal_legacy_e9a_v1;
+/// Vintage Lurrus card programs and companions of the eternal catalog (wave
+/// E4b).
+pub mod eternal_lurrus_v1;
+/// Pauper Affinity, Tron and Ephemerate card programs of the eternal
+/// catalog (wave E6a).
+pub mod eternal_pauper_e6a_v1;
+/// Pauper Bogles, white aggro, Rakdos Madness and Gates card programs of
+/// the eternal catalog (wave E6b).
+pub mod eternal_pauper_e6b_v1;
+/// Pauper Ruby Storm, Golgari Gardens, Familiars and Jeskai Ephemerate card
+/// programs of the eternal catalog (wave E8b).
+pub mod eternal_pauper_e8b_v1;
+/// Vintage graveyard and tempo card programs of the eternal catalog (wave
+/// E7b).
+pub mod eternal_vintage_e7b_v1;
+/// Vintage card programs of the eternal catalog (wave E4).
+pub mod eternal_vintage_v1;
 pub mod event;
 pub mod event_history_v1;
 pub mod expanded_deck_training_v1;
@@ -231,11 +384,16 @@ pub mod unclamped_softmax_sampler_v1;
 #[cfg_attr(not(windows), allow(dead_code))]
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
+pub(crate) mod leyline_axe_v1;
 pub mod limited_common_session_v1;
 pub mod limited_common_session_v2;
 pub mod limited_common_session_v3;
 pub mod limited_elenda_session_v4;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub mod limited_match_v1;
 pub mod limited_prepared_session_v5;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub mod limited_rules_only_v1;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;
 pub mod mana;
@@ -588,6 +746,8 @@ mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
 pub(crate) mod combat_static_rules_v1;
+mod counter_target_effects_v1;
+mod extravagant_replication_v1;
 pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub(crate) mod life_loss_turn_v1;
@@ -625,7 +785,9 @@ pub mod trace;
 pub mod trigger;
 mod wildwood_capture_v1;
 mod wildwood_scourge_v1;
+pub mod win_search_v1;
 pub mod xmage_observed_inference_v1;
+mod zimone_paradox_sculptor_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
@@ -765,7 +927,25 @@ pub mod rules_meaning_quandary_v55;
 pub mod rules_meaning_spinner_v54;
 pub mod spinner_public_v54;
 
+pub mod alesha_v1;
+pub mod artist_public_v64;
+pub mod chosen_type_public_v66;
+pub mod giada_v1;
+pub mod graveyard_return_candidates_v61;
+pub mod graveyard_return_observation_v61;
+pub mod graveyard_return_public_v61;
+pub mod infernal_vessel_v1;
+pub mod midnight_snack_v1;
+pub mod nine_lives_familiar_v1;
 pub mod prepared_observation_v57;
+pub mod rules_meaning_artist_v64;
+pub mod rules_meaning_chosen_type_v66;
+pub mod rules_meaning_graveyard_return_v61;
+pub mod rules_meaning_valkyries_call_v62;
+pub mod snack_wide_life_v59;
+pub mod snack_wide_public_v59;
+pub mod valkyries_call_public_v62;
+pub mod valkyries_call_v1;
 
 #[cfg(all(
     test,
@@ -780,3 +960,78 @@ pub(crate) mod fake_full_engine_admission_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 pub(crate) mod ravenous_full_engine_admission_v1_tests;
+
+pub mod midnight_snack_public_v58;
+pub mod rules_meaning_midnight_snack_v58;
+
+pub mod goblin_negotiation_v1;
+pub mod next_five_public_v59;
+pub mod rules_meaning_next_five_v59;
+
+pub mod next_five_observation_v59;
+
+pub mod limited_graveyard_return_session_v7;
+pub mod limited_next_five_session_v6;
+
+pub mod drakuseth_public_v67;
+pub mod fdn_family_source_v76;
+pub mod rules_meaning_drakuseth_v67;
+
+pub mod call_candidates_v62;
+pub mod call_observation_v62;
+pub mod cast_identity_v1;
+
+pub mod limited_call_session_v8;
+
+pub mod end_turn_candidates_v68;
+pub mod end_turn_observation_v68;
+pub mod rules_meaning_time_stop_v68;
+pub mod time_stop_public_v68;
+
+pub mod limited_end_turn_session_v9;
+
+pub mod genesis_wave_candidates_v69;
+pub mod genesis_wave_observation_v69;
+pub mod genesis_wave_public_v69;
+pub mod limited_genesis_wave_session_v10;
+pub mod rules_meaning_genesis_wave_v69;
+
+pub mod rules_meaning_vivien_v70;
+pub mod vivien_public_v70;
+
+pub mod vivien_candidates_v70;
+pub mod vivien_observation_v70;
+
+pub mod limited_vivien_session_v11;
+
+pub mod chandra_public_v74;
+pub mod liliana_public_v73;
+pub mod muldrotha_public_v71;
+pub mod rules_meaning_chandra_v74;
+pub mod rules_meaning_liliana_v73;
+pub mod rules_meaning_muldrotha_v71;
+pub mod rules_meaning_tinybones_v72;
+pub mod tinybones_public_v72;
+
+pub mod limited_muldrotha_session_v12;
+pub mod muldrotha_candidates_v71;
+pub mod muldrotha_observation_v71;
+pub mod tinybones_candidates_v72;
+pub mod tinybones_observation_v72;
+
+pub mod kaito_public_v75;
+pub mod liliana_candidates_v73;
+pub mod liliana_observation_v73;
+pub mod rules_meaning_kaito_v75;
+
+pub mod chandra_candidates_v74;
+pub mod chandra_observation_v74;
+pub mod kaito_candidates_v75;
+pub mod kaito_observation_v75;
+pub mod limited_tinybones_session_v13;
+
+pub mod limited_liliana_session_v14;
+
+pub mod limited_chandra_session_v15;
+
+pub mod limited_kaito_session_v16;

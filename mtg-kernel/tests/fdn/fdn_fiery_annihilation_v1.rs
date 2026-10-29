@@ -44,7 +44,10 @@ fn actual_fiery_cast_during_madness_cleanup_priority_expires_before_player_flip(
         event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
         assert_eq!(state.players[actor.index()].hand.len(), 9);
         let discard_land = *state.players[actor.index()].hand.last().unwrap();
-        state.step = Step::End;
+        {
+            let active = state.active_player;
+            super::fixture_turn_v1::reach(&mut state, active, Step::End);
+        }
         let ending_turn = (
             state.turn,
             state.active_player,
@@ -624,7 +627,10 @@ fn fiery_cleanup_expires_replacement_and_restored_forgery_refuses_before_mutatio
         assert!(mtg_kernel::fiery_public_v1::facts_v1(&forged).is_err());
         assert!(engine::step(&mut forged, Action::Pass).is_err());
         assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
-        state.step = Step::End;
+        {
+            let active = state.active_player;
+            super::fixture_turn_v1::reach(&mut state, active, Step::End);
+        }
         for _ in 0..8 {
             next(&mut state);
             if state.step != Step::End {

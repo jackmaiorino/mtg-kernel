@@ -232,6 +232,193 @@ class FailureRecordingTests(unittest.TestCase):
             self.assertFalse((output / 'created-pod.json').exists())
 
 
+class AmbiguousCreateTests(unittest.TestCase):
+    """collab#335 review r1 finding 2: only an explicit 4xx proves that no Pod exists."""
+
+    def attempt(self, temporary, error):
+        output = prepared_output(temporary)
+        snapshot = snapshot_path(temporary)
+        api = Mock(); api.create.side_effect = error
+        with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+            with self.assertRaises(type(error)):
+                pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+        self.snapshot = snapshot
+        return output
+
+    def test_timeout_or_5xx_records_an_ambiguous_create(self):
+        for error in (RuntimeError('provider request unavailable'), RuntimeError('provider HTTP 503'),
+                      TimeoutError('timed out')):
+            with self.subTest(error=str(error)), tempfile.TemporaryDirectory() as temporary:
+                output = self.attempt(temporary, error)
+                self.assertTrue((output / 'create-attempt.json').exists())
+                self.assertTrue((output / 'create-ambiguous.json').exists())
+                self.assertFalse(read(output / 'create-pod-failure.json')['definite'])
+
+    def test_explicit_4xx_is_definite_and_not_ambiguous(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.attempt(temporary, RuntimeError('provider HTTP 400'))
+            self.assertTrue(read(output / 'create-pod-failure.json')['definite'])
+            self.assertFalse((output / 'create-ambiguous.json').exists())
+
+    def test_second_create_of_the_same_preparation_refuses_before_posting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.attempt(temporary, RuntimeError('provider request unavailable'))
+            snapshot = self.snapshot
+            api = Mock()
+            with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+                with self.assertRaisesRegex(ValueError, 'earlier create receipt'):
+                    pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+            api.create.assert_not_called()
+
+
+class RetainFirstTests(unittest.TestCase):
+    """Round 3 review finding 5 (I1): a valid POST ID is retained before sanitization or receipts."""
+
+    def run_create(self, temporary, response, write_patch=None):
+        output = prepared_output(temporary)
+        snapshot = snapshot_path(temporary)
+        api = Mock(); api.create.return_value = response
+        with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+            if write_patch:
+                with patch.object(pl, 'write', write_patch), self.assertRaises(Exception):
+                    pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+            else:
+                with self.assertRaises(Exception):
+                    pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+        return output
+
+    def test_sanitization_failure_keeps_the_valid_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.run_create(temporary, pod_response(costPerHr='bad'))
+            self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
+            self.assertEqual(read(output / 'create-pod-failure.json')['pod_id'], 'pod123')
+            self.assertEqual(read(output / 'create-ambiguous.json')['pod_id'], 'pod123')
+
+    def test_receipt_write_failure_keeps_the_valid_id(self):
+        original = pl.write
+
+        def failing(path, value, **kwargs):
+            if Path(path).name == 'created-pod.json':
+                raise OSError('disk full')
+            return original(path, value, **kwargs)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.run_create(temporary, pod_response(), write_patch=failing)
+            self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')   # handed off first
+
+    def test_non_string_id_is_never_coerced(self):
+        for bad in (None, True, 123):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as temporary:
+                output = self.run_create(temporary, pod_response(id=bad))
+                self.assertFalse((output / 'known-pods').exists())
+                self.assertIsNone(read(output / 'create-pod-failure.json')['pod_id'])
+
+
+class ResponsibilityTests(unittest.TestCase):
+    """Round 4 findings 3 and 5: I1 retains the raw POST ID first; I4 keeps responsibility for it."""
+
+    def attempt(self, temporary, response, world, handoff_fails=False):
+        from lease_test_support import FakeClock, no_network
+        output = prepared_output(temporary)
+        snapshot = snapshot_path(temporary)
+        api = Mock(); api.create.return_value = response
+        clock = FakeClock(lease()['deadline_epoch'] - 60)   # bounds the release loop to MIN_RELEASE_SECONDS
+        release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
+        patches = [patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'})]
+        if handoff_fails:
+            import external_guard
+            patches.append(patch.object(external_guard, 'handoff_in', side_effect=OSError('read-only store')))
+        with no_network(), patches[0], (patches[1] if handoff_fails else patch.object(pl, 'MIN_RELEASE_SECONDS', 120)):
+            with self.assertRaises(Exception) as raised:
+                pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW,
+                                  release=release)
+        return output, raised.exception
+
+    def test_post_id_is_retained_whatever_the_name(self):
+        from lease_test_support import World
+        for response in ({'id': 'pod123'}, {'id': 'pod123', 'name': 'another-name'}):
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as temporary:
+                output, _ = self.attempt(temporary, response, World())
+                self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
+                self.assertEqual(read(output / 'create-pod-failure.json')['pod_id'], 'pod123')
+
+    def test_failed_handoff_deletes_and_verifies_absence_before_exiting(self):
+        from lease_test_support import World
+        with tempfile.TemporaryDirectory() as temporary:
+            world = World([pod_response()])
+            output, error = self.attempt(temporary, pod_response(), world, handoff_fails=True)
+            self.assertIn('deleted and verified absent', str(error))
+            self.assertEqual(world.deletes[0], 'pod123')
+            self.assertNotIn('pod123', world.pods)
+
+    def test_recovered_handoff_reports_a_guarded_pod_and_writes_the_receipt(self):
+        # round 9: the POST handoff fails, the cleanup's census hands the ID off durably: the guardian
+        # owns the Pod, the cleanup deleted nothing, and its receipt is written
+        from lease_test_support import FakeClock, World, no_network
+        import external_guard
+        with tempfile.TemporaryDirectory() as temporary:
+            output = prepared_output(temporary)
+            snapshot = snapshot_path(temporary)
+            world = World([pod_response()])
+            api = Mock(); api.create.return_value = pod_response()
+            clock = FakeClock(lease()['deadline_epoch'] - 60)
+            release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
+            real = external_guard.handoff_in; fired = []
+
+            def handoff(folder, pod_id, role, epoch):
+                if not fired:
+                    fired.append(pod_id)
+                    raise OSError('transient')
+                return real(folder, pod_id, role, epoch)
+            with no_network(), patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}), \
+                    patch.object(external_guard, 'handoff_in', side_effect=handoff):
+                result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
+                                           now=NOW, release=release)
+            self.assertEqual(result['id'], 'pod123')
+            self.assertEqual(world.deletes, [])
+            self.assertEqual(read(output / 'created-pod.json')['id'], 'pod123')
+            self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
+            self.assertIn('requires rechecking', read(output / 'create-handoff-recovered.json')['state'])
+
+    def test_handoff_recovered_after_a_delete_attempt_claims_ownership_not_liveness(self):
+        # #388 item 1: the POST and census handoffs fail, the cleanup sends a DELETE (which fails here),
+        # and only the following GET hands the ID off durably. The record must not call the Pod alive.
+        from lease_test_support import FakeClock, World, no_network
+        import external_guard
+        with tempfile.TemporaryDirectory() as temporary:
+            output = prepared_output(temporary)
+            snapshot = snapshot_path(temporary)
+            world = World([pod_response()]); world.delete_failures = 1
+            api = Mock(); api.create.return_value = pod_response()
+            clock = FakeClock(lease()['deadline_epoch'] - 60)
+            release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
+            real = external_guard.handoff_in; calls = []
+
+            def handoff(folder, pod_id, role, epoch):
+                calls.append(list(world.deletes))
+                if not world.deletes:
+                    raise OSError('transient')
+                return real(folder, pod_id, role, epoch)
+            with no_network(), patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}),                     patch.object(external_guard, 'handoff_in', side_effect=handoff):
+                result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
+                                           now=NOW, release=release)
+            self.assertEqual(result['id'], 'pod123')
+            self.assertEqual(world.deletes, ['pod123'])            # the DELETE was sent before the handoff
+            self.assertEqual(calls[-1], ['pod123'])                 # the persisting handoff came after it
+            self.assertEqual(read(output / 'created-pod.json')['id'], 'pod123')
+            state = read(output / 'create-handoff-recovered.json')['state']
+            self.assertNotIn('alive', state)
+            self.assertIn('requires rechecking', state)
+
+    def test_failed_handoff_and_failed_release_fail_loudly(self):
+        from lease_test_support import World
+        with tempfile.TemporaryDirectory() as temporary:
+            world = World([pod_response()]); world.delete_failures = -1
+            output, error = self.attempt(temporary, pod_response(), world, handoff_fails=True)
+            self.assertIn('ALERT', str(error))
+            self.assertEqual(read(output / 'ALERT-pod-not-released.json')['pod_ids'], ['pod123'])
+            self.assertGreaterEqual(len(world.deletes), 2)
+
+
 def fresh_spec():
     # main() has no --now hook for the offline --spec step either, so the
     # lease's own created_epoch/account_observed_epoch/quote_observed_epoch

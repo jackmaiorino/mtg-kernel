@@ -12,7 +12,9 @@
 //!    decks consistent with the opponent's publicly observed card
 //!    multiplicities. The true opponent deck is never read. Own registration
 //!    is known, so the actor's own unknown cards keep the true remaining
-//!    multiset (step 1).
+//!    multiset (step 1). A hidden object whose definition a live stack item
+//!    freezes in a public source contract (`contract_pinned`) keeps its
+//!    definition and counts as observed (mtg-kernel#380).
 //!
 //! The V4 sampler then rebuilds the live candidates and fails the sample if
 //! anything the actor observes changed. Every failure is a declared
@@ -22,7 +24,9 @@
 
 use crate::card_def::CARD_DEFS;
 use crate::ids::{ObjectId, PlayerId};
-use crate::rl_session::{FastActorSessionV1, V4SearchSampleMode, V4SearchStateErrorV1};
+use crate::rl_session::{
+    FastActorSessionV1, V4BoundaryEncodingFailureV1, V4SearchSampleMode, V4SearchStateErrorV1,
+};
 use crate::runtime_decks::RUNTIME_DECKS;
 use crate::state::{GameState, ObjectStateV4, SplitMix64, Zone};
 use sha2::{Digest, Sha256};
@@ -188,6 +192,37 @@ fn prior_seed(seed: u64) -> u64 {
     u64::from_le_bytes(bytes[..8].try_into().expect("eight digest bytes"))
 }
 
+/// Objects whose definition a live stack item, or the pending effect's
+/// resolving item, freezes in a public source contract. The observation
+/// encoder checks each one's live `card_def` against that contract
+/// (`engine.rs` `validate_ability_source_contract` and
+/// `validate_historical_ability_source_contract`, `rl.rs` `stack_source_ref`),
+/// so the prior must not relabel them: their identity is public even when
+/// the object is back in a hidden zone (Lembas shuffling itself into its
+/// owner's library while its ability waits, mtg-kernel#380).
+fn contract_pinned(state: &GameState) -> HashSet<ObjectId> {
+    let mut pinned = HashSet::new();
+    let items = state.stack.iter().chain(
+        state
+            .engine
+            .pending_effect
+            .as_ref()
+            .map(|pending| &pending.resolving_item),
+    );
+    for item in items {
+        let v4 = &item.v4;
+        pinned.extend(v4.ability_source_contract.as_ref().map(|c| c.source));
+        pinned.extend(v4.source_contract.as_ref().map(|c| c.source));
+        pinned.extend(v4.madness_source_contract.as_ref().map(|c| c.source));
+        pinned.extend(v4.granted_by.as_ref().map(|c| c.source));
+        if let Some(grant) = &v4.cauldron_grant.0 {
+            pinned.insert(grant.host.source);
+            pinned.insert(grant.donor.source);
+        }
+    }
+    pinned
+}
+
 /// The opponent's unknown slots from `actor`'s view, in the V4 sampler's
 /// canonical order (hand indices, then library indices).
 fn unknown_slots(state: &GameState, actor: PlayerId, owner: PlayerId) -> Vec<ObjectId> {
@@ -251,7 +286,14 @@ pub(crate) fn apply_deck_prior(
     seed: u64,
 ) -> Result<usize, String> {
     let opp = actor.opponent();
-    let slots = unknown_slots(state, actor, opp);
+    // Contract-pinned objects keep their definition and count as observed.
+    // With none among the unknown slots this is the original prior, draw for
+    // draw; otherwise the remainder (and so every slot's draw) changes.
+    let pinned = contract_pinned(state);
+    let slots: Vec<ObjectId> = unknown_slots(state, actor, opp)
+        .into_iter()
+        .filter(|id| !pinned.contains(id))
+        .collect();
     let unknown: HashSet<ObjectId> = slots.iter().copied().collect();
     if unknown.len() != slots.len() {
         return Err("duplicate unknown slot".into());
@@ -297,6 +339,18 @@ pub(crate) fn sample(
     seed: u64,
     prior: &DeckPrior,
 ) -> Result<Sample, String> {
+    sample_recorded(session, seed, prior, &mut None)
+}
+
+/// `sample`, also handing back the encoder stage and inner error when the
+/// sampled world's boundary fails to encode (recording only, mtg-kernel#380).
+/// The returned result, including the rejection string, is `sample`'s.
+pub(crate) fn sample_recorded(
+    session: &FastActorSessionV1,
+    seed: u64,
+    prior: &DeckPrior,
+    encoding_failure: &mut Option<V4BoundaryEncodingFailureV1>,
+) -> Result<Sample, String> {
     let mut chosen = None;
     let mut hook_error = None;
     let world = session
@@ -313,6 +367,7 @@ pub(crate) fn sample(
                     Err(V4SearchStateErrorV1::SampleHookRejected)
                 }
             },
+            encoding_failure,
         )
         .map_err(|e| match &hook_error {
             Some(h) => format!("{e:?}: {h}"),
@@ -323,6 +378,9 @@ pub(crate) fn sample(
         prior_deck: chosen.ok_or("deck prior hook did not run")?,
     })
 }
+
+#[cfg(test)]
+mod lembas_tests;
 
 #[cfg(test)]
 mod tests {

@@ -165,7 +165,9 @@ fn actual_registered_installation_current_control_departure_restore_and_cleanup(
             observe_v1(&restored, &surface, actor, 0, 0, 0, 1).unwrap(),
             public
         );
-        state.step = crate::state::Step::End;
+        crate::engine::time_stop_v1::tests::until(&mut state, |state| {
+            state.active_player == actor && state.step == crate::state::Step::End
+        });
         state.engine.priority_passes = [false; 2];
         for _ in 0..16 {
             let decision = engine::advance_until_decision(&mut state);

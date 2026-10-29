@@ -9,14 +9,33 @@ pub enum ObjectSelectionFilterV1 {
     AnotherCreatureFromCapturedSourceV1,
     /// A resolving choice of a card, not an announcement target.
     InstantOrSorcery,
+    /// An artifact, instant or sorcery card in the chooser's own graveyard
+    /// that can be cast as such a spell right now, paying its costs (Bilbo,
+    /// Thief in the Night). Appended for the eternal catalog.
+    CastableArtifactInstantOrSorceryV1,
+    /// An artifact or creature (Phyrexian Metamorph's copy choice).
+    /// Appended for the eternal catalog.
+    ArtifactOrCreatureV1,
+    /// A face-up artifact card the chooser owns in exile (Karn, the Great
+    /// Creator's -2). Appended for the eternal catalog.
+    OwnedFaceUpArtifactCardV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectSelectionActionV1 {
     MoveTo(Zone),
     TapFiveThenTransformSource,
-    CountersAndKeyword { counters: u8, keyword: Keywords },
+    CountersAndKeyword {
+        counters: u8,
+        keyword: Keywords,
+    },
     SacrificeThenDrawAndMakeCapturedSourceUnblockableV1,
     SacrificeThenCounterCapturedSourceV1,
+    /// Cast the selected card from the graveyard during this resolution,
+    /// paying its costs (608.2g). The interpreter stages the cast.
+    CastFromGraveyardV1,
+    /// The resolving permanent spell enters as a copy of the selected
+    /// permanent (Phyrexian Metamorph). Appended for the eternal catalog.
+    EnterAsCopyV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ObjectSelectionRuleV1 {
@@ -35,7 +54,11 @@ fn candidates(
     rule: ObjectSelectionRuleV1,
     source: Option<crate::state::AbilitySourceContractV4>,
 ) -> Result<Vec<EffectObjectBinding>, String> {
-    if !matches!(rule.zone, Zone::Battlefield | Zone::Graveyard) || rule.min > rule.max {
+    let exile = rule.filter == ObjectSelectionFilterV1::OwnedFaceUpArtifactCardV1;
+    if exile != (rule.zone == Zone::Exile)
+        || !matches!(rule.zone, Zone::Battlefield | Zone::Graveyard | Zone::Exile)
+        || rule.min > rule.max
+    {
         return Err("object selection requires a public zone and ordered bounds".into());
     }
     let instant_or_sorcery = rule.filter == ObjectSelectionFilterV1::InstantOrSorcery;
@@ -48,6 +71,15 @@ fn candidates(
     {
         return Err("instant-or-sorcery return requires one own graveyard card".into());
     }
+    let graveyard_cast = rule.filter == ObjectSelectionFilterV1::CastableArtifactInstantOrSorceryV1;
+    if graveyard_cast != (rule.action == ObjectSelectionActionV1::CastFromGraveyardV1)
+        || (graveyard_cast
+            && (rule.zone != Zone::Graveyard || rule.any_player || rule.min != 0 || rule.max != 1))
+    {
+        return Err(
+            "a graveyard cast selects at most one card from the chooser's graveyard".into(),
+        );
+    }
     let mut candidates = Vec::new();
     for owner in [PlayerId::P0, PlayerId::P1] {
         if !rule.any_player && owner != player {
@@ -55,6 +87,8 @@ fn candidates(
         }
         let objects = if rule.zone == Zone::Battlefield {
             &state.players[owner.index()].battlefield
+        } else if exile {
+            &state.exile
         } else {
             &state.players[owner.index()].graveyard
         };
@@ -103,6 +137,29 @@ fn candidates(
                 ObjectSelectionFilterV1::InstantOrSorcery => {
                     crate::engine::object_has_type(state, id, CardType::Instant)
                         || crate::engine::object_has_type(state, id, CardType::Sorcery)
+                }
+                ObjectSelectionFilterV1::ArtifactOrCreatureV1 => {
+                    creature || crate::engine::object_has_type(state, id, CardType::Artifact)
+                }
+                ObjectSelectionFilterV1::OwnedFaceUpArtifactCardV1 => {
+                    live.zone == Zone::Exile
+                        && live.owner == owner
+                        && live.v4.face_down_v1.is_none()
+                        && crate::card_def::CARD_DEFS[live.card_def as usize]
+                            .has_type(CardType::Artifact)
+                }
+                ObjectSelectionFilterV1::CastableArtifactInstantOrSorceryV1 => {
+                    live.zone == Zone::Graveyard
+                        && live.owner == owner
+                        && crate::engine::resolution_cast_v1::can_cast_from_graveyard_v1(
+                            state,
+                            player,
+                            EffectObjectBinding {
+                                object: id,
+                                expected_zone: Zone::Graveyard,
+                                expected_zone_change_count: live.zone_change_count,
+                            },
+                        )
                 }
             };
             if matches {
@@ -259,6 +316,9 @@ pub(super) fn apply_selection(
         ObjectSelectionActionV1::SacrificeThenCounterCapturedSourceV1 => {
             return Err("Hunter cost requires its genuine private resumed owner".into());
         }
+        ObjectSelectionActionV1::CastFromGraveyardV1 => {
+            return Err("a graveyard cast is staged by the resumable interpreter".into());
+        }
         ObjectSelectionActionV1::TapFiveThenTransformSource => {
             if !selected.is_empty() {
                 if selected.len() != 5 {
@@ -272,6 +332,11 @@ pub(super) fn apply_selection(
                     &pending.ctx,
                     state,
                 );
+            }
+        }
+        ObjectSelectionActionV1::EnterAsCopyV1 => {
+            if let Some(copied) = selected.first() {
+                crate::eternal_vintage_v1::enter_as_copy(state, &pending.ctx, *copied);
             }
         }
         ObjectSelectionActionV1::MoveTo(zone) => event::propose_and_commit_batch(
@@ -357,6 +422,32 @@ pub fn gix_pair_4() -> EffectOp {
 }
 pub fn gix_pair_5() -> EffectOp {
     gix_command_pair(5)
+}
+
+/// Authenticates a graveyard cast child (Bilbo) against its typed selection
+/// answer: the definition-owned selection, its one selected card and the
+/// child's permission.
+pub(crate) fn validate_graveyard_cast_authorization(
+    state: &GameState,
+    pending: &EffectContinuation,
+    rule: ObjectSelectionRuleV1,
+    original: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+    path: &[u16],
+    permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
+) -> Result<(), String> {
+    validate_origin(state, pending, rule, path)?;
+    if rule.action != ObjectSelectionActionV1::CastFromGraveyardV1
+        || selected != [permission.card]
+        || !original.contains(&permission.card)
+        || permission.card.expected_zone != Zone::Graveyard
+        || permission.land
+        || permission.maximum_mana_value.is_some()
+        || permission.controller != pending.ctx.resolve_player(rule.player, state)
+    {
+        return Err("graveyard cast answer does not authorize this child".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

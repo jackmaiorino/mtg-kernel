@@ -48,6 +48,8 @@ pub enum RemovalV1 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+// Historical native records retain their original by-value source contracts.
+#[allow(clippy::large_enum_variant)]
 pub enum JournalV1 {
     CombatInput {
         world: Box<GameState>,
@@ -122,8 +124,12 @@ thread_local! {
 // executable authority and never replace custody/world/replay validation.
 // Limits bound event count and canonical JSON volume, not resident heap bytes:
 // typed allocations, spare capacity, and SHA bookkeeping have different sizes.
-const REPLAY_PREFIX_EVENTS: usize = 512;
-const REPLAY_PREFIX_CANONICAL_BYTES: usize = 64 * 1024 * 1024;
+// Drake combats keep whole worlds in history (about 44 KB of JSON per event in
+// a 1,700-event random game), and every row past the prefix is serialized and
+// parsed again on each validation, so the budget covers a long game about
+// three times over.
+pub(super) const REPLAY_PREFIX_EVENTS: usize = 1 << 14;
+pub(super) const REPLAY_PREFIX_CANONICAL_BYTES: usize = 256 * 1024 * 1024;
 struct ReplayPrefixRow {
     event: CommittedEvent,
     canonical_bytes: usize,
@@ -1381,12 +1387,18 @@ fn refs<'a>(rows: &'a [&RecordV1], predicate: impl Fn(&JournalV1) -> bool) -> Ve
 /// Validate originals and one-use custody before a public engine mutation.
 /// Private current-operation tails are permitted only under the actual Runner.
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
+    // Kind-guarded scans: a history with no event of the kind gives no rows
+    // either way, and otherwise the whole history (positions included) is read.
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::DrakeJournalV1])
         .iter()
         .enumerate()
-        .filter_map(|(position, event)| journal(event).map(|row| (position, row)))
+        .filter_map(|(position, event)| match event {
+            CommittedEvent::DrakeJournalV1 { record } => Some((position, &**record)),
+            _ => None,
+        })
         .map(|(position, row)| {
             // An identical appended row must not borrow the earlier record's
             // index and enclosing range. Authenticate its physical position
@@ -1410,6 +1422,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     if state
         .engine
         .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::DrakeHistoryRefV1])
         .iter()
         .any(|e| matches!(e, CommittedEvent::DrakeHistoryRefV1 { .. }))
     {
@@ -1685,28 +1698,30 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     if !hit {
                         verification(|| {
                             let input = restore_world(original, prefix)?;
-                            let replay = {
-                                #[cfg(test)]
-                                let _timing = crate::rl_session::test_timing_v1::span(
-                                    crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
-                                );
-                                crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
-                                    &input,
-                                    operation,
-                                    answers,
-                                    *used_banner,
-                                )?
-                            };
-                            if replay.engine.event_history.get(*start as usize..)
-                                != state
-                                    .engine
-                                    .event_history
-                                    .get(*start as usize..row.index as usize)
-                                || world(&replay)? != **output
-                            {
-                                return Err("Drake complete enclosing original operation/history replay differs".into());
-                            }
-                            Ok(())
+                            crate::linked_aura_operation_v1::as_recorded(|| {
+                                let replay = {
+                                    #[cfg(test)]
+                                    let _timing = crate::rl_session::test_timing_v1::span(
+                                        crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
+                                    );
+                                    crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
+                                        &input,
+                                        operation,
+                                        answers,
+                                        *used_banner,
+                                    )?
+                                };
+                                if replay.engine.event_history.get(*start as usize..)
+                                    != state
+                                        .engine
+                                        .event_history
+                                        .get(*start as usize..row.index as usize)
+                                    || world(&replay)? != **output
+                                {
+                                    return Err("Drake complete enclosing original operation/history replay differs".into());
+                                }
+                                Ok(())
+                            })
                         })?;
                         if let Some(key) = key {
                             verified_keys.push(*key);
@@ -1726,8 +1741,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 .filter(|i| i.v4.stack_item_id == item.v4.stack_item_id)
                 .collect::<Vec<_>>();
             let live_once = matches!((lives.as_slice(), removals.as_slice()), ([live], []) if *live == item.as_ref());
-            if removals.len() > 1
-                || !(local || live_once || lives.is_empty() && removals.len() == 1)
+            let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+            if (disposed && (!lives.is_empty() || !removals.is_empty()))
+                || removals.len() > 1
+                || !(local || live_once || lives.is_empty() && removals.len() == 1 || disposed)
             {
                 return Err("Drake issued stack row lost/duplicated/replayed".into());
             }

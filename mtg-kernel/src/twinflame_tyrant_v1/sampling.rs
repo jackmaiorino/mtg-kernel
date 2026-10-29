@@ -98,7 +98,10 @@ fn operands(
     value: DynamicValueDef,
 ) -> Result<Vec<OperandV38>, String> {
     use DynamicValueDef as V;
-    if matches!(value, V::ControllerLifeTotal) {
+    if matches!(
+        value,
+        V::ControllerLifeTotal | V::UrzasLandsIfMetalcraftV1 | V::SixIfDungeonCompletedElseTwoV1
+    ) {
         return Err("life-total damage requires a distinct scalar sampling contract".into());
     }
     if matches!(value, V::Fixed(_)) {
@@ -119,7 +122,10 @@ fn operands(
             let object = state.objects.get(id);
             let controlled = object.controller == ctx.controller;
             let (first, second, mana_value) = match value {
-                V::Fixed(_) | V::ControllerLifeTotal => {
+                V::Fixed(_)
+                | V::ControllerLifeTotal
+                | V::UrzasLandsIfMetalcraftV1
+                | V::SixIfDungeonCompletedElseTwoV1 => {
                     unreachable!("scalar values have no permanent operands")
                 }
                 V::BattlefieldPermanentsWithSubtype(subtype) => (
@@ -260,6 +266,7 @@ pub(crate) fn damage(
         touched_by: Vec::new(),
         is_combat: false,
         historical_source: None,
+        niv_damage_origin_v1: ctx.niv_damage_origin_v1,
     })
 }
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {

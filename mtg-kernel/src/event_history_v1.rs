@@ -13,16 +13,23 @@
 //! which marks the counts stale: while they are stale `has_any` answers
 //! true, so every scan runs as before, and the next counting method
 //! recounts.
+//!
+//! It also keeps the hash chain behind the linked Aura origin digest v2
+//! ([`EventHistoryV1::chain_digest_v2`]) for its longest unchanged prefix,
+//! so a digest hashes only the events appended since the previous one.
 
 use crate::event::CommittedEvent;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
+use std::sync::Mutex;
 
 /// One value per `CommittedEvent` variant, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
+#[repr(u16)]
 pub enum EventKindV1 {
     Damage,
     ZoneChange,
@@ -261,12 +268,88 @@ pub enum EventKindV1 {
     DrakeJournalV1,
     DrakeHistoryRefV1,
     ConquerorGainReplayBorrowV49,
+    AleshaPowerLkiV1,
+    NivMizzetVisionaryDamageV1,
+    NivMizzetVisionaryTriggerStackedV1,
+    NivMizzetVisionaryDamageSourceDepartureV1,
+    KinshipEntryV1,
+    SphinxsTutelageDrawV1,
+    SphinxsTutelageCollectedV1,
+    SphinxsTutelagePublishedV1,
+    SphinxsTutelageMillStartedV1,
+    SphinxsTutelageMillBatchV1,
+    LathrilCombatDamageV1,
+    LathrilCombatCollectedV1,
+    LathrilCombatPublishedV1,
+    LathrilCombatResolvedV1,
+    LathrilCombatCounteredV1,
+    LathrilCombatObservedV1,
+    CopiedTokenAbilitiesEnteredV1,
+    CopiedTokenEndStepV1,
+    CopiedTokenEndStepCollectedV1,
+    CopiedTokenSacrificePublishedV1,
+    CopiedTokenSacrificeFinishedV1,
+    CuratorEnteredV1,
+    CuratorCollectedV1,
+    CuratorPublishedV1,
+    CuratorFinishedV1,
+    CuratorProgressV1,
+    KykarExiledV1,
+    KykarDelayedCollectedV1,
+    GreatwurmCounterPaymentV1,
+    GreatwurmCombatCaptureV1,
+    GreatwurmCombatBoundV1,
+    GreatwurmCollectedV1,
+    GreatwurmPublishedV1,
+    GreatwurmFinishedV1,
+    GreatwurmCounterInputV1,
+    SourceCopyDepartureV1,
+    SphinxLoreV1,
+    SphinxLoreCastOptionsV1,
+    SphinxLoreCastSelectedV1,
+    OmniscienceCastOptionsV1,
+    OmniscienceCastSelectedV1,
+    NightmareCopyEnteredV1,
+    NightmareCopyLayerV1,
+    HarvesterGraveyardEntryV1,
+    HarvesterResolvedV1,
+    HarvesterCastAnnouncedV1,
+    HarvesterCastReversedV1,
+    ProgenitusInputV1,
+    ProgenitusShuffledV1,
+    LeylineOpeningV1,
+    FiendArtisanInputV1,
+    FiendArtisanPaidV1,
+    FiendArtisanSearchStartedV1,
+    FiendArtisanSearchFinishedV1,
+    LifeLossWideV59,
+    LifeGainWideV59,
+    ConquerorObserverInputV59,
+    ConquerorLossBatchV59,
+    ConquerorCapturedV59,
+    ConquerorCollectedV59,
+    ConquerorJournalV59,
+    FiendishPandaWideGainCaptureV59,
+    ThousandYearStormV1,
+    TimeStopJournalV1,
+    OrdinaryCleanupStageV1,
+    GenesisWaveProgressV1,
+    GenesisWaveFinishedV1,
+    PublishedCastIdentityV1,
+    VivienReidV1,
+    MuldrothaOptionsV1,
+    MuldrothaSelectedV1,
+    MuldrothaPlayedV1,
+    TinybonesV72,
+    LilianaDreadhordeV1,
+    ChandraFlameshaperV74,
+    KaitoCunningV75,
+    DrakusethDamageSourceV76,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 237;
-const _: () =
-    assert!(EventKindV1::ConquerorGainReplayBorrowV49 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 314;
+const _: () = assert!(EventKindV1::DrakusethDamageSourceV76 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -589,8 +672,147 @@ impl CommittedEvent {
             Self::DrakeJournalV1 { .. } => EventKindV1::DrakeJournalV1,
             Self::DrakeHistoryRefV1 { .. } => EventKindV1::DrakeHistoryRefV1,
             Self::ConquerorGainReplayBorrowV49 { .. } => EventKindV1::ConquerorGainReplayBorrowV49,
+            Self::AleshaPowerLkiV1 { .. } => EventKindV1::AleshaPowerLkiV1,
+            Self::NivMizzetVisionaryDamageV1 { .. } => EventKindV1::NivMizzetVisionaryDamageV1,
+            Self::NivMizzetVisionaryTriggerStackedV1 { .. } => {
+                EventKindV1::NivMizzetVisionaryTriggerStackedV1
+            }
+            Self::NivMizzetVisionaryDamageSourceDepartureV1 { .. } => {
+                EventKindV1::NivMizzetVisionaryDamageSourceDepartureV1
+            }
+            Self::KinshipEntryV1 { .. } => EventKindV1::KinshipEntryV1,
+            Self::SphinxsTutelageDrawV1 { .. } => EventKindV1::SphinxsTutelageDrawV1,
+            Self::SphinxsTutelageCollectedV1 { .. } => EventKindV1::SphinxsTutelageCollectedV1,
+            Self::SphinxsTutelagePublishedV1 { .. } => EventKindV1::SphinxsTutelagePublishedV1,
+            Self::SphinxsTutelageMillStartedV1 { .. } => EventKindV1::SphinxsTutelageMillStartedV1,
+            Self::SphinxsTutelageMillBatchV1 { .. } => EventKindV1::SphinxsTutelageMillBatchV1,
+            Self::LathrilCombatDamageV1 { .. } => EventKindV1::LathrilCombatDamageV1,
+            Self::LathrilCombatCollectedV1 { .. } => EventKindV1::LathrilCombatCollectedV1,
+            Self::LathrilCombatPublishedV1 { .. } => EventKindV1::LathrilCombatPublishedV1,
+            Self::LathrilCombatResolvedV1 { .. } => EventKindV1::LathrilCombatResolvedV1,
+            Self::LathrilCombatCounteredV1 { .. } => EventKindV1::LathrilCombatCounteredV1,
+            Self::LathrilCombatObservedV1 { .. } => EventKindV1::LathrilCombatObservedV1,
+            Self::CopiedTokenAbilitiesEnteredV1 { .. } => {
+                EventKindV1::CopiedTokenAbilitiesEnteredV1
+            }
+            Self::CopiedTokenEndStepV1 { .. } => EventKindV1::CopiedTokenEndStepV1,
+            Self::CopiedTokenEndStepCollectedV1 { .. } => {
+                EventKindV1::CopiedTokenEndStepCollectedV1
+            }
+            Self::CopiedTokenSacrificePublishedV1 { .. } => {
+                EventKindV1::CopiedTokenSacrificePublishedV1
+            }
+            Self::CopiedTokenSacrificeFinishedV1 { .. } => {
+                EventKindV1::CopiedTokenSacrificeFinishedV1
+            }
+            Self::CuratorEnteredV1 { .. } => EventKindV1::CuratorEnteredV1,
+            Self::CuratorCollectedV1 { .. } => EventKindV1::CuratorCollectedV1,
+            Self::CuratorPublishedV1 { .. } => EventKindV1::CuratorPublishedV1,
+            Self::CuratorFinishedV1 { .. } => EventKindV1::CuratorFinishedV1,
+            Self::CuratorProgressV1 { .. } => EventKindV1::CuratorProgressV1,
+            Self::KykarExiledV1 { .. } => EventKindV1::KykarExiledV1,
+            Self::KykarDelayedCollectedV1 { .. } => EventKindV1::KykarDelayedCollectedV1,
+            Self::GreatwurmCounterPaymentV1 { .. } => EventKindV1::GreatwurmCounterPaymentV1,
+            Self::GreatwurmCombatCaptureV1 { .. } => EventKindV1::GreatwurmCombatCaptureV1,
+            Self::GreatwurmCombatBoundV1 { .. } => EventKindV1::GreatwurmCombatBoundV1,
+            Self::GreatwurmCollectedV1 { .. } => EventKindV1::GreatwurmCollectedV1,
+            Self::GreatwurmPublishedV1 { .. } => EventKindV1::GreatwurmPublishedV1,
+            Self::GreatwurmFinishedV1 { .. } => EventKindV1::GreatwurmFinishedV1,
+            Self::GreatwurmCounterInputV1 { .. } => EventKindV1::GreatwurmCounterInputV1,
+            Self::SourceCopyDepartureV1 { .. } => EventKindV1::SourceCopyDepartureV1,
+            Self::SphinxLoreV1 { .. } => EventKindV1::SphinxLoreV1,
+            Self::SphinxLoreCastOptionsV1 { .. } => EventKindV1::SphinxLoreCastOptionsV1,
+            Self::SphinxLoreCastSelectedV1 { .. } => EventKindV1::SphinxLoreCastSelectedV1,
+            Self::OmniscienceCastOptionsV1 { .. } => EventKindV1::OmniscienceCastOptionsV1,
+            Self::OmniscienceCastSelectedV1 { .. } => EventKindV1::OmniscienceCastSelectedV1,
+            Self::NightmareCopyEnteredV1 { .. } => EventKindV1::NightmareCopyEnteredV1,
+            Self::NightmareCopyLayerV1 { .. } => EventKindV1::NightmareCopyLayerV1,
+            Self::HarvesterGraveyardEntryV1 { .. } => EventKindV1::HarvesterGraveyardEntryV1,
+            Self::HarvesterResolvedV1 { .. } => EventKindV1::HarvesterResolvedV1,
+            Self::HarvesterCastAnnouncedV1 { .. } => EventKindV1::HarvesterCastAnnouncedV1,
+            Self::HarvesterCastReversedV1 { .. } => EventKindV1::HarvesterCastReversedV1,
+            Self::ProgenitusInputV1 { .. } => EventKindV1::ProgenitusInputV1,
+            Self::ProgenitusShuffledV1 { .. } => EventKindV1::ProgenitusShuffledV1,
+            Self::LeylineOpeningV1 { .. } => EventKindV1::LeylineOpeningV1,
+            Self::FiendArtisanInputV1 { .. } => EventKindV1::FiendArtisanInputV1,
+            Self::FiendArtisanPaidV1 { .. } => EventKindV1::FiendArtisanPaidV1,
+            Self::FiendArtisanSearchStartedV1 { .. } => EventKindV1::FiendArtisanSearchStartedV1,
+            Self::FiendArtisanSearchFinishedV1 { .. } => EventKindV1::FiendArtisanSearchFinishedV1,
+            Self::LifeLossWideV59 { .. } => EventKindV1::LifeLossWideV59,
+            Self::LifeGainWideV59 { .. } => EventKindV1::LifeGainWideV59,
+            Self::ConquerorObserverInputV59 { .. } => EventKindV1::ConquerorObserverInputV59,
+            Self::ConquerorLossBatchV59 { .. } => EventKindV1::ConquerorLossBatchV59,
+            Self::ConquerorCapturedV59 { .. } => EventKindV1::ConquerorCapturedV59,
+            Self::ConquerorCollectedV59 { .. } => EventKindV1::ConquerorCollectedV59,
+            Self::ConquerorJournalV59 { .. } => EventKindV1::ConquerorJournalV59,
+            Self::FiendishPandaWideGainCaptureV59 { .. } => {
+                EventKindV1::FiendishPandaWideGainCaptureV59
+            }
+            Self::ThousandYearStormV1 { .. } => EventKindV1::ThousandYearStormV1,
+            Self::TimeStopJournalV1 { .. } => EventKindV1::TimeStopJournalV1,
+            Self::OrdinaryCleanupStageV1 { .. } => EventKindV1::OrdinaryCleanupStageV1,
+            Self::GenesisWaveProgressV1 { .. } => EventKindV1::GenesisWaveProgressV1,
+            Self::GenesisWaveFinishedV1 { .. } => EventKindV1::GenesisWaveFinishedV1,
+            Self::PublishedCastIdentityV1 { .. } => EventKindV1::PublishedCastIdentityV1,
+            Self::VivienReidV1 { .. } => EventKindV1::VivienReidV1,
+            Self::MuldrothaOptionsV1 { .. } => EventKindV1::MuldrothaOptionsV1,
+            Self::MuldrothaSelectedV1 { .. } => EventKindV1::MuldrothaSelectedV1,
+            Self::MuldrothaPlayedV1 { .. } => EventKindV1::MuldrothaPlayedV1,
+            Self::TinybonesV72 { .. } => EventKindV1::TinybonesV72,
+            Self::LilianaDreadhordeV1 { .. } => EventKindV1::LilianaDreadhordeV1,
+            Self::ChandraFlameshaperV74 { .. } => EventKindV1::ChandraFlameshaperV74,
+            Self::KaitoCunningV75 { .. } => EventKindV1::KaitoCunningV75,
+            Self::DrakusethDamageSourceV76 { .. } => EventKindV1::DrakusethDamageSourceV76,
         }
     }
+}
+
+/// The v2 hash chain over a prefix of the events: the prefix length and the
+/// SHA-256 state after it. Only an acceleration: the chain is a function of
+/// the events, so it never enters a comparison, hash, print or record.
+#[derive(Default)]
+struct ChainV2(Mutex<Option<(usize, Sha256)>>);
+
+impl ChainV2 {
+    fn get(&self) -> Option<(usize, Sha256)> {
+        self.0.lock().ok().and_then(|chain| chain.clone())
+    }
+
+    fn set(&self, chain: (usize, Sha256)) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(chain);
+        }
+    }
+
+    /// Drops the chain unless it covers at most the first `len` events.
+    fn keep(&mut self, len: usize) {
+        let slot = self
+            .0
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if slot.as_ref().is_some_and(|(covered, _)| *covered > len) {
+            *slot = None;
+        }
+    }
+
+    fn forget(&mut self) {
+        *self
+            .0
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
+    }
+}
+
+impl Clone for ChainV2 {
+    fn clone(&self) -> Self {
+        Self(Mutex::new(self.get()))
+    }
+}
+
+thread_local! {
+    /// The address of the one history that serializes as `[]`, while the v2
+    /// origin digest writes the rest of its state.
+    static OMITTED_V2: Cell<usize> = const { Cell::new(0) };
 }
 
 /// `EngineState::event_history`: the events in commit order and the number
@@ -601,6 +823,7 @@ pub struct EventHistoryV1 {
     counts: [u32; EVENT_KIND_COUNT_V1],
     /// Set by a mutable access outside the counting methods.
     stale: bool,
+    chain: ChainV2,
 }
 
 impl EventHistoryV1 {
@@ -609,6 +832,7 @@ impl EventHistoryV1 {
             events: Vec::new(),
             counts: [0; EVENT_KIND_COUNT_V1],
             stale: false,
+            chain: ChainV2::default(),
         }
     }
 
@@ -650,6 +874,7 @@ impl EventHistoryV1 {
         #[cfg(any(test, feature = "event-sample-harvest-v1"))]
         sample_harvest_v1::note(&event);
         self.settle();
+        self.chain.keep(index);
         let kind = event.kind_v1();
         self.events.insert(index, event);
         self.counts[kind as usize] += 1;
@@ -657,6 +882,7 @@ impl EventHistoryV1 {
 
     pub fn remove(&mut self, index: usize) -> CommittedEvent {
         self.settle();
+        self.chain.keep(index);
         let event = self.events.remove(index);
         self.counts[event.kind_v1() as usize] -= 1;
         event
@@ -665,12 +891,14 @@ impl EventHistoryV1 {
     pub fn pop(&mut self) -> Option<CommittedEvent> {
         self.settle();
         let event = self.events.pop()?;
+        self.chain.keep(self.events.len());
         self.counts[event.kind_v1() as usize] -= 1;
         Some(event)
     }
 
     pub fn retain(&mut self, mut keep: impl FnMut(&CommittedEvent) -> bool) {
         self.settle();
+        self.chain.forget();
         let Self { events, counts, .. } = self;
         events.retain(|event| {
             let kept = keep(event);
@@ -683,6 +911,7 @@ impl EventHistoryV1 {
 
     pub fn truncate(&mut self, len: usize) {
         self.settle();
+        self.chain.keep(len);
         for event in self.events.get(len..).unwrap_or_default() {
             self.counts[event.kind_v1() as usize] -= 1;
         }
@@ -693,6 +922,46 @@ impl EventHistoryV1 {
         self.events.clear();
         self.counts = [0; EVENT_KIND_COUNT_V1];
         self.stale = false;
+        self.chain.forget();
+    }
+
+    /// The v2 hash chain over every event: SHA-256 of a domain tag, then of
+    /// each event's canonical JSON length (u64, little-endian) and bytes, in
+    /// order. Hashes only the events past the longest prefix chained before.
+    pub(crate) fn chain_digest_v2(&self) -> [u8; 32] {
+        let (covered, mut chain) = self
+            .chain
+            .get()
+            .filter(|(covered, _)| *covered <= self.events.len())
+            .unwrap_or_else(|| {
+                let mut chain = Sha256::new();
+                chain.update(b"mtg-kernel/event-history-chain/v2");
+                (0, chain)
+            });
+        for event in &self.events[covered..] {
+            let bytes = serde_json::to_vec(event).expect("committed events serialize");
+            chain.update(
+                u64::try_from(bytes.len())
+                    .expect("event length")
+                    .to_le_bytes(),
+            );
+            chain.update(&bytes);
+        }
+        self.chain.set((self.events.len(), chain.clone()));
+        chain.finalize().into()
+    }
+
+    /// Runs `write` with this history (and no other) serializing as `[]`.
+    pub(crate) fn omitted_v2<T>(&self, write: impl FnOnce() -> T) -> T {
+        struct Restore(usize);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                OMITTED_V2.with(|omitted| omitted.set(self.0));
+            }
+        }
+        let _restore =
+            Restore(OMITTED_V2.with(|omitted| omitted.replace(self as *const Self as usize)));
+        write()
     }
 
     fn settle(&mut self) {
@@ -720,6 +989,7 @@ impl From<Vec<CommittedEvent>> for EventHistoryV1 {
             events,
             counts: [0; EVENT_KIND_COUNT_V1],
             stale: true,
+            chain: ChainV2::default(),
         };
         history.settle();
         history
@@ -742,10 +1012,12 @@ impl Deref for EventHistoryV1 {
     }
 }
 
-/// Any change outside the counting methods marks the counts stale.
+/// Any change outside the counting methods marks the counts stale and drops
+/// the v2 chain.
 impl DerefMut for EventHistoryV1 {
     fn deref_mut(&mut self) -> &mut Vec<CommittedEvent> {
         self.stale = true;
+        self.chain.forget();
         &mut self.events
     }
 }
@@ -816,6 +1088,9 @@ impl fmt::Debug for EventHistoryV1 {
 
 impl Serialize for EventHistoryV1 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if OMITTED_V2.with(Cell::get) == self as *const Self as usize {
+            return serializer.collect_seq(std::iter::empty::<&CommittedEvent>());
+        }
         self.events.serialize(serializer)
     }
 }

@@ -182,8 +182,18 @@ pub(crate) fn self_counter_boost(state: &GameState, id: ObjectId) -> (i32, i32) 
 pub(crate) fn reads_counter_lki(card_def: u16) -> bool {
     matches!(
         CARD_DEFS.get(card_def as usize).map(|def| def.name),
-        Some("Quirion Beastcaller" | "Unstoppable Slasher" | "Essence Channeler")
-    )
+        Some(
+            "Quirion Beastcaller"
+                | "Unstoppable Slasher"
+                | "Essence Channeler"
+                // Eternal catalog: Blast Zone reads its charge counters
+                // after it is sacrificed.
+                | "Blast Zone"
+        )
+    ) || (cfg!(feature = "eternal-fixtures")
+        && CARD_DEFS
+            .get(card_def as usize)
+            .is_some_and(|def| crate::eternal_legacy_e8a_v1::statics::reads_counter_lki(def.name)))
 }
 
 /// Generic ward costs other permanents grant `id`, one entry per granting
@@ -260,6 +270,9 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
                     && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
             })
             .count(),
+        #[cfg(feature = "eternal-fixtures")]
+        _ => return crate::eternal_cards_v1::characteristic_defining_power(state, id),
+        #[cfg(not(feature = "eternal-fixtures"))]
         _ => return None,
     };
     Some(i32::try_from(count).unwrap_or(i32::MAX))
@@ -270,7 +283,14 @@ pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId)
     if CARD_DEFS.get(object.card_def as usize)?.name == "Regal Bunnicorn" {
         characteristic_defining_power(state, id)
     } else {
-        None
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            crate::eternal_cards_v1::characteristic_defining_toughness(state, id)
+        }
+        #[cfg(not(feature = "eternal-fixtures"))]
+        {
+            None
+        }
     }
 }
 
@@ -395,9 +415,12 @@ pub(crate) fn expire_attack_block_restrictions(state: &mut GameState) {
     state.attack_block_restrictions_v1 = (!restrictions.is_empty()).then_some(restrictions);
 }
 
-pub(crate) use crate::creature_stats_lki_v1::{
-    current_or_last_creature_stats, record_creature_stats_lki,
-};
+pub(crate) use crate::creature_stats_lki_v1::current_or_last_creature_stats;
+#[cfg(any(
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+))]
+pub(crate) use crate::creature_stats_lki_v1::record_creature_stats_lki;
 
 /// Whether a recorded restriction stops `id` from attacking or blocking.
 pub(crate) fn cant_attack_or_block(state: &GameState, id: ObjectId) -> bool {

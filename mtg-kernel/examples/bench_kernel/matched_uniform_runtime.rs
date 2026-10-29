@@ -1271,6 +1271,9 @@ fn semantic_category(semantic: &ActionSemanticV1) -> Result<&'static str, String
         ActionSemanticV1::ChooseLondonBottom { .. } => "choose_london_bottom",
         #[cfg(feature = "limited-fdn-fixtures")]
         ActionSemanticV1::ChooseTriggerOrderNext { .. } => "choose_trigger_order_next",
+        ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. } => {
+            return Err("matched-uniform frozen benchmark requires a separate successor for full-range cast-X decisions".into());
+        }
         ActionSemanticV1::ChooseEntryColorV36 { .. }
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }

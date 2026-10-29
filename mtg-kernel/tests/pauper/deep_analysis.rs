@@ -277,11 +277,25 @@ fn flashback_life_two_is_illegal_life_three_loses_and_life_four_resolves() {
                 player: PlayerId::P0,
                 amount: 3,
             },
+            CommittedEvent::PublishedCastIdentityV1 { receipt },
             CommittedEvent::SpellCast {
+                spell,
                 controller: PlayerId::P0,
-                ..
             },
-        ]
+        ] if *spell == deep
+            && receipt.spell == deep
+            && receipt.owner == PlayerId::P0
+            && receipt.controller == PlayerId::P0
+            && receipt.origin_zone == Zone::Graveyard
+            && receipt.origin_zone_change_count.checked_add(1)
+                == Some(receipt.stack_zone_change_count)
+            && receipt.stack_zone_change_count == above.objects.get(deep).zone_change_count
+            && receipt.spell_cast_history_index == u64::try_from(history_start + 6).unwrap()
+            && receipt.public_identity == mtg_kernel::cast_identity_v1::PublicIdentityV1::Known {
+                card_def: card_id("Deep Analysis"),
+            }
+            && above.stack.iter().any(|item|
+                item.source == deep && item.v4.stack_item_id == receipt.stack_item_id)
     ));
     pass_until_stack_len(&mut above, 0);
     assert_eq!(above.players[0].hand, libraries[0][..2]);

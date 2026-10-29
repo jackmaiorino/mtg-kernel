@@ -3,6 +3,7 @@ mtg_kernel::fast_global_allocator!();
 use mtg_kernel::regret_census_v1::{run_v1, CensusConfigV1};
 
 fn main() {
+    mtg_kernel::opt_out_of_power_throttling_v1();
     let mut cfg = CensusConfigV1 {
         source: String::new(),
         out: String::new(),

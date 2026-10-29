@@ -60,6 +60,18 @@ class TemplateTests(unittest.TestCase):
             with self.subTest(bad_size=bad_size), self.assertRaises(ValueError):
                 pv.build_template('phase1-volume-test', bad_size)
 
+    def test_study_volume_needs_a_stated_reason(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(ValueError):
+                pv.prepare(spec(size_gb=200), Path(temporary) / 'no-reason', now=NOW)
+            with self.assertRaises(ValueError):
+                pv.prepare(spec(size_gb=200, size_reason='  '), Path(temporary) / 'blank', now=NOW)
+            result = pv.prepare(spec(size_gb=200, size_reason='G(i): 60 GiB reserve plus peak'),
+                                Path(temporary) / 'study', now=NOW)
+            self.assertEqual((result['size_gb'], result['size_reason']), (200, 'G(i): 60 GiB reserve plus peak'))
+            with self.assertRaises(ValueError):
+                pv.prepare(spec(size_gb=251, size_reason='too big'), Path(temporary) / 'big', now=NOW)
+
     def test_template_accepts_boundary_sizes(self):
         pv.build_template('phase1-volume-test', 1)
         pv.build_template('phase1-volume-test', pv.VOLUME_SIZE_GB_CAP)
@@ -153,6 +165,23 @@ class PlaceholderTests(unittest.TestCase):
             name, size, data_center = api.create.call_args.args
             self.assertNotIn('fake-sensitive-key', (name, size, data_center))
             self.assertNotIn(pv.KEY_PLACEHOLDER, (name, size, data_center))
+
+
+    def test_study_volume_reaches_the_client_only_with_its_recorded_reason(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshot = snapshot_path(temporary)
+            prepared = Path(temporary) / 'prepared'
+            pv.prepare(spec(size_gb=200, size_reason='G(i): reserve plus peak'), prepared, now=NOW)
+            template = pv.prepared_template(prepared)
+            api = Mock(); api.create.return_value = volume(size=200)
+            with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+                pv.execute_create(template, prepared, snapshot, api=api, now=NOW)
+            self.assertEqual(api.create.call_args.kwargs['cap_gb'], pv.STUDY_VOLUME_SIZE_GB_CAP)
+            with self.assertRaises(ValueError):
+                pv.Provider('k').create('phase1-volume-test', 200, pv.DATA_CENTER_ID)
+            with self.assertRaises(ValueError):
+                pv.Provider('k').create('phase1-volume-test', 251, pv.DATA_CENTER_ID,
+                                        cap_gb=pv.STUDY_VOLUME_SIZE_GB_CAP)
 
 
 class SanitizedVerifyTests(unittest.TestCase):
@@ -319,7 +348,8 @@ class EndToEndExecuteTests(unittest.TestCase):
                  patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pv.main()
             provider_cls.assert_called_once_with('fake-sensitive-key')
-            fake_api.create.assert_called_once_with('phase1-volume-qualification-test', 2, 'EU-RO-1')
+            fake_api.create.assert_called_once_with('phase1-volume-qualification-test', 2, 'EU-RO-1',
+                                                    cap_gb=pv.VOLUME_SIZE_GB_CAP)
             created = read(output / 'created-volume.json')
             self.assertEqual(created['id'], 'agv6w2qcg7')
             self.assertNotIn('fake-sensitive-key', json.dumps(created))

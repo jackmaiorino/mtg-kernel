@@ -87,6 +87,10 @@ fn groups(state: &GameState) -> Vec<LegendGroupV1> {
             if object.zone == Zone::Battlefield
                 && object.controller == controller
                 && engine::effective_supertypes(state, id).contains(&Supertype::Legendary)
+                // Council of Reeds: "The 'legend rule' doesn't apply to
+                // creatures you control."
+                && !(cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_e5a_v1::statics::legend_rule_exempt(state, id))
             {
                 names
                     .entry(engine::effective_name(state, id))
@@ -116,7 +120,11 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
     for (id, object) in state.objects.iter() {
         let definition = &card_def::CARD_DEFS[object.card_def as usize];
         if object.zone != Zone::Battlefield {
-            if definition.is_token {
+            // A phased-out token still exists (702.26).
+            if definition.is_token
+                && !(cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_e5a_v1::phasing::phased_out(state, id))
+            {
                 ceasing.push(link(state, id));
             }
             continue;
@@ -133,11 +141,10 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
                 state.objects.try_get(host_link.object).is_some_and(|host| {
                     host.zone == Zone::Battlefield
                         && host.zone_change_count == host_link.zone_change_count
-                        && engine::object_has_type(
-                            state,
-                            host_link.object,
-                            definition.attachment.unwrap().enchanted_type(),
-                        )
+                        && definition
+                            .attachment
+                            .unwrap()
+                            .host_matches(state, host_link.object)
                         && host.attachments.contains(&id)
                 })
             });

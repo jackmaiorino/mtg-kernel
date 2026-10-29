@@ -155,14 +155,29 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
                     pregame.stage = StageV1::Announce { next: next + 1 };
                     continue;
                 }
+                let mulligan_count = pregame.counts[player.index()];
+                #[cfg(feature = "eternal-fixtures")]
+                if let Some(powder) =
+                    crate::eternal_vintage_e7b_v1::statics::serum_powder_offer(state, player)
+                {
+                    // 0 keeps this hand for the mulligan choice, 1 exiles it
+                    // and draws that many cards.
+                    return Ok(Some(Decision::ChooseEffectOption {
+                        player,
+                        source: powder,
+                        option_count: 2,
+                    }));
+                }
                 return Ok(Some(Decision::ChooseLondonMulligan {
                     player,
-                    mulligan_count: pregame.counts[player.index()],
+                    mulligan_count,
                 }));
             }
             StageV1::Announce { next: 2 } => {
                 if pregame.kept.iter().all(|&kept| kept) {
                     state.london_mulligans_v1.as_mut().unwrap().stage = StageV1::Complete;
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_vintage_e7b_v1::statics::end_mulligans(state);
                     return Ok(None);
                 }
                 // All announcements are complete before any hand changes.
@@ -232,9 +247,53 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
     Ok(None)
 }
 
+/// Serum Powder's choice, offered before `player`'s mulligan choice.
+#[cfg(feature = "eternal-fixtures")]
+fn answer_serum_powder(
+    state: &mut GameState,
+    player: PlayerId,
+    action: Action,
+) -> Result<(), String> {
+    match action {
+        Action::ChooseEffectOption(0) => {
+            crate::eternal_vintage_e7b_v1::statics::decline_serum_powder(state, player);
+            Ok(())
+        }
+        Action::ChooseEffectOption(1) => {
+            let hand = state.players[player.index()].hand.clone();
+            event::propose_and_commit_batch(
+                state,
+                hand.iter()
+                    .map(|&card| ProposedEvent::zone_change(card, Zone::Exile))
+                    .collect(),
+            );
+            for _ in 0..hand.len() {
+                event::propose_and_commit(state, ProposedEvent::draw(player));
+            }
+            let bindings = hand_bindings(state, player);
+            state.london_mulligans_v1.as_mut().unwrap().hands[player.index()] = bindings;
+            Ok(())
+        }
+        _ => Err("action does not answer the Serum Powder choice".into()),
+    }
+}
+
 pub(crate) fn answer(state: &mut GameState, action: Action) -> Result<(), String> {
     validate(state)?;
     let pregame = state.london_mulligans_v1.as_ref().unwrap();
+    #[cfg(feature = "eternal-fixtures")]
+    if let StageV1::Announce { next } = pregame.stage {
+        if next < 2 {
+            let player = pregame.player(next);
+            if !pregame.kept[player.index()]
+                && pregame.counts[player.index()] < HAND_SIZE
+                && crate::eternal_vintage_e7b_v1::statics::serum_powder_offer(state, player)
+                    .is_some()
+            {
+                return answer_serum_powder(state, player, action);
+            }
+        }
+    }
     match (pregame.stage.clone(), action) {
         (StageV1::Announce { next }, Action::ChooseLondonMulligan { mulligan }) if next < 2 => {
             let player = pregame.player(next);
@@ -273,4 +332,19 @@ pub(crate) fn answer(state: &mut GameState, action: Action) -> Result<(), String
         }
         _ => Err("action does not answer the current London mulligan decision".into()),
     }
+}
+
+/// Exact native kept hands for the following opening-hand-action checkpoint.
+/// The normal London protocol and its serialized shape remain unchanged.
+pub(crate) fn kept_hands_for_opening_v1(
+    state: &GameState,
+) -> Result<Option<[Vec<ObjectLinkV4>; 2]>, String> {
+    let Some(opening) = state.london_mulligans_v1.as_ref() else {
+        return Ok(None);
+    };
+    validate(state)?;
+    if !opening.is_complete() {
+        return Err("London keeps must finish before opening actions".into());
+    }
+    Ok(Some(opening.hands.clone()))
 }

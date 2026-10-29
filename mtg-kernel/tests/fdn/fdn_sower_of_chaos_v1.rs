@@ -483,7 +483,10 @@ fn activation_during_real_madness_cleanup_priority_expires_before_the_player_fli
         assert_eq!(state.players[actor.index()].hand.len(), 9);
         let forest = *state.players[actor.index()].hand.last().unwrap();
         assert_eq!(state.objects.get(forest).name, "Forest");
-        state.step = Step::End;
+        {
+            let active = state.active_player;
+            super::fixture_turn_v1::reach(&mut state, active, Step::End);
+        }
         let round = state.turn;
         let mut discarded = false;
         for _ in 0..20 {

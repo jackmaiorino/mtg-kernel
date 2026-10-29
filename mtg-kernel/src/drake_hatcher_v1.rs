@@ -432,7 +432,7 @@ mod tests {
         let id = card_id_by_name("Drake Hatcher").unwrap();
         assert_eq!(id, 448);
         assert_eq!(card_id_by_name("Drake Token"), Some(449));
-        assert_eq!(CARD_DEFS.len(), 452);
+        assert_eq!(CARD_DEFS.len(), 496);
         assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
         assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_ok());
         assert!(
@@ -1261,8 +1261,8 @@ mod tests {
             let (cold, retained, bytes, reused) = custody::replay_prefix_probe_for_test(history);
             assert_eq!(cold, oracle);
             assert_eq!(reused, 0);
-            assert!(retained > 0 && retained <= 512);
-            assert!(bytes > 0 && bytes <= 64 * 1024 * 1024);
+            assert!(retained > 0 && retained <= custody::REPLAY_PREFIX_EVENTS);
+            assert!(bytes > 0 && bytes <= custody::REPLAY_PREFIX_CANONICAL_BYTES);
             let restored = restored(&state);
             let (warm, _, _, reused) =
                 custody::replay_prefix_probe_for_test(&restored.engine.event_history);
@@ -1380,14 +1380,17 @@ mod tests {
             let ordinary = state.engine.event_history.iter().find(|event| {
                 matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == ordinary)
             }).unwrap();
-            let primitive = vec![ordinary.clone(); 513];
+            let primitive = vec![ordinary.clone(); custody::REPLAY_PREFIX_EVENTS + 1];
             custody::clear_replay_prefix_for_test();
             let (keys, rows, bytes, _) = custody::replay_prefix_probe_for_test(&primitive);
             assert_eq!(keys, custody::original_replay_keys_for_test(&primitive));
-            assert_eq!(rows, 512);
-            assert!(bytes <= 64 * 1024 * 1024);
+            assert_eq!(rows, custody::REPLAY_PREFIX_EVENTS);
+            assert!(bytes <= custody::REPLAY_PREFIX_CANONICAL_BYTES);
             let (_, rows, _, reused) = custody::replay_prefix_probe_for_test(&primitive);
-            assert_eq!((rows, reused), (512, 512));
+            assert_eq!(
+                (rows, reused),
+                (custody::REPLAY_PREFIX_EVENTS, custody::REPLAY_PREFIX_EVENTS)
+            );
         }
     }
 

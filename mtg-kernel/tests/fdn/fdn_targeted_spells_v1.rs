@@ -697,7 +697,10 @@ fn flight_cleanup_removes_flying_and_prevention_but_keeps_the_counter() {
     let mut surface = surface();
     cast(&mut surface, &mut state, "Fleeting Flight", &[target]);
     resolve(&mut surface, &mut state);
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(&mut state, active, Step::End);
+    }
     state.engine.priority_passes = [false, false];
     apply(&mut surface, &mut state, Action::Pass);
     priority(&mut surface, &mut state);

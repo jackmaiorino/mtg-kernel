@@ -30,11 +30,12 @@ use crate::state::{
     StackItem, Target, Zone,
 };
 
-/// Definitions with "Start your engines!".
-fn has_start_your_engines(card_def: u16) -> bool {
-    CARD_DEFS
-        .get(usize::from(card_def))
-        .is_some_and(|def| def.name == "Burnout Bashtronaut")
+/// Definitions with "Start your engines!". The eternal catalog's Momentum
+/// Breaker has it too (`eternal_e9b_v1`).
+pub(crate) fn has_start_your_engines(card_def: u16) -> bool {
+    CARD_DEFS.get(usize::from(card_def)).is_some_and(|def| {
+        def.name == "Burnout Bashtronaut" || crate::eternal_e9b_v1::starts_engines(def.name)
+    })
 }
 
 /// The player's current speed; zero means the player has no speed.
@@ -138,7 +139,9 @@ pub(crate) fn note_life_loss(
 pub(crate) fn max_speed_keywords(state: &GameState, id: ObjectId) -> Keywords {
     let object = state.objects.get(id);
     if object.zone == Zone::Battlefield
-        && has_start_your_engines(object.card_def)
+        && CARD_DEFS
+            .get(usize::from(object.card_def))
+            .is_some_and(|def| def.name == "Burnout Bashtronaut")
         && speed(state, object.controller) >= SpeedV1::MAX
     {
         Keywords::DOUBLE_STRIKE
@@ -350,10 +353,13 @@ pub(crate) fn convoke_plan(
                 unreachable!("checked above")
             };
             let mask = crate::card_def::mana_color_mask(*color);
-            let Some(position) = available
-                .iter()
-                .position(|&id| state.objects.get(id).v4.effective_color_mask & mask != 0)
-            else {
+            let Some(position) = available.iter().position(|&id| {
+                // Painter's Servant's added color (eternal wave E9a).
+                (state.objects.get(id).v4.effective_color_mask
+                    | crate::eternal_legacy_e9a_v1::statics::painter_mask(state))
+                    & mask
+                    != 0
+            }) else {
                 pip_payers.clear();
                 available = creatures.clone();
                 break;
@@ -398,12 +404,20 @@ fn needs_power_lki(card_def: u16) -> bool {
 /// leave triggers, and descend (700.14) for a permanent card going to its
 /// owner's graveyard.
 pub(crate) fn before_zone_change(state: &mut GameState, object: ObjectId, to: Zone) {
+    before_zone_change_with_power(state, object, to, None);
+}
+pub(crate) fn before_zone_change_with_power(
+    state: &mut GameState,
+    object: ObjectId,
+    to: Zone,
+    frozen: Option<i32>,
+) {
     let live = state.objects.get(object);
     if live.zone == Zone::Battlefield && needs_power_lki(live.card_def) {
         let marker = CommittedEvent::PowerBeforeLeavingBattlefield {
             object,
             zone_change_count: live.zone_change_count,
-            power: crate::engine::effective_power(state, object),
+            power: frozen.unwrap_or_else(|| crate::engine::effective_power(state, object)),
         };
         state.engine.event_log.push(marker.clone());
         state.engine.event_history.push(marker);
@@ -420,6 +434,10 @@ pub(crate) fn before_zone_change(state: &mut GameState, object: ObjectId, to: Zo
         state.engine.event_log.push(marker.clone());
         state.engine.event_history.push(marker);
     }
+    record_descended_zone_change_v1(state, object, to);
+}
+/// Native characteristic bookkeeping without publishing a departure receipt.
+pub(crate) fn record_descended_zone_change_v1(state: &mut GameState, object: ObjectId, to: Zone) {
     let live = state.objects.get(object);
     let def = &CARD_DEFS[usize::from(live.card_def)];
     let permanent_card = [

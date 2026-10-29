@@ -135,6 +135,7 @@ fn captures(state: &GameState) -> Vec<u64> {
         .scan_for_v1(&[
             EventKindV1::FiendishPandaDeathCaptureV1,
             EventKindV1::FiendishPandaLifeGainCaptureV1,
+            EventKindV1::FiendishPandaWideGainCaptureV59,
         ])
         .iter()
         .enumerate()
@@ -142,6 +143,7 @@ fn captures(state: &GameState) -> Vec<u64> {
             matches!(
                 e,
                 CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
+                    | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
                     | CommittedEvent::FiendishPandaDeathCaptureV1 { .. }
             )
             .then_some(at as u64)
@@ -852,7 +854,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     _ => None,
                 }).collect::<Vec<_>>();
                 if removals.is_empty() {
-                    if live.as_slice() != [item.as_ref()] {
+                    let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+                    if (!disposed && live.as_slice() != [item.as_ref()])
+                        || (disposed && !live.is_empty())
+                    {
                         return Err(
                             "Panda whole full stack publication disappeared or changed".into()
                         );

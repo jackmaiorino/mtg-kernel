@@ -15,9 +15,10 @@ const REGISTRY: &[u8] = include_bytes!("../../../../data/cards_v1.json");
 // Shared with the imported family; no distinct fresh schedule schema exists.
 const SCHEDULE_SCHEMA: &str = "mtg-kernel-expanded-registry-resolved-schedule/v1";
 
-struct Fixture {
+/// Also the no-state-digest tests' registry-transfer base.
+pub(in crate::expanded_deck_training_v1) struct Fixture {
     root: PathBuf,
-    source: ExpandedModelSourceV1,
+    pub(in crate::expanded_deck_training_v1) source: ExpandedModelSourceV1,
     schedule: ExpandedRegistryTransferScheduleV1,
 }
 impl Drop for Fixture {
@@ -109,7 +110,7 @@ fn apply(
         .unwrap();
 }
 
-fn fixture() -> Fixture {
+pub(in crate::expanded_deck_training_v1) fn fixture() -> Fixture {
     // The tests in this module build fixtures on parallel threads of one
     // process, and the Windows clock can return the same nanosecond value to
     // two of them, so the counter keeps each root distinct.

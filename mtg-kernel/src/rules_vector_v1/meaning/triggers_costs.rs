@@ -41,10 +41,18 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
-        TriggerCondition::OpponentCastsSpellV1 => out.atoms.push(Atom::Opaque),
+        TriggerCondition::DiesUnlessSubtype(_)
+        | TriggerCondition::DiesWithRevivalCounterV1
+        | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_) => {
+            out.atoms.push(Atom::Opaque)
+        }
+        TriggerCondition::OpponentDiscardsV72 | TriggerCondition::OpponentCastsSpellV1 => {
+            out.atoms.push(Atom::Opaque)
+        }
         TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(_)
         | TriggerCondition::OpponentLosesLifeBatchV49
         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
+        | TriggerCondition::ControlledCreatureCombatDamageDuringOwnTurnV1
         | TriggerCondition::OtherNontokenCreatureDies
         | TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1
         | TriggerCondition::FishingPoleEquippedCreatureUntappedV39
@@ -640,10 +648,60 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
         CostComponent::RemoveSourceCountersV1 { kind: _, count: _ } => {
             out.atoms.push(Atom::Opaque);
         }
+        CostComponent::PayEnergyV1(_) => {
+            // Energy counters leave the payer; the player counter kind and
+            // quantity are outside the frozen cost vocabulary.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::ExileCardFromHandWithColorV1(color) => {
+            // One card of the color, other than the source, moves from the
+            // payer's hand to exile. The color refinement has no facet.
+            let _ = color;
+            move_cost(out, ZoneF::Hand, ZoneF::Exile, ObjF::AnyCard, 1);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
+            // Any number of other graveyard cards covering `minimum` card
+            // types move to exile; the variable count and the type-coverage
+            // condition are outside the frozen cost vocabulary.
+            let _ = minimum;
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Graveyard,
+                to: ZoneF::Exile,
+                obj: ObjF::AnyCard,
+                amount: AmtF::Dynamic,
+            });
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::RemoveChargeCounterFromSelf => {
             // Exactly one charge counter leaves the source as payment.
             out.cost(CostAtom::RemoveCounters);
             out.atoms.push(Atom::Opaque); // Counter kind and quantity.
+        }
+        CostComponent::RemovePlusOneCounterFromSelfV1 => {
+            // Exactly one +1/+1 counter leaves the source as payment.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque); // Counter kind and quantity.
+        }
+        CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
+            // `count` cards of the color, other than the source, move from
+            // the payer's hand to exile. The color refinement has no facet.
+            let _ = color;
+            move_cost(out, ZoneF::Hand, ZoneF::Exile, ObjF::AnyCard, count);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::DiscardLandCardsV1(count) => {
+            // `count` land cards, other than the source, move from the
+            // payer's hand to their graveyard as a discard.
+            move_cost(
+                out,
+                ZoneF::Hand,
+                ZoneF::Graveyard,
+                ObjF::Typed(CardTypeF::Land),
+                count,
+            );
+            out.atoms.push(Atom::Opaque);
         }
         CostComponent::Crew(required) => {
             // The payer selects untapped creatures, excluding the source,
@@ -708,6 +766,9 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             // the filter, the source included and summoning sickness
             // irrelevant. Vocabulary gap: `TapOthers` carries no count or
             // class.
+            if matches!(filter, PermanentFilter::AnotherWithSubtype(_)) {
+                out.atoms.push(Atom::Opaque);
+            }
             let _ = (count, filter);
             out.cost(CostAtom::TapOthers);
         }
@@ -722,7 +783,12 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             out.atoms.push(Atom::Opaque);
         }
         CostComponent::SacrificeControlled { count, filter } => {
-            if filter == PermanentFilter::AnotherArtifact {
+            if matches!(
+                filter,
+                PermanentFilter::AnotherArtifact
+                    | PermanentFilter::AnotherWithSubtype(_)
+                    | PermanentFilter::AnotherArtifactOrCreatureV1
+            ) {
                 out.atoms.push(Atom::Opaque);
             }
             // The component itself restricts candidates to the payer's
@@ -761,6 +827,13 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             let _ = relation; // Control is checked by this component.
             move_cost(out, ZoneF::Battlefield, ZoneF::Hand, obj, 1);
         }
+        CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
+            // `count` distinct permanents the payer controls matching the
+            // filter move to their owner's hand (and leave combat).
+            let (obj, relation) = reads::permanent_filter_def(filter);
+            let _ = relation; // Control is checked by this component.
+            move_cost(out, ZoneF::Battlefield, ZoneF::Hand, obj, count);
+        }
         CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
             // Taps one other untapped permanent the payer controls with the
             // subtype. Vocabulary gap: `TapOthers` carries no object class.
@@ -771,6 +844,13 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             // Taps one untapped permanent the payer controls matching the
             // filter. Vocabulary gap: `TapOthers` carries no object class.
             let _ = filter;
+            out.cost(CostAtom::TapOthers);
+        }
+        CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+            // Taps `count` untapped permanents the payer controls matching
+            // the filter. Vocabulary gap: `TapOthers` carries no count or
+            // class.
+            let _ = (count, filter);
             out.cost(CostAtom::TapOthers);
         }
         CostComponent::RevealHandIfNoCardsWithType(card_type) => {

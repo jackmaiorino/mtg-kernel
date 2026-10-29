@@ -145,7 +145,7 @@ pub(crate) fn resume_owned(
     }
     drive_owned(state, owner)
 }
-fn tracked(state: &GameState) -> Result<bool, String> {
+pub(super) fn tracked(state: &GameState) -> Result<bool, String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(false);
     };
@@ -1162,6 +1162,19 @@ fn validate_publications_with_owner(
             || payments.first().is_some_and(|ordinal| *ordinal <= index)
         {
             return Err("Frenzied operation journal repeats or precedes publication".into());
+        }
+        if crate::engine::time_stop_v1::disposed(state, &publication.item)? {
+            if !live.is_empty()
+                || !completed.is_empty()
+                || !payments.is_empty()
+                || !removals.is_empty()
+                || !installations.is_empty()
+                || last.is_some()
+                || owner.is_some_and(|owner| owner.expected.v4.stack_item_id == id)
+            {
+                return Err("Frenzied disposed publication has another owner/outcome".into());
+            }
+            continue;
         }
         if let Some((end, outcome)) = completed.first() {
             if !live.is_empty()

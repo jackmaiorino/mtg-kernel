@@ -624,6 +624,7 @@ pub enum DiscardResumeSemanticV2 {
     FinishActivation,
     FinishSpellResolution,
     FinishOptionalCost,
+    TimeStopCleanupV68,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1373,6 +1374,12 @@ pub enum ActionSemanticV1 {
         source: CardStableRefV1,
         selected_count: u64,
     },
+    /// Appended exact65536-choice cast-X boundary, never a u16 count sentinel.
+    ChooseFullRangeCastXValueV59 {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        x_value: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1895,6 +1902,18 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
+        .map_err(RlContractError)?;
+    crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    refuse_chosen_type_mana_v60(state)?;
+    crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
@@ -1910,6 +1929,18 @@ pub fn observe_v1(
     crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::effect::kaito_cunning_v75::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::game_outcome_protection_v1::require_legacy_consumer_supported(
         state,
@@ -2016,23 +2047,74 @@ enum ObservationTextModeV2 {
     RavenousV51Artifact,
     FlatForbiddenElided,
     PreparedV57Artifact,
+    NextFiveV59Artifact,
+    GraveyardReturnV61Artifact,
+    CallV62Artifact,
+    EndTurnV68Artifact,
+    GenesisWaveV69Artifact,
+    VivienV70Artifact,
+    MuldrothaV71Artifact,
+    TinybonesV72Artifact,
+    LilianaV73Artifact,
+    ChandraV74Artifact,
+    KaitoV75Artifact,
 }
 
 impl ObservationTextModeV2 {
+    fn complete_source_scope(self) -> Option<CommonProjectionScopeV42> {
+        match self {
+            Self::PreparedV57Artifact => Some(CommonProjectionScopeV42::PreparedV57),
+            Self::NextFiveV59Artifact => Some(CommonProjectionScopeV42::NextFiveV59),
+            Self::GraveyardReturnV61Artifact => Some(CommonProjectionScopeV42::GraveyardReturnV61),
+            Self::CallV62Artifact => Some(CommonProjectionScopeV42::CallV62),
+            Self::EndTurnV68Artifact => Some(CommonProjectionScopeV42::EndTurnV68),
+            Self::VivienV70Artifact => Some(CommonProjectionScopeV42::VivienV70),
+            Self::MuldrothaV71Artifact => Some(CommonProjectionScopeV42::MuldrothaV71),
+            Self::TinybonesV72Artifact => Some(CommonProjectionScopeV42::TinybonesV72),
+            Self::LilianaV73Artifact => Some(CommonProjectionScopeV42::LilianaV73),
+            Self::ChandraV74Artifact => Some(CommonProjectionScopeV42::ChandraV74),
+            Self::KaitoV75Artifact => Some(CommonProjectionScopeV42::KaitoV75),
+            Self::GenesisWaveV69Artifact => Some(CommonProjectionScopeV42::GenesisWaveV69),
+            _ => None,
+        }
+    }
+
     fn kernel_version(self) -> String {
         match self {
-            Self::FullArtifact | Self::RavenousV51Artifact | Self::PreparedV57Artifact => {
-                KERNEL_VERSION.to_string()
-            }
+            Self::FullArtifact
+            | Self::RavenousV51Artifact
+            | Self::PreparedV57Artifact
+            | Self::NextFiveV59Artifact
+            | Self::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact => KERNEL_VERSION.to_string(),
             Self::FlatForbiddenElided => String::new(),
         }
     }
 
     fn card_name(self, card_id: u16) -> String {
         match self {
-            Self::FullArtifact | Self::RavenousV51Artifact | Self::PreparedV57Artifact => {
-                card_name(card_id)
-            }
+            Self::FullArtifact
+            | Self::RavenousV51Artifact
+            | Self::PreparedV57Artifact
+            | Self::NextFiveV59Artifact
+            | Self::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact => card_name(card_id),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2183,13 +2265,120 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::NextFiveV59Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    }
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
+    }
+    crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
+        .map_err(RlContractError)?;
+    refuse_chosen_type_mana_v60(state)?;
+    validate_copy_prefix_for_mode_v1(state, text_mode)?;
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
+
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
+            state,
+            Some(acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::NextFiveV59Artifact
+            | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
+            .map_err(RlContractError)?;
     }
 
     if !matches!(
         text_mode,
-        ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+        ObservationTextModeV2::RavenousV51Artifact
+            | ObservationTextModeV2::PreparedV57Artifact
+            | ObservationTextModeV2::NextFiveV59Artifact
+            | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2253,6 +2442,59 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     }
     if !accept_faebloom {
         refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::ChandraV74Artifact | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact {
+        crate::effect::kaito_cunning_v75::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
     }
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -2379,7 +2621,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             accept_divine,
             accept_conqueror,
             accept_fake,
-            text_mode == ObservationTextModeV2::PreparedV57Artifact,
+            text_mode.complete_source_scope(),
             conqueror_proof,
         )?,
         combat: combat_public_v2(state, acting_player)?,
@@ -2400,7 +2642,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 (true, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
-                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                text_mode.complete_source_scope(),
                 conqueror_proof,
             )?
         } else {
@@ -2560,7 +2802,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state)?,
+            restricted_mana: public_restricted_mana_v1(state, text_mode)?,
             surface: base.projection,
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
@@ -2598,9 +2840,83 @@ fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFounda
         .transpose()
 }
 
+// Every predecessor counter/mana projection lacks the producing chosen type.
+// Inspect the actual public mana rule, never a concealed source printing.
+fn refuse_chosen_type_mana_v60(state: &GameState) -> Result<()> {
+    if state.players.iter().any(|player| {
+        player.restricted_mana_pool.0.iter().any(|unit| {
+            matches!(
+                unit.restriction,
+                crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(_)
+            )
+        })
+    }) {
+        return Err(RlContractError(
+            "chosen-type restricted mana requires a distinct complete consumer".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Carry the complete owning envelope through shared observation and mana
+/// prefixes. Every predecessor keeps the original refusal and all native
+/// copied-ability checks remain active.
+fn validate_copy_prefix_for_mode_v1(state: &GameState, mode: ObservationTextModeV2) -> Result<()> {
+    use crate::optional_trigger_public_v1::ConsumerV1;
+    let consumer = match mode {
+        ObservationTextModeV2::KaitoV75Artifact => ConsumerV1::KaitoV75,
+        ObservationTextModeV2::ChandraV74Artifact => ConsumerV1::ChandraV74,
+        _ => ConsumerV1::Legacy,
+    };
+    consumer
+        .validate_copy_prefix(state)
+        .map_err(RlContractError)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "rl/complete_copy_prefix_scope_tests.rs"]
+mod complete_copy_prefix_scope_tests;
+
 fn public_restricted_mana_v1(
     state: &GameState,
+    text_mode: ObservationTextModeV2,
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
+    refuse_chosen_type_mana_v60(state)?;
+    validate_copy_prefix_for_mode_v1(state, text_mode)?;
+    // Both frozen and complete constructors project this field, even for an
+    // empty mana pool. Retain their private scope through these legacy guards.
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
+    }
+    crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
     let mut pools = [Vec::new(), Vec::new()];
     for (index, pool) in pools.iter_mut().enumerate() {
         for unit in &state.players[index].restricted_mana_pool.0 {
@@ -2823,6 +3139,59 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     }
     if !accept_faebloom {
         refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::ChandraV74Artifact | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact {
+        crate::effect::kaito_cunning_v75::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
     }
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -3584,6 +3953,152 @@ pub(crate) enum CommonProjectionScopeV42 {
     FakeV50,
     RavenousV51,
     PreparedV57,
+    NextFiveV59,
+    GraveyardReturnV61,
+    CallV62,
+    EndTurnV68,
+    GenesisWaveV69,
+    VivienV70,
+    MuldrothaV71,
+    TinybonesV72,
+    LilianaV73,
+    ChandraV74,
+    KaitoV75,
+}
+
+/// Classification of a caller-declared mainboard, never cast permission or a
+/// replacement for Full preflight. No hidden native zones are inspected here.
+pub(crate) fn require_declared_cards_for_scope(
+    scope: CommonProjectionScopeV42,
+    cards: &[u16],
+) -> std::result::Result<(), String> {
+    // Card ids 459 and up are FDN printings only in the FDN catalog build;
+    // the Standard and Eternal catalogs assign those ids to other cards.
+    let fdn_ids = cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ));
+    for &id in cards {
+        let definition = CARD_DEFS
+            .get(usize::from(id))
+            .ok_or("unknown declared card")?;
+        let next_five = matches!(
+            definition.name,
+            "Midnight Snack"
+                | "Extravagant Replication"
+                | "Infernal Vessel"
+                | "Giada, Font of Hope"
+                | "Goblin Negotiation"
+        );
+        let graveyard = matches!(
+            definition.name,
+            "Alesha, Who Laughs at Fate" | "Nine-Lives Familiar"
+        );
+        if (next_five
+            && !matches!(
+                scope,
+                CommonProjectionScopeV42::NextFiveV59
+                    | CommonProjectionScopeV42::GraveyardReturnV61
+                    | CommonProjectionScopeV42::CallV62
+                    | CommonProjectionScopeV42::EndTurnV68
+                    | CommonProjectionScopeV42::GenesisWaveV69
+                    | CommonProjectionScopeV42::VivienV70
+                    | CommonProjectionScopeV42::MuldrothaV71
+                    | CommonProjectionScopeV42::TinybonesV72
+                    | CommonProjectionScopeV42::LilianaV73
+                    | CommonProjectionScopeV42::ChandraV74
+                    | CommonProjectionScopeV42::KaitoV75
+            ))
+            || (graveyard
+                && !matches!(
+                    scope,
+                    CommonProjectionScopeV42::GraveyardReturnV61
+                        | CommonProjectionScopeV42::CallV62
+                        | CommonProjectionScopeV42::EndTurnV68
+                        | CommonProjectionScopeV42::GenesisWaveV69
+                        | CommonProjectionScopeV42::VivienV70
+                        | CommonProjectionScopeV42::MuldrothaV71
+                        | CommonProjectionScopeV42::TinybonesV72
+                        | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
+                        | CommonProjectionScopeV42::KaitoV75
+                ))
+            || (fdn_ids
+                && ((id == 459
+                    && !matches!(
+                        scope,
+                        CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
+                            | CommonProjectionScopeV42::GenesisWaveV69
+                            | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
+                            | CommonProjectionScopeV42::TinybonesV72
+                            | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
+                            | CommonProjectionScopeV42::KaitoV75
+                    ))
+                    || (scope == CommonProjectionScopeV42::CallV62 && id >= 460)
+                    || (scope == CommonProjectionScopeV42::MuldrothaV71
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id))
+                    || (scope == CommonProjectionScopeV42::LilianaV73
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id)
+                        && !crate::engine::tinybones_v72::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::token_definition(id))
+                    || (scope == CommonProjectionScopeV42::ChandraV74
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id)
+                        && !crate::engine::tinybones_v72::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::token_definition(id)
+                        && !crate::effect::chandra_flameshaper_v1::definition(id))
+                    || (scope == CommonProjectionScopeV42::KaitoV75
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id)
+                        && !crate::engine::tinybones_v72::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::token_definition(id)
+                        && !crate::effect::chandra_flameshaper_v1::definition(id)
+                        && !crate::effect::kaito_cunning_v75::definition(id)
+                        && !crate::effect::kaito_cunning_v75::token_definition(id))
+                    || (scope == CommonProjectionScopeV42::TinybonesV72
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id)
+                        && !crate::engine::tinybones_v72::definition(id))
+                    || (scope == CommonProjectionScopeV42::VivienV70
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id))
+                    || (scope == CommonProjectionScopeV42::GenesisWaveV69
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id))
+                    || (scope == CommonProjectionScopeV42::EndTurnV68
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id))))
+        {
+            return Err("declared mainboard requires its distinct complete consumer".into());
+        }
+    }
+    Ok(())
 }
 
 /// Public construction operands confined to one immutable complete-family call.
@@ -3708,6 +4223,16 @@ fn common_family_observation_storage_with_proof(
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PolicyObservationStorageV6> {
     let (scope, state) = request;
+    if !matches!(
+        scope,
+        CommonProjectionScopeV42::NextFiveV59
+            | CommonProjectionScopeV42::TinybonesV72
+            | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
+            | CommonProjectionScopeV42::KaitoV75
+    ) {
+        crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    }
     if let Some(proof) = conqueror_proof {
         if scope != CommonProjectionScopeV42::ConquerorV49 {
             return Err(RlContractError(
@@ -3730,6 +4255,33 @@ fn common_family_observation_storage_with_proof(
         CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
         CommonProjectionScopeV42::PandaV47 => crate::panda_observation_v47::validate_state(state),
         CommonProjectionScopeV42::FakeV50 => crate::fake_observation_v50::validate_state(state),
+        CommonProjectionScopeV42::NextFiveV59 => {
+            crate::next_five_observation_v59::validate_state(state)
+        }
+        CommonProjectionScopeV42::GraveyardReturnV61 => {
+            crate::graveyard_return_observation_v61::validate_state(state)
+        }
+        CommonProjectionScopeV42::CallV62 => crate::call_observation_v62::validate_state(state),
+        CommonProjectionScopeV42::VivienV70 => crate::vivien_observation_v70::validate_state(state),
+        CommonProjectionScopeV42::MuldrothaV71 => {
+            crate::muldrotha_observation_v71::validate_state(state)
+        }
+        CommonProjectionScopeV42::TinybonesV72 => {
+            crate::tinybones_observation_v72::validate_state(state)
+        }
+        CommonProjectionScopeV42::LilianaV73 => {
+            crate::liliana_observation_v73::validate_state(state)
+        }
+        CommonProjectionScopeV42::ChandraV74 => {
+            crate::chandra_observation_v74::validate_state(state)
+        }
+        CommonProjectionScopeV42::KaitoV75 => crate::kaito_observation_v75::validate_state(state),
+        CommonProjectionScopeV42::GenesisWaveV69 => {
+            crate::genesis_wave_observation_v69::validate_state(state)
+        }
+        CommonProjectionScopeV42::EndTurnV68 => {
+            crate::end_turn_observation_v68::validate_state(state)
+        }
         CommonProjectionScopeV42::PreparedV57 => {
             crate::prepared_observation_v57::validate_state(state)
         }
@@ -3759,6 +4311,17 @@ fn common_family_observation_storage_with_proof(
             | CommonProjectionScopeV42::FakeV50
             | CommonProjectionScopeV42::RavenousV51
             | CommonProjectionScopeV42::PreparedV57
+            | CommonProjectionScopeV42::NextFiveV59
+            | CommonProjectionScopeV42::GraveyardReturnV61
+            | CommonProjectionScopeV42::CallV62
+            | CommonProjectionScopeV42::EndTurnV68
+            | CommonProjectionScopeV42::GenesisWaveV69
+            | CommonProjectionScopeV42::VivienV70
+            | CommonProjectionScopeV42::MuldrothaV71
+            | CommonProjectionScopeV42::TinybonesV72
+            | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
+            | CommonProjectionScopeV42::KaitoV75
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -3770,7 +4333,36 @@ fn common_family_observation_storage_with_proof(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: if scope == CommonProjectionScopeV42::PreparedV57 {
+                text_mode: if scope == CommonProjectionScopeV42::KaitoV75 {
+                    ObservationTextModeV2::KaitoV75Artifact
+                } else if scope == CommonProjectionScopeV42::ChandraV74 {
+                    ObservationTextModeV2::ChandraV74Artifact
+                } else if scope == CommonProjectionScopeV42::LilianaV73 {
+                    ObservationTextModeV2::LilianaV73Artifact
+                } else if scope == CommonProjectionScopeV42::TinybonesV72 {
+                    ObservationTextModeV2::TinybonesV72Artifact
+                } else if scope == CommonProjectionScopeV42::MuldrothaV71 {
+                    ObservationTextModeV2::MuldrothaV71Artifact
+                } else if scope == CommonProjectionScopeV42::VivienV70 {
+                    ObservationTextModeV2::VivienV70Artifact
+                } else if scope == CommonProjectionScopeV42::GenesisWaveV69 {
+                    ObservationTextModeV2::GenesisWaveV69Artifact
+                } else if scope == CommonProjectionScopeV42::EndTurnV68 {
+                    ObservationTextModeV2::EndTurnV68Artifact
+                } else if scope == CommonProjectionScopeV42::CallV62 {
+                    ObservationTextModeV2::CallV62Artifact
+                } else if scope == CommonProjectionScopeV42::GraveyardReturnV61 {
+                    ObservationTextModeV2::GraveyardReturnV61Artifact
+                } else if matches!(
+                    scope,
+                    CommonProjectionScopeV42::NextFiveV59
+                        | CommonProjectionScopeV42::TinybonesV72
+                        | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
+                        | CommonProjectionScopeV42::KaitoV75
+                ) {
+                    ObservationTextModeV2::NextFiveV59Artifact
+                } else if scope == CommonProjectionScopeV42::PreparedV57 {
                     ObservationTextModeV2::PreparedV57Artifact
                 } else if scope == CommonProjectionScopeV42::RavenousV51 {
                     ObservationTextModeV2::RavenousV51Artifact
@@ -3794,6 +4386,17 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
+                            | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
+                            | CommonProjectionScopeV42::GenesisWaveV69
+                            | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
+                            | CommonProjectionScopeV42::TinybonesV72
+                            | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
+                            | CommonProjectionScopeV42::KaitoV75
                     ),
                     matches!(
                         scope,
@@ -3805,6 +4408,17 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
+                            | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
+                            | CommonProjectionScopeV42::GenesisWaveV69
+                            | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
+                            | CommonProjectionScopeV42::TinybonesV72
+                            | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
+                            | CommonProjectionScopeV42::KaitoV75
                     ),
                     matches!(
                         scope,
@@ -3815,6 +4429,17 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
+                            | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
+                            | CommonProjectionScopeV42::GenesisWaveV69
+                            | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
+                            | CommonProjectionScopeV42::TinybonesV72
+                            | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
+                            | CommonProjectionScopeV42::KaitoV75
                     ),
                     matches!(
                         scope,
@@ -3824,6 +4449,17 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
+                            | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
+                            | CommonProjectionScopeV42::GenesisWaveV69
+                            | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
+                            | CommonProjectionScopeV42::TinybonesV72
+                            | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
+                            | CommonProjectionScopeV42::KaitoV75
                     ),
                     matches!(
                         scope,
@@ -3832,6 +4468,17 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
+                            | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
+                            | CommonProjectionScopeV42::GenesisWaveV69
+                            | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
+                            | CommonProjectionScopeV42::TinybonesV72
+                            | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
+                            | CommonProjectionScopeV42::KaitoV75
                     ),
                 ),
                 matches!(
@@ -3840,6 +4487,17 @@ fn common_family_observation_storage_with_proof(
                         | CommonProjectionScopeV42::FakeV50
                         | CommonProjectionScopeV42::RavenousV51
                         | CommonProjectionScopeV42::PreparedV57
+                        | CommonProjectionScopeV42::NextFiveV59
+                        | CommonProjectionScopeV42::GraveyardReturnV61
+                        | CommonProjectionScopeV42::CallV62
+                        | CommonProjectionScopeV42::EndTurnV68
+                        | CommonProjectionScopeV42::GenesisWaveV69
+                        | CommonProjectionScopeV42::VivienV70
+                        | CommonProjectionScopeV42::MuldrothaV71
+                        | CommonProjectionScopeV42::TinybonesV72
+                        | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
+                        | CommonProjectionScopeV42::KaitoV75
                 ),
             ),
         ),
@@ -3860,6 +4518,17 @@ fn common_family_observation_storage_with_proof(
             CommonProjectionScopeV42::FakeV50
                 | CommonProjectionScopeV42::RavenousV51
                 | CommonProjectionScopeV42::PreparedV57
+                | CommonProjectionScopeV42::NextFiveV59
+                | CommonProjectionScopeV42::GraveyardReturnV61
+                | CommonProjectionScopeV42::CallV62
+                | CommonProjectionScopeV42::EndTurnV68
+                | CommonProjectionScopeV42::GenesisWaveV69
+                | CommonProjectionScopeV42::VivienV70
+                | CommonProjectionScopeV42::MuldrothaV71
+                | CommonProjectionScopeV42::TinybonesV72
+                | CommonProjectionScopeV42::LilianaV73
+                | CommonProjectionScopeV42::ChandraV74
+                | CommonProjectionScopeV42::KaitoV75
         ),
         conqueror_proof,
     )
@@ -4408,6 +5077,64 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         proof.require_state(request.0.state)?;
     }
 
+    if !matches!(
+        request.0.text_mode,
+        ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
+            request.0.state,
+            Some(request.0.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        request.0.text_mode,
+        ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::graveyard_return_public_v61::require_legacy_visible(
+            request.0.state,
+            Some(request.0.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        request.0.text_mode,
+        ObservationTextModeV2::NextFiveV59Artifact
+            | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::next_five_public_v59::require_legacy_visible(
+            request.0.state,
+            Some(request.0.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(request.0.state)?;
     } else {
@@ -4439,6 +5166,68 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             accept_season,
         ),
     ) = (request, accepted_planes);
+    if !matches!(
+        request.text_mode,
+        ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::liliana_dreadhorde_v1::require_legacy(
+            request.state,
+            Some(request.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        request.text_mode,
+        ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::tinybones_v72::require_legacy(request.state, Some(request.acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        request.text_mode,
+        ObservationTextModeV2::ChandraV74Artifact | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::chandra_flameshaper_v1::require_legacy(
+            request.state,
+            Some(request.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if request.text_mode != ObservationTextModeV2::KaitoV75Artifact {
+        crate::effect::kaito_cunning_v75::require_legacy(
+            request.state,
+            Some(request.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        request.text_mode,
+        ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::muldrotha_v1::require_legacy(request.state, Some(request.acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        request.text_mode,
+        ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::vivien_reid_v1::require_legacy(request.state, Some(request.acting_player))
+            .map_err(RlContractError)?;
+    }
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
             request.state,
@@ -4678,7 +5467,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state)?,
+            restricted_mana: public_restricted_mana_v1(state, text_mode)?,
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
@@ -4962,10 +5751,104 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
+    validate_copy_prefix_for_mode_v1(state, text_mode)?;
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
     if !matches!(
         text_mode,
-        ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+        ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
+            state,
+            Some(acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::NextFiveV59Artifact
+            | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::RavenousV51Artifact
+            | ObservationTextModeV2::PreparedV57Artifact
+            | ObservationTextModeV2::NextFiveV59Artifact
+            | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5118,7 +6001,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
-                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                text_mode.complete_source_scope(),
                 conqueror_proof,
             )?;
             let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
@@ -5155,7 +6038,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                     (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                     accept_conqueror,
                     accept_fake,
-                    text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                    text_mode.complete_source_scope(),
                     conqueror_proof,
                 )?,
                 stack_item_kind: item.kind.into(),
@@ -5187,7 +6070,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
-                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                text_mode.complete_source_scope(),
                 conqueror_proof,
             )?,
             stack_item_kind: pending.resolving_item.kind.into(),
@@ -5242,6 +6125,17 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                                 text_mode,
                                 ObservationTextModeV2::RavenousV51Artifact
                                     | ObservationTextModeV2::PreparedV57Artifact
+                                    | ObservationTextModeV2::NextFiveV59Artifact
+                                    | ObservationTextModeV2::GraveyardReturnV61Artifact
+                                    | ObservationTextModeV2::CallV62Artifact
+                                    | ObservationTextModeV2::EndTurnV68Artifact
+                                    | ObservationTextModeV2::GenesisWaveV69Artifact
+                                    | ObservationTextModeV2::VivienV70Artifact
+                                    | ObservationTextModeV2::MuldrothaV71Artifact
+                                    | ObservationTextModeV2::TinybonesV72Artifact
+                                    | ObservationTextModeV2::LilianaV73Artifact
+                                    | ObservationTextModeV2::ChandraV74Artifact
+                                    | ObservationTextModeV2::KaitoV75Artifact
                             ) && crate::ravenous_amulet_v1::definition(object.card_def)
                             {
                                 return Err(RlContractError(
@@ -5600,6 +6494,76 @@ pub(crate) fn core_policy_action_candidates_fake_scoped_v50(
     accept_conqueror: bool,
     accept_fake: bool,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        accept_hunter,
+        accept_panda,
+        accept_conqueror,
+        accept_fake,
+        CommonProjectionScopeV42::ExistingV40,
+    )
+}
+pub(crate) fn core_policy_action_candidates_next_five_scoped_v59(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+    accept_hunter: bool,
+    accept_panda: bool,
+    accept_conqueror: bool,
+    accept_fake: bool,
+    scope: CommonProjectionScopeV42,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    if !matches!(
+        scope,
+        CommonProjectionScopeV42::CallV62
+            | CommonProjectionScopeV42::EndTurnV68
+            | CommonProjectionScopeV42::GenesisWaveV69
+            | CommonProjectionScopeV42::VivienV70
+            | CommonProjectionScopeV42::MuldrothaV71
+            | CommonProjectionScopeV42::TinybonesV72
+            | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
+            | CommonProjectionScopeV42::KaitoV75
+    ) {
+        crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
+            state,
+            decision.actor(state),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        scope,
+        CommonProjectionScopeV42::GraveyardReturnV61
+            | CommonProjectionScopeV42::CallV62
+            | CommonProjectionScopeV42::EndTurnV68
+            | CommonProjectionScopeV42::GenesisWaveV69
+            | CommonProjectionScopeV42::VivienV70
+            | CommonProjectionScopeV42::MuldrothaV71
+            | CommonProjectionScopeV42::TinybonesV72
+            | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
+            | CommonProjectionScopeV42::KaitoV75
+    ) {
+        crate::graveyard_return_public_v61::require_legacy_visible(state, decision.actor(state))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        scope,
+        CommonProjectionScopeV42::NextFiveV59
+            | CommonProjectionScopeV42::GraveyardReturnV61
+            | CommonProjectionScopeV42::CallV62
+            | CommonProjectionScopeV42::EndTurnV68
+            | CommonProjectionScopeV42::GenesisWaveV69
+            | CommonProjectionScopeV42::VivienV70
+            | CommonProjectionScopeV42::MuldrothaV71
+            | CommonProjectionScopeV42::TinybonesV72
+            | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
+            | CommonProjectionScopeV42::KaitoV75
+    ) {
+        crate::next_five_public_v59::require_legacy_visible(state, decision.actor(state))
+            .map_err(RlContractError)?;
+    }
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {
@@ -5619,6 +6583,43 @@ pub(crate) fn core_policy_action_candidates_fake_scoped_v50(
     }
     if accept_hunter {
         crate::high_society_hunter_custody_v45::validate(state).map_err(RlContractError)?;
+    }
+    if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+        Decision::ChooseFullRangeCastXValueV59 { player, spell },
+    )) = decision
+    {
+        if !matches!(
+            scope,
+            CommonProjectionScopeV42::NextFiveV59
+                | CommonProjectionScopeV42::GraveyardReturnV61
+                | CommonProjectionScopeV42::CallV62
+                | CommonProjectionScopeV42::EndTurnV68
+                | CommonProjectionScopeV42::GenesisWaveV69
+                | CommonProjectionScopeV42::VivienV70
+                | CommonProjectionScopeV42::MuldrothaV71
+                | CommonProjectionScopeV42::TinybonesV72
+                | CommonProjectionScopeV42::LilianaV73
+                | CommonProjectionScopeV42::ChandraV74
+                | CommonProjectionScopeV42::KaitoV75
+        ) {
+            return Err(RlContractError(
+                "full-range cast X requires its current successor".into(),
+            ));
+        }
+        engine::validate_full_range_cast_x_v59(state, *player, *spell).map_err(RlContractError)?;
+        let source = card_ref(state, *spell)?;
+        return Ok((0..=u16::MAX)
+            .map(|x_value| CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseFullRangeCastXValueV59 {
+                    actor: (*player).into(),
+                    source: source.clone(),
+                    x_value,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseEffectOption(x_value),
+                )),
+            })
+            .collect());
     }
     let out: Vec<CorePolicyActionCandidateV1> = match decision {
         PolicyDecisionV5::Surface(surface_decision) => {
@@ -5717,7 +6718,8 @@ fn validate_policy_action_semantic_v5(semantic: &ActionSemanticV1) -> Result<()>
 fn refuse_divine_semantic_in_frozen_transport(semantic: &ActionSemanticV1) -> Result<()> {
     if matches!(
         semantic,
-        ActionSemanticV1::ChooseDivineKickerV44 { .. }
+        ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
+            | ActionSemanticV1::ChooseDivineKickerV44 { .. }
             | ActionSemanticV1::ChooseDivineTargetV44 { .. }
             | ActionSemanticV1::FinishDivineTargetsV44 { .. }
     ) {
@@ -5791,6 +6793,11 @@ fn core_surface_action_candidates_v1(
     decision: &SurfaceDecision,
     state: &GameState,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    crate::graveyard_return_public_v61::require_legacy_visible(
+        state,
+        PolicyDecisionV5::Surface(decision.clone()).actor(state),
+    )
+    .map_err(RlContractError)?;
     crate::elenda_public_v52::require_legacy_visible(
         state,
         PolicyDecisionV5::Surface(decision.clone()).actor(state),
@@ -5913,7 +6920,9 @@ fn core_surface_action_candidates_fake_scoped_v50(
                 for &id in mana_abilities {
                     let choices = engine::available_mana_ability_choices(*player, id, state);
                     for &choice in &choices {
-                        let cost_targets = engine::mana_ability_cost_targets(*player, id, state);
+                        let cost_targets = engine::mana_ability_cost_targets_for_choice(
+                            *player, id, choice, state,
+                        );
                         if cost_targets.is_empty() {
                             push_action(
                                 &mut out,
@@ -6002,9 +7011,11 @@ fn core_surface_action_candidates_fake_scoped_v50(
                     SurfaceAction::Action(Action::Pass),
                 )?;
             }
-            Decision::ChooseVariableCastTargets { .. }
+            Decision::ChooseFullRangeCastXValueV59 { .. }
+            | Decision::ChooseVariableCastTargets { .. }
             | Decision::ChooseVariableCastKicker { .. }
-            | Decision::ChooseEntryColorV36 { .. } => {
+            | Decision::ChooseEntryColorV36 { .. }
+            | Decision::ChooseEntryCreatureTypeV1 { .. } => {
                 return Err(RlContractError(
                     "variable cast targeting requires its legal-action successor".into(),
                 ))
@@ -6608,6 +7619,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseSpellMode { player, .. }
             | Decision::ChooseTriggerMode { player, .. }
             | Decision::ChooseEffectOption { player, .. }
+            | Decision::ChooseFullRangeCastXValueV59 { player, .. }
             | Decision::ChooseEffectTargets { player, .. }
             | Decision::ChooseEffectBoolean { player, .. }
             | Decision::ChooseCombatDamageRange { player, .. }
@@ -6618,6 +7630,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseVariableCastTargets { player, .. }
             | Decision::ChooseVariableCastKicker { player, .. }
             | Decision::ChooseEntryColorV36 { player, .. }
+            | Decision::ChooseEntryCreatureTypeV1 { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -8442,6 +9455,30 @@ fn known_face_down_cards_v1(
         .collect()
 }
 
+/// Positionless visible library ordering shared by frozen normalization and
+/// source-only successor projections. Native indices remain private bindings.
+pub(crate) fn positionless_library_candidate_order(
+    semantic: &ActionSemanticV1,
+    search: &DecisionLocalLibraryV6,
+) -> Result<usize> {
+    match semantic {
+        ActionSemanticV1::ChooseEffectTarget {
+            target: TargetRefV1::Object { object },
+            ..
+        } => search
+            .cards
+            .iter()
+            .position(|card| card.stable == *object)
+            .ok_or_else(|| {
+                RlContractError("library candidate has no positionless visible card".into())
+            }),
+        ActionSemanticV1::FinishEffectSelection { .. } => Ok(usize::MAX),
+        _ => Err(RlContractError(
+            "library candidate changed semantic family".into(),
+        )),
+    }
+}
+
 pub(crate) fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
     let object = state
         .objects
@@ -8783,12 +9820,123 @@ fn effect_target_ref_visible(
     })
 }
 
+/// Frozen RL card rows have no revival or fellowship counter field. Refuse
+/// before projecting any card carrying one through those older shapes. Keep this guard in `rl.rs`
+/// so the existing RL source-identity closure covers the behavior.
+fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|o| o.counters.stash != 0)
+    {
+        return Err(RlContractError(
+            "legacy public counter schema cannot represent stash counters".into(),
+        ));
+    }
+    if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && (crate::progenitus_v1::definition(o.card_def)
+                || crate::leyline_axe_v1::definition(o.card_def)
+                || crate::effect::harvester_v1::definition(o.card_def)
+                || crate::engine::omniscience_cast_v1::definition(o.card_def)
+                || crate::effect::sphinx_lore_v1::definition(o.card_def)
+                || crate::effect::greatwurm_v1::definition(o.card_def)
+                || crate::effect::kykar_v1::definition(o.card_def)
+                || crate::effect::kykar_v1::token_definition(o.card_def))
+    }) {
+        return Err(RlContractError(
+            "Kykar requires a distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && CARD_DEFS[usize::from(o.card_def)].name == "Loot, Exuberant Explorer"
+    }) {
+        return Err(RlContractError(
+            "Loot requires a distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && CARD_DEFS[usize::from(o.card_def)].name == "Curator of Destinies"
+    }) {
+        return Err(RlContractError(
+            "Curator private piles require a distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none() && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
+    }) {
+        return Err(RlContractError(
+            "Electroduplicate requires a distinct complete consumer".into(),
+        ));
+    }
+
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|o| o.v4.face_down_v1.is_none() && crate::event::is_lathril_v1(o.card_def))
+    {
+        return Err(RlContractError(
+            "Lathril requires its distinct complete consumer".into(),
+        ));
+    }
+
+    if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && CARD_DEFS[usize::from(o.card_def)].name == "Consuming Aberration"
+    }) {
+        return Err(RlContractError(
+            "Aberration requires its distinct complete consumer".into(),
+        ));
+    }
+
+    if state.objects.try_get(object).is_some_and(|live| {
+        live.v4.face_down_v1.is_none() && crate::event::is_sphinxs_tutelage_v1(live.card_def)
+    }) {
+        return Err(RlContractError(
+            "Tutelage requires its distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(object).is_some_and(|live| {
+        live.v4.kinship_type_v1.is_some()
+            || CARD_DEFS
+                .get(usize::from(live.card_def))
+                .is_some_and(|d| d.creature_type_entry_v1.is_some())
+    }) {
+        return Err(RlContractError(
+            "creature type entry requires its native-only successor".into(),
+        ));
+    }
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| live.counters.fellowship != 0)
+    {
+        return Err(RlContractError(
+            "legacy public counter schema cannot represent fellowship counters".into(),
+        ));
+    }
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| live.counters.revival != 0)
+    {
+        Err(RlContractError(
+            "legacy public counter schema cannot represent revival counters".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
     crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     let object = state
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    require_legacy_public_counter_schema(state, id)?;
     if object.counters.soul != 0 {
         return Err(RlContractError(
             "public counter schema cannot represent soul counters".into(),
@@ -8848,7 +9996,19 @@ fn public_card_v2_unframed(
     if object.counters.soul != 0
         && !(matches!(
             text_mode,
-            ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+            ObservationTextModeV2::RavenousV51Artifact
+                | ObservationTextModeV2::PreparedV57Artifact
+                | ObservationTextModeV2::NextFiveV59Artifact
+                | ObservationTextModeV2::GraveyardReturnV61Artifact
+                | ObservationTextModeV2::CallV62Artifact
+                | ObservationTextModeV2::EndTurnV68Artifact
+                | ObservationTextModeV2::GenesisWaveV69Artifact
+                | ObservationTextModeV2::VivienV70Artifact
+                | ObservationTextModeV2::MuldrothaV71Artifact
+                | ObservationTextModeV2::TinybonesV72Artifact
+                | ObservationTextModeV2::LilianaV73Artifact
+                | ObservationTextModeV2::ChandraV74Artifact
+                | ObservationTextModeV2::KaitoV75Artifact
         ) && object.zone == Zone::Battlefield)
     {
         return Err(RlContractError(
@@ -8871,6 +10031,21 @@ pub(crate) fn public_card_prepared_compat_v57(
     id: ObjectId,
 ) -> Result<CardPublicV2> {
     public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::PreparedV57Artifact)
+}
+pub(crate) fn public_card_graveyard_return_compat_v61(
+    state: &GameState,
+    id: ObjectId,
+) -> Result<CardPublicV2> {
+    public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::GraveyardReturnV61Artifact)
+}
+pub(crate) fn public_card_call_compat_v62(state: &GameState, id: ObjectId) -> Result<CardPublicV2> {
+    public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::CallV62Artifact)
+}
+pub(crate) fn public_card_tinybones_compat_v72(
+    state: &GameState,
+    id: ObjectId,
+) -> Result<CardPublicV2> {
+    public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::TinybonesV72Artifact)
 }
 pub(crate) fn policy_observation_extensions_prepared_v57(
     state: &GameState,
@@ -8897,18 +10072,245 @@ pub(crate) fn core_policy_action_candidates_prepared_v57(
     core_policy_action_candidates_fake_scoped_v50(decision, state, true, true, true, true)
 }
 
+pub(crate) fn policy_observation_extensions_next_five_v59(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    crate::next_five_observation_v59::validate_state(state).map_err(RlContractError)?;
+    policy_observation_extensions_conqueror_inner_v49_fake_v50(
+        state,
+        actor,
+        ObservationTextModeV2::NextFiveV59Artifact,
+        true,
+        true,
+        (true, true, true, true),
+        true,
+        true,
+        None,
+    )
+}
+pub(crate) fn core_policy_action_candidates_next_five_v59(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::next_five_observation_v59::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::NextFiveV59,
+    )
+}
+
+/// Read-only V61 source projection. This does not admit an owning consumer.
+pub(crate) fn core_policy_action_candidates_graveyard_return_v61(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::GraveyardReturnV61,
+    )
+}
+pub(crate) fn core_policy_action_candidates_call_v62(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::call_observation_v62::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::CallV62,
+    )
+}
+
+pub(crate) fn core_policy_action_candidates_end_turn_v68(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::end_turn_observation_v68::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::EndTurnV68,
+    )
+}
+pub(crate) fn core_policy_action_candidates_genesis_wave_v69(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::genesis_wave_observation_v69::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::GenesisWaveV69,
+    )
+}
+pub(crate) fn core_policy_action_candidates_vivien_v70(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::vivien_observation_v70::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::VivienV70,
+    )
+}
+pub(crate) fn core_policy_action_candidates_muldrotha_v71(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::muldrotha_observation_v71::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::MuldrothaV71,
+    )
+}
+pub(crate) fn core_policy_action_candidates_tinybones_v72(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::tinybones_observation_v72::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::TinybonesV72,
+    )
+}
+pub(crate) fn core_policy_action_candidates_liliana_v73(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::liliana_observation_v73::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::LilianaV73,
+    )
+}
+pub(crate) fn core_policy_action_candidates_chandra_v74(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::chandra_observation_v74::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::ChandraV74,
+    )
+}
+pub(crate) fn core_policy_action_candidates_kaito_v75(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::KaitoV75,
+    )
+}
+
 fn public_card_v2_non_soul_fields(
     state: &GameState,
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPublicV2> {
-    if text_mode != ObservationTextModeV2::PreparedV57Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::PreparedV57Artifact
+            | ObservationTextModeV2::NextFiveV59Artifact
+            | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
     let object = state
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    if matches!(
+        text_mode,
+        ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::tinybones_public_v72::counters(state, id).map_err(RlContractError)?;
+    } else if matches!(
+        text_mode,
+        ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)
+            .map_err(RlContractError)?;
+    } else if text_mode == ObservationTextModeV2::GraveyardReturnV61Artifact {
+        crate::graveyard_return_public_v61::counter_values(state, id).map_err(RlContractError)?;
+    } else {
+        require_legacy_public_counter_schema(state, id)?;
+    }
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
         card_name: if object.v4.face_down_v1.is_some() {
@@ -8918,6 +10320,17 @@ fn public_card_v2_non_soul_fields(
             ObservationTextModeV2::FullArtifact
                 | ObservationTextModeV2::RavenousV51Artifact
                 | ObservationTextModeV2::PreparedV57Artifact
+                | ObservationTextModeV2::NextFiveV59Artifact
+                | ObservationTextModeV2::GraveyardReturnV61Artifact
+                | ObservationTextModeV2::CallV62Artifact
+                | ObservationTextModeV2::EndTurnV68Artifact
+                | ObservationTextModeV2::GenesisWaveV69Artifact
+                | ObservationTextModeV2::VivienV70Artifact
+                | ObservationTextModeV2::MuldrothaV71Artifact
+                | ObservationTextModeV2::TinybonesV72Artifact
+                | ObservationTextModeV2::LilianaV73Artifact
+                | ObservationTextModeV2::ChandraV74Artifact
+                | ObservationTextModeV2::KaitoV75Artifact
         ) && (object.v4.face_index == 1
             || card_effective_identity_v1(state, id).is_some()
             || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
@@ -9002,9 +10415,72 @@ fn private_card(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPrivateV1> {
+    if state.objects.try_get(id).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && (crate::progenitus_v1::definition(o.card_def)
+                || crate::leyline_axe_v1::definition(o.card_def)
+                || crate::effect::harvester_v1::definition(o.card_def)
+                || crate::engine::omniscience_cast_v1::definition(o.card_def)
+                || crate::effect::sphinx_lore_v1::definition(o.card_def)
+                || crate::effect::greatwurm_v1::definition(o.card_def)
+                || crate::effect::kykar_v1::definition(o.card_def)
+                || crate::effect::kykar_v1::token_definition(o.card_def))
+    }) {
+        return Err(RlContractError(
+            "Kykar requires a distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(id).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && CARD_DEFS[usize::from(o.card_def)].name == "Loot, Exuberant Explorer"
+    }) {
+        return Err(RlContractError(
+            "Loot requires a distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(id).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && CARD_DEFS[usize::from(o.card_def)].name == "Curator of Destinies"
+    }) {
+        return Err(RlContractError(
+            "Curator private piles require a distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(id).is_some_and(|o| {
+        o.v4.face_down_v1.is_none() && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
+    }) {
+        return Err(RlContractError(
+            "Electroduplicate requires a distinct complete consumer".into(),
+        ));
+    }
+
+    if state.objects.try_get(id).is_some_and(|live| {
+        live.v4.kinship_type_v1.is_some()
+            || CARD_DEFS
+                .get(usize::from(live.card_def))
+                .is_some_and(|d| d.creature_type_entry_v1.is_some())
+    }) {
+        return Err(RlContractError(
+            "creature type entry requires its native-only successor".into(),
+        ));
+    }
     // Callers have already selected an actor-authorized identity: own hand,
     // known hand/library, or a visible choice. Do not scan concealed zones.
-    if text_mode != ObservationTextModeV2::PreparedV57Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::PreparedV57Artifact
+            | ObservationTextModeV2::NextFiveV59Artifact
+            | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
     let object = state
@@ -9966,7 +11442,7 @@ fn engine_context_v2_conqueror_inner_v49(
         accepted_sources,
         accept_conqueror,
         false,
-        false,
+        None,
         None,
     )
 }
@@ -9979,7 +11455,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<EngineContextV2> {
     if let Some(proof) = conqueror_proof {
@@ -10183,7 +11659,25 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
             .engine
             .pending_discard
             .as_ref()
-            .map(|p| pending_discard_semantic_v2(state, acting_player, p))
+            .map(|p| {
+                if matches!(
+                    prepared_scope,
+                    Some(
+                        CommonProjectionScopeV42::EndTurnV68
+                            | CommonProjectionScopeV42::GenesisWaveV69
+                            | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
+                            | CommonProjectionScopeV42::TinybonesV72
+                            | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
+                            | CommonProjectionScopeV42::KaitoV75
+                    )
+                ) {
+                    pending_discard_semantic_end_turn_v68(state, acting_player, p)
+                } else {
+                    pending_discard_semantic_v2(state, acting_player, p)
+                }
+            })
             .transpose()?,
         pending_optional_cost: state
             .engine
@@ -10212,7 +11706,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     (accept_inspiration, accept_fishing),
                     (true, accept_hunter, accept_panda),
                     accept_fake,
-                    accept_prepared,
+                    prepared_scope,
                     conqueror_proof,
                 )?
             } else {
@@ -10251,10 +11745,44 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     .flat_map(|pending| pending.waiting_triggers()),
             )
             .map(|p| {
-                let prepared_source = if accept_prepared {
-                    crate::prepared_observation_v57::pending_source_reference(state, p)?
-                } else {
-                    None
+                let prepared_source = match prepared_scope {
+                    Some(CommonProjectionScopeV42::NextFiveV59) => {
+                        crate::next_five_observation_v59::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::CallV62) => {
+                        crate::call_observation_v62::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::MuldrothaV71) => {
+                        crate::muldrotha_observation_v71::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::TinybonesV72) => {
+                        crate::tinybones_observation_v72::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::LilianaV73) => {
+                        crate::liliana_observation_v73::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::ChandraV74) => {
+                        crate::chandra_observation_v74::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::KaitoV75) => {
+                        crate::kaito_observation_v75::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::VivienV70) => {
+                        crate::vivien_observation_v70::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::GenesisWaveV69) => {
+                        crate::genesis_wave_observation_v69::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::EndTurnV68) => {
+                        crate::end_turn_observation_v68::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::GraveyardReturnV61) => {
+                        crate::graveyard_return_observation_v61::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::PreparedV57) => {
+                        crate::prepared_observation_v57::pending_source_reference(state, p)?
+                    }
+                    _ => None,
                 };
                 let fake_source = if accept_fake {
                     crate::fake_your_own_death_v50::public_v50::pending_source_reference(state, p)?
@@ -10265,13 +11793,41 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     if let Some(proof) = conqueror_proof {
                         proof.pending_source_reference(state, p)?
                     } else {
-                        crate::conqueror_public_v49::pending_source_reference(state, p)?
+                        if matches!(
+                            prepared_scope,
+                            Some(
+                                CommonProjectionScopeV42::NextFiveV59
+                                    | CommonProjectionScopeV42::TinybonesV72
+                                    | CommonProjectionScopeV42::LilianaV73
+                                    | CommonProjectionScopeV42::ChandraV74
+                                    | CommonProjectionScopeV42::KaitoV75
+                            )
+                        ) {
+                            crate::conqueror_public_v49::pending_source_reference_for_next_five(
+                                state, p,
+                            )?
+                        } else {
+                            crate::conqueror_public_v49::pending_source_reference(state, p)?
+                        }
                     }
                 } else {
                     None
                 };
                 let panda_source = if accept_panda {
-                    crate::panda_public_v47::pending_source_reference(state, p)?
+                    if matches!(
+                        prepared_scope,
+                        Some(
+                            CommonProjectionScopeV42::NextFiveV59
+                                | CommonProjectionScopeV42::TinybonesV72
+                                | CommonProjectionScopeV42::LilianaV73
+                                | CommonProjectionScopeV42::ChandraV74
+                                | CommonProjectionScopeV42::KaitoV75
+                        )
+                    ) {
+                        crate::panda_public_v47::pending_source_reference_for_next_five(state, p)?
+                    } else {
+                        crate::panda_public_v47::pending_source_reference(state, p)?
+                    }
                 } else {
                     None
                 };
@@ -10348,7 +11904,7 @@ fn pending_effect_semantic_v4_akroma_inner(
         capabilities,
         accepted_sources,
         false,
-        false,
+        None,
         None,
     )
 }
@@ -10361,9 +11917,44 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     capabilities: (bool, bool),
     accepted_sources: (bool, bool, bool),
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PendingEffectSemanticV4> {
+    let liliana_sacrifice = matches!(
+        prepared_scope,
+        Some(
+            CommonProjectionScopeV42::LilianaV73
+                | CommonProjectionScopeV42::ChandraV74
+                | CommonProjectionScopeV42::KaitoV75
+        )
+    ) && crate::effect::liliana_dreadhorde_v1::sacrifice_selected(
+        state,
+        &pending.resolving_item,
+    );
+    if crate::effect::blasphemous_edict_v1::selected(state, &pending.resolving_item)
+        && !liliana_sacrifice
+    {
+        return Err(RlContractError(
+            "Blasphemous Edict requires its distinct complete consumer".into(),
+        ));
+    }
+    if pending
+        .resolving_item
+        .inline_effect
+        .as_ref()
+        .is_some_and(crate::effect::contains_nonland_sacrifice_payment_v1)
+        || pending.frames.iter().any(|frame| {
+            matches!(
+                frame,
+                crate::effect::EffectFrame::NonlandSacrificePaymentV1 { .. }
+            )
+        })
+    {
+        return Err(RlContractError(
+            "nonland sacrifice payment requires its distinct consumer".into(),
+        ));
+    }
+
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
@@ -10400,7 +11991,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                 (accept_akroma, false, accept_hunter, accept_panda),
                 false,
                 accept_fake,
-                accept_prepared,
+                prepared_scope,
                 conqueror_proof,
             )?),
             controller: pending.resolving_item.controller.into(),
@@ -10454,7 +12045,10 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     ordered,
                     purpose,
                 } => {
-                    let chooser_private = matches!(
+                    if matches!(purpose, crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. }) {
+                        return Err(RlContractError("nonland sacrifice payment requires its distinct consumer".into()));
+                    }
+                    let chooser_private = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
                             | crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
@@ -10496,13 +12090,21 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                                 ..
                             }
-                    ) && acting_player != *player;
-                    let search_for_chooser = matches!(
+                    ) || matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
+                            if choice.chooser_private()
+                    )) && acting_player != *player;
+                    let search_for_chooser = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
-                    ) && acting_player == *player;
+                    ) || matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
+                            if choice.library_search()
+                    )) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
@@ -10565,6 +12167,11 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         },
                         ordered: *ordered,
                         purpose: match purpose {
+                            crate::effect::EffectTargetSelectionPurpose::LilianaV1 { .. } => {
+                                if !matches!(prepared_scope, Some(CommonProjectionScopeV42::LilianaV73 | CommonProjectionScopeV42::ChandraV74 | CommonProjectionScopeV42::KaitoV75)) { return Err(RlContractError("Liliana sacrifice choice requires a complete V73 consumer".into())); }
+                                TargetSelectionPurposeV4::CardSelection
+                            },
+                            crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. } => return Err(RlContractError("Progenitus mill ordering needs a complete successor".into())),
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: Some(_), .. } => TargetSelectionPurposeV4::LibraryOrder,
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: None, .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
@@ -10611,6 +12218,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             crate::effect::EffectTargetSelectionPurpose::UntapLands {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::AttachCopiedAuraV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::AttachReturningAura {
                                 ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
@@ -10629,6 +12237,20 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
+                            crate::effect::EffectTargetSelectionPurpose::GenesisWaveCardsV1 { choice } => {
+                                if !matches!(prepared_scope,Some(CommonProjectionScopeV42::GenesisWaveV69|CommonProjectionScopeV42::VivienV70
+|CommonProjectionScopeV42::MuldrothaV71|CommonProjectionScopeV42::TinybonesV72|CommonProjectionScopeV42::LilianaV73|CommonProjectionScopeV42::ChandraV74|CommonProjectionScopeV42::KaitoV75)) {return Err(RlContractError("Genesis Wave requires its distinct complete consumer".into()));}
+                                crate::effect::genesis_wave_v1::selection_purpose_v69(choice)
+                            },
+                            crate::effect::EffectTargetSelectionPurpose::ChandraExileV74{..}=>{if !matches!(prepared_scope, Some(CommonProjectionScopeV42::ChandraV74 | CommonProjectionScopeV42::KaitoV75)) {return Err(RlContractError("Chandra requires its complete V74 consumer".into()));} TargetSelectionPurposeV4::CardSelection},
+                            crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
+                            crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
+                            crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
+                                return Err(RlContractError("Tutelage mill requires its distinct complete consumer".into()));
+                            }
+                            crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. } => {
+                                return Err(RlContractError("nonland sacrifice payment requires its distinct consumer".into()));
+                            }
                             crate::effect::EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
                             | crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
@@ -10677,6 +12299,9 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             crate::effect::EffectTargetSelectionPurpose::StandardCopyTargetV1 {
                                 ..
                             } => TargetSelectionPurposeV4::EffectTargets,
+                            crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice } => {
+                                choice.public_purpose()
+                            }
                         },
                     })
                 }
@@ -10707,7 +12332,9 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
-                        crate::effect::EffectBooleanChoicePurpose::ExilePlay { .. }
+                        crate::effect::EffectBooleanChoicePurpose::CuratorPileV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
+                        crate::effect::EffectBooleanChoicePurpose::AleshaRaidReturnV1
+                        | crate::effect::EffectBooleanChoicePurpose::ExilePlay { .. }
                         | crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
                             ..
                         }
@@ -10736,7 +12363,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
             (accept_akroma, false, accept_hunter, accept_panda),
             false,
             accept_fake,
-            accept_prepared,
+            prepared_scope,
             conqueror_proof,
         )?),
         controller: pending.resolving_item.controller.into(),
@@ -10766,15 +12393,36 @@ fn pending_cast_semantic_v2(
                 matches!(
                     component,
                     crate::card_def::CostComponent::TapUntappedControlledPermanent(_)
+                        | crate::card_def::CostComponent::TapUntappedControlledPermanentsV1 { .. }
                 )
             })
         });
-    let sacrifice_chosen =
-        if p.source_contract.cast_method == CastMethodV4::Escape || object_cost_is_tap {
-            Vec::new()
-        } else {
-            visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
-        };
+    // An alternative cost's returned permanent or exiled hand card (Daze,
+    // Force of Will) is not a sacrifice either.
+    let object_cost_is_alternative = p.cast_mode == Some(engine::CastMode::Alternative)
+        && source_def.alt_cost.is_some_and(|alt| {
+            alt.components.iter().any(|component| {
+                matches!(
+                    component,
+                    crate::card_def::CostComponent::ReturnControlledPermanentToOwnersHand(_)
+                        | crate::card_def::CostComponent::ExileCardFromHandWithColorV1(_)
+                        | crate::card_def::CostComponent::ExileCardsFromHandWithColorV1 { .. }
+                        | crate::card_def::CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
+                )
+            })
+        });
+    // Retrace's discarded land card is not a sacrifice either.
+    let object_cost_is_retrace = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_vintage_e7b_v1::pending_retrace(state, p);
+    let sacrifice_chosen = if p.source_contract.cast_method == CastMethodV4::Escape
+        || object_cost_is_tap
+        || object_cost_is_alternative
+        || object_cost_is_retrace
+    {
+        Vec::new()
+    } else {
+        visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
+    };
     Ok(PendingCastSemanticV2 {
         source: visible_card_ref(state, p.spell, acting_player)?,
         controller: p.controller.into(),
@@ -10838,6 +12486,23 @@ pub(crate) fn public_granted_ability(
     })
 }
 
+fn pending_discard_semantic_end_turn_v68(
+    state: &GameState,
+    actor: PlayerId,
+    p: &engine::PendingDiscard,
+) -> Result<PendingDiscardSemanticV2> {
+    if p.resume != engine::DiscardResume::TimeStopCleanupV1 {
+        return pending_discard_semantic_v2(state, actor, p);
+    }
+    engine::time_stop_v1::validate_discard(state, p).map_err(RlContractError)?;
+    Ok(PendingDiscardSemanticV2 {
+        player: p.player.into(),
+        count: p.count,
+        resume_stage: DiscardResumeSemanticV2::TimeStopCleanupV68,
+        resume_source: None,
+    })
+}
+
 fn pending_discard_semantic_v2(
     state: &GameState,
     acting_player: PlayerId,
@@ -10846,6 +12511,11 @@ fn pending_discard_semantic_v2(
     engine::validate_pending_discard_binding(state, p)
         .map_err(|(_, error)| RlContractError(format!("invalid pending discard: {error}")))?;
     let (resume_stage, resume_source) = match &p.resume {
+        engine::DiscardResume::TimeStopCleanupV1 => {
+            return Err(RlContractError(
+                "Time Stop cleanup is outside this frozen discard protocol".into(),
+            ))
+        }
         // The resolving ability itself stays on the public stack.
         engine::DiscardResume::None
         | engine::DiscardResume::FinishAbilityResolution { .. }
@@ -11131,6 +12801,108 @@ fn stack_item_public_v1(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn stack_item_public_end_turn_v68(
+    state: &GameState,
+    viewer: PlayerId,
+    position: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    stack_item_public_conqueror_v49_fake_v50(
+        state,
+        viewer,
+        position,
+        item,
+        true,
+        (true, true, true, true),
+        (true, true),
+        true,
+        Some(CommonProjectionScopeV42::EndTurnV68),
+        None,
+    )
+}
+pub(crate) fn stack_item_public_genesis_wave_v69(
+    state: &GameState,
+    viewer: PlayerId,
+    position: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    stack_item_public_conqueror_v49_fake_v50(
+        state,
+        viewer,
+        position,
+        item,
+        true,
+        (true, true, true, true),
+        (true, true),
+        true,
+        Some(CommonProjectionScopeV42::GenesisWaveV69),
+        None,
+    )
+}
+pub(crate) fn stack_item_public_vivien_v70(
+    state: &GameState,
+    viewer: PlayerId,
+    position: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    stack_item_public_conqueror_v49_fake_v50(
+        state,
+        viewer,
+        position,
+        item,
+        true,
+        (true, true, true, true),
+        (true, true),
+        true,
+        Some(CommonProjectionScopeV42::VivienV70),
+        None,
+    )
+}
+pub(crate) fn stack_item_public_muldrotha_v71(
+    state: &GameState,
+    viewer: PlayerId,
+    position: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    stack_item_public_conqueror_v49_fake_v50(
+        state,
+        viewer,
+        position,
+        item,
+        true,
+        (true, true, true, true),
+        (true, true),
+        true,
+        Some(CommonProjectionScopeV42::MuldrothaV71),
+        None,
+    )
+}
+pub(crate) fn stack_item_public_tinybones_v72(
+    state: &GameState,
+    viewer: PlayerId,
+    position: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    stack_item_public_conqueror_v49_fake_v50(
+        state,
+        viewer,
+        position,
+        item,
+        true,
+        (true, true, true, true),
+        (true, true),
+        true,
+        Some(CommonProjectionScopeV42::TinybonesV72),
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn stack_public_conqueror_v49_fake_v50(
     state: &GameState,
     acting_player: PlayerId,
@@ -11139,7 +12911,7 @@ fn stack_public_conqueror_v49_fake_v50(
     accept_divine: bool,
     accept_conqueror: bool,
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<Vec<StackItemPublicV2>> {
     if let Some(proof) = conqueror_proof {
@@ -11160,7 +12932,7 @@ fn stack_public_conqueror_v49_fake_v50(
                 accepted_sources,
                 (accept_divine, accept_conqueror),
                 accept_fake,
-                accept_prepared,
+                prepared_scope,
                 conqueror_proof,
             )
         })
@@ -11177,7 +12949,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accepted_roots: (bool, bool),
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<StackItemPublicV2> {
     if let Some(proof) = conqueror_proof {
@@ -11191,7 +12963,20 @@ fn stack_item_public_conqueror_v49_fake_v50(
         ));
     }
     let panda_target = if accepted_sources.3 {
-        crate::panda_public_v47::original_target_reference(state, item)?
+        if matches!(
+            prepared_scope,
+            Some(
+                CommonProjectionScopeV42::NextFiveV59
+                    | CommonProjectionScopeV42::TinybonesV72
+                    | CommonProjectionScopeV42::LilianaV73
+                    | CommonProjectionScopeV42::ChandraV74
+                    | CommonProjectionScopeV42::KaitoV75
+            )
+        ) {
+            crate::panda_public_v47::original_target_reference_for_next_five(state, item)?
+        } else {
+            crate::panda_public_v47::original_target_reference(state, item)?
+        }
     } else {
         None
     };
@@ -11229,7 +13014,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
             accepted_sources,
             accept_conqueror,
             accept_fake,
-            accept_prepared,
+            prepared_scope,
             conqueror_proof,
         )?,
         controller: item.controller.into(),
@@ -11491,7 +13276,7 @@ fn akroma_historical_source_ref_fake_scoped_v50(
             (true, false, false, false),
             false,
             true,
-            false,
+            None,
             None,
         )
     } else {
@@ -11523,7 +13308,7 @@ fn stack_source_ref_conqueror_v49(
         accepted_sources,
         accept_conqueror,
         false,
-        false,
+        None,
         None,
     )
 }
@@ -11536,18 +13321,54 @@ fn stack_source_ref_conqueror_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<CardStableRefV1> {
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
 
-    if accept_prepared {
-        if let Some(source) = crate::prepared_observation_v57::stack_source_reference(state, item)?
-        {
-            return Ok(source);
+    let prepared_source = match prepared_scope {
+        Some(CommonProjectionScopeV42::NextFiveV59) => {
+            crate::next_five_observation_v59::stack_source_reference(state, item)?
         }
+        Some(CommonProjectionScopeV42::CallV62) => {
+            crate::call_observation_v62::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::MuldrothaV71) => {
+            crate::muldrotha_observation_v71::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::TinybonesV72) => {
+            crate::tinybones_observation_v72::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::LilianaV73) => {
+            crate::liliana_observation_v73::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::ChandraV74) => {
+            crate::chandra_observation_v74::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::KaitoV75) => {
+            crate::kaito_observation_v75::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::VivienV70) => {
+            crate::vivien_observation_v70::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::GenesisWaveV69) => {
+            crate::genesis_wave_observation_v69::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::EndTurnV68) => {
+            crate::end_turn_observation_v68::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::GraveyardReturnV61) => {
+            crate::graveyard_return_observation_v61::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::PreparedV57) => {
+            crate::prepared_observation_v57::stack_source_reference(state, item)?
+        }
+        _ => None,
+    };
+    if let Some(source) = prepared_source {
+        return Ok(source);
     }
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
@@ -11565,7 +13386,20 @@ fn stack_source_ref_conqueror_v49_fake_v50(
         let source = if let Some(proof) = conqueror_proof {
             proof.stack_source_reference(state, item)?
         } else {
-            crate::conqueror_public_v49::stack_source_reference(state, item)?
+            if matches!(
+                prepared_scope,
+                Some(
+                    CommonProjectionScopeV42::NextFiveV59
+                        | CommonProjectionScopeV42::TinybonesV72
+                        | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
+                        | CommonProjectionScopeV42::KaitoV75
+                )
+            ) {
+                crate::conqueror_public_v49::stack_source_reference_for_next_five(state, item)?
+            } else {
+                crate::conqueror_public_v49::stack_source_reference(state, item)?
+            }
         };
         if let Some(source) = source {
             return Ok(source);
@@ -11573,7 +13407,20 @@ fn stack_source_ref_conqueror_v49_fake_v50(
     }
     let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     if accept_panda {
-        if let Some(source) = crate::panda_public_v47::stack_source_reference(state, item)? {
+        if let Some(source) = if matches!(
+            prepared_scope,
+            Some(
+                CommonProjectionScopeV42::NextFiveV59
+                    | CommonProjectionScopeV42::TinybonesV72
+                    | CommonProjectionScopeV42::LilianaV73
+                    | CommonProjectionScopeV42::ChandraV74
+                    | CommonProjectionScopeV42::KaitoV75
+            )
+        ) {
+            crate::panda_public_v47::stack_source_reference_for_next_five(state, item)?
+        } else {
+            crate::panda_public_v47::stack_source_reference(state, item)?
+        } {
             return Ok(source);
         }
     }
@@ -11693,7 +13540,17 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
     let historical = state.objects.try_get(item.source).ok_or_else(|| {
         RlContractError("ability stack source references an unknown arena object".to_string())
     })?;
-    if historical.card_def != card_def || historical.owner != owner {
+    // A copy that left the battlefield (Phyrexian Metamorph) is its own
+    // card again; its copied definition stays recorded for the incarnation.
+    let same_card = historical.card_def == card_def
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::standard_cards_v1::had_card_def(
+                state,
+                item.source,
+                zone_change_count,
+                card_def,
+            ));
+    if !same_card || historical.owner != owner {
         return Err(RlContractError(
             "ability stack source changed stable arena identity".to_string(),
         ));
@@ -11753,7 +13610,15 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
                             "stack target contract references an unknown arena object".to_string(),
                         )
                     })?;
-                    if historical.card_def != card_def || historical.owner != owner {
+                    let same_card = historical.card_def == card_def
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::standard_cards_v1::had_card_def(
+                                state,
+                                object,
+                                zone_change_count,
+                                card_def,
+                            ));
+                    if !same_card || historical.owner != owner {
                         return Err(RlContractError(
                             "stack target contract changed stable arena identity".to_string(),
                         ));
@@ -13290,6 +15155,73 @@ mod soul_counter_representation_v1_tests {
         assert!(public_card(&state, source).is_err());
         assert!(public_card_v2(&state, source, ObservationTextModeV2::FullArtifact).is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn neutral_face_down_projection_does_not_select_hidden_tutelage_or_aberration() {
+    use crate::policy_observation_v6::tests::put;
+    let island = crate::card_def::card_id_by_name("Island").unwrap();
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let mut public_rows = None;
+        for name in ["Forest", "Sphinx's Tutelage", "Consuming Aberration"] {
+            let mut state =
+                GameState::new_from_libraries(&[island; 8], &[island; 8], card_name, 110_467);
+            let object = put(&mut state, owner, name, crate::state::Zone::Battlefield);
+            // Explicit neutral native projection setup, not a claim that either
+            // hidden printing has a legal paid disguise/manifest cast route.
+            state.objects.get_mut(object).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: true,
+                lookers: 1 << owner.index(),
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            assert!(
+                !crate::continuous_characteristics_v1::printed_abilities_active(&state, object)
+            );
+            crate::optional_trigger_public_v1::validate_state_for_consumer(
+                &state,
+                false,
+                crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+            )
+            .unwrap();
+            let rows = (
+                public_card(&state, object).unwrap(),
+                public_card_v2(&state, object, ObservationTextModeV2::FullArtifact).unwrap(),
+            );
+            if let Some(expected) = &public_rows {
+                assert_eq!(&rows, expected);
+            } else {
+                public_rows = Some(rows);
+            }
+            state.objects.get_mut(object).v4.face_down_v1 = None;
+            if name != "Forest" {
+                assert!(require_legacy_public_counter_schema(&state, object).is_err());
+                assert!(
+                    crate::optional_trigger_public_v1::validate_state_for_consumer(
+                        &state,
+                        false,
+                        crate::optional_trigger_public_v1::ConsumerV1::Legacy
+                    )
+                    .is_err()
+                );
+            } else {
+                // The face-up reference is an ordinary supported land. The
+                // hidden views above must erase even that type distinction.
+                require_legacy_public_counter_schema(&state, object).unwrap();
+                crate::optional_trigger_public_v1::validate_state_for_consumer(
+                    &state,
+                    false,
+                    crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+                )
+                .unwrap();
+            }
+        }
     }
 }
 

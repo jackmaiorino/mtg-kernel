@@ -96,6 +96,7 @@ pub(crate) fn exact_definition(d: &crate::card_def::CardDef) -> bool {
         && d.damage_replacement_v1.is_none()
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
+        && d.creature_type_entry_v1.is_none()
         && d.other_controlled_nontoken_death_v1.is_none()
         && d.activated_abilities.is_empty()
         && d.token_counter_replacement_v48
@@ -130,7 +131,10 @@ pub(crate) fn entry_input(
 ) -> Option<ReplacementInputV48> {
     match event {
         crate::event::ProposedEvent::CreateToken(t) => {
-            Some(ReplacementInputV48::capture(state, t.controller))
+            let mut input = ReplacementInputV48::capture(state, t.controller);
+            input.subtype_entries_v1 =
+                crate::giada_v1::capture_entry_replacements(state, t.controller, None);
+            Some(input)
         }
         crate::event::ProposedEvent::ZoneChange(z) if z.to_zone == Zone::Battlefield => {
             let mut input = ReplacementInputV48::capture(
@@ -149,6 +153,11 @@ pub(crate) fn entry_input(
             {
                 input.seasons.clear();
             }
+            input.subtype_entries_v1 = crate::giada_v1::capture_entry_replacements(
+                state,
+                input.controller,
+                Some(z.object),
+            );
             Some(input)
         }
         _ => None,
@@ -200,7 +209,7 @@ pub struct EffectXEntryV48 {
     pub host: Option<crate::state::ObjectLinkV4>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplacementInputV48 {
     pub controller: PlayerId,
@@ -209,12 +218,28 @@ pub struct ReplacementInputV48 {
     pub entry_controls_big: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_talent_doublings: Option<u32>,
+    /// Already-active entry replacements and prebatch counts, not later entrants.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtype_entries_v1: Vec<crate::giada_v1::EntryReplacementV1>,
+}
+impl std::hash::Hash for ReplacementInputV48 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.controller.hash(state);
+        self.seasons.hash(state);
+        self.entry_controls_big.hash(state);
+        self.entry_talent_doublings.hash(state);
+        if !self.subtype_entries_v1.is_empty() {
+            "subtype-entry-replacements/v1".hash(state);
+            self.subtype_entries_v1.hash(state);
+        }
+    }
 }
 impl ReplacementInputV48 {
     pub(crate) fn capture(state: &GameState, controller: PlayerId) -> Self {
         Self {
             controller,
             seasons: sources(state, controller),
+            subtype_entries_v1: Vec::new(),
             entry_talent_doublings: Some(crate::standard_cards_v1::counter_modifier_doublings_v48(
                 state, controller,
             )),
@@ -679,7 +704,7 @@ fn validate_bait_transfers(state: &GameState) -> Result<(), String> {
 
 /// Properties of the creation effect, installed on every expanded token
 /// before the first entry observer is captured. None leaves old proposals exact.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenEntryV48 {
     pub copied: bool,
@@ -689,6 +714,36 @@ pub struct TokenEntryV48 {
     pub plus_one_counters: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sacrifice_at_end_step: Option<AbilitySourceContractV4>,
+    #[serde(default, skip_serializing_if = "copied_abilities_zero_v1")]
+    pub copied_end_step_sacrifices_v1: u32,
+    #[serde(default, skip_serializing_if = "copied_nightmare_false_v1")]
+    pub copied_nightmare_v1: bool,
+}
+
+fn copied_nightmare_false_v1(value: &bool) -> bool {
+    !*value
+}
+fn copied_abilities_zero_v1(value: &u32) -> bool {
+    *value == 0
+}
+impl std::hash::Hash for TokenEntryV48 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        // Original derive's field order, with no extra bytes for absence.
+        std::hash::Hash::hash(&self.copied, h);
+        std::hash::Hash::hash(&self.haste_until_end_of_turn, h);
+        std::hash::Hash::hash(&self.attacking, h);
+        std::hash::Hash::hash(&self.attached_to, h);
+        std::hash::Hash::hash(&self.plus_one_counters, h);
+        std::hash::Hash::hash(&self.sacrifice_at_end_step, h);
+        if self.copied_end_step_sacrifices_v1 != 0 {
+            std::hash::Hash::hash("copied-end-step-sacrifices/v1", h);
+            std::hash::Hash::hash(&self.copied_end_step_sacrifices_v1, h);
+        }
+        if self.copied_nightmare_v1 {
+            std::hash::Hash::hash("copied-nightmare/v1", h);
+            std::hash::Hash::hash(&self.copied_nightmare_v1, h);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -949,6 +1004,9 @@ pub(crate) fn preflight_token_initialization(
         let Some(init) = &token.initialization_v48 else {
             continue;
         };
+        if (init.copied_end_step_sacrifices_v1 != 0 || init.copied_nightmare_v1) && !init.copied {
+            return Err("copiable token ability exceptions require a copied template".into());
+        }
         let def = CARD_DEFS
             .get(usize::from(token.token_def))
             .ok_or("token blueprint absent")?;
@@ -977,11 +1035,18 @@ pub(crate) fn preflight_token_initialization(
                 .ok_or("token Aura host absent")?;
             let attachment = def
                 .attachment
-                .filter(|a| a.is_creature_aura())
+                .filter(|a| {
+                    a.is_creature_aura() || *a == crate::card_def::AttachmentDef::AuraLandOverride
+                })
                 .ok_or("attached token is not Aura")?;
             if live.zone != Zone::Battlefield
                 || live.zone_change_count != host.zone_change_count
-                || !crate::engine::object_has_type(state, host.object, attachment.enchanted_type())
+                || !attachment.host_matches(state, host.object)
+                || crate::engine::has_effective_keyword(
+                    state,
+                    host.object,
+                    Keywords::PROTECTION_FROM_EVERYTHING,
+                )
                 || (def.colors.len() == 1
                     && crate::engine::has_effective_keyword(
                         state,

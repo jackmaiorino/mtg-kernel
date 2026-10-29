@@ -334,6 +334,24 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::SixIfDungeonCompletedElseTwoV1 => {
+            // Two, or six once the controller completed a dungeon.
+            // Vocabulary gap: no dungeon read.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
+        DynamicValueDef::UrzasLandsIfMetalcraftV1 => {
+            // One, or with three artifacts the controller's Urza's lands.
+            // Vocabulary gap: no conditional count or subtype class.
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Count,
+            );
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicValueDef::ControllerLifeTotal => {
             // Frozen count/read vocabulary cannot encode a player's signed life
             // total as a token quantity. The precise Ajani successor owns it.
@@ -447,6 +465,29 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             );
             AmtF::Dynamic
         }
+        DynamicCountDef::CardsCycledOrDiscardedThisTurnV1 => {
+            // Cards the caster cycled or discarded this turn. Vocabulary
+            // gap: no aggregate for discards as events this turn.
+            out.read(
+                RelF::You,
+                Some(ZoneF::Graveyard),
+                Some(ObjF::AnyCard),
+                AggF::EventThisTurn,
+            );
+            AmtF::Dynamic
+        }
+        DynamicCountDef::ControllerAttackingCreatures => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Count,
+            );
+            // The frozen vocabulary has no current-attacker predicate. Do
+            // not identify this with the distinct attacked-this-turn count.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicCountDef::ControllerDrawsThisTurn => {
             // The caster's draws this turn. Vocabulary gap: no aggregate
             // for the number of events this turn.
@@ -473,6 +514,17 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
                     at_least(1),
                 );
             }
+            AmtF::Dynamic
+        }
+        DynamicCountDef::SpellTargetsTappedPermanentV1 => {
+            // One iff a chosen target is a tapped battlefield permanent
+            // (Ride's End). The same vocabulary gap as below.
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Characteristic,
+            );
             AmtF::Dynamic
         }
         DynamicCountDef::SpellTargetsTappedCreature => {
@@ -570,16 +622,65 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
         LibraryCardFilter::AnyLand | LibraryCardFilter::LandWithBasicLandType => {
             ObjF::Typed(CardTypeF::Land)
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => {
+            // Land subtypes occur only on lands. Vocabulary gap: ObjF has no
+            // subtype class.
+            let _ = subtypes;
+            ObjF::Typed(CardTypeF::Land)
+        }
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
+        LibraryCardFilter::CardWithTypeV1(card_type) => ObjF::Typed(card_type.into()),
+        LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
+            // The frozen vocabulary has no library mana-value bound.
+            let _ = maximum;
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Artifact)
+        }
+        LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => {
+            // A mana-cost shape, not a mana value: opaque to the vocabulary.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Artifact)
+        }
+        LibraryCardFilter::BlueInstantV1 => {
+            // The color refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Instant)
+        }
+        LibraryCardFilter::ColorlessCreatureV1 => {
+            // The colorless refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Creature)
+        }
+        LibraryCardFilter::InstantOrFlashV1 => {
+            // The flash alternative has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Instant)
+        }
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(_) => ObjF::Permanent,
         LibraryCardFilter::ArtifactWithManaValue(_) => {
             // The frozen vocabulary lacks an exact mana-value read predicate.
             out.atoms.push(Atom::Opaque);
             ObjF::Typed(CardTypeF::Artifact)
         }
+        LibraryCardFilter::CreatureManaValueAtMost(_) => {
+            // The frozen vocabulary cannot express this mana-value ceiling.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Creature)
+        }
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             let _ = value;
             // The vocabulary lacks a disjunction of types and exact mana value.
+            out.atoms.push(Atom::Opaque);
+            ObjF::AnyCard
+        }
+        LibraryCardFilter::InstantOrSorceryCardV1 => {
+            // The vocabulary lacks a disjunction of types.
+            out.atoms.push(Atom::Opaque);
+            ObjF::AnyCard
+        }
+        LibraryCardFilter::CardWithSubtypeV1(subtype) => {
+            // Vocabulary gap: ObjF has no subtype class.
+            let _ = subtype;
             out.atoms.push(Atom::Opaque);
             ObjF::AnyCard
         }
@@ -603,6 +704,22 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
         PermanentFilter::Creature => (ObjF::Typed(CardTypeF::Creature), None),
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
         PermanentFilter::Token => (ObjF::Token, None),
+        PermanentFilter::AnotherWithSubtype(_) => (ObjF::Permanent, None),
+        PermanentFilter::DesertV1 => {
+            // Vocabulary gap: ObjF has no subtype class.
+            (ObjF::Typed(CardTypeF::Land), None)
+        }
+        PermanentFilter::BlueV1 => {
+            // Vocabulary gap: ObjF has no color class.
+            (ObjF::Permanent, None)
+        }
+        PermanentFilter::NonlandV1 => (ObjF::NonlandPermanent, None),
+        // Vocabulary gap: ObjF has no artifact-or-creature union.
+        PermanentFilter::AnotherArtifactOrCreatureV1 => (ObjF::Permanent, None),
+        PermanentFilter::ForestOrPlainsV1 => {
+            // Vocabulary gap: ObjF has no subtype class.
+            (ObjF::Typed(CardTypeF::Land), None)
+        }
     }
 }
 
@@ -621,6 +738,11 @@ pub(crate) fn permanent_filter_def(filter: PermanentFilterDef) -> (ObjF, Option<
             (ObjF::Typed(CardTypeF::Creature), None)
         }
         PermanentFilterDef::Artifact => (ObjF::Typed(CardTypeF::Artifact), None),
+        PermanentFilterDef::CreatureV1 => (ObjF::Typed(CardTypeF::Creature), None),
+        PermanentFilterDef::TappedCreatureV1 | PermanentFilterDef::UnblockedAttackingCreatureV1 => {
+            // Vocabulary gap: ObjF has no tapped or combat refinement.
+            (ObjF::Typed(CardTypeF::Creature), None)
+        }
     }
 }
 

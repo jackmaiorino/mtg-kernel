@@ -92,6 +92,9 @@ RECOVERY_HEADROOM_MULTIPLIER = 4
 # than 50 GB, matching the project's qualification-scope ceilings elsewhere
 # (lease_guard.validate: total_cap_usd <= 200).
 VOLUME_SIZE_GB_CAP = 50
+# A study volume may be larger when its spec states the study and why (size_reason),
+# for example the dispatcher's 60 GiB reserve plus a campaign's peak; never above this.
+STUDY_VOLUME_SIZE_GB_CAP = 250
 
 SIZING_BASIS = {
     'package_bytes_estimate': PACKAGE_BYTES_ESTIMATE,
@@ -162,10 +165,11 @@ def cost_note(size_gb):
 
 
 # ---- Offline template -------------------------------------------------------
-def build_template(name, size_gb, data_center_id=DATA_CENTER_ID):
+def build_template(name, size_gb, data_center_id=DATA_CENTER_ID, cap_gb=VOLUME_SIZE_GB_CAP):
     require(re.fullmatch(VOLUME_NAME_PATTERN, name), 'invalid exact volume name')
+    require(cap_gb in (VOLUME_SIZE_GB_CAP, STUDY_VOLUME_SIZE_GB_CAP), 'unknown volume size cap')
     require(isinstance(size_gb, int) and not isinstance(size_gb, bool)
-            and 1 <= size_gb <= VOLUME_SIZE_GB_CAP,
+            and 1 <= size_gb <= cap_gb,
             'volume size must be a whole number of gigabytes within the qualification cap')
     require(data_center_id == DATA_CENTER_ID,
             'volume must target the same data center as prepare_lease.py (EU-RO-1)')
@@ -180,14 +184,16 @@ def prepare(spec, output, now=None):
     require(spec['schema'] == SPEC_SCHEMA, 'wrong volume preparation schema')
     name = spec['name']
     size_gb = spec.get('size_gb', default_size_gb())
-    template = build_template(name, size_gb)
+    reason = spec.get('size_reason')
+    require(reason is None or isinstance(reason, str) and reason.strip(), 'size_reason must state the study and why')
+    template = build_template(name, size_gb, cap_gb=STUDY_VOLUME_SIZE_GB_CAP if reason else VOLUME_SIZE_GB_CAP)
     output = Path(output)
     require(not output.exists(), 'fresh volume output required')
     output.mkdir(parents=True)
     write(output / 'create-request-template.json', template)
     result = {'schema': RESULT_SCHEMA, 'prepared_epoch': now,
               'data_center_id': DATA_CENTER_ID, 'requested_name': name,
-              'size_gb': size_gb, 'size_default_used': 'size_gb' not in spec,
+              'size_gb': size_gb, 'size_default_used': 'size_gb' not in spec, 'size_reason': reason,
               'sizing_basis': SIZING_BASIS, 'cost_note': cost_note(size_gb),
               'create_request_template': pin(output / 'create-request-template.json'),
               'api_reference': API_REFERENCE,
@@ -224,10 +230,11 @@ class Provider:
         require(key, 'runtime API key missing')
         self.key = key
 
-    def create(self, name, size_gb, data_center_id):
+    def create(self, name, size_gb, data_center_id, cap_gb=VOLUME_SIZE_GB_CAP):
         require(re.fullmatch(VOLUME_NAME_PATTERN, name), 'invalid exact volume name')
+        require(cap_gb in (VOLUME_SIZE_GB_CAP, STUDY_VOLUME_SIZE_GB_CAP), 'unknown volume size cap')
         require(isinstance(size_gb, int) and not isinstance(size_gb, bool)
-                and 1 <= size_gb <= VOLUME_SIZE_GB_CAP, 'volume size out of qualification bound')
+                and 1 <= size_gb <= cap_gb, 'volume size out of qualification bound')
         body = json.dumps({'name': name, 'size': size_gb, 'dataCenterId': data_center_id}).encode()
         request = urllib.request.Request(VOLUMES_URL, data=body, method='POST',
             headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json',
@@ -284,8 +291,12 @@ def execute_create(template, output, funding_snapshot_path, api=None, now=None):
     require(funding_snapshot_path, '--funding-snapshot is required with --execute')
     require_fresh_funding_snapshot(funding_snapshot_path, now)
     body = template['body']
+    # A study volume above the default cap needs the reason its preparation recorded.
+    preparation = Path(output) / 'preparation.json'
+    reason = read(preparation).get('size_reason') if preparation.exists() else None
     api = api or Provider(key)
-    raw = api.create(body['name'], body['size'], body['dataCenterId'])
+    raw = api.create(body['name'], body['size'], body['dataCenterId'],
+                     cap_gb=STUDY_VOLUME_SIZE_GB_CAP if reason else VOLUME_SIZE_GB_CAP)
     sanitized = sanitize_volume(raw)
     result = {'schema': CREATED_SCHEMA, 'created_epoch': now, 'requested': body,
               **sanitized, 'cost_note': cost_note(sanitized['size_gb'])}

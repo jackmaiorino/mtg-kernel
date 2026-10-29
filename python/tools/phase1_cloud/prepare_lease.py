@@ -31,6 +31,7 @@ import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
 from lease_guard import validate
+from external_guard import LeaseClient, require_boundary, resolve_or_alert, valid_id
 from runtime_observation import IMAGE_REFERENCE
 
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
@@ -38,6 +39,7 @@ KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
 PODS_URL = 'https://rest.runpod.io/v1/pods'
 USER_AGENT = 'Mozilla/5.0 g115-lease-execute/1'
 CREATED_SCHEMA = 'phase1-cloud-pod-created/v1'
+MIN_RELEASE_SECONDS = 120   # a creator's own release loop always gets time for two spaced absences
 FAILURE_SCHEMA = 'phase1-cloud-pod-create-failure/v1'
 # A pinned reference is "<repo>@sha256:<64 hex>"; a mutable tag (e.g. the
 # "python:3.12-slim-bookworm" historical default) never matches this shape.
@@ -71,6 +73,9 @@ def prepare(spec, output, now=None, allow_mutable_image=False):
     require(spec['quoted_cpu_usd_hour'] <= lease['rate_ceiling_usd_hour'], 'quote above ceiling')
     require(re.fullmatch('ssh-ed25519 [A-Za-z0-9+/=]+(?: [^\r\n]+)?', spec['public_ssh_key']),
             'single public ed25519 key required')
+    # Pod-local disk for hot outputs (default 40 GB); the dispatcher keeps a 60 GiB reserve on every root's volume.
+    container_disk = spec.get('container_disk_gb', 40)
+    require(type(container_disk) is int and 20 <= container_disk <= 400, 'container disk must be 20 to 400 GB')
     run_id = lease['name']
     guard_root = '/run/phase1/' + run_id
     durable = '/workspace/phase1/' + run_id
@@ -148,7 +153,7 @@ raise SystemExit(0)
                base64.b64encode(bootstrap.encode()).decode() + "'))"]
     body = {'name': run_id, 'cloudType': 'SECURE', 'computeType': 'CPU',
             'cpuFlavorIds': ['cpu3c'], 'cpuFlavorPriority': 'custom', 'vcpuCount': 32,
-            'containerDiskInGb': 40, 'volumeInGb': 0,
+            'containerDiskInGb': container_disk, 'volumeInGb': 0,
             'imageName': image_name,
             'interruptible': False, 'supportPublicIp': True, 'ports': ['22/tcp'],
             'networkVolumeId': lease['network_volume_id'], 'volumeMountPath': '/workspace',
@@ -193,6 +198,7 @@ class Provider:
         self.key = key
 
     def create(self, body):
+        require_boundary('Pod create')
         payload = json.dumps(body).encode()
         request = urllib.request.Request(PODS_URL, data=payload, method='POST',
             headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json',
@@ -242,7 +248,7 @@ def _require_execute_key():
 
 
 def execute_create(template, output, funding_snapshot_path, volume_id, api=None, now=None,
-                   allow_mutable_image=False):
+                   allow_mutable_image=False, release=None):
     """Live Pod-create call. Reachable only when RUNPOD_API_KEY is set, a
     funding snapshot no older than thirty minutes is supplied, and the
     pre-created --volume-id matches what the saved template already targets.
@@ -251,6 +257,10 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
 
     On a non-2xx or malformed response, records a sanitized failure receipt
     (never the raw body or the key) and re-raises so the caller exits nonzero.
+    A returned Pod ID is handed off to the external guard first (known-pods,
+    read back); if that fails this process deletes the Pod and verifies its
+    absence before raising. `release` passes provider/pods/clock/sleep fakes
+    to that release loop in tests.
     """
     now = time.time() if now is None else now
     key = _require_execute_key()
@@ -272,16 +282,86 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
             'prepared template volume id differs from --volume-id')
     require_pinned_image(body.get('imageName'), allow_mutable_image)
     output = Path(output)
-    api = api or Provider(key)
+    # One POST per prepared lease, ever: a concurrent or repeated create (for
+    # example a retry after a timed-out POST) refuses instead of allocating a
+    # second Pod. The lock is never removed; a retry needs a fresh preparation.
+    for receipt in ('created-pod.json', 'create-pod-failure.json'):
+        require(not (output / receipt).exists(), 'an earlier create receipt exists: ' + receipt)
     try:
-        raw = api.create(body)
-        sanitized = sanitize_pod(raw)
-    except (RuntimeError, ValueError, KeyError, TypeError) as error:
-        write(output / 'create-pod-failure.json', {'schema': FAILURE_SCHEMA,
-              'failed_epoch': now, 'error_type': type(error).__name__,
-              'error': str(error)}, replace=True)
-        raise
+        lock = os.open(output / 'create.lock', os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise ValueError('create already attempted or in progress for this lease '
+                         '(one POST per prepared lease)') from None
+    os.close(lock)
+    # The external guard treats an attempt without a receipt or a definite
+    # refusal as a create that may have allocated a Pod no receipt names.
+    write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
+    api = api or Provider(key)
+    options = dict(release or {})
+    clock = options.pop('clock', time.time); sleep = options.pop('sleep', time.sleep)
+    try:
+        deadline = float(read(output / 'lease.json')['deadline_epoch'])
+    except Exception:  # noqa: BLE001
+        deadline = 0.0
+    # The provider boundary retains the raw POST ID, validated as a string and whatever its name or
+    # other fields, before this code examines anything else (I1); leaving the block releases any ID
+    # that could not be handed off, or fails loudly (I4).
+    with LeaseClient(output / 'known-pods', body.get('name'), key, options.get('provider'), options.get('pods'),
+                     clock, sleep, output / 'ALERT-pod-not-released.json', lease_deadline=deadline,
+                     min_release_seconds=MIN_RELEASE_SECONDS) as client:
+        return _post_and_record(client, api, body, output, now, deadline, clock, sleep)
+
+
+def _post_and_record(client, api, body, output, now, deadline, clock, sleep):
+    returned = None; error = None
+    try:
+        returned = client.post(body, api=api)
+    except Exception as post_error:  # noqa: BLE001 - classified below
+        error = post_error
+    pod_id = returned.get('id') if isinstance(returned, dict) and valid_id(returned.get('id')) else None
+    if client.unpersisted:
+        # I4: without a durable handoff this process releases the Pod itself, or fails loudly.
+        released = resolve_or_alert(client, max(deadline, clock() + MIN_RELEASE_SECONDS),
+                                    output / 'ALERT-pod-not-released.json', sleep)
+        if pod_id in released:
+            raise RuntimeError('create handoff failed; the Pod was deleted and verified absent')
+        # The cleanup's own census or GET handed the ID off durably, so the guardian owns it. The
+        # cleanup may already have sent a DELETE before that GET, so this proves ownership, not that
+        # the Pod is still alive. Say so, and continue so its receipt (created-pod.json) is written below.
+        try:
+            write(output / 'create-handoff-recovered.json', {'epoch': now, 'pod_id': pod_id,
+                  'state': 'durable handoff recovered by the cleanup; the guardian owns the Pod and its '
+                           'current provider state requires rechecking (a DELETE may already have been sent)'},
+                  replace=True)
+        except Exception:  # noqa: BLE001 - the known-Pod record already hands it to the guardian
+            pass
+    sanitized = None
+    if error is None:
+        try:
+            sanitized = sanitize_pod(returned)
+        except Exception as sanitize_error:  # noqa: BLE001
+            error = sanitize_error
+    if error is not None:
+        # Only an explicit provider refusal (HTTP 4xx, no ID returned) proves no Pod
+        # exists. A timeout, 5xx, transport error or malformed response is ambiguous:
+        # the external guard keeps deleting any Pod with the lease's name and never
+        # completes until an operator writes ambiguous-resolved-by-operator.json.
+        definite = (pod_id is None and isinstance(error, RuntimeError)
+                    and re.fullmatch(r'provider HTTP 4\d\d', str(error)) is not None)
+        for path, value in ((output / 'create-pod-failure.json', {'schema': FAILURE_SCHEMA,
+                             'failed_epoch': now, 'error_type': type(error).__name__,
+                             'error': str(error), 'definite': definite, 'pod_id': pod_id}),
+                            (output / 'create-ambiguous.json', None if definite else {
+                             'epoch': now, 'exact_name': body.get('name'), 'error_type': type(error).__name__,
+                             'pod_id': pod_id})):
+            if value is not None:
+                try:
+                    write(path, value, replace=True)
+                except Exception:  # noqa: BLE001 - create-attempt.json already blocks guard completion
+                    pass
+        raise error
     result = {'schema': CREATED_SCHEMA, 'created_epoch': now, **sanitized}
+    # The ID is already handed off (known-pods); a failed receipt write still fails the create.
     write(output / 'created-pod.json', result, replace=True)
     return result
 

@@ -68,7 +68,7 @@ pub(super) fn decision(state: &GameState, pending: &PendingTrigger) -> Option<De
             TargetSpec::ControlledCreature,
             &[],
             pending.controller,
-            pending_trigger_targeting_source(pending),
+            pending_trigger_targeting_source(pending, state),
             state,
         ),
         can_finish: assigned == 0,
