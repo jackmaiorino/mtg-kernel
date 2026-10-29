@@ -31,16 +31,21 @@ import panel  # noqa: E402
 import pilot  # noqa: E402
 
 
-def remap(value, mapping):
+def remap(value, mapping, overrides=None):
     if isinstance(value, dict):
-        out = {k: remap(v, mapping) for k, v in value.items()}
+        out = {k: remap(v, mapping, overrides) for k, v in value.items()}
+        if overrides and out.get("sha256") in overrides:
+            # A pinned file whose own contents point at moved inputs: use the declared
+            # re-pointed copy (same referenced bytes, checked when it was written).
+            path = Path(overrides[out["sha256"]])
+            out = {**out, "path": str(path).replace("\\", "/"), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
         if isinstance(out.get("path"), str) and isinstance(out.get("sha256"), str):
             path = Path(out["path"])
             if hashlib.sha256(path.read_bytes()).hexdigest() != out["sha256"]:
                 raise ValueError(f"{path} differs from its pinned sha256")
         return out
     if isinstance(value, list):
-        return [remap(v, mapping) for v in value]
+        return [remap(v, mapping, overrides) for v in value]
     if isinstance(value, str):
         for old, new in mapping:
             if value.startswith(old):
@@ -61,8 +66,10 @@ def main(argv=None) -> int:
     ap.add_argument("--opponents", required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--map", action="append", default=[], help="OLD=NEW path prefix rewrite")
+    ap.add_argument("--override", action="append", default=[], help="OLD_SHA256=PATH: a re-pointed copy of a pinned file")
     a = ap.parse_args(argv)
     mapping = [tuple(m.split("=", 1)) for m in a.map]
+    overrides = dict(o.split("=", 1) for o in a.override)
     decks = ndb.load_decks(REPO / "data" / "runtime_decks_v1.json")
     total = 0
     for name in a.opponents.split(","):
@@ -73,7 +80,7 @@ def main(argv=None) -> int:
         for case in cases:
             if recorded[(case["own"], case["other"], case["repeat"], case["seat"])] != case:
                 raise ValueError(f"{name}: case {case} differs from the panel's schedule")
-        candidate, opponent = remap(source["candidate"], mapping), remap(source["opponent"], mapping)
+        candidate, opponent = remap(source["candidate"], mapping, overrides), remap(source["opponent"], mapping, overrides)
         out = a.out / f"{a.subject}-vs-{name}"
         requests = []
         for seat in (0, 1):
@@ -88,7 +95,7 @@ def main(argv=None) -> int:
         plan = {"schema": panel.SCHEMA, "panel": f"{a.subject}-vs-{name}", "checkpoint_id": a.subject,
                 "opponent_name": name, "candidate": candidate, "opponent": opponent,
                 "runtime_rules": pilot.RUNTIME_RULES, "seed_namespace": namespace, "capture_all": True,
-                "cases": len(cases), "requests": requests,
+                "cases": len(cases), "requests": requests, "pin_overrides": overrides,
                 "selection": "repeat 0, every other deck, focal seat (own + other) % 2, Spy excluded"}
         npp.write_json(out / "plan.json", plan)
         total += len(cases)
