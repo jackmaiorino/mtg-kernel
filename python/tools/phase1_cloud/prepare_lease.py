@@ -23,6 +23,7 @@ import argparse
 import copy
 import base64
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -30,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
-from lease_guard import validate
+from lease_guard import Provider as AccountProvider, validate
 from external_guard import LeaseClient, require_boundary, resolve_or_alert, valid_id
 from runtime_observation import IMAGE_REFERENCE
 
@@ -40,6 +41,7 @@ PODS_URL = 'https://rest.runpod.io/v1/pods'
 USER_AGENT = 'Mozilla/5.0 g115-lease-execute/1'
 CREATED_SCHEMA = 'phase1-cloud-pod-created/v1'
 MIN_RELEASE_SECONDS = 120   # a creator's own release loop always gets time for two spaced absences
+FUNDING_MAX_AGE_SECONDS = 120   # live account read to the recorded create attempt, as in cloud_lease.create
 FAILURE_SCHEMA = 'phase1-cloud-pod-create-failure/v1'
 # A pinned reference is "<repo>@sha256:<64 hex>"; a mutable tag (e.g. the
 # "python:3.12-slim-bookworm" historical default) never matches this shape.
@@ -205,6 +207,11 @@ class Provider:
                      'User-Agent': USER_AGENT})
         return self._call(request)
 
+    def funds(self):
+        """Fresh account read through the resident guard's read-only query; raises on any error.
+        It carries no Pod ID, so it is outside the Pod provider boundary."""
+        return AccountProvider(self.key, 'funding').funds()
+
     def _call(self, request):
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
@@ -215,6 +222,11 @@ class Provider:
             raise RuntimeError('provider HTTP ' + str(code)) from None
         except (OSError, ValueError):
             raise RuntimeError('provider request unavailable') from None
+
+
+def live_funds(api):
+    """Fresh account read (no Pod ID, so outside the Pod provider boundary); raises on any error."""
+    return api.funds()
 
 
 def sanitize_pod(raw):
@@ -250,8 +262,11 @@ def _require_execute_key():
 def execute_create(template, output, funding_snapshot_path, volume_id, api=None, now=None,
                    allow_mutable_image=False, release=None):
     """Live Pod-create call. Reachable only when RUNPOD_API_KEY is set, a
-    funding snapshot no older than thirty minutes is supplied, and the
-    pre-created --volume-id matches what the saved template already targets.
+    funding snapshot no older than thirty minutes is supplied, a live account
+    read (at most FUNDING_MAX_AGE_SECONDS old when the attempt is recorded, just
+    before the POST) shows the account not under balance and able to fund the
+    lease, and the pre-created --volume-id matches what the saved template
+    already targets.
     `api` is exercised only through a mocked client in tests; this function
     never performs a live call outside of --execute.
 
@@ -282,6 +297,20 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
             'prepared template volume id differs from --volume-id')
     require_pinned_image(body.get('imageName'), allow_mutable_image)
     output = Path(output)
+    api = api or Provider(key)
+    options = dict(release or {})
+    clock = options.pop('clock', time.time); sleep = options.pop('sleep', time.sleep)
+    # The operator snapshot is the preparation record; this live read is the funding gate.
+    try:
+        observed = live_funds(api)
+        observed_epoch = clock()
+        balance = float(observed['balance_usd'])
+        under = observed['under_balance']
+    except Exception as error:  # noqa: BLE001
+        raise ValueError('funding service unavailable: ' + type(error).__name__) from None
+    require(under is False and math.isfinite(balance), 'account under balance or balance unavailable')
+    lease = read(output / 'lease.json')
+    validate(dict(lease, funded_balance_usd=min(balance, lease['funded_balance_usd'])))
     # One POST per prepared lease, ever: a concurrent or repeated create (for
     # example a retry after a timed-out POST) refuses instead of allocating a
     # second Pod. The lock is never removed; a retry needs a fresh preparation.
@@ -293,12 +322,13 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
         raise ValueError('create already attempted or in progress for this lease '
                          '(one POST per prepared lease)') from None
     os.close(lock)
+    write(output / 'funding-at-create.json', {'epoch': observed_epoch, 'balance_usd': balance,
+          'under_balance': under, 'account_spend_usd_hour': observed.get('account_spend_usd_hour')})
+    require(clock() - observed_epoch <= FUNDING_MAX_AGE_SECONDS,
+            'funding observation older than %d s at the create attempt' % FUNDING_MAX_AGE_SECONDS)
     # The external guard treats an attempt without a receipt or a definite
     # refusal as a create that may have allocated a Pod no receipt names.
     write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
-    api = api or Provider(key)
-    options = dict(release or {})
-    clock = options.pop('clock', time.time); sleep = options.pop('sleep', time.sleep)
     try:
         deadline = float(read(output / 'lease.json')['deadline_epoch'])
     except Exception:  # noqa: BLE001

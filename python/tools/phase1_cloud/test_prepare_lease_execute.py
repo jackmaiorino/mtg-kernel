@@ -41,6 +41,58 @@ def pod_response(**changes):
             'imageName': IMAGE_REFERENCE} | changes
 
 
+def funded(**funds):
+    """A mock provider whose live account read can fund the test lease."""
+    api = Mock()
+    api.funds.return_value = {'balance_usd': lease()['funded_balance_usd'], 'under_balance': False,
+                              'account_spend_usd_hour': 0.} | funds
+    return api
+
+
+class LiveFundingTests(unittest.TestCase):
+    def execute(self, api, release=None):
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        output = prepared_output(temporary)
+        with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+            pl.execute_create(pl.prepared_template(output), output, snapshot_path(temporary), 'testvolume',
+                              api=api, now=NOW, release=release)
+        return output
+
+    def test_a_failed_under_balance_or_insufficient_read_refuses_before_the_lock(self):
+        failing = funded(); failing.funds.side_effect = RuntimeError('account HTTP 503')
+        for api, message in ((failing, 'funding service unavailable: RuntimeError'),
+                             (funded(balance_usd='n/a'), 'funding service unavailable: ValueError'),
+                             (funded(under_balance=True), 'under balance'),
+                             (funded(under_balance=None), 'under balance'),
+                             (funded(balance_usd=float('nan')), 'under balance'),
+                             (funded(balance_usd=1.), 'insufficient funded balance')):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.execute(api)
+            api.create.assert_not_called()
+
+    def test_a_read_older_than_the_limit_at_the_attempt_refuses_without_an_attempt_record(self):
+        clock = iter([1000., 1000. + pl.FUNDING_MAX_AGE_SECONDS + 1])
+        api = funded(); api.create.return_value = pod_response()
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        output = prepared_output(temporary)
+        with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}), \
+             self.assertRaisesRegex(ValueError, 'funding observation older than 120 s'):
+            pl.execute_create(pl.prepared_template(output), output, snapshot_path(temporary), 'testvolume',
+                              api=api, now=NOW, release={'clock': lambda: next(clock)})
+        api.create.assert_not_called()
+        self.assertFalse((output / 'create-attempt.json').exists())  # the external guard sees no attempt
+        self.assertEqual(read(output / 'funding-at-create.json')['epoch'], 1000.)
+
+    def test_the_create_records_the_live_read(self):
+        api = funded(balance_usd=40., account_spend_usd_hour=.5); api.create.return_value = pod_response()
+        output = self.execute(api)
+        api.funds.assert_called_once_with()
+        api.create.assert_called_once()
+        record = read(output / 'funding-at-create.json')
+        self.assertEqual((record['balance_usd'], record['under_balance'], record['account_spend_usd_hour']),
+                         (40., False, .5))
+
+
 class ImagePinTests(unittest.TestCase):
     def test_prepare_defaults_the_image_to_the_pinned_digest(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -63,7 +115,7 @@ class ImagePinTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary, allow_mutable_image=True, image_name='python:3.12-slim-bookworm')
             snapshot = snapshot_path(temporary)
-            api = Mock()
+            api = funded()
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, 'mutable image tag refused'):
                     pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
@@ -73,7 +125,7 @@ class ImagePinTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary, allow_mutable_image=True, image_name='python:3.12-slim-bookworm')
             snapshot = snapshot_path(temporary)
-            api = Mock(); api.create.return_value = pod_response(imageName='python:3.12-slim-bookworm')
+            api = funded(); api.create.return_value = pod_response(imageName='python:3.12-slim-bookworm')
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW,
                                   allow_mutable_image=True)
@@ -85,7 +137,7 @@ class VolumeIdGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
-            api = Mock()
+            api = funded()
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, '--volume-id is required'):
                     pl.execute_create(pl.prepared_template(output), output, snapshot, None, api=api, now=NOW)
@@ -95,7 +147,7 @@ class VolumeIdGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
-            api = Mock()
+            api = funded()
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, 'volume id differs'):
                     pl.execute_create(pl.prepared_template(output), output, snapshot, 'different-volume',
@@ -107,7 +159,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
     def test_execute_refuses_without_a_funding_snapshot_path(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
-            api = Mock()
+            api = funded()
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, 'funding-snapshot is required'):
                     pl.execute_create(pl.prepared_template(output), output, None, 'testvolume', api=api, now=NOW)
@@ -117,7 +169,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             stale = snapshot_path(temporary, age_seconds=31 * 60)
-            api = Mock()
+            api = funded()
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, 'stale'):
                     pl.execute_create(pl.prepared_template(output), output, stale, 'testvolume', api=api, now=NOW)
@@ -127,7 +179,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             fresh = snapshot_path(temporary, age_seconds=29 * 60 + 59)
-            api = Mock(); api.create.return_value = pod_response()
+            api = funded(); api.create.return_value = pod_response()
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pl.execute_create(pl.prepared_template(output), output, fresh, 'testvolume', api=api, now=NOW)
             api.create.assert_called_once()
@@ -136,7 +188,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             fresh = snapshot_path(temporary)
-            api = Mock()
+            api = funded()
             with patch.dict('os.environ', {}, clear=False):
                 os.environ.pop('RUNPOD_API_KEY', None)
                 with self.assertRaisesRegex(ValueError, 'RUNPOD_API_KEY must be set'):
@@ -149,7 +201,7 @@ class SanitizedSuccessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
-            api = Mock()
+            api = funded()
             api.create.return_value = pod_response(extraField='must-not-be-saved', machineId='secret-machine')
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume',
@@ -170,7 +222,7 @@ class SanitizedSuccessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
-            api = Mock(); api.create.return_value = pod_response()
+            api = funded(); api.create.return_value = pod_response()
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
             (body,) = api.create.call_args.args
@@ -184,7 +236,7 @@ class SanitizedSuccessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
-            api = Mock(); api.create.return_value = pod_response()
+            api = funded(); api.create.return_value = pod_response()
             template = pl.prepared_template(output); template['env']['RUNPOD_API_KEY'] = 'already-filled'
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, 'key placeholder'):
@@ -195,7 +247,7 @@ class SanitizedSuccessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
-            api = Mock(); response = pod_response(); response['dataCenterId'] = None
+            api = funded(); response = pod_response(); response['dataCenterId'] = None
             api.create.return_value = response
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
@@ -208,7 +260,7 @@ class FailureRecordingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
-            api = Mock(); api.create.side_effect = RuntimeError('provider HTTP 500')
+            api = funded(); api.create.side_effect = RuntimeError('provider HTTP 500')
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(RuntimeError, 'provider HTTP 500'):
                     pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
@@ -223,7 +275,7 @@ class FailureRecordingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
-            api = Mock(); api.create.return_value = {'id': 'pod123'}
+            api = funded(); api.create.return_value = {'id': 'pod123'}
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, 'pod response missing'):
                     pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
@@ -238,7 +290,7 @@ class AmbiguousCreateTests(unittest.TestCase):
     def attempt(self, temporary, error):
         output = prepared_output(temporary)
         snapshot = snapshot_path(temporary)
-        api = Mock(); api.create.side_effect = error
+        api = funded(); api.create.side_effect = error
         with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
             with self.assertRaises(type(error)):
                 pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
@@ -264,7 +316,7 @@ class AmbiguousCreateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = self.attempt(temporary, RuntimeError('provider request unavailable'))
             snapshot = self.snapshot
-            api = Mock()
+            api = funded()
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, 'earlier create receipt'):
                     pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
@@ -277,7 +329,7 @@ class RetainFirstTests(unittest.TestCase):
     def run_create(self, temporary, response, write_patch=None):
         output = prepared_output(temporary)
         snapshot = snapshot_path(temporary)
-        api = Mock(); api.create.return_value = response
+        api = funded(); api.create.return_value = response
         with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
             if write_patch:
                 with patch.object(pl, 'write', write_patch), self.assertRaises(Exception):
@@ -320,7 +372,7 @@ class ResponsibilityTests(unittest.TestCase):
         from lease_test_support import FakeClock, no_network
         output = prepared_output(temporary)
         snapshot = snapshot_path(temporary)
-        api = Mock(); api.create.return_value = response
+        api = funded(); api.create.return_value = response
         clock = FakeClock(lease()['deadline_epoch'] - 60)   # bounds the release loop to MIN_RELEASE_SECONDS
         release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
         patches = [patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'})]
@@ -359,7 +411,7 @@ class ResponsibilityTests(unittest.TestCase):
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
             world = World([pod_response()])
-            api = Mock(); api.create.return_value = pod_response()
+            api = funded(); api.create.return_value = pod_response()
             clock = FakeClock(lease()['deadline_epoch'] - 60)
             release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
             real = external_guard.handoff_in; fired = []
@@ -388,7 +440,7 @@ class ResponsibilityTests(unittest.TestCase):
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
             world = World([pod_response()]); world.delete_failures = 1
-            api = Mock(); api.create.return_value = pod_response()
+            api = funded(); api.create.return_value = pod_response()
             clock = FakeClock(lease()['deadline_epoch'] - 60)
             release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
             real = external_guard.handoff_in; calls = []
@@ -444,7 +496,7 @@ class EndToEndExecuteTests(unittest.TestCase):
             # main() has no --now hook and calls the real clock, so this snapshot
             # must be fresh against wall time, not the fixed NOW used elsewhere.
             snapshot = snapshot_path(temporary, now=time.time())
-            fake_api = Mock(); fake_api.create.return_value = pod_response()
+            fake_api = funded(); fake_api.create.return_value = pod_response()
             argv = ['prepare_lease.py', '--output', str(output), '--execute',
                     '--funding-snapshot', str(snapshot), '--volume-id', lease()['network_volume_id']]
             with patch.object(sys, 'argv', argv), \

@@ -66,6 +66,7 @@ SMALL_RECORDS = ("complete.json", "update.json", "collection.json", "non-natural
                  "update-command.json", "update-input.json", "restarts.log")
 LOCK = threading.Lock()
 HEARTBEAT_SECONDS = 15  # progress.json refresh, under the guard's 90 s controller-lost limit
+DRIVER_BUSY_SHARE = 0.25  # driver CPU per wall second that counts as its own work outside a native part
 LEASE_MARGIN_SECONDS = 600  # exposure collection, retention and pruning after a block's native part
 ESTIMATE_FACTOR = 1.25  # block times vary with game lengths
 
@@ -188,6 +189,12 @@ def lease_stop(estimate: float) -> str | None:
     return None
 
 
+def driver_cpu_seconds() -> float:
+    """This driver process's CPU time, every thread, user and system."""
+    times = os.times()
+    return times.user + times.system
+
+
 def native_ticks(root: Path) -> int | None:
     """None outside a block's native part, else its native CPU clock ticks (-1 once unreadable)."""
     if not (root / "started.json").exists() or (root / "execution.json").exists():
@@ -206,7 +213,11 @@ class LeaseProgress:
     decision() latches controller_lost once the record is over 90 s old and
     native_work_stalled_or_idle after work_idle_seconds without activity, so it is
     rewritten every min(15 s, work_idle_seconds / 3). Activity is advancing native
-    CPU time, or the driver dispatching, archiving or finishing a block.
+    CPU time, a driver step finishing (``touch``: a dispatch, a native run's end,
+    each kept file of a retention, each saved step of finishing a block), or the
+    driver itself computing (at least DRIVER_BUSY_SHARE of a core since the last
+    beat, as during a long collection or hash), never the beat alone, so a driver
+    stuck outside a native part goes idle and the guard releases the pod.
     last_productive_epoch is the latest block completion (else this driver's
     start, never before the lease). queued_work follows native_alive, so the gap
     between blocks is not native_worker_lost. The last record says finished.
@@ -220,6 +231,7 @@ class LeaseProgress:
         self.campaign, self.path = campaign, Path(folder) / "progress.json"
         self.interval = min(HEARTBEAT_SECONDS, lease["work_idle_seconds"] / 3)
         self.productive = self.activity = time.time()
+        self.cpu = (self.activity, driver_cpu_seconds())
         self.active, self.ticks, self.lock, self.done = {}, {}, threading.Lock(), threading.Event()
         self.thread = threading.Thread(target=self.loop, name="lease-progress", daemon=True)
 
@@ -234,6 +246,10 @@ class LeaseProgress:
             except OSError as error:  # the guard's controller-lost limit still bounds the lease
                 self.campaign.event(kind="lease-progress-error", error=str(error))
 
+    def touch(self) -> None:
+        with self.lock:
+            self.activity = time.time()
+
     def completed(self) -> None:
         self.productive = time.time()
         self.beat()
@@ -245,12 +261,14 @@ class LeaseProgress:
 
     def beat(self, finished: bool = False) -> None:
         with self.lock:
-            stamp, alive = time.time(), False
+            stamp, alive, cpu = time.time(), False, driver_cpu_seconds()
+            if cpu - self.cpu[1] >= DRIVER_BUSY_SHARE * (stamp - self.cpu[0]) > 0:
+                self.activity = stamp
+            self.cpu = (stamp, cpu)
             for entry in list(self.active.values()):
                 root = Path(entry["attempts"][-1]["root"]) if entry["attempts"] else None
                 ticks = native_ticks(root) if root else None
-                if ticks is None:
-                    self.activity = stamp
+                if ticks is None:  # outside the native part only touch() counts
                     continue
                 alive = alive or ticks >= 0
                 if ticks > self.ticks.get(str(root), -1):
@@ -259,6 +277,11 @@ class LeaseProgress:
             write_json(self.path, {"pod_id": self.pod, "epoch": stamp, "last_productive_epoch": self.productive,
                                    "last_activity_epoch": self.activity, "native_alive": alive,
                                    "queued_work": alive, "finished": finished})
+
+
+def touch(campaign: Campaign) -> None:
+    if getattr(campaign, "lease", None):
+        campaign.lease.touch()
 
 
 def classify_failure(root: Path) -> str:
@@ -325,6 +348,7 @@ def retain_block(campaign: Campaign, run: str, block: int, native: Path, summary
             if sha256_file(destination) != digest:
                 raise RuntimeError(f"retained copy differs: {destination}")
             mapping.append({"from": str(path), "to": str(destination), "sha256": digest})
+            touch(campaign)
     manifest = write_json(target / "RETAINED.json", {"run": run, "block": block, "native_root": str(native),
                                                      "retained_updates": sorted(keep_updates), "files": mapping})
     pruned_files, pruned_bytes = 0, 0
@@ -404,12 +428,14 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         campaign.event(run=run, block=block, attempt=attempt, kind="dispatch")
         started = time.monotonic()
         result = dispatch_block(Path(request_pin["path"]), campaign.raw.get("compute_host_name"))
+        touch(campaign)
         record["dispatch"] = result
         if result.get("state") != "dispatched":
             record["outcome"] = "spawn-" + str(result.get("state"))
             campaign.save_state(run, state)
             return "stopped"
         outcome = wait_block(root, result["pid"])
+        touch(campaign)
         record["finished"] = now()
         if outcome == "success":
             record["outcome"] = "complete"
@@ -447,6 +473,7 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
                              "failed_checks": sorted(k for k, v in summary["checks"].items() if not v["pass"]),
                              "summary": pin(campaign.exposure / f"{run}-b{block:02d}-exposure.json")}
         campaign.save_state(run, state)
+        touch(campaign)
     summary = json.loads(Path(entry["exposure"]["summary"]["path"]).read_text(encoding="utf-8"))
     if "final_checkpoint" not in entry:
         completion = json.loads((native / "completion.json").read_text(encoding="utf-8"))
@@ -463,6 +490,7 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
         entry["final_checkpoint"] = {"path": str(kept), "sha256": update["checkpoint"]["sha256"]}
         entry["final_adam_step"] = update["adam_step"]
         campaign.save_state(run, state)
+        touch(campaign)
     if block == 1 and "embedding_gate_pass" not in entry:
         gate = collector.embedding_gate(json.loads(Path(campaign.raw["t1_source"]["checkpoint"]["path"]).read_bytes()),
                                         json.loads(Path(entry["final_checkpoint"]["path"]).read_bytes()),
@@ -470,6 +498,7 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
         entry["embedding_gate"] = write_json(campaign.exposure / f"{run}-b01-embedding-gate.json", gate)
         entry["embedding_gate_pass"] = gate["pass"]
         campaign.save_state(run, state)
+        touch(campaign)
     if "retained" not in entry:
         existing = campaign.retained / run / f"b{block:02d}" / "RETAINED.json"
         if not native.exists() and existing.exists():
@@ -478,6 +507,7 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
             entry["retained"] = retain_block(campaign, run, block, native, summary)
         entry["cold_root"] = record["cold"]
         campaign.save_state(run, state)
+        touch(campaign)
     prune_cold(campaign, run, block - campaign.raw["cold_keep_blocks"] + 1, state)
     failed = entry["exposure"]["failed_checks"] + (["embedding_gate"] if block == 1 and not entry["embedding_gate_pass"] else [])
     if failed:
@@ -486,6 +516,7 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
     else:
         entry["done"] = True
     campaign.save_state(run, state)
+    touch(campaign)
     campaign.event(run=run, block=block, kind="complete", exposure=entry["exposure"]["verdict"],
                    final_checkpoint=entry["final_checkpoint"]["sha256"], failed=failed)
     return "stopped" if failed else "complete"

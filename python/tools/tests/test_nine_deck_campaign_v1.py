@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import nine_deck_campaign_v1 as driver
 
@@ -84,10 +84,12 @@ class DriverTests(unittest.TestCase):
             (base / "update" / "update.json").write_text("{}")
             (base / "update" / "checkpoint.json").write_text("big")
         (native / "run.json").write_text("{}")
+        self.campaign.lease = Mock()
         manifest = driver.retain_block(self.campaign, "r1", 1, native, {"retained_updates": [1]})
         self.assertFalse(native.exists())
         kept = {Path(item["to"]).relative_to(self.root / "retained" / "r1" / "b01").as_posix()
                 for item in json.loads(Path(manifest["path"]).read_text())["files"]}
+        self.assertEqual(self.campaign.lease.touch.call_count, len(kept))  # each kept file is lease activity
         self.assertIn("run.json", kept)
         self.assertIn("iterations/000001/attempt-000000/collect/episode-0000.json", kept)
         self.assertNotIn("iterations/000000/attempt-000000/collect/episode-0000.json", kept)
@@ -234,6 +236,34 @@ class DriverTests(unittest.TestCase):
         self.runpod()
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(SystemExit):
             driver.LeaseProgress(self.campaign)
+
+    def test_outside_the_native_part_only_a_step_or_driver_work_is_activity(self):
+        self.runpod()
+        folder = self.root / "guard"
+        lease_guard_files(folder)
+        with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", driver.native_dispatch.LEASE_GUARD_ENV: str(folder)}):
+            progress = driver.LeaseProgress(self.campaign)
+        root = self.root / "attempt"; root.mkdir()
+        progress.active["r1"] = {"attempts": [{"root": str(root)}]}
+        def activity_after_beat(busy_seconds=0.0):
+            # An idle beat comes half a second after the last; a busy one right after it, so a loaded runner's
+            # slower spin still shows well over a quarter of a core.
+            progress.cpu = (time.time() - (0 if busy_seconds else 0.5), driver.driver_cpu_seconds())
+            end = time.process_time() + busy_seconds
+            while time.process_time() < end:
+                pass
+            progress.beat()
+            return json.loads((folder / "progress.json").read_text())["last_activity_epoch"]
+        progress.activity = 0
+        self.assertEqual(activity_after_beat(), 0)  # dispatching, no started.json yet: the beat alone is not activity
+        (root / "started.json").write_text(json.dumps({"pid": os.getpid()}))
+        (root / "execution.json").write_text("{}")
+        self.assertEqual(activity_after_beat(), 0)  # finishing a block
+        self.assertGreater(activity_after_beat(busy_seconds=0.3), 0)  # the driver computing (a collection, a hash)
+        progress.activity = 0
+        self.assertEqual(activity_after_beat(), 0)
+        progress.touch()  # a finished driver step
+        self.assertGreater(activity_after_beat(), time.time() - 60)
 
 
     def test_busy_refusal_is_retried(self):
