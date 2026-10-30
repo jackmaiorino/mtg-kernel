@@ -259,7 +259,7 @@ fn shared_query_preserves_cancellation_and_sequence_stops_on_lower_boundary_both
                         index,
                         value: crate::drake_hatcher_v1::custody::JournalV1::Enclosing {
                             start: index,
-                            original: Box::new(input_scene),
+                            original: std::sync::Arc::new(input_scene),
                             operation: crate::linked_aura_operation_v1::OperationV1::Effect {
                                 op: EffectOp::BoostBoundObjectUntilEndOfTurn {
                                     object: binding,
@@ -270,7 +270,7 @@ fn shared_query_preserves_cancellation_and_sequence_stops_on_lower_boundary_both
                             },
                             answers: vec![],
                             used_banner: false,
-                            output: Box::new(output_scene),
+                            output: std::sync::Arc::new(output_scene),
                         },
                     }),
                 });

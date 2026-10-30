@@ -16,6 +16,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, VecDeque},
     hash::{Hash, Hasher},
+    sync::Arc,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,7 +53,7 @@ pub enum RemovalV1 {
 #[allow(clippy::large_enum_variant)]
 pub enum JournalV1 {
     CombatInput {
-        world: Box<GameState>,
+        world: Arc<GameState>,
         proposals: Vec<ProposedEvent>,
     },
     CombatFinished {
@@ -83,7 +84,7 @@ pub enum JournalV1 {
     },
     Paid {
         debit: u64,
-        original: Box<GameState>,
+        original: Arc<GameState>,
         pending: Box<PendingActivation>,
         item: Box<StackItem>,
     },
@@ -91,19 +92,19 @@ pub enum JournalV1 {
         publication: u64,
         item: Box<StackItem>,
         kind: RemovalV1,
-        original: Box<GameState>,
+        original: Arc<GameState>,
     },
     Completed {
         removed: u64,
-        output: Box<GameState>,
+        output: Arc<GameState>,
     },
     Enclosing {
         start: u64,
-        original: Box<GameState>,
+        original: Arc<GameState>,
         operation: crate::linked_aura_operation_v1::OperationV1,
         answers: Vec<crate::linked_aura_operation_v1::GeneralAnswerV36>,
         used_banner: bool,
-        output: Box<GameState>,
+        output: Arc<GameState>,
     },
 }
 thread_local! { static VERIFYING: Cell<bool> = const { Cell::new(false) }; }
@@ -865,7 +866,7 @@ pub(crate) fn begin_combat(
     if open_combat(state)?.is_some() {
         return Err("Drake combat input replayed before completion".into());
     }
-    let original = Box::new(world(state)?);
+    let original = Arc::new(world(state)?);
     emit(
         state,
         JournalV1::CombatInput {
@@ -1082,7 +1083,7 @@ pub(crate) fn capture_payment(
         return Err("Drake payment changed exact printed source/cost/input".into());
     }
     Ok(Some(PaymentOwnerV1 {
-        original: Box::new(world(state)?),
+        original: Arc::new(world(state)?),
         pending: p.clone(),
         start: state.engine.event_history.len(),
         source: AbilitySourceContractV4::capture(state, p.source),
@@ -1225,7 +1226,7 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
     Ok(Some(OwnerV1 {
         publication: publication(state, item)?,
         item: item.clone(),
-        original: Box::new(world(state)?),
+        original: Arc::new(world(state)?),
         start: state.engine.event_history.len(),
     }))
 }
@@ -1273,7 +1274,7 @@ fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u6
     )
 }
 fn complete(state: &mut GameState, removed: u64) -> Result<(), String> {
-    let output = Box::new(world(state)?);
+    let output = Arc::new(world(state)?);
     emit(state, JournalV1::Completed { removed, output })?;
     Ok(())
 }
@@ -1342,11 +1343,11 @@ pub(crate) fn enclose(
         index,
         value: JournalV1::Enclosing {
             start,
-            original: Box::new(world(original)?),
+            original: Arc::new(world(original)?),
             operation: operation.clone(),
             answers: answers.to_vec(),
             used_banner,
-            output: Box::new(world(output)?),
+            output: Arc::new(world(output)?),
         },
     };
     output

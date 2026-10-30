@@ -1107,7 +1107,7 @@ mod tests {
             .find_map(|event| {
                 if let event::CommittedEvent::DrakeJournalV1 { record } = event {
                     if let custody::JournalV1::Enclosing { output, .. } = &mut record.value {
-                        return Some(output.as_mut());
+                        return Some(std::sync::Arc::make_mut(output));
                     }
                 }
                 None
@@ -1350,7 +1350,9 @@ mod tests {
             let custody::JournalV1::Enclosing { output, .. } = &mut record.value else {
                 unreachable!()
             };
-            crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(output);
+            crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
+                std::sync::Arc::make_mut(output),
+            );
             assert_eq!(
                 serde_json::to_vec(&private).unwrap(),
                 serde_json::to_vec(&state).unwrap()
