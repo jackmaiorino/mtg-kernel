@@ -13,10 +13,14 @@ DIR/qualification.json with the binary, policy and roots hashes.
 `measure` refuses to start unless DIR/qualification.json exists, records an
 identity pass, and matches the binary, policy and roots hashes. It then runs
 the frozen matrix (64,000 and 256,000 at seeds 0, 1 and 2 for every root;
-1,024,000 at seed 0 for the Spy k2 roots) as N shard processes, each under
-its own one-core host_slots claim with a declared --max-seconds, and writes
-DIR/manifest.json. Every process writes its own rows file; the readout is
-tools/reach/report.py.
+1,024,000 at seed 0 for the Spy k2 roots, last) as small shards through a
+pool of N one-core host_slots claims, each declaring --max-seconds from the
+qualified rate. host_slots never preempts, so the cap (40 claimed core-hours
+by default, every running claim charged one core for its wall time) is
+enforced here: no shard starts if it would be projected past the cap, and
+running claims end once it is reached. DIR/manifest.json records the plan
+and every shard's exit. Every process writes its own rows file; the readout
+is tools/reach/report.py.
 """
 from __future__ import annotations
 
@@ -121,6 +125,11 @@ def qualify(a) -> int:
     return 0 if identity_pass else 1
 
 
+def cpu_rate(q: dict) -> float:
+    """Claimed core-seconds per transition: the slowest qualified width (hyperthread siblings share a core)."""
+    return max(x["wall"] * x["workers"] / (x["searches"] * 64000) for x in q["throughput"]["scaling"] if x["searches"])
+
+
 def measure(a) -> int:
     qpath = a.out / "qualification.json"
     if not qpath.exists():
@@ -132,29 +141,65 @@ def measure(a) -> int:
         raise SystemExit(f"refused: qualification hashes differ: {q['hashes']} vs {hashes(a)}")
     if not q["throughput"]["scaling"]:
         raise SystemExit("refused: no throughput record")
-    n = a.workers
-    roots = sum(1 for x in a.roots.read_text(encoding="utf-8").splitlines() if x.strip())
-    k2 = sum(1 for x in a.roots.read_text(encoding="utf-8").splitlines()
-             if x.strip() and any(r["stratum"] == "spy" and r["role"] == "k2" for r in json.loads(x)["roles"]))
-    main_s = int(roots / n * 3 * 320000 * SECONDS_PER_TRANSITION * 1.5) + 600
-    large_s = int(max(1, k2 / n) * 1024000 * SECONDS_PER_TRANSITION * 1.5) + 600
-    procs = []
-    for i in range(n):
-        cmd, env = census(a, a.out / f"main-{i}.jsonl", {"REACH_BUDGETS": BUDGETS, "REACH_SEEDS": SEEDS,
-                                                         "REACH_SHARD": f"{i}/{n}"})
-        procs.append(claim(f"rs0-main-{i}", main_s, cmd, env, a.out / f"main-{i}.log"))
-    for i in range(n):
-        cmd, env = census(a, a.out / f"large-{i}.jsonl", {"REACH_BUDGETS": LARGE, "REACH_SEEDS": "0",
-                                                          "REACH_ROLES": "spy:k2", "REACH_SHARD": f"{i}/{n}"})
-        procs.append(claim(f"rs0-large-{i}", large_s, cmd, env, a.out / f"large-{i}.log"))
-    manifest = {"schema": "rs0-run-v1", "plan": "rs0-plan-v4", "hashes": hashes(a), "workers": n,
-                "qualification": sha256(qpath), "declared_max_seconds": {"main": main_s, "large": large_s},
+    n, cap = a.workers, a.cap_cpu_hours * 3600
+    rate = cpu_rate(q)
+    lines = [x for x in a.roots.read_text(encoding="utf-8").splitlines() if x.strip()]
+    k2 = sum(1 for x in lines if any(r["stratum"] == "spy" and r["role"] == "k2" for r in json.loads(x)["roles"]))
+    # The frozen matrix as small shards (main first: the flags read 64,000 and
+    # 256,000 only; the Spy k2 1,024,000 cells are diagnostic), run through a
+    # pool of n one-core claims.
+    shards = []
+    main_n, large_n = a.shards or 4 * n, n
+    for i in range(main_n):
+        expect = len(lines) / main_n * 3 * 320000 * rate
+        shards.append({"name": f"main-{i}", "expect": expect, "extra": {
+            "REACH_BUDGETS": BUDGETS, "REACH_SEEDS": SEEDS, "REACH_SHARD": f"{i}/{main_n}"}})
+    for i in range(large_n):
+        expect = max(1, k2 / large_n) * int(LARGE) * rate
+        shards.append({"name": f"large-{i}", "expect": expect, "extra": {
+            "REACH_BUDGETS": LARGE, "REACH_SEEDS": "0", "REACH_ROLES": "spy:k2", "REACH_SHARD": f"{i}/{large_n}"}})
+    for sh in shards:
+        sh["max_seconds"] = int(2 * sh["expect"]) + 600
+    manifest = {"schema": "rs0-run-v2", "plan": "rs0-plan-v4", "hashes": hashes(a), "workers": n,
+                "qualification": sha256(qpath), "core_seconds_per_transition": rate,
+                "cap_core_seconds": cap, "projected_core_seconds": sum(sh["expect"] for sh in shards),
+                "shards": [{k: sh[k] for k in ("name", "expect", "max_seconds", "extra")} for sh in shards],
                 "host": os.environ.get("COMPUTERNAME"), "started": time.time()}
-    (a.out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
-    codes = run_all(procs)
-    manifest.update({"finished": time.time(), "exit_codes": codes})
-    (a.out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
-    return 0 if all(c == 0 for c in codes) else 1
+    mpath = a.out / "manifest.json"
+    mpath.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    # Cap accounting: every running shard is charged one core for its whole
+    # wall time (conservative against its process CPU time).
+    used, running, pending, results, capped = 0.0, {}, list(shards), [], False
+    while pending or running:
+        while pending and len(running) < n and not capped:
+            sh = pending[0]
+            # Charged so far plus what the running shards are still expected to take.
+            committed = used + sum(max(time.time() - t, sh2["expect"]) for sh2, t in running.values())
+            if committed + sh["expect"] > cap:
+                capped = True
+                break
+            pending.pop(0)
+            cmd, env = census(a, a.out / f"{sh['name']}.jsonl", sh["extra"])
+            proc = claim(f"rs0-{sh['name']}", sh["max_seconds"], cmd, env, a.out / f"{sh['name']}.log")
+            running[proc] = (sh, time.time())
+        if capped and not running:
+            break
+        time.sleep(5)
+        live = used + sum(time.time() - t for _, t in running.values())
+        for proc, (sh, t) in list(running.items()):
+            code = proc.poll()
+            if code is None and live > cap:
+                proc.terminate()
+                code = proc.wait()
+                capped = True
+            if code is not None:
+                used += time.time() - t
+                results.append({"name": sh["name"], "exit_code": code, "core_seconds": time.time() - t})
+                del running[proc]
+    manifest.update({"finished": time.time(), "core_seconds": used, "capped": capped, "results": results,
+                     "not_started": [sh["name"] for sh in pending]})
+    mpath.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    return 0 if not capped and all(r["exit_code"] == 0 for r in results) else 1
 
 
 def main(argv=None) -> int:
@@ -165,6 +210,8 @@ def main(argv=None) -> int:
     ap.add_argument("--roots", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--workers", default="1,2,4,8", help="qualify: comma list; measure: one integer")
+    ap.add_argument("--shards", type=int, default=0, help="measure: main-matrix shards (default 4 x workers)")
+    ap.add_argument("--cap-cpu-hours", type=float, default=40.0, help="measure: claimed core-hours cap")
     a = ap.parse_args(argv)
     if a.command == "qualify":
         return qualify(a)

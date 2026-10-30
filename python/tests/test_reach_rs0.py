@@ -241,6 +241,12 @@ class LauncherTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "hashes differ"):
                 run.main(argv)
 
+    def test_cpu_rate_charges_the_slowest_width(self):
+        q = {"throughput": {"scaling": [{"workers": 1, "searches": 8, "wall": 128.0},
+                                        {"workers": 2, "searches": 8, "wall": 128.0},
+                                        {"workers": 4, "searches": 0, "wall": 1.0}]}}
+        self.assertAlmostEqual(run.cpu_rate(q), 2 * 128.0 / (8 * 64000))
+
 
 if __name__ == "__main__":
     unittest.main()
