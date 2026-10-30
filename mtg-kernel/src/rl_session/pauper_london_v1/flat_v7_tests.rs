@@ -338,6 +338,9 @@ fn flat_v7_in_game_tensors_and_logits_equal_v4() {
 /// the actor-visible observation and menu of each pregame phase for both
 /// seats, with the Rust V7 tensors. `MTG_KERNEL_WRITE_FLAT_V7_FIXTURE=1`
 /// rewrites it; otherwise it must match byte for byte.
+/// The fixture binds the Pauper registry's card database hash, so the
+/// appended-registry builds skip it.
+#[cfg(not(feature = "limited-fdn-fixtures"))]
 #[test]
 fn flat_v7_pregame_parity_fixture_matches_rust_tensors() {
     let mut cases = Vec::new();
