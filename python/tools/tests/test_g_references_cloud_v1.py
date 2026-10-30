@@ -3,6 +3,7 @@ recovery scope and the study's lease caps. The shared lease cycle is covered by 
 import hashlib
 import json
 import os
+import re
 import tarfile
 import tempfile
 import time
@@ -100,6 +101,12 @@ class PackageTests(unittest.TestCase):
         self.assertIn("g_references_campaign_v1.py", tooling)
         self.assertIn("g_references_qualify_v1.py", tooling)
         self.assertIn("g_references_v1.py", tooling)
+        # Every script the Pod-side tools start by path travels with them.
+        started = set()
+        for name in tooling:
+            started |= set(re.findall(r'TOOLS / "([a-z0-9_]+\.py)"', (cloud.TOOLS / name).read_text(encoding="utf-8")))
+        self.assertIn("native_expanded_pack_v1.py", started)
+        self.assertLessEqual(started, set(tooling))
         command = gcloud.driver_command(manifest)
         self.assertEqual(command[0].rsplit("/", 1)[1], "g_references_qualify_v1.py")
         self.assertEqual(command[1], "start")
@@ -329,7 +336,22 @@ class LeaseTests(unittest.TestCase):
                 write(control / "release-confirmed.json", {"epoch": now - 80000 + hours * 3600})
             write(root / "never" / "lease" / "lease.json", {"name": "never", "created_epoch": 0, "deadline_epoch": 1,
                                                             "rate_ceiling_usd_hour": 1})
+            ambiguous = root / "ambiguous"  # a create with no Pod id, closed by the lead
+            write(ambiguous / "lease" / "lease.json", {"name": "ambiguous", "created_epoch": now - 50000,
+                                                       "deadline_epoch": now, "rate_ceiling_usd_hour": 1.2})
+            write(ambiguous / "lease" / "create-attempt.json", {"epoch": now - 50000})
+            unclosed = gcloud.ledger(root, 200, now - 5 * 86400, now)
+            write(ambiguous / "release-closed-by-lead.json", {"lease": "ambiguous", "usd": 0.0,
+                                                              "closed_by": "research lead"})
             summary = gcloud.ledger(root, 200, now - 5 * 86400, now)
+            write(ambiguous / "release-closed-by-lead.json", {"lease": "other", "usd": 0.0, "closed_by": "x"},
+                  replace=True)
+            with self.assertRaises(ValueError):
+                gcloud.ledger(root, 200, now - 5 * 86400, now)
+        self.assertAlmostEqual(unclosed["lease_seconds"], 15 * 3600 + 50000)
+        closed = next(row for row in summary["leases"] if row["lease"] == "ambiguous")
+        self.assertEqual((closed["usd_at_ceiling"], closed["seconds"]), (0.0, 0.0))
+        self.assertIn("closed_by_lead", closed)
         self.assertAlmostEqual(summary["lease_seconds"], 15 * 3600)
         self.assertAlmostEqual(summary["compute_usd_at_ceiling"], 18.0)
         self.assertAlmostEqual(summary["volume_usd"], 5 / 30 * 200 * 0.07)
