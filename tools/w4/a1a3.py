@@ -18,7 +18,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
-from common import (ACTION_DIM, HIDDEN, OBJECT_DIM, auc, bootstrap_groups, choose_c, deck, fit_logistic,
+from common import (ACTION_DIM, require_complete, HIDDEN, OBJECT_DIM, auc, bootstrap_groups, choose_c, deck, fit_logistic,
                     load_scores, log_loss, predict, standardize, template_half)
 
 MIN_MINORITY = 20
@@ -213,6 +213,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     sc = load_scores(a.scores)
     split = json.loads(a.split.read_text())
+    require_complete(sc, split)
     result = {"games_scored": len(sc.games), "score_errors": sc.errors, "focal_decisions": len(sc.decisions),
               "A1": a1(sc, split), "A3": a3(sc, split)}
     a.out.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")

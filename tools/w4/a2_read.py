@@ -19,7 +19,7 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from common import bootstrap_groups, choose_c, fit_logistic, load_scores, spearman, standardize
+from common import require_complete, bootstrap_groups, choose_c, fit_logistic, load_scores, spearman, standardize
 
 SIGN_SUBSET = 20
 
@@ -75,6 +75,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     sc = load_scores(a.scores)
     split = json.loads(a.split.read_text())
+    require_complete(sc, split)
     cal = calibration(sc, split)
     rows, errors = [], []
     for path in sorted(glob.glob(str(a.positions / "a2-*.jsonl"))):

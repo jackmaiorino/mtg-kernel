@@ -46,13 +46,25 @@ class Scores:
         return np.asarray(self.hidden[row["_shard"]][offset:offset + n], dtype=np.float64)
 
 
+def require_complete(sc: "Scores", split: dict) -> None:
+    """Selection, calibration and classification need every game of the split scored."""
+    missing = sorted(set(split) - set(sc.games))
+    extra = sorted(set(sc.games) - set(split))
+    if missing or extra or sc.errors:
+        raise SystemExit(f"score coverage incomplete: {len(missing)} missing, {len(extra)} unexpected, "
+                         f"{len(sc.errors)} replay errors (first: {(missing + [e['id'] for e in sc.errors])[:3]})")
+
+
 def load_scores(directory: Path) -> Scores:
     stems = sorted(Path(p[:-6]) for p in glob.glob(str(directory / "score-*.jsonl")))
     return Scores(stems)
 
 
 def sigmoid(z):
-    return 1.0 / (1.0 + np.exp(-z))
+    """Overflow-safe logistic function."""
+    z = np.asarray(z, float)
+    e = np.exp(-np.abs(z))
+    return np.where(z >= 0, 1.0 / (1.0 + e), e / (1.0 + e))
 
 
 def log_loss(y, p):
@@ -69,37 +81,50 @@ def standardize(x_fit, w_fit, *others):
     return [(x - mu) / sd for x in (x_fit, *others)]
 
 
-def fit_logistic(x, y, w, c):
+class FitDidNotConverge(RuntimeError):
+    pass
+
+
+def fit_logistic(x, y, w, c, tol=1e-9, max_iter=200):
     """Weighted L2 logistic regression with fractional targets: minimizes
-    sum_i w_i * logloss_i + |beta|^2 / (2C), the intercept unpenalized (the
-    scikit-learn convention), by damped Newton steps. Returns (intercept, beta)."""
+    sum_i w_i * (log(1 + e^z_i) - y_i z_i) + |beta|^2 / (2C), the intercept unpenalized (the
+    scikit-learn convention), by damped Newton steps on that stable objective. Stops when the
+    largest gradient component is below `tol` times the total weight; raises FitDidNotConverge
+    otherwise. Returns (intercept, beta)."""
     n, k = x.shape
     z = np.hstack([np.ones((n, 1)), x])
     pen = np.full(k + 1, 1.0 / c)
     pen[0] = 0.0
+    scale = max(float(w.sum()), 1.0)
 
     def objective(t):
-        return float((w * log_loss(y, sigmoid(z @ t))).sum() + 0.5 * (pen * t * t).sum())
+        logits = z @ t
+        return float((w * (np.logaddexp(0.0, logits) - y * logits)).sum() + 0.5 * (pen * t * t).sum())
 
     theta = np.zeros(k + 1)
     current = objective(theta)
-    for _ in range(100):
+    for _ in range(max_iter):
         p = sigmoid(z @ theta)
         grad = z.T @ (w * (p - y)) + pen * theta
-        hess = (z * (w * p * (1 - p))[:, None]).T @ z + np.diag(pen) + 1e-10 * np.eye(k + 1)
+        if np.abs(grad).max() <= tol * scale:
+            return theta[0], theta[1:]
+        hess = (z * (w * p * (1 - p))[:, None]).T @ z + np.diag(pen) + 1e-12 * scale * np.eye(k + 1)
         step = np.linalg.solve(hess, grad)
-        scale = 1.0
-        while scale > 1e-8:
-            trial = theta - scale * step
+        t = 1.0
+        while t > 1e-12:
+            trial = theta - t * step
             value = objective(trial)
-            if value <= current:
+            if value <= current + 1e-4 * t * float(grad @ -step):
                 break
-            scale /= 2
-        if current - value < 1e-12 * max(1.0, abs(current)):
-            theta = trial if value <= current else theta
+            t /= 2
+        else:
             break
         theta, current = trial, value
-    return theta[0], theta[1:]
+    p = sigmoid(z @ theta)
+    grad = z.T @ (w * (p - y)) + pen * theta
+    if np.abs(grad).max() <= tol * scale * 1e3:
+        return theta[0], theta[1:]
+    raise FitDidNotConverge(f"logistic fit: max gradient {np.abs(grad).max():.3g} after {max_iter} steps")
 
 
 def ranks(v):

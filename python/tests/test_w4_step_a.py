@@ -111,6 +111,28 @@ class ReferenceTests(unittest.TestCase):
         rho = 1 - 6 * ((ra - rb) ** 2).sum() / (6 * 35)
         self.assertAlmostEqual(common.spearman(a, b), rho, places=12)
 
+    def test_tied_spearman_matches_hand_ranks(self):
+        # Average ranks by hand: a -> [1, 2.5, 2.5, 4], b -> [1, 3, 2, 4].
+        ra, rb = np.array([1, 2.5, 2.5, 4]), np.array([1, 3, 2, 4])
+        da, db = ra - ra.mean(), rb - rb.mean()
+        rho = (da * db).sum() / np.sqrt((da ** 2).sum() * (db ** 2).sum())
+        self.assertAlmostEqual(common.spearman([10, 20, 20, 30], [1, 3, 2, 4]), rho, places=12)
+
+    def test_nearly_separable_fit_converges(self):
+        # Round-3 adversarial case: standardized features, binary targets, C = 1000.
+        rng = np.random.default_rng(3)
+        x = rng.normal(size=(60, 5))
+        y = (x[:, 0] + 0.05 * rng.normal(size=60) > 0).astype(float)
+        w = rng.random(60) + 0.5
+        a, b = common.fit_logistic(x, y, w, 1000.0)
+        p = common.sigmoid(a + x @ b)
+        grad = np.concatenate([[(w * (p - y)).sum()], x.T @ (w * (p - y)) + b / 1000.0])
+        self.assertLess(np.abs(grad).max(), 1e-5)
+
+    def test_sigmoid_is_overflow_safe(self):
+        with np.errstate(over="raise"):
+            np.testing.assert_allclose(common.sigmoid(np.array([-1000.0, 0.0, 1000.0])), [0.0, 0.5, 1.0])
+
     def test_bootstrap_matches_manual_resampling(self):
         groups = ["g1", "g1", "g2", "g3", "g3", "g3"]
         vals = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from common import deck, load_scores
+from common import require_complete, deck, load_scores
 
 TOTAL = 300
 FLOOR = 20
@@ -59,6 +59,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     sc = load_scores(a.scores)
     split = json.loads(a.split.read_text())
+    require_complete(sc, split)
     eligible = sorted((d["id"], d["index"]) for d in sc.decisions if "block" in d and split[d["id"]] == "read")
     by_deck = defaultdict(list)
     for gid, index in eligible:
