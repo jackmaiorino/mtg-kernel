@@ -1334,10 +1334,17 @@ impl CopyPermitV74<'_, '_> {
 }
 pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
     validate_state(state)?;
-    if rows(state).next().is_some() || state.objects.iter().any(|(id,o)| {
-        crate::optional_trigger_public_v1::reference(state,id,viewer).is_some_and(|r|matches!(r.identity,crate::optional_trigger_public_v1::IdentityV1::Known{card_id}if definition(card_id)))
-        || viewer.is_some_and(|v|o.v4.face_down_v1.is_some_and(|f|f.lookers&(1<<v.index())!=0)&&definition(o.card_def))
-    }) {
+    if rows(state).next().is_some()
+        || state.objects.iter().any(|(id, o)| {
+            crate::optional_trigger_public_v1::visible_known(state, id, viewer, |card_id| {
+                definition(card_id)
+            }) || viewer.is_some_and(|v| {
+                o.v4.face_down_v1
+                    .is_some_and(|f| f.lookers & (1 << v.index()) != 0)
+                    && definition(o.card_def)
+            })
+        })
+    {
         Err("Chandra requires its complete V74 consumer".into())
     } else {
         Ok(())
