@@ -1719,6 +1719,46 @@ impl FrozenPlayPolicyV1 {
             .ok_or_else(|| "native capture requires the V4 scorer".into())
     }
 
+    /// The installed model (read-only), for measurement-only forwards.
+    pub(crate) fn diagnostic_model_v1(&self) -> &NativePolicyValueNetV1 {
+        &self.model
+    }
+
+    /// Measurement only (W4 combat diagnostics): the reference forward of the
+    /// last V4-scored decision under `model` (the installed one when None),
+    /// with its state and scorer hidden. Uses the scoring call's activation
+    /// mode; the caller compares the output with that call's scores.
+    pub(crate) fn diagnostic_last_v4_hidden_v1(
+        &self,
+        model: Option<&NativePolicyValueNetV1>,
+    ) -> Result<
+        (
+            FrozenPlayDecisionScoresV1,
+            crate::native_policy_value_net_v1::NativeHiddenCaptureV1,
+        ),
+        String,
+    > {
+        require(
+            self.input_contract.is_none(),
+            "hidden capture is not defined under the no-state-digest contract",
+        )?;
+        let tensor = self.last_scored_training_tensor_v4()?;
+        let (output, capture) = model
+            .unwrap_or(&self.model)
+            .forward_feature_transfer_v4_hidden_v1(
+                encoded_decision_view_v4(tensor),
+                self.forward_mode_v1(),
+            )
+            .map_err(|e| format!("V4 hidden capture: {e:?}"))?;
+        Ok((
+            FrozenPlayDecisionScoresV1 {
+                logits: output.logits,
+                value: output.value,
+            },
+            capture,
+        ))
+    }
+
     pub(crate) fn select_with_training_tensor_v3(
         &mut self,
         session: &FastActorSessionV1,

@@ -141,6 +141,42 @@ mod tests {
     }
 
     #[test]
+    fn hidden_capture_forward_equals_the_v4_forward() {
+        use crate::native_policy_value_net_v1::{ForwardActivationModeV1, HIDDEN_DIM_V1};
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let tensor = NativeFlatDecisionTensorV4 {
+            common: NativeFlatDecisionTensorV2 {
+                state: (0..219).map(|k| (k % 7) as f32 * 0.1).collect(),
+                object_features: (0..98).map(|k| (k % 5) as f32 * 0.2).collect(),
+                object_card_ids: vec![1],
+                object_groups: vec![0],
+                object_node_ids: vec![0],
+                action_features: (0..2 * 195).map(|k| (k % 3) as f32 * 0.3).collect(),
+                ..Default::default()
+            },
+        };
+        let view = encoded_decision_view_v4(&tensor);
+        let plain = model.forward_feature_transfer_v4(view).unwrap();
+        let (output, hidden) = model
+            .forward_feature_transfer_v4_hidden_v1(view, ForwardActivationModeV1::LibmTanh)
+            .unwrap();
+        assert_eq!(output.value.to_bits(), plain.value.to_bits());
+        assert_eq!(
+            output
+                .logits
+                .iter()
+                .map(|x| x.to_bits())
+                .collect::<Vec<_>>(),
+            plain.logits.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+        );
+        assert_eq!(hidden.state_hidden.len(), HIDDEN_DIM_V1);
+        assert_eq!(hidden.scorer_hidden.len(), 2 * HIDDEN_DIM_V1);
+        assert!(hidden.scorer_hidden.iter().all(|x| x.abs() <= 1.0));
+    }
+
+    #[test]
     fn frozen_feature_transfer_v4_requires_new_identity_and_preserves_shape_checks() {
         let model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())

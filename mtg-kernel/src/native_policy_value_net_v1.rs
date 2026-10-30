@@ -413,6 +413,15 @@ pub(crate) struct NativeActionIngressCaptureV1 {
     pub(crate) action_ref_pooled: Vec<f32>,
 }
 
+/// Hidden activations of one reference forward: the state encoder output
+/// (`HIDDEN_DIM_V1`) and each action row's scorer hidden after its tanh
+/// (rows times `HIDDEN_DIM_V1`, row major).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct NativeHiddenCaptureV1 {
+    pub(crate) state_hidden: Vec<f32>,
+    pub(crate) scorer_hidden: Vec<f32>,
+}
+
 /// Ordered, owned copy of one Torch-compatible named parameter.  The order
 /// and `[output, input]` linear-weight layout come from `named_parameters()`.
 #[derive(Clone, Debug, PartialEq)]
@@ -854,7 +863,32 @@ impl NativePolicyValueNetV1 {
             public,
             stack,
             None,
+            None,
         )
+    }
+
+    /// [`Self::forward_feature_transfer_v4_mode`] that also returns the state
+    /// encoder output and every action row's scorer hidden (after its tanh).
+    /// Measurement only (W4 combat diagnostics): the output is the reference
+    /// forward's, and nothing that plays or trains calls this.
+    pub(crate) fn forward_feature_transfer_v4_hidden_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<(NativePolicyValueOutputV1, NativeHiddenCaptureV1), NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v4())?;
+        let mut capture = NativeHiddenCaptureV1::default();
+        let output = self.forward_registration_validated_rows_v1(
+            encoded,
+            counts,
+            None,
+            activation_mode,
+            None,
+            None,
+            None,
+            Some(&mut capture),
+        )?;
+        Ok((output, capture))
     }
 
     #[allow(
@@ -879,6 +913,7 @@ impl NativePolicyValueNetV1 {
             &own_registration::RegistrationInputWeightsV1,
             &crate::own_registration_v1::RegistrationFeatureRowsV1,
         )>,
+        hidden_capture: Option<&mut NativeHiddenCaptureV1>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
         for object in 0..counts.object_count {
@@ -1056,6 +1091,10 @@ impl NativePolicyValueNetV1 {
                 field: "value",
                 position: 0,
             });
+        }
+        if let Some(capture) = hidden_capture {
+            capture.state_hidden = state_hidden;
+            capture.scorer_hidden = scorer_hidden;
         }
         Ok(NativePolicyValueOutputV1 { logits, value })
     }
