@@ -257,6 +257,47 @@ class SuspensionHandshakeTests(unittest.TestCase):
                 tree.kill.assert_not_called()
 
 
+class ChildCommandTests(unittest.TestCase):
+    GIT = os.path.normpath("C:/Program Files/Git/bin/bash.exe")
+
+    def resolve(self, command, path, files):
+        env = {"PATH": os.pathsep.join(path), "ProgramFiles": "C:/Program Files"}
+        with patch.dict(os.environ, env, clear=True),                 patch.object(slots.os.path, "isfile", lambda name: os.path.normpath(name) in files):
+            return slots.child_command(command, windows=True)
+
+    def test_bare_bash_skips_wsl_and_runs_git_bash_from_path(self):
+        wsl = os.path.normpath("C:/Windows/System32/bash.exe")
+        got = self.resolve(["bash", "run.sh"], ["C:/Windows/System32", "C:/Program Files/Git/bin"], {wsl, self.GIT})
+        self.assertEqual([os.path.normpath(got[0]), got[1]], [self.GIT, "run.sh"])
+
+    def test_bare_bash_falls_back_to_the_default_git_install(self):
+        got = self.resolve(["bash.exe", "-c", "true"], ["C:/Windows/System32"], {self.GIT})
+        self.assertEqual(os.path.normpath(got[0]), self.GIT)
+        self.assertEqual(got[1:], ["-c", "true"])
+
+    def test_bare_bash_without_git_bash_is_refused(self):
+        with self.assertRaisesRegex(slots.Refused, "WSL"):
+            self.resolve(["bash", "run.sh"], ["C:/Windows/System32"], {os.path.normpath("C:/Windows/System32/bash.exe")})
+
+    def test_explicit_wsl_bash_is_refused(self):
+        for program in ("C:/Windows/System32/bash.exe", "c:\windows\sysnative\BASH",
+                        "C:/Users/u/AppData/Local/Microsoft/WindowsApps/bash.exe"):
+            with self.subTest(program=program), self.assertRaisesRegex(slots.Refused, "WSL"):
+                self.resolve([program, "run.sh"], [], set())
+
+    def test_other_commands_and_other_platforms_are_unchanged(self):
+        self.assertEqual(self.resolve(["python", "x.py"], [], set()), ["python", "x.py"])
+        self.assertEqual(self.resolve([self.GIT, "x.sh"], [], set()), [self.GIT, "x.sh"])
+        self.assertEqual(slots.child_command(["bash", "x.sh"], windows=False), ["bash", "x.sh"])
+
+    def test_cli_refuses_before_any_ticket(self):
+        with tempfile.TemporaryDirectory() as root,                 patch.dict(os.environ, {"HOST_SLOTS_ROOT": root, "HOST_SLOTS_HOST": "TESTHOST"}),                 patch.object(slots, "child_command", side_effect=slots.Refused("WSL's bash")),                 patch.object(slots, "run") as run:
+            code = slots.main(["run", "--lane", "l", "--work-id", "w", "--cores", "1", "--", "bash", "x.sh"])
+            self.assertEqual(code, slots.EXIT_REFUSED)
+            run.assert_not_called()
+            self.assertEqual(list(Path(root).rglob("*")), [])
+
+
 class CoreListTests(unittest.TestCase):
     def test_core_lists_round_trip(self):
         assert slots.parse_cores("0-3,8,11-10") == [0, 1, 2, 3, 8, 11, 10]
