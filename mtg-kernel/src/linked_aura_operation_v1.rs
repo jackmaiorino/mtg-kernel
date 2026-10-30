@@ -1743,6 +1743,14 @@ pub(crate) fn event(state: &mut GameState, operation: OperationV1) -> bool {
     if has_pending(state) {
         return true; // No event may mutate an externally suspended owner.
     }
+    // A draw moves no permanent, so it starts no linked operation. Its replay
+    // would validate a resolving ability without the removed row and drop it.
+    if matches!(
+        &operation,
+        OperationV1::Event(ProposedEvent::Draw(_)) | OperationV1::Commit(ProposedEvent::Draw(_))
+    ) {
+        return false;
+    }
     if let Ok((next, _)) = replay(state, &operation, &[]) {
         *state = next;
     }

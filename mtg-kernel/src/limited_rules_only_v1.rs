@@ -10,6 +10,7 @@ use crate::card_def::CARD_DEFS;
 /// Admitted Partial printings, by exact name.
 pub const RULES_ONLY_ADMITTED_V1: &[&str] = &[
     "Abyssal Harvester",
+    "Alesha, Who Laughs at Fate",
     "Blasphemous Edict",
     "Chandra, Flameshaper",
     "Consuming Aberration",
@@ -18,9 +19,12 @@ pub const RULES_ONLY_ADMITTED_V1: &[&str] = &[
     "Embercleave",
     "Imprisoned in the Moon",
     "Kykar, Zephyr Awakener",
+    "Lathril, Blade of the Elves",
     "Leyline Axe",
+    "Liliana, Dreadhorde General",
     "Loot, Exuberant Explorer",
     "Muldrotha, the Gravetide",
+    "Perforating Artist",
     "Quilled Greatwurm",
     "Sphinx of Forgotten Lore",
     "Thousand-Year Storm",

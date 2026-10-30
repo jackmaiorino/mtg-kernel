@@ -170,6 +170,74 @@ fn actual_full_printing_pays_1b_and_returns_once_with_death_controller_treasure_
     }
 }
 
+/// A Vampire Gourmand that dies under Fake returns: its gained dies trigger
+/// is not Gourmand's own attack trigger, so Gourmand's dispatch leaves it
+/// alone (#110, DraftZero train pair 504 halted here).
+#[test]
+fn actual_paid_fake_on_vampire_gourmand_returns_it_with_treasure() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        let target = put(&mut state, actor, "Vampire Gourmand", Zone::Battlefield);
+        let (mut state, _, target) = paid_on(state, actor, target);
+        drain(&mut state);
+        death(&mut state, target);
+        drain(&mut state);
+        let returned = state.objects.get(target);
+        assert_eq!((returned.zone, returned.tapped), (Zone::Battlefield, true));
+        assert_eq!(treasures(&state, actor), 1);
+        crate::vampire_gourmand_dispatch_v2::validate(&state, None).unwrap();
+    }
+}
+
+/// Vampire Gourmand's paid sacrifice of a creature under Fake still draws,
+/// and Fake returns that creature (#110, DraftZero eval pair 514 halted here).
+#[test]
+fn actual_paid_fake_creature_sacrificed_to_vampire_gourmand_draws_and_returns() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        let gourmand = put(&mut state, actor, "Vampire Gourmand", Zone::Battlefield);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let (mut state, _, target) = paid_on(state, actor, target);
+        drain(&mut state);
+        state.step = crate::state::Step::DeclareAttackers;
+        engine::step(&mut state, Action::DeclareAttackers(vec![gourmand])).unwrap();
+        let hand = state.players[actor.index()].hand.len();
+        let mut chose = false;
+        for _ in 0..24 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::ChooseEffectTargets { source, .. } if source == gourmand && !chose => {
+                    engine::step(
+                        &mut state,
+                        Action::ChooseEffectTarget(Target::Object(target)),
+                    )
+                    .unwrap();
+                    chose = true;
+                }
+                Decision::ChooseEffectTargets { source, .. } if source == gourmand => {
+                    engine::step(&mut state, Action::FinishEffectSelection).unwrap()
+                }
+                Decision::CastSpellOrPass { .. }
+                    if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+                {
+                    break
+                }
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(chose);
+        assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
+        let returned = state.objects.get(target);
+        assert_eq!((returned.zone, returned.tapped), (Zone::Battlefield, true));
+        assert_eq!(treasures(&state, actor), 1);
+        assert!(crate::vampire_gourmand_v1::cant_be_blocked(
+            &state, gourmand
+        ));
+        crate::vampire_gourmand_dispatch_v2::validate(&state, None).unwrap();
+        public_facts(&state);
+    }
+}
+
 #[test]
 fn actual_paid_spell_and_gained_trigger_counter_have_distinct_no_grant_and_no_return_outcomes() {
     for actor in [PlayerId::P0, PlayerId::P1] {

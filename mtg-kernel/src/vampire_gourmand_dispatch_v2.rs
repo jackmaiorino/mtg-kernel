@@ -25,8 +25,9 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         .any(|e| matches!(e, CommittedEvent::VampireGourmandAttackCaptureV2 { .. }))
         || state.stack.iter().any(selected)
         || state.engine.pending_triggers.iter().any(|p| {
-            p.source_contract
-                .is_some_and(|s| owns_definition(s.card_def))
+            p.effect == crate::vampire_gourmand_v1::program()
+                && p.source_contract
+                    .is_some_and(|s| owns_definition(s.card_def))
         })
 }
 
@@ -189,9 +190,12 @@ fn publications(state: &GameState, capture: u32) -> Vec<(usize, &StackItem)> {
         })
         .collect()
 }
+/// Gourmand's own attack trigger. Other triggers of a Gourmand source (a
+/// copy's end-step sacrifice, a gained dies trigger) are not Gourmand's.
 fn selected(item: &StackItem) -> bool {
     item.kind == StackItemKind::TriggeredAbility
         && item.v4.granted_by.is_none()
+        && item.inline_effect.as_ref() == Some(&crate::vampire_gourmand_v1::program())
         && item
             .v4
             .ability_source_contract
@@ -266,15 +270,15 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
         .collect();
     for pending in &waiting {
         if pending.granted_by.is_none()
+            && pending.effect == crate::vampire_gourmand_v1::program()
             && pending
                 .source_contract
                 .is_some_and(|s| owns_definition(s.card_def))
         {
             crate::engine::validate_pending_trigger_identity(state, pending)?;
-            if pending.effect != crate::vampire_gourmand_v1::program()
-                || !capture_ids
-                    .iter()
-                    .any(|at| capture_at(state, *at).ok() == pending.source_contract)
+            if !capture_ids
+                .iter()
+                .any(|at| capture_at(state, *at).ok() == pending.source_contract)
             {
                 return Err("Gourmand pending owner erased original attack capture".into());
             }
@@ -593,6 +597,55 @@ mod future_counter_primitive {
     use crate::engine::{self, Action, Decision};
     use crate::ids::PlayerId;
     use crate::policy_observation_v6::tests::put;
+    use crate::state::Target;
+    /// The paid sacrifice draws even when a linked Aura operation could
+    /// start (Doubling Season here): the draw happens inside Gourmand's own
+    /// resolution, so the linked Aura owner must not replay or drop it.
+    #[test]
+    fn actual_paid_sacrifice_draws_beside_a_linked_aura_operation_source() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for season in [false, true] {
+                let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
+                state.step = crate::state::Step::DeclareAttackers;
+                let source = put(&mut state, actor, "Vampire Gourmand", Zone::Battlefield);
+                let other = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+                put(&mut state, actor, "Forest", Zone::Library);
+                if season {
+                    put(&mut state, actor, "Doubling Season", Zone::Battlefield);
+                }
+                engine::step(&mut state, Action::DeclareAttackers(vec![source])).unwrap();
+                let hand = state.players[actor.index()].hand.len();
+                let mut chose = false;
+                for _ in 0..12 {
+                    match engine::advance_until_decision(&mut state) {
+                        Decision::ChooseEffectTargets { source: id, .. } if id == source => {
+                            if chose {
+                                engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+                            } else {
+                                engine::step(
+                                    &mut state,
+                                    Action::ChooseEffectTarget(Target::Object(other)),
+                                )
+                                .unwrap();
+                                chose = true;
+                            }
+                        }
+                        Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(&mut state, Action::Pass).unwrap()
+                        }
+                        other => panic!("{other:?}"),
+                    }
+                }
+                assert!(chose);
+                assert_eq!(state.objects.get(other).zone, Zone::Graveyard);
+                assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
+                assert!(crate::vampire_gourmand_v1::cant_be_blocked(&state, source));
+                crate::effect::validate_pending_effect_choice(&state).unwrap();
+                validate(&state, None).unwrap();
+            }
+        }
+    }
     #[test]
     fn actual_declaration_publication_counter_removal_and_restore_reject_replay() {
         for actor in [PlayerId::P0, PlayerId::P1] {
