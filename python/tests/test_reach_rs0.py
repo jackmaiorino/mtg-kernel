@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.reach import plan, report  # noqa: E402
+from tools.reach import plan, report, run  # noqa: E402
 
 SPY = "Balustrade Spy"
 
@@ -206,6 +206,40 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(reps.interval(subset)["games"], 10)
         self.assertLess(a["ci95"][0], 0.5)
         self.assertGreater(a["ci95"][1], 0.5)
+
+
+class LauncherTests(unittest.TestCase):
+    def args(self, d):
+        files = {}
+        for name in ("binary", "source", "roots"):
+            files[name] = Path(d) / name
+            files[name].write_text(name, encoding="utf-8")
+        return ["measure", "--binary", str(files["binary"]), "--source", str(files["source"]),
+                "--roots", str(files["roots"]), "--out", str(Path(d) / "out"), "--workers", "2"]
+
+    def test_measure_refuses_without_qualification(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(SystemExit, "no qualification"):
+                run.main(self.args(d))
+
+    def test_measure_refuses_failed_identity_and_changed_hashes(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            argv = self.args(d)
+            out = Path(d) / "out"
+            out.mkdir()
+            hashes = {k: run.sha256(Path(d) / k) for k in ("binary", "source", "roots")}
+            q = {"identity": {"pass": False}, "hashes": hashes, "throughput": {"scaling": [{}]}}
+            (out / "qualification.json").write_text(json.dumps(q), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "identity"):
+                run.main(argv)
+            q["identity"]["pass"] = True
+            (Path(d) / "binary").write_text("rebuilt", encoding="utf-8")
+            (out / "qualification.json").write_text(json.dumps(q), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "hashes differ"):
+                run.main(argv)
 
 
 if __name__ == "__main__":
