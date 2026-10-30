@@ -550,7 +550,9 @@ def run(args):
     # One claim for the group: inside it, `_members` checks again and starts every member's binary. Metering,
     # STOP and the outcome stay out here, so they still act while the claim waits in the queue or is suspended.
     results = Path(plan["root"]) / "chains" / f"group-{group}" / "members.json"
-    inner = wrapper + [sys.executable, str(Path(__file__).resolve()), "_members", "--plan", str(args.plan),
+    # The plan goes by absolute path and hash, so a wrapper that changes directory cannot swap it.
+    inner = wrapper + [sys.executable, str(Path(__file__).resolve()), "_members",
+                       "--plan", str(Path(args.plan).resolve()), "--plan-sha256", sha(args.plan),
                        "--results", str(results)]
     for name in names:
         inner += ["--chain", name]
@@ -560,6 +562,8 @@ def run(args):
 def members(args):
     """Inside a pack group's claim: the group's checks again, then every member's binary at once; writes each
     member's exit code to --results."""
+    if not Path(args.plan).is_absolute() or sha(args.plan) != args.plan_sha256:
+        raise SystemExit("refused: _members needs the launching plan's absolute path and hash")
     plan = load_plan(args.plan)
     names = list(dict.fromkeys(args.chain))
     chain = group_checks(plan, names)
@@ -696,6 +700,7 @@ def main(argv=None):
     m = sub.add_parser("_members")
     m.add_argument("--plan", required=True)
     m.add_argument("--results", required=True)
+    m.add_argument("--plan-sha256", required=True)
     m.add_argument("--chain", required=True, action="append", choices=sorted(CHAINS))
     m.add_argument("--fast-poll", action="store_true")
     ln = sub.add_parser("_lanes")

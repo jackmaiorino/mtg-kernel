@@ -141,7 +141,8 @@ class StagePTests(unittest.TestCase):
     def test_members_checks_again_and_runs_only_inside_its_claim(self):
         self.make(self.PACKED)
         results = str(self.root / "members.json")
-        argv = ["_members", "--plan", str(self.plan), "--results", results, "--chain", "r2-c1", "--chain", "r2-c2"]
+        argv = ["_members", "--plan", str(self.plan.resolve()), "--plan-sha256", sha(self.plan), "--results", results,
+                "--chain", "r2-c1", "--chain", "r2-c2"]
         with self.assertRaisesRegex(SystemExit, "no throughput record"):
             stagep.main(argv)
         self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2)
@@ -150,10 +151,24 @@ class StagePTests(unittest.TestCase):
         plan = json.loads(self.plan.read_text())
         plan["hosts"]["desk"]["wrapper"] = ["wrapper"]
         self.plan.write_text(json.dumps(plan))
+        argv[argv.index("--plan-sha256") + 1] = sha(self.plan)
         with mock.patch.dict(stagep.os.environ, {}, clear=True), \
                 self.assertRaisesRegex(SystemExit, "only inside its host_slots claim"):
             stagep.main(argv)
         self.assertFalse(Path(results).exists())
+
+    def test_members_refuses_a_relative_or_changed_plan(self):
+        self.make(self.PACKED)
+        self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2)
+        tail = ["--results", str(self.root / "m.json"), "--chain", "r2-c1", "--chain", "r2-c2"]
+        for plan, digest in ((self.plan.name, sha(self.plan)), (str(self.plan.resolve()), "0" * 64)):
+            with self.subTest(plan=plan), self.assertRaisesRegex(SystemExit, "absolute path and hash"):
+                stagep.main(["_members", "--plan", plan, "--plan-sha256", digest, *tail])
+        with mock.patch.object(stagep, "supervise", return_value=0) as supervise, self.assertRaises(SystemExit):
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2"])
+        cmd = supervise.call_args.args[2]
+        self.assertEqual(cmd[cmd.index("--plan") + 1], str(self.plan.resolve()))
+        self.assertEqual(cmd[cmd.index("--plan-sha256") + 1], sha(self.plan))
 
     def test_a_group_exit_is_nonzero_when_any_member_fails(self):
         plan = self.make(self.PACKED)
@@ -277,8 +292,8 @@ class StagePTests(unittest.TestCase):
         with mock.patch.object(stagep.subprocess, "Popen", side_effect=[first, OSError("no process")]), \
                 mock.patch.object(stagep, "stop_tree") as stop:
             with self.assertRaises(OSError):
-                stagep.main(["_members", "--plan", str(self.plan), "--results", str(self.root / "m.json"),
-                             "--chain", "r2-c1", "--chain", "r2-c2"])
+                stagep.main(["_members", "--plan", str(self.plan.resolve()), "--plan-sha256", sha(self.plan),
+                             "--results", str(self.root / "m.json"), "--chain", "r2-c1", "--chain", "r2-c2"])
         stop.assert_called_once_with(first)
         self.assertFalse((self.root / "m.json").exists())
 
