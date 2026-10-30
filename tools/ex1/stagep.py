@@ -3,21 +3,31 @@ rule step: it trains the four mechanism-pilot chains and records what the lead r
 
   stagep.py plan --qualification Q.json --binary EXE --root ROOT --out PLAN.json
                  --parent r2=DOSE.json --parent r1=DOSE.json --base r2=BASE.json --base r1=BASE.json
-                 --place CHAIN=HOST:CORES:USD_PER_HOUR:BUDGET_USD [...] [--wrapper HOST=JSON_LIST] [--reserve HOST=GIB]
+                 --place CHAIN=HOST:CORES:USD_PER_HOUR:BUDGET_USD[:GROUP] [...] [--wrapper HOST=JSON_LIST]
+                 [--reserve HOST=GIB]
   stagep.py localize --plan PLAN.json --host HOST --export DIR --map OLD=NEW [...]
                                                        a plan for another host and the files to copy there
-  stagep.py throughput --plan PLAN.json --host HOST    one EX1 update (the qualification's update 100) on this host at
+  stagep.py throughput --plan PLAN.json --host HOST [--pack K [--repeats R] [--stagger S]]
+                                                       one EX1 update (the qualification's update 100) on this host at
                                                        the planned cores and workers; its state must equal the
-                                                       qualification's on Windows
-  stagep.py run --plan PLAN.json --chain CHAIN          the guarded chain run (resumable; run it again after a stop)
+                                                       qualification's on Windows. With --pack, K copies share one
+                                                       claim of those cores, each running the update R times
+  stagep.py run --plan PLAN.json --chain CHAIN [--chain CHAIN ...]
+                                                       the guarded chain run (resumable; run it again after a stop);
+                                                       a pack group's chains run together, naming every member
   stagep.py status --plan PLAN.json                     updates done, metered USD and a projected end per chain
+
+Packing: chains placed with the same GROUP (same host and cores) run together in one claim of those cores, K = the
+group's size. Each chain's work is unchanged (fixed-work and deterministic), so its outputs are identical; what
+changes is that one chain's straggler episode leaves cores to the others. A pack group needs a throughput record
+measured at the same K (THROUGHPUT-HOST-kK.json; K = 1 keeps THROUGHPUT-HOST.json).
 
 The plan pins the design's frozen inputs: the qualified binary, the calibrated c* per lineage (read from the
 qualification manifest), kappa = 1, 300 updates per chain, the parents, the RT1 bases, and the episode and placement
 keys (namespace, run id, global update). `run` refuses to start unless:
 - every pin still matches;
-- this host has a throughput record for the chain's host, binary, cores and workers (COMPUTE-POLICY item 5), whose
-  state equals the qualification's;
+- this host has a throughput record for the chain's host, binary, cores, workers and pack size K (COMPUTE-POLICY
+  item 5), whose state equals the qualification's in every copy;
 - free space covers the chain's remaining bytes plus the host's reserve.
 An iteration interrupted after its collection began cannot be resumed (mtg-kernel#336), so `run` moves it aside and
 the run reruns it fresh. Each chain meters USD as its host rate times the wall time it runs; at its allotment (the
@@ -27,6 +37,7 @@ A STOP file in the root stops every chain at once.
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
@@ -34,6 +45,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import psutil
@@ -129,8 +141,14 @@ def make_plan(args):
         raise SystemExit(f"refused: place every chain exactly once ({sorted(CHAINS)})")
     root = Path(args.root)
     chains, total = {}, 0.0
+    groups = {}
     for name, lineage in CHAINS.items():
-        host, cores, rate, budget = places[name].split(":")
+        fields = places[name].split(":")
+        if len(fields) not in (4, 5):
+            raise SystemExit(f"refused: --place {name}=HOST:CORES:USD_PER_HOUR:BUDGET_USD[:GROUP]")
+        host, cores, rate, budget = fields[:4]
+        if len(fields) == 5:
+            groups.setdefault(fields[4], []).append(name)
         cores, rate, budget = int(cores), float(rate), float(budget)
         if cores < 1 or rate < 0 or budget < 0 or (rate > 0) != (budget > 0):
             raise SystemExit(f"refused: {name} needs cores >= 1 and a budget exactly when its host costs money")
@@ -146,6 +164,13 @@ def make_plan(args):
                         "cores": cores, "usd_per_hour": rate, "budget_usd": budget, "config": pin(config_path),
                         "parent": pin(parents[lineage]), "base": pin(bases[lineage]),
                         "native": native.as_posix()}
+    for group, members in groups.items():
+        if not group or len({(chains[m]["host"], chains[m]["cores"]) for m in members}) != 1:
+            raise SystemExit(f"refused: pack group {group!r} needs a name and one host and core count")
+        if any(chains[m]["usd_per_hour"] > 0 for m in members):
+            raise SystemExit(f"refused: pack group {group!r} is on a paid host (budgets are metered per chain)")
+        for m in members:
+            chains[m].update(group=group, pack=len(members))
     if total > CEILING_USD + 1e-9:
         raise SystemExit(f"refused: allotments sum to {total} USD, above the {CEILING_USD} USD ceiling")
     hosts = sorted({c["host"] for c in chains.values()})
@@ -290,8 +315,18 @@ def throughput(args):
     if not chains:
         raise SystemExit(f"no chain is placed on {args.host}")
     cores = max(c["cores"] for c in chains)
+    if args.pack > 1:
+        # A packed record qualifies the pack groups of that size on this host, at their own core count.
+        sizes = {c["cores"] for c in chains if c.get("pack", 1) == args.pack}
+        if len(sizes) != 1:
+            raise SystemExit(f"refused: {args.host} needs pack groups of size {args.pack} at one core count, "
+                             f"found {sorted(sizes)}")
+        cores = sizes.pop()
     q = read(plan["qualification"]["path"])
-    out = Path(plan["root"]) / "throughput" / f"{args.host}-c{cores}-{time.strftime('%Y%m%dT%H%M%S')}"
+    # Unique per invocation, so concurrent checks never share a folder.
+    out = Path(plan["root"]) / "throughput" / (f"{args.host}-c{cores}-k{args.pack}-"
+                                               f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}")
+    out.mkdir(parents=True, exist_ok=False)
     config_path = out / "config.json"
     if "throughput_config" in plan:
         # A localized plan carries the config prebuilt where the dose records' paths resolve.
@@ -305,25 +340,144 @@ def throughput(args):
     wrapper = [part.replace("{cores}", str(cores)).replace("{chain}", "throughput")
                for part in plan["hosts"][args.host]["wrapper"]]
     plan["hosts"][args.host]["wrapper"] = wrapper
-    started = time.time()
-    code = subprocess.call(command(plan, args.host, str(config_path)))
-    wall = time.time() - started
-    receipt, update, collection = next(qual.iterations(out / "native"))
     expected = q["checks"]["resume_determinism"]["states"][0]
     windows = platform.system() == "Windows"
-    record = {"schema": "ex1-stagep-throughput/v1", "host": args.host, "hostname": socket.gethostname(),
-              "platform": platform.platform(), "binary_sha256": plan["binary"]["sha256"], "cores": cores,
-              "workers": WORKERS, "exit": code, "wall_seconds": wall,
-              "collection_wall_seconds": collection["collection_elapsed_seconds"],
-              "process_cpu_seconds": receipt.get("driver_process_cpu_seconds"),
-              "after_state_sha256": update["after_state_sha256"], "expected_state_sha256": expected,
-              "state_equal": update["after_state_sha256"] == expected, "state_required": windows,
-              "reference_collection_wall_seconds": {"desktop_10_cores": 218.4, "desktop_5_cores": 363.2}}
-    path = Path(plan["root"]) / "throughput" / f"THROUGHPUT-{args.host}.json"
+    if args.pack == 1 and args.repeats == 1:
+        started = time.time()
+        code = subprocess.call(command(plan, args.host, str(config_path)))
+        wall = time.time() - started
+        receipt, update, collection = next(qual.iterations(out / "native"))
+        record = {"schema": "ex1-stagep-throughput/v1", "host": args.host, "hostname": socket.gethostname(),
+                  "platform": platform.platform(), "binary_sha256": plan["binary"]["sha256"], "cores": cores,
+                  "workers": WORKERS, "pack": 1, "exit": code, "wall_seconds": wall,
+                  "collection_wall_seconds": collection["collection_elapsed_seconds"],
+                  "process_cpu_seconds": receipt.get("driver_process_cpu_seconds"),
+                  "after_state_sha256": update["after_state_sha256"], "expected_state_sha256": expected,
+                  "state_equal": update["after_state_sha256"] == expected, "state_required": windows,
+                  "reference_collection_wall_seconds": {"desktop_10_cores": 218.4, "desktop_5_cores": 363.2}}
+    else:
+        record = packed_throughput(plan, args, out, config_path, cores, expected, windows)
+    path = throughput_path(plan, args.host, args.pack)
     write(path, record)
     print(json.dumps(record, indent=1))
-    if code != 0 or (windows and not record["state_equal"]):
+    if record["exit"] != 0 or (windows and not record["state_equal"]):
         raise SystemExit("throughput run failed or its state differs from the qualification's")
+
+
+def throughput_path(plan, host, pack):
+    name = f"THROUGHPUT-{host}.json" if pack == 1 else f"THROUGHPUT-{host}-k{pack}.json"
+    return Path(plan["root"]) / "throughput" / name
+
+
+def packed_throughput(plan, args, out, config_path, cores, expected, windows):
+    """K copies of the throughput update in one claim, each running it R times in fresh output folders; copy i
+    starts i * S seconds late (S defaults to the K = 1 record's wall over K), so the copies' straggler phases do not
+    all line up, as they would not between chains that drifted apart. The group's rate counts every completed
+    update over the span from the first start to the last end, ramps included."""
+    text = config_path.read_text(encoding="utf-8")
+    single = throughput_path(plan, args.host, 1)
+    stagger = args.stagger
+    if stagger is None:
+        stagger = read(single)["wall_seconds"] / args.pack if single.exists() else 0.0
+    plan_lanes = []
+    for i in range(args.pack):
+        configs = []
+        for r in range(args.repeats):
+            native = out / f"copy-{i}" / f"rep-{r}" / "native"
+            cfg = out / f"copy-{i}" / f"rep-{r}" / "config.json"
+            cfg.parent.mkdir(parents=True, exist_ok=True)
+            # The config already names out/native; each copy and repeat gets its own folder.
+            cfg.write_text(text.replace(json.dumps((out / "native").as_posix())[1:-1], native.as_posix()),
+                           encoding="utf-8", newline="\n")
+            if read(cfg)["output_directory"] != native.as_posix():
+                raise SystemExit("refused: could not place a copy's output folder")
+            configs.append({"config": cfg.as_posix(), "native": native.as_posix()})
+        plan_lanes.append({"delay": i * stagger, "configs": configs})
+    spec = out / "pack.json"
+    write(spec, {"binary": plan["binary"]["path"], "wrapped": bool(plan["hosts"][args.host]["wrapper"]),
+                 "lanes": plan_lanes})
+    inner = [part for part in plan["hosts"][args.host]["wrapper"]] + [
+        sys.executable, str(Path(__file__).resolve()), "_lanes", "--spec", str(spec.resolve()),
+        "--spec-sha256", sha(spec)]
+    code = subprocess.call(inner)
+    result = read(out / "pack-result.json") if (out / "pack-result.json").exists() else {"lanes": []}
+    copies, starts, ends, equal, exits = [], [], [], True, [code]
+    if len(result["lanes"]) != len(plan_lanes) or any(len(r) != len(lane["configs"])
+                                                      for r, lane in zip(result["lanes"], plan_lanes)):
+        exits.append(1)        # the inner run must report exactly one result per planned copy and repeat
+    ran_lanes = (result["lanes"] + [[]] * len(plan_lanes))[:len(plan_lanes)]
+    for lane, ran in zip(plan_lanes, ran_lanes):
+        updates = []
+        for item, run_ in zip(lane["configs"], ran):
+            exits.append(run_["exit"])
+            rows = list(qual.iterations(item["native"]))
+            states = [u["after_state_sha256"] for _, u, _ in rows]
+            ok = states == [expected]
+            equal = equal and ok
+            # Counted only when the run left exactly one completed update, whatever its state.
+            updates.append({"wall_seconds": run_["end"] - run_["start"], "exit": run_["exit"],
+                            "completed": len(rows) == 1,
+                            "collection_wall_seconds": rows[0][2]["collection_elapsed_seconds"] if rows else None,
+                            "after_state_sha256": states[0] if states else None, "state_equal": ok})
+            starts.append(run_["start"])
+            ends.append(run_["end"])
+        copies.append({"delay_seconds": lane["delay"], "updates": updates,
+                       "chain_wall_seconds": (ran[-1]["end"] - ran[0]["start"]) if ran else None,
+                       "state_equal": len(updates) == args.repeats and all(u["state_equal"] for u in updates)})
+    done = sum(u["completed"] for c in copies for u in c["updates"])
+    complete = done == args.pack * args.repeats
+    span = (max(ends) - min(starts)) if complete else None
+    return {"schema": "ex1-stagep-throughput/v1", "host": args.host, "hostname": socket.gethostname(),
+            "platform": platform.platform(), "binary_sha256": plan["binary"]["sha256"], "cores": cores,
+            "workers": WORKERS, "pack": args.pack, "repeats": args.repeats, "stagger_seconds": stagger,
+            "exit": 0 if complete and not any(exits) else (code or 1), "copies": copies,
+            "group_span_seconds": span, "completed_updates": done,
+            "group_updates_per_hour": done * 3600 / span if span else None,
+            "wall_seconds": span, "expected_state_sha256": expected,
+            "state_equal": complete and equal, "state_required": windows}
+
+
+def lanes(args):
+    """Inside a throughput claim: each lane waits its delay, then runs its configs one after another."""
+    import threading
+    if sha(args.spec) != args.spec_sha256:
+        raise SystemExit("refused: _lanes needs the spec its throughput check wrote")
+    spec = read(args.spec)
+    if spec["wrapped"] and not os.environ.get("HOST_SLOTS_CLAIM"):
+        raise SystemExit("refused: this internal command runs only inside its host_slots claim")
+    for lane in spec["lanes"]:
+        for item in lane["configs"]:
+            cfg = read(item["config"])
+            ex1 = cfg.get("ex1") or {}
+            # Only the one-update throughput check runs here, never a chain.
+            if (len(cfg.get("iterations", [])) != 1 or ex1.get("run") != THROUGHPUT["run"]
+                    or ex1.get("update_offset") != THROUGHPUT["offset"]
+                    or cfg.get("output_directory") != item["native"]):
+                raise SystemExit("refused: _lanes runs only the one-update throughput config")
+    binary = spec["binary"]
+    exe = [sys.executable, binary] if binary.endswith(".py") else [binary]   # .py: test stand-ins only
+    results = [[] for _ in spec["lanes"]]
+
+    def go(i, lane):
+        time.sleep(lane["delay"])
+        for item in lane["configs"]:
+            start = time.time()
+            code = subprocess.call(exe + [item["config"]])
+            results[i].append({"start": start, "end": time.time(), "exit": code})
+
+    threads = [threading.Thread(target=go, args=(i, lane)) for i, lane in enumerate(spec["lanes"])]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    write(Path(args.spec).with_name("pack-result.json"), {"lanes": results})
+    raise SystemExit(0 if all(r["exit"] == 0 for lane in results for r in lane) else 1)
+
+
+def require_claim(plan, host):
+    """The inner commands run only inside the host's claim when the host has a wrapper."""
+    if plan["hosts"][host]["wrapper"] and not os.environ.get("HOST_SLOTS_CLAIM"):
+        raise SystemExit("refused: this internal command runs only inside its host_slots claim")
 
 
 def throughput_config(plan, native):
@@ -333,19 +487,37 @@ def throughput_config(plan, native):
                              THROUGHPUT["namespace"], THROUGHPUT["offset"], 1, WORKERS, THROUGHPUT["coefficient"])
 
 
+def pack_size(plan, chain):
+    """K from the group's actual members (1 without a group); the plan's `pack` field must agree."""
+    group = chain.get("group")
+    members = [c for c in plan["chains"].values() if group is not None and c.get("group") == group]
+    pack = len(members) if group is not None else 1
+    if chain.get("pack", 1) != pack or any(c.get("pack", 1) != pack for c in members):
+        raise SystemExit(f"refused: pack group {group!r} has {pack} members but its plan says otherwise")
+    if len({(c["host"], c["cores"]) for c in members}) > 1:
+        raise SystemExit(f"refused: pack group {group!r} needs one host and core count")
+    return pack
+
+
 def guard(plan, name, chain):
     """COMPUTE-POLICY item 5: refuse without a matching throughput record for this host."""
-    path = Path(plan["root"]) / "throughput" / f"THROUGHPUT-{chain['host']}.json"
+    pack = pack_size(plan, chain)
+    path = throughput_path(plan, chain["host"], pack)
     if not path.exists():
-        raise SystemExit(f"refused: no throughput record for {chain['host']}; run `stagep.py throughput` there first")
+        raise SystemExit(f"refused: no throughput record for {chain['host']} at pack {pack}; run "
+                         f"`stagep.py throughput{'' if pack == 1 else f' --pack {pack}'}` there first")
     t = read(path)
     problems = []
+    if t.get("pack", 1) != pack:
+        problems.append(f"recorded at pack {t.get('pack', 1)}, not {pack}")
     if t["hostname"] != socket.gethostname():
         problems.append(f"recorded on {t['hostname']}, not {socket.gethostname()}")
     if t["binary_sha256"] != plan["binary"]["sha256"]:
         problems.append("recorded with another binary")
     if t["workers"] != chain["workers"] or t["cores"] < chain["cores"]:
         problems.append("recorded at other workers or fewer cores")
+    if pack > 1 and t["cores"] != chain["cores"]:
+        problems.append(f"packed record at {t['cores']} cores, not the group's {chain['cores']}")
     if t["exit"] != 0 or (t["state_required"] and not t["state_equal"]):
         problems.append("its update failed or its state differs from the qualification's")
     if problems:
@@ -355,74 +527,151 @@ def guard(plan, name, chain):
 
 # ---------------------------------------------------------------- run
 
-def run(args):
-    plan = load_plan(args.plan)
-    name = args.chain
+def check(plan, name):
+    """A chain's pins, throughput record, budget and byte share; returns the bytes it still has to write."""
     chain = plan["chains"][name]
     root = Path(plan["root"])
     for key, what in (("config", "the chain config"), ("parent", "the parent"), ("base", "the base config")):
         check_pin(chain[key], what)
     guard(plan, name, chain)
-    state_path = root / "chains" / name / "STATE.json"
-    state = read(state_path) if state_path.exists() else {"metered_seconds": 0.0, "sessions": []}
     if (root / "chains" / name / "TRUNCATED.json").exists():
         raise SystemExit(f"{name} stopped at its budget; Stage P is inconclusive on budget")
     native = chain["native"]
-    done = completed(native)
     written = sum(f.stat().st_size for f in Path(native).rglob("*") if f.is_file()) if Path(native).exists() else 0
     if written > plan["byte_budget"]["cap_bytes"] / len(plan["chains"]):
         raise SystemExit(f"refused: {name} has written {written / 1e9:.1f} GB, past its share of the byte cap")
-    need = (chain["updates"] - done) * plan["byte_budget"]["bytes_per_update"]
-    free = shutil.disk_usage(root).free
+    return (chain["updates"] - completed(native)) * plan["byte_budget"]["bytes_per_update"]
+
+
+def group_checks(plan, names):
+    """Every named chain's checks, the pack group's completeness and the disk reserve; returns the first chain."""
+    chain = plan["chains"][names[0]]
+    group = chain.get("group")
+    members = sorted(n for n, c in plan["chains"].items() if group is not None and c.get("group") == group)
+    if group is None and len(names) > 1:
+        raise SystemExit("refused: only the chains of one pack group run together")
+    if group is not None and sorted(names) != members:
+        raise SystemExit(f"refused: pack group {group} runs all its chains together: {members}")
+    need = sum(check(plan, name) for name in names)
+    free = shutil.disk_usage(Path(plan["root"])).free
     reserve = plan["hosts"][chain["host"]]["reserve_gib"] * (1 << 30)
     if free < need + reserve:
         raise SystemExit(f"refused: {free / 1e9:.1f} GB free, need {need / 1e9:.1f} GB plus the host reserve")
-    moved = quarantine(native, root, name)
-    wrapper = [part.replace("{cores}", str(chain["cores"])).replace("{chain}", name)
+    return chain
+
+
+def run(args):
+    plan = load_plan(args.plan)
+    names = list(dict.fromkeys(args.chain))
+    chain = group_checks(plan, names)
+    group = chain.get("group")
+    wrapper = [part.replace("{cores}", str(chain["cores"])).replace("{chain}", group or names[0])
                for part in plan["hosts"][chain["host"]]["wrapper"]]
     plan["hosts"][chain["host"]]["wrapper"] = wrapper
-    cmd = command(plan, chain["host"], chain["config"]["path"])
-    log(root, chain=name, event="start", completed=done, moved=moved, cmd=cmd)
-    session = {"started": time.time(), "completed_at_start": done, "moved": moved}
+    if group is None:
+        raise SystemExit(supervise(plan, names, command(plan, chain["host"], chain["config"]["path"]),
+                                   args.fast_poll))
+    # One claim for the group: inside it, `_members` checks again and starts every member's binary. Metering,
+    # STOP and the outcome stay out here, so they still act while the claim waits in the queue or is suspended.
+    results = Path(plan["root"]) / "chains" / f"group-{group}" / "members.json"
+    # The plan goes by absolute path and hash, so a wrapper that changes directory cannot swap it.
+    inner = wrapper + [sys.executable, str(Path(__file__).resolve()), "_members",
+                       "--plan", str(Path(args.plan).resolve()), "--plan-sha256", sha(args.plan),
+                       "--results", str(results)]
+    for name in names:
+        inner += ["--chain", name]
+    raise SystemExit(supervise(plan, names, inner, args.fast_poll, results))
+
+
+def members(args):
+    """Inside a pack group's claim: the group's checks again, then every member's binary at once; writes each
+    member's exit code to --results."""
+    if not Path(args.plan).is_absolute() or sha(args.plan) != args.plan_sha256:
+        raise SystemExit("refused: _members needs the launching plan's absolute path and hash")
+    plan = load_plan(args.plan)
+    names = list(dict.fromkeys(args.chain))
+    # Every check again, free space included: the claim may have waited in the queue.
+    chain = group_checks(plan, names)
+    if chain.get("group") is None:
+        raise SystemExit("refused: _members runs a pack group")
+    require_claim(plan, chain["host"])
+    binary = plan["binary"]["path"]
+    exe = [sys.executable, binary] if binary.endswith(".py") else [binary]   # .py: test stand-ins only
+    procs = {}
+    try:
+        for name in names:
+            procs[name] = subprocess.Popen(exe + [plan["chains"][name]["config"]["path"]])
+    except BaseException:
+        for proc in procs.values():        # a partial start leaves nothing running
+            stop_tree(proc)
+        raise
+    codes = {name: proc.wait() for name, proc in procs.items()}
+    write(args.results, codes)
+    raise SystemExit(0 if not any(codes.values()) else 1)
+
+
+def supervise(plan, names, cmd, fast_poll, results=None):
+    """Runs the command for the named chains (one chain, or a pack group's claim), metering each chain's USD and
+    watching STOP; returns the exit code (any nonzero member code, whatever its sign, makes it nonzero)."""
+    root = Path(plan["root"])
+    chains = {name: plan["chains"][name] for name in names}
+    paths = {name: root / "chains" / name / "STATE.json" for name in names}
+    states = {name: read(p) if p.exists() else {"metered_seconds": 0.0, "sessions": []} for name, p in paths.items()}
+    sessions = {}
+    for name, chain in chains.items():
+        done = completed(chain["native"])
+        moved = quarantine(chain["native"], root, name)
+        log(root, chain=name, event="start", completed=done, moved=moved, cmd=cmd)
+        sessions[name] = {"started": time.time(), "completed_at_start": done, "moved": moved}
+    if results is not None:
+        Path(results).unlink(missing_ok=True)
     proc = subprocess.Popen(cmd)
     outcome = None
     last = time.time()
     while proc.poll() is None:
-        time.sleep(POLL_S if not args.fast_poll else 0.2)
+        time.sleep(POLL_S if not fast_poll else 0.2)
         now = time.time()
-        state["metered_seconds"] += now - last
+        for name, chain in chains.items():
+            states[name]["metered_seconds"] += now - last
+            write(paths[name], states[name])
+            spent = states[name]["metered_seconds"] / 3600 * chain["usd_per_hour"]
+            if chain["usd_per_hour"] > 0 and spent >= chain["budget_usd"]:
+                outcome = "budget"
         last = now
-        write(state_path, state)
-        spent = state["metered_seconds"] / 3600 * chain["usd_per_hour"]
-        if chain["usd_per_hour"] > 0 and spent >= chain["budget_usd"]:
-            outcome = "budget"
-        elif (root / "STOP").exists():
+        if outcome is None and (root / "STOP").exists():
             outcome = "stop"
         if outcome:
             stop_tree(proc)
             break
-    state["metered_seconds"] += time.time() - last
     code = proc.wait()
-    session.update(ended=time.time(), exit=code, outcome=outcome, completed=completed(native))
-    state["sessions"].append(session)
-    write(state_path, state)
-    spent = state["metered_seconds"] / 3600 * chain["usd_per_hour"]
-    log(root, chain=name, event="end", exit=code, outcome=outcome, completed=session["completed"], usd=spent)
-    if outcome:
-        session["moved_after"] = quarantine(native, root, name)
+    member = read(results) if results is not None and Path(results).exists() else {}
+    codes = {name: member.get(name, code) for name in names}
+    for name, chain in chains.items():
+        native = chain["native"]
+        states[name]["metered_seconds"] += time.time() - last
+        session = sessions[name]
+        session.update(ended=time.time(), exit=codes[name], outcome=outcome, completed=completed(native))
+        states[name]["sessions"].append(session)
+        write(paths[name], states[name])
+        spent = states[name]["metered_seconds"] / 3600 * chain["usd_per_hour"]
+        log(root, chain=name, event="end", exit=codes[name], outcome=outcome, completed=session["completed"],
+            usd=spent)
+        if outcome:
+            session["moved_after"] = quarantine(native, root, name)
+        if outcome == "budget":
+            write(root / "chains" / name / "TRUNCATED.json",
+                  {"chain": name, "completed_updates": session["completed"], "planned_updates": chain["updates"],
+                   "metered_usd": spent, "budget_usd": chain["budget_usd"],
+                   "stage_p": "inconclusive on budget (design section 5)"})
+        elif not outcome and codes[name] == 0 and Path(native, "completion.json").exists():
+            write(root / "chains" / name / "DONE.json",
+                  {"chain": name, "completed_updates": session["completed"], "metered_usd": spent,
+                   "completion": pin(Path(native, "completion.json"))})
     if outcome == "budget":
-        write(root / "chains" / name / "TRUNCATED.json",
-              {"chain": name, "completed_updates": session["completed"], "planned_updates": chain["updates"],
-               "metered_usd": spent, "budget_usd": chain["budget_usd"],
-               "stage_p": "inconclusive on budget (design section 5)"})
-        raise SystemExit(EXIT_BUDGET)
+        return EXIT_BUDGET
     if outcome == "stop":
-        raise SystemExit(EXIT_STOP)
-    if code == 0 and Path(native, "completion.json").exists():
-        write(root / "chains" / name / "DONE.json",
-              {"chain": name, "completed_updates": session["completed"], "metered_usd": spent,
-               "completion": pin(Path(native, "completion.json"))})
-    raise SystemExit(code)
+        return EXIT_STOP
+    return next((c for c in [code, *codes.values()] if c != 0), 0)
 
 
 def status(args):
@@ -466,14 +715,36 @@ def main(argv=None):
     t = sub.add_parser("throughput")
     t.add_argument("--plan", required=True)
     t.add_argument("--host", required=True)
+    t.add_argument("--pack", type=int, default=1, help="K copies sharing one claim of the planned cores")
+    t.add_argument("--repeats", type=int, default=None, help="updates per copy (packed only; default 3)")
+    t.add_argument("--stagger", type=float, help="seconds between copy starts (default: the K = 1 wall over K)")
     r = sub.add_parser("run")
     r.add_argument("--plan", required=True)
-    r.add_argument("--chain", required=True, choices=sorted(CHAINS))
+    r.add_argument("--chain", required=True, action="append", choices=sorted(CHAINS))
     r.add_argument("--fast-poll", action="store_true", help=argparse.SUPPRESS)
+    m = sub.add_parser("_members")
+    m.add_argument("--plan", required=True)
+    m.add_argument("--results", required=True)
+    m.add_argument("--plan-sha256", required=True)
+    m.add_argument("--chain", required=True, action="append", choices=sorted(CHAINS))
+    m.add_argument("--fast-poll", action="store_true")
+    ln = sub.add_parser("_lanes")
+    ln.add_argument("--spec", required=True)
+    ln.add_argument("--spec-sha256", required=True)
     s = sub.add_parser("status")
     s.add_argument("--plan", required=True)
     args = ap.parse_args(argv)
-    {"plan": make_plan, "localize": localize, "throughput": throughput, "run": run, "status": status}[args.cmd](args)
+    if args.cmd == "throughput":
+        if args.pack < 1:
+            ap.error("--pack is at least 1")
+        if args.pack == 1 and (args.repeats not in (None, 1) or args.stagger is not None):
+            ap.error("--repeats and --stagger are for --pack 2 or more")
+        if args.repeats is None:
+            args.repeats = 1 if args.pack == 1 else 3
+        if args.repeats < 1:
+            ap.error("--repeats is at least 1")
+    {"plan": make_plan, "localize": localize, "throughput": throughput, "run": run, "status": status,
+     "_members": members, "_lanes": lanes}[args.cmd](args)
 
 
 if __name__ == "__main__":
