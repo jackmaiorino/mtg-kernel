@@ -23,51 +23,48 @@ with a 60 s timeout.
 
 Halts only catch refusals. Rules correctness rests on #308's own per-card rules tests.
 
-## Evidence (2026-10-27, games from branch head 04c0b166d)
+## Evidence (2026-10-29, games from #415 head 6dfd1f6b1)
 
-1,200 games: 560 and 546 wins, 29 errors, 65 hangs (all with Drake Hatcher), 625 s on 8 cores.
-Full-only baseline, without the Drake Hatcher hangs: 6 halts in 291 games (2.1%). The admission
-list does not change play under `rules-only-all`, so these games stand for the final list.
+1,200 games: 580 and 566 wins, 0 errors, 54 hangs (all with Drake Hatcher), 577 s on 8 cores.
+Full-only baseline, without the Drake Hatcher hangs: 0 halts in 293 games. With no halt
+anywhere, every Partial card with at least 20 games passes the rule. The admission list does not
+change play under `rules-only-all`, so these games stand for the final list.
 
-| Card | Games | Halts | Tail p | |
-| --- | ---: | ---: | ---: | --- |
-| Curator of Destinies | 226 | 3 | 0.85 | admitted |
-| Imprisoned in the Moon | 213 | 3 | 0.82 | admitted |
-| Blasphemous Edict | 142 | 4 | 0.34 | admitted |
-| Leyline Axe | 107 | 2 | 0.65 | admitted |
-| Kykar, Zephyr Awakener | 96 | 1 | 0.86 | admitted |
-| Lathril, Blade of the Elves | 87 | 5 | 0.034 | held |
-| Perforating Artist | 85 | 6 | 0.008 | held |
-| Liliana, Dreadhorde General | 82 | 5 | 0.028 | held |
-| Zimone, Paradox Sculptor | 76 | 2 | 0.47 | admitted |
-| Consuming Aberration | 63 | 3 | 0.14 | admitted |
-| Alesha, Who Laughs at Fate | 59 | 11 | <0.0001 | held |
-| Abyssal Harvester | 54 | 3 | 0.10 | admitted |
-| Tinybones, Bauble Burglar | 52 | 2 | 0.29 | admitted |
-| Loot, Exuberant Explorer | 48 | 0 | 1.00 | admitted |
-| Thousand-Year Storm | 43 | 0 | 1.00 | admitted |
-| Muldrotha, the Gravetide | 36 | 2 | 0.17 | admitted |
-| Quilled Greatwurm | 32 | 1 | 0.49 | admitted |
-| Drakuseth, Maw of Flames | 30 | 0 | 1.00 | admitted |
-| Vivien Reid | 30 | 1 | 0.46 | admitted |
-| Embercleave | 29 | 0 | 1.00 | admitted |
-| Chandra, Flameshaper | 27 | 2 | 0.11 | admitted |
-| Sphinx of Forgotten Lore | 27 | 0 | 1.00 | admitted |
-| Valkyrie's Call | 26 | 1 | 0.42 | admitted |
+| Card | Games | Halts | |
+| --- | ---: | ---: | --- |
+| Curator of Destinies | 232 | 0 | admitted |
+| Imprisoned in the Moon | 214 | 0 | admitted |
+| Blasphemous Edict | 143 | 0 | admitted |
+| Leyline Axe | 108 | 0 | admitted |
+| Kykar, Zephyr Awakener | 97 | 0 | admitted |
+| Lathril, Blade of the Elves | 88 | 0 | admitted |
+| Perforating Artist | 86 | 0 | admitted |
+| Liliana, Dreadhorde General | 84 | 0 | admitted |
+| Zimone, Paradox Sculptor | 76 | 0 | admitted |
+| Consuming Aberration | 63 | 0 | admitted |
+| Alesha, Who Laughs at Fate | 60 | 0 | admitted |
+| Abyssal Harvester | 55 | 0 | admitted |
+| Tinybones, Bauble Burglar | 52 | 0 | admitted |
+| Loot, Exuberant Explorer | 48 | 0 | admitted |
+| Thousand-Year Storm | 44 | 0 | admitted |
+| Muldrotha, the Gravetide | 36 | 0 | admitted |
+| Quilled Greatwurm | 32 | 0 | admitted |
+| Drakuseth, Maw of Flames | 30 | 0 | admitted |
+| Vivien Reid | 30 | 0 | admitted |
+| Embercleave | 29 | 0 | admitted |
+| Chandra, Flameshaper | 27 | 0 | admitted |
+| Sphinx of Forgotten Lore | 27 | 0 | admitted |
+| Valkyrie's Call | 26 | 0 | admitted |
 
-With these 19, 70 of the 80 sample decks play under `-session rules-only` (33 train, 37 eval),
-against 34 under Prepared.
+With these 23, all 80 sample decks play under `-session rules-only`, against 34 under Prepared.
 
 "Games" counts games where the card was in a deck, not games where it was cast.
 
-The held cards' halts are mostly the engine-wide errors below, in games those cards happen to
-share: Alesha sits in Flamewake Phoenix's deck, whose forced attack the inclusion menu gets wrong
-(#376), and Lathril's Elf Warrior tokens hit the token-roster refusal. Rerun the report once #376
-and the token refusal are fixed; the rule may then admit them.
-
-The errors are engine-wide, not card-specific: attacker or blocker inclusion options the surface
-refuses (#376), tokens left in a graveyard without a roster entry (Food, Soldier, Insect, Treasure,
-Elf Warrior), and four `InvalidEffectContinuation` halts.
+The 2026-10-27 run (19 admitted, 70 decks) had 29 errors: attacker and blocker inclusion options
+the surface refused (#376), tokens left in a graveyard without a roster entry, and
+`InvalidEffectContinuation` halts. None recur. #404 fixed the first, and #415 the halts from
+Vampire Gourmand (another trigger of a Gourmand source taken for its own, and its paid draw dropped
+by a linked Aura replay) and from Reassembling Skeleton under mixed Crystal prevention.
 
 On 10 deals of `FDN_top_02819_WU` vs `FDN_top_21341_WU` (two decks both sessions can play), 7
 finished in both with the same result and decision count, rules-only about 60 times faster. One
