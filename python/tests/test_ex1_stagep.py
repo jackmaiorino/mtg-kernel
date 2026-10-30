@@ -132,6 +132,11 @@ class StagePTests(unittest.TestCase):
         self.plan.write_text(json.dumps(plan))
         with self.assertRaisesRegex(SystemExit, "has 2 members but its plan says otherwise"):
             stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2"])
+        plan["chains"]["r2-c1"]["pack"] = plan["chains"]["r2-c2"]["pack"] = 2
+        plan["chains"]["r2-c2"]["cores"] = 8                # an edited placement inside the group
+        self.plan.write_text(json.dumps(plan))
+        with self.assertRaisesRegex(SystemExit, "needs one host and core count"):
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2"])
 
     def test_a_pack_group_runs_all_its_chains_together_in_one_claim(self):
         plan = self.make(self.PACKED)

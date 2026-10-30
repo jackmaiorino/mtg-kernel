@@ -494,6 +494,8 @@ def pack_size(plan, chain):
     pack = len(members) if group is not None else 1
     if chain.get("pack", 1) != pack or any(c.get("pack", 1) != pack for c in members):
         raise SystemExit(f"refused: pack group {group!r} has {pack} members but its plan says otherwise")
+    if len({(c["host"], c["cores"]) for c in members}) > 1:
+        raise SystemExit(f"refused: pack group {group!r} needs one host and core count")
     return pack
 
 
