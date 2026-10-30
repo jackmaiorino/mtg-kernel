@@ -8,10 +8,12 @@ were checked from, and writes:
   roots.jsonl     one line per selected root, each carrying its label job;
   inventory.json  the selection, refusals, eligible counts and every source and tool hash.
 
-Replacement (RS0-PLAN.md section 3): pass the `s4a-reach` output of a run
-with --refused; refused games (or control roots) are skipped and the next
+Replacement (RS0-PLAN.md section 3): pass the `s4a-reach` output rows and the
+inventory.json of every earlier round with --refused (refusals are cumulative);
+refused games (or control roots) are skipped and the next
 eligible candidates in hash order are selected. Searches are deterministic,
-so rows of roots that stay selected are reused.
+so a row is reused only when the roles, T and c it recorded equal
+the current root entry's (tools/reach/report.py marks any other row stale).
 
 The selection reads the rows alone (verdicts, lines, turns, actors); the jobs
 are attached afterwards and only for reconstruction. Nothing here chooses,
@@ -32,7 +34,7 @@ from summarize import classify  # noqa: E402  (the step 1 class rule, unchanged)
 SPY_GAMES = 36
 BURN_GAMES = 12
 CONTROL_PER_DECK = 3
-PLAN = "rs0-plan-v3"
+PLAN = "rs0-plan-v4"
 
 
 def sha256_file(path: Path) -> str:
