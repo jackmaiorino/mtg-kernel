@@ -855,6 +855,11 @@ jobs:
     if: needs.detect-changes.outputs.python_relevant == 'true'
     # Includes waiting for the same low-priority CPU admission as Rust jobs.
     timeout-minutes: 120
+    # Windows' default pwsh fails a step only on its last command's exit code, so an earlier failing command in a
+    # multi-line step passes silently. Bash (-eo pipefail) stops at the first failure on both systems.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
