@@ -1083,7 +1083,7 @@ pub(crate) fn capture_payment(
         return Err("Drake payment changed exact printed source/cost/input".into());
     }
     Ok(Some(PaymentOwnerV1 {
-        original: Arc::new(world(state)?),
+        original: Box::new(world(state)?),
         pending: p.clone(),
         start: state.engine.event_history.len(),
         source: AbilitySourceContractV4::capture(state, p.source),
@@ -1173,7 +1173,7 @@ pub(crate) fn record_paid(
         state,
         JournalV1::Paid {
             debit,
-            original: owner.original,
+            original: Arc::from(owner.original),
             pending: Box::new(owner.pending),
             item: Box::new(item),
         },
@@ -1226,7 +1226,7 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
     Ok(Some(OwnerV1 {
         publication: publication(state, item)?,
         item: item.clone(),
-        original: Arc::new(world(state)?),
+        original: Box::new(world(state)?),
         start: state.engine.event_history.len(),
     }))
 }
@@ -1269,7 +1269,7 @@ fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u6
             publication: owner.publication,
             item: Box::new(owner.item.clone()),
             kind,
-            original: owner.original.clone(),
+            original: Arc::new((*owner.original).clone()),
         },
     )
 }
