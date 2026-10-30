@@ -28,6 +28,7 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -55,6 +56,7 @@ EXIT_BUDGET = 4
 EXIT_STOP = 5
 # The throughput update: the qualification's resume check, update 100 of run ex1-qual-det-r2 from the r2 parent.
 THROUGHPUT = {"namespace": "ex1-qual-20261029", "run": "ex1-qual-det-r2", "offset": 100, "coefficient": 1.0}
+THROUGHPUT_NATIVE = "<THROUGHPUT_NATIVE>"
 
 
 def read(path):
@@ -172,9 +174,10 @@ def referenced(value, out):
 
 
 def remap(text, mapping):
-    for old, new in mapping:
-        text = text.replace(old, new)
-    return text
+    """One pass over the text, longest prefix first, so a mapped path is never mapped again."""
+    table = dict(mapping)
+    pattern = "|".join(re.escape(old) for old in sorted(table, key=len, reverse=True))
+    return re.sub(pattern, lambda m: table[m.group(0)], text)
 
 
 def localize(args):
@@ -195,14 +198,23 @@ def localize(args):
         new_cfg = export / "configs" / f"{name}.json"
         new_cfg.parent.mkdir(parents=True, exist_ok=True)
         new_cfg.write_text(remap(cfg_text, mapping), encoding="utf-8", newline="\n")
-        host_cfg = remap(chain["config"]["path"], mapping)
-        local["chains"][name]["config"] = {"path": host_cfg, "sha256": sha(new_cfg)}
+        # The whole plan is remapped below, so the path stays unmapped here.
+        local["chains"][name]["config"] = {"path": chain["config"]["path"], "sha256": sha(new_cfg)}
         copies[new_cfg.as_posix()] = local["chains"][name]["config"]["sha256"]
         for key in ("parent", "base"):
             copies[chain[key]["path"]] = chain[key]["sha256"]
     for key in ("qualification", "binary"):
         copies[plan[key]["path"]] = plan[key]["sha256"]
+    # The throughput update, prebuilt here where the dose records' paths resolve, with its inputs.
+    tcfg = throughput_config(plan, THROUGHPUT_NATIVE)
+    for path, digest in referenced(tcfg, {}).items():
+        copies[path] = digest
+    tpath = export / "throughput-config.json"
+    tpath.write_text(remap(json.dumps(tcfg, indent=1) + "\n", mapping), encoding="utf-8", newline="\n")
+    copies[tpath.as_posix()] = sha(tpath)
     local = json.loads(remap(json.dumps(local), mapping))
+    local["throughput_config"] = {"path": remap(plan["root"], mapping) + "/throughput-config.json",
+                                  "sha256": sha(tpath)}
     for name in local["chains"]:
         if plan["chains"][name]["host"] == args.host:
             local["chains"][name]["config"]["sha256"] = sha(export / "configs" / f"{name}.json")
@@ -210,7 +222,9 @@ def localize(args):
     rows = []
     for path, digest in sorted(copies.items()):
         target = remap(path, mapping)
-        if path.startswith(export.as_posix()):
+        if path == tpath.as_posix():
+            target = remap(plan["root"], mapping) + "/throughput-config.json"
+        elif path.startswith(export.as_posix()):
             target = remap(plan["root"], mapping) + "/configs/" + Path(path).name
         rows.append({"local": path, "host": target, "sha256": digest})
     write(export / "COPY.json", {"host": args.host, "plan": remap(plan["root"], mapping) + "/PLAN.json", "files": rows})
@@ -277,12 +291,17 @@ def throughput(args):
         raise SystemExit(f"no chain is placed on {args.host}")
     cores = max(c["cores"] for c in chains)
     q = read(plan["qualification"]["path"])
-    r2 = next(c for c in plan["chains"].values() if c["lineage"] == "r2")
     out = Path(plan["root"]) / "throughput" / f"{args.host}-c{cores}-{time.strftime('%Y%m%dT%H%M%S')}"
-    cfg = qual.build_config(read(r2["base"]["path"]), read(r2["parent"]["path"]), out / "native", THROUGHPUT["run"],
-                            THROUGHPUT["namespace"], THROUGHPUT["offset"], 1, WORKERS, THROUGHPUT["coefficient"])
     config_path = out / "config.json"
-    write(config_path, cfg)
+    if "throughput_config" in plan:
+        # A localized plan carries the config prebuilt where the dose records' paths resolve.
+        check_pin(plan["throughput_config"], "the throughput config")
+        text = Path(plan["throughput_config"]["path"]).read_text(encoding="utf-8")
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(text.replace(THROUGHPUT_NATIVE, (out / "native").as_posix()), encoding="utf-8",
+                               newline="\n")
+    else:
+        write(config_path, throughput_config(plan, out / "native"))
     wrapper = [part.replace("{cores}", str(cores)).replace("{chain}", "throughput")
                for part in plan["hosts"][args.host]["wrapper"]]
     plan["hosts"][args.host]["wrapper"] = wrapper
@@ -305,6 +324,13 @@ def throughput(args):
     print(json.dumps(record, indent=1))
     if code != 0 or (windows and not record["state_equal"]):
         raise SystemExit("throughput run failed or its state differs from the qualification's")
+
+
+def throughput_config(plan, native):
+    """The qualification's update 100 (resume check, run ex1-qual-det-r2) from the plan's r2 inputs."""
+    r2 = next(c for c in plan["chains"].values() if c["lineage"] == "r2")
+    return qual.build_config(read(r2["base"]["path"]), read(r2["parent"]["path"]), native, THROUGHPUT["run"],
+                             THROUGHPUT["namespace"], THROUGHPUT["offset"], 1, WORKERS, THROUGHPUT["coefficient"])
 
 
 def guard(plan, name, chain):
