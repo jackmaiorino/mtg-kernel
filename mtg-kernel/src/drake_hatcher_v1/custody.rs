@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -113,10 +113,19 @@ thread_local! { static VERIFYING: Cell<bool> = const { Cell::new(false) }; }
 // validate(). This predicate memo retains keys only; the separate prefix cache
 // below retains typed event data. Neither provides executable authority or can
 // be restored or serialized by callers. Misses run the original predicate.
-const REPLAY_MEMO_LIMIT: usize = 1024;
+// Every validation looks up each enclosing row of the history in order, so the
+// memo is least recently used: a key that each validation hits stays, and only
+// keys a later validation stopped using are dropped. (A first-in first-out
+// memo smaller than a game's rows missed a growing run of them each time.)
+const REPLAY_MEMO_LIMIT: usize = 1 << 15;
 type ReplayKey = [u8; 32];
+#[derive(Default)]
+struct ReplayMemo {
+    used: HashMap<ReplayKey, u64>,
+    clock: u64,
+}
 thread_local! {
-    static REPLAY_MEMO: RefCell<VecDeque<ReplayKey>> = const { RefCell::new(VecDeque::new()) };
+    static REPLAY_MEMO: RefCell<ReplayMemo> = RefCell::new(ReplayMemo::default());
 }
 
 // Across requests, retain data only for a round-trip-eligible typed prefix.
@@ -483,16 +492,24 @@ pub(super) fn clear_replay_prefix_for_test() {
 
 fn replay_cached(key: &ReplayKey) -> bool {
     // Release the borrow before any replay, including reentrant validation.
-    REPLAY_MEMO.with(|cache| cache.borrow().contains(key))
+    REPLAY_MEMO.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.clock += 1;
+        let now = cache.clock;
+        cache.used.get_mut(key).map(|used| *used = now).is_some()
+    })
 }
 fn remember_replay(key: ReplayKey) {
     REPLAY_MEMO.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if !cache.contains(&key) {
-            if cache.len() == REPLAY_MEMO_LIMIT {
-                cache.pop_front();
-            }
-            cache.push_back(key);
+        cache.clock += 1;
+        let now = cache.clock;
+        cache.used.insert(key, now);
+        if cache.used.len() > REPLAY_MEMO_LIMIT {
+            // Keep the most recently used half; the uses are distinct.
+            let mut uses = cache.used.values().copied().collect::<Vec<_>>();
+            let (_, &mut oldest_kept, _) = uses.select_nth_unstable(REPLAY_MEMO_LIMIT / 2);
+            cache.used.retain(|_, used| *used >= oldest_kept);
         }
     });
 }
@@ -524,7 +541,7 @@ thread_local! {
     not(feature = "standard-magezero-fixtures")
 ))]
 pub(super) fn reset_replay_memo_for_test() {
-    REPLAY_MEMO.with(|cache| cache.borrow_mut().clear());
+    REPLAY_MEMO.with(|cache| *cache.borrow_mut() = ReplayMemo::default());
     REPLAY_MEMO_STATS.with(|stats| stats.set(ReplayMemoStats::default()));
 }
 #[cfg(all(
@@ -1791,5 +1808,27 @@ impl Hash for JournalV1 {
         serde_json::to_vec(self)
             .expect("typed Drake journal serializes")
             .hash(h);
+    }
+}
+
+#[cfg(test)]
+mod replay_memo_tests {
+    use super::*;
+
+    #[test]
+    fn a_key_every_validation_hits_outlives_twice_the_limit_of_newer_keys() {
+        REPLAY_MEMO.with(|cache| *cache.borrow_mut() = ReplayMemo::default());
+        let key = |n: usize| {
+            let mut key = [0; 32];
+            key[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            key
+        };
+        remember_replay(key(0));
+        for n in 1..=2 * REPLAY_MEMO_LIMIT {
+            assert!(replay_cached(&key(0)), "evicted after {n} keys");
+            remember_replay(key(n));
+        }
+        assert!(!replay_cached(&key(1)));
+        assert!(REPLAY_MEMO.with(|cache| cache.borrow().used.len()) <= REPLAY_MEMO_LIMIT);
     }
 }

@@ -775,8 +775,12 @@ impl CommittedEvent {
 #[derive(Default)]
 struct ChainV2(Mutex<Arc<Vec<(usize, Sha256)>>>);
 
-/// The most prefix states one history keeps; the oldest are dropped first.
+/// The most recent prefix states one history keeps; the oldest are dropped
+/// first.
 const CHAIN_V2_PREFIXES: usize = 16;
+/// Every prefix whose length is a multiple of this is kept as well, so a copy
+/// of any earlier prefix rehashes fewer than this many events.
+const CHAIN_V2_STRIDE: usize = 64;
 
 impl ChainV2 {
     fn get(&self) -> Arc<Vec<(usize, Sha256)>> {
@@ -795,14 +799,26 @@ impl ChainV2 {
             .cloned()
     }
 
-    fn set(&self, chain: (usize, Sha256)) {
+    /// Records `chains`, shortest first, past every kept prefix they extend.
+    fn set(&self, chains: Vec<(usize, Sha256)>) {
+        let Some(&(shortest, _)) = chains.first() else {
+            return;
+        };
         if let Ok(mut slot) = self.0.lock() {
             let prefixes = Arc::make_mut(&mut slot);
-            prefixes.retain(|(covered, _)| *covered < chain.0);
-            prefixes.push(chain);
-            if prefixes.len() > CHAIN_V2_PREFIXES {
-                prefixes.remove(0);
-            }
+            prefixes.retain(|(covered, _)| *covered < shortest);
+            prefixes.extend(chains);
+            let recent = |covered: usize| covered % CHAIN_V2_STRIDE != 0;
+            let mut excess = prefixes
+                .iter()
+                .filter(|(covered, _)| recent(*covered))
+                .count()
+                .saturating_sub(CHAIN_V2_PREFIXES);
+            prefixes.retain(|(covered, _)| {
+                let drop = excess > 0 && recent(*covered);
+                excess -= usize::from(drop);
+                !drop
+            });
         }
     }
 
@@ -966,7 +982,11 @@ impl EventHistoryV1 {
             chain.update(b"mtg-kernel/event-history-chain/v2");
             (0, chain)
         });
-        for event in &self.events[covered..] {
+        let mut chains = Vec::new();
+        for (position, event) in self.events.iter().enumerate().skip(covered) {
+            if position > covered && position % CHAIN_V2_STRIDE == 0 {
+                chains.push((position, chain.clone()));
+            }
             let bytes = serde_json::to_vec(event).expect("committed events serialize");
             chain.update(
                 u64::try_from(bytes.len())
@@ -975,7 +995,8 @@ impl EventHistoryV1 {
             );
             chain.update(&bytes);
         }
-        self.chain.set((self.events.len(), chain.clone()));
+        chains.push((self.events.len(), chain.clone()));
+        self.chain.set(chains);
         chain.finalize().into()
     }
 

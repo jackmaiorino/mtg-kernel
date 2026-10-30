@@ -976,3 +976,27 @@ fn a_prefix_copy_resumes_its_chain_and_digests_like_a_plain_copy() {
         Some(37)
     );
 }
+
+#[test]
+fn a_long_digest_keeps_stride_prefixes_for_any_earlier_copy() {
+    let mut history = EventHistoryV1::new();
+    for id in 0..300 {
+        history.push(tap(id));
+    }
+    history.chain_digest_v2();
+    // Recent digests past the stride never evict a stride prefix.
+    for id in 300..340 {
+        history.push(tap(id));
+        history.chain_digest_v2();
+    }
+    for len in [0, 63, 64, 65, 150, 299, 301] {
+        let prefix = history.prefix_v1(len);
+        let covered = prefix.chain.longest(len).map_or(0, |(covered, _)| covered);
+        assert!(
+            len - covered < CHAIN_V2_STRIDE,
+            "{len} resumes at {covered}"
+        );
+        let plain = EventHistoryV1::from(history.events[..len].to_vec());
+        assert_eq!(prefix.chain_digest_v2(), plain.chain_digest_v2());
+    }
+}
