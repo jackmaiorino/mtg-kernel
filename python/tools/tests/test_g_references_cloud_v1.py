@@ -2,6 +2,7 @@
 recovery scope and the study's lease caps. The shared lease cycle is covered by test_nine_deck_cloud_v1."""
 import hashlib
 import json
+import os
 import tarfile
 import tempfile
 import time
@@ -9,8 +10,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import g_references_campaign_v1 as driver
 import g_references_cloud_v1 as gcloud
 import g_references_v1 as g
+import host_slots_v1 as slots
+import native_expanded_dispatch_v1 as dispatch
 import nine_deck_cloud_v1 as cloud
 from common import read, write
 from test_nine_deck_cloud_v1 import FAKE_ELF, pinned
@@ -144,6 +148,126 @@ class PackageTests(unittest.TestCase):
                      self.fixture.spec(native_root="/workspace/hot")):
             with self.assertRaises(ValueError):
                 gcloud.package(spec, Path(self.temp.name) / f"bad-{time.monotonic_ns()}")
+
+
+class FakePod:
+    def __init__(self, granted):
+        self.granted, self.calls = granted, []
+
+    def run(self, program, args, timeout=30, read_only=False):
+        self.calls.append((program.split("\n", 1)[0], args))
+        if program is gcloud.POD_AFFINITY:
+            return self.granted
+        if program is cloud.POD_LAUNCH:
+            return {"pid": 7, "start_ticks": 1, "token": "t", "epoch": 1.0}
+        raise AssertionError(program.split("\n", 1)[0])
+
+
+class CpuBindingTests(unittest.TestCase):
+    # The 2026-10-30 Pod's granted CPUs: 32 of a 192-CPU host, siblings 96 apart.
+    GRANTED = [5, 9, 11, 20, 25, 27, 52, 53, 54, 66, 74, 78, 79, 83, 85, 89, 101, 105, 107, 116, 121, 123, 148, 149,
+               150, 162, 170, 174, 175, 179, 181, 185]
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.package = self.root / "package"
+        gcloud.package(Fixture(temp.name).spec(), self.package)
+
+    def test_binding_rule(self):
+        placement = {"cpu_affinity": list(range(32))}
+        self.assertIsNone(gcloud.cpu_binding(placement, range(32)))
+        self.assertIsNone(gcloud.cpu_binding(placement, range(64)))
+        self.assertEqual(gcloud.cpu_binding(placement, list(reversed(self.GRANTED))), self.GRANTED)
+        with self.assertRaises(ValueError):
+            gcloud.cpu_binding(placement, self.GRANTED[:31])
+
+    def cycle(self, granted):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.package_dir, cycle.control = self.package, self.root / "control"
+        cycle.control.mkdir()
+        cycle.manifest = read(self.package / "package.json")
+        cycle.created, cycle.pod = {"id": "pod-1"}, FakePod(granted)
+        cycle.lease = {"created_epoch": time.time(), "startup_idle_seconds": 1800}
+        cycle.guard, cycle.remote_control = "/run/phase1/lease", "/workspace/control/lease"
+        seen = []
+        with patch.object(cloud.Cycle, "check_hardware", lambda self: seen.append(self.manifest["placement"])):
+            cycle.check_hardware()
+        cycle.launch()
+        return cycle, seen[0], [args for name, args in cycle.pod.calls if name == "#pod:launch"][0]["env"]
+
+    def test_a_scattered_cpuset_binds_logical_cpus(self):
+        cycle, checked, env = self.cycle(self.GRANTED)
+        self.assertEqual(checked["cpu_affinity"], self.GRANTED)  # the base check sees the granted CPUs
+        self.assertEqual(cycle.manifest, read(self.package / "package.json"))  # everything else stays logical
+        self.assertEqual(env[slots.CPU_BINDING_ENV], ",".join(map(str, self.GRANTED)))
+        record = read(cycle.control / "cpu-binding.json")
+        self.assertEqual((record["pod_id"], record["granted"], record["logical"]["16"]), ("pod-1", self.GRANTED, 101))
+
+    def test_a_granted_placement_runs_as_built(self):
+        cycle, checked, env = self.cycle(list(range(32)))
+        self.assertEqual(checked, read(self.package / "package.json")["placement"])
+        self.assertNotIn(slots.CPU_BINDING_ENV, env)
+        self.assertFalse((cycle.control / "cpu-binding.json").exists())
+
+    def test_host_slots_speak_logical_cpus_under_a_binding(self):
+        sys_root = self.root / "sys"
+        for cpu in self.GRANTED + [0, 96]:
+            sibling = cpu + 96 if cpu < 96 else cpu - 96
+            path = sys_root / f"devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+            path.parent.mkdir(parents=True)
+            path.write_text(f"{min(cpu, sibling)},{max(cpu, sibling)}\n")
+        real = slots.Path
+
+        def fake(value, *rest):
+            text = str(value)
+            return real(sys_root, text.removeprefix("/sys/")) if text.startswith("/sys/") else real(value, *rest)
+        binding = {slots.CPU_BINDING_ENV: ",".join(map(str, self.GRANTED))}
+        with patch.dict(os.environ, binding), patch.object(slots.os, "name", "posix"), patch.object(slots, "Path", fake):
+            self.assertEqual(slots.cpu_total(), 32)
+            self.assertEqual(slots.physical_cpus([0, 1, 16]), [5, 9, 101])
+            self.assertEqual(slots.logical_cpus({185, 5}), [0, 31])
+            with self.assertRaises(ValueError):
+                slots.physical_cpus([32])
+            with self.assertRaises(ValueError):
+                slots.logical_cpus([6])
+            rows = slots.topology()
+        self.assertEqual(sorted(slots.parse_cores(row["cpus"]) for row in rows), [[i, i + 16] for i in range(16)])
+        with patch.dict(os.environ, {slots.CPU_BINDING_ENV: ""}):
+            self.assertIsNone(slots.cpu_binding())
+            self.assertEqual(slots.physical_cpus([3]), [3])
+
+    def test_dispatch_binds_granted_cpus(self):
+        calls = []
+        with patch.dict(os.environ, {slots.CPU_BINDING_ENV: ",".join(map(str, self.GRANTED))}), \
+                patch.object(slots.os, "name", "posix"), patch.object(dispatch, "WINDOWS", False), \
+                patch.object(dispatch.os, "sched_setaffinity", lambda pid, cpus: calls.append(list(cpus)), create=True), \
+                patch.object(dispatch.os, "sched_getaffinity", lambda pid: set(self.GRANTED[:4]), create=True):
+            dispatch.set_affinity([0, 1, 2, 3])
+        self.assertEqual(calls, [self.GRANTED[:4]])
+
+    def test_a_bound_pod_runs_the_same_trainer_inputs(self):
+        """The binding changes no hashed input: trainer configs and dispatch requests are built from the package's
+        logical CPUs whatever the Pod granted, and the trainer's config takes worker counts, never CPU IDs."""
+        campaign = driver.Campaign.__new__(driver.Campaign)
+        campaign.raw = json.loads((self.package / "campaign.json").read_text())
+
+        def inputs():
+            out = {}
+            for run in g.RUNS:
+                spec = driver.block_spec(campaign, run, 1, {"blocks": {}}, Path("/root/g-native") / run)
+                config = {"iterations": [{"episodes": [1]}], **spec}
+                request = {"kind": "training", "placement": campaign.placement(run), "root": "/r"}
+                out[run] = [cloud.encoded(spec), cloud.encoded(dispatch.placed_config(request, config, False))]
+            return out
+        unbound = inputs()
+        with patch.dict(os.environ, {slots.CPU_BINDING_ENV: ",".join(map(str, self.GRANTED))}):
+            bound = inputs()
+        self.assertEqual(bound, unbound)
+        for run, (spec, _) in unbound.items():
+            self.assertNotIn(b"cpu_affinity", spec)
+            self.assertEqual(json.loads(spec)["collection_workers"], 4)
 
 
 class LeaseTests(unittest.TestCase):

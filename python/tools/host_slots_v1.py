@@ -96,6 +96,11 @@ HOST_ENV = "HOST_SLOTS_HOST"
 POLL_ENV = "HOST_SLOTS_POLL_SECONDS"
 CLAIM_ENV = "HOST_SLOTS_CLAIM"
 CORES_ENV = "HOST_SLOTS_CORES"
+# A Linux container's granted CPUs need not be 0..n-1 (a 32-vCPU RunPod Pod on a 192-CPU host was granted 5, 9,
+# 11, ...). This variable lists the granted CPUs; under it the host is n logical CPUs 0..n-1, logical i being the
+# i-th listed CPU: cpu_total, topology, pinning and current_affinity speak logical CPUs, so the records of work
+# placed here carry the same CPU lists on every such host.
+CPU_BINDING_ENV = "MTG_CPU_BINDING_V1"
 CANONICAL_ROOT = "C:/mtg-node/host-lock" if os.name == "nt" else "/mnt/c/mtg-node/host-lock"
 PRIORITIES = ("normal", "below_normal", "idle")
 EXIT_OK, EXIT_USAGE, EXIT_HELD, EXIT_REFUSED = 0, 2, 3, 6
@@ -176,8 +181,40 @@ def format_cores(cores) -> str:
     return ",".join(runs)
 
 
+def cpu_binding() -> list[int] | None:
+    """The granted CPUs in logical order (CPU_BINDING_ENV), or None when CPU numbers are the OS's own."""
+    spec = os.environ.get(CPU_BINDING_ENV)
+    if not spec:
+        return None
+    if os.name == "nt":
+        raise ValueError(CPU_BINDING_ENV + " is for Linux containers")
+    return parse_cores(spec)
+
+
+def physical_cpus(cpus) -> list[int]:
+    """The OS's numbers for logical ``cpus``."""
+    binding = cpu_binding()
+    if binding is None:
+        return list(cpus)
+    if any(type(cpu) is not int or not 0 <= cpu < len(binding) for cpu in cpus):
+        raise ValueError(f"CPUs {list(cpus)} exceed the {len(binding)} bound logical CPUs")
+    return [binding[cpu] for cpu in cpus]
+
+
+def logical_cpus(cpus) -> list[int]:
+    """The logical numbers of the OS's ``cpus``, sorted."""
+    binding = cpu_binding()
+    if binding is None:
+        return sorted(cpus)
+    index = {cpu: i for i, cpu in enumerate(binding)}
+    if not set(cpus) <= set(index):
+        raise ValueError(f"CPUs {sorted(set(cpus) - set(index))} are outside the CPU binding")
+    return sorted(index[cpu] for cpu in cpus)
+
+
 def cpu_total() -> int:
-    return os.cpu_count() or 1
+    binding = cpu_binding()
+    return len(binding) if binding is not None else os.cpu_count() or 1
 
 
 # ---------------------------------------------------------------- processes
@@ -380,7 +417,7 @@ else:
         return Path(path).read_bytes()
 
     def current_affinity() -> list[int]:
-        return sorted(os.sched_getaffinity(0))
+        return logical_cpus(os.sched_getaffinity(0))
 
 
 if os.name == "nt":
@@ -784,7 +821,7 @@ class Tree:
         else:
             if not contain_self:
                 raise Refused("adopting an existing worker requires Windows")
-            os.sched_setaffinity(0, self.cores)
+            os.sched_setaffinity(0, physical_cpus(self.cores))
             if priority is not None:
                 floor = {"normal": 0, "below_normal": 10, "idle": 19}[priority]
                 current = os.getpriority(os.PRIO_PROCESS, 0)
@@ -1252,10 +1289,13 @@ def topology() -> list[dict]:
         listed = Path(f"/sys/devices/{kind}/cpus")
         if listed.exists():
             hybrid.update({cpu: rank for cpu in parse_cores(listed.read_text().strip())})
-    seen = set()
-    for cpu in range(cpu_total()):
+    seen, binding = set(), cpu_binding()
+    index = None if binding is None else {cpu: i for i, cpu in enumerate(binding)}
+    for cpu in (range(cpu_total()) if binding is None else binding):
         siblings = Path(f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list")
         group = parse_cores(siblings.read_text().strip()) if siblings.exists() else [cpu]
+        if index is not None:  # logical numbers; siblings outside the binding are not this host's
+            group = [index[sibling] for sibling in group if sibling in index]
         if tuple(group) in seen:
             continue
         seen.add(tuple(group))
