@@ -34,9 +34,12 @@ def calibration(sc, split):
     y = np.asarray([score[i] for i in ids])
     n = Counter(ids)
     w = np.asarray([1.0 / n[i] for i in ids])
+    c, losses, _ = choose_c(v, y, w, ids, w)
     (vf,) = standardize(v, w)
-    mu, sd = float((v[:, 0] * w).sum() / w.sum()), float(np.sqrt((((v[:, 0] - (v[:, 0] * w).sum() / w.sum()) ** 2) * w).sum() / w.sum()))
-    c, losses, _ = choose_c(vf, y, w, ids, w)
+    w1 = w / w.sum()
+    mu = float((v[:, 0] * w1).sum())
+    sd = float(np.sqrt((((v[:, 0] - mu) ** 2) * w1).sum()))
+    sd = sd if sd > 0 else 1.0  # the scale standardize() used
     a, b = fit_logistic(vf, y, w, c)
     # In raw units: p = sigmoid(a + b * (v - mu) / sd).
     return {"C": c, "cv_log_loss": losses, "intercept": float(a), "slope": float(b[0]), "mu": mu, "sd": sd,
@@ -69,6 +72,7 @@ def main(argv=None) -> int:
     ap.add_argument("--scores", type=Path, required=True)
     ap.add_argument("--split", type=Path, required=True)
     ap.add_argument("--positions", type=Path, required=True)
+    ap.add_argument("--selected", type=Path, required=True, help="the drawn positions.jsonl")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     sc = load_scores(a.scores)
@@ -79,6 +83,25 @@ def main(argv=None) -> int:
         for line in open(path, encoding="utf-8"):
             r = json.loads(line)
             (rows if r["kind"] == "position" else errors).append(r)
+    # The analysis population is every drawn position, each once and complete.
+    want = [json.loads(l) for l in open(a.selected, encoding="utf-8") if l.strip()]
+    got = Counter((r["id"], r["index"]) for r in rows)
+    def complete(r, worlds):
+        ch = r["choices"]
+        return all(len(ch[s]["value"]) == 16 and len(ch[s]["playout"]) == 256
+                   and (not worlds or (len(ch[s]["worlds"]) == 4
+                                       and all(len(w["playouts"]) == 64 for w in ch[s]["worlds"])))
+                   for s in ("include", "exclude"))
+    by_key = {(r["id"], r["index"]): r for r in rows}
+    missing = [p for p in want if got[(p["id"], p["index"])] != 1
+               or not complete(by_key[(p["id"], p["index"])], p["worlds"])]
+    extra = sorted(set(got) - {(p["id"], p["index"]) for p in want})
+    if missing or extra or errors:
+        result = {"classification": "withheld", "reason": "incomplete A2 population",
+                  "missing_or_incomplete": missing, "extra": extra, "position_errors": errors}
+        a.out.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
+        print(json.dumps({k: (len(v) if isinstance(v, list) else v) for k, v in result.items()}))
+        return 1
     rows.sort(key=lambda r: (r["id"], r["index"]))
     endings = Counter()
     out = []

@@ -31,9 +31,9 @@ TURN_BUCKETS = ((1, 4, "1-4"), (5, 8, "5-8"), (9, 10 ** 9, "9+"))
 def probe(x, y, fit, read, groups):
     """L2 logistic probe: C by grouped CV on the fit rows (unweighted), AUC on the read rows."""
     y = np.asarray(y, float)
-    xf, xr = standardize(x[fit], np.ones(fit.sum()), x[read])
     w = np.ones(fit.sum())
-    c, losses, _ = choose_c(xf, y[fit], w, np.asarray(groups)[fit], w)
+    c, losses, _ = choose_c(x[fit], y[fit], w, np.asarray(groups)[fit], w)
+    xf, xr = standardize(x[fit], w, x[read])
     model = fit_logistic(xf, y[fit], w, c)
     yr = y[read]
     minority = int(min(yr.sum(), len(yr) - yr.sum()))
@@ -48,6 +48,7 @@ def a1(sc, split):
     rows = []
     for d in blocks:
         b = d["block"]
+        # Facts are null unless the rules simulation reached the pair and finished combat.
         logits = np.asarray(d["logits"], float)
         p = np.exp(logits - logits.max())
         p /= p.sum()
@@ -148,10 +149,10 @@ def a3(sc, split):
     fit = np.asarray([split[i] == "fit" for i in ids])
     read = ~fit
     v1 = np.hstack([v, x])
+    c0, l0, oof0 = choose_c(v[fit], y[fit], w[fit], ids[fit], w[fit])
+    c1, l1, oof1 = choose_c(v1[fit], y[fit], w[fit], ids[fit], w[fit])
     v0f, v0r = standardize(v[fit], w[fit], v[read])
     v1f, v1r = standardize(v1[fit], w[fit], v1[read])
-    c0, l0, oof0 = choose_c(v0f, y[fit], w[fit], ids[fit], w[fit])
-    c1, l1, oof1 = choose_c(v1f, y[fit], w[fit], ids[fit], w[fit])
     m0, m1 = fit_logistic(v0f, y[fit], w[fit], c0), fit_logistic(v1f, y[fit], w[fit], c1)
 
     def per_game_diff(idx_ids, yy, p0, p1):

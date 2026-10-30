@@ -101,16 +101,18 @@ def group_folds(groups, k=5):
 
 
 def choose_c(x, y, w, groups, metric_w):
-    """C from the grid by 5-fold grouped cross-validation, by mean held-out log loss
-    (weighted by `metric_w`); ties go to the smaller C. Returns (C, per-C losses, out-of-fold
-    predictions at the chosen C)."""
+    """C from the grid by 5-fold grouped cross-validation, by mean held-out log loss (weighted by
+    `metric_w`); ties go to the smaller C. `x` is raw: each training fold is standardized by its own
+    (w-weighted) moments, which are then applied to its held-out fold. Returns (C, per-C losses,
+    out-of-fold predictions at the chosen C)."""
     folds = group_folds(groups)
     losses, oof = {}, {}
     for c in C_GRID:
         pred = np.zeros(len(y))
         for f in range(5):
             tr, te = folds != f, folds == f
-            pred[te] = predict(fit_logistic(x[tr], y[tr], w[tr], c), x[te])
+            xtr, xte = standardize(x[tr], w[tr], x[te])
+            pred[te] = predict(fit_logistic(xtr, y[tr], w[tr], c), xte)
         oof[c] = pred
         losses[c] = float((metric_w * log_loss(y, pred)).sum() / metric_w.sum())
     best = min(C_GRID, key=lambda c: (round(losses[c], 12), c))

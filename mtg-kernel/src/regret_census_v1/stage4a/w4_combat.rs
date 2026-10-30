@@ -25,7 +25,9 @@
 //!
 //! Environment: `LABEL_JOBS` (jsonl), `W4_SOURCES` (JSON: panel -> candidate
 //! and opponent model sources), `W4_HIDDEN`, `W4_RANDOM_SEED` (default
-//! 20261030), `W4_POSITIONS` (jsonl of `{"id", "index", "worlds"}`).
+//! 20261030), `W4_POSITIONS` (jsonl of `{"id", "index", "worlds"}`),
+//! `W4_ACCEPT` (a2 only: the passed acceptance output; A2 refuses to run
+//! without it).
 
 use super::play::{acting, decision};
 use super::replay_labels::LabelJob;
@@ -213,22 +215,25 @@ fn terminal_score(s: &Session, focal: PlayerId) -> Option<(f64, TerminalClassifi
     Some((score, t.terminal_classification))
 }
 
+/// A focal decision: the focal seat acts (forced decisions included).
 fn is_focal(d: &FastActorDecisionV1, focal: PlayerId) -> bool {
-    acting(d) == focal && d.legal_action_count >= 2
+    acting(d) == focal
 }
 
-/// A focal blocker-pair decision: (attacker, blocker, include row).
-fn blocker_pair(
-    s: &Session,
-    d: &FastActorDecisionV1,
-    focal: PlayerId,
-) -> Option<(ObjectId, ObjectId, u32)> {
-    if !is_focal(d, focal) || d.legal_action_count != 2 {
+/// One focal blocker-inclusion decision: (attacker, blocker, include row, if
+/// offered; exclude row, if offered). A forced scan step offers one row.
+struct BlockerScan {
+    pair: (ObjectId, ObjectId),
+    include_row: Option<u32>,
+    exclude_row: Option<u32>,
+}
+
+fn blocker_scan(s: &Session, d: &FastActorDecisionV1, focal: PlayerId) -> Option<BlockerScan> {
+    if !is_focal(d, focal) {
         return None;
     }
     let menu = s.diagnostic_current_action_semantics()?;
-    let mut pair = None;
-    let mut include_row = None;
+    let mut scan: Option<BlockerScan> = None;
     for (row, action) in menu.iter().enumerate() {
         let ActionSemanticV1::ChooseBlockerInclusion {
             attacker,
@@ -239,17 +244,34 @@ fn blocker_pair(
         else {
             return None;
         };
-        let this = (ObjectId(attacker.arena_id), ObjectId(blocker.arena_id));
-        if pair.is_some_and(|p| p != this) {
+        let pair = (ObjectId(attacker.arena_id), ObjectId(blocker.arena_id));
+        let entry = scan.get_or_insert(BlockerScan {
+            pair,
+            include_row: None,
+            exclude_row: None,
+        });
+        if entry.pair != pair {
             return None;
         }
-        pair = Some(this);
         if *include {
-            include_row = Some(row as u32);
+            entry.include_row = Some(row as u32);
+        } else {
+            entry.exclude_row = Some(row as u32);
         }
     }
-    let (a, b) = pair?;
-    Some((a, b, include_row?))
+    scan
+}
+
+/// A focal blocker-pair decision (both rows offered): (attacker, blocker,
+/// include row).
+fn blocker_pair(
+    s: &Session,
+    d: &FastActorDecisionV1,
+    focal: PlayerId,
+) -> Option<(ObjectId, ObjectId, u32)> {
+    let scan = blocker_scan(s, d, focal)?;
+    scan.exclude_row?;
+    Some((scan.pair.0, scan.pair.1, scan.include_row?))
 }
 
 fn creatures(state: &GameState, seat: PlayerId) -> impl Iterator<Item = ObjectId> + '_ {
@@ -294,12 +316,23 @@ fn step_order(step: Step) -> u8 {
     step as u8
 }
 
-/// Whether combat damage, its state-based actions and triggers are all
-/// over: a later step than combat damage in the position's turn, or a later
-/// turn (the engine's round holds both players' turns).
-fn past_combat(state: &GameState, turn: (u32, PlayerId)) -> bool {
-    (state.turn, state.active_player) != turn
+/// Whether combat damage, its state-based actions and triggers are all over
+/// at the current decision: a later turn (the engine's round holds both
+/// players' turns), a later step than combat damage, or a priority decision
+/// in the combat damage step with an empty stack and no pending trigger.
+/// Combat damage, both waves, is dealt as the step begins.
+fn past_combat(s: &Session, turn: (u32, PlayerId)) -> bool {
+    let state = s.game_state();
+    if (state.turn, state.active_player) != turn
         || step_order(state.step) > step_order(Step::CombatDamage)
+    {
+        return true;
+    }
+    state.step == Step::CombatDamage
+        && state.stack.is_empty()
+        && state.engine.pending_triggers.is_empty()
+        && s.diagnostic_current_action_semantics()
+            .is_some_and(|m| m.iter().any(|x| matches!(x, ActionSemanticV1::Pass { .. })))
 }
 
 /// Engine-computed rules facts for one blocker pair, assuming only that pair
@@ -320,31 +353,43 @@ fn rules_facts(
         .attackers
         .iter()
         .filter(|&&a| a != pair.0)
-        .map(|&a| i64::from(effective_power(state, a).max(0)))
+        .map(|&a| i64::from(effective_power(state, a)))
         .sum();
     let life_after = i64::from(state.players[focal.index()].life) - unblocked;
     let before = (presence(state, pair.0), presence(state, pair.1));
     let turn = (state.turn, state.active_player);
     let mut s = start.clone();
     let mut reached = false;
+    let mut impossible = false;
     let mut steps = 0usize;
     let outcome = loop {
         let Some(d) = decision(&s) else {
-            break "terminal";
+            break match terminal_score(&s, focal).map(|(_, c)| c) {
+                Some(TerminalClassificationV1::Natural) => "terminal",
+                _ => "terminal_not_natural",
+            };
         };
         if steps >= FACT_STEPS {
             break "step_bound";
         }
         steps += 1;
-        let a = if let Some((att, blk, include_row)) = blocker_pair(&s, &d, focal) {
-            let hit = (att, blk) == pair;
+        let a = if let Some(scan) = blocker_scan(&s, &d, focal) {
+            let hit = scan.pair == pair;
             reached |= hit;
-            if hit {
-                include_row
+            let want = if hit {
+                scan.include_row
             } else {
-                1 - include_row
+                scan.exclude_row
+            };
+            match want {
+                Some(row) => row,
+                None => {
+                    // A forced scan step that contradicts "only this pair".
+                    impossible = true;
+                    break "single_pair_impossible";
+                }
             }
-        } else if past_combat(s.game_state(), turn) {
+        } else if past_combat(&s, turn) {
             break "combat_over";
         } else {
             s.diagnostic_current_action_semantics()
@@ -358,12 +403,15 @@ fn rules_facts(
             break "step_error";
         }
     };
+    // Facts only from a simulation that reached the pair and finished combat
+    // (or ended the game naturally); every other end leaves them null.
+    let complete = reached && !impossible && matches!(outcome, "combat_over" | "terminal");
     let after = s.game_state();
     let dies = |id: ObjectId, was: Option<u32>| was.is_some() && presence(after, id) != was;
-    json!({"blocker_dies": reached.then(|| dies(pair.1, before.1)),
-        "attacker_dies": reached.then(|| dies(pair.0, before.0)),
+    json!({"blocker_dies": complete.then(|| dies(pair.1, before.1)),
+        "attacker_dies": complete.then(|| dies(pair.0, before.0)),
         "focal_life_minus_unblocked_power": life_after, "lethal_on_board": life_after <= 0,
-        "simulation": {"reached_pair": reached, "end": outcome, "steps": steps}})
+        "simulation": {"reached_pair": reached, "complete": complete, "end": outcome, "steps": steps}})
 }
 
 /// A random-init net of the candidate's architecture: every weight and bias
@@ -381,7 +429,7 @@ fn random_like(
         .parameter_snapshot_v1()
         .into_iter()
         .map(|mut p| {
-            if p.name == "card_embedding" {
+            if p.name.starts_with("card_embedding") {
                 let dim = p.shape.get(1).copied().unwrap_or(1);
                 for (k, v) in p.values.iter_mut().enumerate() {
                     *v = if k < dim {
@@ -505,10 +553,15 @@ fn score_job(
     for i in 0..job.decisions.len() {
         let d = checked(&s, job, i)?;
         let selected = job.decisions[i].selected;
-        let pair = blocker_pair(&s, &d, focal);
-        if pair.is_none() {
-            declaration = None;
+        // A declaration is a run of focal blocker scan steps (forced ones
+        // included); it starts at its first step.
+        let scan = blocker_scan(&s, &d, focal);
+        match &scan {
+            None => declaration = None,
+            Some(_) if declaration.is_none() => declaration = Some((s.clone(), Vec::new())),
+            Some(_) => {}
         }
+        let pair = blocker_pair(&s, &d, focal);
         if is_focal(&d, focal) {
             let policy = panel.scorer()?;
             let scores = policy.score_fast_session_v1(&s)?;
@@ -528,9 +581,6 @@ fn score_job(
                 "scorer_hidden": sidecar.put(&hidden.scorer_hidden)?, "rows": rows,
                 "material": material(s.game_state(), focal)});
             if let Some((attacker, blocker, include_row)) = pair {
-                if declaration.is_none() {
-                    declaration = Some((s.clone(), Vec::new()));
-                }
                 let (start, earlier) = declaration.as_ref().ok_or("declaration")?;
                 let tensor = policy.last_scored_training_tensor_v4()?.common.clone();
                 let (random_scores, random_hidden) =
@@ -563,12 +613,16 @@ fn score_job(
                     "random_value": random_scores.value,
                     "action_features": sidecar.put(&tensor.action_features[..rows * ACTION_FEATURE_DIM_V1])?,
                     "ref_nodes": refs, "ref_object_features": sidecar.put(&objects)?});
-                if let Some((_, earlier)) = declaration.as_mut() {
-                    earlier.push(json!([attacker.0, blocker.0, selected == include_row]));
-                }
             }
             writeln!(out, "{row}").map_err(|e| e.to_string())?;
             focal_rows += 1;
+        }
+        if let (Some(scan), Some((_, earlier))) = (&scan, declaration.as_mut()) {
+            earlier.push(json!([
+                scan.pair.0 .0,
+                scan.pair.1 .0,
+                Some(selected) == scan.include_row
+            ]));
         }
         step(&mut s, &d, selected)?;
     }
@@ -638,7 +692,7 @@ fn continuation(
             return Ok(end);
         }
         let d = decision(&s).ok_or("no decision and no terminal")?;
-        if stop_after_combat && is_focal(&d, focal) && past_combat(s.game_state(), turn) {
+        if stop_after_combat && is_focal(&d, focal) && past_combat(&s, turn) {
             let scores = panel.scorer()?.score_fast_session_v1(&s)?;
             return Ok(Ending::Value(scores.value));
         }
@@ -709,6 +763,29 @@ fn a2_position(job: &LabelJob, position: &Position, panel: &mut Panel) -> Result
     )
 }
 
+/// A2 runs only after the driver acceptance check passed: `W4_ACCEPT` names
+/// its output, which must hold five exact games and no error.
+fn require_acceptance() -> Result<(), String> {
+    let path = env_path("W4_ACCEPT")?;
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+    let rows: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).map_err(|e| format!("{path}: {e}")))
+        .collect::<Result<_, _>>()?;
+    let exact = rows
+        .iter()
+        .filter(|r| r["kind"] == "accept" && r["exact"] == true)
+        .count();
+    if exact < 5 || exact != rows.len() {
+        return Err(format!(
+            "A2 needs a passed acceptance check; {path} has {exact} exact of {} rows",
+            rows.len()
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
     let mode = env_path("W4_MODE")?;
     let jobs = read_jobs()?;
@@ -723,6 +800,7 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
             // Two more copies of each candidate: a shadow reset at game start
             // and a probe reset before every score.
             let mut probes: BTreeMap<String, (Play, Play)> = BTreeMap::new();
+            let mut failed = 0usize;
             for job in &jobs {
                 let name = panel_of(&job.id);
                 if !probes.contains_key(name) {
@@ -731,10 +809,18 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
                 }
                 let (shadow, probe) = probes.get_mut(name).ok_or("probe")?;
                 let panel = loaded.get_mut(name).ok_or("panel")?;
-                let row = accept_job(job, panel, shadow, probe)
-                    .unwrap_or_else(|e| json!({"kind": "error", "id": job.id, "error": e}));
+                let row = accept_job(job, panel, shadow, probe).unwrap_or_else(|e| {
+                    failed += 1;
+                    json!({"kind": "error", "id": job.id, "error": e})
+                });
                 writeln!(out, "{row}").map_err(|e| e.to_string())?;
                 out.flush().map_err(|e| e.to_string())?;
+            }
+            if failed > 0 {
+                return Err(format!(
+                    "acceptance failed: {failed} of {} games differ",
+                    jobs.len()
+                ));
             }
         }
         "score" => {
@@ -770,6 +856,7 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
             sidecar.out.flush().map_err(|e| e.to_string())?;
         }
         "a2" => {
+            require_acceptance()?;
             let path = env_path("W4_POSITIONS")?;
             let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
             let positions: Vec<Position> = text
