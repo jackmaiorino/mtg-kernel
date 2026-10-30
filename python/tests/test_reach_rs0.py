@@ -86,6 +86,27 @@ class PlannerTests(unittest.TestCase):
             _, index, _ = p["roles"][0]
             self.assertEqual(by_key[(p["game_id"], index)]["active"], 0)
 
+    def test_a_control_game_without_a_label_job_is_never_selected(self):
+        rows = []
+        for gid in ("a", "b", "c", "d"):
+            rows += game_rows(gid, proven_turn=99)
+        games, decisions = plan.read_rows_from(rows)
+        first, _ = plan.select_control([(games, decisions)], {})
+        top = next(p for p in first if p["status"] == "selected")["game_id"]
+        again, _ = plan.select_control([(games, decisions)], {top: "missing_job"})
+        chosen = [p for p in again if p["status"] == "selected"]
+        self.assertNotIn(top, {p["game_id"] for p in chosen})
+        self.assertEqual(len(chosen), 3)
+        self.assertTrue(all(p["refusal"] == "missing_job" for p in again if p["game_id"] == top))
+
+    def test_an_opportunity_games_replay_refusal_does_not_refuse_its_control_candidates(self):
+        rows = []
+        for gid in ("a", "b", "c"):
+            rows += game_rows(gid, proven_turn=99)
+        games, decisions = plan.read_rows_from(rows)
+        picks, _ = plan.select_control([(games, decisions)], {"a": "replay: x"})
+        self.assertIn("a", {p["game_id"] for p in picks if p["status"] == "selected"})
+
     def test_a_refused_control_root_keeps_its_game_available(self):
         # Three games, three slots: the refused game must still enter through another decision.
         rows = []
@@ -104,8 +125,9 @@ def root(root_id, game_id, role="k2", stratum="spy"):
     return {"root_id": root_id, "game_id": game_id, "roles": [{"stratum": stratum, "role": role, "rank": 0, "selected": True}]}
 
 
-def search(root_id, seed, hit, budget=64000, failed=False):
+def search(root_id, seed, hit, budget=64000, failed=False, roles=(("spy", "k2"),)):
     return {"kind": "search", "root_id": root_id, "budget": budget, "seed": seed, "o1_spy": hit, "failed": failed,
+            "roles": [{"stratum": a, "role": b} for a, b in roles], "opportunity_turn": None, "certified_index": None,
             "o2": {"valid": False}, "o3": {"found": False}, "self_chosen_simulations": 0, "hero_wins": 1}
 
 
@@ -151,6 +173,28 @@ class ReportTests(unittest.TestCase):
         out = report.summarize(rows, roots, [64000], [0], 1_024_000)
         self.assertEqual(out["missing_searches"], [])
         self.assertEqual([f["budget"] for f in out["flags"]], [64000])
+
+    def test_rows_measured_under_other_roles_are_stale_not_reused(self):
+        # A root that was control-only when searched, now promoted into the Burn sample.
+        promoted = {"root_id": "g#1", "game_id": "g",
+                    "roles": [{"stratum": "burn", "role": "k1", "rank": 0, "selected": True,
+                               "opportunity_turn": 9, "certified_index": 40}]}
+        old = search("g#1", 0, True, roles=(("control", "ctrl"),))
+        out = report.summarize([old], [promoted], [64000], [0], None)
+        self.assertEqual(out["stale_searches"], [["g#1", 64000, 0]])
+        self.assertEqual(out["missing_searches"], [["g#1", 64000, 0]])
+        self.assertTrue(out["table"][0]["incomplete"])
+
+    def test_the_large_budget_makes_no_control_cell(self):
+        both = {"root_id": "g#1", "game_id": "g", "roles": [
+            {"stratum": "spy", "role": "k2", "rank": 0, "selected": True},
+            {"stratum": "control", "role": "ctrl", "rank": 0, "selected": True}]}
+        roles = (("spy", "k2"), ("control", "ctrl"))
+        rows = [search("g#1", 0, True, roles=roles), search("g#1", 0, True, budget=1_024_000, roles=roles)]
+        out = report.summarize(rows, [both], [64000], [0], 1_024_000)
+        cells = {(c["stratum"], c["role"], c["budget"]) for c in out["table"]}
+        self.assertNotIn(("control", "ctrl", 1_024_000), cells)
+        self.assertTrue(all(not c["incomplete"] for c in out["table"]))
 
     def test_cells_share_one_set_of_bootstrap_replicates(self):
         games = [f"g{i}" for i in range(30)]

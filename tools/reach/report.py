@@ -54,6 +54,18 @@ def indicators(row: dict, stratum: str) -> dict:
             "broad_hero_win": row.get("hero_wins", 0) > 0}
 
 
+def spec(roles: list[dict], opportunity_turn, certified_index) -> list:
+    """What a search row measured: its root's roles, T and c. A row is reused only
+    when this equals the current root's (RS0-PLAN.md section 3)."""
+    return [sorted([r["stratum"], r["role"]] for r in roles), opportunity_turn, certified_index]
+
+
+def root_spec(root: dict) -> list:
+    t = next((r.get("opportunity_turn") for r in root["roles"] if r.get("opportunity_turn") is not None), None)
+    c = next((r.get("certified_index") for r in root["roles"] if r.get("certified_index") is not None), None)
+    return spec(root["roles"], t, c)
+
+
 def expected_searches(roots: list[dict], budgets: list[int], seeds: list[int], large: int | None) -> set:
     want = set()
     for r in roots:
@@ -93,9 +105,14 @@ class Replicates:
 
 def summarize(rows: list[dict], roots: list[dict], budgets: list[int], seeds: list[int], large: int | None) -> dict:
     by_id = {r["root_id"]: r for r in roots}
-    searches, duplicates = {}, []
+    searches, duplicates, stale = {}, [], []
     for r in rows:
         if r["kind"] != "search":
+            continue
+        root = by_id.get(r["root_id"])
+        if root is not None and spec(r.get("roles", []), r.get("opportunity_turn"), r.get("certified_index")) != root_spec(root):
+            # Measured under a different root entry: superseded, never reused.
+            stale.append([r["root_id"], r["budget"], r["seed"]])
             continue
         key = (r["root_id"], r["budget"], r["seed"])
         if key in searches:
@@ -113,6 +130,8 @@ def summarize(rows: list[dict], roots: list[dict], budgets: list[int], seeds: li
     for root_id, budget, seed in sorted(want):
         root = by_id[root_id]
         for role in root["roles"]:
+            if large is not None and budget == large and (role["stratum"], role["role"]) != ("spy", "k2"):
+                continue  # the large budget belongs to the Spy k2 role only
             cell = (role["stratum"], role["role"], budget)
             row = searches.get((root_id, budget, seed))
             if row is None:
@@ -149,6 +168,7 @@ def summarize(rows: list[dict], roots: list[dict], budgets: list[int], seeds: li
                                  f"availability in the sampled worlds not measured"})
     return {"roots": len(roots), "searches_expected": len(want), "searches_found": len(want) - len(missing),
             "missing_searches": [list(m) for m in missing], "unexpected_searches": [list(u) for u in unexpected],
+            "stale_searches": stale,
             "errors": len(errors), "error_roots": sorted({e["root_id"] for e in errors}),
             "table": table, "flags": flags}
 

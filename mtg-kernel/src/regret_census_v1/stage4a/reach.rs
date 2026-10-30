@@ -496,8 +496,16 @@ fn measure(
     } else {
         o2(s.tree, rb, scorer, found_edge)?
     };
+    // What this row measured, so a re-plan never reuses it under other roles.
+    let roles: Vec<Value> = r
+        .roles
+        .iter()
+        .map(|x| json!({"stratum": x.stratum, "role": x.role}))
+        .collect();
+    let certified_index = r.roles.iter().find_map(|x| x.certified_index);
     Ok(
         json!({"kind": "search", "root_id": r.root_id, "budget": budget, "seed": seed, "failed": failed,
+        "roles": roles, "opportunity_turn": opportunity_turn, "certified_index": certified_index,
         "selection": s.sel.json(), "cpu_seconds": s.cpu, "wall": s.wall, "tree_digest": digest,
         "simulations_recorded": s.records.len(), "depth_limited_simulations": depth_limited,
         "o1_spy": disc.completion_wins > 0, "spy_completion_wins": disc.completion_wins,

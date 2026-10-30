@@ -147,9 +147,12 @@ def select_control(sources: list[tuple[dict, dict]], refused: dict) -> tuple[lis
             if gid in used:
                 continue
             key = f"{gid}#{index}"
-            if key in refused:
+            # A control root is refused by itself; a game without a label job is
+            # refused whole (an opportunity game's replay refusal is not).
+            reason = refused.get(key) or (refused.get(gid) if refused.get(gid) == "missing_job" else None)
+            if reason:
                 picks.append({"stratum": "control", "deck": deck, "game_id": gid, "rank": rank, "status": "refused",
-                              "refusal": refused[key], "roles": [("ctrl", index, turn)]})
+                              "refusal": reason, "roles": [("ctrl", index, turn)]})
                 continue
             used.add(gid)
             picks.append({"stratum": "control", "deck": deck, "game_id": gid, "rank": rank, "status": "selected",
@@ -170,12 +173,20 @@ def read_jobs(paths: list[Path]) -> dict:
 
 
 def read_refusals(paths: list[Path]) -> dict:
-    """Replay refusals from `s4a-reach` error rows without a budget (root
-    rebuild errors): an opportunity game is refused whole; a control root by
-    its game and index."""
+    """Replay refusals, cumulative over every earlier round (RS0-PLAN.md
+    section 3): `s4a-reach` error rows without a budget (root rebuild errors;
+    an opportunity game is refused whole, a control root by its game and
+    index), and earlier `inventory.json` files, whose refusals carry over."""
     refused = {}
     for path in paths:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        text = path.read_text(encoding="utf-8")
+        if path.suffix == ".json":
+            for r in json.loads(text).get("refusals", []):
+                if r["reason"] != "missing_job":
+                    key = r["root_id"] if r["stratum"] == "control" else r["game_id"]
+                    refused[key] = r["reason"]
+            continue
+        for line in text.splitlines():
             if not line.strip():
                 continue
             row = json.loads(line)
@@ -195,7 +206,8 @@ def main(argv=None) -> int:
     ap.add_argument("--other-rows", type=Path, required=True)
     ap.add_argument("--spy-jobs", type=Path, nargs="*", default=[])
     ap.add_argument("--other-jobs", type=Path, nargs="*", default=[])
-    ap.add_argument("--refused", type=Path, nargs="*", default=[], help="s4a-reach output rows with replay refusals")
+    ap.add_argument("--refused", type=Path, nargs="*", default=[],
+                    help="every earlier round's s4a-reach output rows and inventory.json (cumulative)")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--dry-run", action="store_true", help="selection and counts only; jobs assumed present")
     a = ap.parse_args(argv)
@@ -221,8 +233,8 @@ def main(argv=None) -> int:
                  "control_candidates": candidates,
                  "sources": {str(p): sha256_file(p) for p in spy_files + other_files + list(a.spy_jobs) + list(a.other_jobs) + list(a.refused)},
                  "tools": {p.name: sha256_file(p) for p in tools},
-                 "refusals": [{"stratum": p["stratum"], "game_id": p["game_id"], "rank": p["rank"], "reason": p["refusal"]}
-                              for p in picks if p["status"] == "refused"],
+                 "refusals": [{"stratum": p["stratum"], "game_id": p["game_id"], "root_id": f"{p['game_id']}#{p['roles'][0][1]}",
+                               "rank": p["rank"], "reason": p["refusal"]} for p in picks if p["status"] == "refused"],
                  "games": [{k: v for k, v in p.items() if k != "roles"} | {"roles": [list(r) for r in p["roles"]]} for p in picks]}
     roots = len({(p["game_id"], r[1]) for p in selected for r in p["roles"]})
     inventory["roots"] = roots
