@@ -1,5 +1,5 @@
 """EX1 Stage P launcher (tools/ex1/stagep.py): plan pins and refusals, the throughput guard, the #336 quarantine,
-the per-chain USD meter and localization. The training binary is a Python stand-in."""
+the per-chain USD meter, localization and packing. The training binary is a Python stand-in."""
 import hashlib
 import json
 import socket
@@ -17,7 +17,8 @@ import json, sys, time
 from pathlib import Path
 cfg = json.loads(Path(sys.argv[1]).read_text())
 root = Path(cfg["output_directory"])
-delay = float(Path(cfg["output_directory"]).parents[2].joinpath("DELAY").read_text() or 0)
+delay = float(next(p for p in Path(cfg["output_directory"]).parents if (p / "DELAY").exists())
+              .joinpath("DELAY").read_text() or 0)
 for i in range(len(cfg["iterations"])):
     d = root / "iterations" / f"{i:06d}"
     if (d / "complete.json").exists():
@@ -85,12 +86,100 @@ class StagePTests(unittest.TestCase):
         stagep.main(argv)
         return json.loads(self.plan.read_text())
 
-    def throughput_record(self, host, **changes):
+    def throughput_record(self, host, name=None, **changes):
         plan = json.loads(self.plan.read_text())
         record = {"host": host, "hostname": socket.gethostname(), "binary_sha256": plan["binary"]["sha256"],
                   "cores": 8, "workers": 10, "exit": 0, "state_equal": True, "state_required": True}
         record.update(changes)
-        stagep.write(self.root / "throughput" / f"THROUGHPUT-{host}.json", record)
+        stagep.write(self.root / "throughput" / (name or f"THROUGHPUT-{host}.json"), record)
+
+    PACKED = {"r2-c1": "desk:8:0:0:g", "r2-c2": "desk:8:0:0:g", "r1-c1": "desk:6:0:0", "r1-c2": "pod:8:0.24:6.0"}
+
+    def test_a_pack_group_shares_host_and_cores(self):
+        plan = self.make(self.PACKED)
+        self.assertEqual({n: (c.get("group"), c.get("pack")) for n, c in plan["chains"].items()},
+                         {"r2-c1": ("g", 2), "r2-c2": ("g", 2), "r1-c1": (None, None), "r1-c2": (None, None)})
+        with self.assertRaisesRegex(SystemExit, "one host and core count"):
+            self.make(dict(self.PACKED, **{"r2-c2": "desk:6:0:0:g"}))
+        with self.assertRaisesRegex(SystemExit, "one host and core count"):
+            self.make(dict(self.PACKED, **{"r2-c2": "pod:8:0:0:g"}))
+
+    def test_a_pack_group_needs_a_record_at_its_own_pack_size(self):
+        self.make(self.PACKED)
+        self.throughput_record("desk")                     # K = 1 records stay valid for unpacked chains
+        with self.assertRaisesRegex(SystemExit, "no throughput record for desk at pack 2"):
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2"])
+        self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=3)
+        with self.assertRaisesRegex(SystemExit, "recorded at pack 3, not 2"):
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2"])
+        self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2, state_equal=False)
+        with self.assertRaisesRegex(SystemExit, "state differs"):
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2"])
+        guard_k1 = stagep.guard(json.loads(self.plan.read_text()), "r1-c1",
+                                json.loads(self.plan.read_text())["chains"]["r1-c1"])
+        self.assertNotIn("pack", guard_k1)                 # an old record without the field reads as K = 1
+
+    def test_a_pack_group_runs_all_its_chains_together_in_one_claim(self):
+        plan = self.make(self.PACKED)
+        self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2)
+        with self.assertRaisesRegex(SystemExit, "runs all its chains together"):
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1"])
+        with self.assertRaisesRegex(SystemExit, "only the chains of one pack group"):
+            self.throughput_record("desk")
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r1-c1", "--chain", "r2-c1"])
+        with self.assertRaises(SystemExit) as stop:
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2", "--fast-poll"])
+        self.assertEqual(stop.exception.code, 0)
+        for name in ("r2-c1", "r2-c2"):
+            self.assertTrue((self.root / "chains" / name / "DONE.json").exists())
+            self.assertEqual(stagep.completed(plan["chains"][name]["native"]), 300)
+        events = [json.loads(line) for line in (self.root / "LAUNCH.jsonl").read_text().splitlines()]
+        self.assertEqual([e["event"] for e in events if "group" in e], ["group-start", "group-end"])
+
+    def test_packed_throughput_checks_every_copy_and_records_the_group_rate(self):
+        self.make(self.PACKED)
+        stagep.main(["throughput", "--plan", str(self.plan), "--host", "desk"])
+        single = json.loads((self.root / "throughput" / "THROUGHPUT-desk.json").read_text())
+        self.assertEqual((single["pack"], single["state_equal"]), (1, True))
+        stagep.main(["throughput", "--plan", str(self.plan), "--host", "desk", "--pack", "2", "--repeats", "2"])
+        record = json.loads((self.root / "throughput" / "THROUGHPUT-desk-k2.json").read_text())
+        self.assertEqual((record["pack"], record["repeats"], record["completed_updates"]), (2, 2, 4))
+        self.assertEqual(len(record["copies"]), 2)
+        self.assertTrue(all(len(c["updates"]) == 2 and c["state_equal"] for c in record["copies"]))
+        self.assertTrue(record["state_equal"])
+        self.assertGreater(record["group_updates_per_hour"], 0)
+        self.assertEqual(record["copies"][1]["delay_seconds"], single["wall_seconds"] / 2)
+        self.assertEqual(json.loads((self.root / "throughput" / "THROUGHPUT-desk.json").read_text()), single)
+        stagep.guard(json.loads(self.plan.read_text()), "r2-c1", json.loads(self.plan.read_text())["chains"]["r2-c1"])
+
+    def test_packed_throughput_fails_when_one_copy_differs(self):
+        self.make(self.PACKED)
+        real = stagep.qual.iterations
+        calls = []
+
+        def one_bad(native):
+            rows = list(real(native))
+            calls.append(native)
+            if len(calls) == 3:                            # the second copy's first update
+                rows = [(r, dict(u, after_state_sha256="x" * 64), c) for r, u, c in rows]
+            return iter(rows)
+
+        with mock.patch.object(stagep.platform, "system", return_value="Windows"), \
+                mock.patch.object(stagep.qual, "iterations", side_effect=one_bad):
+            with self.assertRaisesRegex(SystemExit, "state differs"):
+                stagep.main(["throughput", "--plan", str(self.plan), "--host", "desk", "--pack", "2",
+                             "--repeats", "1", "--stagger", "0"])
+        record = json.loads((self.root / "throughput" / "THROUGHPUT-desk-k2.json").read_text())
+        self.assertEqual([c["state_equal"] for c in record["copies"]], [True, False])
+        self.assertFalse(record["state_equal"])
+
+    def test_throughput_flags(self):
+        self.make()
+        for argv in (["--pack", "0"], ["--repeats", "2"], ["--stagger", "1"], ["--pack", "2", "--repeats", "0"]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as stop, \
+                    mock.patch("sys.stderr", new=__import__("io").StringIO()):
+                stagep.main(["throughput", "--plan", str(self.plan), "--host", "desk", *argv])
+            self.assertEqual(stop.exception.code, 2)
 
     def test_plan_pins_the_frozen_inputs_and_refuses_departures(self):
         plan = self.make()
