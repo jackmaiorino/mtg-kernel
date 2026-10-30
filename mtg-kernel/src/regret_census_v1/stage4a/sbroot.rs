@@ -1,11 +1,11 @@
 //! Search on recorded human-game decisions (mode `s4a-sbroot`). Measurement
 //! only: nothing that chooses, samples, trains or selects reads these rows.
 //!
-//! A Spellbench pauper-v2 game is rebuilt on this engine from its wire
-//! record (`tools/reach/sbroot.py` writes the job): the flat-action session
-//! the bridge kept in lockstep with its raw session
-//! (`reset_with_decks_and_limits_flat_action_v3` with the bridge's episode id
-//! and game seed), stepped with each recorded selection's flat row. Every
+//! A Spellbench pauper-v2 game is rebuilt on this engine from the native
+//! steps its adapter sent the bridge (`tools/reach/sbcapture.py` writes the
+//! job): the flat-action session the bridge kept in lockstep with its raw
+//! session (`reset_with_decks_and_limits_flat_action_v3` with the bridge's
+//! episode id and game seed), stepped with each native step's flat row. Every
 //! recorded decision must match this engine's actor and row kinds. A
 //! single-candidate recorded choice that this engine resolves by itself
 //! (the pauper-v2 line's neutral choices) is skipped and logged. Each

@@ -1,33 +1,29 @@
 """Search on recorded human-game misplays (mode `s4a-sbroot`). Measurement only.
 
 usage:
-  sbroot.py job --engine ENGINE.jsonl[.gz] --spec SPEC.json --out JOB.json
-  sbroot.py check --engine ENGINE.jsonl[.gz] --spec SPEC.json --rows ROWS.jsonl [--json OUT]
+  sbroot.py check --engine ENGINE.jsonl[.gz] --spec SPEC.json --capture REPORT.json --rows-dir DIR [--json OUT]
 
-`job` turns a Spellbench pauper-v2 engine wire record into an `s4a-sbroot`
-job: the bridge's episode id (FNV-1a 64 of the game id) and game seed (HMAC
-of the game secret, as kernel_engine_v2.py derives it), the two catalog decks,
-and every recorded decision as its acting seat, row kinds in flat-row order
-(`row_candidate_ids`) and the selected row. SPEC names the target decisions
-(wire decision indices, both seats counted) with, for each, what the model
-played (the misplay) and the play the human reviewer called right, as
-predicates over the wire candidates.
+`sbcapture.py` writes the jobs: the native steps of a recorded Spellbench
+pauper-v2 game and one job per decision point of each target. SPEC names the
+target wire decisions (indices over both seats) with, for each, what the
+model played (the misplay) and the play the human reviewer called right, as
+predicates over candidate descriptions (`describe`).
 
-`check` reads the mode's rows. It confirms the rebuild: every applied step's
-rows name the same cards as the record's candidates, and at every decision of
-the model's seat its view (own hand, both battlefields with tapped state,
+`check` reads the mode's rows for every decision point. It confirms the
+rebuild: no step's actor or row kinds differed, every applied step's rows
+name the same cards as the bridge's candidates, and at every earlier decision
+of the model's seat its view (own hand, both battlefields with tapped state,
 graveyards, life, hand and library sizes) equals the record's observation.
-It then reads each search: the most visited move, its visits and value, the
-whole visit distribution, whether it avoids the misplay and whether it is the
-play the reviewer called right.
+It then reads each search: the most visited row, the wire candidates behind
+it, its visits and value, the whole visit distribution, whether it avoids the
+misplay and whether it is the play the reviewer called right (None when the
+wire candidates behind that row disagree).
 """
 from __future__ import annotations
 
 import argparse
 import collections
 import gzip
-import hashlib
-import hmac
 import json
 from pathlib import Path
 
@@ -89,38 +85,115 @@ def describe(sem: dict) -> str:
     return f"{kind} {src.get('card_name', '')}".strip()
 
 
-def matches(pred: dict, sem: dict) -> bool:
-    """A spec predicate: every given field must equal the candidate's."""
-    d = describe(sem)
+def matches(pred: dict, d: str) -> bool:
+    """A spec predicate over a candidate description: every given field must hold."""
     if "describe" in pred and d != pred["describe"]:
         return False
     if "describe_prefix" in pred and not d.startswith(pred["describe_prefix"]):
         return False
     if pred.get("not"):
-        return not matches(pred["not"], sem)
+        return not matches(pred["not"], d)
     return True
 
 
-def job(a) -> int:
+def verdict(pred: dict, labels: list[str]):
+    """True or False when every wire candidate behind a native row agrees, else None."""
+    got = {matches(pred, d) for d in labels}
+    return got.pop() if len(got) == 1 else None
+
+
+def check(a) -> int:
+    """Check native-step rebuilds (`sbcapture.py` report and per-point jobs) and read their searches.
+
+    Rows for decision point KEY are read from `--rows-dir`/rows-<game>-<KEY>.jsonl."""
     reset, decisions, steps = wire(a.engine)
     spec = json.loads(a.spec.read_text(encoding="utf-8"))
-    secret = bytes.fromhex(reset["game_secret"])
-    seed = int.from_bytes(hmac.new(secret, b"spellbench-kernel-v2/rng", hashlib.sha256).digest()[:8], "little")
-    out = []
-    for i, (d, sel) in enumerate(zip(decisions, steps)):
-        rows = d["extensions"]["x_kernel_flat_v4"]["row_candidate_ids"]
-        by_id = {c["candidate_id"]: c for c in d["candidates"]}
-        if sorted(rows) != sorted(by_id):
-            raise SystemExit(f"decision {i}: flat rows do not cover the candidates")
-        out.append({"i": i, "seat": int(d["acting_seat"][1:]),
-                    "kinds": [by_id[c]["semantic"]["kind"] for c in rows],
-                    "row": rows.index(sel["candidate_id"])})
-    j = {"game_id": reset["game_id"], "episode_id": fnv1a64(reset["game_id"]), "game_seed": seed,
-         "deck_ids": [s["deck"]["catalog_id"] for s in reset["seats"]],
-         "max_decisions": reset["max_decisions"], "max_steps": reset["max_steps"],
-         "steps": out, "targets": sorted(int(t) for t in spec["targets"])}
-    a.out.write_text(json.dumps(j) + "\n", encoding="utf-8")
-    print(json.dumps({"game_id": j["game_id"], "steps": len(out), "targets": j["targets"]}))
+    cap = json.loads(a.capture.read_text(encoding="utf-8"))
+    native = cap["native"]
+    model = spec["model_seat"]
+    swap = cap["wire_starting_seat"] != "p0"
+    to_native = (lambda p: 1 - p) if swap else (lambda p: p)
+    posed = {int(k): v for k, v in cap["posed"].items()}
+    problems, out_targets, searched = [], {}, 0
+    for t, sp in spec["targets"].items():
+        ct = cap["targets"][t]
+        out = {"i": int(t), "label": sp["label"], "right_call": sp.get("right_text"),
+               "status": ct.get("status"), "played": ct.get("played"), "points": []}
+        for pt in ct.get("points", []):
+            path = a.rows_dir / f"rows-{cap['game_id']}-{pt['key']}.jsonl"
+            res = {"key": pt["key"], "native": pt["native"], "on_recorded_line": pt["on_recorded_line"],
+                   "row_labels": pt["row_labels"], "status": None, "searches": []}
+            out["points"].append(res)
+            if not path.exists():
+                res["status"] = "not run"
+                continue
+            rows = list(read_lines(path))
+            card = next(r["names"] for r in rows if r["kind"] == "card_names")
+            facts = {}
+            for r in rows:
+                if r["kind"] == "mismatch":
+                    problems.append({"key": pt["key"], "i": r["i"], "what": "kinds or actor",
+                                     "record": r["record_kinds"], "main": [x["kind"] for x in r["main"]["rows"]]})
+                if r["kind"] == "target":
+                    res["status"] = r["status"]
+                if r["kind"] != "step" or r["status"] != "applied":
+                    continue
+                facts[r["i"]] = r["main"]["facts"]
+                want_rows = pt["names"] if r["i"] == pt["native"] else native[r["i"]]["names"]
+                if r["i"] > pt["native"] or (not pt["on_recorded_line"] and r["i"] >= ct["native_posed_at"]
+                                             and r["i"] != pt["native"]):
+                    continue
+                for k, want_names in enumerate(want_rows):
+                    want = collections.Counter(want_names)
+                    got = collections.Counter(card[c] for c in r["main"]["rows"][k]["cards"])
+                    if want != got:
+                        problems.append({"key": pt["key"], "i": r["i"], "row": k, "what": "row names",
+                                         "record": sorted(want.elements()), "main": sorted(got.elements())})
+            for i, d in enumerate(decisions):
+                n = posed.get(i)
+                if int(d["acting_seat"][1:]) != model or n is None or n not in facts or n > ct["native_posed_at"]:
+                    continue
+                got = seat_view(facts[n], to_native(model), card)
+                got = {(1 - p if swap else p): v for p, v in got.items()}
+                want = record_view(d["observation"], model)
+                if json.dumps(want, sort_keys=True) != json.dumps(got, sort_keys=True):
+                    problems.append({"key": pt["key"], "i": i, "native": n, "what": "model view",
+                                     "record": want, "main": got})
+            res["views_checked"] = sum(1 for i, d in enumerate(decisions) if int(d["acting_seat"][1:]) == model
+                                       and posed.get(i) in facts and posed[i] <= ct["native_posed_at"])
+            for r in rows:
+                if r.get("i") != pt["native"] or r["kind"] not in ("search", "error"):
+                    continue
+                if r["kind"] == "error":
+                    res["searches"].append({"budget": r["budget"], "seed": r["seed"], "error": r["error"]})
+                    continue
+                o2 = r["o2"]
+                edges = o2.get("edges") or []
+                top = o2.get("top_edge")
+                n = [e[0] for e in edges]
+                q = [(e[1] + 0.5 * e[2]) / e[0] if e[0] else None for e in edges]
+                labels = pt["row_labels"].get(str(top), ["unlabelled"]) if top is not None else []
+                res["searches"].append({
+                    "budget": r["budget"], "seed": r["seed"], "top_row": top, "top": labels,
+                    "top_visits": n[top] if top is not None else None, "visits": n,
+                    "top_q": q[top] if top is not None else None, "q": q,
+                    "avoids_misplay": None if top is None else
+                        (lambda v: None if v is None else not v)(verdict(sp["misplay"], labels)),
+                    "matches_right_call": None if top is None or "right" not in sp else verdict(sp["right"], labels),
+                    "simulations": r["selection"].get("completed_natural"), "cpu_seconds": r["cpu_seconds"]})
+                searched += 1
+            res["status"] = res["status"] or ("searched" if res["searches"] else "not reached")
+        out_targets[t] = out
+    result = {"game_id": reset["game_id"], "rebuild_exact": not problems, "problems": problems[:20],
+              "problem_count": len(problems), "searches": searched, "targets": out_targets}
+    if a.json:
+        a.json.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
+    print(json.dumps({k: result[k] for k in ("game_id", "rebuild_exact", "problem_count", "searches")}))
+    for t, o in out_targets.items():
+        for pt in o["points"]:
+            for s in pt["searches"]:
+                print(t, pt["key"], s.get("budget"), s.get("seed"), s.get("top"), s.get("top_visits"),
+                      s.get("avoids_misplay"), s.get("matches_right_call"), s.get("error", ""))
     return 0
 
 
@@ -147,96 +220,16 @@ def record_view(obs: dict, seat: int) -> dict:
     return view
 
 
-def check(a) -> int:
-    reset, decisions, steps = wire(a.engine)
-    spec = json.loads(a.spec.read_text(encoding="utf-8"))
-    rows = list(read_lines(a.rows))
-    card = next(r["names"] for r in rows if r["kind"] == "card_names")
-    model = spec["model_seat"]
-    problems, skipped, applied = [], [], 0
-    for r in rows:
-        if r["kind"] == "mismatch":
-            problems.append({"i": r["i"], "what": "kinds or actor", "record": r["record_kinds"],
-                             "main": [x["kind"] for x in r["main"]["rows"]]})
-        if r["kind"] != "step":
-            continue
-        d = decisions[r["i"]]
-        if r["status"] == "skipped":
-            skipped.append(r["i"])
-            continue
-        applied += 1
-        order = d["extensions"]["x_kernel_flat_v4"]["row_candidate_ids"]
-        by_id = {c["candidate_id"]: c for c in d["candidates"]}
-        for k, cid in enumerate(order):
-            want = collections.Counter(names(by_id[cid]["semantic"]))
-            got = collections.Counter(card[c] for c in r["main"]["rows"][k]["cards"])
-            if want != got:
-                problems.append({"i": r["i"], "row": k, "what": "row names",
-                                 "record": sorted(want.elements()), "main": sorted(got.elements())})
-        if int(d["acting_seat"][1:]) == model:
-            want, got = record_view(d["observation"], model), seat_view(r["main"]["facts"], model, card)
-            if json.dumps(want, sort_keys=True) != json.dumps(got, sort_keys=True):
-                problems.append({"i": r["i"], "what": "model view", "record": want, "main": got})
-    targets = {}
-    for t in spec["targets"]:
-        i = int(t)
-        d = decisions[i]
-        order = d["extensions"]["x_kernel_flat_v4"]["row_candidate_ids"]
-        by_id = {c["candidate_id"]: c for c in d["candidates"]}
-        sems = [by_id[cid]["semantic"] for cid in order]
-        sp = spec["targets"][t]
-        played = steps[i]["candidate_id"]
-        out = {"i": i, "label": sp["label"], "menu": [describe(s) for s in sems],
-               "played": describe(by_id[played]["semantic"]), "right_call": sp.get("right_text"),
-               "status": None, "searches": []}
-        for r in rows:
-            if r.get("i") != i:
-                continue
-            if r["kind"] == "target":
-                out["status"] = r["status"]
-            if r["kind"] == "error":
-                out["searches"].append({"budget": r["budget"], "seed": r["seed"], "error": r["error"]})
-            if r["kind"] != "search":
-                continue
-            o2 = r["o2"]
-            edges = o2.get("edges") or []
-            top = o2.get("top_edge")
-            n = [e[0] for e in edges]
-            q = [(e[1] + 0.5 * e[2]) / e[0] if e[0] else None for e in edges]
-            top_sem = sems[top] if top is not None else None
-            out["searches"].append({
-                "budget": r["budget"], "seed": r["seed"], "top": describe(top_sem) if top_sem else None,
-                "top_visits": n[top] if top is not None else None, "visits": n,
-                "top_q": q[top] if top is not None else None,
-                "avoids_misplay": None if top_sem is None else not matches(sp["misplay"], top_sem),
-                "matches_right_call": None if top_sem is None or "right" not in sp else matches(sp["right"], top_sem),
-                "simulations": r["selection"].get("completed_natural"), "cpu_seconds": r["cpu_seconds"]})
-        out["status"] = out["status"] or ("searched" if out["searches"] else "not reached")
-        targets[t] = out
-    result = {"game_id": reset["game_id"], "applied": applied, "skipped_single_candidate": skipped,
-              "rebuild_exact": not problems, "problems": problems[:20], "problem_count": len(problems),
-              "targets": targets}
-    if a.json:
-        a.json.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
-    print(json.dumps({k: result[k] for k in ("game_id", "applied", "rebuild_exact", "problem_count")}
-                     | {"skipped": len(skipped)}))
-    for t, o in targets.items():
-        for s in o["searches"]:
-            print(t, o["label"], s.get("budget"), s.get("seed"), s.get("top"), s.get("top_visits"),
-                  s.get("avoids_misplay"), s.get("matches_right_call"), s.get("error", ""))
-    return 0
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["job", "check"])
+    ap.add_argument("command", choices=["check"])
     ap.add_argument("--engine", type=Path, required=True)
     ap.add_argument("--spec", type=Path, required=True)
-    ap.add_argument("--out", type=Path)
-    ap.add_argument("--rows", type=Path)
     ap.add_argument("--json", type=Path)
+    ap.add_argument("--capture", type=Path)
+    ap.add_argument("--rows-dir", type=Path)
     a = ap.parse_args(argv)
-    return job(a) if a.command == "job" else check(a)
+    return check(a)
 
 
 if __name__ == "__main__":
