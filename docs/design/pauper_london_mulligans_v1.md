@@ -1,8 +1,9 @@
 # London mulligans for the default Pauper game (v1)
 
-Status: revision 3, after round 2 (Fable max: proceed with changes 1-3;
-GPT-6 Astra ultra: change 1). Round 1: Fable 1-6, Astra 1-6, all resolved. Every piece is opt-in; nothing changes a frozen study,
-benchmark or checkpoint.
+Status: frozen at revision 3 (2026-10-30). Fable 5.1 max and GPT-6 Astra
+ultra both said proceed in round 3; the record is
+`docs/design/pauper_london_mulligans_v1_reviews.md`. Every piece is opt-in;
+nothing changes a frozen study, benchmark or checkpoint.
 
 ## 1. Goal and laws
 
@@ -195,7 +196,8 @@ State at pregame decisions (visible to both heads):
 
 Encoder paths V7 forks (each gets the pregame encoding, and a pregame-row
 equality test runs across all of them and Python): the production state
-encoders `native_flat_tensorizer_v2.rs` about 3943 and 4027 (the
+encoders `native_flat_tensorizer_v2.rs` about 3943 and the JSON writer
+about 5204 (the
 `cfg(test)` encoder near 2010-2114 follows them), `streaming_v3.rs` about
 202 (`has_lost` by field name), `streaming_v3/context_v3.rs` about 165
 (`current_stage`), the action-row encoder
@@ -303,8 +305,8 @@ Function preservation (tested):
    - stale and invalid actions rejected without mutation;
    - V7 menus and rows for both seats; opponent hand never exposed;
    - in-game V7 tensors and logits equal V4 over a seeded game with
-     mulligans, plus a loss-bearing row with `has_lost` set (Highway
-     Robbery case);
+     mulligans, plus a loss-bearing row with `has_lost` set, built from a
+     directly constructed state so it survives a later engine fix;
    - pregame-row equality across every forked Rust encoder path and Python;
    - counterfactual announcement test (explicit columns, digest off);
    - V4 identity still refuses London; V7 refuses numeric choice;
