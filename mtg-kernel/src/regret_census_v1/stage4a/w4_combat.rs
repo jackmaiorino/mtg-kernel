@@ -687,12 +687,16 @@ fn continuation(
     panel.reset(paired_policy_seeds_v1(seed))?;
     let mut s = root.clone();
     step(&mut s, &d, choice)?;
+    // Combat is over once seen at any decision, either seat's; a later
+    // opponent spell does not move the stopping point.
+    let mut combat_over = false;
     loop {
         if let Some(end) = ending_at_terminal(&s, focal) {
             return Ok(end);
         }
         let d = decision(&s).ok_or("no decision and no terminal")?;
-        if stop_after_combat && is_focal(&d, focal) && past_combat(&s, turn) {
+        combat_over |= past_combat(&s, turn);
+        if stop_after_combat && combat_over && is_focal(&d, focal) {
             let scores = panel.scorer()?.score_fast_session_v1(&s)?;
             return Ok(Ending::Value(scores.value));
         }

@@ -7,7 +7,7 @@ usage: a2_read.py --scores DIR --split split.json --positions DIR --out RESULT.j
 the value-head scalar to the expected terminal score (win 1, draw 0.5, loss 0), fit on the fit half's focal
 states by fractional-outcome logistic regression with equal-game weights (C by the same grouped
 cross-validation as A1b and A3, on the standardized scalar). A capped or halted continuation or playout scores
-0.5. The world-variance share (descriptive) is, over the 50 positions, the mean between-world variance of the
+0.5; an engine halt withholds the classification. The world-variance share (descriptive) is, over the 50 positions, the mean between-world variance of the
 gap (corrected by the mean within-world SE squared, floored at 0) over the variance of the true-world gaps.
 """
 from __future__ import annotations
@@ -91,12 +91,21 @@ def main(argv=None) -> int:
                                        and all(len(w["playouts"]) == 64 for w in ch[s]["worlds"])))
                    for s in ("include", "exclude"))
     by_key = {(r["id"], r["index"]): r for r in rows}
+    keys = [(p["id"], p["index"]) for p in want]
+    if len(want) != 300 or len(set(keys)) != 300:
+        raise SystemExit(f"the A2 selection must be 300 distinct positions, not {len(want)} ({len(set(keys))} distinct)")
     missing = [p for p in want if got[(p["id"], p["index"])] != 1
                or not complete(by_key[(p["id"], p["index"])], p["worlds"])]
     extra = sorted(set(got) - {(p["id"], p["index"]) for p in want})
-    if missing or extra or errors:
-        result = {"classification": "withheld", "reason": "incomplete A2 population",
-                  "missing_or_incomplete": missing, "extra": extra, "position_errors": errors}
+    halts = sum(1 for r in rows for side in ("include", "exclude")
+                for e in (r["choices"][side]["value"] + r["choices"][side]["playout"]
+                          + [x for w in r["choices"][side]["worlds"] for x in w["playouts"]])
+                if "halt" in e)
+    if missing or extra or errors or halts:
+        result = {"classification": "withheld",
+                  "reason": "engine halts" if halts and not (missing or extra or errors) else "incomplete A2 population",
+                  "halted_branches": halts, "missing_or_incomplete": missing, "extra": extra,
+                  "position_errors": errors}
         a.out.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
         print(json.dumps({k: (len(v) if isinstance(v, list) else v) for k, v in result.items()}))
         return 1
@@ -141,10 +150,12 @@ def main(argv=None) -> int:
         z = np.where(pse > 0, pg / pse, np.nan)
     strong = np.abs(z) > 2
     agree = float(np.mean(np.sign(vg[strong]) == np.sign(pg[strong]))) if strong.any() else None
-    se_ratio = float(np.median(vse) / np.median([o["playout_se16"] for o in out]))
+    median_vse = float(np.median(vse))
+    median_pse16 = float(np.median([o["playout_se16"] for o in out]))
+    se_ratio = median_vse / median_pse16 if median_pse16 > 0 else None
     crit = {"i": rho is not None and rho >= 0.40 and lo is not None and lo > 0.20,
             "ii": agree is not None and agree >= 0.75, "ii_positions": int(strong.sum()),
-            "iii": se_ratio <= 0.5}
+            "iii": median_vse <= 0.5 * median_pse16}
     if constant:
         verdict = "inconclusive"
     elif min(shares.values()) < 0.5:
@@ -166,8 +177,8 @@ def main(argv=None) -> int:
     result = {"calibration": cal, "positions": len(out), "position_errors": errors, "endings": dict(endings),
               "signal_share": shares, "world_variance_share": world_share, "spearman": rho,
               "spearman_ci95": [lo, hi], "bootstrap_replicates": reps, "sign_agreement": agree,
-              "undefined_z": undefined_z, "median_value_se": float(np.median(vse)),
-              "median_playout_se16": float(np.median([o["playout_se16"] for o in out])), "se_ratio": se_ratio,
+              "undefined_z": undefined_z, "median_value_se": median_vse,
+              "median_playout_se16": median_pse16, "se_ratio": se_ratio,
               "criteria": crit, "classification": verdict,
               "bellman": {"corr_pre_post": None if bell is None else float(bell),
                           "mean_post_minus_pre": float(np.mean([o["post_taken"] - o["pre"] for o in out]))},
