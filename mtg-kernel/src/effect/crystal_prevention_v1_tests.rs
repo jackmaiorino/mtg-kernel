@@ -229,6 +229,7 @@ fn typed_nondamage_effects_preserve_their_own_dispatch_and_reject_nested_damage(
             object: ObjectRef::Target(0),
             keyword: crate::card_def::Keywords::INDESTRUCTIBLE,
         },
+        EffectOp::ReturnAbilitySourceFromGraveyard { tapped: true },
     ];
     assert!(ordinary_nondamage(&EffectOp::Sequence(safe.clone())));
     for op in safe {

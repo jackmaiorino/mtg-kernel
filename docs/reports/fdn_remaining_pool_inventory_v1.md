@@ -10,6 +10,32 @@ not missing target decisions. Goblin Bushwhacker is the tenth Special Guest
 and was already supported. The older sizing snapshot below is preserved;
 its request to freeze the manifest is now satisfied.
 
+## Current coverage (2026-10-29, main `024026b16`)
+
+Every target name is registered: **250 Full, 36 Partial, 0 Missing** of 286
+(`python python/tools/fdn_booster_pool_v1.py`). The 41 names still missing at
+v88 were registered by #308 with executing rules. The sections below are the
+historical sizing and batch record and no longer list open work.
+
+Partial now means the card's rules execute but it has no consumer stack
+(owning session, Human facts, transport and numeric model), so Prepared and
+Full-only sessions refuse its decks. The rules-only tier
+(`docs/design/limited_rules_only_v1.md`) plays admitted Partial printings in
+self-play, search and DraftZero evaluation. Taking Partial printings to Full
+waits until Limited training or fair search is scheduled.
+
+The 36 Partial names: Abyssal Harvester; Alesha, Who Laughs at Fate; Banner of
+Kinship; Blasphemous Edict; Chandra, Flameshaper; Consuming Aberration; Curator
+of Destinies; Drakuseth, Maw of Flames; Electroduplicate; Embercleave; Etali,
+Primal Storm; Fiend Artisan; Genesis Wave; Imprisoned in the Moon; Kaito,
+Cunning Infiltrator; Kykar, Zephyr Awakener; Lathril, Blade of the Elves;
+Leyline Axe; Liliana, Dreadhorde General; Loot, Exuberant Explorer; Muldrotha,
+the Gravetide; Nine-Lives Familiar; Niv-Mizzet, Visionary; Omniscience;
+Perforating Artist; Progenitus; Quilled Greatwurm; Secluded Courtyard; Sphinx
+of Forgotten Lore; Sphinx's Tutelage; Thousand-Year Storm; Time Stop;
+Tinybones, Bauble Burglar; Valkyrie's Call; Vivien Reid; Zimone, Paradox
+Sculptor.
+
 Snapshot of the 243 FDN reference names (242 missing plus the partial Ajani) that are not fully supported on `main` at `a4e1474b`, classified by the XMage implementation each card uses (`jackmaiorino/mage` master). The tier is a heuristic over the XMage ability/effect classes imported by each card file and whether the file defines its own effect classes; it estimates engineering size and is not a rules-parity verdict. Nine names (Akroma's Memorial, Bloom Tender, Condemn, Embercleave, Fiend Artisan, Grim Tutor, Paradise Druid, Sphinx's Tutelage, Temporal Manipulation) are absent from XMage's `Foundations.java` set list, so the observed 17lands pool includes cards printed outside the main set and a frozen target manifest is still required (milestone 5).
 
 | Tier | Meaning | Names | Common | Uncommon | Rare | Mythic | Outside set |

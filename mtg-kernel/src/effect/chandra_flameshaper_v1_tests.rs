@@ -374,6 +374,38 @@ fn genuine_paid_plus_one_season_copiable_haste_sacrifice_and_copy_of_copy_restor
         }
     }
 }
+/// A Chandra copy of Vampire Gourmand keeps its end-step sacrifice: that
+/// trigger is not Gourmand's own attack trigger (#110, DraftZero eval pairs
+/// 117 and 280 halted placing it).
+#[test]
+fn genuine_paid_copy_of_vampire_gourmand_is_sacrificed_at_end_step_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p);
+        let c = walker(&mut s, p);
+        let original = put(&mut s, p, "Vampire Gourmand", Zone::Battlefield);
+        let before = s.players[p.index()].battlefield.clone();
+        activate(&mut s, p, c, 1, &[Target::Object(original)]);
+        finish(&mut s);
+        let copies = s.players[p.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|o| !before.contains(o) && s.objects.get(*o).v4.is_token)
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 1);
+        for _ in 0..200 {
+            let d = next(&mut s);
+            assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
+            if s.objects.get(copies[0]).zone != Zone::Battlefield {
+                break;
+            }
+            pass(&mut s, d);
+        }
+        assert_ne!(s.objects.get(copies[0]).zone, Zone::Battlefield);
+        assert_eq!(s.objects.get(original).zone, Zone::Battlefield);
+        validate_state(&s).unwrap();
+    }
+}
 #[test]
 fn genuine_paid_copy_ignores_continuous_pump_and_native_face_down_values_are_neutral_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {

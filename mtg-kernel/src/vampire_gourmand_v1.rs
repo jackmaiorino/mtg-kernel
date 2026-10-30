@@ -138,13 +138,12 @@ pub(crate) fn pay_and_capture(
         return Ok(result);
     }
     let draw_begin = state.engine.event_history.len();
-    crate::effect::execute(
-        &EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 1,
-        },
-        &pending.ctx,
+    // This resolution owns the draw. A linked Aura replay would validate the
+    // state without the removed item and drop the draw, and a draw starts no
+    // linked Aura operation, so it commits directly.
+    crate::event::propose_without_linked_aura_v1(
         state,
+        crate::event::ProposedEvent::draw(source.controller),
     );
     result.draw_history_index = state.engine.event_history[draw_begin..]
         .iter()

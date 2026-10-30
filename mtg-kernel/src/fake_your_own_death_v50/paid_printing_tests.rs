@@ -170,6 +170,25 @@ fn actual_full_printing_pays_1b_and_returns_once_with_death_controller_treasure_
     }
 }
 
+/// A Vampire Gourmand that dies under Fake returns: its gained dies trigger
+/// is not Gourmand's own attack trigger, so Gourmand's dispatch leaves it
+/// alone (#110, DraftZero train pair 504 halted here).
+#[test]
+fn actual_paid_fake_on_vampire_gourmand_returns_it_with_treasure() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        let target = put(&mut state, actor, "Vampire Gourmand", Zone::Battlefield);
+        let (mut state, _, target) = paid_on(state, actor, target);
+        drain(&mut state);
+        death(&mut state, target);
+        drain(&mut state);
+        let returned = state.objects.get(target);
+        assert_eq!((returned.zone, returned.tapped), (Zone::Battlefield, true));
+        assert_eq!(treasures(&state, actor), 1);
+        crate::vampire_gourmand_dispatch_v2::validate(&state, None).unwrap();
+    }
+}
+
 #[test]
 fn actual_paid_spell_and_gained_trigger_counter_have_distinct_no_grant_and_no_return_outcomes() {
     for actor in [PlayerId::P0, PlayerId::P1] {

@@ -230,3 +230,46 @@ fn original_crystal_journals_do_not_authorize_unmarked_foreign_or_rewritten_lega
         }
     }
 }
+
+/// Reassembling Skeleton's return only moves its source, so a live mixed
+/// Crystal environment lets it resolve (#110, DraftZero eval pair 166 halted
+/// here).
+#[test]
+fn skeleton_graveyard_return_resolves_under_mixed_crystal_prevention_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let wall = put(&mut state, actor, "Crystal Barricade", Zone::Battlefield);
+        let skeleton = put(&mut state, actor, "Reassembling Skeleton", Zone::Graveyard);
+        state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        state.engine.next_replacement_id = 1;
+        state.engine.active_replacements.push(ActiveReplacement {
+            id: 1,
+            source: wall,
+            kind: ReplacementEffectKind::PreventNextDamage {
+                target: Target::Object(wall),
+                remaining: 1,
+            },
+        });
+        assert!(super::super::mixed_environment(&state));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. }
+            if activatable_abilities.contains(&(skeleton, 0)))
+        );
+        engine::step(&mut state, Action::ActivateAbility(skeleton, 0)).unwrap();
+        let mut replay = restored(&state);
+        for game in [&mut state, &mut replay] {
+            for _ in 0..8 {
+                assert!(matches!(next(game), Decision::CastSpellOrPass { .. }));
+                if game.stack.is_empty() && game.objects.get(skeleton).zone == Zone::Battlefield {
+                    break;
+                }
+                engine::step(game, Action::Pass).unwrap();
+            }
+            let returned = game.objects.get(skeleton);
+            assert_eq!((returned.zone, returned.tapped), (Zone::Battlefield, true));
+            super::super::validate(game).unwrap();
+        }
+        assert_eq!(state, replay);
+    }
+}

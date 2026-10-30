@@ -847,6 +847,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::PutSourceOntoBattlefieldAttachedToTarget { .. }
         | EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters
         | EffectOp::ReturnTargetPermanentToBattlefield { .. }
+        | EffectOp::ReturnAbilitySourceFromGraveyard { .. }
         | EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
         | EffectOp::ReturnAllGraveyardCreaturesUnderController
