@@ -19,9 +19,7 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from scipy.stats import spearmanr
-
-from common import bootstrap_groups, choose_c, fit_logistic, load_scores, standardize
+from common import bootstrap_groups, choose_c, fit_logistic, load_scores, spearman, standardize
 
 SIGN_SUBSET = 20
 
@@ -134,10 +132,10 @@ def main(argv=None) -> int:
     games = [o["id"] for o in out]
     shares = {"playout": signal_share(pg, pse), "value": signal_share(vg, vse)}
     constant = bool(np.all(vg == vg[0]) or np.all(pg == pg[0]))
-    rho = None if constant else float(spearmanr(vg, pg).statistic)
+    rho = None if constant else spearman(vg, pg)
     lo, hi, reps = (None, None, 0) if constant else bootstrap_groups(
         games, lambda idx: (None if np.all(vg[idx] == vg[idx][0]) or np.all(pg[idx] == pg[idx][0])
-                            else float(spearmanr(vg[idx], pg[idx]).statistic)), 20261031)
+                            else spearman(vg[idx], pg[idx])), 20261031)
     undefined_z = int((pse == 0).sum())
     with np.errstate(divide="ignore", invalid="ignore"):
         z = np.where(pse > 0, pg / pse, np.nan)

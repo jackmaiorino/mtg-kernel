@@ -18,12 +18,12 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
-from scipy.stats import norm
-
 from common import (ACTION_DIM, HIDDEN, OBJECT_DIM, auc, bootstrap_groups, choose_c, deck, fit_logistic,
                     load_scores, log_loss, predict, standardize, template_half)
 
 MIN_MINORITY = 20
+# Standard normal quantiles for a two-sided 5% test at 80% power.
+Z_975, Z_80 = 1.959963984540054, 0.8416212335729143
 A3_EFFECT = 0.005
 TURN_BUCKETS = ((1, 4, "1-4"), (5, 8, "5-8"), (9, 10 ** 9, "9+"))
 
@@ -167,7 +167,7 @@ def a3(sc, split):
     sd = float(np.std(list(fit_diff.values()), ddof=1))
     read_diff = per_game_diff(ids[read], y[read], predict(m0, v0r), predict(m1, v1r))
     n_read = len(read_diff)
-    mde = float((norm.ppf(0.975) + norm.ppf(0.80)) * sd / np.sqrt(n_read))
+    mde = float((Z_975 + Z_80) * sd / np.sqrt(n_read))
     games = sorted(read_diff)
     vals = np.asarray([read_diff[g] for g in games])
     point = float(vals.mean())

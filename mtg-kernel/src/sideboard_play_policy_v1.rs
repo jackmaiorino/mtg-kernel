@@ -1720,6 +1720,7 @@ impl FrozenPlayPolicyV1 {
     }
 
     /// The installed model (read-only), for measurement-only forwards.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     pub(crate) fn diagnostic_model_v1(&self) -> &NativePolicyValueNetV1 {
         &self.model
     }
@@ -1728,6 +1729,7 @@ impl FrozenPlayPolicyV1 {
     /// last V4-scored decision under `model` (the installed one when None),
     /// with its state and scorer hidden. Uses the scoring call's activation
     /// mode; the caller compares the output with that call's scores.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     pub(crate) fn diagnostic_last_v4_hidden_v1(
         &self,
         model: Option<&NativePolicyValueNetV1>,

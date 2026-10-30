@@ -871,6 +871,7 @@ impl NativePolicyValueNetV1 {
     /// encoder output and every action row's scorer hidden (after its tanh).
     /// Measurement only (W4 combat diagnostics): the output is the reference
     /// forward's, and nothing that plays or trains calls this.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn forward_feature_transfer_v4_hidden_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,

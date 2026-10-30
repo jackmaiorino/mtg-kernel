@@ -46,6 +46,10 @@ class FitTests(unittest.TestCase):
         self.assertEqual(common.auc([0, 1], np.array([0.5, 0.5])), 0.5)
         self.assertIsNone(common.auc([1, 1], np.array([0.1, 0.2])))
 
+    def test_spearman_with_ties(self):
+        self.assertAlmostEqual(common.spearman([1, 2, 3], [1, 3, 2]), 0.5)
+        self.assertAlmostEqual(common.spearman([1, 1, 2], [1, 1, 2]), 1.0)
+
     def test_fractional_logistic_recovers_slope(self):
         rng = np.random.default_rng(0)
         x = rng.normal(size=(4000, 1))

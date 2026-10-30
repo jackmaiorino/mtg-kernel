@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-from scipy.optimize import minimize
 
 C_GRID = (1e-3, 1e-2, 1e-1, 1.0, 10.0, 1e2, 1e3)
 BOOTSTRAP = 2000
@@ -73,19 +72,56 @@ def standardize(x_fit, w_fit, *others):
 def fit_logistic(x, y, w, c):
     """Weighted L2 logistic regression with fractional targets: minimizes
     sum_i w_i * logloss_i + |beta|^2 / (2C), the intercept unpenalized (the
-    scikit-learn convention). Returns (intercept, beta)."""
+    scikit-learn convention), by damped Newton steps. Returns (intercept, beta)."""
     n, k = x.shape
+    z = np.hstack([np.ones((n, 1)), x])
+    pen = np.full(k + 1, 1.0 / c)
+    pen[0] = 0.0
 
-    def f(theta):
-        z = theta[0] + x @ theta[1:]
-        p = sigmoid(z)
-        loss = (w * log_loss(y, p)).sum() + (theta[1:] ** 2).sum() / (2 * c)
-        g = w * (p - y)
-        grad = np.concatenate([[g.sum()], x.T @ g + theta[1:] / c])
-        return loss, grad
+    def objective(t):
+        return float((w * log_loss(y, sigmoid(z @ t))).sum() + 0.5 * (pen * t * t).sum())
 
-    res = minimize(f, np.zeros(k + 1), jac=True, method="L-BFGS-B", options={"maxiter": 2000})
-    return res.x[0], res.x[1:]
+    theta = np.zeros(k + 1)
+    current = objective(theta)
+    for _ in range(100):
+        p = sigmoid(z @ theta)
+        grad = z.T @ (w * (p - y)) + pen * theta
+        hess = (z * (w * p * (1 - p))[:, None]).T @ z + np.diag(pen) + 1e-10 * np.eye(k + 1)
+        step = np.linalg.solve(hess, grad)
+        scale = 1.0
+        while scale > 1e-8:
+            trial = theta - scale * step
+            value = objective(trial)
+            if value <= current:
+                break
+            scale /= 2
+        if current - value < 1e-12 * max(1.0, abs(current)):
+            theta = trial if value <= current else theta
+            break
+        theta, current = trial, value
+    return theta[0], theta[1:]
+
+
+def ranks(v):
+    """Average ranks (ties share their mean rank)."""
+    v = np.asarray(v, float)
+    order = np.argsort(v, kind="mergesort")
+    r = np.empty(len(v))
+    sv = v[order]
+    i = 0
+    while i < len(v):
+        j = i
+        while j + 1 < len(v) and sv[j + 1] == sv[i]:
+            j += 1
+        r[order[i:j + 1]] = (i + j) / 2 + 1
+        i = j + 1
+    return r
+
+
+def spearman(a, b):
+    """Spearman correlation: Pearson correlation of average ranks."""
+    ra, rb = ranks(a), ranks(b)
+    return float(np.corrcoef(ra, rb)[0, 1])
 
 
 def predict(model, x):
@@ -122,20 +158,11 @@ def choose_c(x, y, w, groups, metric_w):
 def auc(y, s):
     """Mann-Whitney AUC with ties counted half."""
     y = np.asarray(y, bool)
-    pos, neg = s[y], s[~y]
-    if len(pos) == 0 or len(neg) == 0:
+    if y.all() or not y.any():
         return None
-    order = np.argsort(np.concatenate([pos, neg]), kind="mergesort")
-    ranks = np.empty(len(order))
-    allv = np.concatenate([pos, neg])[order]
-    i = 0
-    while i < len(allv):
-        j = i
-        while j + 1 < len(allv) and allv[j + 1] == allv[i]:
-            j += 1
-        ranks[order[i:j + 1]] = (i + j) / 2 + 1
-        i = j + 1
-    return float((ranks[:len(pos)].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
+    r = ranks(s)
+    npos, nneg = int(y.sum()), int((~y).sum())
+    return float((r[y].sum() - npos * (npos + 1) / 2) / (npos * nneg))
 
 
 def bootstrap_groups(groups, stat, seed):
