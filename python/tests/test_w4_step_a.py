@@ -72,6 +72,61 @@ class FitTests(unittest.TestCase):
             self.assertEqual(len({folds[i] for i in range(30) if groups[i] == g}), 1)
 
 
+class ReferenceTests(unittest.TestCase):
+    """Each rewritten fit against a closed form or an independent computation."""
+
+    def test_saturated_logistic_matches_closed_form(self):
+        # One binary feature, effectively unpenalized: intercept logit(p0), slope logit(p1) - logit(p0).
+        x = np.array([[0.0]] * 10 + [[1.0]] * 10)
+        y = np.array([1.0] * 3 + [0.0] * 7 + [1.0] * 8 + [0.0] * 2)
+        a, b = common.fit_logistic(x, y, np.ones(20), 1e12)
+        logit = lambda p: np.log(p / (1 - p))
+        self.assertAlmostEqual(a, logit(0.3), places=5)
+        self.assertAlmostEqual(b[0], logit(0.8) - logit(0.3), places=5)
+
+    def test_penalized_weighted_fractional_fit_is_stationary(self):
+        # The penalized objective's gradient is zero at the returned fit.
+        rng = np.random.default_rng(1)
+        x = rng.normal(size=(300, 3))
+        y = rng.choice([0.0, 0.5, 1.0], size=300)
+        w = rng.random(300)
+        c = 0.1
+        a, b = common.fit_logistic(x, y, w, c)
+        p = common.sigmoid(a + x @ b)
+        self.assertAlmostEqual(float((w * (p - y)).sum()), 0.0, places=6)
+        np.testing.assert_allclose(x.T @ (w * (p - y)) + b / c, 0.0, atol=1e-6)
+
+    def test_auc_matches_pairwise_count(self):
+        rng = np.random.default_rng(2)
+        s = np.round(rng.normal(size=200), 1)
+        y = rng.random(200) < 0.4
+        pos, neg = s[y], s[~y]
+        brute = np.mean([(p > n) + 0.5 * (p == n) for p in pos for n in neg])
+        self.assertAlmostEqual(common.auc(y, s), brute, places=12)
+
+    def test_spearman_matches_rank_formula(self):
+        a = [3.0, 1.0, 4.0, 1.5, 5.0, 9.0]
+        b = [2.0, 7.0, 1.0, 8.0, 2.5, 3.0]
+        ra, rb = np.argsort(np.argsort(a)) + 1, np.argsort(np.argsort(b)) + 1
+        rho = 1 - 6 * ((ra - rb) ** 2).sum() / (6 * 35)
+        self.assertAlmostEqual(common.spearman(a, b), rho, places=12)
+
+    def test_bootstrap_matches_manual_resampling(self):
+        groups = ["g1", "g1", "g2", "g3", "g3", "g3"]
+        vals = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        lo, hi, n = common.bootstrap_groups(groups, lambda idx: float(vals[idx].mean()), 20261032)
+        rng = np.random.Generator(np.random.PCG64(20261032))
+        members = {"g1": [0, 1], "g2": [2], "g3": [3, 4, 5]}
+        keys = ["g1", "g2", "g3"]
+        manual = []
+        for _ in range(common.BOOTSTRAP):
+            idx = np.concatenate([members[keys[i]] for i in rng.integers(0, 3, 3)])
+            manual.append(vals[idx].mean())
+        self.assertEqual(n, common.BOOTSTRAP)
+        self.assertAlmostEqual(lo, float(np.percentile(manual, 2.5)), places=12)
+        self.assertAlmostEqual(hi, float(np.percentile(manual, 97.5)), places=12)
+
+
 class A2Tests(unittest.TestCase):
     def test_paired_gap_and_se(self):
         gap, se = paired([1, 1, 0, 1], [0, 1, 0, 0])
