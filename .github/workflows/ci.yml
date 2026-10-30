@@ -960,6 +960,15 @@ jobs:
           cd python/tools/tests && PYTHONPATH=.. uv run --no-sync python -m unittest -v \
             test_nine_deck_cloud_v1.PackageTests.test_tooling_closure_is_complete_from_a_copy
 
+      # Tests that live beside top-level tools/ scripts (no Rust binary, no network).
+      - name: Top-level tools tests
+        if: matrix.shard == 0
+        shell: bash
+        run: |
+          uv run --no-sync python -m unittest discover -v -s tools/search_experiment/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/stage4a/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/t1_diagnosis -p 'test_*.py'
+
       - name: Use the runner's persistent Python environment build
         if: runner.environment == 'self-hosted'
         shell: bash
