@@ -15,6 +15,8 @@ python host_slots_v1.py submit --log FILE --lane LANE --work-id WORK --cores N -
 
 With `--wait`, the claim queues and starts in arrival order once cores are free. Without `--wait`, it exits with code 3 when there is no room. `submit` starts a detached waiting `run` that logs to `FILE`, and returns the claim id immediately.
 
+On Windows, a bare `bash` runs Git Bash (the first on `PATH`, then `C:/Program Files/Git/bin/bash.exe`): Windows would otherwise start WSL's `bash.exe` from System32, which cannot see drive paths such as `D:/`. WSL's bash itself is refused (exit 6) before the request takes a queue turn.
+
 The command sees `HOST_SLOTS_CLAIM` and `HOST_SLOTS_CORES`. On Windows, spellbench's `usable_cpus()` (`spellbench.arena.machine`) honors the pinned cores, so its throughput planning sizes workers to the claim.
 
 ## Backfill: small jobs ahead of a waiting head
