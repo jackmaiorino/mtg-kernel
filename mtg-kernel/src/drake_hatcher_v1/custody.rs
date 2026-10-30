@@ -1734,13 +1734,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Drake whole operation input/output prefix changed".into());
                 }
-                let prefix = state
-                    .engine
-                    .event_history
-                    .get(..*start as usize)
-                    .ok_or("Drake operation original prefix absent")?;
+                if state.engine.event_history.get(..*start as usize).is_none() {
+                    return Err("Drake operation original prefix absent".into());
+                }
+                // `rows` is every journal event in history order, so this
+                // counts the prefix's journal events without scanning it.
                 if original.engine.drake_ledger_v1.issued
-                    != prefix.iter().filter(|e| journal(e).is_some()).count() as u64
+                    != rows.partition_point(|r| r.index < *start) as u64
                 {
                     return Err("Drake operation original ledger changed".into());
                 }
