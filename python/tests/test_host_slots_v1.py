@@ -416,8 +416,8 @@ class HostSlotsTests(unittest.TestCase):
         background = {"id": "b" * 32, "background": True}
         earlier = {"id": "c" * 32}
         own = {"id": claim_id}
-        with patch.object(slots, "live_tickets", side_effect=[
-                [background, earlier, own], [background, own]]), \
+        with patch.object(slots, "_snapshot", side_effect=[
+                snapshot_of([background, earlier, own]), snapshot_of([background, own])]), \
                 patch.object(slots, "_run_claimed", return_value=0) as launch, \
                 patch.object(slots.time, "sleep") as sleep:
             result = slots.run("probe", "ordinary", 1, ["unused"], wait=True, claim_id=claim_id)
@@ -633,6 +633,11 @@ class BackgroundProcessTests(unittest.TestCase):
                 controller.wait(timeout=30)
 
 
+def snapshot_of(tickets, claims=()):
+    """A `_snapshot` result with these live tickets and claims and nothing unreadable."""
+    return {"tickets": list(tickets), "claims": list(claims), "unreadable": set(), "names": set(), "records": {}}
+
+
 def config8(keep_free=0):
     return {"cores": [7, 6, 5, 4, 3, 2, 1, 0], "keep_free": keep_free, "priority": "below_normal"}
 
@@ -790,8 +795,7 @@ class BackfillAdmissionTests(unittest.TestCase):
         tickets = [head, {"id": own, "cores_wanted": 1, "background": False, "max_seconds": 30.0}]
         holder = {"id": "c" * 32, "cores": CPUS[1:], "background": False}
         seen, announced = [], []
-        with patch.object(slots, "live_tickets", return_value=tickets), \
-                patch.object(slots, "live_claims", return_value=[holder]), \
+        with patch.object(slots, "_snapshot", side_effect=lambda: snapshot_of(tickets, [holder])), \
                 patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
                     slots.read_json(claim)) or 0):
             # the head wants every CPU: with the backfill still running it could never start, so no backfill
@@ -890,16 +894,16 @@ class BackfillAdmissionTests(unittest.TestCase):
         slots.write_json(d / f"delay-{'c' * 32}.json", {"head_id": "c" * 32})
         slots.write_json(d / f"delay-{'d' * 32}.json", {"head_id": "d" * 32})
         (d / f"queue-{1:020d}-{'d' * 32}.json").write_text("{ unreadable")   # review r2: still present
-        scan = slots._scan_state()
-        self.assertEqual(scan["unreadable"], {f"queue-{1:020d}-{'d' * 32}.json"})
-        slots._prune_delay_windows(scan)
+        snap = slots._snapshot()
+        self.assertEqual(snap["unreadable"], {f"queue-{1:020d}-{'d' * 32}.json"})
+        slots._prune_delay_windows(snap)
         self.assertFalse((d / f"delay-{'c' * 32}.json").exists())
         self.assertTrue((d / f"delay-{'d' * 32}.json").exists())
 
     def test_a_failed_folder_scan_admits_nothing(self):
         # review r4: Path.glob returns nothing on a listing error; the scan must fail instead
         with patch.object(slots.os, "scandir", side_effect=PermissionError("denied")):
-            self.assertIsNone(slots._scan_state())
+            self.assertIsNone(slots._snapshot())
             with self.assertRaises(slots.NoRoom):
                 slots.run("probe", "head", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3)
 
@@ -925,9 +929,9 @@ class BackfillAdmissionTests(unittest.TestCase):
     def test_an_unreadable_window_refuses_every_delaying_backfill(self):
         # review r2: a failed read must not start a fresh window
         d = self.host / "TESTHOST.slots"
-        self.assertIsNone(slots._read_delay_window("e" * 32))
+        self.assertIsNone(slots._snapshot_window(slots._snapshot(), "e" * 32))
         (d / f"delay-{'e' * 32}.json").write_text("{ torn")
-        window = slots._read_delay_window("e" * 32)
+        window = slots._snapshot_window(slots._snapshot(), "e" * 32)
         self.assertEqual(window, {"unreadable": True})
         head = {**ticket("e" * 32, 4, 3600.0), "config_sha256": slots.config_digest(config8())}
         self.assertIsNone(slots.backfill_admission(config8(), FREE, BoundedDelayBackfillTests.CLAIMS,
@@ -935,14 +939,35 @@ class BackfillAdmissionTests(unittest.TestCase):
 
     def test_a_window_whose_metadata_cannot_be_read_refuses(self):
         # review r3: Path.exists() is False on a permission error; only a confirmed absence is "no window"
-        real = slots.os.stat
+        slots.write_json(self.host / f"TESTHOST.slots/delay-{'e' * 32}.json", {"head_id": "e" * 32})
+        real_stat, real_read = slots.os.stat, slots.read_json
 
         def denied(path, *a, **k):
             if str(path).endswith(f"delay-{'e' * 32}.json"):
                 raise PermissionError("denied")
-            return real(path, *a, **k)
-        with patch.object(slots.os, "stat", side_effect=denied):
-            self.assertEqual(slots._read_delay_window("e" * 32), {"unreadable": True})
+            return real_stat(path, *a, **k)
+        with patch.object(slots.os, "stat", side_effect=denied), \
+                patch.object(slots, "read_json", side_effect=lambda path: None if str(path).endswith(
+                    f"delay-{'e' * 32}.json") else real_read(path)):
+            self.assertEqual(slots._snapshot_window(slots._snapshot(), "e" * 32), {"unreadable": True})
+
+    def test_a_read_that_fails_once_never_drops_a_record_from_the_decision(self):
+        # review r5: every file is read once per poll, so a transient failure is seen as unreadable, never as
+        # an absent head ticket or an absent claim
+        self.write_head("a" * 32, stamp=1)
+        head_name = f"queue-{1:020d}-{'a' * 32}.json"
+        real_read, failed = slots.read_json, []
+
+        def once(path):
+            if Path(path).name == head_name and not failed:
+                failed.append(path)
+                return None
+            return real_read(path)
+        with patch.object(slots, "read_json", side_effect=once):
+            snap = slots._snapshot()
+        self.assertIn(head_name, snap["unreadable"])
+        self.assertEqual([t["id"] for t in snap["tickets"]], [])
+        self.assertEqual(len(failed), 1)
 
     def write_head(self, head_id, stamp=2):
         pid, creation = slots.self_identity()
