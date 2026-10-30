@@ -119,6 +119,20 @@ class StagePTests(unittest.TestCase):
                                 json.loads(self.plan.read_text())["chains"]["r1-c1"])
         self.assertNotIn("pack", guard_k1)                 # an old record without the field reads as K = 1
 
+    def test_group_metadata_must_match_membership(self):
+        self.make()
+        self.throughput_record("desk")
+        plan = json.loads(self.plan.read_text())
+        for name in ("r2-c1", "r2-c2"):                    # an edited plan: grouped, pack left at 1
+            plan["chains"][name]["group"] = "g"
+        self.plan.write_text(json.dumps(plan))
+        with self.assertRaisesRegex(SystemExit, "has 2 members but its plan says otherwise"):
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2"])
+        plan["chains"]["r2-c1"]["pack"] = plan["chains"]["r2-c2"]["pack"] = 3
+        self.plan.write_text(json.dumps(plan))
+        with self.assertRaisesRegex(SystemExit, "has 2 members but its plan says otherwise"):
+            stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2"])
+
     def test_a_pack_group_runs_all_its_chains_together_in_one_claim(self):
         plan = self.make(self.PACKED)
         self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2)

@@ -487,9 +487,19 @@ def throughput_config(plan, native):
                              THROUGHPUT["namespace"], THROUGHPUT["offset"], 1, WORKERS, THROUGHPUT["coefficient"])
 
 
+def pack_size(plan, chain):
+    """K from the group's actual members (1 without a group); the plan's `pack` field must agree."""
+    group = chain.get("group")
+    members = [c for c in plan["chains"].values() if group is not None and c.get("group") == group]
+    pack = len(members) if group is not None else 1
+    if chain.get("pack", 1) != pack or any(c.get("pack", 1) != pack for c in members):
+        raise SystemExit(f"refused: pack group {group!r} has {pack} members but its plan says otherwise")
+    return pack
+
+
 def guard(plan, name, chain):
     """COMPUTE-POLICY item 5: refuse without a matching throughput record for this host."""
-    pack = chain.get("pack", 1)
+    pack = pack_size(plan, chain)
     path = throughput_path(plan, chain["host"], pack)
     if not path.exists():
         raise SystemExit(f"refused: no throughput record for {chain['host']} at pack {pack}; run "
