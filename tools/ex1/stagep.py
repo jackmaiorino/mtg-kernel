@@ -37,6 +37,7 @@ A STOP file in the root stops every chain at once.
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
@@ -165,6 +166,8 @@ def make_plan(args):
     for group, members in groups.items():
         if not group or len({(chains[m]["host"], chains[m]["cores"]) for m in members}) != 1:
             raise SystemExit(f"refused: pack group {group!r} needs a name and one host and core count")
+        if any(chains[m]["usd_per_hour"] > 0 for m in members):
+            raise SystemExit(f"refused: pack group {group!r} is on a paid host (budgets are metered per chain)")
         for m in members:
             chains[m].update(group=group, pack=len(members))
     if total > CEILING_USD + 1e-9:
@@ -380,29 +383,33 @@ def packed_throughput(plan, args, out, config_path, cores, expected, windows):
             configs.append({"config": cfg.as_posix(), "native": native.as_posix()})
         plan_lanes.append({"delay": i * stagger, "configs": configs})
     spec = out / "pack.json"
-    write(spec, {"binary": plan["binary"]["path"], "lanes": plan_lanes})
+    write(spec, {"binary": plan["binary"]["path"], "wrapped": bool(plan["hosts"][args.host]["wrapper"]),
+                 "lanes": plan_lanes})
     inner = [part for part in plan["hosts"][args.host]["wrapper"]] + [
         sys.executable, str(Path(__file__).resolve()), "_lanes", "--spec", str(spec)]
     code = subprocess.call(inner)
     result = read(out / "pack-result.json") if (out / "pack-result.json").exists() else {"lanes": []}
     copies, starts, ends, equal, exits = [], [], [], True, [code]
-    for lane, ran in zip(plan_lanes, result["lanes"]):
+    ran_lanes = result["lanes"] + [[]] * (len(plan_lanes) - len(result["lanes"]))
+    for lane, ran in zip(plan_lanes, ran_lanes):
         updates = []
         for item, run_ in zip(lane["configs"], ran):
             exits.append(run_["exit"])
-            states = [u["after_state_sha256"] for _, u, _ in qual.iterations(item["native"])]
-            walls = [c["collection_elapsed_seconds"] for _, _, c in qual.iterations(item["native"])]
+            rows = list(qual.iterations(item["native"]))
+            states = [u["after_state_sha256"] for _, u, _ in rows]
             ok = states == [expected]
             equal = equal and ok
+            # Counted only when the run left exactly one completed update, whatever its state.
             updates.append({"wall_seconds": run_["end"] - run_["start"], "exit": run_["exit"],
-                            "collection_wall_seconds": walls[0] if walls else None,
+                            "completed": len(rows) == 1,
+                            "collection_wall_seconds": rows[0][2]["collection_elapsed_seconds"] if rows else None,
                             "after_state_sha256": states[0] if states else None, "state_equal": ok})
             starts.append(run_["start"])
             ends.append(run_["end"])
         copies.append({"delay_seconds": lane["delay"], "updates": updates,
                        "chain_wall_seconds": (ran[-1]["end"] - ran[0]["start"]) if ran else None,
-                       "state_equal": all(u["state_equal"] for u in updates)})
-    done = sum(len(c["updates"]) for c in copies)
+                       "state_equal": len(updates) == args.repeats and all(u["state_equal"] for u in updates)})
+    done = sum(u["completed"] for c in copies for u in c["updates"])
     complete = done == args.pack * args.repeats
     span = (max(ends) - min(starts)) if complete else None
     return {"schema": "ex1-stagep-throughput/v1", "host": args.host, "hostname": socket.gethostname(),
@@ -419,6 +426,8 @@ def lanes(args):
     """Inside a throughput claim: each lane waits its delay, then runs its configs one after another."""
     import threading
     spec = read(args.spec)
+    if spec["wrapped"] and not os.environ.get("HOST_SLOTS_CLAIM"):
+        raise SystemExit("refused: this internal command runs only inside its host_slots claim")
     binary = spec["binary"]
     exe = [sys.executable, binary] if binary.endswith(".py") else [binary]   # .py: test stand-ins only
     results = [[] for _ in spec["lanes"]]
@@ -437,6 +446,12 @@ def lanes(args):
         t.join()
     write(Path(args.spec).with_name("pack-result.json"), {"lanes": results})
     raise SystemExit(0 if all(r["exit"] == 0 for lane in results for r in lane) else 1)
+
+
+def require_claim(plan, host):
+    """The inner commands run only inside the host's claim when the host has a wrapper."""
+    if plan["hosts"][host]["wrapper"] and not os.environ.get("HOST_SLOTS_CLAIM"):
+        raise SystemExit("refused: this internal command runs only inside its host_slots claim")
 
 
 def throughput_config(plan, native):
@@ -488,9 +503,8 @@ def check(plan, name):
     return (chain["updates"] - completed(native)) * plan["byte_budget"]["bytes_per_update"]
 
 
-def run(args):
-    plan = load_plan(args.plan)
-    names = list(dict.fromkeys(args.chain))
+def group_checks(plan, names):
+    """Every named chain's checks, the pack group's completeness and the disk reserve; returns the first chain."""
     chain = plan["chains"][names[0]]
     group = chain.get("group")
     members = sorted(n for n, c in plan["chains"].items() if group is not None and c.get("group") == group)
@@ -498,101 +512,114 @@ def run(args):
         raise SystemExit("refused: only the chains of one pack group run together")
     if group is not None and sorted(names) != members:
         raise SystemExit(f"refused: pack group {group} runs all its chains together: {members}")
-    root = Path(plan["root"])
     need = sum(check(plan, name) for name in names)
-    free = shutil.disk_usage(root).free
+    free = shutil.disk_usage(Path(plan["root"])).free
     reserve = plan["hosts"][chain["host"]]["reserve_gib"] * (1 << 30)
     if free < need + reserve:
         raise SystemExit(f"refused: {free / 1e9:.1f} GB free, need {need / 1e9:.1f} GB plus the host reserve")
+    return chain
+
+
+def run(args):
+    plan = load_plan(args.plan)
+    names = list(dict.fromkeys(args.chain))
+    chain = group_checks(plan, names)
+    group = chain.get("group")
     wrapper = [part.replace("{cores}", str(chain["cores"])).replace("{chain}", group or names[0])
                for part in plan["hosts"][chain["host"]]["wrapper"]]
     plan["hosts"][chain["host"]]["wrapper"] = wrapper
     if group is None:
-        raise SystemExit(supervise(plan, names[0], command(plan, chain["host"], chain["config"]["path"]),
+        raise SystemExit(supervise(plan, names, command(plan, chain["host"], chain["config"]["path"]),
                                    args.fast_poll))
-    # One claim for the group: inside it, `_members` supervises every member's binary without a wrapper.
-    inner = wrapper + [sys.executable, str(Path(__file__).resolve()), "_members", "--plan", str(args.plan)]
+    # One claim for the group: inside it, `_members` checks again and starts every member's binary. Metering,
+    # STOP and the outcome stay out here, so they still act while the claim waits in the queue or is suspended.
+    results = Path(plan["root"]) / "chains" / f"group-{group}" / "members.json"
+    inner = wrapper + [sys.executable, str(Path(__file__).resolve()), "_members", "--plan", str(args.plan),
+                       "--results", str(results)]
     for name in names:
         inner += ["--chain", name]
-    if args.fast_poll:
-        inner.append("--fast-poll")
-    log(root, group=group, event="group-start", chains=names, cmd=inner)
-    code = subprocess.call(inner)
-    log(root, group=group, event="group-end", exit=code)
-    raise SystemExit(code)
+    raise SystemExit(supervise(plan, names, inner, args.fast_poll, results))
 
 
 def members(args):
-    """Inside a pack group's claim: each member chain runs and is metered on its own thread."""
-    import threading
+    """Inside a pack group's claim: the group's checks again, then every member's binary at once; writes each
+    member's exit code to --results."""
     plan = load_plan(args.plan)
+    names = list(dict.fromkeys(args.chain))
+    chain = group_checks(plan, names)
+    if chain.get("group") is None:
+        raise SystemExit("refused: _members runs a pack group")
+    require_claim(plan, chain["host"])
     binary = plan["binary"]["path"]
     exe = [sys.executable, binary] if binary.endswith(".py") else [binary]   # .py: test stand-ins only
-    names = list(dict.fromkeys(args.chain))
-    codes = {}
-
-    def go(name):
-        codes[name] = supervise(plan, name, exe + [plan["chains"][name]["config"]["path"]], args.fast_poll)
-
-    threads = [threading.Thread(target=go, args=(name,)) for name in names]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    worst = [codes.get(name, 1) for name in names]
-    raise SystemExit(next((c for c in (EXIT_BUDGET, EXIT_STOP) if c in worst), max(worst)))
+    procs = {name: subprocess.Popen(exe + [plan["chains"][name]["config"]["path"]]) for name in names}
+    codes = {name: proc.wait() for name, proc in procs.items()}
+    write(args.results, codes)
+    raise SystemExit(0 if not any(codes.values()) else 1)
 
 
-def supervise(plan, name, cmd, fast_poll):
-    """Runs one chain's command, metering its USD and watching STOP; returns its exit code."""
-    chain = plan["chains"][name]
+def supervise(plan, names, cmd, fast_poll, results=None):
+    """Runs the command for the named chains (one chain, or a pack group's claim), metering each chain's USD and
+    watching STOP; returns the exit code (any nonzero member code, whatever its sign, makes it nonzero)."""
     root = Path(plan["root"])
-    state_path = root / "chains" / name / "STATE.json"
-    state = read(state_path) if state_path.exists() else {"metered_seconds": 0.0, "sessions": []}
-    native = chain["native"]
-    done = completed(native)
-    moved = quarantine(native, root, name)
-    log(root, chain=name, event="start", completed=done, moved=moved, cmd=cmd)
-    session = {"started": time.time(), "completed_at_start": done, "moved": moved}
+    chains = {name: plan["chains"][name] for name in names}
+    paths = {name: root / "chains" / name / "STATE.json" for name in names}
+    states = {name: read(p) if p.exists() else {"metered_seconds": 0.0, "sessions": []} for name, p in paths.items()}
+    sessions = {}
+    for name, chain in chains.items():
+        done = completed(chain["native"])
+        moved = quarantine(chain["native"], root, name)
+        log(root, chain=name, event="start", completed=done, moved=moved, cmd=cmd)
+        sessions[name] = {"started": time.time(), "completed_at_start": done, "moved": moved}
+    if results is not None:
+        Path(results).unlink(missing_ok=True)
     proc = subprocess.Popen(cmd)
     outcome = None
     last = time.time()
     while proc.poll() is None:
         time.sleep(POLL_S if not fast_poll else 0.2)
         now = time.time()
-        state["metered_seconds"] += now - last
+        for name, chain in chains.items():
+            states[name]["metered_seconds"] += now - last
+            write(paths[name], states[name])
+            spent = states[name]["metered_seconds"] / 3600 * chain["usd_per_hour"]
+            if chain["usd_per_hour"] > 0 and spent >= chain["budget_usd"]:
+                outcome = "budget"
         last = now
-        write(state_path, state)
-        spent = state["metered_seconds"] / 3600 * chain["usd_per_hour"]
-        if chain["usd_per_hour"] > 0 and spent >= chain["budget_usd"]:
-            outcome = "budget"
-        elif (root / "STOP").exists():
+        if outcome is None and (root / "STOP").exists():
             outcome = "stop"
         if outcome:
             stop_tree(proc)
             break
-    state["metered_seconds"] += time.time() - last
     code = proc.wait()
-    session.update(ended=time.time(), exit=code, outcome=outcome, completed=completed(native))
-    state["sessions"].append(session)
-    write(state_path, state)
-    spent = state["metered_seconds"] / 3600 * chain["usd_per_hour"]
-    log(root, chain=name, event="end", exit=code, outcome=outcome, completed=session["completed"], usd=spent)
-    if outcome:
-        session["moved_after"] = quarantine(native, root, name)
+    member = read(results) if results is not None and Path(results).exists() else {}
+    codes = {name: member.get(name, code) for name in names}
+    for name, chain in chains.items():
+        native = chain["native"]
+        states[name]["metered_seconds"] += time.time() - last
+        session = sessions[name]
+        session.update(ended=time.time(), exit=codes[name], outcome=outcome, completed=completed(native))
+        states[name]["sessions"].append(session)
+        write(paths[name], states[name])
+        spent = states[name]["metered_seconds"] / 3600 * chain["usd_per_hour"]
+        log(root, chain=name, event="end", exit=codes[name], outcome=outcome, completed=session["completed"],
+            usd=spent)
+        if outcome:
+            session["moved_after"] = quarantine(native, root, name)
+        if outcome == "budget":
+            write(root / "chains" / name / "TRUNCATED.json",
+                  {"chain": name, "completed_updates": session["completed"], "planned_updates": chain["updates"],
+                   "metered_usd": spent, "budget_usd": chain["budget_usd"],
+                   "stage_p": "inconclusive on budget (design section 5)"})
+        elif not outcome and codes[name] == 0 and Path(native, "completion.json").exists():
+            write(root / "chains" / name / "DONE.json",
+                  {"chain": name, "completed_updates": session["completed"], "metered_usd": spent,
+                   "completion": pin(Path(native, "completion.json"))})
     if outcome == "budget":
-        write(root / "chains" / name / "TRUNCATED.json",
-              {"chain": name, "completed_updates": session["completed"], "planned_updates": chain["updates"],
-               "metered_usd": spent, "budget_usd": chain["budget_usd"],
-               "stage_p": "inconclusive on budget (design section 5)"})
         return EXIT_BUDGET
     if outcome == "stop":
         return EXIT_STOP
-    if code == 0 and Path(native, "completion.json").exists():
-        write(root / "chains" / name / "DONE.json",
-              {"chain": name, "completed_updates": session["completed"], "metered_usd": spent,
-               "completion": pin(Path(native, "completion.json"))})
-    return code
+    return next((c for c in [code, *codes.values()] if c != 0), 0)
 
 
 def status(args):
@@ -645,6 +672,7 @@ def main(argv=None):
     r.add_argument("--fast-poll", action="store_true", help=argparse.SUPPRESS)
     m = sub.add_parser("_members")
     m.add_argument("--plan", required=True)
+    m.add_argument("--results", required=True)
     m.add_argument("--chain", required=True, action="append", choices=sorted(CHAINS))
     m.add_argument("--fast-poll", action="store_true")
     ln = sub.add_parser("_lanes")
@@ -657,7 +685,8 @@ def main(argv=None):
             ap.error("--pack is at least 1")
         if args.pack == 1 and (args.repeats not in (None, 1) or args.stagger is not None):
             ap.error("--repeats and --stagger are for --pack 2 or more")
-        args.repeats = args.repeats or (1 if args.pack == 1 else 3)
+        if args.repeats is None:
+            args.repeats = 1 if args.pack == 1 else 3
         if args.repeats < 1:
             ap.error("--repeats is at least 1")
     {"plan": make_plan, "localize": localize, "throughput": throughput, "run": run, "status": status,
