@@ -405,7 +405,9 @@ def driver_command(manifest):
 
 def ledger(root: Path, volume_gb: int, volume_created_epoch: float, now: float | None = None) -> dict:
     """Every lease of the study (``root``/<lease name>/ control folders): lease seconds from creation to the
-    confirmed release (or now while unconfirmed), at the lease's rate ceiling, plus the volume charge."""
+    confirmed release (or now while unconfirmed), at the lease's rate ceiling, plus the volume charge. A lease the
+    research lead closed (``release-closed-by-lead.json``: a create that left no Pod id, so no release can be
+    confirmed, with the evidence that no Pod ran or was billed) counts at 0 and cites that record."""
     now = time.time() if now is None else now
     leases, seconds, usd = [], 0.0, 0.0
     for control in sorted(path for path in Path(root).iterdir() if (path / "lease" / "lease.json").exists()):
@@ -415,6 +417,14 @@ def ledger(root: Path, volume_gb: int, volume_created_epoch: float, now: float |
         start = read(attempt)["epoch"] if attempt.exists() else None
         if start is None:
             leases.append({"lease": lease["name"], "created": False})
+            continue
+        closed = control / "release-closed-by-lead.json"
+        if not confirmed.exists() and closed.exists():
+            record = read(closed)
+            require(record.get("lease") == lease["name"] and record.get("usd") == 0.0 and record.get("closed_by"),
+                    "a lead closure names this lease, 0 USD and who closed it")
+            leases.append({"lease": lease["name"], "seconds": 0.0, "usd_at_ceiling": 0.0, "release_confirmed": False,
+                           "closed_by_lead": pin(closed)})
             continue
         end = read(confirmed)["epoch"] if confirmed.exists() else now
         span = max(0.0, end - start)
