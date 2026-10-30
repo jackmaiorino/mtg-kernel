@@ -296,6 +296,9 @@ impl Trace {
         if let Some(v) = self.viewer.as_mut() {
             v.choice(s, d, a, at, src);
         }
+        // The turn of the simulation's latest focal non-forced decision
+        // (RS0's opportunity-turn win check).
+        self.cur.insert("lt".into(), json!(s.game_state().turn));
         let menu = menu_bits(s, focal, defs);
         let off = menu.iter().fold(0u8, |x, y| x | y);
         let ch = menu.get(a as usize).copied().unwrap_or(0);

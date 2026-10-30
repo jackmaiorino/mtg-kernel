@@ -71,6 +71,7 @@ mod play;
 mod policy_ensemble;
 pub(crate) mod process_cpu;
 mod profile_roots;
+mod reach;
 mod refresh;
 mod replay_labels;
 mod reuse_witness;
@@ -141,6 +142,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-reuse-prefix"
             | "s4a-reused-action"
             | "s4a-policy-ensemble"
+            | "s4a-reach"
     )
 }
 
@@ -1691,6 +1693,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-root-actions" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
+        "s4a-reach" => return reach::run(cfg, policy),
         _ => {}
     }
     let shared = load_shared(cfg)?;
