@@ -28,6 +28,13 @@ LANES/g-references-20261028/DESIGN.md v1.2, section 6, and FROZEN.md):
 * The supervisor is started detached with /dev/null for stdin, stdout and
   stderr (host_reservation_v1.spawn_detached on Linux, the equivalent of
   ``nohup ... < /dev/null``), so the SSH call that launches it returns at once.
+* A Pod's cpuset need not be 0..n-1: a 32-vCPU Pod on a 192-CPU host was
+  granted 5, 9, 11, 20, ... The package's placements are logical CPUs; when
+  they are not all granted, the lease binds them to the granted CPUs by
+  position (both sorted), writes the bound campaign, qualification spec and
+  inventory beside the staged inputs (content-addressed, never replacing
+  different bytes), launches with those and records the map in
+  ``cpu-binding.json``. A package whose CPUs are all granted runs as built.
 * Recovery also brings back the dose records and the qualification folder.
 * ``ledger`` sums every lease of the study (control folders under one root):
   pod hours from the lease records, the conservative cost at the lease's rate
@@ -261,6 +268,75 @@ path = pathlib.Path(ARGS["result"])
 print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 '''
 
+POD_AFFINITY = '''#pod:affinity
+import os
+print(json.dumps(sorted(os.sched_getaffinity(0))))
+'''
+
+POD_WRITE = '''#pod:write
+import os, pathlib, uuid
+root = pathlib.Path(ARGS["root"])
+for item in ARGS["files"]:
+    target = pathlib.Path(item["path"])
+    need(target.is_relative_to(root), "outside the inputs: " + item["path"])
+    if target.exists() or target.is_symlink():
+        need(target.is_file() and not target.is_symlink() and digest(target) == item["sha256"],
+             "refusing to replace " + item["path"])
+        continue
+    target.parent.mkdir(parents=True, exist_ok=True)
+    need(target.parent.resolve().is_relative_to(root.resolve()), "outside the inputs: " + item["path"])
+    partial = target.with_name(target.name + "." + uuid.uuid4().hex + ".partial")
+    with partial.open("xb") as sink:
+        sink.write(item["text"].encode())
+        sink.flush()
+        os.fsync(sink.fileno())
+    os.replace(partial, target)
+    need(digest(target) == item["sha256"], "written file differs " + item["path"])
+print(json.dumps({"files": len(ARGS["files"])}))
+'''
+
+
+def cpu_binding(placement, granted):
+    """Logical placement CPUs to the Pod's granted CPUs by position (both sorted), or None when every placement
+    CPU is granted (the package runs as built)."""
+    logical, granted = sorted(placement["cpu_affinity"]), sorted(granted)
+    if set(logical) <= set(granted):
+        return None
+    require(len(granted) >= len(logical), "placement CPUs unavailable on the Pod")
+    return dict(zip(logical, granted))
+
+
+def bind_inputs(manifest, documents, binding):
+    """The bound campaign (and, for qualification, spec and inventory): every runpod CPU list mapped, the spec
+    naming the bound inventory. ``documents`` maps role to the package's bytes; returns role to (pin, text)."""
+    base, out = PurePosixPath(manifest["pod_root"]), {}
+
+    def mapped(cpus):
+        require(set(cpus) <= set(binding), "a CPU list names a CPU outside the placements")
+        return [binding[cpu] for cpu in cpus]
+
+    def store(role, value, name):
+        data = encoded(value)
+        digest = hashlib.sha256(data).hexdigest()
+        out[role] = ({"path": str(base / "inputs/objects" / digest / name), "sha256": digest}, data.decode())
+        return out[role][0]
+
+    campaign = json.loads(documents["campaign"])
+    campaign["placement"]["cpu_affinity"] = mapped(campaign["placement"]["cpu_affinity"])
+    for slot in campaign["placement_by_run"].values():
+        slot["cpu_affinity"] = mapped(slot["cpu_affinity"])
+    campaign["host_slots"]["cores"] = cloud.cores(campaign["placement"]["cpu_affinity"])
+    store("campaign", campaign, "campaign.json")
+    if manifest["mode"] == "qualification":
+        inventory = json.loads(documents["inventory"])
+        inventory["inventory"]["runpod"]["cpu_affinity"] = mapped(inventory["inventory"]["runpod"]["cpu_affinity"])
+        spec = json.loads(documents["qualification_spec"])
+        for slot in spec["slots"]:
+            slot["cpu_affinity"] = mapped(slot["cpu_affinity"])
+        spec["inventory"] = store("inventory", inventory, "inventory.json")
+        store("qualification_spec", spec, "qualification-spec.json")
+    return out
+
 
 class Cycle(cloud.Cycle):
     """nine_deck_cloud_v1.Cycle with the G driver (or the qualification tool) and G statuses."""
@@ -282,6 +358,48 @@ class Cycle(cloud.Cycle):
         result = self.pod.run(POD_RESULT, {"result": str(self.base / "campaign" / "qualification" / "RESULT.json")},
                               read_only=True)
         return bool(result) and result.get("passed") is True
+
+    def check_hardware(self):
+        """The base check, after binding the placements to the Pod's granted CPUs (cpu_binding)."""
+        granted = self.pod.run(POD_AFFINITY, {}, read_only=True)
+        self.binding = cpu_binding(self.manifest["placement"], granted)
+        if self.binding:
+            self.granted = granted
+            self.manifest["placement"] = {**self.manifest["placement"], "cpu_affinity":
+                                          [self.binding[cpu] for cpu in self.manifest["placement"]["cpu_affinity"]]}
+        super().check_hardware()
+
+    def stage(self):
+        """The base staging, then the bound inputs (when a binding exists) beside the staged ones."""
+        super().stage()
+        if getattr(self, "binding", None):
+            self.write_bound_inputs()
+
+    def write_bound_inputs(self):
+        documents = {"campaign": (self.package_dir / "campaign.json").read_bytes()}
+        require(hashlib.sha256(documents["campaign"]).hexdigest() == self.manifest["campaign"]["sha256"],
+                "package campaign differs from its pin")
+        originals = {"campaign": self.manifest["campaign"]}
+        if self.manifest["mode"] == "qualification":
+            with tarfile.open(self.package_dir / self.manifest["archives"]["inputs"]["file"]) as tar:
+                def member(item):
+                    data = tar.extractfile(str(PurePosixPath(item["path"]).relative_to(self.base))).read()
+                    require(hashlib.sha256(data).hexdigest() == item["sha256"], "package input differs from its pin")
+                    return data
+                originals["qualification_spec"] = self.manifest["qualification_spec"]
+                documents["qualification_spec"] = member(originals["qualification_spec"])
+                originals["inventory"] = json.loads(documents["qualification_spec"])["inventory"]
+                documents["inventory"] = member(originals["inventory"])
+        bound = bind_inputs(self.manifest, documents, self.binding)
+        self.pod.run(POD_WRITE, {"root": str(self.base / "inputs/objects"),
+                                 "files": [{**item, "text": text} for item, text in bound.values()]})
+        for role in ("campaign", "qualification_spec"):
+            if role in bound:
+                self.manifest[role] = bound[role][0]
+        write(self.control / "cpu-binding.json", {"granted": self.granted,
+                                                  "binding": {str(cpu): to for cpu, to in self.binding.items()},
+                                                  "package": originals,
+                                                  "bound": {role: item for role, (item, _) in bound.items()}})
 
     def check_volume_inputs(self):
         if self.manifest["mode"] == "production":

@@ -146,6 +146,88 @@ class PackageTests(unittest.TestCase):
                 gcloud.package(spec, Path(self.temp.name) / f"bad-{time.monotonic_ns()}")
 
 
+class FakePod:
+    def __init__(self, granted):
+        self.granted, self.calls = granted, []
+
+    def run(self, program, args, timeout=30, read_only=False):
+        self.calls.append((program.split("\n", 1)[0], args))
+        if program is gcloud.POD_AFFINITY:
+            return self.granted
+        if program is gcloud.POD_WRITE:
+            return {"files": len(args["files"])}
+        raise AssertionError(program.split("\n", 1)[0])
+
+
+class CpuBindingTests(unittest.TestCase):
+    # The 2026-10-30 Pod's granted CPUs: 32 of a 192-CPU host.
+    GRANTED = [5, 9, 11, 20, 25, 27, 52, 53, 54, 66, 74, 78, 79, 83, 85, 89, 101, 105, 107, 116, 121, 123, 148, 149,
+               150, 162, 170, 174, 175, 179, 181, 185]
+
+    def test_binding_by_position(self):
+        placement = {"cpu_affinity": list(range(32))}
+        self.assertIsNone(gcloud.cpu_binding(placement, range(32)))
+        self.assertIsNone(gcloud.cpu_binding(placement, range(64)))
+        binding = gcloud.cpu_binding(placement, list(reversed(self.GRANTED)))
+        self.assertEqual([binding[cpu] for cpu in range(32)], self.GRANTED)
+        with self.assertRaises(ValueError):
+            gcloud.cpu_binding(placement, self.GRANTED[:31])
+
+    def cycle(self, granted):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        fixture = Fixture(temp.name)
+        out = Path(temp.name) / "package"
+        gcloud.package(fixture.spec(), out)
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.package_dir, cycle.control = out, Path(temp.name) / "control"
+        cycle.manifest = read(out / "package.json")
+        cycle.base = gcloud.PurePosixPath(cycle.manifest["pod_root"])
+        cycle.pod = FakePod(granted)
+        with patch.object(cloud.Cycle, "check_hardware") as base_check, patch.object(cloud.Cycle, "stage"):
+            cycle.check_hardware()
+            cycle.stage()
+        base_check.assert_called_once()
+        return cycle, out
+
+    def test_a_scattered_cpuset_binds_the_inputs(self):
+        cycle, out = self.cycle(self.GRANTED)
+        self.assertEqual(cycle.manifest["placement"]["cpu_affinity"], self.GRANTED)
+        writes = [args for name, args in cycle.pod.calls if name == "#pod:write"]
+        self.assertEqual(len(writes), 1)
+        files = {Path(item["path"]).name: item for item in writes[0]["files"]}
+        self.assertEqual(set(files), {"campaign.json", "qualification-spec.json", "inventory.json"})
+        for item in files.values():
+            self.assertEqual(hashlib.sha256(item["text"].encode()).hexdigest(), item["sha256"])
+            self.assertEqual(item["path"], f"/workspace/{ROOT}/inputs/objects/{item['sha256']}/{Path(item['path']).name}")
+        campaign = json.loads(files["campaign.json"]["text"])
+        original = json.loads((out / "campaign.json").read_text())
+        self.assertEqual(campaign["placement_by_run"]["G3"]["cpu_affinity"], self.GRANTED[8:12])
+        self.assertEqual(campaign["placement"]["cpu_affinity"], self.GRANTED)
+        self.assertEqual(campaign["host_slots"]["cores"], ",".join(map(str, self.GRANTED)))
+        for key in ("play_imports", "storage", "runtime", "roots", "decks"):
+            self.assertEqual(campaign[key], original[key])
+        spec = json.loads(files["qualification-spec.json"]["text"])
+        self.assertEqual(spec["slots"][7]["cpu_affinity"], self.GRANTED[28:])
+        self.assertEqual(spec["inventory"], {"path": files["inventory.json"]["path"],
+                                             "sha256": files["inventory.json"]["sha256"]})
+        inventory = json.loads(files["inventory.json"]["text"])["inventory"]
+        self.assertEqual(inventory["runpod"]["cpu_affinity"], self.GRANTED)
+        self.assertNotIn("cpu_affinity", inventory["desktop"])
+        command = gcloud.driver_command(cycle.manifest)
+        self.assertEqual(command[command.index("--campaign") + 1], files["campaign.json"]["path"])
+        self.assertEqual(command[command.index("--spec") + 1], files["qualification-spec.json"]["path"])
+        record = read(cycle.control / "cpu-binding.json")
+        self.assertEqual(record["binding"]["8"], self.GRANTED[8])
+        self.assertEqual(record["package"]["campaign"], read(out / "package.json")["campaign"])
+
+    def test_a_granted_placement_runs_as_built(self):
+        cycle, out = self.cycle(list(range(32)))
+        self.assertEqual(cycle.manifest, read(out / "package.json"))
+        self.assertEqual([name for name, _ in cycle.pod.calls], ["#pod:affinity"])
+        self.assertFalse((cycle.control / "cpu-binding.json").exists())
+
+
 class LeaseTests(unittest.TestCase):
     def test_recovery_includes_doses_and_qualification(self):
         self.assertIn('"doses", "qualification"', gcloud.POD_RECOVER)
