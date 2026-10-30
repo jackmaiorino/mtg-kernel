@@ -293,13 +293,11 @@ class LeaseProgress(base.LeaseProgress):
     def beat(self, finished: bool = False) -> None:
         with self.lock:
             stamp = time.time()
-            alive = self.observe(stamp)
+            alive = self.observe(stamp)  # native_alive from in-flight attempts' own processes
             for run, entry in list(self.active.items()):
                 attempt = entry["attempts"][-1] if entry["attempts"] else None
-                if attempt is None or "outcome" in attempt:
+                if attempt is None or "outcome" in attempt or "finished" in attempt:
                     continue
-                ticks = base.native_ticks(Path(attempt["root"]))
-                alive = alive or (ticks is not None and ticks >= 0)
                 count = completed_updates(Path(attempt["native"]))
                 key = attempt["native"]
                 if count > self.counts.get(key, 0):

@@ -222,6 +222,15 @@ class DriverTests(unittest.TestCase):
         progress.touch()
         self.assertGreater(beat()["last_activity_epoch"], 0)
         self.assertEqual(beat()["completed_updates"], 1)
+        for marker in ("finished", "outcome"):  # a terminal attempt's later updates are never counted
+            terminal = {"root": str(dispatch), "native": str(native), "dispatch": attempt["dispatch"], marker: "x"}
+            progress.active["G1"] = {"attempts": [terminal]}
+            folder = native / "iterations" / f"00000{2 if marker == 'finished' else 3}" / "attempt-000000" / "update"
+            folder.mkdir(parents=True)
+            (folder / "update.json").write_text("{}")
+            progress.activity = 0
+            record = beat()
+            self.assertEqual((record["last_activity_epoch"], record["completed_updates"]), (0, 1))
 
     def test_pack_slots_and_native_root(self):
         raw = json.loads(self.path.read_text())

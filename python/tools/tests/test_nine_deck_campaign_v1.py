@@ -209,10 +209,11 @@ class DriverTests(unittest.TestCase):
         children = {}
         for name, code in (("idle", "import time; time.sleep(30)"), ("busy", "while True: pass")):
             children[name] = subprocess.Popen([sys.executable, "-c", code])
+            started_unix = time.time()  # as the dispatcher records it, just after Popen
             self.addCleanup(children[name].wait)
             self.addCleanup(children[name].kill)
             root = self.root / name; root.mkdir()
-            (root / "started.json").write_text(json.dumps({"pid": children[name].pid}))
+            (root / "started.json").write_text(json.dumps({"pid": children[name].pid, "started_unix": started_unix}))
         time.sleep(1)  # interpreter start-up is over
         progress.active["r1"] = {"attempts": [{"root": str(self.root / "idle")}]}
         progress.beat(); time.sleep(0.3); progress.beat()
