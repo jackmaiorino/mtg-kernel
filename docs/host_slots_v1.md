@@ -13,7 +13,7 @@ python host_slots_v1.py submit --log FILE --lane LANE --work-id WORK --cores N -
 
 `run` claims N free cores and pins `COMMAND` and every process it starts to them, at below-normal priority by default. On Windows this uses a job object, so the whole tree also dies if the runner is killed. When the tree ends, the claim is freed.
 
-With `--wait`, the claim queues and starts in arrival order once cores are free. Without `--wait`, it exits with code 3 when there is no room. `submit` starts a detached waiting `run` that logs to `FILE`, and returns the claim id immediately.
+With `--wait`, the claim queues and starts in arrival order once cores are free. Each poll lists the slots folder first: if the listing fails, or a queue file ahead of the request exists but cannot be read, the true order is unknown and the request waits. Without `--wait`, it exits with code 3 when there is no room. `submit` starts a detached waiting `run` that logs to `FILE`, and returns the claim id immediately.
 
 On Windows, a bare `bash` runs Git Bash (the first on `PATH`, then `C:/Program Files/Git/bin/bash.exe`): Windows would otherwise start WSL's `bash.exe` from System32, which cannot see drive paths such as `D:/`. WSL's bash itself is refused (exit 6) before the request takes a queue turn.
 
@@ -31,11 +31,20 @@ It starts only when all of these hold:
 
 - it fits in the cores free now, without taking any background claim's cores (it never suspends CI work);
 - it and the head are both ordinary requests (later ordinary requests overtake a background head, so its protection could not hold), and the head was queued under the current per-host config (requests from launchers older than backfill are never jumped);
-- no earlier request behind the head is also eligible;
+- no earlier request behind the head is also eligible, and every queue, claim and delay file reads (while one does not, the true head, its claims or its window are unknown, so nothing backfills);
 - no timed reservation is held, and the host has at most 12 live claims (backfills and background claims included);
-- it cannot delay the head. The live claims, backfills included, could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with the remaining backfills running, and an ordinary head must not need any background claim's cores that it would not have needed anyway (it would wait for them to suspend).
+- it cannot delay the head, or its delay is bounded (below). The live claims, backfills included, could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with the remaining backfills running, and an ordinary head must not need any background claim's cores that it would not have needed anyway (it would wait for them to suspend).
 
-The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations. `--max-seconds` is at most 30 days. Past it, `status` lists the claim under `backfill` with `overdue: true`; it is not stopped, suspended or preempted for that. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
+**Bounded delay.** A request that could delay the head (some release order would leave the head waiting on backfills) may still start when:
+
+- the head declared its own `--max-seconds H` and cannot start right now (a head that can start now is never jumped, by any backfill);
+- every delaying backfill admitted for that head, this one included, fits in one window from the first one's start to the latest deadline, of at most min(15 minutes, H / 10). The head can only be held up while one of them runs, so that window bounds its total delay, however many there are. The window is kept in `delay-<head id>.json` beside the claims, so it does not slide when earlier backfills end, and it is measured on the host's monotonic clock, so a clock change cannot stretch it. It is removed once its head leaves the queue;
+- no earlier delaying backfill for that head is overdue, and its window file reads (a file that exists but cannot be read refuses);
+- the request comes from a launcher that applies this rule (its ticket records `backfill_policy: 2`). An older launcher's ticket is judged by the zero-delay rule it applies itself, so it never holds back the requests behind it.
+
+Every backfill records `deadline_mono`, which `status` uses for `overdue`. A delaying one also records `delays_head`, `delay_bound_seconds` (the window so far) and `delay_limit_seconds`. `status` shows the bound and the limit for every backfill (0 and none for one that cannot delay its head). The bound relies on backfills keeping their declared limits; nothing is preempted.
+
+The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations; the bounded-delay rule uses only the declared limits. `--max-seconds` is at most 30 days. Past it, `status` lists the claim under `backfill` with `overdue: true`; it is not stopped, suspended or preempted for that. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
 
 Deploying: ticket names are chosen under the admission mutex, but older versions choose them before taking it. Replace every deployed copy while no `host_slots_v1.py` process of any version is running, so no older launcher can publish an earlier-named ticket after a backfill is proved.
 

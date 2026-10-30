@@ -457,8 +457,8 @@ class HostSlotsTests(unittest.TestCase):
         background = {"id": "b" * 32, "background": True}
         earlier = {"id": "c" * 32}
         own = {"id": claim_id}
-        with patch.object(slots, "live_tickets", side_effect=[
-                [background, earlier, own], [background, own]]), \
+        with patch.object(slots, "_snapshot", side_effect=[
+                snapshot_of([background, earlier, own]), snapshot_of([background, own])]), \
                 patch.object(slots, "_run_claimed", return_value=0) as launch, \
                 patch.object(slots.time, "sleep") as sleep:
             result = slots.run("probe", "ordinary", 1, ["unused"], wait=True, claim_id=claim_id)
@@ -475,8 +475,13 @@ class HostSlotsTests(unittest.TestCase):
         mark = script(tmp_path, "mixed-mark.py", "open(sys.argv[1], 'a').write(sys.argv[2] + '\\n')\n")
         legacy = script(tmp_path, "legacy-fifo.py", "class FilenameFIFO(list):\n"
                         "    def sort(self, *args, **kwargs): pass\n"
-                        "read_tickets = h.live_tickets\n"
-                        "h.live_tickets = lambda: FilenameFIFO(read_tickets())\n"
+                        "read_snapshot = h._snapshot\n"
+                        "def legacy_snapshot():\n"
+                        "    snap = read_snapshot()\n"
+                        "    if snap is not None:\n"
+                        "        snap['tickets'] = FilenameFIFO(snap['tickets'])\n"
+                        "    return snap\n"
+                        "h._snapshot = legacy_snapshot\n"
                         "raise SystemExit(h.main())\n")
         order = tmp_path / "mixed-order"
         ci = cli("run", "--wait", "--background", "--priority", "idle", "--lane", "ci",
@@ -674,6 +679,11 @@ class BackgroundProcessTests(unittest.TestCase):
                 controller.wait(timeout=30)
 
 
+def snapshot_of(tickets, claims=()):
+    """A `_snapshot` result with these live tickets and claims and nothing unreadable."""
+    return {"tickets": list(tickets), "claims": list(claims), "unreadable": set(), "names": set(), "records": {}}
+
+
 def config8(keep_free=0):
     return {"cores": [7, 6, 5, 4, 3, 2, 1, 0], "keep_free": keep_free, "priority": "below_normal"}
 
@@ -831,8 +841,7 @@ class BackfillAdmissionTests(unittest.TestCase):
         tickets = [head, {"id": own, "cores_wanted": 1, "background": False, "max_seconds": 30.0}]
         holder = {"id": "c" * 32, "cores": CPUS[1:], "background": False}
         seen, announced = [], []
-        with patch.object(slots, "live_tickets", return_value=tickets), \
-                patch.object(slots, "live_claims", return_value=[holder]), \
+        with patch.object(slots, "_snapshot", side_effect=lambda: snapshot_of(tickets, [holder])), \
                 patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
                     slots.read_json(claim)) or 0):
             # the head wants every CPU: with the backfill still running it could never start, so no backfill
@@ -896,6 +905,173 @@ class BackfillAdmissionTests(unittest.TestCase):
         self.assertEqual(set(seen[0]), {"schema", "id", "lane", "work_id", "pid", "creation_time", "background",
                                         "cores", "priority", "state", "acquired_at"})
 
+    def test_run_records_the_bounded_terms_and_the_window(self):
+        # review r1: through run(), not only the admission function
+        pid, creation = slots.self_identity()
+        head_id = "a" * 32
+        config = slots.load_config()
+        slots.write_json(self.host / f"TESTHOST.slots/queue-{1:020d}-{head_id}.json", {
+            "schema": slots.SCHEMA, "id": head_id, "lane": "l", "work_id": "head", "pid": pid,
+            "creation_time": creation, "background": False, "cores_wanted": 1, "max_seconds": 3600.0,
+            "enqueued_at": slots.now_utc(), "config_sha256": slots.config_digest(config)})
+        terms = {"delays_head": head_id, "delay_bound_seconds": 60.0, "delay_limit_seconds": 360.0,
+                 "deadline_mono": 1060.0, "delay_window": {"head_id": head_id, "start_mono": 1000.0,
+                                                           "end_mono": 1060.0}}
+        seen, given = [], []
+
+        def admission(*args):
+            given.append(args)
+            return [CPUS[-1]], terms
+        with patch.object(slots, "backfill_admission", side_effect=admission), \
+                patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                    slots.read_json(claim)) or 0):
+            slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, max_seconds=60.0)
+        claim = seen[0]
+        self.assertEqual((claim["head_id"], claim["delays_head"], claim["delay_bound_seconds"],
+                          claim["delay_limit_seconds"], claim["deadline_mono"]), (head_id, head_id, 60.0, 360.0, 1060.0))
+        self.assertNotIn("delay_window", claim)
+        self.assertEqual(slots.read_json(self.host / f"TESTHOST.slots/delay-{head_id}.json"), terms["delay_window"])
+        self.assertIsNone(given[0][6])                       # no window was persisted before this admission
+        own = [t for t in given[0][3] if t["id"] == "b" * 32][0]
+        self.assertEqual(own["backfill_policy"], slots.BACKFILL_POLICY)
+
+    def test_windows_of_heads_that_left_are_pruned(self):
+        d = self.host / "TESTHOST.slots"
+        slots.write_json(d / f"delay-{'c' * 32}.json", {"head_id": "c" * 32})
+        slots.write_json(d / f"delay-{'d' * 32}.json", {"head_id": "d" * 32})
+        (d / f"queue-{1:020d}-{'d' * 32}.json").write_text("{ unreadable")   # review r2: still present
+        snap = slots._snapshot()
+        self.assertEqual(snap["unreadable"], {f"queue-{1:020d}-{'d' * 32}.json"})
+        slots._prune_delay_windows(snap)
+        self.assertFalse((d / f"delay-{'c' * 32}.json").exists())
+        self.assertTrue((d / f"delay-{'d' * 32}.json").exists())
+
+    def test_a_failed_folder_scan_admits_nothing(self):
+        # review r4: Path.glob returns nothing on a listing error; the scan must fail instead
+        with patch.object(slots.os, "scandir", side_effect=PermissionError("denied")):
+            self.assertIsNone(slots._snapshot())
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "head", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3)
+
+    def test_no_request_starts_behind_an_unreadable_queue_file(self):
+        # review r4: an unreadable true head must not let the next request start as head
+        (self.host / f"TESTHOST.slots/queue-{1:020d}-{'9' * 32}.json").write_text("{ torn")
+        with patch.object(slots, "_run_claimed", return_value=0) as ran:
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "next", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3)
+        ran.assert_not_called()
+
+    def test_nothing_backfills_while_a_claim_file_is_unreadable(self):
+        # review r4: an unreadable delaying backfill's claim would escape the overdue guard
+        (self.host / f"TESTHOST.slots/claim-{'8' * 32}.json").write_text("{ torn")
+        self.write_head("a" * 32)
+        with patch.object(slots, "backfill_admission") as admission, \
+                patch.object(slots, "available", return_value=[]):
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3,
+                          max_seconds=60.0)
+        admission.assert_not_called()
+
+    def test_an_unreadable_window_refuses_every_delaying_backfill(self):
+        # review r2: a failed read must not start a fresh window
+        d = self.host / "TESTHOST.slots"
+        self.assertIsNone(slots._snapshot_window(slots._snapshot(), "e" * 32))
+        (d / f"delay-{'e' * 32}.json").write_text("{ torn")
+        window = slots._snapshot_window(slots._snapshot(), "e" * 32)
+        self.assertEqual(window, {"unreadable": True})
+        head = {**ticket("e" * 32, 4, 3600.0), "config_sha256": slots.config_digest(config8())}
+        self.assertIsNone(slots.backfill_admission(config8(), FREE, BoundedDelayBackfillTests.CLAIMS,
+                                                   [head, bounded("t", 2, 60.0)], "t", 1000.0, window))
+
+    def test_a_window_whose_metadata_cannot_be_read_refuses(self):
+        # review r3: Path.exists() is False on a permission error; only a confirmed absence is "no window"
+        slots.write_json(self.host / f"TESTHOST.slots/delay-{'e' * 32}.json", {"head_id": "e" * 32})
+        real_stat, real_read = slots.os.stat, slots.read_json
+
+        def denied(path, *a, **k):
+            if str(path).endswith(f"delay-{'e' * 32}.json"):
+                raise PermissionError("denied")
+            return real_stat(path, *a, **k)
+        with patch.object(slots.os, "stat", side_effect=denied), \
+                patch.object(slots, "read_json", side_effect=lambda path: None if str(path).endswith(
+                    f"delay-{'e' * 32}.json") else real_read(path)):
+            self.assertEqual(slots._snapshot_window(slots._snapshot(), "e" * 32), {"unreadable": True})
+
+    def test_a_read_that_fails_once_never_drops_a_record_from_the_decision(self):
+        # review r5: every file is read once per poll, so a transient failure is seen as unreadable, never as
+        # an absent head ticket or an absent claim
+        self.write_head("a" * 32, stamp=1)
+        head_name = f"queue-{1:020d}-{'a' * 32}.json"
+        real_read, failed = slots.read_json, []
+
+        def once(path):
+            if Path(path).name == head_name and not failed:
+                failed.append(path)
+                return None
+            return real_read(path)
+        with patch.object(slots, "read_json", side_effect=once):
+            snap = slots._snapshot()
+        self.assertIn(head_name, snap["unreadable"])
+        self.assertEqual([t["id"] for t in snap["tickets"]], [])
+        self.assertEqual(len(failed), 1)
+
+    def write_head(self, head_id, stamp=2):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/queue-{stamp:020d}-{head_id}.json", {
+            "schema": slots.SCHEMA, "id": head_id, "lane": "l", "work_id": "head", "pid": pid,
+            "creation_time": creation, "background": False, "cores_wanted": 1, "max_seconds": 3600.0,
+            "enqueued_at": slots.now_utc(), "config_sha256": slots.config_digest(slots.load_config())})
+
+    def test_nothing_backfills_while_a_queue_file_is_unreadable(self):
+        # review r3: an unreadable head ticket would hand admission to the next ticket's fresh budget
+        (self.host / f"TESTHOST.slots/queue-{1:020d}-{'9' * 32}.json").write_text("{ torn")
+        self.write_head("a" * 32)
+        with patch.object(slots, "backfill_admission") as admission, \
+                patch.object(slots, "available", return_value=[]):
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3,
+                          max_seconds=60.0)
+        admission.assert_not_called()
+
+    def test_every_new_backfill_records_a_monotonic_deadline(self):
+        # review r3: zero-delay backfills too, so status can flag them overdue after a wall-clock change
+        self.write_head("a" * 32)
+        seen = []
+        before = slots.time.monotonic()
+        with patch.object(slots, "backfill_admission", return_value=([CPUS[-1]], None)), \
+                patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                    slots.read_json(claim)) or 0):
+            slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, max_seconds=60.0)
+        self.assertNotIn("delays_head", seen[0])
+        self.assertGreaterEqual(seen[0]["deadline_mono"], before + 60.0)
+        self.assertLessEqual(seen[0]["deadline_mono"], slots.time.monotonic() + 60.0)
+
+    def test_status_uses_the_monotonic_deadline(self):
+        # review r2: a wall-clock rollback must not hide an overdue backfill
+        pid, creation = slots.self_identity()
+        base = {"schema": slots.SCHEMA, "pid": pid, "creation_time": creation, "lane": "l", "work_id": "w",
+                "background": False, "priority": "below_normal", "state": "running", "acquired_at": slots.now_utc(),
+                "backfill": True, "max_seconds": 60.0, "head_id": "f" * 32,
+                "deadline_at": "9999-01-01T00:00:00.000+00:00"}
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'5' * 32}.json", {
+            **base, "id": "5" * 32, "cores": [CPUS[-1]], "deadline_mono": slots.time.monotonic() - 1.0})
+        rows = {b["id"]: b["overdue"] for b in slots.status()["backfill"]}
+        self.assertEqual(rows, {"5" * 32: True})
+
+    def test_status_shows_each_backfills_delay_bound(self):
+        pid, creation = slots.self_identity()
+        base = {"schema": slots.SCHEMA, "pid": pid, "creation_time": creation, "lane": "l", "work_id": "w",
+                "background": False, "priority": "below_normal", "state": "running", "acquired_at": slots.now_utc(),
+                "backfill": True, "max_seconds": 300.0, "head_id": "f" * 32,
+                "deadline_at": "9999-01-01T00:00:00.000+00:00"}
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'3' * 32}.json", {**base, "id": "3" * 32,
+                         "cores": [CPUS[-1]], "delays_head": "f" * 32, "delay_bound_seconds": 300.0,
+                         "delay_limit_seconds": 360.0})
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'4' * 32}.json", {**base, "id": "4" * 32,
+                         "cores": [CPUS[0]]})
+        rows = {b["id"]: (b["delay_bound_seconds"], b["delay_limit_seconds"]) for b in slots.status()["backfill"]}
+        self.assertEqual(rows, {"3" * 32: (300.0, 360.0), "4" * 32: (0.0, None)})
+
     def test_status_flags_an_overdue_backfill_and_keeps_it(self):
         pid, creation = slots.self_identity()
         base = {"schema": slots.SCHEMA, "pid": pid, "creation_time": creation, "lane": "l", "work_id": "w",
@@ -912,6 +1088,93 @@ class BackfillAdmissionTests(unittest.TestCase):
         self.assertEqual(sorted((b["id"], b["overdue"], b["head_id"]) for b in status["backfill"]),
                          [("2" * 32, False, "f" * 32), ("e" * 32, True, "f" * 32)])
         self.assertEqual(len(status["claims"]), 3)  # flagged, never removed or stopped
+
+
+def bounded(name, wanted, max_seconds=60.0, **extra):
+    """A request from a launcher that applies the bounded-delay rule."""
+    return ticket(name, wanted, max_seconds, backfill_policy=slots.BACKFILL_POLICY, **extra)
+
+
+class BoundedDelayBackfillTests(unittest.TestCase):
+    """A backfill that could delay the head starts only when every delaying backfill for that head fits in one
+    persisted window, on the monotonic clock, of at most min(15 minutes, 10% of the head's declared limit)."""
+    # Releasing either claim alone lets a 4-core head start without the backfill (5 free) but not with it.
+    CLAIMS = [{"cores": [7, 6, 5]}, {"cores": [4, 3, 2]}]
+
+    def admit(self, claims, head, small, now=1000.0, window=None, tickets=None):
+        tickets = tickets or [head, small]
+        tickets = [{**tickets[0], "config_sha256": slots.config_digest(config8())}, *tickets[1:]]
+        return slots.backfill_admission(config8(), FREE, claims, tickets, small["id"], now, window)
+
+    def test_a_delay_within_the_bound_is_admitted_with_its_terms(self):
+        head = ticket("head", 4, 3600.0)                   # limit min(900, 360) = 360 s
+        cores, terms = self.admit(self.CLAIMS, head, bounded("t", 2, 300.0))
+        self.assertEqual(cores, [0, 1])
+        self.assertEqual(terms, {"delays_head": "head", "delay_bound_seconds": 300.0, "delay_limit_seconds": 360.0,
+                                 "deadline_mono": 1300.0,
+                                 "delay_window": {"head_id": "head", "start_mono": 1000.0, "end_mono": 1300.0}})
+        self.assertIsNone(self.admit(self.CLAIMS, head, bounded("t", 2, 361.0)))
+        long_head = ticket("head", 4, 36000.0)             # limit min(900, 3600) = 900 s
+        self.assertEqual(self.admit(self.CLAIMS, long_head, bounded("t", 2, 900.0))[1]["delay_limit_seconds"], 900.0)
+        self.assertIsNone(self.admit(self.CLAIMS, long_head, bounded("t", 2, 901.0)))
+
+    def test_the_window_persists_after_its_backfills_end(self):
+        # review r1: windows rebuilt from live claims slid forward as backfills ended (the head waited 661 s
+        # under a 360 s limit). A 2-core backfill here delays the head.
+        head = ticket("head", 4, 3600.0)
+        window = self.admit(self.CLAIMS, head, bounded("a", 2, 300.0), now=0.0)[1]["delay_window"]
+        self.assertEqual((window["start_mono"], window["end_mono"]), (0.0, 300.0))
+        # a has ended; the persisted window still starts at 0
+        self.assertIsNone(self.admit(self.CLAIMS, head, bounded("b", 2, 60.0), now=301.0, window=window))
+        terms = self.admit(self.CLAIMS, head, bounded("b", 2, 59.0), now=301.0, window=window)[1]
+        self.assertEqual((terms["delay_bound_seconds"], terms["delay_window"]["start_mono"]), (360.0, 0.0))
+
+    def test_a_window_from_before_a_restart_or_another_head_refuses(self):
+        head = ticket("head", 4, 36000.0)
+        for window in ({"head_id": "head", "start_mono": 5000.0, "end_mono": 5100.0},   # monotonic clock reset
+                       {"head_id": "other", "start_mono": 900.0, "end_mono": 950.0},
+                       {"head_id": "head", "start_mono": "x", "end_mono": 950.0},
+                       {"head_id": "head", "start_mono": 990.0, "end_mono": 980.0}):
+            with self.subTest(window=window):
+                self.assertIsNone(self.admit(self.CLAIMS, head, bounded("t", 2, 60.0), window=window))
+        # the same request with no persisted window starts under fresh terms
+        self.assertIsNotNone(self.admit(self.CLAIMS, head, bounded("t", 2, 60.0))[1])
+
+    def test_a_head_without_a_declared_limit_gets_no_delaying_backfill(self):
+        self.assertIsNone(self.admit(self.CLAIMS, ticket("head", 4, None), bounded("t", 2, 60.0)))
+
+    def test_a_backfill_that_cannot_delay_carries_no_terms(self):
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        self.assertEqual(self.admit(claims, ticket("head", 4, 3600.0), bounded("t", 2, 60.0)), ([0, 1], None))
+
+    def test_a_live_delaying_backfill_that_is_overdue_or_unreadable_refuses(self):
+        head = ticket("head", 4, 36000.0)
+        window = {"head_id": "head", "start_mono": 900.0, "end_mono": 990.0}
+        for deadline in (999.0, None, "soon", True):
+            claims = [*self.CLAIMS, {"cores": [1], "backfill": True, "delays_head": "head", "deadline_mono": deadline}]
+            with self.subTest(deadline=deadline):
+                self.assertIsNone(self.admit(claims, head, bounded("t", 1, 60.0), window=window))
+        claims = [*self.CLAIMS, {"cores": [1], "backfill": True, "delays_head": "head", "deadline_mono": 1050.0}]
+        self.assertEqual(self.admit(claims, head, bounded("t", 1, 60.0), window=window)[1]["delay_bound_seconds"],
+                         160.0)
+
+    def test_a_head_that_can_start_now_is_never_jumped(self):
+        # review r1: also by a backfill that would leave it room
+        head = ticket("head", 4, 36000.0)
+        self.assertIsNone(self.admit([{"cores": [7, 6, 5, 4]}], head, bounded("t", 2, 60.0)))
+        self.assertIsNone(self.admit([], head, bounded("t", 2, 60.0)))
+
+    def test_an_older_launchers_ticket_is_judged_by_its_own_rule(self):
+        # review r1: eight cores, two 3-core claims, a 4-core head; the old launcher's delaying request must not
+        # be treated as eligible, or the 1-core request behind it would wait too
+        head, old, new = ticket("head", 4, 3600.0), ticket("old", 2, 300.0), bounded("new", 1, 60.0)
+        self.assertIsNone(self.admit(self.CLAIMS, head, old, tickets=[head, old, new]))
+        self.assertEqual(self.admit(self.CLAIMS, head, new, tickets=[head, old, new]), ([1], None))
+
+    def test_timed_reservations_still_stop_every_backfill(self):
+        head = {**ticket("head", 4, 36000.0), "config_sha256": slots.config_digest(config8())}
+        self.assertIsNone(slots.backfill_admission(config8(), {"held": True, "cores": [0]}, self.CLAIMS,
+                                                   [head, bounded("t", 2, 60.0)], "t", 1000.0))
 
 
 class BackfillProcessTests(unittest.TestCase):
