@@ -790,12 +790,27 @@ fn require_acceptance() -> Result<(), String> {
     Ok(())
 }
 
+/// Policy construction and play have large stack frames (the evaluator runs
+/// them on a 16 MiB worker thread), so the work runs on its own thread.
+const STACK_BYTES: usize = 256 << 20;
+
 pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
+    let out = cfg.out.clone();
+    std::thread::Builder::new()
+        .name("s4a-w4".into())
+        .stack_size(STACK_BYTES)
+        .spawn(move || run_on_worker(&out))
+        .map_err(|e| format!("spawn s4a-w4 worker: {e}"))?
+        .join()
+        .map_err(|_| "s4a-w4 worker panicked".to_string())?
+}
+
+fn run_on_worker(out_path: &str) -> Result<(), String> {
     let mode = env_path("W4_MODE")?;
     let jobs = read_jobs()?;
     let sources = read_sources()?;
     let mut out =
-        std::io::BufWriter::new(std::fs::File::create(&cfg.out).map_err(|e| e.to_string())?);
+        std::io::BufWriter::new(std::fs::File::create(out_path).map_err(|e| e.to_string())?);
     let by_id: BTreeMap<&str, &LabelJob> = jobs.iter().map(|j| (j.id.as_str(), j)).collect();
     match mode.as_str() {
         "accept" => {
