@@ -56,7 +56,11 @@ fn env_list(name: &str) -> Result<Vec<u64>, String> {
     let text = std::env::var(name).map_err(|_| format!("{name} is required"))?;
     text.split(',')
         .filter(|x| !x.trim().is_empty())
-        .map(|x| x.trim().parse().map_err(|_| format!("{name}: bad entry {x}")))
+        .map(|x| {
+            x.trim()
+                .parse()
+                .map_err(|_| format!("{name}: bad entry {x}"))
+        })
         .collect()
 }
 
@@ -118,7 +122,10 @@ pub(super) fn run(
     for step in &job.steps {
         let d = decision(&s).ok_or_else(|| format!("replay ended before decision {}", step.i))?;
         let rows = menu(&s)?;
-        let kinds: Vec<&str> = rows.iter().map(|r| r["kind"].as_str().unwrap_or("")).collect();
+        let kinds: Vec<&str> = rows
+            .iter()
+            .map(|r| r["kind"].as_str().unwrap_or(""))
+            .collect();
         let actor = acting(&d).0;
         let facts = super::wm_dump::facts(s.game_state());
         let here = json!({"actor": actor, "legal": d.legal_action_count, "rows": rows,
@@ -132,8 +139,10 @@ pub(super) fn run(
             continue;
         }
         if !same {
-            line(json!({"kind": "mismatch", "i": step.i, "record_seat": step.seat,
-                "record_kinds": step.kinds, "main": here}))?;
+            line(
+                json!({"kind": "mismatch", "i": step.i, "record_seat": step.seat,
+                "record_kinds": step.kinds, "main": here}),
+            )?;
             return Ok(());
         }
         line(json!({"kind": "step", "i": step.i, "status": "applied", "main": here}))?;
@@ -161,8 +170,16 @@ pub(super) fn run(
                 }
             }
         }
-        apply(&mut s, &d, step.row, &mut meter, PlayerId(step.seat), None, &defs)
-            .map_err(|e| format!("{e:?}"))?;
+        apply(
+            &mut s,
+            &d,
+            step.row,
+            &mut meter,
+            PlayerId(step.seat),
+            None,
+            &defs,
+        )
+        .map_err(|e| format!("{e:?}"))?;
     }
     line(json!({"kind": "done", "game_id": job.game_id}))
 }
