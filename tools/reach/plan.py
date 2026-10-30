@@ -41,21 +41,22 @@ def control_key(game_id: str, index: int) -> str:
     return hashlib.sha256(json.dumps([game_id, index]).encode("utf-8")).hexdigest()
 
 
-def read_rows(paths: list[Path]) -> tuple[dict, dict]:
+def read_rows_from(rows) -> tuple[dict, dict]:
     """Game rows and decision rows by game id (error rows mean no game row)."""
     games, decisions = {}, defaultdict(list)
-    for path in paths:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            if row["kind"] == "game":
-                games[row["id"]] = row
-            elif row["kind"] == "decision":
-                decisions[row["id"]].append(row)
-    for rows in decisions.values():
-        rows.sort(key=lambda r: r["index"])
+    for row in rows:
+        if row["kind"] == "game":
+            games[row["id"]] = row
+        elif row["kind"] == "decision":
+            decisions[row["id"]].append(row)
+    for found in decisions.values():
+        found.sort(key=lambda r: r["index"])
     return games, decisions
+
+
+def read_rows(paths: list[Path]) -> tuple[dict, dict]:
+    return read_rows_from(json.loads(line) for path in paths
+                          for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
 
 
 def deck_of(game: dict) -> str:
@@ -63,12 +64,17 @@ def deck_of(game: dict) -> str:
 
 
 def proof_line(row: dict) -> list[str]:
-    robust = row.get("robust") or {}
-    return robust.get("line") or row["oracle"].get("line") or []
+    """The robust line (a proven robust result always carries one)."""
+    return row["robust"]["line"]
 
 
 def opportunity(game: dict, rows: list[dict], cls: str) -> dict | None:
-    """The first robust opportunity turn of `cls`, its certified decision and roots k0..k2."""
+    """The first robust opportunity turn T of `cls`, its certified decision, and roots k0..k2.
+
+    Root k is the first recorded focal decision of turn T - 2k (the hero's
+    immediately preceding turns: turns alternate seats); a game whose turn
+    T - 2k holds no focal decision with the hero active is not eligible.
+    """
     deck = deck_of(game)
     proven = defaultdict(list)
     for r in rows:
@@ -77,14 +83,14 @@ def opportunity(game: dict, rows: list[dict], cls: str) -> dict | None:
     turn = next((t for t in sorted(proven) if classify(proof_line(proven[t][0]), deck) == cls), None)
     if turn is None:
         return None
-    hero_turns = sorted({r["turn"] for r in rows if r["active"] == r["focal"]})
-    if turn not in hero_turns or hero_turns.index(turn) < 2:
-        return None
-    position = hero_turns.index(turn)
-    first_hero = {t: min(r["index"] for r in rows if r["turn"] == t and r["active"] == r["focal"]) for t in hero_turns}
-    roots = {f"k{k}": (first_hero[hero_turns[position - k]], hero_turns[position - k]) for k in range(3)}
-    certified = proven[turn][0]["index"]
-    return {"turn": turn, "certified": certified, "roots": roots}
+    roots = {}
+    for k in range(3):
+        t = turn - 2 * k
+        hero = [r["index"] for r in rows if r["turn"] == t and r["active"] == r["focal"]]
+        if not hero:
+            return None
+        roots[f"k{k}"] = (min(hero), t)
+    return {"turn": turn, "certified": proven[turn][0]["index"], "roots": roots}
 
 
 def select_class(games: dict, decisions: dict, cls: str, deck: str | None, count: int, stratum: str) -> tuple[list, dict]:
@@ -121,8 +127,6 @@ def select_control(sources: list[tuple[dict, dict]]) -> list:
             seen.add(gid)
             picks.append({"stratum": "control", "deck": deck, "game_id": gid, "rank": len(seen) - 1,
                           "selected": len(seen) <= CONTROL_PER_DECK, "roles": [("ctrl", index, turn)]})
-            if len(seen) >= CONTROL_PER_DECK + 3:  # three spares per deck for replay refusals
-                break
     return picks
 
 
@@ -166,12 +170,12 @@ def main(argv=None) -> int:
     if a.dry_run:
         return 0
     jobs = read_jobs(a.spy_jobs + a.other_jobs)
-    lines, merged = [], {}
-    for p in picks:  # spares included; the runner takes replacements in rank order
+    lines, merged, missing = [], {}, []
+    for p in picks:  # spares included; replacements are taken in rank order
         job = jobs.get(p["game_id"])
         if job is None:
-            if p["selected"]:
-                raise SystemExit(f"no label job for selected game {p['game_id']}")
+            # Recorded as a refusal in rank order (section 6), never skipped silently.
+            missing.append({"stratum": p["stratum"], "game_id": p["game_id"], "rank": p["rank"], "selected": p["selected"]})
             continue
         for role, index, turn in p["roles"]:
             key = (p["game_id"], index)
@@ -182,6 +186,8 @@ def main(argv=None) -> int:
     for entry in merged.values():
         lines.append(json.dumps(entry, sort_keys=True))
     (a.out / "roots.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    inventory["missing_jobs"] = missing
+    (a.out / "inventory.json").write_text(json.dumps(inventory, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     return 0
 
 
