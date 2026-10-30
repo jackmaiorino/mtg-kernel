@@ -187,7 +187,35 @@ class StagePTests(unittest.TestCase):
         copy = json.loads((export / "COPY.json").read_text())
         hosts = {row["host"] for row in copy["files"]}
         self.assertTrue(all(h.startswith("/workspace/ex1/") for h in hosts))
-        self.assertEqual(len(copy["files"]), 6)   # config, parent, checkpoint, base, qualification, binary
+        # r1-c2's config, parent, checkpoint and base; the qualification and binary; the throughput config and the
+        # r2 checkpoint it starts from.
+        self.assertEqual(len(copy["files"]), 8)
+        self.assertTrue(local["throughput_config"]["path"].endswith("/throughput-config.json"))
+
+    def test_a_localized_host_runs_throughput_and_its_chain_from_copied_files(self):
+        self.make()
+        export = Path(self.tmp.name) / "export"
+        remote = Path(self.tmp.name) / "remote"
+        prefix = Path(self.tmp.name).as_posix()
+        stagep.main(["localize", "--plan", str(self.plan), "--host", "pod", "--export", str(export),
+                     "--map", f"{prefix}/stagep={remote.as_posix()}/stagep",
+                     "--map", f"{prefix}={remote.as_posix()}/inputs"])
+        copy = json.loads((export / "COPY.json").read_text())
+        for row in copy["files"]:
+            target = Path(row["host"])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(Path(row["local"]).read_bytes())
+        plan = Path(copy["plan"])
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_bytes((export / "PLAN.json").read_bytes())
+        (remote / "stagep" / "DELAY").write_text("0")
+        stagep.main(["throughput", "--plan", str(plan), "--host", "pod"])
+        record = json.loads((remote / "stagep" / "throughput" / "THROUGHPUT-pod.json").read_text())
+        self.assertTrue(record["state_equal"])
+        with self.assertRaises(SystemExit) as stop:
+            stagep.main(["run", "--plan", str(plan), "--chain", "r1-c2", "--fast-poll"])
+        self.assertEqual(stop.exception.code, 0)
+        self.assertTrue((remote / "stagep" / "chains" / "r1-c2" / "DONE.json").exists())
 
 
 if __name__ == "__main__":
