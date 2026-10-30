@@ -1,11 +1,17 @@
 """RS0 root inventory (collab LANES/reverse-search-20261029/RS0-PLAN.md section 3). Measurement only.
 
-usage: plan.py --spy-rows DIR --other-rows DIR --spy-jobs JOBS.jsonl... --other-jobs JOBS.jsonl... --out DIR
+usage: plan.py --spy-rows DIR --other-rows DIR --spy-jobs JOBS.jsonl... --other-jobs JOBS.jsonl...
+               [--refused REACH_ROWS.jsonl...] --out DIR [--dry-run]
 
 Reads step 1 win-check rows (`s4a-win-check` output) and the label jobs they
 were checked from, and writes:
-  roots.jsonl     one line per searched root, each carrying its label job;
-  inventory.json  the selection, its eligible counts and every source hash.
+  roots.jsonl     one line per selected root, each carrying its label job;
+  inventory.json  the selection, refusals, eligible counts and every source and tool hash.
+
+Replacement (RS0-PLAN.md section 3): pass the `s4a-reach` output of a run
+with --refused; refused games (or control roots) are skipped and the next
+eligible candidates in hash order are selected. Searches are deterministic,
+so rows of roots that stay selected are reused.
 
 The selection reads the rows alone (verdicts, lines, turns, actors); the jobs
 are attached afterwards and only for reconstruction. Nothing here chooses,
@@ -26,7 +32,7 @@ from summarize import classify  # noqa: E402  (the step 1 class rule, unchanged)
 SPY_GAMES = 36
 BURN_GAMES = 12
 CONTROL_PER_DECK = 3
-PLAN = "rs0-plan-v1"
+PLAN = "rs0-plan-v3"
 
 
 def sha256_file(path: Path) -> str:
@@ -93,41 +99,62 @@ def opportunity(game: dict, rows: list[dict], cls: str) -> dict | None:
     return {"turn": turn, "certified": proven[turn][0]["index"], "roots": roots}
 
 
-def select_class(games: dict, decisions: dict, cls: str, deck: str | None, count: int, stratum: str) -> tuple[list, dict]:
+def select_class(games: dict, decisions: dict, cls: str, deck: str, count: int, stratum: str,
+                 refused: dict) -> tuple[list, dict]:
+    """Eligible games in hash order; the first `count` not refused are selected."""
     eligible = []
     for gid, game in games.items():
-        if deck is not None and deck_of(game) != deck:
+        if deck_of(game) != deck:
             continue
         opp = opportunity(game, decisions.get(gid, []), cls)
         if opp is not None:
             eligible.append((game_key(gid), gid, opp))
     eligible.sort()
-    picks = []
+    picks, taken = [], 0
     for rank, (_, gid, opp) in enumerate(eligible):
         roles = [(role, index, turn) for role, (index, turn) in opp["roots"].items()]
         if opp["certified"] != opp["roots"]["k0"][0]:
             roles.append(("cert", opp["certified"], opp["turn"]))
-        picks.append({"stratum": stratum, "game_id": gid, "rank": rank, "selected": rank < count,
-                      "opportunity_turn": opp["turn"], "certified_index": opp["certified"], "roles": roles})
-    return picks, {"eligible": len(eligible), "selected": min(count, len(eligible))}
+        if gid in refused:
+            status = "refused"
+        elif taken < count:
+            status, taken = "selected", taken + 1
+        else:
+            break
+        picks.append({"stratum": stratum, "game_id": gid, "rank": rank, "status": status,
+                      "refusal": refused.get(gid), "opportunity_turn": opp["turn"],
+                      "certified_index": opp["certified"], "roles": roles})
+    return picks, {"eligible": len(eligible), "selected": taken}
 
 
-def select_control(sources: list[tuple[dict, dict]]) -> list:
+def select_control(sources: list[tuple[dict, dict]], refused: dict) -> tuple[list, dict]:
+    """Per deck, hero-turn decisions in key order; a refused candidate is skipped
+    (its game stays available); at most one accepted root per game."""
     by_deck = defaultdict(list)
     for games, decisions in sources:
         for gid, game in games.items():
             for r in decisions.get(gid, []):
-                by_deck[deck_of(game)].append((control_key(gid, r["index"]), gid, r["index"], r["turn"]))
-    picks = []
+                if r["active"] == r["focal"]:
+                    by_deck[deck_of(game)].append((control_key(gid, r["index"]), gid, r["index"], r["turn"]))
+    picks, candidates = [], {}
     for deck in sorted(by_deck):
-        seen, ranked = set(), sorted(by_deck[deck])
+        ranked = sorted(by_deck[deck])
+        candidates[deck] = len(ranked)
+        used = set()
         for rank, (_, gid, index, turn) in enumerate(ranked):
-            if gid in seen:
+            if len(used) >= CONTROL_PER_DECK:
+                break
+            if gid in used:
                 continue
-            seen.add(gid)
-            picks.append({"stratum": "control", "deck": deck, "game_id": gid, "rank": len(seen) - 1,
-                          "selected": len(seen) <= CONTROL_PER_DECK, "roles": [("ctrl", index, turn)]})
-    return picks
+            key = f"{gid}#{index}"
+            if key in refused:
+                picks.append({"stratum": "control", "deck": deck, "game_id": gid, "rank": rank, "status": "refused",
+                              "refusal": refused[key], "roles": [("ctrl", index, turn)]})
+                continue
+            used.add(gid)
+            picks.append({"stratum": "control", "deck": deck, "game_id": gid, "rank": rank, "status": "selected",
+                          "refusal": None, "roles": [("ctrl", index, turn)]})
+    return picks, candidates
 
 
 def read_jobs(paths: list[Path]) -> dict:
@@ -142,52 +169,77 @@ def read_jobs(paths: list[Path]) -> dict:
     return jobs
 
 
+def read_refusals(paths: list[Path]) -> dict:
+    """Replay refusals from `s4a-reach` error rows without a budget (root
+    rebuild errors): an opportunity game is refused whole; a control root by
+    its game and index."""
+    refused = {}
+    for path in paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("kind") != "error" or "budget" in row:
+                continue
+            for role in row.get("roles", []):
+                if role["stratum"] == "control":
+                    refused[row["root_id"]] = f"replay: {row['error']}"
+                else:
+                    refused[row["game_id"]] = f"replay: {row['error']}"
+    return refused
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--spy-rows", type=Path, required=True)
     ap.add_argument("--other-rows", type=Path, required=True)
     ap.add_argument("--spy-jobs", type=Path, nargs="*", default=[])
     ap.add_argument("--other-jobs", type=Path, nargs="*", default=[])
+    ap.add_argument("--refused", type=Path, nargs="*", default=[], help="s4a-reach output rows with replay refusals")
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--dry-run", action="store_true", help="selection and counts only; no jobs needed")
+    ap.add_argument("--dry-run", action="store_true", help="selection and counts only; jobs assumed present")
     a = ap.parse_args(argv)
     spy_files = sorted(a.spy_rows.glob("rows-*.jsonl"))
     other_files = sorted(a.other_rows.glob("rows-*.jsonl"))
     spy, other = read_rows(spy_files), read_rows(other_files)
-    spy_picks, spy_counts = select_class(*spy, "spy_line", "Spy", SPY_GAMES, "spy")
-    burn_picks, burn_counts = select_class(*other, "burn_lethal", "Burn", BURN_GAMES, "burn")
-    control = select_control([spy, other])
+    refused = read_refusals(a.refused)
+    jobs = {} if a.dry_run else read_jobs(a.spy_jobs + a.other_jobs)
+    if not a.dry_run:
+        # A game without a label job is refused like a replay failure.
+        for games, _ in (spy, other):
+            for gid in games:
+                if gid not in jobs:
+                    refused.setdefault(gid, "missing_job")
+    spy_picks, spy_counts = select_class(*spy, "spy_line", "Spy", SPY_GAMES, "spy", refused)
+    burn_picks, burn_counts = select_class(*other, "burn_lethal", "Burn", BURN_GAMES, "burn", refused)
+    control, candidates = select_control([spy, other], refused)
     picks = spy_picks + burn_picks + control
-    sources = {str(p): sha256_file(p) for p in spy_files + other_files + list(a.spy_jobs) + list(a.other_jobs)}
+    selected = [p for p in picks if p["status"] == "selected"]
+    tools = [Path(__file__).resolve(), Path(__file__).resolve().parents[1] / "win_check" / "summarize.py"]
     inventory = {"plan": PLAN, "spy": spy_counts, "burn": burn_counts,
-                 "control_selected": sum(p["selected"] for p in control), "sources": sources,
+                 "control_selected": sum(p["status"] == "selected" for p in control),
+                 "control_candidates": candidates,
+                 "sources": {str(p): sha256_file(p) for p in spy_files + other_files + list(a.spy_jobs) + list(a.other_jobs) + list(a.refused)},
+                 "tools": {p.name: sha256_file(p) for p in tools},
+                 "refusals": [{"stratum": p["stratum"], "game_id": p["game_id"], "rank": p["rank"], "reason": p["refusal"]}
+                              for p in picks if p["status"] == "refused"],
                  "games": [{k: v for k, v in p.items() if k != "roles"} | {"roles": [list(r) for r in p["roles"]]} for p in picks]}
+    roots = len({(p["game_id"], r[1]) for p in selected for r in p["roles"]})
+    inventory["roots"] = roots
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "inventory.json").write_text(json.dumps(inventory, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    selected = [p for p in picks if p["selected"]]
     print(json.dumps({"spy": spy_counts, "burn": burn_counts, "control": inventory["control_selected"],
-                      "roots": len({(p["game_id"], r[1]) for p in selected for r in p["roles"]})}))
+                      "roots": roots, "refusals": len(inventory["refusals"])}))
     if a.dry_run:
         return 0
-    jobs = read_jobs(a.spy_jobs + a.other_jobs)
-    lines, merged, missing = [], {}, []
-    for p in picks:  # spares included; replacements are taken in rank order
-        job = jobs.get(p["game_id"])
-        if job is None:
-            # Recorded as a refusal in rank order (section 6), never skipped silently.
-            missing.append({"stratum": p["stratum"], "game_id": p["game_id"], "rank": p["rank"], "selected": p["selected"]})
-            continue
+    merged = {}
+    for p in selected:
         for role, index, turn in p["roles"]:
-            key = (p["game_id"], index)
-            entry = merged.setdefault(key, {"root_id": f"{p['game_id']}#{index}", "game_id": p["game_id"], "index": index,
-                                            "turn": turn, "roles": [], "job": job})
-            entry["roles"].append({"stratum": p["stratum"], "role": role, "rank": p["rank"], "selected": p["selected"],
+            entry = merged.setdefault((p["game_id"], index), {"root_id": f"{p['game_id']}#{index}", "game_id": p["game_id"],
+                                                             "index": index, "turn": turn, "roles": [], "job": jobs[p["game_id"]]})
+            entry["roles"].append({"stratum": p["stratum"], "role": role, "rank": p["rank"], "selected": True,
                                    "opportunity_turn": p.get("opportunity_turn"), "certified_index": p.get("certified_index")})
-    for entry in merged.values():
-        lines.append(json.dumps(entry, sort_keys=True))
-    (a.out / "roots.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    inventory["missing_jobs"] = missing
-    (a.out / "inventory.json").write_text(json.dumps(inventory, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    (a.out / "roots.jsonl").write_text("".join(json.dumps(e, sort_keys=True) + "\n" for e in merged.values()), encoding="utf-8")
     return 0
 
 

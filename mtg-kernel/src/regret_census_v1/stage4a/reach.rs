@@ -11,10 +11,12 @@
 //! Environment: `REACH_ROOTS` (jsonl from `tools/reach/plan.py`),
 //! `REACH_BUDGETS` (comma list of selection transitions), `REACH_SEEDS`
 //! (comma list), optional `REACH_ROLES` (comma list of `stratum:role`; only
-//! roots carrying one of them are searched), `REACH_SPARES=1` (also search
-//! roots whose roles are all unselected spares), `REACH_SHARD` (`i/n`: roots
-//! whose position mod n is i), `REACH_IDENTITY=1` (instead of measuring, run
-//! each root plain and traced at the first budget and seed and compare).
+//! roots carrying one of them are searched), `REACH_SHARD` (`i/n`: roots
+//! whose position mod n is i), `REACH_LIMIT` (at most this many roots after
+//! the filters), `REACH_IDENTITY=1` (instead of measuring, run each root
+//! plain and traced at the first budget and seed and compare). The planner
+//! writes selected roots only; replacements come from re-planning with the
+//! refusals (`tools/reach/plan.py --refused`).
 
 use super::arms::{Limits, SimRecord};
 use super::bank::{bank_roles, guide_ctx};
@@ -541,7 +543,11 @@ pub(super) fn run(
             .filter(|x| !x.is_empty())
             .collect()
     });
-    let spares = std::env::var("REACH_SPARES").is_ok_and(|v| v == "1");
+    let limit: Option<usize> = match std::env::var("REACH_LIMIT") {
+        Ok(t) => Some(t.parse().map_err(|_| "REACH_LIMIT must be an integer")?),
+        Err(_) => None,
+    };
+    let mut taken = 0usize;
     let identity_mode = std::env::var("REACH_IDENTITY").is_ok_and(|v| v == "1");
     let (shard, shards) = match std::env::var("REACH_SHARD") {
         Ok(t) => {
@@ -570,7 +576,7 @@ pub(super) fn run(
         if r.game_id != r.job.id {
             return Err(format!("{}: root game id differs from its job", r.root_id));
         }
-        if !spares && !r.roles.iter().any(|x| x.selected) {
+        if !r.roles.iter().any(|x| x.selected) {
             continue;
         }
         if let Some(want) = &roles {
@@ -582,6 +588,10 @@ pub(super) fn run(
                 continue;
             }
         }
+        if limit.is_some_and(|n| taken >= n) {
+            break;
+        }
+        taken += 1;
         let roles_json: Vec<Value> = r
             .roles
             .iter()
