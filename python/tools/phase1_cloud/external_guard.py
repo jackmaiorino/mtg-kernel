@@ -64,10 +64,17 @@ Completion needs every known ID confirmed absent in this process, two spaced
 empty censuses, every known ID durable and no store error. A create attempt
 (lease/create-attempt.json or lease/create-ambiguous.json) is resolved only by
 readable evidence: a valid receipt, a retained 'receipt' record, a definite
-provider refusal, or lease/ambiguous-resolved-by-operator.json; until then
-completion is blocked, and lease/create-ambiguous.json is also a release
-reason. Release authorization never proves that a create failed. once=True
-runs a single pass (a watchdog).
+provider refusal, lease/ambiguous-resolved-by-operator.json, or
+lease/ambiguous-resolved-by-guard.json; until then completion is blocked, and
+lease/create-ambiguous.json is also a release reason. Release authorization
+never proves that a create failed. The guard writes its own resolution only
+while it retains no Pod ID at all (a late Pod in any census is retained, so it
+never resolves), after clear censuses of the exact name for
+AMBIGUOUS_CLEAR_SECONDS without a break, and when a live account read shows
+spend no higher than the read recorded just before the POST
+(lease/funding-at-create.json): no hidden Pod is billing. Any other Pod on the
+account keeps the create unresolved for an operator. once=True runs a single
+pass (a watchdog).
 
 usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json required)
 """
@@ -95,6 +102,10 @@ CONTROLLER_DONE_SECONDS = 600     # completion.json with nothing created ends an
 RELEASE_POLL_SECONDS = 5          # a creator's own release loop (I4)
 ONCE_RELEASE_SECONDS = 180        # a watchdog pass's own release bound (I4)
 OPERATOR_RESOLUTION = 'lease/ambiguous-resolved-by-operator.json'
+GUARD_RESOLUTION = 'lease/ambiguous-resolved-by-guard.json'
+AMBIGUOUS_CLEAR_SECONDS = 1800    # clear exact-name censuses, unbroken, before the guard resolves a create
+FUNDS_POLL_SECONDS = 300          # at most one account read per five minutes for that resolution
+SPEND_TOLERANCE_USD_HOUR = 0.001
 KNOWN_DIR = 'lease/known-pods'
 CREATE_ROLES = ('receipt', 'adopted')   # roles that mark a retained ID as the create result (I3)
 POD_ID = re.compile('[A-Za-z0-9]+')
@@ -174,7 +185,7 @@ def create_evidence(root):
 def ambiguous_unresolved(root):
     root = Path(root)
     return (root / 'lease/create-ambiguous.json').exists() and not create_evidence(root) \
-        and not (root / OPERATOR_RESOLUTION).exists()
+        and not resolved(root)
 
 
 def definite_create_failure(root):
@@ -193,7 +204,12 @@ def create_unresolved(root):
     root = Path(root)
     attempted = (root / 'lease/create-attempt.json').exists() or (root / 'lease/create-ambiguous.json').exists()
     return attempted and not create_evidence(root) and not definite_create_failure(root) \
-        and not (root / OPERATOR_RESOLUTION).exists()
+        and not resolved(root)
+
+
+def resolved(root):
+    """An operator's or the guard's own resolution of a create that named no Pod."""
+    return (Path(root) / OPERATOR_RESOLUTION).exists() or (Path(root) / GUARD_RESOLUTION).exists()
 
 
 def remember_in(folder, pod_id, role, epoch):
@@ -548,18 +564,28 @@ def resolve_or_alert(client, deadline, alert_path, sleep=None, also=()):
     return targets & client.verified_absent
 
 
+def live_funds(key):
+    """Fresh account read (no Pod ID, so outside the Pod provider boundary), as prepare_lease.live_funds."""
+    return Provider(key, 'funding').funds()
+
+
+def census_clear_now(census_ok, malformed, listed):
+    return census_ok and not malformed and not listed
+
+
 def run(root, key, pods=None, provider=None, clock=time.time, sleep=time.sleep,
-        once=False, preserve=None, marker_probe=None):
+        once=False, preserve=None, marker_probe=None, funds=None):
     root = Path(root); lease = read(root / 'lease/lease.json'); validate(lease)
     # Leaving this block (completion, a --once pass, any exception) resolves every ID that is neither
     # durable nor verified absent, or fails loudly (I4).
     with LeaseClient(root / KNOWN_DIR, lease['name'], key, provider, pods, clock, sleep,
                      root / 'ALERT-pod-not-released.json', min_release_seconds=ONCE_RELEASE_SECONDS) as client:
-        return _guard(root, lease, client, clock, sleep, once, preserve, marker_probe)
+        return _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, funds)
 
 
-def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe):
+def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, funds=None):
     highest = lease['rate_ceiling_usd_hour']; preserved = False; deletes = 0; last_probe = None
+    clear_since = None; clear_censuses = 0; last_funds = None  # the guard's own create resolution
     census_absence = AbsenceConfirmer(clock)
     id_absence = {}
     memory = client.retained      # known ID -> role; nothing leaves it (I4)
@@ -709,6 +735,29 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe):
             failures.append('store:' + ','.join(store_errors))
         if failures and open_known:
             reason = reason or 'guard_failure'
+        # A create that named no Pod: resolved here only with no retained ID, unbroken clear censuses and an
+        # account spend no higher than just before the POST
+        if census_clear_now(census_ok, malformed, listed) and not memory and create_unresolved(root):
+            clear_since = now if clear_since is None else clear_since
+            clear_censuses += 1
+        else:
+            clear_since = None
+            clear_censuses = 0
+        if (clear_since is not None and now - clear_since >= AMBIGUOUS_CLEAR_SECONDS and funds is not None
+                and (last_funds is None or now - last_funds >= FUNDS_POLL_SECONDS)):
+            last_funds = now
+            try:
+                baseline = float(read(root / 'lease/funding-at-create.json')['account_spend_usd_hour'])
+                observed_funds = funds()
+                spend = float(observed_funds['account_spend_usd_hour'])
+                if spend <= baseline + SPEND_TOLERANCE_USD_HOUR:
+                    write(root / GUARD_RESOLUTION, {
+                        'schema': 'phase1-cloud-ambiguous-resolution/v1', 'exact_name': lease['name'],
+                        'epoch': clock(), 'clear_since_epoch': clear_since, 'clear_censuses': clear_censuses,
+                        'baseline_spend_usd_hour': baseline, 'account_spend_usd_hour': spend,
+                        'balance_usd': observed_funds.get('balance_usd')})
+            except Exception as e:  # noqa: BLE001 - no resolution without both readings
+                note('external-funds-error.json', {'epoch': clock(), 'error_type': type(e).__name__})
         ambiguous = primary is None and ambiguous_unresolved(root)
         if ambiguous:
             reason = reason or 'ambiguous_create'
@@ -771,6 +820,7 @@ if __name__ == '__main__':
     if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != '--once'):
         raise SystemExit(__doc__)
     try:
-        run(sys.argv[1], api_key(), once=len(sys.argv) == 3)
+        key = api_key()
+        run(sys.argv[1], key, once=len(sys.argv) == 3, funds=lambda: live_funds(key))
     except RuntimeError as error:
         raise SystemExit(str(error))

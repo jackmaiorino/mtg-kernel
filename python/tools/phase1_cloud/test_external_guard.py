@@ -352,6 +352,73 @@ class UnresolvedCreateTests(Base):
         self.assertEqual(self.loop(World([]), polls=10), 'returned')
 
 
+class SelfResolutionTests(Base):
+    """A create that named no Pod: the guard resolves it itself only with no retained ID, clear exact-name
+    censuses for AMBIGUOUS_CLEAR_SECONDS and an account spend no higher than just before the POST."""
+
+    def ambiguous(self, baseline=0.05):
+        write(self.root / 'lease/create-attempt.json', {})
+        write(self.root / 'lease/create-ambiguous.json', {'error_type': 'RuntimeError', 'pod_id': None})
+        write(self.root / 'lease/create-pod-failure.json', {'definite': False})
+        if baseline is not None:
+            write(self.root / 'lease/funding-at-create.json', {'account_spend_usd_hour': baseline})
+        write(self.root / 'completion.json', {'complete': False})
+
+    def polls(self):
+        return int(eg.AMBIGUOUS_CLEAR_SECONDS / eg.POLL_SECONDS) + 20
+
+    def test_clear_censuses_and_unchanged_spend_resolve_and_complete(self):
+        self.ambiguous()
+        world = World([])
+        self.assertEqual(self.loop(world, polls=self.polls(), funds=world.provider('k', 'funding').funds), 'returned')
+        resolution = read(self.root / eg.GUARD_RESOLUTION)
+        self.assertGreaterEqual(resolution['epoch'] - resolution['clear_since_epoch'], eg.AMBIGUOUS_CLEAR_SECONDS)
+        self.assertEqual((resolution['baseline_spend_usd_hour'], resolution['account_spend_usd_hour']), (0.05, 0.05))
+        self.assertTrue(self.completion()['provider_absent'])
+        self.assertEqual(world.funds_calls, 1)
+
+    def test_higher_spend_keeps_the_create_unresolved(self):
+        self.ambiguous()
+        world = World([])
+        world.funds_value = dict(world.funds_value, account_spend_usd_hour=1.01)  # a hidden Pod may be billing
+        self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=world.provider('k', 'funding').funds),
+                         'running')
+        self.assertFalse((self.root / eg.GUARD_RESOLUTION).exists())
+        self.assertIsNone(self.completion())
+        self.assertGreaterEqual(world.funds_calls, 2)              # read again, at most every FUNDS_POLL_SECONDS
+        self.assertLessEqual(world.funds_calls, 1 + 60 * eg.POLL_SECONDS // eg.FUNDS_POLL_SECONDS + 1)
+
+    def test_a_late_pod_is_retained_and_the_create_never_self_resolves(self):
+        self.ambiguous()
+        world = World([])
+        self.loop(world, polls=10, funds=world.provider('k', 'funding').funds)
+        world.pods['late'] = pod('late')                         # the delayed Pod appears, then is deleted
+        self.loop(world, polls=self.polls(), funds=world.provider('k', 'funding').funds)
+        self.assertIn('late', world.deletes)
+        self.assertFalse((self.root / eg.GUARD_RESOLUTION).exists())
+
+    def test_no_baseline_or_no_account_read_never_resolves(self):
+        self.ambiguous(baseline=None)
+        world = World([])
+        self.assertEqual(self.loop(world, polls=self.polls(), funds=world.provider('k', 'funding').funds), 'running')
+        self.assertTrue((self.root / 'external-funds-error.json').exists())
+        (self.root / 'external-funds-error.json').unlink()
+        write(self.root / 'lease/funding-at-create.json', {'account_spend_usd_hour': 0.05})
+        self.assertEqual(self.loop(World([]), polls=self.polls()), 'running')    # no funds reader: operator only
+        self.assertFalse((self.root / eg.GUARD_RESOLUTION).exists())
+
+    def test_an_interrupted_clear_window_starts_again(self):
+        self.ambiguous()
+        world = World([])
+        funds = world.provider('k', 'funding').funds
+        self.loop(world, polls=self.polls() - 30, funds=funds)
+        world.list_fails = True                                   # a failed census is never absence
+        self.loop(world, polls=2, funds=funds)
+        world.list_fails = False
+        self.assertEqual(self.loop(world, polls=self.polls() - 40, funds=funds), 'running')
+        self.assertFalse((self.root / eg.GUARD_RESOLUTION).exists())
+
+
 class CensusAbsenceTests(Base):
     """Review r1 finding 3: absence needs a 404 for the exact ID AND a census that does not list it."""
 
