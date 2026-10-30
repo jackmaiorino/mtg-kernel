@@ -945,3 +945,34 @@ mod guard_audit {
         }
     }
 }
+
+#[test]
+fn a_prefix_copy_resumes_its_chain_and_digests_like_a_plain_copy() {
+    let mut history = EventHistoryV1::new();
+    for id in 0..60 {
+        history.push(tap(id));
+        if id % 3 == 0 {
+            history.chain_digest_v2();
+        }
+    }
+    history.chain_digest_v2();
+    assert_eq!(history.chain.get().len(), CHAIN_V2_PREFIXES);
+    for len in [0, 1, 4, 10, 37, 59, 60, 61] {
+        let prefix = history.prefix_v1(len);
+        let plain = EventHistoryV1::from(history.events[..len.min(60)].to_vec());
+        assert_eq!(*prefix, *plain);
+        assert!(counted(&prefix));
+        assert!(prefix
+            .chain
+            .get()
+            .iter()
+            .all(|(covered, _)| *covered <= len));
+        assert_eq!(prefix.chain_digest_v2(), plain.chain_digest_v2());
+    }
+    // A kept prefix state is resumed, not recomputed from the first event.
+    let prefix = history.prefix_v1(37);
+    assert_eq!(
+        prefix.chain.longest(37).map(|(covered, _)| covered),
+        Some(37)
+    );
+}

@@ -680,7 +680,13 @@ fn strip_nested_receipts(
     }
     strip(value, None, prefix)
 }
-fn restore_world(saved: &GameState, prefix: &[CommittedEvent]) -> Result<GameState, String> {
+/// `history` is the actual enclosing history; the input reattaches its first
+/// `start` events.
+fn restore_world(
+    saved: &GameState,
+    history: &crate::event_history_v1::EventHistoryV1,
+    start: usize,
+) -> Result<GameState, String> {
     fn restore(
         value: &mut serde_json::Value,
         prefix: &[CommittedEvent],
@@ -732,10 +738,15 @@ fn restore_world(saved: &GameState, prefix: &[CommittedEvent]) -> Result<GameSta
         }
         Ok(())
     }
+    let prefix = history
+        .get(..start)
+        .ok_or("Drake operation original prefix absent")?;
     let mut value = serde_json::to_value(saved).map_err(|e| e.to_string())?;
     restore(&mut value, prefix, None)?;
     let mut input: GameState = serde_json::from_value(value).map_err(|e| e.to_string())?;
-    input.engine.event_history = prefix.to_vec().into();
+    // The prefix keeps the actual history's chained prefixes, so the replay's
+    // origin digest resumes at `start` instead of rehashing every event.
+    input.engine.event_history = history.prefix_v1(start);
     Ok(input)
 }
 pub(crate) fn definition(id: u16) -> bool {
@@ -1698,7 +1709,11 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     count_replay(hit, key.is_some());
                     if !hit {
                         verification(|| {
-                            let input = restore_world(original, prefix)?;
+                            let input = restore_world(
+                                original,
+                                &state.engine.event_history,
+                                *start as usize,
+                            )?;
                             crate::linked_aura_operation_v1::as_recorded(|| {
                                 let replay = {
                                     #[cfg(test)]
