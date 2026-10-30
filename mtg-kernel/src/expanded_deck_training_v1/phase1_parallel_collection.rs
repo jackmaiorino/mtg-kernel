@@ -534,6 +534,8 @@ mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             })
             .collect();
         let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
@@ -685,6 +687,8 @@ mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             })
             .collect();
 
@@ -798,6 +802,8 @@ mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             })
             .collect();
         let context = || {
@@ -885,6 +891,8 @@ mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             })
             .collect();
         let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {

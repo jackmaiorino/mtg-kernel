@@ -1494,6 +1494,8 @@ fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> Expa
         max_policy_steps: 1_000_000,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

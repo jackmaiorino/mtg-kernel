@@ -1,0 +1,28 @@
+{
+  "design": "docs/design/pauper_london_mulligans_v1.md",
+  "dimensions": {
+    "action": 195,
+    "action_ref": 25,
+    "edge": 41,
+    "object": 98,
+    "object_groups": 20,
+    "state": 219
+  },
+  "feature_contract_digest": "1f894f0dcaaeb4e5ac0233e3f39d866c0dddca494f1afc8152107bded0551a4d",
+  "feature_encoding_digest": "4c592d136a74240f40b12c638203ab1758ed3cd63748ab7cd2788a60a78850a3",
+  "feature_registry_version": "rust-observation-v10-action-v6-registry-1",
+  "feature_schema_version": "actor-relative-v10-python-1",
+  "features_source_path": "python/mtg_kernel_rl/features_v10.py",
+  "features_source_sha256": "11bd60987b709aca5c3bf755ae074d89a9f7f7d4317373759a77a03c11750f78",
+  "legal_action_schema": 5,
+  "model_contract_version": "kernel-policy-value-net-9",
+  "predecessor_features_source_path": "python/mtg_kernel_rl/features_v7.py",
+  "reused_columns": {
+    "action_kind_15": "london_opening (V4 choose_effect_number; numeric choices are refused)",
+    "engine_stage_slot_9": "london_pregame (V4 halted)",
+    "has_lost_pregame": "self: opponent announced a mulligan this round; opponent: opponent has kept"
+  },
+  "rich_observation_schema": 7,
+  "schema": "flat-policy-v7-feature-contract-1",
+  "transfer": "V4 checkpoints transfer by the explicit same-shape V4-to-V7 transfer. In-game V7 tensors equal V4 tensors; only pregame rows are new."
+}

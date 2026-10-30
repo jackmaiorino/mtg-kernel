@@ -53,6 +53,8 @@ fn episode(search: bool) -> ExpandedEpisodeV1 {
         max_policy_steps: 80_000,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

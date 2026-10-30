@@ -2019,6 +2019,8 @@ mod tests {
                         opponent_search: None,
                         runtime_rules: None,
                         reset: None,
+                        opening: None,
+                        mulligan_modes: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Fixed {
                         id: "archive".into(),
@@ -2790,6 +2792,8 @@ mod tests {
                         max_policy_steps: 1_000_000,
                         runtime_rules: None,
                         reset: None,
+                        opening: None,
+                        mulligan_modes: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 }],

@@ -511,6 +511,7 @@ pub(crate) mod native_flat_tensorizer_v3;
 pub(crate) mod native_flat_tensorizer_v4;
 pub mod native_flat_tensorizer_v5;
 pub mod native_flat_tensorizer_v6;
+pub(crate) mod native_flat_tensorizer_v7;
 // Multi-buffer SHA-512 for the tensorizer digest tails (byte-identical to sha2).
 pub(crate) mod sha512_multi_v1;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,

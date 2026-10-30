@@ -32,6 +32,8 @@ fn base_episode(seed: u64) -> ExpandedEpisodeV1 {
         max_policy_steps: 1_000_000,
         runtime_rules: Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1),
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

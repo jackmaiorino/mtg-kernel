@@ -753,6 +753,31 @@ impl NativePolicyValueNetV1 {
         self.forward_validated_rows_v1(encoded, counts, None, activation_mode)
     }
 
+    /// FlatV7 (`native_flat_tensorizer_v7.rs`): the V4 config under the V7
+    /// feature identity. Same shapes and parameters, so a V4 checkpoint
+    /// enters only through the explicit V4-to-V7 transfer.
+    pub(crate) fn feature_transfer_config_v7(&self) -> NativePolicyValueModelConfigV1 {
+        use crate::native_flat_tensorizer_v7::*;
+        NativePolicyValueModelConfigV1 {
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V7,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V7,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V7,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V7,
+            ..self.config
+        }
+    }
+
+    /// V7 sibling of [`Self::forward_feature_transfer_v4_mode`]: identical
+    /// arithmetic over inputs labeled with the V7 schema.
+    pub(crate) fn forward_feature_transfer_v7_mode(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v7())?;
+        self.forward_validated_rows_v1(encoded, counts, None, activation_mode)
+    }
+
     /// Explicit V4 search-only forward; existing V4 inference remains LibmTanh.
     pub(crate) fn forward_search_feature_transfer_v4(
         &self,

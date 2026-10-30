@@ -283,6 +283,7 @@ impl FastActorSessionV1 {
             trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
+            pauper_london_v1: None,
             terminal: None,
         };
         session.advance_to_decision_or_terminal();

@@ -568,6 +568,7 @@ pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
 pub(crate) mod juggernaut_v25;
 pub(crate) mod librarian_v20;
+pub mod pauper_london_v1;
 pub(crate) mod sower_v14;
 pub(crate) mod stromkirk_v28;
 pub(crate) mod wildwood_v16;
@@ -5328,6 +5329,9 @@ pub struct FastActorSessionV1 {
     trace_pending: crate::gameplay_trace_v1::TraceSlot,
     flat_action_cache_spare: Option<FlatActionDecisionCacheV1>,
     flat_action_cache_spare_v2: Option<FlatActionDecisionCacheV2>,
+    /// Opt-in Pauper London opening (`pauper_london_v1`). None for every
+    /// existing constructor, which keeps every existing transition.
+    pauper_london_v1: Option<Box<pauper_london_v1::PauperLondonSessionV1>>,
     terminal: Option<RlSessionTerminalV1>,
 }
 
@@ -7093,6 +7097,7 @@ impl FastActorSessionV1 {
             trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
+            pauper_london_v1: None,
             terminal: None,
         };
         session.advance_to_decision_or_terminal();
@@ -7151,6 +7156,7 @@ impl FastActorSessionV1 {
             trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
+            pauper_london_v1: None,
             terminal: None,
         };
         session.advance_to_decision_or_terminal();
@@ -8790,6 +8796,22 @@ impl FastActorSessionV1 {
         if self.flat_action_contract_mode == FlatActionContractModeV1::RulesOnlyV1 {
             return self.advance_rules_only_v1();
         }
+        // The session-owned London boundary (`pauper_london_v1`), before any
+        // engine advance. Absent for every other session.
+        if self.pauper_london_v1.is_some() {
+            if let Err(error) = self.drive_pauper_london_v1() {
+                self.current = None;
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:pauper_london_v1:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        }
         if !matches!(
             self.flat_action_contract_mode,
             FlatActionContractModeV1::CallV62
@@ -10067,7 +10089,13 @@ impl FastActorSessionV1 {
             }
             FlatActionContractModeV1::V3 => {
                 self.flat_action_cache_spare_v2 = None;
-                let cache_result = flat_action_v3::prepare_and_build_v3(self, &mut current);
+                // The V3 cache refuses a London pregame decision without
+                // touching its engine-ordered menu (`pauper_london_v1`).
+                let cache_result = if self.pauper_london_pending_v1() {
+                    Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+                } else {
+                    flat_action_v3::prepare_and_build_v3(self, &mut current)
+                };
                 flat_install_action_cache_build_result_v2(&mut current, cache_result);
             }
             FlatActionContractModeV1::AshrootV27 => {
