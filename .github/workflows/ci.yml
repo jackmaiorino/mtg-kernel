@@ -963,6 +963,7 @@ jobs:
       # Tests that live beside top-level tools/ scripts (no Rust binary, no network).
       - name: Top-level tools tests
         if: matrix.shard == 0
+        shell: bash
         run: |
           uv run --no-sync python -m unittest discover -v -s tools/search_experiment/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/stage4a/tests -p 'test_*.py'
