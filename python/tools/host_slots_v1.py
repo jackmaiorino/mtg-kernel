@@ -114,6 +114,32 @@ class Refused(Exception):
     """A declaration or claim was refused."""
 
 
+# ---------------------------------------------------------------- child command
+
+WSL_BASH = re.compile(r"(?:^|[\\/])(?:system32|sysnative|windowsapps)[\\/]bash(?:\.exe)?$", re.IGNORECASE)
+
+
+def child_command(command: list[str], windows: bool = os.name == "nt") -> list[str]:
+    """Windows' CreateProcess searches System32 before PATH, so a bare `bash` starts WSL's bash.exe, which cannot
+    see drive paths such as D:/ and exits at once, after the claim already took its queue turn. A bare `bash` runs
+    the first Git Bash found instead (PATH, then the default install); WSL's bash is refused before any ticket."""
+    if not windows or not command:
+        return command
+    program = command[0]
+    if re.fullmatch(r"bash(?:\.exe)?", program, re.IGNORECASE):
+        install = os.path.join(os.environ.get("ProgramFiles", "C:/Program Files"), "Git", "bin", "bash.exe")
+        for folder in [*os.environ.get("PATH", "").split(os.pathsep), os.path.dirname(install)]:
+            candidate = os.path.join(folder, "bash.exe") if folder else ""
+            if candidate and not WSL_BASH.search(os.path.normpath(candidate)) and os.path.isfile(candidate):
+                return [candidate, *command[1:]]
+        raise Refused("`bash` would start WSL's bash.exe, which cannot see drive paths such as D:/; "
+                      "install Git Bash or give the full path of a non-WSL bash")
+    if WSL_BASH.search(os.path.normpath(program)):
+        raise Refused(f"{program} is WSL's bash, which cannot see drive paths such as D:/; "
+                      "use Git Bash (C:/Program Files/Git/bin/bash.exe)")
+    return command
+
+
 # ---------------------------------------------------------------- cores
 
 
@@ -1279,6 +1305,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.op in ("run", "submit", "timed") and not command:
             parser.error(f"{args.op} needs -- COMMAND...")
+        command = child_command(command)
         if args.op == "run":
             def announce(claimed):
                 print(json.dumps({"claimed": claimed["id"], "cores": format_cores(claimed["cores"]),
