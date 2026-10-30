@@ -117,6 +117,8 @@ BACKFILL_MAX_SECONDS = 30 * 86400.0
 # window (first start to last deadline) of at most min(15 minutes, 10% of the head's declared max seconds).
 BACKFILL_DELAY_CAP_SECONDS = 900.0
 BACKFILL_DELAY_HEAD_SHARE = 0.10
+# Launchers that apply the bounded-delay rule record this in their queue tickets.
+BACKFILL_POLICY = 2
 
 
 class NoRoom(Exception):
@@ -697,49 +699,48 @@ def _head_start(config: dict, timed: dict, claims: list[dict], head: dict) -> tu
     return chosen, chosen & borrowed
 
 
-def _when(value) -> datetime | None:
-    try:
-        when = datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return None
-    return when if when.tzinfo is not None else None
-
-
-def _delay_terms(claims: list[dict], head: dict, ticket: dict, now: datetime) -> dict | None:
-    """The bounded-delay terms for a backfill that could delay head, or None. The head can only be delayed
-    while one of its delaying backfills runs, so its total delay is at most the window from the first one's
-    start to the last one's deadline; that window must stay within min(15 minutes, 10% of the head's declared
-    max seconds). A head without a declared limit gets no delaying backfill, and none starts while an earlier
-    one for the same head is overdue or unreadable. The bound holds while backfills keep their declared
-    limits; nothing is preempted."""
+def _delay_terms(claims: list[dict], head: dict, ticket: dict, now: float, window: dict | None) -> dict | None:
+    """The bounded-delay terms for a backfill that could delay head, or None. `now` and every bound are on the
+    host's monotonic clock (shared by its processes, unmoved by clock changes). The head can only be held up
+    while one of its delaying backfills runs, and `window` keeps the first one's start and the latest deadline
+    for this head after those claims end, so the whole window, this backfill included, must stay within
+    min(15 minutes, 10% of the head's declared max seconds). A head without a declared limit gets no delaying
+    backfill, and none starts while an earlier one for the same head is overdue or unreadable. The bound holds
+    while backfills keep their declared limits; nothing is preempted."""
     head_max, own = _max_seconds(head), _max_seconds(ticket)
     if head_max is None or own is None or not isinstance(head.get("id"), str):
         return None
     limit = min(BACKFILL_DELAY_CAP_SECONDS, BACKFILL_DELAY_HEAD_SHARE * head_max)
-    starts, ends = [now], [now + timedelta(seconds=own)]
     for claim in claims:
-        if not claim.get("backfill") or claim.get("delays_head") != head["id"]:
-            continue
-        start, end = _when(claim.get("acquired_at")), _when(claim.get("deadline_at"))
-        if start is None or end is None or now > end:
-            return None
-        starts.append(start)
-        ends.append(end)
-    window = (max(ends) - min(starts)).total_seconds()
-    if window > limit:
+        if claim.get("backfill") and claim.get("delays_head") == head["id"]:
+            deadline = claim.get("deadline_mono")
+            if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or now > deadline:
+                return None
+    if window is not None:
+        first, last = window.get("start_mono"), window.get("end_mono")
+        if (window.get("head_id") != head["id"] or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                                                      for v in (first, last)) or not first <= last or first > now):
+            return None        # unreadable, or from before a restart: no delaying backfill for this head
+    else:
+        first = last = now
+    last = max(last, now + own)
+    if last - first > limit:
         return None
-    return {"delays_head": head["id"], "delay_bound_seconds": round(window, 3), "delay_limit_seconds": limit}
+    return {"delays_head": head["id"], "delay_bound_seconds": round(last - first, 3), "delay_limit_seconds": limit,
+            "deadline_mono": now + own, "delay_window": {"head_id": head["id"], "start_mono": first, "end_mono": last}}
 
 
 def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, ticket: dict,
-                    now: datetime | None = None) -> tuple[list[int], dict | None] | None:
+                    now: float | None = None, window: dict | None = None) -> tuple[list[int], dict | None] | None:
     """Cores ticket may take ahead of head, with the bounded-delay terms when it could delay the head
     (None when it cannot), or None when it may not start.
 
-    The live claims, backfills included, may end in any order, so every subset of them is tried:
-    whenever ending a subset would let the head start with no backfills, it must still start with the
-    remaining backfills and this one running, without waiting on more background cores. If some subset
-    would leave the head waiting on backfills, the request may start only under `_delay_terms`. It never
+    A head that can start now is never jumped. Otherwise the live claims, backfills included, may end in any
+    order, so every subset of them is tried: whenever ending a subset would let the head start with no
+    backfills, it must still start with the remaining backfills and this one running, without waiting on more
+    background cores. If some subset would leave the head waiting on backfills, the request may start only
+    under `_delay_terms`, and only if its own launcher applies that rule (`backfill_policy` 2; an older
+    launcher refuses such a start, so judging its ticket by it would strand the requests behind it). It never
     starts if it would leave the head waiting on more background cores. A backfill never takes a background
     claim's cores, so it never suspends one.
     Only ordinary requests backfill, behind an ordinary head: later ordinary requests overtake a
@@ -756,6 +757,8 @@ def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, t
     for value in (wanted, head_wanted):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             return None
+    if _head_start(config, timed, claims, head) is not None:
+        return None        # the head can start now: it is never jumped
     room = available(config, timed, claims, core_pool=_pool(ticket))
     if len(room) < wanted:
         return None
@@ -774,9 +777,9 @@ def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, t
             return None
     if not delays:
         return cores, None
-    if _head_start(config, timed, claims, head) is not None:
-        return None        # the head can start now: it is never jumped, bounded or not
-    terms = _delay_terms(claims, head, ticket, now or datetime.now(timezone.utc))
+    if ticket.get("backfill_policy") != BACKFILL_POLICY:
+        return None
+    terms = _delay_terms(claims, head, ticket, time.monotonic() if now is None else now, window)
     return None if terms is None else (cores, terms)
 
 
@@ -796,26 +799,37 @@ def config_digest(config: dict) -> str:
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def _delay_window_path(head_id: str) -> Path:
+    return slots_dir() / f"delay-{head_id}.json"
+
+
+def _prune_delay_windows(queued: set) -> None:
+    """Delay windows of heads no longer queued go (called under the admission mutex)."""
+    for path in slots_dir().glob("delay-*.json"):
+        if path.stem.removeprefix("delay-") not in queued:
+            path.unlink(missing_ok=True)
+
+
 def backfill_admission(config: dict, timed: dict, claims: list[dict], tickets: list[dict], claim_id: str,
-                       now: datetime | None = None) -> tuple[list[int], dict | None] | None:
+                       now: float | None = None, window: dict | None = None) -> tuple[list[int], dict | None] | None:
     """Cores for claim_id to start before the queue head with its bounded-delay terms (None when it cannot
     delay the head), or None. Called under the admission mutex with tickets in admission order and the
     current config. Only the first eligible ticket behind the head may start. The head admits with the
     config it read before queueing, so nothing backfills unless its ticket records that same config (a
-    ticket from an older launcher records none)."""
+    ticket from an older launcher records none). `window` is the head's persisted delay window, if any."""
     if not tickets or tickets[0].get("config_sha256") != config_digest(config):
         return None
     for ticket in tickets[1:]:
-        admitted = _backfill_cores(config, timed, claims, tickets[0], ticket, now)
+        admitted = _backfill_cores(config, timed, claims, tickets[0], ticket, now, window)
         if admitted is not None:
             return admitted if ticket["id"] == claim_id else None
     return None
 
 
 def backfill_admits(config: dict, timed: dict, claims: list[dict], tickets: list[dict], claim_id: str,
-                    now: datetime | None = None) -> list[int] | None:
+                    now: float | None = None, window: dict | None = None) -> list[int] | None:
     """The cores of `backfill_admission`, or None."""
-    admitted = backfill_admission(config, timed, claims, tickets, claim_id, now)
+    admitted = backfill_admission(config, timed, claims, tickets, claim_id, now, window)
     return None if admitted is None else admitted[0]
 
 
@@ -1046,6 +1060,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     request = {**base, "cores_wanted": cores_wanted, "enqueued_at": now_utc(), "config_sha256": config_digest(config)}
     if max_seconds is not None:
         request["max_seconds"] = max_seconds
+        request["backfill_policy"] = BACKFILL_POLICY
     with Mutex():
         ticket = _ticket_path(queue_class, claim_id)
         write_json(ticket, request)
@@ -1068,11 +1083,16 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                         current = load_config()
                     except ValueError:  # an unreadable edit: no backfill until it is fixed
                         current = None
-                    started = datetime.now(timezone.utc)
+                    _prune_delay_windows({ticket["id"] for ticket in tickets})
+                    started, mono = datetime.now(timezone.utc), time.monotonic()
+                    window = read_json(_delay_window_path(tickets[0]["id"]))
                     admitted = None if current is None else backfill_admission(
-                        current, timed_state(), live_claims(), tickets, claim_id, started)
+                        current, timed_state(), live_claims(), tickets, claim_id, mono, window)
                     if admitted is not None:
                         cores, terms = admitted
+                        if terms is not None:
+                            terms = dict(terms)
+                            write_json(_delay_window_path(tickets[0]["id"]), terms.pop("delay_window"))
                         backfill = {"backfill": True, "max_seconds": max_seconds, "head_id": tickets[0]["id"],
                                     "deadline_at": (started + timedelta(seconds=max_seconds)).isoformat(
                                         timespec="milliseconds"), **(terms or {})}
