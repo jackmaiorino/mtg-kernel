@@ -28,6 +28,12 @@ LANES/g-references-20261028/DESIGN.md v1.2, section 6, and FROZEN.md):
 * The supervisor is started detached with /dev/null for stdin, stdout and
   stderr (host_reservation_v1.spawn_detached on Linux, the equivalent of
   ``nohup ... < /dev/null``), so the SSH call that launches it returns at once.
+* A Pod's granted CPUs need not be 0..n-1: a 32-vCPU Pod on a 192-CPU host
+  was granted 5, 9, 11, 20, ... When some placement CPU is not granted, the
+  lease binds the Pod's sorted granted CPUs to logical CPUs 0..n-1 by position
+  (host_slots_v1 CPU_BINDING_ENV in the launch environment): the package, its
+  records and every hashed input keep the logical CPUs, only the OS affinity
+  calls see the granted ones, and ``cpu-binding.json`` records the map.
 * Recovery also brings back the dose records and the qualification folder.
 * ``ledger`` sums every lease of the study (control folders under one root):
   pod hours from the lease records, the conservative cost at the lease's rate
@@ -53,6 +59,7 @@ from pathlib import Path, PurePosixPath
 
 import g_references_campaign_v1 as driver
 import g_references_v1 as g
+import host_slots_v1
 import nine_deck_cloud_v1 as cloud
 from nine_deck_cloud_v1 import Bundle, is_pin, require, safe_name, sha, write, read, encoded, pin
 
@@ -255,6 +262,22 @@ POD_RECOVER = cloud.POD_RECOVER.replace(
 assert POD_RECOVER != cloud.POD_RECOVER
 
 
+POD_AFFINITY = '''#pod:affinity
+import os
+print(json.dumps(sorted(os.sched_getaffinity(0))))
+'''
+
+
+def cpu_binding(placement, granted):
+    """The Pod's granted CPUs (sorted) as logical CPUs 0..n-1, or None when every placement CPU is granted (the
+    package's CPUs are the OS's own)."""
+    cpus, granted = placement["cpu_affinity"], sorted(granted)
+    if set(cpus) <= set(granted):
+        return None
+    require(max(cpus) < len(granted), "placement CPUs unavailable on the Pod")
+    return granted
+
+
 POD_RESULT = '''#pod:result
 import pathlib
 path = pathlib.Path(ARGS["result"])
@@ -283,6 +306,22 @@ class Cycle(cloud.Cycle):
                               read_only=True)
         return bool(result) and result.get("passed") is True
 
+    def check_hardware(self):
+        """The base check, with the placement read through the CPU binding (cpu_binding) when one is needed."""
+        self.binding = cpu_binding(self.manifest["placement"], self.pod.run(POD_AFFINITY, {}, read_only=True))
+        if self.binding is None:
+            return super().check_hardware()
+        placement = self.manifest["placement"]
+        self.manifest["placement"] = {**placement,
+                                      "cpu_affinity": [self.binding[cpu] for cpu in placement["cpu_affinity"]]}
+        try:
+            super().check_hardware()
+        finally:
+            self.manifest["placement"] = placement
+        write(self.control / "cpu-binding.json", {"pod_id": self.created["id"],
+                                                  "env": host_slots_v1.CPU_BINDING_ENV, "granted": self.binding,
+                                                  "logical": {str(cpu): to for cpu, to in enumerate(self.binding)}})
+
     def check_volume_inputs(self):
         if self.manifest["mode"] == "production":
             super().check_volume_inputs()
@@ -292,6 +331,8 @@ class Cycle(cloud.Cycle):
                 "startup outlasted the guards' startup idle bound")
         env = {"RUNPOD_POD_ID": self.created["id"], cloud.native_dispatch.LEASE_GUARD_ENV: self.guard,
                "MTG_HOST_LOCK_ROOT": cloud.LOCK_ROOT, "HOST_SLOTS_ROOT": cloud.LOCK_ROOT, "PYTHONDONTWRITEBYTECODE": "1"}
+        if getattr(self, "binding", None):
+            env[host_slots_v1.CPU_BINDING_ENV] = ",".join(map(str, self.binding))
         self.worker = self.pod.run(cloud.POD_LAUNCH, {"control": self.remote_control, "argv": driver_command(self.manifest),
                                                       "cwd": self.manifest["tooling"]["root"], "env": env}, timeout=360)
         write(self.control / "worker-started.json", {**self.worker, "pod_id": self.created["id"]})
