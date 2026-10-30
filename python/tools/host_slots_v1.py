@@ -814,13 +814,27 @@ def _prune_delay_windows() -> None:
 
 
 def _read_delay_window(head_id: str) -> dict | None:
-    """The head's persisted window, None when there is none, or an unreadable marker (which refuses every
-    delaying backfill for that head) when the file exists but cannot be read."""
+    """The head's persisted window, None only when the file is confirmed absent, or an unreadable marker (which
+    refuses every delaying backfill for that head) on any other failure, metadata errors included."""
     path = _delay_window_path(head_id)
-    if not path.exists():
+    try:
+        os.stat(path)
+    except FileNotFoundError:
         return None
+    except OSError:
+        return {"unreadable": True}
     window = read_json(path)
     return window if isinstance(window, dict) else {"unreadable": True}
+
+
+def _queue_uncertain(tickets: list[dict]) -> bool:
+    """True when a queue file exists that `live_tickets` could not read: the true head, and so whose delay
+    budget applies, is unknown, so nothing backfills until it reads again (called under the admission mutex)."""
+    seen = {Path(ticket["path"]).name for ticket in tickets if ticket.get("path")}
+    try:
+        return any(path.name not in seen for path in slots_dir().glob("queue-*.json"))
+    except OSError:
+        return True
 
 
 def backfill_admission(config: dict, timed: dict, claims: list[dict], tickets: list[dict], claim_id: str,
@@ -1091,7 +1105,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                                            "acquired_at": now_utc()})
                         ticket.unlink()
                         break
-                elif max_seconds is not None and len(tickets) > 1:
+                elif max_seconds is not None and len(tickets) > 1 and not _queue_uncertain(tickets):
                     try:
                         current = load_config()
                     except ValueError:  # an unreadable edit: no backfill until it is fixed
@@ -1108,7 +1122,8 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                             write_json(_delay_window_path(tickets[0]["id"]), terms.pop("delay_window"))
                         backfill = {"backfill": True, "max_seconds": max_seconds, "head_id": tickets[0]["id"],
                                     "deadline_at": (started + timedelta(seconds=max_seconds)).isoformat(
-                                        timespec="milliseconds"), **(terms or {})}
+                                        timespec="milliseconds"), "deadline_mono": mono + max_seconds,
+                                    **(terms or {})}
                         write_json(claim, {**base, "cores": cores, "priority": priority, "state": "running",
                                            "acquired_at": started.isoformat(timespec="milliseconds"), **backfill})
                         ticket.unlink()

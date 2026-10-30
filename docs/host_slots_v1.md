@@ -29,7 +29,7 @@ It starts only when all of these hold:
 
 - it fits in the cores free now, without taking any background claim's cores (it never suspends CI work);
 - it and the head are both ordinary requests (later ordinary requests overtake a background head, so its protection could not hold), and the head was queued under the current per-host config (requests from launchers older than backfill are never jumped);
-- no earlier request behind the head is also eligible;
+- no earlier request behind the head is also eligible, and every queue file reads (while one does not, the true head is unknown, so nothing backfills);
 - no timed reservation is held, and the host has at most 12 live claims (backfills and background claims included);
 - it cannot delay the head, or its delay is bounded (below). The live claims, backfills included, could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with the remaining backfills running, and an ordinary head must not need any background claim's cores that it would not have needed anyway (it would wait for them to suspend).
 
@@ -37,10 +37,10 @@ It starts only when all of these hold:
 
 - the head declared its own `--max-seconds H` and cannot start right now (a head that can start now is never jumped, by any backfill);
 - every delaying backfill admitted for that head, this one included, fits in one window from the first one's start to the latest deadline, of at most min(15 minutes, H / 10). The head can only be held up while one of them runs, so that window bounds its total delay, however many there are. The window is kept in `delay-<head id>.json` beside the claims, so it does not slide when earlier backfills end, and it is measured on the host's monotonic clock, so a clock change cannot stretch it. It is removed once its head leaves the queue;
-- no earlier delaying backfill for that head is overdue;
+- no earlier delaying backfill for that head is overdue, and its window file reads (a file that exists but cannot be read refuses);
 - the request comes from a launcher that applies this rule (its ticket records `backfill_policy: 2`). An older launcher's ticket is judged by the zero-delay rule it applies itself, so it never holds back the requests behind it.
 
-The claim records `delays_head`, `delay_bound_seconds` (the window so far), `delay_limit_seconds` and `deadline_mono`. `status` shows the bound and the limit for every backfill (0 and none for one that cannot delay its head). The bound relies on backfills keeping their declared limits; nothing is preempted.
+Every backfill records `deadline_mono`, which `status` uses for `overdue`. A delaying one also records `delays_head`, `delay_bound_seconds` (the window so far) and `delay_limit_seconds`. `status` shows the bound and the limit for every backfill (0 and none for one that cannot delay its head). The bound relies on backfills keeping their declared limits; nothing is preempted.
 
 The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations; the bounded-delay rule uses only the declared limits. `--max-seconds` is at most 30 days. Past it, `status` lists the claim under `backfill` with `overdue: true`; it is not stopped, suspended or preempted for that. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
 

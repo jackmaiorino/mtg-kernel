@@ -905,6 +905,48 @@ class BackfillAdmissionTests(unittest.TestCase):
         self.assertIsNone(slots.backfill_admission(config8(), FREE, BoundedDelayBackfillTests.CLAIMS,
                                                    [head, bounded("t", 2, 60.0)], "t", 1000.0, window))
 
+    def test_a_window_whose_metadata_cannot_be_read_refuses(self):
+        # review r3: Path.exists() is False on a permission error; only a confirmed absence is "no window"
+        real = slots.os.stat
+
+        def denied(path, *a, **k):
+            if str(path).endswith(f"delay-{'e' * 32}.json"):
+                raise PermissionError("denied")
+            return real(path, *a, **k)
+        with patch.object(slots.os, "stat", side_effect=denied):
+            self.assertEqual(slots._read_delay_window("e" * 32), {"unreadable": True})
+
+    def write_head(self, head_id, stamp=2):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/queue-{stamp:020d}-{head_id}.json", {
+            "schema": slots.SCHEMA, "id": head_id, "lane": "l", "work_id": "head", "pid": pid,
+            "creation_time": creation, "background": False, "cores_wanted": 1, "max_seconds": 3600.0,
+            "enqueued_at": slots.now_utc(), "config_sha256": slots.config_digest(slots.load_config())})
+
+    def test_nothing_backfills_while_a_queue_file_is_unreadable(self):
+        # review r3: an unreadable head ticket would hand admission to the next ticket's fresh budget
+        (self.host / f"TESTHOST.slots/queue-{1:020d}-{'9' * 32}.json").write_text("{ torn")
+        self.write_head("a" * 32)
+        with patch.object(slots, "backfill_admission") as admission, \
+                patch.object(slots, "available", return_value=[]):
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3,
+                          max_seconds=60.0)
+        admission.assert_not_called()
+
+    def test_every_new_backfill_records_a_monotonic_deadline(self):
+        # review r3: zero-delay backfills too, so status can flag them overdue after a wall-clock change
+        self.write_head("a" * 32)
+        seen = []
+        before = slots.time.monotonic()
+        with patch.object(slots, "backfill_admission", return_value=([CPUS[-1]], None)), \
+                patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                    slots.read_json(claim)) or 0):
+            slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, max_seconds=60.0)
+        self.assertNotIn("delays_head", seen[0])
+        self.assertGreaterEqual(seen[0]["deadline_mono"], before + 60.0)
+        self.assertLessEqual(seen[0]["deadline_mono"], slots.time.monotonic() + 60.0)
+
     def test_status_uses_the_monotonic_deadline(self):
         # review r2: a wall-clock rollback must not hide an overdue backfill
         pid, creation = slots.self_identity()
