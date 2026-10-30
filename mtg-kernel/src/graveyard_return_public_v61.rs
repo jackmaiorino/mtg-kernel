@@ -217,20 +217,23 @@ pub(crate) fn require_legacy_visible(
     state: &GameState,
     viewer: Option<PlayerId>,
 ) -> Result<(), String> {
-    let ids = FamilyV61::ALL
-        .into_iter()
-        .filter_map(|family| card_def::card_id_by_name(family.name()))
-        .collect::<BTreeSet<_>>();
+    // The registry is fixed at build time, so the family's ids are computed once.
+    static IDS: std::sync::OnceLock<std::collections::BTreeSet<u16>> = std::sync::OnceLock::new();
+    let ids = IDS.get_or_init(|| {
+        FamilyV61::ALL
+            .into_iter()
+            .filter_map(|family| card_def::card_id_by_name(family.name()))
+            .collect()
+    });
     let selected = |id: u16| ids.contains(&id);
     let visible = state.objects.iter().any(|(id, live)| {
-        public::reference(state, id, viewer).is_some_and(
-            |r| matches!(r.identity, public::IdentityV1::Known{card_id} if selected(card_id)),
-        ) || viewer.is_some_and(|viewer| {
-            live.v4
-                .face_down_v1
-                .is_some_and(|face| face.lookers & (1 << viewer.index()) != 0)
-                && selected(live.card_def)
-        })
+        public::visible_known(state, id, viewer, |card_id| selected(card_id))
+            || viewer.is_some_and(|viewer| {
+                live.v4
+                    .face_down_v1
+                    .is_some_and(|face| face.lookers & (1 << viewer.index()) != 0)
+                    && selected(live.card_def)
+            })
     });
     if visible {
         return Err("graveyard return rules require the distinct V61 consumer".into());
@@ -299,15 +302,15 @@ pub(crate) fn require_call_legacy_visible_v62(
     if crate::card_def::card_id_by_name("Valkyrie's Call") != Some(selected) {
         return Err("Call printing ID changed".into());
     }
-    let visible =
-        state.objects.iter().any(|(id, live)| {
-            public::reference(state, id, viewer).is_some_and(
-            |r| matches!(r.identity, public::IdentityV1::Known { card_id } if card_id == selected),
-        ) || viewer.is_some_and(|viewer| {
-            live.v4.face_down_v1.is_some_and(|face| face.lookers & (1 << viewer.index()) != 0)
-                && live.card_def == selected
-        })
-        });
+    let visible = state.objects.iter().any(|(id, live)| {
+        public::visible_known(state, id, viewer, |card_id| card_id == selected)
+            || viewer.is_some_and(|viewer| {
+                live.v4
+                    .face_down_v1
+                    .is_some_and(|face| face.lookers & (1 << viewer.index()) != 0)
+                    && live.card_def == selected
+            })
+    });
     let source = |s: AbilitySourceContractV4| s.card_def == selected;
     let retained = state.stack.iter().any(|r| {
         r.v4.ability_source_contract.is_some_and(source)

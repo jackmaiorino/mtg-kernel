@@ -129,14 +129,13 @@ pub(crate) fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> 
     let historical_unsupported =
         crate::cast_identity_v1::unsupported_public_history(state, unsupported)?;
     let visible = state.objects.iter().any(|(id, live)| {
-        public::reference(state, id, viewer).is_some_and(
-            |r| matches!(r.identity, public::IdentityV1::Known { card_id } if unsupported(card_id)),
-        ) || viewer.is_some_and(|viewer| {
-            live.v4
-                .face_down_v1
-                .is_some_and(|face| face.lookers & (1 << viewer.index()) != 0)
-                && unsupported(live.card_def)
-        })
+        public::visible_known(state, id, viewer, |card_id| unsupported(card_id))
+            || viewer.is_some_and(|viewer| {
+                live.v4
+                    .face_down_v1
+                    .is_some_and(|face| face.lookers & (1 << viewer.index()) != 0)
+                    && unsupported(live.card_def)
+            })
     });
     let captured_unsupported = |source: crate::state::AbilitySourceContractV4| {
         unsupported(crate::rl::projected_captured_card_def(
