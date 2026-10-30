@@ -6,8 +6,8 @@ Eligible: the read half's focal blocker-pair decisions, sorted by (game id, deci
 focal deck. Each deck gets a share of 300 proportional to its eligible count, with a floor of 20 where it has
 that many (a deck below its floor is fixed at the floor and the rest is shared again until stable), rounded by
 largest remainder (ties by deck name). Within each deck, in deck-name order, decisions are drawn without
-replacement by one numpy Generator(PCG64(20261030)). The world-variance check takes the first 50 positions in
-that draw order.
+replacement by one numpy Generator(PCG64(20261030)). The world-variance check takes 50 of the 300 by
+Generator(PCG64(20261033)).choice(300, 50, replace=False) over the 300 in draw order (design section 12).
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ TOTAL = 300
 FLOOR = 20
 WORLD_CHECK = 50
 SEED = 20261030
+WORLD_SEED = 20261033
 
 
 def allocate(counts: dict[str, int]) -> dict[str, int]:
@@ -70,9 +71,11 @@ def main(argv=None) -> int:
     for d in sorted(by_deck):
         for k in rng.choice(len(by_deck[d]), size=alloc[d], replace=False):
             drawn.append((d, *by_deck[d][int(k)]))
+    world = {int(k) for k in np.random.Generator(np.random.PCG64(WORLD_SEED)).choice(
+        len(drawn), size=min(WORLD_CHECK, len(drawn)), replace=False)}
     with open(a.out, "w", encoding="utf-8") as out:
         for n, (d, gid, index) in enumerate(drawn):
-            out.write(json.dumps({"id": gid, "index": index, "worlds": n < WORLD_CHECK}) + "\n")
+            out.write(json.dumps({"id": gid, "index": index, "worlds": n in world}) + "\n")
     print(json.dumps({"eligible": len(eligible), "counts": counts, "allocation": alloc, "positions": len(drawn)}))
     return 0
 
