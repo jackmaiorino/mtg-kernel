@@ -134,12 +134,20 @@ fn export_root(root: &Root) -> Result<Value, String> {
         if i == certified {
             let row = json!({"board": board(&s), "legal": legal(&s), "actor": r.actor,
                 "selected": r.selected});
+            // Every object the game has created so far (the arena keeps them), so
+            // actions on cards seen only between the two boards still have names.
+            let names: std::collections::BTreeMap<u16, String> = s
+                .game_state()
+                .objects
+                .iter()
+                .map(|(_, o)| (o.card_def, crate::rl::card_name(o.card_def)))
+                .collect();
             return Ok(
                 json!({"kind": "review", "root_id": root.root_id, "game_id": job.id,
                 "role": role.role, "stratum": role.stratum, "opportunity_turn": role.opportunity_turn,
                 "index": root.index, "certified_index": certified, "focal": job.focal,
                 "deck_ids": job.config.deck_ids, "winner": job.winner,
-                "root": at_root, "certified": row, "path": path}),
+                "root": at_root, "certified": row, "path": path, "names": names}),
             );
         }
         if i >= root.index {

@@ -67,14 +67,17 @@ def describe(action: str | None, names: dict[int, str], focal: int) -> str | Non
         return None
     text = CARD.sub(lambda m: f"{names.get(int(m[2]), 'card ' + m[2])} ({m[4].lower()})", action)
     text = PLAYER.sub(lambda m: "you" if int(m[1]) == focal else "opponent", text)
-    text = re.sub(r"actor: P\d, ", "", text)
+    text = re.sub(r"actor: P\d(, )?", "", text)
+    text = re.sub(r"Object \{ object: ([^{}]*?) \}", r"\1", text)
+    text = re.sub(r", (cost_target: None|granted_ability: GrantedAbilityPublicV1\(None\))", "", text)
+    text = re.sub(r"Some\(([^()]*)\)", r"\1", text)
     kind, _, rest = text.partition(" ")
     kind = re.sub(r"(?<!^)(?=[A-Z])", " ", kind).lower()
     rest = rest.strip().removeprefix("{").removesuffix("}").strip()
     return f"{kind}: {rest}" if rest else kind
 
 
-def card_names(row: dict) -> dict[int, str]:
+def card_names(rows: list[dict]) -> dict[int, str]:
     names: dict[int, str] = {}
 
     def walk(v: object) -> None:
@@ -87,7 +90,9 @@ def card_names(row: dict) -> dict[int, str]:
             for x in v:
                 walk(x)
 
-    walk([row["root"]["board"], row["certified"]["board"]])
+    walk([[row["root"]["board"], row["certified"]["board"]] for row in rows])
+    for row in rows:
+        names.update({int(k): v for k, v in row.get("names", {}).items()})
     return names
 
 
@@ -124,12 +129,14 @@ def build(roots: Path, export: Path, run: Path, checker: str, out: Path) -> dict
     results = rs0_results(run)
     checks = checker_rows(checker)
     positions, problems = [], []
+    # Names come from every exported board, so a card seen only between two snapshots still has one.
+    names = card_names([r for r in exported.values() if r.get("kind") == "review"])
     for root in read_jsonl(roots):
         row = exported.get(root["root_id"])
         if row is None or row.get("kind") != "review":
             problems.append(f"{root['root_id']}: {row.get('error') if row else 'not exported'}")
             continue
-        focal, names = row["focal"], card_names(row)
+        focal = row["focal"]
         check = checks.get((row["game_id"], row["certified_index"]))
         if check is None or check["oracle"]["verdict"] != "proven":
             problems.append(f"{root['root_id']}: no proven win-check row at {row['certified_index']}")
