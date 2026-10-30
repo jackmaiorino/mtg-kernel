@@ -1004,9 +1004,11 @@ def require_choice(path, request, verify_outputs=False):
 
 
 def set_affinity(cpus):
-    if not WINDOWS:  # inherited by the native child
-        os.sched_setaffinity(0, cpus)
-        require(os.sched_getaffinity(0) == set(cpus), "cannot bind eligible CPU affinity")
+    if not WINDOWS:  # inherited by the native child; logical CPUs under host_slots_v1's CPU binding
+        import host_slots_v1
+        granted = host_slots_v1.physical_cpus(cpus)
+        os.sched_setaffinity(0, granted)
+        require(os.sched_getaffinity(0) == set(granted), "cannot bind eligible CPU affinity")
         return
     import ctypes
     kernel = ctypes.windll.kernel32
