@@ -543,8 +543,9 @@ def check(plan, name):
     return (chain["updates"] - completed(native)) * plan["byte_budget"]["bytes_per_update"]
 
 
-def group_checks(plan, names):
-    """Every named chain's checks, the pack group's completeness and the disk reserve; returns the first chain."""
+def group_checks(plan, names, disk=True):
+    """Every named chain's checks, the pack group's completeness and (with disk) the disk reserve; returns the
+    first chain."""
     chain = plan["chains"][names[0]]
     group = chain.get("group")
     members = sorted(n for n, c in plan["chains"].items() if group is not None and c.get("group") == group)
@@ -553,6 +554,8 @@ def group_checks(plan, names):
     if group is not None and sorted(names) != members:
         raise SystemExit(f"refused: pack group {group} runs all its chains together: {members}")
     need = sum(check(plan, name) for name in names)
+    if not disk:
+        return chain
     free = shutil.disk_usage(Path(plan["root"])).free
     reserve = plan["hosts"][chain["host"]]["reserve_gib"] * (1 << 30)
     if free < need + reserve:
@@ -590,7 +593,8 @@ def members(args):
         raise SystemExit("refused: _members needs the launching plan's absolute path and hash")
     plan = load_plan(args.plan)
     names = list(dict.fromkeys(args.chain))
-    chain = group_checks(plan, names)
+    # Free space was checked by the launching run just before; every other check is repeated here.
+    chain = group_checks(plan, names, disk=False)
     if chain.get("group") is None:
         raise SystemExit("refused: _members runs a pack group")
     require_claim(plan, chain["host"])
