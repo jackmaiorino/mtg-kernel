@@ -227,7 +227,7 @@ pub(crate) fn require_legacy_visible(
     });
     let selected = |id: u16| ids.contains(&id);
     let visible = state.objects.iter().any(|(id, live)| {
-        public::visible_known(state, id, viewer, &selected)
+        public::visible_known(state, id, viewer, selected)
             || viewer.is_some_and(|viewer| {
                 live.v4
                     .face_down_v1
