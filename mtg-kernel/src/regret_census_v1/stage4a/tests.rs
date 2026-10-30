@@ -42,6 +42,7 @@ fn exact_cost_defaults_cover_only_the_fixed_work_play_modes() {
         "s4a-bank-parity",
         "s4a-label-replay",
         "s4a-win-check",
+        "s4a-review-export",
         "s4a-bank-trace",
         "s4a-refresh",
         "s4a-branch",

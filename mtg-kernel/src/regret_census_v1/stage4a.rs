@@ -75,6 +75,7 @@ mod reach;
 mod refresh;
 mod replay_labels;
 mod reuse_witness;
+mod review_export;
 mod root_allocation;
 mod root_rebuild;
 mod seeds;
@@ -117,6 +118,11 @@ pub(super) fn run_win_check(cfg: &super::CensusConfigV1) -> Result<(), String> {
     win_check::run(cfg)
 }
 
+/// `s4a-review-export` also replays recorded actions without a policy.
+pub(super) fn run_review_export(cfg: &super::CensusConfigV1) -> Result<(), String> {
+    review_export::run(cfg)
+}
+
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
@@ -128,6 +134,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-bank-parity"
             | "s4a-label-replay"
             | "s4a-win-check"
+            | "s4a-review-export"
             | "s4a-bank-trace"
             | "s4a-refresh"
             | "s4a-branch"
