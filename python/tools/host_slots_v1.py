@@ -803,14 +803,37 @@ def _delay_window_path(head_id: str) -> Path:
     return slots_dir() / f"delay-{head_id}.json"
 
 
-def _prune_delay_windows() -> None:
-    """A delay window goes once no queue file for its head exists at all (called under the admission mutex,
-    after `live_tickets` has removed the tickets of exited launchers). A ticket that exists but cannot be read
-    keeps its head's window."""
-    for path in slots_dir().glob("delay-*.json"):
-        head_id = path.stem.removeprefix("delay-")
-        if not any(slots_dir().glob(f"queue-*-{head_id}.json")):
-            path.unlink(missing_ok=True)
+def _scan_state() -> dict | None:
+    """The queue, claim and delay files in the slots folder and which of them cannot be read, or None when the
+    folder cannot be listed. `os.scandir` raises on a listing error, where `Path.glob` would return nothing, so
+    a failed scan is never mistaken for an empty folder (called under the admission mutex)."""
+    folder = slots_dir()
+    try:
+        with os.scandir(folder) as entries:
+            names = {entry.name for entry in entries
+                     if entry.name.endswith(".json") and entry.name.startswith(("queue-", "claim-", "delay-"))}
+    except OSError:
+        return None
+    unreadable = set()
+    for name in names:
+        if read_json(folder / name) is None:
+            try:
+                os.stat(folder / name)
+            except FileNotFoundError:
+                continue           # removed since the listing
+            except OSError:
+                pass
+            unreadable.add(name)
+    return {"names": names, "unreadable": unreadable}
+
+
+def _prune_delay_windows(scan: dict) -> None:
+    """A delay window goes once no queue file for its head exists at all, judged from a scan that succeeded
+    (called under the admission mutex, after `live_tickets` removed the tickets of exited launchers)."""
+    queued = {name.rsplit("-", 1)[-1].removesuffix(".json") for name in scan["names"] if name.startswith("queue-")}
+    for name in scan["names"]:
+        if name.startswith("delay-") and name.removeprefix("delay-").removesuffix(".json") not in queued:
+            (slots_dir() / name).unlink(missing_ok=True)
 
 
 def _read_delay_window(head_id: str) -> dict | None:
@@ -825,16 +848,6 @@ def _read_delay_window(head_id: str) -> dict | None:
         return {"unreadable": True}
     window = read_json(path)
     return window if isinstance(window, dict) else {"unreadable": True}
-
-
-def _queue_uncertain(tickets: list[dict]) -> bool:
-    """True when a queue file exists that `live_tickets` could not read: the true head, and so whose delay
-    budget applies, is unknown, so nothing backfills until it reads again (called under the admission mutex)."""
-    seen = {Path(ticket["path"]).name for ticket in tickets if ticket.get("path")}
-    try:
-        return any(path.name not in seen for path in slots_dir().glob("queue-*.json"))
-    except OSError:
-        return True
 
 
 def backfill_admission(config: dict, timed: dict, claims: list[dict], tickets: list[dict], claim_id: str,
@@ -1097,7 +1110,15 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
             with Mutex():
                 tickets = live_tickets()
                 tickets.sort(key=lambda ticket: bool(ticket.get("background", False)))
-                if tickets and tickets[0]["id"] == claim_id:
+                # A file that exists but cannot be read leaves the true queue order or the claims unknown:
+                # no request starts while a queue file ahead of it is unreadable, and nothing backfills
+                # while any queue, claim or delay file is.
+                scan = _scan_state()
+                ahead_unknown = scan is None or any(name.startswith("queue-") and name < ticket.name
+                                                    for name in scan["unreadable"])
+                if ahead_unknown:
+                    pass
+                elif tickets and tickets[0]["id"] == claim_id:
                     room = available(config, timed_state(), live_claims(), background=background, core_pool=core_pool)
                     if len(room) >= cores_wanted:
                         cores = sorted(room[:cores_wanted])
@@ -1105,12 +1126,12 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                                            "acquired_at": now_utc()})
                         ticket.unlink()
                         break
-                elif max_seconds is not None and len(tickets) > 1 and not _queue_uncertain(tickets):
+                elif max_seconds is not None and len(tickets) > 1 and not scan["unreadable"]:
                     try:
                         current = load_config()
                     except ValueError:  # an unreadable edit: no backfill until it is fixed
                         current = None
-                    _prune_delay_windows()
+                    _prune_delay_windows(scan)
                     started, mono = datetime.now(timezone.utc), time.monotonic()
                     window = _read_delay_window(tickets[0]["id"])
                     admitted = None if current is None else backfill_admission(

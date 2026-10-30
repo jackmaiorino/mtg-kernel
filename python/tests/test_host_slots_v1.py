@@ -890,9 +890,37 @@ class BackfillAdmissionTests(unittest.TestCase):
         slots.write_json(d / f"delay-{'c' * 32}.json", {"head_id": "c" * 32})
         slots.write_json(d / f"delay-{'d' * 32}.json", {"head_id": "d" * 32})
         (d / f"queue-{1:020d}-{'d' * 32}.json").write_text("{ unreadable")   # review r2: still present
-        slots._prune_delay_windows()
+        scan = slots._scan_state()
+        self.assertEqual(scan["unreadable"], {f"queue-{1:020d}-{'d' * 32}.json"})
+        slots._prune_delay_windows(scan)
         self.assertFalse((d / f"delay-{'c' * 32}.json").exists())
         self.assertTrue((d / f"delay-{'d' * 32}.json").exists())
+
+    def test_a_failed_folder_scan_admits_nothing(self):
+        # review r4: Path.glob returns nothing on a listing error; the scan must fail instead
+        with patch.object(slots.os, "scandir", side_effect=PermissionError("denied")):
+            self.assertIsNone(slots._scan_state())
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "head", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3)
+
+    def test_no_request_starts_behind_an_unreadable_queue_file(self):
+        # review r4: an unreadable true head must not let the next request start as head
+        (self.host / f"TESTHOST.slots/queue-{1:020d}-{'9' * 32}.json").write_text("{ torn")
+        with patch.object(slots, "_run_claimed", return_value=0) as ran:
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "next", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3)
+        ran.assert_not_called()
+
+    def test_nothing_backfills_while_a_claim_file_is_unreadable(self):
+        # review r4: an unreadable delaying backfill's claim would escape the overdue guard
+        (self.host / f"TESTHOST.slots/claim-{'8' * 32}.json").write_text("{ torn")
+        self.write_head("a" * 32)
+        with patch.object(slots, "backfill_admission") as admission, \
+                patch.object(slots, "available", return_value=[]):
+            with self.assertRaises(slots.NoRoom):
+                slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, wait_timeout=0.3,
+                          max_seconds=60.0)
+        admission.assert_not_called()
 
     def test_an_unreadable_window_refuses_every_delaying_backfill(self):
         # review r2: a failed read must not start a fresh window

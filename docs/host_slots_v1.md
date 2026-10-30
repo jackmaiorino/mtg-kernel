@@ -13,7 +13,7 @@ python host_slots_v1.py submit --log FILE --lane LANE --work-id WORK --cores N -
 
 `run` claims N free cores and pins `COMMAND` and every process it starts to them, at below-normal priority by default. On Windows this uses a job object, so the whole tree also dies if the runner is killed. When the tree ends, the claim is freed.
 
-With `--wait`, the claim queues and starts in arrival order once cores are free. Without `--wait`, it exits with code 3 when there is no room. `submit` starts a detached waiting `run` that logs to `FILE`, and returns the claim id immediately.
+With `--wait`, the claim queues and starts in arrival order once cores are free. Each poll lists the slots folder first: if the listing fails, or a queue file ahead of the request exists but cannot be read, the true order is unknown and the request waits. Without `--wait`, it exits with code 3 when there is no room. `submit` starts a detached waiting `run` that logs to `FILE`, and returns the claim id immediately.
 
 The command sees `HOST_SLOTS_CLAIM` and `HOST_SLOTS_CORES`. On Windows, spellbench's `usable_cpus()` (`spellbench.arena.machine`) honors the pinned cores, so its throughput planning sizes workers to the claim.
 
@@ -29,7 +29,7 @@ It starts only when all of these hold:
 
 - it fits in the cores free now, without taking any background claim's cores (it never suspends CI work);
 - it and the head are both ordinary requests (later ordinary requests overtake a background head, so its protection could not hold), and the head was queued under the current per-host config (requests from launchers older than backfill are never jumped);
-- no earlier request behind the head is also eligible, and every queue file reads (while one does not, the true head is unknown, so nothing backfills);
+- no earlier request behind the head is also eligible, and every queue, claim and delay file reads (while one does not, the true head, its claims or its window are unknown, so nothing backfills);
 - no timed reservation is held, and the host has at most 12 live claims (backfills and background claims included);
 - it cannot delay the head, or its delay is bounded (below). The live claims, backfills included, could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with the remaining backfills running, and an ordinary head must not need any background claim's cores that it would not have needed anyway (it would wait for them to suspend).
 
