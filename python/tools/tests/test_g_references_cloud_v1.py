@@ -3,6 +3,7 @@ recovery scope and the study's lease caps. The shared lease cycle is covered by 
 import hashlib
 import json
 import os
+import re
 import tarfile
 import tempfile
 import time
@@ -100,6 +101,12 @@ class PackageTests(unittest.TestCase):
         self.assertIn("g_references_campaign_v1.py", tooling)
         self.assertIn("g_references_qualify_v1.py", tooling)
         self.assertIn("g_references_v1.py", tooling)
+        # Every script the Pod-side tools start by path travels with them.
+        started = set()
+        for name in tooling:
+            started |= set(re.findall(r'TOOLS / "([a-z0-9_]+\.py)"', (cloud.TOOLS / name).read_text(encoding="utf-8")))
+        self.assertIn("native_expanded_pack_v1.py", started)
+        self.assertLessEqual(started, set(tooling))
         command = gcloud.driver_command(manifest)
         self.assertEqual(command[0].rsplit("/", 1)[1], "g_references_qualify_v1.py")
         self.assertEqual(command[1], "start")

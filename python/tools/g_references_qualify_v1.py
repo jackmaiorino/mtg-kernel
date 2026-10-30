@@ -495,6 +495,9 @@ def run(campaign_path: Path, plan_path: Path) -> int:
         log(kind="done", passed=passed)
         write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed})
         return 0 if passed else 1
+    except BaseException as error:  # the supervisor discards stderr: the reason goes in the events
+        log(kind="error", error_type=type(error).__name__, error=str(error)[-4000:])
+        raise
     finally:
         if campaign.lease:
             campaign.lease.stop()

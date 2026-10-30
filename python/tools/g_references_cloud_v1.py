@@ -65,7 +65,9 @@ from nine_deck_cloud_v1 import Bundle, is_pin, require, safe_name, sha, write, r
 
 SCHEMA = "g-references-cloud-package/v1"
 SPEC_SCHEMA = "g-references-cloud-package-spec/v1"
-CLOSURE_ROOTS = cloud.CLOSURE_ROOTS + ("g_references_campaign_v1.py", "g_references_qualify_v1.py")
+# The qualification tool starts the pack qualifier by path, not by import.
+CLOSURE_ROOTS = cloud.CLOSURE_ROOTS + ("g_references_campaign_v1.py", "g_references_qualify_v1.py",
+                                       "native_expanded_pack_v1.py")
 ROOTS = ("state", "cold", "retained", "checkpoints", "exposure", "hot", "doses")
 TEMPLATE_KEYS = {"recipe", "lane", "decks", "play_imports", "placement", "placement_by_run", "runtime", "storage",
                  "wall_seconds", "choice_pins", "cold_keep_blocks", "roots", "compute_host_name", "host_slots",
