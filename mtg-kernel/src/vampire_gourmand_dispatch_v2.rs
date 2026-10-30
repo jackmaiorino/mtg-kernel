@@ -600,8 +600,7 @@ mod future_counter_primitive {
     use crate::state::Target;
     /// The paid sacrifice draws even when a linked Aura operation could
     /// start (Doubling Season here): the draw happens inside Gourmand's own
-    /// resolution, so the linked Aura owner must not replay or drop it (#110,
-    /// DraftZero eval pair 514 lost this draw).
+    /// resolution, so the linked Aura owner must not replay or drop it.
     #[test]
     fn actual_paid_sacrifice_draws_beside_a_linked_aura_operation_source() {
         for actor in [PlayerId::P0, PlayerId::P1] {
