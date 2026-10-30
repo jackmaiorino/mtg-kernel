@@ -31,9 +31,17 @@ It starts only when all of these hold:
 - it and the head are both ordinary requests (later ordinary requests overtake a background head, so its protection could not hold), and the head was queued under the current per-host config (requests from launchers older than backfill are never jumped);
 - no earlier request behind the head is also eligible;
 - no timed reservation is held, and the host has at most 12 live claims (backfills and background claims included);
-- it cannot delay the head. The live claims, backfills included, could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with the remaining backfills running, and an ordinary head must not need any background claim's cores that it would not have needed anyway (it would wait for them to suspend).
+- it cannot delay the head, or its delay is bounded (below). The live claims, backfills included, could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with the remaining backfills running, and an ordinary head must not need any background claim's cores that it would not have needed anyway (it would wait for them to suspend).
 
-The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations. `--max-seconds` is at most 30 days. Past it, `status` lists the claim under `backfill` with `overdue: true`; it is not stopped, suspended or preempted for that. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
+**Bounded delay.** A request that could delay the head (some release order would leave the head waiting on backfills) may still start when:
+
+- the head declared its own `--max-seconds H` and cannot start right now;
+- every delaying backfill admitted for that head, this one included, fits in one window from the first one's start to the last one's deadline, of at most min(15 minutes, H / 10). The head can only be held up while one of them runs, so that window bounds its total delay, however many there are;
+- no earlier delaying backfill for that head is overdue.
+
+The claim records `delays_head`, `delay_bound_seconds` (the window so far) and `delay_limit_seconds`. `status` shows both for every backfill (0 and none for one that cannot delay its head). The bound relies on backfills keeping their declared limits; nothing is preempted.
+
+The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations; the bounded-delay rule uses only the declared limits. `--max-seconds` is at most 30 days. Past it, `status` lists the claim under `backfill` with `overdue: true`; it is not stopped, suspended or preempted for that. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
 
 Deploying: ticket names are chosen under the admission mutex, but older versions choose them before taking it. Replace every deployed copy while no `host_slots_v1.py` process of any version is running, so no older launcher can publish an earlier-named ticket after a backfill is proved.
 

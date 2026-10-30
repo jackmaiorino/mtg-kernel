@@ -855,6 +855,20 @@ class BackfillAdmissionTests(unittest.TestCase):
         self.assertEqual(set(seen[0]), {"schema", "id", "lane", "work_id", "pid", "creation_time", "background",
                                         "cores", "priority", "state", "acquired_at"})
 
+    def test_status_shows_each_backfills_delay_bound(self):
+        pid, creation = slots.self_identity()
+        base = {"schema": slots.SCHEMA, "pid": pid, "creation_time": creation, "lane": "l", "work_id": "w",
+                "background": False, "priority": "below_normal", "state": "running", "acquired_at": slots.now_utc(),
+                "backfill": True, "max_seconds": 300.0, "head_id": "f" * 32,
+                "deadline_at": "9999-01-01T00:00:00.000+00:00"}
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'3' * 32}.json", {**base, "id": "3" * 32,
+                         "cores": [CPUS[-1]], "delays_head": "f" * 32, "delay_bound_seconds": 300.0,
+                         "delay_limit_seconds": 360.0})
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'4' * 32}.json", {**base, "id": "4" * 32,
+                         "cores": [CPUS[0]]})
+        rows = {b["id"]: (b["delay_bound_seconds"], b["delay_limit_seconds"]) for b in slots.status()["backfill"]}
+        self.assertEqual(rows, {"3" * 32: (300.0, 360.0), "4" * 32: (0.0, None)})
+
     def test_status_flags_an_overdue_backfill_and_keeps_it(self):
         pid, creation = slots.self_identity()
         base = {"schema": slots.SCHEMA, "pid": pid, "creation_time": creation, "lane": "l", "work_id": "w",
@@ -871,6 +885,78 @@ class BackfillAdmissionTests(unittest.TestCase):
         self.assertEqual(sorted((b["id"], b["overdue"], b["head_id"]) for b in status["backfill"]),
                          [("2" * 32, False, "f" * 32), ("e" * 32, True, "f" * 32)])
         self.assertEqual(len(status["claims"]), 3)  # flagged, never removed or stopped
+
+
+NOW = slots.datetime(2026, 10, 30, 15, 0, tzinfo=slots.timezone.utc)
+
+
+def at(seconds):
+    return (NOW + slots.timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
+
+
+class BoundedDelayBackfillTests(unittest.TestCase):
+    """A backfill that could delay the head starts only when every delaying backfill for that head fits in one
+    window of at most min(15 minutes, 10% of the head's declared max seconds)."""
+    # Releasing either claim alone lets a 4-core head start without the backfill (5 free) but not with it.
+    CLAIMS = [{"cores": [7, 6, 5]}, {"cores": [4, 3, 2]}]
+
+    def admit(self, claims, head, small, now=NOW):
+        tickets = [{**head, "config_sha256": slots.config_digest(config8())}, small]
+        return slots.backfill_admission(config8(), FREE, claims, tickets, small["id"], now)
+
+    def test_a_delay_within_the_bound_is_admitted_with_its_terms(self):
+        head = ticket("head", 4, 3600.0)                   # limit min(900, 360) = 360 s
+        cores, terms = self.admit(self.CLAIMS, head, ticket("t", 2, 300.0))
+        self.assertEqual(cores, [0, 1])
+        self.assertEqual(terms, {"delays_head": "head", "delay_bound_seconds": 300.0, "delay_limit_seconds": 360.0})
+        self.assertIsNone(self.admit(self.CLAIMS, head, ticket("t", 2, 361.0)))
+        long_head = ticket("head", 4, 36000.0)             # limit min(900, 3600) = 900 s
+        self.assertEqual(self.admit(self.CLAIMS, long_head, ticket("t", 2, 900.0))[1]["delay_limit_seconds"], 900.0)
+        self.assertIsNone(self.admit(self.CLAIMS, long_head, ticket("t", 2, 901.0)))
+
+    def test_a_head_without_a_declared_limit_gets_no_delaying_backfill(self):
+        self.assertIsNone(self.admit(self.CLAIMS, ticket("head", 4, None), ticket("t", 2, 60.0)))
+
+    def test_a_backfill_that_cannot_delay_carries_no_terms(self):
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        self.assertEqual(self.admit(claims, ticket("head", 4, 3600.0), ticket("t", 2, 60.0)), ([0, 1], None))
+
+    def test_delaying_backfills_share_one_window_per_head(self):
+        head = ticket("head", 4, 36000.0)                  # 900 s window
+        earlier = {"cores": [1], "backfill": True, "delays_head": "head", "acquired_at": at(-500),
+                   "deadline_at": at(100)}
+        claims = [{"cores": [7, 6, 5]}, {"cores": [4, 3, 2]}, earlier]
+        # starts now with 300 s: the window runs from -500 to +300, 800 s
+        cores, terms = self.admit(claims, head, ticket("t", 1, 300.0))
+        self.assertEqual((cores, terms["delay_bound_seconds"]), ([0], 800.0))
+        self.assertIsNone(self.admit(claims, head, ticket("t", 1, 401.0)))      # 901 s
+        # another head's delaying backfill does not count against this one
+        other = dict(earlier, delays_head="other")
+        self.assertEqual(self.admit([*claims[:2], other], head, ticket("t", 1, 900.0))[1]["delay_bound_seconds"],
+                         900.0)
+
+    def test_no_delaying_backfill_while_an_earlier_one_is_overdue_or_unreadable(self):
+        head = ticket("head", 4, 36000.0)
+        for earlier in ({"deadline_at": at(-1), "acquired_at": at(-60)},
+                        {"deadline_at": "soon", "acquired_at": at(-60)},
+                        {"deadline_at": at(60), "acquired_at": "2026-10-30T15:00:00"}):   # no time zone
+            claims = [*self.CLAIMS, {"cores": [1], "backfill": True, "delays_head": "head", **earlier}]
+            with self.subTest(earlier=earlier):
+                self.assertIsNone(self.admit(claims, head, ticket("t", 1, 60.0)))
+
+    def test_a_head_that_can_start_now_is_never_jumped(self):
+        self.assertIsNone(self.admit([{"cores": [7, 6, 5, 4]}], ticket("head", 4, 36000.0), ticket("t", 2, 60.0)))
+
+    def test_timed_reservations_still_stop_every_backfill(self):
+        head = {**ticket("head", 4, 36000.0), "config_sha256": slots.config_digest(config8())}
+        self.assertIsNone(slots.backfill_admission(config8(), {"held": True, "cores": [0]}, self.CLAIMS,
+                                                   [head, ticket("t", 2, 60.0)], "t", NOW))
+
+    def test_run_records_the_terms_on_the_claim(self):
+        tickets = [{**ticket("head", 4, 3600.0), "config_sha256": slots.config_digest(config8())},
+                   ticket("t", 2, 300.0)]
+        admitted = slots.backfill_admission(config8(), FREE, self.CLAIMS, tickets, "t", NOW)
+        self.assertEqual(admitted[1]["delays_head"], "head")
 
 
 class BackfillProcessTests(unittest.TestCase):
