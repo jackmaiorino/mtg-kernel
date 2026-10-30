@@ -434,8 +434,13 @@ class HostSlotsTests(unittest.TestCase):
         mark = script(tmp_path, "mixed-mark.py", "open(sys.argv[1], 'a').write(sys.argv[2] + '\\n')\n")
         legacy = script(tmp_path, "legacy-fifo.py", "class FilenameFIFO(list):\n"
                         "    def sort(self, *args, **kwargs): pass\n"
-                        "read_tickets = h.live_tickets\n"
-                        "h.live_tickets = lambda: FilenameFIFO(read_tickets())\n"
+                        "read_snapshot = h._snapshot\n"
+                        "def legacy_snapshot():\n"
+                        "    snap = read_snapshot()\n"
+                        "    if snap is not None:\n"
+                        "        snap['tickets'] = FilenameFIFO(snap['tickets'])\n"
+                        "    return snap\n"
+                        "h._snapshot = legacy_snapshot\n"
                         "raise SystemExit(h.main())\n")
         order = tmp_path / "mixed-order"
         ci = cli("run", "--wait", "--background", "--priority", "idle", "--lane", "ci",
