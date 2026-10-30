@@ -629,9 +629,11 @@ fn world(state: &GameState) -> Result<GameState, String> {
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::DrakeWorld,
     );
-    let mut copy = state.clone();
-    copy.engine.event_history.clear();
-    let mut value = serde_json::to_value(&copy).map_err(|e| e.to_string())?;
+    // Written as if cleared, without cloning the state and its history.
+    let history = &state.engine.event_history;
+    let mut value = history
+        .omitted_v2(|| serde_json::to_value(state))
+        .map_err(|e| e.to_string())?;
     strip_nested_receipts(&mut value, &state.engine.event_history)?;
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
