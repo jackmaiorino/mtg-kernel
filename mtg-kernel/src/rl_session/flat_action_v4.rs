@@ -890,6 +890,10 @@ impl FastActorSessionV1 {
         expected: FastActorDecisionV1,
         buffers: &mut FlatActionDecisionSliceBuffersV2<'_>,
     ) -> Result<FlatActionDecisionSliceV3, FlatActionDecisionSliceErrorV1> {
+        if self.pauper_london_pending_v1() {
+            // The FlatV7 admission of a London pregame decision.
+            return self.encode_london_flat_action_slice_v7(expected, buffers);
+        }
         let current = self
             .current
             .as_ref()

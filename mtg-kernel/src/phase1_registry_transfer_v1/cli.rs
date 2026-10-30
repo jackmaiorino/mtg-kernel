@@ -121,6 +121,8 @@ fn inference_only_episode() -> Result<ExpandedEpisodeV1, String> {
         max_policy_steps: 100,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     })
 }
 

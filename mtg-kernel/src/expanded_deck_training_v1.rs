@@ -47,6 +47,9 @@ use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::rl::{
     terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
 };
+use crate::rl_session::pauper_london_v1::{
+    PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningV1,
+};
 use crate::rl_session::{
     explicit_deck_hash_v1, FastActorResponseV1, FastActorSessionV1, RlSessionTerminalV1,
     RL_SESSION_SCHEMA_VERSION,
@@ -1002,6 +1005,15 @@ pub struct ExpandedEpisodeV1 {
     /// byte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<ExpandedResetStartV1>,
+    /// Some selects an opt-in opening protocol (`"london-v1"`,
+    /// docs/design/pauper_london_mulligans_v1.md): London mulligans before
+    /// turn 1, owned by the session (`rl_session::pauper_london_v1`). None
+    /// keeps every prior serialized byte and the keep-seven deal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opening: Option<PauperOpeningV1>,
+    /// Per-physical-seat mulligan modes, present exactly when `opening` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1048,6 +1060,38 @@ pub struct ExpandedResetStartV1 {
 }
 
 impl ExpandedEpisodeV1 {
+    /// The opt-in opening's own refusals (design section 3). The feature
+    /// identity refusal needs the loaded policies and is checked by the
+    /// collector (`require_opening_feature_identity_v1`).
+    pub(crate) fn validate_opening_v1(&self) -> Result<(), String> {
+        ensure(
+            self.opening.is_some() == self.mulligan_modes.is_some(),
+            "mulligan modes are present exactly when an opening is",
+        )?;
+        let Some(modes) = self.mulligan_modes else {
+            return Ok(());
+        };
+        ensure(
+            self.reset.is_none(),
+            "an opening is refused with a reset start (recorded prefixes predate London)",
+        )?;
+        ensure(
+            self.opponent_search.is_none(),
+            "an opening is refused with a search opponent (no London search path in v1)",
+        )?;
+        ensure(
+            !matches!(
+                self.opponent_kind,
+                Some(ExpandedOpponentKindV1::Legacy { .. })
+            ),
+            "an opening is refused with a Legacy opponent kind",
+        )?;
+        ensure(
+            modes.get(self.learner_seat as usize) == Some(&PauperMulliganModeV1::Learned),
+            "the learner seat's mulligans are learned; keep_seven is for declared frozen opponents",
+        )
+    }
+
     /// Policy steps and physical decisions the starting history already
     /// holds (zero for an ordinary episode).
     fn reset_offsets_v1(&self) -> (u64, u64) {
@@ -1078,10 +1122,15 @@ impl ExpandedEpisodeV1 {
             self.reset.is_none(),
             "reset starts are admitted only by the expanded collector",
         )?;
+        ensure(
+            self.opening.is_none(),
+            "an opening is admitted only by the expanded collector",
+        )?;
         self.configurations_checked_v1()
     }
 
     fn configurations_checked_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
+        self.validate_opening_v1()?;
         ensure(
             self.opponent_search.is_none() || self.opponent.is_some(),
             "search opponent requires an explicit opponent model",
@@ -1355,6 +1404,10 @@ struct ExpandedTrajectoryV1 {
         deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
     )]
     input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
+    /// The London opening record (`PauperOpeningRecordV1`) of an episode
+    /// with `opening`; absent otherwise, preserving archived bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opening_record: Option<PauperOpeningRecordV1>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1555,6 +1608,22 @@ fn initialize_from_source_bytes_v1(
     ),
     String,
 > {
+    if flat_v7_transfer_requested_v1(source)? {
+        // The explicit V4-to-V7 transfer (Pauper London mulligans v1): the
+        // source loads and restores under its V4 identity, then its unchanged
+        // parameters score under the FlatV7 identity. Collection only: no
+        // update of FlatV7 rows is admitted yet.
+        ensure(inputs.is_none(), "FlatV7 updates are not admitted")?;
+        let v4 = ExpandedModelSourceV1 {
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+            },
+            ..source.clone()
+        };
+        let (policy, state, context) = initialize_from_source_bytes_v1(&v4, bytes, None)?;
+        return Ok((policy.into_flat_v7_transfer_v1()?, state, context));
+    }
     if let Some((policy, state)) = loaded_source_cache_v1::lookup_v1(source, bytes, inputs)? {
         return Ok((policy, state, None));
     }
@@ -1638,6 +1707,22 @@ pub(crate) fn validate_ordinary_source_descriptor_v1(
         let _: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
     }
     Ok(())
+}
+
+/// Whether `source` declares the explicit V4-to-V7 transfer: both expected
+/// feature digests are FlatV7's. A half-V7 declaration is refused.
+fn flat_v7_transfer_requested_v1(source: &ExpandedModelSourceV1) -> Result<bool, String> {
+    use crate::native_flat_tensorizer_v7::{
+        FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+    };
+    let transfer = &source.feature_transfer;
+    let contract = transfer.expected_feature_contract_digest == FEATURE_CONTRACT_DIGEST_V7;
+    let encoding = transfer.expected_feature_encoding_digest == FEATURE_ENCODING_DIGEST_V7;
+    ensure(
+        contract == encoding,
+        "FlatV7 transfer requires both V7 feature digests",
+    )?;
+    Ok(contract)
 }
 
 fn load_ordinary_policy_v1(
@@ -2011,9 +2096,26 @@ fn episode_session_v1(
 ) -> Result<FastActorSessionV1, String> {
     let (steps, physical) = episode.reset_offsets_v1();
     let game_seed = episode.reset.as_ref().map_or(episode.seed, |r| r.game_seed);
-    let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+    let mut session = if let Some(modes) = episode.mulligan_modes {
+        // `opening` (London v1) with its refusals; never a reset start.
+        episode.validate_opening_v1()?;
+        FastActorSessionV1::reset_pauper_london_v1(
+            1,
+            game_seed,
+            episode.max_physical_decisions,
+            episode.max_policy_steps,
+            episode.selected.each_ref().map(|d| d.label.clone()),
+            configs.each_ref().map(|d| d.mainboard().to_vec()),
+            PlayerId(episode.starting_player),
+            modes,
+        )
+        .map_err(err)?
+    } else {
+        episode.validate_opening_v1()?;
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?;
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?
+    };
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
     }
@@ -2054,6 +2156,26 @@ pub(crate) fn restore_reset_cut_v1(
     )
 }
 
+/// Design section 6: an episode with `opening` runs only when every seat's
+/// policy has the FlatV7 feature identity, whose contract encodes pregame
+/// state and rows. V3 and V4 identities keep refusing London.
+pub(crate) fn require_opening_feature_identity_v1(
+    episode: &ExpandedEpisodeV1,
+    seats: &[Option<&FrozenPlayPolicyV1>],
+) -> Result<(), String> {
+    if episode.opening.is_none() {
+        return Ok(());
+    }
+    for policy in seats.iter().flatten() {
+        ensure(
+            policy.feature_identity_v1().feature_contract_digest
+                == crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
+            "london-v1 requires the FlatV7 feature identity on every seat",
+        )?;
+    }
+    Ok(())
+}
+
 fn collect_episode(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
@@ -2087,6 +2209,11 @@ fn collect_episode_hooked_v1(
                 == other.policy.feature_identity_v1().generation,
             "learner and opponent use different fresh-lineage feature generations",
         )?;
+        // FlatV7 shares the V4 generation, so compare whole identities too.
+        ensure(
+            policy.feature_identity_v1() == other.policy.feature_identity_v1(),
+            "learner and opponent use different feature identities",
+        )?;
         // The trajectory records one math, the learner's.
         ensure(
             policy.training_math_v1() == other.policy.training_math_v1(),
@@ -2098,6 +2225,10 @@ fn collect_episode_hooked_v1(
             "learner and opponent use different no-state-digest contracts",
         )?;
     }
+    require_opening_feature_identity_v1(
+        episode,
+        &[Some(&*policy), opponent.as_ref().map(|other| &other.policy)],
+    )?;
     let input_contract = no_state_digest_v1::policy_contract_record_v1(policy)?;
     let seat_behaviors = opponent.as_ref().map(|other| {
         std::array::from_fn(|actor| {
@@ -2149,6 +2280,7 @@ fn collect_episode_hooked_v1(
                     learner_sampler: policy.collection_sampler_identity_v1().map(str::to_owned),
                     training_math: policy.training_math_v1(),
                     input_contract,
+                    opening_record: session.pauper_opening_record_v1().cloned(),
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -2605,9 +2737,12 @@ fn validate_actual_behaviors_v1(
 
 fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     validate_behavior_shape_v1(t)?;
-    let contract = trajectory_contract_v1(t)?;
-    if contract.input_contract_digest_v1().is_some() {
-        no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
+    validate_opening_record_v1(&t.episode, t.opening_record.as_ref())?;
+    if !flat_v7_trajectory_v1(t)? {
+        let contract = trajectory_contract_v1(t)?;
+        if contract.input_contract_digest_v1().is_some() {
+            no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
+        }
     }
     validate_episode_records_with_learner_sampler_v1(
         &t.episode,
@@ -2616,6 +2751,50 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         &t.terminal,
         t.learner_sampler.as_deref(),
     )
+}
+
+/// A trajectory collected under the FlatV7 identity (the V4-to-V7
+/// transfer). Collection validates it here; every update, replay and
+/// checkpoint reader keeps refusing this identity (`trajectory_contract_v1`)
+/// until FlatV7 updates are admitted.
+fn flat_v7_trajectory_v1(t: &ExpandedTrajectoryV1) -> Result<bool, String> {
+    use crate::native_flat_tensorizer_v7::{
+        FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+    };
+    if t.feature_contract_digest != FEATURE_CONTRACT_DIGEST_V7 {
+        return Ok(false);
+    }
+    ensure(
+        t.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V7
+            && t.input_contract.is_none()
+            && t.card_db_hash == format!("{KERNEL_CARDDB_HASH:016x}"),
+        "FlatV7 trajectory identity differs",
+    )?;
+    Ok(true)
+}
+
+/// An episode with `opening` records its opening exactly once, with the
+/// episode's modes; every other episode records none.
+fn validate_opening_record_v1(
+    episode: &ExpandedEpisodeV1,
+    record: Option<&PauperOpeningRecordV1>,
+) -> Result<(), String> {
+    match (episode.opening, episode.mulligan_modes, record) {
+        (None, None, None) => Ok(()),
+        (Some(opening), Some(modes), Some(record)) => ensure(
+            record.opening == opening
+                && record.seats.iter().zip(modes).all(|(seat, mode)| {
+                    seat.mode == mode
+                        && seat.mulligans_taken <= 7
+                        && u16::from(seat.kept_hand_size) + u16::from(seat.mulligans_taken) == 7
+                        && seat.forced_zero_card_keep == (seat.mulligans_taken == 7)
+                        && (mode == PauperMulliganModeV1::Learned
+                            || (seat.mulligans_taken == 0 && seat.exposed_pregame_decisions == 0))
+                }),
+            "opening record differs from the episode's opening",
+        ),
+        _ => Err("opening record differs from the episode's opening".into()),
+    }
 }
 
 /// Legacy-sampler record validation, unchanged for every existing caller.
@@ -5706,6 +5885,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         }
     }
 
@@ -5776,6 +5957,7 @@ pub(crate) mod tests {
             learner_sampler: None,
             training_math: TrainingMathV1::PlatformLibm,
             input_contract: None,
+            opening_record: None,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -6235,6 +6417,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -6343,6 +6527,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -6477,6 +6663,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -6614,6 +6802,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -6747,6 +6937,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -6863,6 +7055,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -6994,6 +7188,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7135,6 +7331,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7266,6 +7464,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7414,6 +7614,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7564,6 +7766,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7604,6 +7808,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         }
     }
 
@@ -8192,6 +8398,8 @@ pub(crate) mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -8250,6 +8458,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -8291,6 +8501,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -8413,6 +8625,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -8469,6 +8683,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -8511,6 +8727,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -8568,6 +8786,8 @@ pub(crate) mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -8640,6 +8860,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -8674,6 +8896,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -8726,6 +8950,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -8761,6 +8987,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -8870,6 +9098,8 @@ pub(crate) mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -9177,6 +9407,8 @@ pub(crate) mod tests {
                     max_policy_steps: 1_000_000,
                     runtime_rules: None,
                     reset: None,
+                    opening: None,
+                    mulligan_modes: None,
                 }],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
@@ -9600,6 +9832,8 @@ pub(crate) mod tests {
                     max_policy_steps: 1_000_000,
                     runtime_rules: None,
                     reset: None,
+                    opening: None,
+                    mulligan_modes: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -9745,6 +9979,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -9867,6 +10103,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -10332,6 +10570,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -10803,6 +11043,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -10948,6 +11190,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -11037,6 +11281,7 @@ pub(crate) mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    mod pauper_opening_tests;
     mod reset_start_tests;
     mod widening_b512_tests;
 }

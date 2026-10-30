@@ -59,6 +59,8 @@ fn episode(learner_seat: u8, kind: Option<ExpandedOpponentKindV1>) -> ExpandedEp
         max_policy_steps: 1_000_000,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

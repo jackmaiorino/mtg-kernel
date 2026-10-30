@@ -604,6 +604,8 @@ pub(crate) fn episode_v1(
         max_policy_steps: c.max_policy_steps,
         runtime_rules: Some(c.runtime_rules),
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

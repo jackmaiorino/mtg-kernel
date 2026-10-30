@@ -85,6 +85,17 @@ impl NativePolicyValueNetV1 {
         self.forward_validated_with_scratch_v1(encoded, counts, scratch, activation_mode, None)
     }
 
+    /// V7 sibling of `forward_feature_transfer_v4_with_scratch_v1`.
+    pub(crate) fn forward_feature_transfer_v7_with_scratch_v1<'a>(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        scratch: &'a mut NativePolicyValueForwardScratchV1,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputViewV1<'a>, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v7())?;
+        self.forward_validated_with_scratch_v1(encoded, counts, scratch, activation_mode, None)
+    }
+
     /// `forward_with_scratch_v1` (flat, V3 or V4 transfer by `config`) using
     /// `rows` for the five row layers: the same output, bit for bit.
     pub(crate) fn forward_rows_cached_with_scratch_v1<'a>(

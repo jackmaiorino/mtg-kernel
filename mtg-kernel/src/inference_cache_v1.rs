@@ -32,6 +32,7 @@ pub(crate) enum ForwardPathV1 {
     Flat = 1,
     TransferV3 = 3,
     TransferV4 = 4,
+    TransferV7 = 7,
 }
 
 /// Cache byte budget from `MTG_KERNEL_INFERENCE_CACHE_MIB` (None when unset

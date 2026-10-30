@@ -1629,11 +1629,49 @@ pub(crate) fn fill_native_flat_decision_tensors_v3_with_scratch(
         output,
         |projection, edges| append_extension_edges_v3(view, projection, edges),
         |output| streaming_v3::write_extensions_v3(view, output),
+        None,
     )
 }
 
-/// V4 retains its own projection and canonical feature identity.
+/// V4 retains its own projection and canonical feature identity. A London
+/// pregame decision (FlatV7 only) is refused.
 pub(crate) fn fill_native_flat_decision_tensors_v4_with_scratch(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+    scratch: &mut NativeFlatTensorScratchV3,
+    output: &mut NativeFlatDecisionTensorV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    if view.extensions().london_pregame.is_some() {
+        return Err(NativeFlatTensorErrorV2::ContextShape);
+    }
+    fill_native_flat_decision_tensors_v4_or_v7(view, scratch, output)
+}
+
+/// FlatV7 (`native_flat_tensorizer_v7.rs`, Python `features_v10.py`): an
+/// in-game decision is exactly the V4 fill. A London pregame decision reuses
+/// the V4 objects, edges and canonical observation, adds the
+/// `london_pregame` canonical extension (so only pregame state hashes
+/// change), sets the pregame meanings of the engine-stage slot 9 and the two
+/// `has_lost` columns, and encodes its rows with action-kind column 15.
+pub(crate) fn fill_native_flat_decision_tensors_v7_with_scratch(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+    scratch: &mut NativeFlatTensorScratchV3,
+    output: &mut NativeFlatDecisionTensorV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    // Column 15 is `london_opening` in V7: an in-game numeric choice is
+    // refused rather than aliased to it.
+    if view.extensions().london_pregame.is_none()
+        && view
+            .common()
+            .actions()
+            .iter()
+            .any(|action| action.kind == FlatScorerActionKindV1::ChooseEffectNumber)
+    {
+        return Err(NativeFlatTensorErrorV2::InvalidActionRange);
+    }
+    fill_native_flat_decision_tensors_v4_or_v7(view, scratch, output)
+}
+
+fn fill_native_flat_decision_tensors_v4_or_v7(
     view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
     scratch: &mut NativeFlatTensorScratchV3,
     output: &mut NativeFlatDecisionTensorV2,
@@ -1646,14 +1684,250 @@ pub(crate) fn fill_native_flat_decision_tensors_v4_with_scratch(
     validate_auxiliary_tables_v2(decision)?;
     let projection = build_object_projection_v4(view)?;
     drop(span);
+    let london = view.extensions().london_pregame;
     fill_successor_reusing_v2(
         decision,
         projection,
         scratch,
         output,
         |projection, edges| append_extension_edges_v4(view, projection, edges),
-        |output| streaming_v3::write_extensions_v4(view, output),
+        |output| match london {
+            None => streaming_v3::write_extensions_v4(view, output),
+            Some(london) => write_extensions_london_v7(view, london, output),
+        },
+        london,
     )
+}
+
+/// Explicit FlatV7 state columns (`features_v10.py`): the self and opponent
+/// `has_lost` columns of the two nineteen-column player blocks and the
+/// engine-stage slot 9.
+const LONDON_SELF_HAS_LOST_COLUMN_V7: usize = 30;
+const LONDON_OPPONENT_HAS_LOST_COLUMN_V7: usize = 49;
+const LONDON_PREGAME_STAGE_COLUMN_V7: usize = 89;
+
+fn london_canonical_json_v7(london: crate::flat_policy_v4::FlatLondonPregameV7) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "announced_mulligan": london.announced_mulligan,
+        "kept": london.kept,
+        "mulligans_taken": london.mulligans_taken,
+        "phase": if london.bottom { "bottom" } else { "announce" },
+    }))
+    .expect("London pregame canonical JSON serializes")
+}
+
+/// The V4 canonical extensions with `london_pregame` inserted in sorted key
+/// order, before the always-present `pending_cast_object_cost` member.
+fn write_extensions_london_v7(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+    london: crate::flat_policy_v4::FlatLondonPregameV7,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut extensions = Vec::new();
+    streaming_v3::write_extensions_v4(view, &mut extensions)?;
+    const NEXT: &[u8] = br#""pending_cast_object_cost":"#;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut insert_at = None;
+    for (index, &byte) in extensions.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => {
+                if depth == 1 && extensions[index..].starts_with(NEXT) {
+                    insert_at = Some(index);
+                    break;
+                }
+                in_string = true;
+            }
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    let insert_at = insert_at.ok_or(NativeFlatTensorErrorV2::CanonicalJson)?;
+    output.extend_from_slice(&extensions[..insert_at]);
+    output.extend_from_slice(br#""london_pregame":"#);
+    output.extend_from_slice(&london_canonical_json_v7(london));
+    output.push(b',');
+    output.extend_from_slice(&extensions[insert_at..]);
+    Ok(())
+}
+
+/// Pregame meanings of three V4 columns no admitted pregame row uses: no
+/// seat has lost and no engine stage is halted at a London decision.
+fn patch_london_state_v7(
+    state: &mut [f32],
+    london: crate::flat_policy_v4::FlatLondonPregameV7,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let columns = [
+        LONDON_SELF_HAS_LOST_COLUMN_V7,
+        LONDON_OPPONENT_HAS_LOST_COLUMN_V7,
+        LONDON_PREGAME_STAGE_COLUMN_V7,
+    ];
+    if columns
+        .iter()
+        .any(|&column| state.get(column).is_none_or(|value| value.to_bits() != 0))
+    {
+        return Err(NativeFlatTensorErrorV2::ContextShape);
+    }
+    state[LONDON_SELF_HAS_LOST_COLUMN_V7] = f32::from(u8::from(london.announced_mulligan[1]));
+    state[LONDON_OPPONENT_HAS_LOST_COLUMN_V7] = f32::from(u8::from(london.kept[1]));
+    state[LONDON_PREGAME_STAGE_COLUMN_V7] = 1.0;
+    Ok(())
+}
+
+/// FlatV7 London rows: action-kind column 15 with the London numeric
+/// columns of the flat action slice (`rl_session::pauper_london_v1`), and the
+/// canonical London semantic as the action hash input. Every row must match
+/// the decision's London facts exactly; a numeric choice is never accepted.
+fn encode_london_action_half_v7(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    london: crate::flat_policy_v4::FlatLondonPregameV7,
+    canonical_json: &mut Vec<u8>,
+    deferred: DeferredActionJsonV1<'_>,
+    mut out: ActionHalfV1,
+) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV1::ActingPlayerNotRelativeSelf);
+    }
+    let actions = decision.actions();
+    let refs = decision.action_refs();
+    if actions.is_empty() || (!london.bottom && actions.len() != 2) {
+        return Err(NativeFlatTensorErrorV1::EmptyActionTable);
+    }
+    clear_and_reserve_v2(
+        &mut out.action_features,
+        actions
+            .len()
+            .checked_mul(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
+            .ok_or(NativeFlatTensorErrorV1::CheckedIntegerRange)?,
+    )?;
+    clear_and_reserve_v2(
+        &mut out.action_ref_features,
+        refs.len()
+            .checked_mul(NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1)
+            .ok_or(NativeFlatTensorErrorV1::CheckedIntegerRange)?,
+    )?;
+    clear_and_reserve_v2(&mut out.action_ref_card_ids, refs.len())?;
+    clear_and_reserve_v2(&mut out.action_ref_action_indices, refs.len())?;
+    clear_and_reserve_v2(&mut out.action_ref_node_indices, refs.len())?;
+    let mut resolved = Vec::new();
+    let mut ref_cursor = 0usize;
+    let mut mulligan_rows = [false; 2];
+    for (action_index, action) in actions.iter().enumerate() {
+        let start = usize::try_from(action.ref_start)
+            .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?;
+        let end = start
+            .checked_add(usize::from(action.ref_len))
+            .ok_or(NativeFlatTensorErrorV1::CheckedIntegerRange)?;
+        if start != ref_cursor || end > refs.len() {
+            return Err(NativeFlatTensorErrorV1::ActionReferenceRange);
+        }
+        resolve_action_refs_reusing_v1(decision, action_index, &refs[start..end], &mut resolved)?;
+        if action.kind != FlatScorerActionKindV1::ChooseEffectNumber {
+            return Err(NativeFlatTensorErrorV1::NonCanonicalActionCore);
+        }
+        let mut expected = FlatScorerActionCoreV1 {
+            kind: action.kind,
+            ref_start: action.ref_start,
+            ref_len: action.ref_len,
+            selected_count: u16::from(london.mulligans_taken[0]),
+            ..FlatScorerActionCoreV1::default()
+        };
+        let mut semantic = Map::<String, Value>::new();
+        semantic.insert("actor".to_owned(), Value::String("self".to_owned()));
+        let mut card = None;
+        if london.bottom {
+            let reference = require_only_ref(&resolved, ROLE_CARD_V1)?;
+            if reference.object.owner != FlatRelativePlayerV1::SelfPlayer
+                || reference.object.zone != Some(FlatZoneV1::Hand)
+                || !(1..=7).contains(&action.remaining)
+            {
+                return Err(NativeFlatTensorErrorV1::ActionReferenceObject);
+            }
+            expected.remaining = action.remaining;
+            semantic.insert(
+                "action_kind".to_owned(),
+                Value::String("choose_london_bottom".to_owned()),
+            );
+            semantic.insert("card".to_owned(), canonical_card_ref_v1(reference)?);
+            semantic.insert("remaining".to_owned(), Value::from(action.remaining));
+            card = Some(reference);
+        } else {
+            require_no_refs(&resolved)?;
+            validate_only_flag(action.flags, FLAT_ACTION_FLAG_VALUE_V1)?;
+            let mulligan = action.flags & FLAT_ACTION_FLAG_VALUE_V1 != 0;
+            if std::mem::replace(&mut mulligan_rows[usize::from(mulligan)], true) {
+                return Err(NativeFlatTensorErrorV1::NonCanonicalActionCore);
+            }
+            expected.flags = action.flags;
+            expected.option_index = u16::from(london.kept[1]);
+            expected.option_count = u16::from(london.announced_mulligan[1]);
+            expected.number = i32::from(london.mulligans_taken[1]);
+            semantic.insert(
+                "action_kind".to_owned(),
+                Value::String("choose_london_mulligan".to_owned()),
+            );
+            semantic.insert("mulligan".to_owned(), Value::Bool(mulligan));
+            semantic.insert(
+                "mulligan_count".to_owned(),
+                Value::from(london.mulligans_taken[0]),
+            );
+        }
+        if *action != expected {
+            return Err(NativeFlatTensorErrorV1::NonCanonicalActionCore);
+        }
+        write_canonical_action_json_v1(semantic, canonical_json)?;
+        let features = explicit_action_features_contract_v3(action, &resolved, false)?;
+        let json_start = deferred.json.len();
+        deferred.json.extend_from_slice(canonical_json);
+        deferred.ranges.push((json_start, deferred.json.len()));
+        out.action_features.extend_from_slice(&features);
+        if let Some(reference) = card {
+            let projected = projected_singular(reference, ROLE_CARD_V1);
+            out.action_ref_features
+                .extend_from_slice(&action_ref_features_v1(projected)?);
+            out.action_ref_card_ids
+                .push(i64::from(reference.raw.card_token));
+            out.action_ref_action_indices.push(
+                i64::try_from(action_index)
+                    .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?,
+            );
+            out.action_ref_node_indices.push(
+                i64::try_from(projected_node_index_v2(
+                    reference.raw.model_object_index,
+                    Some(projection),
+                )?)
+                .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?,
+            );
+        }
+        ref_cursor = end;
+    }
+    if ref_cursor != refs.len() {
+        return Err(NativeFlatTensorErrorV1::ActionReferenceRange);
+    }
+    validate_native_flat_action_slices_v1(
+        &out.action_features,
+        &out.action_ref_features,
+        &out.action_ref_card_ids,
+        &out.action_ref_action_indices,
+        &out.action_ref_node_indices,
+        actions.len(),
+        refs.len(),
+        projection.node_to_raw.len(),
+    )?;
+    Ok(out)
 }
 
 fn fill_successor_reusing_v2(
@@ -1666,6 +1940,7 @@ fn fill_successor_reusing_v2(
         &mut EdgeHalfV2,
     ) -> Result<(), NativeFlatTensorErrorV2>,
     extensions: impl FnOnce(&mut Vec<u8>) -> Result<(), NativeFlatTensorErrorV2>,
+    london: Option<crate::flat_policy_v4::FlatLondonPregameV7>,
 ) -> Result<(), NativeFlatTensorErrorV2> {
     let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorGraph);
     let mut buffers = std::mem::take(&mut scratch.pending);
@@ -1692,27 +1967,42 @@ fn fill_successor_reusing_v2(
     drop(span);
     let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorStateHead);
     let mut state = encode_state_head_reusing_v2(decision, buffers.state)?;
+    if let Some(london) = london {
+        patch_london_state_v7(&mut state, london)?;
+    }
     drop(span);
     let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorActions);
     scratch.slot.action_json.clear();
     scratch.slot.action_ranges.clear();
-    let mut actions = encode_action_half_reusing_v3(
-        decision,
-        Some(&objects.projection),
-        &mut scratch.slot.action_scratch,
-        true,
-        Some(DeferredActionJsonV1 {
-            json: &mut scratch.slot.action_json,
-            ranges: &mut scratch.slot.action_ranges,
-        }),
-        ActionHalfV1 {
-            action_features: buffers.action_features,
-            action_ref_features: buffers.action_ref_features,
-            action_ref_card_ids: buffers.action_ref_card_ids,
-            action_ref_action_indices: buffers.action_ref_action_indices,
-            action_ref_node_indices: buffers.action_ref_node_indices,
-        },
-    )?;
+    let action_half = ActionHalfV1 {
+        action_features: buffers.action_features,
+        action_ref_features: buffers.action_ref_features,
+        action_ref_card_ids: buffers.action_ref_card_ids,
+        action_ref_action_indices: buffers.action_ref_action_indices,
+        action_ref_node_indices: buffers.action_ref_node_indices,
+    };
+    let deferred = DeferredActionJsonV1 {
+        json: &mut scratch.slot.action_json,
+        ranges: &mut scratch.slot.action_ranges,
+    };
+    let mut actions = match london {
+        None => encode_action_half_reusing_v3(
+            decision,
+            Some(&objects.projection),
+            &mut scratch.slot.action_scratch,
+            true,
+            Some(deferred),
+            action_half,
+        )?,
+        Some(london) => encode_london_action_half_v7(
+            decision,
+            &objects.projection,
+            london,
+            &mut scratch.slot.action_scratch,
+            deferred,
+            action_half,
+        )?,
+    };
     if actions.action_features.len()
         != scratch.slot.action_ranges.len() * NATIVE_FLAT_ACTION_FEATURE_DIM_V1
     {

@@ -1844,3 +1844,45 @@ fn inference_cache_scores_match_and_respect_mode_and_model() {
     cached.replace_training_parameters_v3(&parameters).unwrap();
     assert!(cached.inference_cache_v1().is_none());
 }
+
+/// Pauper London mulligans v1 (docs/design/pauper_london_mulligans_v1.md,
+/// section 7): s4a bank and B1 root specs refuse an `opening` until the V2
+/// search path exists. Both are strict readers, so the member is refused.
+#[test]
+fn s4a_bank_and_b1_root_specs_refuse_an_opening() {
+    let source = serde_json::json!({
+        "id": "s", "own": 0, "other": 0, "seat": 0, "opp": "o", "seed": 1,
+        "starting_player": 0, "source_policy_seeds": [1, 2], "anchor_draw": 0,
+        "guide_policy_seeds": [3, 4], "search_root": "r",
+    });
+    let bank = serde_json::json!({
+        "schema": bank::SPEC_SCHEMA, "namespace": "spy-reset-pilot-v1", "lineage": "l",
+        "runtime_rules": "resolution-boundary-v1", "select_rule": "fpu-1.5",
+        "max_physical_decisions": 1, "max_policy_steps": 1,
+        "decks": [{"label": "d", "mainboard": [1]}], "sources": [source],
+    });
+    let root = serde_json::json!({
+        "root_id": "r", "source": "s", "budget": 1, "expected_b1_tree": "t",
+    });
+    assert!(serde_json::from_value::<bank::BankSpec>(bank.clone()).is_ok());
+    assert!(serde_json::from_value::<branch::RootSpec>(root.clone()).is_ok());
+    for (mut spec, path) in [
+        (bank.clone(), "/opening"),
+        (bank.clone(), "/sources/0/opening"),
+        (root, "/opening"),
+    ] {
+        let parent = path.rsplit_once('/').unwrap().0;
+        let target = if parent.is_empty() {
+            &mut spec
+        } else {
+            spec.pointer_mut(parent).unwrap()
+        };
+        target["opening"] = serde_json::json!("london-v1");
+        let refused = if path.ends_with("/opening") && spec.get("budget").is_some() {
+            serde_json::from_value::<branch::RootSpec>(spec).is_err()
+        } else {
+            serde_json::from_value::<bank::BankSpec>(spec).is_err()
+        };
+        assert!(refused, "{path}");
+    }
+}

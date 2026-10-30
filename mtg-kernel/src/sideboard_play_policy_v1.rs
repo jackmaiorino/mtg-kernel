@@ -279,6 +279,21 @@ struct FrozenPlayFreshSuccessorStateV1 {
     tensorizer: NativeFlatTensorizerV4,
     tensor: NativeFlatDecisionTensorV4,
     sampler: WideCategoricalScratchV1,
+    /// FlatV7 (`native_flat_tensorizer_v7.rs`): set only by the explicit
+    /// V4-to-V7 transfer (`into_flat_v7_transfer_v1`); forks and sampling
+    /// resets keep it. The V7 tensors share `tensor`'s storage.
+    flat_v7: bool,
+    tensorizer_v7: crate::native_flat_tensorizer_v7::NativeFlatTensorizerV7,
+}
+
+impl FrozenPlayFreshSuccessorStateV1 {
+    /// A fresh state of the same feature contract.
+    fn fresh_like_v1(&self) -> Self {
+        Self {
+            flat_v7: self.flat_v7,
+            ..Self::default()
+        }
+    }
 }
 
 /// Structural, not just numeric, identity gate for `fresh_successor`:
@@ -381,6 +396,21 @@ pub(crate) const FRESH_FEATURE_IDENTITY_V4: FreshFeatureIdentityV1 = FreshFeatur
     feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4,
     features_source_sha256: FEATURES_SOURCE_SHA256_V4,
     feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V4,
+};
+
+/// FlatV7 (Pauper London mulligans v1): the V4 tensor generation (same
+/// shapes, forward family and in-game tensors) under its own feature
+/// identity, which adds London pregame rows. Reached only through the
+/// explicit V4-to-V7 transfer; the generation alone never distinguishes V7,
+/// its digests do.
+pub(crate) const FRESH_FEATURE_IDENTITY_V7: FreshFeatureIdentityV1 = FreshFeatureIdentityV1 {
+    generation: FreshLineageGenerationV1::V4,
+    feature_schema_version: crate::native_flat_tensorizer_v7::FEATURE_SCHEMA_VERSION_V7,
+    feature_registry_version: crate::native_flat_tensorizer_v7::FEATURE_REGISTRY_VERSION_V7,
+    feature_contract_digest: crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
+    feature_encoding_digest: crate::native_flat_tensorizer_v7::FEATURE_ENCODING_DIGEST_V7,
+    features_source_sha256: crate::native_flat_tensorizer_v7::FEATURES_SOURCE_SHA256_V7,
+    feature_descriptor_sha256: crate::native_flat_tensorizer_v7::FEATURE_DESCRIPTOR_SHA256_V7,
 };
 
 /// Computes the two byte-identity hashes `from_fresh_initialization_generation_v1`
@@ -589,8 +619,12 @@ impl FrozenPlayPolicyV1 {
     /// is; item 3's mitigation against a silent V4-encoded/V3-labeled
     /// mislabel is that every stamping site instead reads this.
     pub(crate) fn feature_identity_v1(&self) -> FreshFeatureIdentityV1 {
-        if self.fresh_successor.is_some() {
-            FRESH_FEATURE_IDENTITY_V4
+        if let Some(fresh) = &self.fresh_successor {
+            if fresh.flat_v7 {
+                FRESH_FEATURE_IDENTITY_V7
+            } else {
+                FRESH_FEATURE_IDENTITY_V4
+            }
         } else {
             // Also the correct default for the plain V3 successor and for
             // any policy with neither successor active: this crate's fresh-
@@ -1146,9 +1180,32 @@ impl FrozenPlayPolicyV1 {
                 .then(FrozenPlaySuccessorStateV3::default),
             fresh_successor: self
                 .fresh_successor
-                .is_some()
-                .then(FrozenPlayFreshSuccessorStateV1::default),
+                .as_ref()
+                .map(FrozenPlayFreshSuccessorStateV1::fresh_like_v1),
         })
+    }
+
+    /// The explicit V4-to-V7 same-shape transfer (FlatV7, design
+    /// docs/design/pauper_london_mulligans_v1.md, sections 5 and 6), as V3 to
+    /// V4 was: the installed V4 parameters unchanged, scored under the V7
+    /// identity. In-game decisions score exactly as under V4; only London
+    /// pregame rows are new. Refused for every other generation, an already
+    /// transferred policy and the no-state-digest contract.
+    pub(crate) fn into_flat_v7_transfer_v1(mut self) -> Result<Self, String> {
+        require(
+            self.successor.is_none() && self.input_contract.is_none(),
+            "the V4-to-V7 transfer requires a V4 policy with its original inputs",
+        )?;
+        let fresh = self
+            .fresh_successor
+            .as_mut()
+            .ok_or("the V4-to-V7 transfer requires a V4 fresh-lineage policy")?;
+        require(!fresh.flat_v7, "the policy already has the V7 identity")?;
+        *fresh = FrozenPlayFreshSuccessorStateV1 {
+            flat_v7: true,
+            ..FrozenPlayFreshSuccessorStateV1::default()
+        };
+        Ok(self)
     }
 
     /// An exact duplicate of a policy in the state its loader returned it:
@@ -1764,7 +1821,7 @@ impl FrozenPlayPolicyV1 {
             let sampler = std::mem::take(&mut fresh.sampler);
             *fresh = FrozenPlayFreshSuccessorStateV1 {
                 sampler,
-                ..FrozenPlayFreshSuccessorStateV1::default()
+                ..fresh.fresh_like_v1()
             };
         }
     }
@@ -2088,18 +2145,35 @@ impl FrozenPlayPolicyV1 {
                 encoded_decision_view_v3(&successor.tensor),
             )
         } else if let Some(fresh) = &mut self.fresh_successor {
-            fresh.tensorizer.set_state_digest_v1(state_digest);
-            fresh
-                .tensorizer
-                .fill(
-                    FlatScoringDecisionViewV4::new(self.owned.view(), &fresh.extensions),
-                    &mut fresh.tensor,
+            if fresh.flat_v7 {
+                fresh.tensorizer_v7.set_state_digest_v1(state_digest);
+                fresh
+                    .tensorizer_v7
+                    .fill(
+                        FlatScoringDecisionViewV4::new(self.owned.view(), &fresh.extensions),
+                        &mut fresh.tensor.common,
+                    )
+                    .map_err(|e| format!("V7 visible tensorization: {e:?}"))?;
+                (
+                    ForwardPathV1::TransferV7,
+                    crate::native_flat_tensorizer_v7::encoded_decision_view_v7(
+                        &fresh.tensor.common,
+                    ),
                 )
-                .map_err(|e| format!("V4 visible tensorization: {e:?}"))?;
-            (
-                ForwardPathV1::TransferV4,
-                encoded_decision_view_v4(&fresh.tensor),
-            )
+            } else {
+                fresh.tensorizer.set_state_digest_v1(state_digest);
+                fresh
+                    .tensorizer
+                    .fill(
+                        FlatScoringDecisionViewV4::new(self.owned.view(), &fresh.extensions),
+                        &mut fresh.tensor,
+                    )
+                    .map_err(|e| format!("V4 visible tensorization: {e:?}"))?;
+                (
+                    ForwardPathV1::TransferV4,
+                    encoded_decision_view_v4(&fresh.tensor),
+                )
+            }
         } else {
             let span =
                 crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyTensorize);
@@ -2319,6 +2393,9 @@ fn uncached_forward_v1(
         ForwardPathV1::TransferV4 => model
             .forward_feature_transfer_v4_with_scratch_v1(view, scratch, mode)
             .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?,
+        ForwardPathV1::TransferV7 => model
+            .forward_feature_transfer_v7_with_scratch_v1(view, scratch, mode)
+            .map_err(|e| format!("explicit V7 frozen feature transfer: {e:?}"))?,
         ForwardPathV1::Flat => model
             .forward_with_scratch_v1(view, scratch, mode)
             .map_err(|e| format!("frozen scalar inference: {e:?}"))?,
@@ -2382,6 +2459,10 @@ fn cached_forward_v1(
                 model.feature_transfer_config_v4(),
                 "explicit V4 frozen feature transfer",
             ),
+            ForwardPathV1::TransferV7 => (
+                model.feature_transfer_config_v7(),
+                "explicit V7 frozen feature transfer",
+            ),
             ForwardPathV1::Flat => (model.config_v1(), "frozen scalar inference"),
         };
         model
@@ -2395,6 +2476,9 @@ fn cached_forward_v1(
             ForwardPathV1::TransferV4 => model
                 .forward_feature_transfer_v4_with_scratch_v1(view, scratch, mode)
                 .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?,
+            ForwardPathV1::TransferV7 => model
+                .forward_feature_transfer_v7_with_scratch_v1(view, scratch, mode)
+                .map_err(|e| format!("explicit V7 frozen feature transfer: {e:?}"))?,
             ForwardPathV1::Flat => model
                 .forward_with_scratch_v1(view, scratch, mode)
                 .map_err(|e| format!("frozen scalar inference: {e:?}"))?,

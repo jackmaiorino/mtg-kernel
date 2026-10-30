@@ -76,6 +76,8 @@ fn episode(learner_seat: u8) -> ExpandedEpisodeV1 {
         max_policy_steps: 1_000_000,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

@@ -46,6 +46,22 @@ pub struct FlatScoringExtensionsV4 {
     pub finalized_chosen_creature_costs: Vec<FlatFinalizedChosenCreatureCostV3>,
     pub pending_ward_payment: Option<FlatWardPaymentV3>,
     pub queued_ward_payments: Vec<FlatQueuedWardPaymentV3>,
+    /// FlatV7 only: the London facts of a pregame decision
+    /// (`rl_session::pauper_london_v1`). None at every in-game decision; the
+    /// V4 tensorizer refuses a decision where it is Some.
+    pub london_pregame: Option<FlatLondonPregameV7>,
+}
+
+/// Public London facts at a pregame decision, actor-relative `[self,
+/// opponent]` (design docs/design/pauper_london_mulligans_v1.md, section 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlatLondonPregameV7 {
+    /// The bottom phase; otherwise the announcement phase.
+    pub bottom: bool,
+    pub mulligans_taken: [u8; 2],
+    pub kept: [bool; 2],
+    /// Announced a mulligan in the current round.
+    pub announced_mulligan: [bool; 2],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,9 +112,14 @@ impl FastActorSessionV1 {
         encoder: &mut FlatDecisionEncoderV4,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<FlatDecisionV4, FlatDecisionErrorV2> {
-        encoder
+        let mut decision = encoder
             .common
-            .build_scoring_owned_v4(self, expected, buffers)
+            .build_scoring_owned_v4(self, expected, buffers)?;
+        // FlatV7: the London facts of a pregame decision; None in-game.
+        decision.extensions.london_pregame = self
+            .flat_london_pregame_v7()
+            .map_err(|_| FlatDecisionErrorV2::ObservationContract)?;
+        Ok(decision)
     }
 }
 

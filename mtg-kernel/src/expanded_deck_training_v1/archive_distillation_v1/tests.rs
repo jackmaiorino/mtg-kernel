@@ -1481,6 +1481,8 @@ fn real_episode(id: &str, seed: u64, learner_seat: u8) -> ExpandedEpisodeV1 {
         max_policy_steps: 200_000,
         runtime_rules: Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1),
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

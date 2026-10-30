@@ -127,6 +127,8 @@ fn widened_b512_reproduces_b512_on_its_collected_decisions() {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         for row in &trajectory.decisions {
