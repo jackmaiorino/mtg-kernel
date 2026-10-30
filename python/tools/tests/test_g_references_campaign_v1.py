@@ -188,7 +188,8 @@ class DriverTests(unittest.TestCase):
         (dispatch / "started.json").write_text(json.dumps({"pid": 2 ** 22 + 7}))  # native child not readable
         with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", "MTG_LEASE_GUARD_DIR": str(guard)}):
             progress = driver.LeaseProgress(self.campaign)
-        attempt = {"root": str(dispatch), "native": str(native), "dispatch": {"state": "dispatched", "pid": 900}}
+        attempt = {"root": str(dispatch), "native": str(native),
+                   "dispatch": {"state": "dispatched", "pid": 900, "token": "t900"}}
         progress.active["G1"] = {"attempts": [attempt]}
         me, clock, ticks = os.getpid(), {"wall": 2000., "cpu": 10.}, {"worker": 0}
 
@@ -197,7 +198,8 @@ class DriverTests(unittest.TestCase):
 
         def beat(wall=15., cpu=0., worker=0):
             clock["wall"] += wall; clock["cpu"] += cpu; ticks["worker"] += worker
-            with patch.object(driver.time, "time", return_value=clock["wall"]),                     patch.object(driver.base.time, "time", return_value=clock["wall"]),                     patch.object(driver.base, "driver_cpu_seconds", return_value=clock["cpu"]),                     patch.object(driver.base, "process_table", side_effect=table):
+            with patch.object(driver.time, "time", return_value=clock["wall"]),                     patch.object(driver.base.time, "time", return_value=clock["wall"]),                     patch.object(driver.base, "driver_cpu_seconds", return_value=clock["cpu"]),                     patch.object(driver.base, "process_table", side_effect=table), \
+                    patch.object(driver.base, "supervisor_owned", side_effect=lambda pid, token: token == "t900"):
                 progress.beat()
             return json.loads((guard / "progress.json").read_text())
         progress.cpu, progress.activity = (clock["wall"], clock["cpu"]), 0
