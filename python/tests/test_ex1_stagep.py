@@ -270,6 +270,7 @@ class StagePTests(unittest.TestCase):
 
         def surplus(cmd):                                  # the inner run reports a third copy
             spec = Path(cmd[cmd.index("--spec") + 1])
+            self.assertEqual(cmd[cmd.index("--spec-sha256") + 1], sha(spec))
             lane = [{"start": 1.0, "end": 2.0, "exit": 0}]
             stagep.write(spec.with_name("pack-result.json"), {"lanes": [lane, lane, lane]})
             return 0
@@ -296,6 +297,20 @@ class StagePTests(unittest.TestCase):
                              "--results", str(self.root / "m.json"), "--chain", "r2-c1", "--chain", "r2-c2"])
         stop.assert_called_once_with(first)
         self.assertFalse((self.root / "m.json").exists())
+
+    def test_lanes_runs_only_the_one_update_throughput_config(self):
+        plan = self.make(self.PACKED)
+        chain_cfg = plan["chains"]["r2-c1"]["config"]["path"]
+        native = json.loads(Path(chain_cfg).read_text())["output_directory"]
+        spec = self.root / "spec.json"
+        stagep.write(spec, {"binary": plan["binary"]["path"], "wrapped": False,
+                            "lanes": [{"delay": 0, "configs": [{"config": chain_cfg, "native": native}]}]})
+        with mock.patch.object(stagep.subprocess, "call") as call:
+            with self.assertRaisesRegex(SystemExit, "only the one-update throughput config"):
+                stagep.main(["_lanes", "--spec", str(spec), "--spec-sha256", sha(spec)])
+            with self.assertRaisesRegex(SystemExit, "the spec its throughput check wrote"):
+                stagep.main(["_lanes", "--spec", str(spec), "--spec-sha256", "0" * 64])
+        call.assert_not_called()
 
     def test_throughput_flags(self):
         self.make()

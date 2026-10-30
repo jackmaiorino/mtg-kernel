@@ -397,7 +397,8 @@ def packed_throughput(plan, args, out, config_path, cores, expected, windows):
     write(spec, {"binary": plan["binary"]["path"], "wrapped": bool(plan["hosts"][args.host]["wrapper"]),
                  "lanes": plan_lanes})
     inner = [part for part in plan["hosts"][args.host]["wrapper"]] + [
-        sys.executable, str(Path(__file__).resolve()), "_lanes", "--spec", str(spec)]
+        sys.executable, str(Path(__file__).resolve()), "_lanes", "--spec", str(spec.resolve()),
+        "--spec-sha256", sha(spec)]
     code = subprocess.call(inner)
     result = read(out / "pack-result.json") if (out / "pack-result.json").exists() else {"lanes": []}
     copies, starts, ends, equal, exits = [], [], [], True, [code]
@@ -439,9 +440,20 @@ def packed_throughput(plan, args, out, config_path, cores, expected, windows):
 def lanes(args):
     """Inside a throughput claim: each lane waits its delay, then runs its configs one after another."""
     import threading
+    if sha(args.spec) != args.spec_sha256:
+        raise SystemExit("refused: _lanes needs the spec its throughput check wrote")
     spec = read(args.spec)
     if spec["wrapped"] and not os.environ.get("HOST_SLOTS_CLAIM"):
         raise SystemExit("refused: this internal command runs only inside its host_slots claim")
+    for lane in spec["lanes"]:
+        for item in lane["configs"]:
+            cfg = read(item["config"])
+            ex1 = cfg.get("ex1") or {}
+            # Only the one-update throughput check runs here, never a chain.
+            if (len(cfg.get("iterations", [])) != 1 or ex1.get("run") != THROUGHPUT["run"]
+                    or ex1.get("update_offset") != THROUGHPUT["offset"]
+                    or cfg.get("output_directory") != item["native"]):
+                raise SystemExit("refused: _lanes runs only the one-update throughput config")
     binary = spec["binary"]
     exe = [sys.executable, binary] if binary.endswith(".py") else [binary]   # .py: test stand-ins only
     results = [[] for _ in spec["lanes"]]
@@ -705,6 +717,7 @@ def main(argv=None):
     m.add_argument("--fast-poll", action="store_true")
     ln = sub.add_parser("_lanes")
     ln.add_argument("--spec", required=True)
+    ln.add_argument("--spec-sha256", required=True)
     s = sub.add_parser("status")
     s.add_argument("--plan", required=True)
     args = ap.parse_args(argv)
