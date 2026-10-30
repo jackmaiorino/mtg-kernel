@@ -265,7 +265,7 @@ pub(crate) fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> 
     let historical_unsupported =
         crate::cast_identity_v1::unsupported_public_history(state, unsupported)?;
     let visible = state.objects.iter().any(|(id, live)| {
-        public::visible_known(state, id, viewer, |card_id| unsupported(card_id))
+        public::visible_known(state, id, viewer, &unsupported)
             || viewer.is_some_and(|viewer| {
                 live.v4
                     .face_down_v1

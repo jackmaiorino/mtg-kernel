@@ -127,7 +127,7 @@ fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> Result<(), 
     use crate::{event::CommittedEvent as E, optional_trigger_public_v1 as public};
     let unsupported = |id: u16| id >= 459;
     let visible = state.objects.iter().any(|(id, live)| {
-        public::visible_known(state, id, viewer, |card_id| unsupported(card_id))
+        public::visible_known(state, id, viewer, &unsupported)
             || viewer.is_some_and(|viewer| {
                 live.v4
                     .face_down_v1
