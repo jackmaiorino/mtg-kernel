@@ -2,6 +2,7 @@
 the per-chain USD meter, localization and packing. The training binary is a Python stand-in."""
 import hashlib
 import json
+import os
 import socket
 import sys
 import tempfile
@@ -31,6 +32,14 @@ for i in range(len(cfg["iterations"])):
     (d / "complete.json").write_text(json.dumps({"iteration": i, "collection": {"path": c.as_posix()},
         "update": {"path": u.as_posix()}, "driver_process_cpu_seconds": 1.0}))
 (root / "completion.json").write_text("{}")
+'''
+
+
+SITE = '''
+import os, shutil
+if os.environ.get("STAGEP_TEST_FREE"):
+    _free = float(os.environ["STAGEP_TEST_FREE"])
+    shutil.disk_usage = lambda _path: type("U", (), {"free": _free})()
 '''
 
 
@@ -70,6 +79,13 @@ class StagePTests(unittest.TestCase):
                                   side_effect=lambda _: type("U", (), {"free": self.free})())
         usage.start()
         self.addCleanup(usage.stop)
+        # Subprocesses (a pack group's `_members`) see the same free space through a test-only sitecustomize.
+        (t / "sitecustomize.py").write_text(SITE)
+        env = mock.patch.dict(stagep.os.environ, {
+            "PYTHONPATH": os.pathsep.join([str(t), *filter(None, [os.environ.get("PYTHONPATH")])]),
+            "STAGEP_TEST_FREE": str(self.free)})
+        env.start()
+        self.addCleanup(env.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -156,6 +172,17 @@ class StagePTests(unittest.TestCase):
         starts = [e for e in events if e["event"] == "start"]
         self.assertEqual(sorted(e["chain"] for e in starts), ["r2-c1", "r2-c2"])
         self.assertTrue(all("_members" in e["cmd"] for e in starts))
+
+    def test_members_checks_free_space_again_after_the_queue(self):
+        # review r8: the claim may wait in the queue while the disk fills
+        plan = self.make(self.PACKED)
+        self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2)
+        with mock.patch.dict(stagep.os.environ, {"STAGEP_TEST_FREE": "70e9"}):   # the outer check still sees 500 GB
+            with self.assertRaises(SystemExit) as stop:
+                stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2", "--fast-poll"])
+        self.assertNotEqual(stop.exception.code, 0)
+        for name in ("r2-c1", "r2-c2"):
+            self.assertEqual(stagep.completed(plan["chains"][name]["native"]), 0)
 
     def test_members_checks_again_and_runs_only_inside_its_claim(self):
         self.make(self.PACKED)
