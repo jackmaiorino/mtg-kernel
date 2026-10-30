@@ -296,41 +296,48 @@ class LeaseProgress:
 
     def beat(self, finished: bool = False) -> None:
         with self.lock:
-            stamp, alive, cpu = time.time(), False, driver_cpu_seconds()
-            if cpu - self.cpu[1] >= DRIVER_BUSY_SHARE * (stamp - self.cpu[0]) > 0:
-                self.activity = stamp
-            self.cpu = (stamp, cpu)
-            # Work in child processes: the driver's own children (the dispatch command's checks), and, outside
-            # the native part, an in-flight attempt's processes under its reservation supervisor (preparation
-            # before the native start; fingerprints and archive after it, until wait_block returns). The
-            # supervisors only wait and poll, so they are left out; during the native part only the native
-            # child's CPU counts, so the dispatcher's polling never hides a stalled native run.
-            attempts = [entry["attempts"][-1] for entry in list(self.active.values()) if entry["attempts"]]
-            native = {attempt["root"]: native_ticks(Path(attempt["root"])) for attempt in attempts}
-            supervisors = {attempt["root"]: (attempt.get("dispatch") or {}).get("pid") for attempt in attempts}
-            supervisors = {root: pid for root, pid in supervisors.items() if isinstance(pid, int)}
-            in_flight = {attempt["root"] for attempt in attempts if "finished" not in attempt and "outcome" not in attempt}
-            table = process_table()
-            observed = {"driver-children": descendant_ticks(table, os.getpid(), frozenset(supervisors.values()))}
-            observed |= {root + ":supervised": descendant_ticks(table, pid) for root, pid in supervisors.items()
-                         if root in in_flight and native[root] is None}
-            for root in supervisors:  # unobserved during the native part: a fresh baseline when it ends
-                if root + ":supervised" not in observed:
-                    self.ticks.pop(root + ":supervised", None)
-            for key, ticks in observed.items():
-                if ticks > self.ticks.get(key, ticks):
-                    self.activity = stamp
-                self.ticks[key] = ticks
-            for root, ticks in native.items():
-                if ticks is None:
-                    continue
-                alive = alive or ticks >= 0
-                if ticks > self.ticks.get(str(root), -1):
-                    self.activity = stamp
-                self.ticks[str(root)] = ticks
+            stamp = time.time()
+            alive = self.observe(stamp)
             write_json(self.path, {"pod_id": self.pod, "epoch": stamp, "last_productive_epoch": self.productive,
                                    "last_activity_epoch": self.activity, "native_alive": alive,
                                    "queued_work": alive, "finished": finished})
+
+    def observe(self, stamp: float) -> bool:
+        """Advance ``activity`` from CPU time (the driver, its children, in-flight attempts' supervised
+        processes and the native runs); whether a native run is alive. Called under ``lock``."""
+        alive, cpu = False, driver_cpu_seconds()
+        if cpu - self.cpu[1] >= DRIVER_BUSY_SHARE * (stamp - self.cpu[0]) > 0:
+            self.activity = stamp
+        self.cpu = (stamp, cpu)
+        # Work in child processes: the driver's own children (the dispatch command's checks), and, outside
+        # the native part, an in-flight attempt's processes under its reservation supervisor (preparation
+        # before the native start; fingerprints and archive after it, until wait_block returns). The
+        # supervisors only wait and poll, so they are left out; during the native part only the native
+        # child's CPU counts, so the dispatcher's polling never hides a stalled native run.
+        attempts = [entry["attempts"][-1] for entry in list(self.active.values()) if entry["attempts"]]
+        native = {attempt["root"]: native_ticks(Path(attempt["root"])) for attempt in attempts}
+        supervisors = {attempt["root"]: (attempt.get("dispatch") or {}).get("pid") for attempt in attempts}
+        supervisors = {root: pid for root, pid in supervisors.items() if isinstance(pid, int)}
+        in_flight = {attempt["root"] for attempt in attempts if "finished" not in attempt and "outcome" not in attempt}
+        table = process_table()
+        observed = {"driver-children": descendant_ticks(table, os.getpid(), frozenset(supervisors.values()))}
+        observed |= {root + ":supervised": descendant_ticks(table, pid) for root, pid in supervisors.items()
+                     if root in in_flight and native[root] is None}
+        for root in supervisors:  # unobserved during the native part: a fresh baseline when it ends
+            if root + ":supervised" not in observed:
+                self.ticks.pop(root + ":supervised", None)
+        for key, ticks in observed.items():
+            if ticks > self.ticks.get(key, ticks):
+                self.activity = stamp
+            self.ticks[key] = ticks
+        for root, ticks in native.items():
+            if ticks is None:
+                continue
+            alive = alive or ticks >= 0
+            if ticks > self.ticks.get(str(root), -1):
+                self.activity = stamp
+            self.ticks[str(root)] = ticks
+        return alive
 
 
 def touch(campaign: Campaign) -> None:
