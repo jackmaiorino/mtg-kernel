@@ -886,10 +886,36 @@ class BackfillAdmissionTests(unittest.TestCase):
         self.assertEqual(own["backfill_policy"], slots.BACKFILL_POLICY)
 
     def test_windows_of_heads_that_left_are_pruned(self):
-        slots.write_json(self.host / f"TESTHOST.slots/delay-{'c' * 32}.json", {"head_id": "c" * 32})
-        with Mutex_free(self.host):
-            slots._prune_delay_windows({"d" * 32})
-        self.assertFalse((self.host / f"TESTHOST.slots/delay-{'c' * 32}.json").exists())
+        d = self.host / "TESTHOST.slots"
+        slots.write_json(d / f"delay-{'c' * 32}.json", {"head_id": "c" * 32})
+        slots.write_json(d / f"delay-{'d' * 32}.json", {"head_id": "d" * 32})
+        (d / f"queue-{1:020d}-{'d' * 32}.json").write_text("{ unreadable")   # review r2: still present
+        slots._prune_delay_windows()
+        self.assertFalse((d / f"delay-{'c' * 32}.json").exists())
+        self.assertTrue((d / f"delay-{'d' * 32}.json").exists())
+
+    def test_an_unreadable_window_refuses_every_delaying_backfill(self):
+        # review r2: a failed read must not start a fresh window
+        d = self.host / "TESTHOST.slots"
+        self.assertIsNone(slots._read_delay_window("e" * 32))
+        (d / f"delay-{'e' * 32}.json").write_text("{ torn")
+        window = slots._read_delay_window("e" * 32)
+        self.assertEqual(window, {"unreadable": True})
+        head = {**ticket("e" * 32, 4, 3600.0), "config_sha256": slots.config_digest(config8())}
+        self.assertIsNone(slots.backfill_admission(config8(), FREE, BoundedDelayBackfillTests.CLAIMS,
+                                                   [head, bounded("t", 2, 60.0)], "t", 1000.0, window))
+
+    def test_status_uses_the_monotonic_deadline(self):
+        # review r2: a wall-clock rollback must not hide an overdue backfill
+        pid, creation = slots.self_identity()
+        base = {"schema": slots.SCHEMA, "pid": pid, "creation_time": creation, "lane": "l", "work_id": "w",
+                "background": False, "priority": "below_normal", "state": "running", "acquired_at": slots.now_utc(),
+                "backfill": True, "max_seconds": 60.0, "head_id": "f" * 32,
+                "deadline_at": "9999-01-01T00:00:00.000+00:00"}
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'5' * 32}.json", {
+            **base, "id": "5" * 32, "cores": [CPUS[-1]], "deadline_mono": slots.time.monotonic() - 1.0})
+        rows = {b["id"]: b["overdue"] for b in slots.status()["backfill"]}
+        self.assertEqual(rows, {"5" * 32: True})
 
     def test_status_shows_each_backfills_delay_bound(self):
         pid, creation = slots.self_identity()
@@ -926,18 +952,6 @@ class BackfillAdmissionTests(unittest.TestCase):
 def bounded(name, wanted, max_seconds=60.0, **extra):
     """A request from a launcher that applies the bounded-delay rule."""
     return ticket(name, wanted, max_seconds, backfill_policy=slots.BACKFILL_POLICY, **extra)
-
-
-class Mutex_free:
-    """Context for helpers that run under the admission mutex in production; tests call them directly."""
-    def __init__(self, _):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
 
 
 class BoundedDelayBackfillTests(unittest.TestCase):

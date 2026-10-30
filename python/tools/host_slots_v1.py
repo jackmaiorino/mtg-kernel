@@ -803,11 +803,24 @@ def _delay_window_path(head_id: str) -> Path:
     return slots_dir() / f"delay-{head_id}.json"
 
 
-def _prune_delay_windows(queued: set) -> None:
-    """Delay windows of heads no longer queued go (called under the admission mutex)."""
+def _prune_delay_windows() -> None:
+    """A delay window goes once no queue file for its head exists at all (called under the admission mutex,
+    after `live_tickets` has removed the tickets of exited launchers). A ticket that exists but cannot be read
+    keeps its head's window."""
     for path in slots_dir().glob("delay-*.json"):
-        if path.stem.removeprefix("delay-") not in queued:
+        head_id = path.stem.removeprefix("delay-")
+        if not any(slots_dir().glob(f"queue-*-{head_id}.json")):
             path.unlink(missing_ok=True)
+
+
+def _read_delay_window(head_id: str) -> dict | None:
+    """The head's persisted window, None when there is none, or an unreadable marker (which refuses every
+    delaying backfill for that head) when the file exists but cannot be read."""
+    path = _delay_window_path(head_id)
+    if not path.exists():
+        return None
+    window = read_json(path)
+    return window if isinstance(window, dict) else {"unreadable": True}
 
 
 def backfill_admission(config: dict, timed: dict, claims: list[dict], tickets: list[dict], claim_id: str,
@@ -1083,9 +1096,9 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                         current = load_config()
                     except ValueError:  # an unreadable edit: no backfill until it is fixed
                         current = None
-                    _prune_delay_windows({ticket["id"] for ticket in tickets})
+                    _prune_delay_windows()
                     started, mono = datetime.now(timezone.utc), time.monotonic()
-                    window = read_json(_delay_window_path(tickets[0]["id"]))
+                    window = _read_delay_window(tickets[0]["id"])
                     admitted = None if current is None else backfill_admission(
                         current, timed_state(), live_claims(), tickets, claim_id, mono, window)
                     if admitted is not None:
@@ -1297,10 +1310,14 @@ def status() -> dict:
     backfills = []
     for c in claims:
         if c.get("backfill"):
-            try:
-                overdue = now > datetime.fromisoformat(c["deadline_at"])
-            except (KeyError, TypeError, ValueError):
-                overdue = None
+            deadline_mono = c.get("deadline_mono")
+            if isinstance(deadline_mono, (int, float)) and not isinstance(deadline_mono, bool):
+                overdue = time.monotonic() > deadline_mono      # unmoved by wall-clock changes
+            else:
+                try:
+                    overdue = now > datetime.fromisoformat(c["deadline_at"])
+                except (KeyError, TypeError, ValueError):
+                    overdue = None
             backfills.append({**{k: c.get(k) for k in ("id", "lane", "work_id", "cores", "max_seconds",
                                                        "acquired_at", "deadline_at", "head_id")},
                               # A delaying backfill's bound: the head's worst-case delay from its backfills.
