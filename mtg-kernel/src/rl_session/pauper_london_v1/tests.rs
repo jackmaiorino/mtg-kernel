@@ -169,15 +169,12 @@ fn pauper_london_both_keep_first_in_game_state_equals_keep_seven_v2_both_startin
                 assert_eq!(session.current_response(), baseline.current_response());
             }
             let record = session.pauper_opening_record_v1().unwrap();
-            for seat in 0..2 {
-                assert_eq!(record.seats[seat].mode, modes[seat]);
-                assert_eq!(record.seats[seat].mulligans_taken, 0);
-                assert_eq!(record.seats[seat].kept_hand_size, 7);
-                assert!(!record.seats[seat].forced_zero_card_keep);
-                assert_eq!(
-                    record.seats[seat].exposed_pregame_decisions,
-                    u32::from(modes[seat] == Learned)
-                );
+            for (seat, mode) in record.seats.iter().zip(modes) {
+                assert_eq!(seat.mode, mode);
+                assert_eq!(seat.mulligans_taken, 0);
+                assert_eq!(seat.kept_hand_size, 7);
+                assert!(!seat.forced_zero_card_keep);
+                assert_eq!(seat.exposed_pregame_decisions, u32::from(mode == Learned));
             }
         }
     }
@@ -235,10 +232,10 @@ fn pauper_london_announcements_precede_redraws_in_starting_player_order() {
         assert_eq!(view.kept, [false, false]);
         play_opening(&mut session, [0, 0]);
         let record = session.pauper_opening_record_v1().unwrap();
-        for seat in 0..2 {
-            assert_eq!(record.seats[seat].mulligans_taken, 1);
-            assert_eq!(record.seats[seat].kept_hand_size, 6);
-            assert_eq!(record.seats[seat].exposed_pregame_decisions, 3);
+        for seat in &record.seats {
+            assert_eq!(seat.mulligans_taken, 1);
+            assert_eq!(seat.kept_hand_size, 6);
+            assert_eq!(seat.exposed_pregame_decisions, 3);
         }
         // The first in-game decision is the starting player's first turn:
         // no turn-1 draw counter survives the opening.
