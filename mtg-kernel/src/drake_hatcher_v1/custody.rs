@@ -1027,10 +1027,22 @@ pub(crate) fn collect(
     events: &[CommittedEvent],
 ) -> Result<Vec<PendingTrigger>, String> {
     let mut ready = Vec::new();
+    // One pass for the collected captures, not one per capture.
+    let collected = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|e| match journal(e).map(|r| &r.value) {
+            Some(JournalV1::Collected { capture, .. }) => Some(*capture),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     for e in &state.engine.event_history {
         let Some(row) = journal(e) else { continue };
         if let JournalV1::Captured { marker, .. } = &row.value {
-            if state.engine.event_history.iter().any(|e| matches!(journal(e).map(|r|&r.value),Some(JournalV1::Collected {capture,..}) if *capture==row.index)) {continue;}
+            if collected.contains(&row.index) {
+                continue;
+            }
             let committed = state
                 .engine
                 .event_history
@@ -1407,11 +1419,24 @@ fn held(state: &GameState) -> impl Iterator<Item = &PendingTrigger> {
                 .flat_map(|p| p.deferred_triggers.iter()),
         )
 }
-fn refs<'a>(rows: &'a [&RecordV1], predicate: impl Fn(&JournalV1) -> bool) -> Vec<&'a RecordV1> {
-    rows.iter()
-        .copied()
-        .filter(|r| predicate(&r.value))
-        .collect()
+/// A row kind that names one earlier row by its index.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum RowReferenceV1 {
+    Collected,
+    Published,
+    Paid,
+    Removed,
+    Completed,
+}
+fn reference(value: &JournalV1) -> Option<(RowReferenceV1, u64)> {
+    match value {
+        JournalV1::Collected { capture, .. } => Some((RowReferenceV1::Collected, *capture)),
+        JournalV1::Published { capture, .. } => Some((RowReferenceV1::Published, *capture)),
+        JournalV1::Paid { debit, .. } => Some((RowReferenceV1::Paid, *debit)),
+        JournalV1::Removed { publication, .. } => Some((RowReferenceV1::Removed, *publication)),
+        JournalV1::Completed { removed, .. } => Some((RowReferenceV1::Completed, *removed)),
+        _ => None,
+    }
 }
 /// Validate originals and one-use custody before a public engine mutation.
 /// Private current-operation tails are permitted only under the actual Runner.
@@ -1477,12 +1502,33 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         replay_keys(&state.engine.event_history)
     };
     let mut verified_keys = Vec::new();
+    // Indexed once: scanning every row again for each row made validation
+    // quadratic in the rows. Rows are in history order, so each enclosing
+    // operation covers one contiguous run of them.
+    let mut referencing = HashMap::<(RowReferenceV1, u64), Vec<&RecordV1>>::new();
+    let mut covering = vec![0_i64; rows.len() + 1];
+    for (position, row) in rows.iter().enumerate() {
+        if let Some(target) = reference(&row.value) {
+            referencing.entry(target).or_default().push(row);
+        }
+        if let JournalV1::Enclosing { start, .. } = row.value {
+            covering[rows.partition_point(|r| r.index < start).min(position)] += 1;
+            covering[position] -= 1;
+        }
+    }
+    let refs = |kind: RowReferenceV1, target: u64| {
+        referencing
+            .get(&(kind, target))
+            .map_or(&[][..], Vec::as_slice)
+    };
+    let mut coverage = 0;
     let last_closed = rows
         .iter()
         .filter(|r| matches!(r.value, JournalV1::Enclosing { .. }))
         .map(|r| r.index)
         .max();
-    for row in &rows {
+    for (position, row) in rows.iter().enumerate() {
+        coverage += covering[position];
         if state
             .engine
             .event_history
@@ -1492,7 +1538,6 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         {
             return Err("Drake record index moved".into());
         }
-        let coverage = rows.iter().filter(|operation| matches!(operation.value, JournalV1::Enclosing { start, .. } if row.index >= start && row.index < operation.index)).count();
         if !matches!(row.value, JournalV1::Enclosing { .. })
             && coverage != 1
             && !(local && last_closed.is_none_or(|last| row.index > last))
@@ -1545,10 +1590,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                             .into(),
                     );
                 }
-                let collections = refs(
-                    &rows,
-                    |j| matches!(j, JournalV1::Collected { capture, .. } if *capture == row.index),
-                );
+                let collections = refs(RowReferenceV1::Collected, row.index);
                 if collections.len() > 1 || (!local && collections.len() != 1) {
                     return Err("Drake capture collection lost/duplicated".into());
                 }
@@ -1561,10 +1603,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 if *capture >= row.index || saved.as_ref() != &pending(original, *capture) {
                     return Err("Drake collected input changed".into());
                 }
-                let publications = refs(
-                    &rows,
-                    |j| matches!(j, JournalV1::Published { capture: c, .. } if c == capture),
-                );
+                let publications = refs(RowReferenceV1::Published, *capture);
                 let held_count = held(state)
                     .filter(|p| capture_of(&p.effect) == Some(*capture))
                     .count();
@@ -1577,10 +1616,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
             JournalV1::Published { capture, item } => {
                 let (original, _) = source(state, *capture)?;
-                let collections = refs(
-                    &rows,
-                    |j| matches!(j, JournalV1::Collected { capture: c, .. } if c == capture),
-                );
+                let collections = refs(RowReferenceV1::Collected, *capture);
                 if **item != trigger_item(original, *capture, item.v4.stack_item_id)
                     || item.v4.stack_item_id == StackItemId::default()
                     || collections.len() != 1
@@ -1605,14 +1641,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Drake original typed debit changed".into());
                 }
-                if !local
-                    && refs(
-                        &rows,
-                        |j| matches!(j, JournalV1::Paid { debit, .. } if *debit == row.index),
-                    )
-                    .len()
-                        != 1
-                {
+                if !local && refs(RowReferenceV1::Paid, row.index).len() != 1 {
                     return Err("Drake debit lost unique paid publication".into());
                 }
             }
@@ -1679,7 +1708,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 if *publication >= row.index || !original.engine.event_history.is_empty() {
                     return Err("Drake removal input moved/nested".into());
                 }
-                if !local && refs(&rows, |j| matches!(j, JournalV1::Completed { removed, .. } if *removed == row.index)).len() != 1 {
+                if !local && refs(RowReferenceV1::Completed, row.index).len() != 1 {
                     return Err("Drake removal lost unique completion".into());
                 }
             }
@@ -1764,16 +1793,14 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
         if let JournalV1::Published { item, .. } | JournalV1::Paid { item, .. } = &row.value {
-            let removals = refs(
-                &rows,
-                |j| matches!(j, JournalV1::Removed { publication, .. } if *publication == row.index),
-            );
+            let removals = refs(RowReferenceV1::Removed, row.index);
             let lives = state
                 .stack
                 .iter()
                 .filter(|i| i.v4.stack_item_id == item.v4.stack_item_id)
                 .collect::<Vec<_>>();
-            let live_once = matches!((lives.as_slice(), removals.as_slice()), ([live], []) if *live == item.as_ref());
+            let live_once =
+                matches!((lives.as_slice(), removals), ([live], []) if *live == item.as_ref());
             let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
             if (disposed && (!lives.is_empty() || !removals.is_empty()))
                 || removals.len() > 1
