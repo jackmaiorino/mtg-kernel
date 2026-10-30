@@ -134,11 +134,13 @@ fn export_root(root: &Root) -> Result<Value, String> {
         if i == certified {
             let row = json!({"board": board(&s), "legal": legal(&s), "actor": r.actor,
                 "selected": r.selected});
-            return Ok(json!({"kind": "review", "root_id": root.root_id, "game_id": job.id,
+            return Ok(
+                json!({"kind": "review", "root_id": root.root_id, "game_id": job.id,
                 "role": role.role, "stratum": role.stratum, "opportunity_turn": role.opportunity_turn,
                 "index": root.index, "certified_index": certified, "focal": job.focal,
                 "deck_ids": job.config.deck_ids, "winner": job.winner,
-                "root": at_root, "certified": row, "path": path}));
+                "root": at_root, "certified": row, "path": path}),
+            );
         }
         if i >= root.index {
             let chosen = s
@@ -163,9 +165,8 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
         std::io::BufWriter::new(std::fs::File::create(&cfg.out).map_err(|e| e.to_string())?);
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let root: Root = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
-        let row = export_root(&root).unwrap_or_else(
-            |e| json!({"kind": "error", "root_id": root.root_id, "error": e}),
-        );
+        let row = export_root(&root)
+            .unwrap_or_else(|e| json!({"kind": "error", "root_id": root.root_id, "error": e}));
         writeln!(out, "{row}").map_err(|e| e.to_string())?;
     }
     out.flush().map_err(|e| e.to_string())
