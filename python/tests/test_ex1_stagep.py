@@ -234,6 +234,54 @@ class StagePTests(unittest.TestCase):
         self.assertNotEqual(record["exit"], 0)
         self.assertFalse(record["state_equal"])
 
+    def test_a_packed_record_is_measured_and_required_at_the_group_core_count(self):
+        plan = self.make({"r2-c1": "desk:6:0:0:g", "r2-c2": "desk:6:0:0:g", "r1-c1": "desk:8:0:0",
+                          "r1-c2": "pod:8:0.24:6.0"})
+        stagep.main(["throughput", "--plan", str(self.plan), "--host", "desk", "--pack", "2", "--repeats", "1",
+                     "--stagger", "0"])
+        record = json.loads((self.root / "throughput" / "THROUGHPUT-desk-k2.json").read_text())
+        self.assertEqual(record["cores"], 6)
+        self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2, cores=8)
+        with self.assertRaisesRegex(SystemExit, "packed record at 8 cores, not the group's 6"):
+            stagep.guard(plan, "r2-c1", plan["chains"]["r2-c1"])
+        with self.assertRaisesRegex(SystemExit, "pack groups of size 3"):
+            stagep.main(["throughput", "--plan", str(self.plan), "--host", "desk", "--pack", "3"])
+
+    def test_packed_throughput_folders_are_unique_and_results_must_match_the_plan(self):
+        self.make(self.PACKED)
+        argv = ["throughput", "--plan", str(self.plan), "--host", "desk", "--pack", "2", "--repeats", "1",
+                "--stagger", "0"]
+        expected = json.loads(self.qualification.read_text())["checks"]["resume_determinism"]["states"][0]
+
+        def surplus(cmd):                                  # the inner run reports a third copy
+            spec = Path(cmd[cmd.index("--spec") + 1])
+            lane = [{"start": 1.0, "end": 2.0, "exit": 0}]
+            stagep.write(spec.with_name("pack-result.json"), {"lanes": [lane, lane, lane]})
+            return 0
+
+        row = ({}, {"after_state_sha256": expected}, {"collection_elapsed_seconds": 1.0})
+        with mock.patch.object(stagep.subprocess, "call", side_effect=surplus), \
+                mock.patch.object(stagep.qual, "iterations", side_effect=lambda _: iter([row])):
+            with self.assertRaisesRegex(SystemExit, "failed"):
+                stagep.main(argv)
+            with self.assertRaisesRegex(SystemExit, "failed"):
+                stagep.main(argv)
+        folders = [d for d in (self.root / "throughput").iterdir() if d.is_dir()]
+        self.assertEqual(len(folders), 2)
+        self.assertTrue(all("-k2-" in d.name for d in folders))
+
+    def test_a_partial_group_start_stops_the_started_member(self):
+        self.make(self.PACKED)
+        self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2)
+        first = mock.Mock()
+        with mock.patch.object(stagep.subprocess, "Popen", side_effect=[first, OSError("no process")]), \
+                mock.patch.object(stagep, "stop_tree") as stop:
+            with self.assertRaises(OSError):
+                stagep.main(["_members", "--plan", str(self.plan), "--results", str(self.root / "m.json"),
+                             "--chain", "r2-c1", "--chain", "r2-c2"])
+        stop.assert_called_once_with(first)
+        self.assertFalse((self.root / "m.json").exists())
+
     def test_throughput_flags(self):
         self.make()
         for argv in (["--pack", "0"], ["--repeats", "2"], ["--stagger", "1"], ["--pack", "2", "--repeats", "0"]):

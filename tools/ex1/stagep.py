@@ -45,6 +45,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import psutil
@@ -314,8 +315,18 @@ def throughput(args):
     if not chains:
         raise SystemExit(f"no chain is placed on {args.host}")
     cores = max(c["cores"] for c in chains)
+    if args.pack > 1:
+        # A packed record qualifies the pack groups of that size on this host, at their own core count.
+        sizes = {c["cores"] for c in chains if c.get("pack", 1) == args.pack}
+        if len(sizes) != 1:
+            raise SystemExit(f"refused: {args.host} needs pack groups of size {args.pack} at one core count, "
+                             f"found {sorted(sizes)}")
+        cores = sizes.pop()
     q = read(plan["qualification"]["path"])
-    out = Path(plan["root"]) / "throughput" / f"{args.host}-c{cores}-{time.strftime('%Y%m%dT%H%M%S')}"
+    # Unique per invocation, so concurrent checks never share a folder.
+    out = Path(plan["root"]) / "throughput" / (f"{args.host}-c{cores}-k{args.pack}-"
+                                               f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}")
+    out.mkdir(parents=True, exist_ok=False)
     config_path = out / "config.json"
     if "throughput_config" in plan:
         # A localized plan carries the config prebuilt where the dose records' paths resolve.
@@ -390,7 +401,10 @@ def packed_throughput(plan, args, out, config_path, cores, expected, windows):
     code = subprocess.call(inner)
     result = read(out / "pack-result.json") if (out / "pack-result.json").exists() else {"lanes": []}
     copies, starts, ends, equal, exits = [], [], [], True, [code]
-    ran_lanes = result["lanes"] + [[]] * (len(plan_lanes) - len(result["lanes"]))
+    if len(result["lanes"]) != len(plan_lanes) or any(len(r) != len(lane["configs"])
+                                                      for r, lane in zip(result["lanes"], plan_lanes)):
+        exits.append(1)        # the inner run must report exactly one result per planned copy and repeat
+    ran_lanes = (result["lanes"] + [[]] * len(plan_lanes))[:len(plan_lanes)]
     for lane, ran in zip(plan_lanes, ran_lanes):
         updates = []
         for item, run_ in zip(lane["configs"], ran):
@@ -478,6 +492,8 @@ def guard(plan, name, chain):
         problems.append("recorded with another binary")
     if t["workers"] != chain["workers"] or t["cores"] < chain["cores"]:
         problems.append("recorded at other workers or fewer cores")
+    if pack > 1 and t["cores"] != chain["cores"]:
+        problems.append(f"packed record at {t['cores']} cores, not the group's {chain['cores']}")
     if t["exit"] != 0 or (t["state_required"] and not t["state_equal"]):
         problems.append("its update failed or its state differs from the qualification's")
     if problems:
@@ -552,7 +568,14 @@ def members(args):
     require_claim(plan, chain["host"])
     binary = plan["binary"]["path"]
     exe = [sys.executable, binary] if binary.endswith(".py") else [binary]   # .py: test stand-ins only
-    procs = {name: subprocess.Popen(exe + [plan["chains"][name]["config"]["path"]]) for name in names}
+    procs = {}
+    try:
+        for name in names:
+            procs[name] = subprocess.Popen(exe + [plan["chains"][name]["config"]["path"]])
+    except BaseException:
+        for proc in procs.values():        # a partial start leaves nothing running
+            stop_tree(proc)
+        raise
     codes = {name: proc.wait() for name, proc in procs.items()}
     write(args.results, codes)
     raise SystemExit(0 if not any(codes.values()) else 1)
