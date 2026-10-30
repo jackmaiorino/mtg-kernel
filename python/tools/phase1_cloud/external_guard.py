@@ -64,17 +64,18 @@ Completion needs every known ID confirmed absent in this process, two spaced
 empty censuses, every known ID durable and no store error. A create attempt
 (lease/create-attempt.json or lease/create-ambiguous.json) is resolved only by
 readable evidence: a valid receipt, a retained 'receipt' record, a definite
-provider refusal, lease/ambiguous-resolved-by-operator.json, or
-lease/ambiguous-resolved-by-guard.json; until then completion is blocked, and
-lease/create-ambiguous.json is also a release reason. Release authorization
-never proves that a create failed. The guard writes its own resolution only
-while it retains no Pod ID at all (a late Pod in any census is retained, so it
-never resolves), after clear censuses of the exact name for
-AMBIGUOUS_CLEAR_SECONDS without a break, and when a live account read shows
-spend no higher than the read recorded just before the POST
-(lease/funding-at-create.json): no hidden Pod is billing. Any other Pod on the
-account keeps the create unresolved for an operator. once=True runs a single
-pass (a watchdog).
+provider refusal, or lease/ambiguous-resolved-by-operator.json; until then
+completion is blocked, and lease/create-ambiguous.json is also a release
+reason. Release authorization never proves that a create failed, and neither
+does quiet: account spend is account-wide and RunPod bounds no create delay.
+After AMBIGUOUS_QUIET_SECONDS of unbroken clear exact-name censuses (monotonic
+time, reset by a failure, a gap or any retained ID) the guard writes
+ambiguous-create-quiet.json (diagnostic evidence for the operator, account
+spend included) and ALERT-ambiguous-create.json, and keeps supervising: only
+an operator's resolution ends it. A census entry with an ID but no name is
+malformed, never absence. Completion re-reads the durable store first, so an ID
+a concurrent --once pass retained is never left behind. once=True runs a
+single pass (a watchdog).
 
 usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json required)
 """
@@ -102,10 +103,10 @@ CONTROLLER_DONE_SECONDS = 600     # completion.json with nothing created ends an
 RELEASE_POLL_SECONDS = 5          # a creator's own release loop (I4)
 ONCE_RELEASE_SECONDS = 180        # a watchdog pass's own release bound (I4)
 OPERATOR_RESOLUTION = 'lease/ambiguous-resolved-by-operator.json'
-GUARD_RESOLUTION = 'lease/ambiguous-resolved-by-guard.json'
-AMBIGUOUS_CLEAR_SECONDS = 1800    # clear exact-name censuses, unbroken, before the guard resolves a create
-FUNDS_POLL_SECONDS = 300          # at most one account read per five minutes for that resolution
-SPEND_TOLERANCE_USD_HOUR = 0.001
+AMBIGUOUS_QUIET_SECONDS = 1800    # unbroken clear censuses before the operator is alerted (never a resolution)
+QUIET_GAP_SECONDS = 3 * POLL_SECONDS   # a longer gap between clear censuses starts the quiet window again
+QUIET_NOTE = 'ambiguous-create-quiet.json'
+QUIET_ALERT = 'ALERT-ambiguous-create.json'
 KNOWN_DIR = 'lease/known-pods'
 CREATE_ROLES = ('receipt', 'adopted')   # roles that mark a retained ID as the create result (I3)
 POD_ID = re.compile('[A-Za-z0-9]+')
@@ -150,6 +151,8 @@ def census_entries(census, name):
         pod_id = entry.get('id')
         if valid_id(pod_id):
             listed.add(pod_id)
+        if valid_id(pod_id) and not isinstance(entry.get('name'), str):
+            malformed = True                # an unnamed entry may be this lease's Pod: never absence
         if entry.get('name') == name:
             if valid_id(pod_id):
                 if pod_id not in owned:
@@ -185,7 +188,7 @@ def create_evidence(root):
 def ambiguous_unresolved(root):
     root = Path(root)
     return (root / 'lease/create-ambiguous.json').exists() and not create_evidence(root) \
-        and not resolved(root)
+        and not (root / OPERATOR_RESOLUTION).exists()
 
 
 def definite_create_failure(root):
@@ -204,12 +207,7 @@ def create_unresolved(root):
     root = Path(root)
     attempted = (root / 'lease/create-attempt.json').exists() or (root / 'lease/create-ambiguous.json').exists()
     return attempted and not create_evidence(root) and not definite_create_failure(root) \
-        and not resolved(root)
-
-
-def resolved(root):
-    """An operator's or the guard's own resolution of a create that named no Pod."""
-    return (Path(root) / OPERATOR_RESOLUTION).exists() or (Path(root) / GUARD_RESOLUTION).exists()
+        and not (root / OPERATOR_RESOLUTION).exists()
 
 
 def remember_in(folder, pod_id, role, epoch):
@@ -569,23 +567,19 @@ def live_funds(key):
     return Provider(key, 'funding').funds()
 
 
-def census_clear_now(census_ok, malformed, listed):
-    return census_ok and not malformed and not listed
-
-
 def run(root, key, pods=None, provider=None, clock=time.time, sleep=time.sleep,
-        once=False, preserve=None, marker_probe=None, funds=None):
+        once=False, preserve=None, marker_probe=None, funds=None, monotonic=time.monotonic):
     root = Path(root); lease = read(root / 'lease/lease.json'); validate(lease)
     # Leaving this block (completion, a --once pass, any exception) resolves every ID that is neither
     # durable nor verified absent, or fails loudly (I4).
     with LeaseClient(root / KNOWN_DIR, lease['name'], key, provider, pods, clock, sleep,
                      root / 'ALERT-pod-not-released.json', min_release_seconds=ONCE_RELEASE_SECONDS) as client:
-        return _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, funds)
+        return _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, funds, monotonic)
 
 
-def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, funds=None):
+def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, funds=None, monotonic=time.monotonic):
     highest = lease['rate_ceiling_usd_hour']; preserved = False; deletes = 0; last_probe = None
-    clear_since = None; clear_censuses = 0; last_funds = None  # the guard's own create resolution
+    quiet_since = last_clear = None; quiet_censuses = 0; quiet_noted = False  # diagnostics only
     census_absence = AbsenceConfirmer(clock)
     id_absence = {}
     memory = client.retained      # known ID -> role; nothing leaves it (I4)
@@ -735,29 +729,33 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             failures.append('store:' + ','.join(store_errors))
         if failures and open_known:
             reason = reason or 'guard_failure'
-        # A create that named no Pod: resolved here only with no retained ID, unbroken clear censuses and an
-        # account spend no higher than just before the POST
-        if census_clear_now(census_ok, malformed, listed) and not memory and create_unresolved(root):
-            clear_since = now if clear_since is None else clear_since
-            clear_censuses += 1
+        # Quiet after a create that named no Pod is evidence for the operator, never a resolution
+        tick = monotonic()
+        if census_ok and not malformed and not listed and not failures and not memory and create_unresolved(root):
+            if quiet_since is None or tick - last_clear > QUIET_GAP_SECONDS:
+                quiet_since, quiet_censuses, quiet_noted = tick, 0, False
+            quiet_censuses += 1; last_clear = tick
         else:
-            clear_since = None
-            clear_censuses = 0
-        if (clear_since is not None and now - clear_since >= AMBIGUOUS_CLEAR_SECONDS and funds is not None
-                and (last_funds is None or now - last_funds >= FUNDS_POLL_SECONDS)):
-            last_funds = now
+            quiet_since = last_clear = None; quiet_censuses = 0; quiet_noted = False
+        if quiet_since is not None and not quiet_noted and tick - quiet_since >= AMBIGUOUS_QUIET_SECONDS:
+            quiet_noted = True
+            account = None
+            if funds is not None:
+                try:
+                    account = funds()
+                except Exception as e:  # noqa: BLE001 - diagnostic only
+                    account = {'error_type': type(e).__name__}
+            evidence = {'exact_name': lease['name'], 'epoch': clock(), 'quiet_seconds': tick - quiet_since,
+                        'clear_censuses': quiet_censuses, 'retained_ids': sorted(memory), 'account_now': account,
+                        'account_before_create': None, 'resolution': 'operator only (lease/' +
+                        OPERATOR_RESOLUTION.split('/', 1)[1] + ')'}
             try:
-                baseline = float(read(root / 'lease/funding-at-create.json')['account_spend_usd_hour'])
-                observed_funds = funds()
-                spend = float(observed_funds['account_spend_usd_hour'])
-                if spend <= baseline + SPEND_TOLERANCE_USD_HOUR:
-                    write(root / GUARD_RESOLUTION, {
-                        'schema': 'phase1-cloud-ambiguous-resolution/v1', 'exact_name': lease['name'],
-                        'epoch': clock(), 'clear_since_epoch': clear_since, 'clear_censuses': clear_censuses,
-                        'baseline_spend_usd_hour': baseline, 'account_spend_usd_hour': spend,
-                        'balance_usd': observed_funds.get('balance_usd')})
-            except Exception as e:  # noqa: BLE001 - no resolution without both readings
-                note('external-funds-error.json', {'epoch': clock(), 'error_type': type(e).__name__})
+                evidence['account_before_create'] = read(root / 'lease/funding-at-create.json')
+            except Exception:  # noqa: BLE001 - absent on older leases
+                pass
+            note(QUIET_NOTE, evidence)
+            note(QUIET_ALERT, {'reason': 'ambiguous create quiet; operator resolution needed', 'epoch': clock(),
+                               'evidence': QUIET_NOTE})
         ambiguous = primary is None and ambiguous_unresolved(root)
         if ambiguous:
             reason = reason or 'ambiguous_create'
@@ -775,6 +773,14 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             and not store_errors and not client.unpersisted
         unresolved = create_unresolved(root)
         if census_done and may_finish and not unresolved and not ambiguous:
+            # a concurrent --once pass may have retained an ID since this pass loaded the store
+            try:
+                late = set(known_pods(root, store_errors)) - set(memory)
+            except Exception as e:  # noqa: BLE001 - an unreadable store never permits completion
+                store_errors.append('store:' + type(e).__name__); late = {None}
+        else:
+            late = {None}
+        if not late and not store_errors:
             note('external-guard-completion.json', {
                 'exact_name': lease['name'], 'pod_id': primary, 'known_pods': sorted(memory),
                 'provider_absent': True, 'absent_confirmations': 2, 'reason': reason, 'deletes': deletes,

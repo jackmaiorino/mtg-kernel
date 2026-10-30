@@ -352,71 +352,101 @@ class UnresolvedCreateTests(Base):
         self.assertEqual(self.loop(World([]), polls=10), 'returned')
 
 
-class SelfResolutionTests(Base):
-    """A create that named no Pod: the guard resolves it itself only with no retained ID, clear exact-name
-    censuses for AMBIGUOUS_CLEAR_SECONDS and an account spend no higher than just before the POST."""
+class QuietCreateTests(Base):
+    """A create that named no Pod is never resolved by the guard: after unbroken quiet it writes diagnostic
+    evidence and an ALERT for the operator and keeps supervising."""
 
-    def ambiguous(self, baseline=0.05):
+    def ambiguous(self, operator=False):
         write(self.root / 'lease/create-attempt.json', {})
         write(self.root / 'lease/create-ambiguous.json', {'error_type': 'RuntimeError', 'pod_id': None})
         write(self.root / 'lease/create-pod-failure.json', {'definite': False})
-        if baseline is not None:
-            write(self.root / 'lease/funding-at-create.json', {'account_spend_usd_hour': baseline})
+        write(self.root / 'lease/funding-at-create.json', {'account_spend_usd_hour': 0.05})
         write(self.root / 'completion.json', {'complete': False})
+        if operator:
+            write(self.root / eg.OPERATOR_RESOLUTION, {'checked_by': 'operator'})
 
     def polls(self):
-        return int(eg.AMBIGUOUS_CLEAR_SECONDS / eg.POLL_SECONDS) + 20
+        return int(eg.AMBIGUOUS_QUIET_SECONDS / eg.POLL_SECONDS) + 20
 
-    def test_clear_censuses_and_unchanged_spend_resolve_and_complete(self):
-        self.ambiguous()
-        world = World([])
-        self.assertEqual(self.loop(world, polls=self.polls(), funds=world.provider('k', 'funding').funds), 'returned')
-        resolution = read(self.root / eg.GUARD_RESOLUTION)
-        self.assertGreaterEqual(resolution['epoch'] - resolution['clear_since_epoch'], eg.AMBIGUOUS_CLEAR_SECONDS)
-        self.assertEqual((resolution['baseline_spend_usd_hour'], resolution['account_spend_usd_hour']), (0.05, 0.05))
-        self.assertTrue(self.completion()['provider_absent'])
-        self.assertEqual(world.funds_calls, 1)
+    def steady(self, step=eg.POLL_SECONDS):
+        """A monotonic clock that advances `step` per pass, whatever the wall clock does."""
+        ticks = iter(range(0, 10**9, int(step)))
+        return lambda: float(next(ticks))
 
-    def test_higher_spend_keeps_the_create_unresolved(self):
-        self.ambiguous()
-        world = World([])
-        world.funds_value = dict(world.funds_value, account_spend_usd_hour=1.01)  # a hidden Pod may be billing
-        self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=world.provider('k', 'funding').funds),
-                         'running')
-        self.assertFalse((self.root / eg.GUARD_RESOLUTION).exists())
-        self.assertIsNone(self.completion())
-        self.assertGreaterEqual(world.funds_calls, 2)              # read again, at most every FUNDS_POLL_SECONDS
-        self.assertLessEqual(world.funds_calls, 1 + 60 * eg.POLL_SECONDS // eg.FUNDS_POLL_SECONDS + 1)
-
-    def test_a_late_pod_is_retained_and_the_create_never_self_resolves(self):
-        self.ambiguous()
-        world = World([])
-        self.loop(world, polls=10, funds=world.provider('k', 'funding').funds)
-        world.pods['late'] = pod('late')                         # the delayed Pod appears, then is deleted
-        self.loop(world, polls=self.polls(), funds=world.provider('k', 'funding').funds)
-        self.assertIn('late', world.deletes)
-        self.assertFalse((self.root / eg.GUARD_RESOLUTION).exists())
-
-    def test_no_baseline_or_no_account_read_never_resolves(self):
-        self.ambiguous(baseline=None)
-        world = World([])
-        self.assertEqual(self.loop(world, polls=self.polls(), funds=world.provider('k', 'funding').funds), 'running')
-        self.assertTrue((self.root / 'external-funds-error.json').exists())
-        (self.root / 'external-funds-error.json').unlink()
-        write(self.root / 'lease/funding-at-create.json', {'account_spend_usd_hour': 0.05})
-        self.assertEqual(self.loop(World([]), polls=self.polls()), 'running')    # no funds reader: operator only
-        self.assertFalse((self.root / eg.GUARD_RESOLUTION).exists())
-
-    def test_an_interrupted_clear_window_starts_again(self):
+    def test_quiet_writes_evidence_and_an_alert_and_never_completes(self):
         self.ambiguous()
         world = World([])
         funds = world.provider('k', 'funding').funds
-        self.loop(world, polls=self.polls() - 30, funds=funds)
-        world.list_fails = True                                   # a failed census is never absence
-        self.loop(world, polls=2, funds=funds)
-        world.list_fails = False
-        self.assertEqual(self.loop(world, polls=self.polls() - 40, funds=funds), 'running')
-        self.assertFalse((self.root / eg.GUARD_RESOLUTION).exists())
+        self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=funds, monotonic=self.clock), 'running')
+        quiet = read(self.root / eg.QUIET_NOTE)
+        self.assertGreaterEqual(quiet['quiet_seconds'], eg.AMBIGUOUS_QUIET_SECONDS)
+        self.assertEqual((quiet['retained_ids'], quiet['account_now']['account_spend_usd_hour']), ([], 0.05))
+        self.assertEqual(quiet['account_before_create'], {'account_spend_usd_hour': 0.05})
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertIsNone(self.completion())
+        self.assertFalse((self.root / eg.OPERATOR_RESOLUTION).exists())
+        self.assertEqual(world.funds_calls, 1)                   # once per quiet window, diagnostic only
+        self.assertTrue(self.status()['create_unresolved'])
+
+    def census_failing_at(self, world, calls):
+        count = [0]
+
+        def census(current):
+            count[0] += 1
+            if count[0] in calls:
+                raise RuntimeError('census HTTP 503')
+            return current
+        world.census = census
+
+    def test_a_failed_census_inside_one_run_starts_the_window_again(self):
+        self.ambiguous()
+        world = World([])
+        self.census_failing_at(world, {self.polls() - 30})
+        self.assertEqual(self.loop(world, polls=self.polls() + 60, monotonic=self.clock), 'running')
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())
+        self.assertEqual(self.loop(world, polls=self.polls(), monotonic=self.clock), 'running')
+        self.assertTrue((self.root / eg.QUIET_NOTE).exists())    # a fresh unbroken window does note
+
+    def test_gaps_and_wall_clock_jumps_never_shorten_the_window(self):
+        self.ambiguous()
+        world = World([])
+        jumps = [0]
+
+        def census(current):                                       # the wall clock leaps an hour each pass
+            jumps[0] += 1; self.clock.t += 3600
+            return current
+        world.census = census
+        self.loop(world, polls=10, monotonic=self.steady())
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())
+        world.census = None
+        self.loop(world, polls=self.polls() + 40, monotonic=self.steady(eg.QUIET_GAP_SECONDS + 1))
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())   # every observation follows a gap
+
+    def test_an_unnamed_census_entry_is_malformed_never_quiet(self):
+        self.ambiguous()
+        world = World([])
+        world.census = lambda current: [{'id': 'ours'}]
+        self.assertEqual(self.loop(world, polls=self.polls() + 20, monotonic=self.clock), 'running')
+        self.assertIn('census:malformed', self.status()['failures'])
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())
+        self.assertEqual(eg.census_entries([{'id': 'ours'}], NAME), ([], {'ours'}, True))
+
+    def test_completion_rereads_the_store_for_an_id_a_watchdog_retained(self):
+        self.ambiguous(operator=True)
+        world = World([])
+        real = eg.known_pods; seen = []; injected = []
+
+        def known(root, errors=None):
+            if seen and seen[-1] == self.clock.t and not injected:   # the completion re-read of one pass
+                eg.remember(root, 'late', 'census', self.clock.t)    # a --once pass retained it meanwhile
+                injected.append(self.clock.t)
+            seen.append(self.clock.t)
+            return real(root, errors)
+        with mock.patch.object(eg, 'known_pods', side_effect=known):
+            self.assertEqual(self.loop(world, polls=200, monotonic=self.clock), 'returned')
+        self.assertTrue(injected)
+        self.assertIn('late', self.completion()['known_pods'])     # completed only after confirming it absent
+        self.assertIn(('GET', 'late'), world.log)
 
 
 class CensusAbsenceTests(Base):

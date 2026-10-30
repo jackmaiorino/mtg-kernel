@@ -422,7 +422,8 @@ def guardian(root, once=False, *, key=None, run_guard=None):
     # known-Pod write is a store failure that blocks completion (I2).
     (run_guard or external_guard.run)(root, key, once=once,
                                       preserve=None if once else (lambda pod_id, t: preserve(root, pod_id, t)),
-                                      marker_probe=pod_marker_probe(root))
+                                      marker_probe=pod_marker_probe(root),
+                                      funds=lambda: external_guard.live_funds(key))
 
 
 def resolve_ambiguous(root, checked_by, *, key=None, pods=None, provider=None, clock=time.time, sleep=time.sleep):
