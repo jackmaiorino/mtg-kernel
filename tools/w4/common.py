@@ -89,8 +89,10 @@ def fit_logistic(x, y, w, c, tol=1e-9, max_iter=200):
     """Weighted L2 logistic regression with fractional targets: minimizes
     sum_i w_i * (log(1 + e^z_i) - y_i z_i) + |beta|^2 / (2C), the intercept unpenalized (the
     scikit-learn convention), by damped Newton steps on that stable objective. Stops when the
-    largest gradient component is below `tol` times the total weight; raises FitDidNotConverge
-    otherwise. Returns (intercept, beta)."""
+    largest gradient component is below `tol` times the total weight. If the line search or the
+    step limit ends first, the fit is accepted only below 1,000 times that tolerance (a float64
+    floor on large, nearly flat objectives); otherwise it raises FitDidNotConverge.
+    Returns (intercept, beta)."""
     n, k = x.shape
     z = np.hstack([np.ones((n, 1)), x])
     pen = np.full(k + 1, 1.0 / c)
