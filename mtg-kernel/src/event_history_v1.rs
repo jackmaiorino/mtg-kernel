@@ -808,7 +808,7 @@ impl ChainV2 {
             let prefixes = Arc::make_mut(&mut slot);
             prefixes.retain(|(covered, _)| *covered < shortest);
             prefixes.extend(chains);
-            let recent = |covered: usize| covered % CHAIN_V2_STRIDE != 0;
+            let recent = |covered: usize| !covered.is_multiple_of(CHAIN_V2_STRIDE);
             let mut excess = prefixes
                 .iter()
                 .filter(|(covered, _)| recent(*covered))
@@ -984,7 +984,7 @@ impl EventHistoryV1 {
         });
         let mut chains = Vec::new();
         for (position, event) in self.events.iter().enumerate().skip(covered) {
-            if position > covered && position % CHAIN_V2_STRIDE == 0 {
+            if position > covered && position.is_multiple_of(CHAIN_V2_STRIDE) {
                 chains.push((position, chain.clone()));
             }
             let bytes = serde_json::to_vec(event).expect("committed events serialize");
