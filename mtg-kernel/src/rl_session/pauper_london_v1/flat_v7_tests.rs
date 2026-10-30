@@ -275,6 +275,12 @@ fn flat_v7_counterfactual_first_announcement_changes_explicit_columns() {
 /// Function preservation (design section 5): every in-game decision of a
 /// London game with mulligans gives V7 tensors and logits bit-identical to
 /// V4, and so does a loss-bearing row built directly at the flat level.
+///
+/// Pauper registry only: in the eternal-fixtures build the V4 policy itself
+/// refuses (`ObservationContract`) a blocker decision of this game whose
+/// actor knows one own library card (its London bottom), so the comparison
+/// has no V4 baseline there.
+#[cfg(not(feature = "limited-fdn-fixtures"))]
 #[test]
 fn flat_v7_in_game_tensors_and_logits_equal_v4() {
     for starting in [PlayerId::P0, PlayerId::P1] {
@@ -292,7 +298,22 @@ fn flat_v7_in_game_tensors_and_logits_equal_v4() {
             let FastActorResponseV1::Decision(d) = session.current_response() else {
                 break;
             };
-            let old = v4.score_fast_session_v1(&session).unwrap();
+            let old = v4.score_fast_session_v1(&session).unwrap_or_else(|error| {
+                let known: Vec<usize> = [PlayerId::P0, PlayerId::P1]
+                    .iter()
+                    .map(|owner| {
+                        session
+                            .state
+                            .known_library_cards(seat_of(d.acting_player), *owner)
+                            .len()
+                    })
+                    .collect();
+                panic!(
+                    "{error}; diagnosis {}; known library {known:?}; history {}",
+                    session.diagnose_current_decision_input_v4(d),
+                    session.state.engine.event_history.len()
+                )
+            });
             let old_tensor = v4.last_scored_training_tensor_v4().unwrap().common.clone();
             let new = v7.score_fast_session_v1(&session).unwrap();
             let new_tensor = v7.last_scored_training_tensor_v4().unwrap().common.clone();
