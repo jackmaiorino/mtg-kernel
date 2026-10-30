@@ -157,6 +157,8 @@ def decision_points(seqs: dict, start: int, played: int):
                 rows.setdefault(seq[d]["row"], []).append(c)
                 at = seq
         recorded = tuple(r["row"] for r in seqs[played][:d]) == path
+        if recorded:
+            at = seqs[played]
         yield [dict(r) for r in at[:d + 1]], start + d, rows, recorded
 
 
