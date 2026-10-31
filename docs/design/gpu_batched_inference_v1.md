@@ -260,6 +260,12 @@ Caveats: uniform and fixture-policy games run about 270 decisions against D1's 1
 | 30x net-8 compute | 20M | 101 to 129 | 393 to 503 | 167 to 214 |
 | Dense 20M transformer over 48 tokens | 0.92G | 2.2 to 2.8 | 8.5 to 10.9 | 3.6 to 4.6 |
 | Dense 50M transformer over 48 tokens | 2.4G | 0.8 to 1.1 | 3.3 to 4.2 | 1.4 to 1.8 |
+| Pilot S (d 96, 3 layers; 0.45M dense, no digest inputs) | 14.8M | 136 to 174 | 531 to 680 | 226 to 289 |
+| Pilot M (d 256, 6 layers; 5.4M dense) | 195M | 10 to 13 | 40 to 52 | 17 to 22 |
+| Pilot L (d 512, 8 layers; 27.5M dense) | 1.02G | 2.0 to 2.5 | 7.7 to 9.9 | 3.3 to 4.2 |
+| net-8 wide (h 256, e 64) | 14.6M | 138 to 177 | 538 to 689 | 229 to 293 |
+
+Pilot rows: the bignet pilot's object transformer (one state token, one per object, one per legal action; edges and refs as attention biases; one forward scores every legal action), multiply-adds at its mean shape of 39 tokens (pilot `macs.py`, collab branch `claude/bignet-pilot-20261031`). Measured on its final store (200k decisions): mean 38.9 tokens, p90 61, p99 94, max 436, so per-decision cost has a long tail.
 
 Ranges are net-8's no-FMA order to a new net's FMA order, both exact. Larger nets scale from the 3050's measured exact GEMM rate (0.84 to 1.08 TMAC/s) by FP32 peak; the 4070 SUPER and 4060 rows are scaled, not measured. Large-net rows use forward GEMM rates for the backward as well; parameter-gradient shapes and Adam and receipt costs at 20M+ are not benchmarked. The 420 forward-equivalents assume D1's mix (learner rows 49%, opponent rows 51% of forwards, memo section 1); a pure self-play run has both seats as learner substeps and about 556. D1's per-model batch is about 10 (one run's games), and independent runs have different weights, so batching across runs needs the multi-model launch above.
 
@@ -268,7 +274,8 @@ Ranges are net-8's no-FMA order to a new net's FMA order, both exact. Larger net
 1. **The budget is multiply-adds per decision, not parameters.** At the S4 CPU floor (464 games/s, an upper-bound estimate), one 4070 SUPER with exact kernels keeps up with about **17M multiply-adds per decision**, about 26x net-8 (same caveats). Parameters in lookup tables (rich card embeddings) are nearly free; dense width times tokens is what costs.
 2. **A dense 20M to 50M transformer is GPU-bound far below today's rate**: about 15 to 20 games/s (20M) and about 6 to 7 games/s (50M) across all three GPUs, against 49 today and 464 at the CPU floor. That holds even before the learner's extra passes for larger batches.
 3. **The deterministic tensor-core tier (section 5)** would raise the GPU rows by an estimated 4 to 5x (not measured), which still leaves a dense 50M net near 30 games/s and needs a lineage decision (exact against the same GPU, bounded against the CPU).
-4. **Architectures that fit:** compute per physical decision once and score substeps cheaply (most forwards share a state); keep dense width modest and tokens few; put capacity in embeddings; consider a large net that trains on a slice of games while net-sized policies act only if the lead accepts that learning semantics, which this design does not assume.
+4. **The pilot's candidates against the budget:** S (14.8M multiply-adds) and net-8 wide fit one 4070 SUPER at the CPU floor; M needs about 11x the exact-kernel budget (about 90 games/s across all three GPUs with the FMA order, against 49 today); L needs about 60x (about 17 games/s across all three). M becomes viable with the tensor-core tier or with batches across runs; L needs both and more.
+5. **Architectures that fit:** compute per physical decision once and score substeps cheaply (most forwards share a state); keep dense width modest and tokens few; put capacity in embeddings; consider a large net that trains on a slice of games while net-sized policies act only if the lead accepts that learning semantics, which this design does not assume.
 
 ### 8.5 Staged path, each stage paying for itself
 

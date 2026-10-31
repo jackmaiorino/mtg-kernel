@@ -910,7 +910,9 @@ mod tests {
         }
         let context = || {
             let mut opponent = template.fork_for_collection_v3().unwrap();
-            opponent.replace_training_parameters_v3(&opponent_parameters).unwrap();
+            opponent
+                .replace_training_parameters_v3(&opponent_parameters)
+                .unwrap();
             (
                 template.fork_for_collection_v3().unwrap(),
                 LoadedOpponentV1 {
@@ -932,16 +934,19 @@ mod tests {
         if crate::gpu_exact_v1::inference_receipt_v1().is_none() {
             crate::gpu_exact_v1::install_inference_service_v1(ordinal, 200).unwrap();
         }
-        let before = crate::gpu_exact_v1::inference_receipt_v1().unwrap().unwrap();
+        let before = crate::gpu_exact_v1::inference_receipt_v1().unwrap();
         for workers in [1, 3, 6] {
             let contexts = (0..workers).map(|_| context()).collect();
             let (parallel, _) =
                 ordered_parallel_jobs_v1(contexts, episodes.len(), collect, || ()).unwrap();
             assert_eq!(parallel, serial, "GPU inference, worker count {workers}");
         }
-        let after = crate::gpu_exact_v1::inference_receipt_v1().unwrap().unwrap();
+        let after = crate::gpu_exact_v1::inference_receipt_v1().unwrap();
         let served = after["requests"].as_u64().unwrap() - before["requests"].as_u64().unwrap();
-        assert!(served > 100, "the service answered only {served} forwards: {after}");
+        assert!(
+            served > 100,
+            "the service answered only {served} forwards: {after}"
+        );
         assert!(
             after["model_uploads"].as_u64().unwrap() >= 2,
             "learner and opponent are distinct models: {after}"

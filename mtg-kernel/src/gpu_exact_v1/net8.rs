@@ -39,17 +39,24 @@ pub(crate) struct Net8HostModelV1 {
 
 impl Net8HostModelV1 {
     pub(crate) fn from_net_v1(net: &NativePolicyValueNetV1) -> Result<Self, String> {
-        let parameters = net
-            .gpu_exact_parameters_v1()
-            .ok_or("the exact GPU forward runs net-8 only (no V8 pairing, hidden 64, embedding 16)")?;
+        let parameters = net.gpu_exact_parameters_v1().ok_or(
+            "the exact GPU forward runs net-8 only (no V8 pairing, hidden 64, embedding 16)",
+        )?;
         let dims = DimsV1::of_config_v1(&net.config_v1());
         let digest = parameter_digest_v1(dims, &parameters.values, &parameters.layout);
-        Ok(Self { values: parameters.values, layout: parameters.layout, dims, digest })
+        Ok(Self {
+            values: parameters.values,
+            layout: parameters.layout,
+            dims,
+            digest,
+        })
     }
 }
 
 impl DimsV1 {
-    pub(super) fn of_config_v1(config: &crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1) -> Self {
+    pub(super) fn of_config_v1(
+        config: &crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+    ) -> Self {
         Self {
             state_dim: config.state_dim as i32,
             object_feature_dim: config.object_feature_dim as i32,
@@ -70,10 +77,19 @@ pub(crate) struct Net8DeviceModelV1 {
 }
 
 impl Net8DeviceModelV1 {
-    pub(crate) fn upload_v1(device: &ExactDeviceV1, host: &Net8HostModelV1) -> Result<Self, String> {
+    pub(crate) fn upload_v1(
+        device: &ExactDeviceV1,
+        host: &Net8HostModelV1,
+    ) -> Result<Self, String> {
         Ok(Self {
-            params: device.stream.clone_htod(&host.values).map_err(|e| format!("upload: {e:?}"))?,
-            layout: device.stream.clone_htod(&host.layout).map_err(|e| format!("upload: {e:?}"))?,
+            params: device
+                .stream
+                .clone_htod(&host.values)
+                .map_err(|e| format!("upload: {e:?}"))?,
+            layout: device
+                .stream
+                .clone_htod(&host.layout)
+                .map_err(|e| format!("upload: {e:?}"))?,
             dims: host.dims,
         })
     }
@@ -106,7 +122,9 @@ fn path_config_v1(
         ForwardPathV1::TransferV3 => Ok(net.feature_transfer_config_v3()),
         ForwardPathV1::TransferV4 => Ok(net.feature_transfer_config_v4()),
         ForwardPathV1::TransferV7 => Ok(net.feature_transfer_config_v7()),
-        ForwardPathV1::TransferV8 => Err("the exact GPU forward does not run the V8 inclusion net".into()),
+        ForwardPathV1::TransferV8 => {
+            Err("the exact GPU forward does not run the V8 inclusion net".into())
+        }
     }
 }
 
@@ -171,7 +189,10 @@ impl PackedBatchV1 {
         self.floats.extend_from_slice(&other.floats);
         self.ints.extend_from_slice(&other.ints);
         self.replies.extend(
-            other.replies.iter().map(|&(_, at, actions)| (slot, at + logits as usize, actions)),
+            other
+                .replies
+                .iter()
+                .map(|&(_, at, actions)| (slot, at + logits as usize, actions)),
         );
         self.scratch_len += other.scratch_len;
         self.logits_len += other.logits_len;
@@ -201,8 +222,12 @@ impl PackedBatchV1 {
             return Err("pairing rows need the V8 net".into());
         }
         let counts = view.validate(config).map_err(|e| format!("{e:?}"))?;
-        let (objects, edges, refs, actions) =
-            (counts.object_count, counts.edge_count, counts.action_ref_count, counts.action_count);
+        let (objects, edges, refs, actions) = (
+            counts.object_count,
+            counts.edge_count,
+            counts.action_ref_count,
+            counts.action_count,
+        );
         let floats = |values: &[f32], floats: &mut Vec<f32>| -> Result<i32, String> {
             let at = offset_i32(floats.len(), "float")?;
             floats.extend_from_slice(values);
@@ -320,10 +345,14 @@ pub(crate) fn forward_batch_v1(
     let ints = buffers.ints.as_mut().expect("ensured");
     let upload = |e| format!("upload: {e:?}");
     if !batch.floats.is_empty() {
-        stream.memcpy_htod(&batch.floats, &mut floats.slice_mut(..batch.floats.len())).map_err(upload)?;
+        stream
+            .memcpy_htod(&batch.floats, &mut floats.slice_mut(..batch.floats.len()))
+            .map_err(upload)?;
     }
     if !batch.ints.is_empty() {
-        stream.memcpy_htod(&batch.ints, &mut ints.slice_mut(..batch.ints.len())).map_err(upload)?;
+        stream
+            .memcpy_htod(&batch.ints, &mut ints.slice_mut(..batch.ints.len()))
+            .map_err(upload)?;
     }
     // One launch per model: descriptors are uploaded grouped by slot (a
     // stable sort), and each descriptor carries its own output offsets, so
@@ -334,7 +363,9 @@ pub(crate) fn forward_batch_v1(
     for &i in &order {
         sorted.extend_from_slice(&batch.requests[i * R_FIELDS..(i + 1) * R_FIELDS]);
     }
-    stream.memcpy_htod(&sorted, &mut requests.slice_mut(..sorted.len())).map_err(upload)?;
+    stream
+        .memcpy_htod(&sorted, &mut requests.slice_mut(..sorted.len()))
+        .map_err(upload)?;
     let scratch = buffers.scratch.as_mut().expect("ensured");
     let logits = buffers.logits.as_mut().expect("ensured");
     let values = buffers.values.as_mut().expect("ensured");
@@ -345,7 +376,9 @@ pub(crate) fn forward_batch_v1(
         while end < count && batch.replies[order[end]].0 == slot {
             end += 1;
         }
-        let model = models.get(slot).ok_or("request names a model slot that is not resident")?;
+        let model = models
+            .get(slot)
+            .ok_or("request names a model slot that is not resident")?;
         let descriptors = requests.slice(start * R_FIELDS..end * R_FIELDS);
         let mut launch = stream.launch_builder(&device.net8_forward);
         launch
@@ -372,9 +405,13 @@ pub(crate) fn forward_batch_v1(
     let mut host_values = vec![0f32; count];
     let download = |e| format!("download: {e:?}");
     if batch.logits_len > 0 {
-        stream.memcpy_dtoh(&logits.slice(..batch.logits_len), &mut host_logits).map_err(download)?;
+        stream
+            .memcpy_dtoh(&logits.slice(..batch.logits_len), &mut host_logits)
+            .map_err(download)?;
     }
-    stream.memcpy_dtoh(&values.slice(..count), &mut host_values).map_err(download)?;
+    stream
+        .memcpy_dtoh(&values.slice(..count), &mut host_values)
+        .map_err(download)?;
     Ok(batch
         .replies
         .iter()

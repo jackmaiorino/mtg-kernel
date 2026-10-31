@@ -63,7 +63,8 @@ fn record_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("MTG_KERNEL_GPU_EXACT_DIR") {
         return Some(dir.into());
     }
-    std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("mtg-kernel").join("gpu-exact"))
+    std::env::var_os("LOCALAPPDATA")
+        .map(|base| PathBuf::from(base).join("mtg-kernel").join("gpu-exact"))
 }
 
 fn write_atomically(path: &std::path::Path, bytes: &[u8]) {
@@ -126,8 +127,14 @@ impl ExactDeviceV1 {
             tanh_proof_key: String::new(),
         };
         let ptx = load_or_compile_v1(&identity, &source, &options)?;
-        let module = ctx.load_module(ptx).map_err(|e| format!("load module: {e:?}"))?;
-        let load = |name: &str| module.load_function(name).map_err(|e| format!("{name}: {e:?}"));
+        let module = ctx
+            .load_module(ptx)
+            .map_err(|e| format!("load module: {e:?}"))?;
+        let load = |name: &str| {
+            module
+                .load_function(name)
+                .map_err(|e| format!("{name}: {e:?}"))
+        };
         let device = Self {
             net8_forward: load("mtg_net8_forward")?,
             tanh_proof: load("mtg_tanh_proof")?,
@@ -155,7 +162,10 @@ impl ExactDeviceV1 {
         h.update(b"tanh-proof-v1");
         h.update(id.program_sha256.as_bytes());
         h.update(id.name.as_bytes());
-        h.update(format!("{:?}{:?}{}", id.compute_capability, id.nvrtc_version, id.driver_version));
+        h.update(format!(
+            "{:?}{:?}{}",
+            id.compute_capability, id.nvrtc_version, id.driver_version
+        ));
         h.update(host.as_bytes());
         Ok(hex(&h.finalize()))
     }
@@ -195,7 +205,11 @@ impl ExactDeviceV1 {
         loop {
             let mut launch = self.stream.launch_builder(&self.tanh_proof);
             launch.arg(&first).arg(&CHUNK).arg(&mut device_out);
-            let config = LaunchConfig { grid_dim: (1024, 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: 0 };
+            let config = LaunchConfig {
+                grid_dim: (1024, 1, 1),
+                block_dim: (256, 1, 1),
+                shared_mem_bytes: 0,
+            };
             // SAFETY: the kernel writes CHUNK u32 values into a CHUNK buffer.
             unsafe { launch.launch(config) }.map_err(|e| format!("tanh proof launch: {e:?}"))?;
             self.stream
@@ -209,17 +223,24 @@ impl ExactDeviceV1 {
                     .map(|(t, part)| {
                         s.spawn(move || {
                             let base = first + (t * span) as u32;
-                            let mut host: Vec<f32> =
-                                (0..part.len()).map(|i| f32::from_bits(base + i as u32)).collect();
+                            let mut host: Vec<f32> = (0..part.len())
+                                .map(|i| f32::from_bits(base + i as u32))
+                                .collect();
                             crate::vector_tanh_v1::libm_tanh_in_place_v1(&mut host);
-                            part.iter().zip(&host).enumerate().find_map(|(i, (&g, &c))| {
-                                let input = f32::from_bits(base + i as u32);
-                                (!input.is_nan() && g != c.to_bits()).then_some(base + i as u32)
-                            })
+                            part.iter()
+                                .zip(&host)
+                                .enumerate()
+                                .find_map(|(i, (&g, &c))| {
+                                    let input = f32::from_bits(base + i as u32);
+                                    (!input.is_nan() && g != c.to_bits()).then_some(base + i as u32)
+                                })
                         })
                     })
                     .collect();
-                workers.into_iter().filter_map(|w| w.join().expect("proof worker")).min()
+                workers
+                    .into_iter()
+                    .filter_map(|w| w.join().expect("proof worker"))
+                    .min()
             });
             if mismatch.is_some() {
                 return Ok(mismatch);
