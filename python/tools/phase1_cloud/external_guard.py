@@ -272,8 +272,13 @@ def lease_root(folder):
 
 def store_closed(folder):
     """The guard's completion record is the store's closure: once it exists (readable or not) no
-    supervisor reads the store, so nothing is handed off to it."""
-    return (lease_root(folder) / COMPLETION).exists()
+    supervisor reads the store, so nothing is handed off to it. A probe that fails counts as open,
+    which is the store's behavior without a closure, so a failing probe never blocks a handoff, a
+    cleanup or an ALERT."""
+    try:
+        return (lease_root(folder) / COMPLETION).exists()
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def presence_path(folder, pod_id):

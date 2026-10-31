@@ -812,6 +812,23 @@ class StoreClosureTests(Base):
         self.assertTrue((self.root / eg.QUIET_ALERT).exists())
         self.assertIsNone(self.completion())
 
+    def test_a_persistently_failing_closure_probe_still_hands_a_post_id_off(self):
+        world = World([])
+        real = Path.exists
+
+        def failing(path, *args, **kwargs):
+            if path.name == eg.COMPLETION:
+                raise PermissionError('stat denied')
+            return real(path, *args, **kwargs)
+
+        def poster(body):                                 # a valid ID under an unexpected name
+            world.pods['w'] = {'id': 'w', 'name': 'someone-else', 'costPerHr': 0.5}
+            return dict(world.pods['w'])
+        with no_network(), mock.patch.object(Path, 'exists', failing), self.lease_client(world) as client:
+            client.post({'name': NAME}, poster=poster)    # the fault persists through the exit
+        self.assertEqual(eg.known_pods(self.root)['w'], 'receipt')   # durably handed off, as main does
+        self.assertFalse(eg.store_closed(self.root / eg.KNOWN_DIR))
+
     def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):
