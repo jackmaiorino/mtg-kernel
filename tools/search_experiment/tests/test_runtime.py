@@ -297,8 +297,10 @@ class QualificationTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows final CPU handle")
     def test_final_cpu_after_exit_and_power(self):
-        # Enough work to register above the CPU clock tick on a fast runner.
-        child = subprocess.Popen([sys.executable, "-c", "sum(range(30000000))"], creationflags=0x4)
+        # Enough work to register above the CPU clock tick on a fast runner. In a Windows venv sys.executable is a
+        # launcher that runs the interpreter as its own child, so the clock would time only the launcher.
+        python = getattr(sys, "_base_executable", sys.executable)
+        child = subprocess.Popen([python, "-c", "sum(range(30000000))"], creationflags=0x4)
         clock = launch.ProcessClock(child)
         try:
             power = clock.qualify_power()
