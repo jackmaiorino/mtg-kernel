@@ -40,6 +40,8 @@ struct InstalledLearnerV1 {
     updates: u64,
     substeps: u64,
     busy_seconds: f64,
+    /// Updates that did not fit the device and ran the CPU backward.
+    cpu_fallbacks: u64,
 }
 
 static LEARNER: std::sync::OnceLock<std::sync::Mutex<InstalledLearnerV1>> = std::sync::OnceLock::new();
@@ -56,6 +58,7 @@ pub fn install_learner_v1(ordinal: usize) -> Result<(), String> {
             updates: 0,
             substeps: 0,
             busy_seconds: 0.0,
+            cpu_fallbacks: 0,
         }))
         .map_err(|_| "a GPU learner is already installed".to_owned())
 }
@@ -68,16 +71,24 @@ pub(crate) fn learner_gradients_v1(
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
     tensors: &[&[f32]],
     substeps: &[net8_learner::LearnerSubstepV1<'_>],
-) -> Result<Vec<Vec<f32>>, String> {
+) -> Result<Option<Vec<Vec<f32>>>, String> {
     let learner = LEARNER.get().ok_or("no GPU learner installed")?;
     let mut learner = learner.lock().unwrap_or_else(|p| p.into_inner());
     let started = std::time::Instant::now();
     let InstalledLearnerV1 { device, buffers, .. } = &mut *learner;
-    let gradients = net8_learner::net8_gradients_v1(device, buffers, config, tensors, substeps)?;
+    let gradients = match net8_learner::net8_gradients_v1(device, buffers, config, tensors, substeps) {
+        Ok(gradients) => gradients,
+        // Too big for the device: the caller's CPU backward gives the same bits.
+        Err(error) if net8_learner::is_resource_error_v1(&error) => {
+            learner.cpu_fallbacks += 1;
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
     learner.updates += 1;
     learner.substeps += substeps.len() as u64;
     learner.busy_seconds += started.elapsed().as_secs_f64();
-    Ok(gradients)
+    Ok(Some(gradients))
 }
 
 /// The installed learner's device identity and counters, if one is installed.
@@ -94,6 +105,7 @@ pub fn learner_receipt_v1() -> Option<serde_json::Value> {
                 "program_sha256": id.program_sha256,
                 "host_tanhf_identity": id.host_tanhf_identity, "tanh_proof_key": id.tanh_proof_key},
             "updates": learner.updates, "substeps": learner.substeps,
+            "cpu_fallbacks": learner.cpu_fallbacks,
             "busy_seconds": learner.busy_seconds,
         })
     })

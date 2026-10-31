@@ -1662,6 +1662,16 @@ fn edge_case_fixture_v1(model: &NativePolicyValueNetV1) -> Fixture {
             common.object_card_ids[1] = common.object_card_ids[0];
         }
     }
+    // The second tensor has no edges and no action refs: the backward's
+    // empty-encoder branches.
+    let common = &mut fixture.tensors[1].common;
+    common.edge_features.clear();
+    common.edge_source_indices.clear();
+    common.edge_target_indices.clear();
+    common.action_ref_features.clear();
+    common.action_ref_card_ids.clear();
+    common.action_ref_action_indices.clear();
+    common.action_ref_node_indices.clear();
     let outputs = fixture.tensors.each_ref().map(|tensor| {
         model
             .forward_feature_transfer_v3_mode(

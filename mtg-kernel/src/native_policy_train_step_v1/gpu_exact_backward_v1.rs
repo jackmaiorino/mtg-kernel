@@ -19,8 +19,9 @@ type BackwardResultV1 =
 
 /// The gradients and gauge evidence, or None when no exact GPU learner is
 /// installed or this update is outside what it runs (another width, the V8
-/// pairing net, packed inputs or the portable math); the caller then runs
-/// its CPU backward, with the same bits.
+/// pairing net or include column, packed inputs, the portable math, the
+/// no-state-digest contract, or an update too big for the device); the
+/// caller then runs its CPU backward, with the same bits.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn gpu_exact_backward_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
@@ -30,8 +31,14 @@ pub(super) fn gpu_exact_backward_dims_v1<D: NetDimsV1>(
     value_coefficient: f32,
     input_config: NativePolicyValueModelConfigV1,
     math: TrainingMathV1,
+    no_state_digest: bool,
 ) -> Option<BackwardResultV1> {
     if !is_net8_dims_v1::<D>()
+        || no_state_digest
+        || crate::native_policy_value_net_v1::v8_inclusion_v1::include_guard_v1(
+            input_config.action_feature_dim,
+        )
+        .is_some()
         || parameters.len() != PARAMETER_TENSOR_COUNT
         || !math.is_platform_libm()
         || !crate::vector_tanh_v1::default_tanhf_environment_v1()
@@ -53,7 +60,9 @@ pub(super) fn gpu_exact_backward_dims_v1<D: NetDimsV1>(
         }
         views.push(row);
     }
-    Some(backward_v1(parameters, group_tapes, &views, group_count, value_coefficient, input_config, math))
+    backward_v1(parameters, group_tapes, &views, group_count, value_coefficient, input_config, math)
+        .transpose()
+
 }
 
 fn backward_v1(
@@ -64,7 +73,7 @@ fn backward_v1(
     value_coefficient: f32,
     input_config: NativePolicyValueModelConfigV1,
     math: TrainingMathV1,
-) -> BackwardResultV1 {
+) -> Result<Option<(Vec<Vec<f32>>, ScorerBiasGaugeAccumulatorV1)>, NativePolicyTrainErrorV1> {
     // The sequential arm's coefficients, visiting order and gauge, as
     // `exact_parallel_backward_v1::backward_dims_v1` computes them.
     let mut gauge = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
@@ -108,5 +117,5 @@ fn backward_v1(
     let tensors: Vec<&[f32]> = parameters.iter().map(|p| p.values.as_slice()).collect();
     let gradients = crate::gpu_exact_v1::learner_gradients_v1(input_config, &tensors, &substeps)
         .map_err(|message| NativePolicyTrainErrorV1::GpuExactBackend { message })?;
-    Ok((gradients, gauge))
+    Ok(gradients.map(|gradients| (gradients, gauge)))
 }

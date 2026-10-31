@@ -23,6 +23,20 @@ const TENSORS: usize = 33;
 const LAYERS: usize = 16;
 const TERM_FIELDS: usize = 18;
 
+/// Prefix of an error that only means this update does not fit the device
+/// (memory, or a batch past the i32 offsets): the caller then runs the CPU
+/// backward, which gives the same bits. Every other error is fatal.
+pub(crate) const RESOURCE_ERROR_PREFIX_V1: &str = "gpu-exact resource: ";
+
+fn resource(error: impl std::fmt::Display) -> String {
+    format!("{RESOURCE_ERROR_PREFIX_V1}{error}")
+}
+
+/// Whether `error` is a resource error (see [`RESOURCE_ERROR_PREFIX_V1`]).
+pub(crate) fn is_resource_error_v1(error: &str) -> bool {
+    error.starts_with(RESOURCE_ERROR_PREFIX_V1) || error.contains("CUDA_ERROR_OUT_OF_MEMORY")
+}
+
 /// One substep of the backward, in visiting order.
 pub(crate) struct LearnerSubstepV1<'a> {
     pub(crate) view: NativeEncodedDecisionViewV1<'a>,
@@ -281,9 +295,35 @@ pub(crate) fn net8_gradients_v1(
     // Forward with the tape kept; its outputs must be the CPU tape's bits.
     let mut batch = PackedBatchV1::default();
     for substep in substeps {
-        batch.push_with_config_v1(0, config, substep.view)?;
+        batch
+            .push_with_config_v1(0, config, substep.view)
+            .map_err(|e| if e.starts_with("batch too large") { resource(e) } else { e })?;
     }
     let (forward, forward_layout, torch, torch_offsets) = layouts(tensors);
+    // Everything this update allocates, against what the device has free
+    // (another process, such as the inference service, may hold the rest).
+    let grad_floats: i64 = batch
+        .requests
+        .chunks_exact(R_FIELDS)
+        .map(|d| grad(&Shape::of(d), &dims).len)
+        .sum();
+    let needed_floats = batch.floats.len()
+        + batch.ints.len()
+        + batch.requests.len()
+        + 2 * batch.scratch_len.next_power_of_two()
+        + 3 * batch.logits_len
+        + 2 * substeps.len()
+        + (grad_floats as usize).next_power_of_two()
+        + 2 * torch.len()
+        + forward.len();
+    let (free, _) = device.memory_v1()?;
+    if needed_floats.saturating_mul(4) > free / 10 * 9 {
+        return Err(resource(format!(
+            "update needs about {} MiB, device has {} MiB free",
+            needed_floats * 4 >> 20,
+            free >> 20
+        )));
+    }
     let model = Net8DeviceModelV1 {
         params: stream.clone_htod(&forward).map_err(e("upload"))?,
         layout: stream.clone_htod(&forward_layout).map_err(e("upload"))?,

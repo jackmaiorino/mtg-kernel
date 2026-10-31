@@ -968,6 +968,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                     value_coefficient,
                     input_config,
                     math,
+                    self.no_state_digest_columns.is_some(),
                 )
             }
             _ => None,

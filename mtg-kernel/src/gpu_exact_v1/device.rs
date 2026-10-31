@@ -151,6 +151,11 @@ impl ExactDeviceV1 {
         Ok(device)
     }
 
+    /// Free and total device memory in bytes.
+    pub(crate) fn memory_v1(&self) -> Result<(usize, usize), String> {
+        self._ctx.mem_get_info().map_err(|e| format!("memory query: {e:?}"))
+    }
+
     /// The proof record's key: the program, this device and NVRTC, and the
     /// host `tanhf` (`vector_tanh_v1`'s key over the loaded images).
     fn tanh_proof_key_v1(&self) -> Result<String, String> {
