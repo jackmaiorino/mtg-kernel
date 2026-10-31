@@ -89,10 +89,11 @@ fn score_v8(policy: &mut FrozenPlayPolicyV1, session: &FastActorSessionV1) -> Sc
     }
 }
 
-/// Plays a session to its end, checking each decision: every combat
-/// candidate is included, so blocks accumulate, and every other decision is
-/// the sampled choice of a third (FlatV8) policy. Returns (decisions,
-/// include rows, decisions with a pairing relation).
+/// Plays a session to its end, checking each decision: every attacker is
+/// included, and every other decision, blocks among them, is the sampled
+/// choice of a third (FlatV8) policy, so blocks spread over attackers and
+/// accumulate. Returns (decisions, include rows, decisions with a pairing
+/// relation).
 fn check_game_v1(
     mut session: FastActorSessionV1,
     cases: &mut Vec<serde_json::Value>,
@@ -175,7 +176,6 @@ fn check_game_v1(
             matches!(
                 semantic,
                 ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
-                    | ActionSemanticV1::ChooseBlockerInclusion { include: true, .. }
             )
         });
         let selected = match include {
@@ -249,6 +249,10 @@ fn flat_v8_tensors_include_bits_and_pairs_match_the_sessions() {
         (false, PlayerId::P1, ["Elves", "Elves"]),
         (false, PlayerId::P0, ["CawGates", "Rally"]),
         (false, PlayerId::P1, ["Rally", "Elves"]),
+        (false, PlayerId::P0, ["Affinity", "Faeries"]),
+        (false, PlayerId::P1, ["Elves", "CawGates"]),
+        (false, PlayerId::P0, ["Rally", "Rally"]),
+        (false, PlayerId::P1, ["Affinity", "Elves"]),
         (true, PlayerId::P0, ["Burn", "Elves"]),
     ] {
         let (decisions, include_rows, pairing) =

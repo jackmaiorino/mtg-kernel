@@ -364,9 +364,9 @@ fn v8_conversion_keeps_old_coordinates_and_zeroes_every_new_moment() {
         }
     }
     let mut drawn = 0u64;
-    for tensor in 0..V8_PARAMETER_TENSOR_COUNT_V1 {
+    for (tensor, seen) in seen.iter().enumerate() {
         for (index, class) in v8_coordinate_classes_v1(tensor).into_iter().enumerate() {
-            assert_eq!(seen[tensor][index], class == Old, "tensor {tensor} {index}");
+            assert_eq!(seen[index], class == Old, "tensor {tensor} {index}");
             if class == Old {
                 continue;
             }
