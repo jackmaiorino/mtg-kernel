@@ -341,7 +341,7 @@ class LeaseTests(unittest.TestCase):
                 cycle = gcloud.Cycle.__new__(gcloud.Cycle)
                 cycle.control, cycle.result, cycle.base = Path(temp), {}, Path("/workspace/g")
                 cycle.remote_ready, calls = True, []
-                cycle.lease, cycle.guard = {"deadline_epoch": time.time() + 3600}, "/run/phase1/g"
+                cycle.lease, cycle.guard = {"deadline_epoch": time.time() + 3600, "recovery_seconds": 600}, "/run/phase1/g"
 
                 class Pod:
                     def run(self, program, args, timeout=30, read_only=False):
@@ -368,15 +368,26 @@ class LeaseTests(unittest.TestCase):
     def test_recovery_is_bounded_by_the_earliest_guard_release(self):
         cycle = gcloud.Cycle.__new__(gcloud.Cycle)
         cycle.result, cycle.remote_ready, cycle.guard = {}, True, "/run/phase1/g"
-        cycle.lease = {"deadline_epoch": time.time() + 3600}
-        ran = []
+        cycle.lease = {"deadline_epoch": time.time() + 3600, "recovery_seconds": 600}
+        ran, latched = [], {"release_epoch": time.time() + 200}  # the resident guard latched: 200 s left
 
         class Pod:
             def run(self, program, args, timeout=30, read_only=False):
                 ran.append(program)
-                return {"release_epoch": time.time() + 200}  # the resident guard latched: 200 s left
+                if latched is None:
+                    raise cloud.PodUnavailable("guard unreadable")
+                return latched
         cycle.pod = Pod()
-        self.assertLess(cycle.release_boundary(), time.time() + 201)
+        now = time.time()
+        self.assertLess(cycle.release_boundary(now), now + 201)
+        latched = {"release_epoch": None}  # unlatched: the recovery's own 600 s, one deadline for all of it
+        self.assertLessEqual(cycle.release_boundary(now), now + gcloud.cloud.RECOVERY_SECONDS)
+        cycle.lease["deadline_epoch"] = now + 650  # near the deadline: the guards start at deadline - 600
+        self.assertLessEqual(cycle.release_boundary(now), now + 50)
+        latched = None
+        self.assertIsNone(cycle.release_boundary(now))  # unreadable: a latched boundary may be earlier
+        cycle.lease["deadline_epoch"] = now + 3600
+        latched = {"release_epoch": time.time() + 200}
         cycle.recover()  # 200 s less the 120 s release reserve: too little to quiesce and recover
         self.assertTrue(cycle.result["recovery"].startswith("skipped: too little time"))
         self.assertEqual(set(ran), {gcloud.POD_GUARD_RELEASE})  # nothing quiesced, packed or copied

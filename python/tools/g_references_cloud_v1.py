@@ -434,24 +434,33 @@ class Cycle(cloud.Cycle):
             self.result["records_backlog_final"] = f"unavailable: {error}"[-400:]
         return True
 
-    def release_boundary(self) -> float:
-        """The earliest instant a guard may delete the Pod: the lease's hard deadline, or the resident guard's
-        release_epoch once it latched (its recovery window); unreadable, the deadline alone."""
-        boundary = self.lease["deadline_epoch"]
+    def release_boundary(self, started: float) -> float | None:
+        """The earliest instant a guard may start deleting the Pod, or None when it cannot be known. It is the
+        smallest of the guards' automatic boundaries (the lease deadline less its recovery window, for the
+        external and the resident guard alike), the resident guard's latched release_epoch, and this
+        recovery's own allowance (``started`` + RECOVERY_SECONDS), one deadline for the whole recovery. An
+        unreadable guard leaves a latched boundary unknown: None, and recovery is skipped."""
+        bounds = [self.lease["deadline_epoch"] - max(self.lease["recovery_seconds"], cloud.RECOVERY_SECONDS),
+                  started + cloud.RECOVERY_SECONDS]
         try:
             latched = self.pod.run(POD_GUARD_RELEASE, {"guard": self.guard}, timeout=30)["release_epoch"]
         except cloud.PodUnavailable:
-            latched = None
-        return min(boundary, latched) if isinstance(latched, (int, float)) else boundary
+            return None
+        if isinstance(latched, (int, float)):
+            bounds.append(latched)
+        return min(bounds)
 
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""
         if not self.remote_ready:
             return
-        boundary = self.release_boundary()
+        boundary = self.release_boundary(time.time())
+        if boundary is None:
+            self.result["recovery"] = "skipped: the resident guard's release time is unreadable"
+            return
 
-        def left() -> float:  # recovery's time: to the earliest guard release, less the release reserve
-            return min(cloud.RECOVERY_SECONDS, boundary - time.time() - RELEASE_RESERVE_SECONDS)
+        def left() -> float:  # what remains of the one recovery deadline, less the release reserve
+            return boundary - time.time() - RELEASE_RESERVE_SECONDS
         if left() < 120:
             self.result["recovery"] = "skipped: too little time before the guards' release"
             return
