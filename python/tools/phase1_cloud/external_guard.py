@@ -258,6 +258,20 @@ def remember_in(folder, pod_id, role, epoch):
         remember_in(folder, pod_id, role, epoch)
 
 
+class SyncError(OSError):
+    """A failure of the synchronization main does not have (the store lock, presence revisions). It blocks
+    completion and is reported, but is never a store fault that releases a lease: main, without that
+    synchronization, would have kept the Pod."""
+
+
+class LockTimeout(SyncError):
+    """The store lock was held past STORE_LOCK_SECONDS."""
+
+
+class PresenceError(SyncError):
+    """A presence revision could not be read or advanced."""
+
+
 class StoreClosed(RuntimeError):
     """The guard completed: no supervisor reads the store any more, so a handoff to it is refused."""
 
@@ -325,7 +339,7 @@ class StoreLock:
             except OSError:
                 if time.monotonic() >= deadline:
                     self.handle.close()
-                    raise
+                    raise LockTimeout('store lock held past %s s' % STORE_LOCK_SECONDS)
                 time.sleep(0.05)
 
     def __exit__(self, *exc):
@@ -350,8 +364,11 @@ def handoff_in(folder, pod_id, role, epoch, presence=True):
         remember_in(folder, pod_id, role, epoch)
         value = read(Path(folder) / (pod_id + '.json'))
         if presence:
-            write(presence_path(folder, pod_id), {'revision': read_presence(folder, pod_id) + 1, 'epoch': epoch},
-                  replace=True)
+            try:
+                write(presence_path(folder, pod_id), {'revision': read_presence(folder, pod_id) + 1,
+                                                      'epoch': epoch}, replace=True)
+            except Exception as e:  # noqa: BLE001 - the record above is durable; only the refresh is not
+                raise PresenceError('presence revision of ' + pod_id + ': ' + type(e).__name__) from e
     if not isinstance(value, dict) or value.get('id') != pod_id:
         raise ValueError('known-Pod record does not read back')
     if role in CREATE_ROLES and value.get('role') not in CREATE_ROLES:
@@ -484,7 +501,7 @@ class LeaseClient:
         self.persisted = set()      # IDs whose own known-Pod record was written (or read) back
         self.presence_pending = set()   # IDs seen alive whose presence handoff has not landed: never durable
         self.errors = []            # retention failures since the caller last cleared it
-        self.presence_errors = []   # failed presence refreshes of IDs an open store already names
+        self.sync_errors = []       # SyncError failures since the caller last cleared it (never store faults)
         self._active = False
 
     def __enter__(self):
@@ -631,14 +648,11 @@ class LeaseClient:
             handoff_in(self.folder, pod_id, self.retained[pod_id], self.clock(), presence=presence)
         except StoreClosed:   # expected after completion, not a store fault: the obligation stays this process's
             return False
+        except SyncError as e:   # the obligation stays and blocks completion; not a store fault
+            self.sync_errors.append('retain:' + pod_id + ':' + type(e).__name__)
+            return False
         except Exception as e:  # noqa: BLE001 - the obligation stays; the exit resolves it
-            failure = 'retain:' + pod_id + ':' + type(e).__name__
-            if presence and pod_id in self.presence_pending and self.guardian_owns(pod_id):
-                # the ownership evidence still reads back: only the refresh is unpublished; the obligation
-                # stays (and blocks completion), but it is not a store fault that ends the lease
-                self.presence_errors.append(failure)
-            else:
-                self.errors.append(failure)
+            self.errors.append('retain:' + pod_id + ':' + type(e).__name__)
             return False
         self.persisted.add(pod_id)
         if presence:
@@ -845,7 +859,8 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
     while True:
         failures = []
         store_errors = []
-        del client.errors[:]; del client.presence_errors[:]
+        del client.errors[:]; del client.sync_errors[:]
+        sync_errors = []              # this pass's SyncError failures: completion blockers, never release reasons
         now = clock()
         # (A) reasons from the clock and local files only; persisted results never end the guard (I5)
         reason = None
@@ -891,8 +906,8 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         for pod_id in sorted(memory):
             try:
                 revision = read_presence(root / KNOWN_DIR, pod_id)
-            except Exception as e:  # noqa: BLE001 - an unreadable revision blocks completion
-                store_errors.append('presence:' + pod_id + ':' + type(e).__name__); revision = None
+            except Exception as e:  # noqa: BLE001 - voids the confirmation and blocks completion; not a store fault
+                sync_errors.append('presence:' + pod_id + ':' + type(e).__name__); revision = None
             if basis.get(pod_id, 0) != revision:
                 confirmed.discard(pod_id); id_absence.pop(pod_id, None); census_absence = AbsenceConfirmer(clock)
             basis[pod_id] = revision
@@ -977,8 +992,9 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
                 now - lease['created_epoch'] > lease['startup_idle_seconds']:
             reason = 'startup_idle'
         store_errors.extend(client.errors)
-        if client.presence_errors:   # diagnostic: completion stays blocked by the pending obligation
-            note('external-presence-error.json', {'epoch': clock(), 'errors': list(client.presence_errors)})
+        sync_errors.extend(client.sync_errors)
+        if sync_errors:   # diagnostic; completion stays blocked
+            note('external-sync-error.json', {'epoch': clock(), 'errors': list(sync_errors)})
         open_known = sorted(p for p in memory if p not in confirmed)
         if store_errors:
             failures.append('store:' + ','.join(store_errors))
@@ -1033,7 +1049,7 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         controller_done = not memory and (root / 'completion.json').exists() and \
             now - lease['created_epoch'] > CONTROLLER_DONE_SECONDS
         may_finish = (not open_known if memory else bool(reason or controller_done)) \
-            and not store_errors and not client.unpersisted
+            and not store_errors and not sync_errors and not client.unpersisted
         unresolved = create_unresolved(root)
         def settled():
             """Re-read under the store lock: every ID a receipt or create record names is one this process

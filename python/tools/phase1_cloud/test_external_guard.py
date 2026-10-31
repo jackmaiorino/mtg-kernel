@@ -843,11 +843,47 @@ class StoreClosureTests(Base):
             self.assertEqual(self.loop(world, polls=20), 'running')
             self.assertEqual(world.deletes, [])               # main keeps it too
             self.assertIsNone(self.status()['reason'])
-            self.assertTrue((self.root / 'external-presence-error.json').exists())
+            self.assertTrue((self.root / 'external-sync-error.json').exists())
             write(self.root / 'release-authorized.json', {})  # an independent release reason
             self.assertEqual(self.loop(world, polls=40), 'returned')
         self.assertIn('pod1', world.deletes)
         self.assertTrue(self.completion()['provider_absent'])  # the lease still completes
+
+    def healthy_primary(self):
+        self.record('pod1'); self.started()
+        eg.remember(self.root, 'pod1', 'receipt', 1.0)
+        return World([pod('pod1')])
+
+    def test_a_failed_presence_read_never_deletes_a_healthy_primary(self):
+        world = self.healthy_primary()
+        real = eg.read_presence; fired = []
+
+        def flaky(folder, pod_id):
+            if len(fired) < 3:
+                fired.append(pod_id)
+                raise PermissionError('presence file locked')
+            return real(folder, pod_id)
+        with mock.patch.object(eg, 'read_presence', side_effect=flaky):
+            self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertTrue(fired)
+        self.assertEqual(world.deletes, [])               # main ignores presence files and keeps it too
+        self.assertIsNone(self.status()['reason'])
+        self.assertTrue((self.root / 'external-sync-error.json').exists())
+
+    def test_a_store_lock_timeout_never_deletes_a_healthy_primary(self):
+        world = self.healthy_primary()
+        real = eg.StoreLock.__enter__; fired = []
+
+        def contended(lock):
+            if len(fired) < 3:
+                fired.append(True)
+                raise eg.LockTimeout('held by another process')
+            return real(lock)
+        with mock.patch.object(eg.StoreLock, '__enter__', contended):
+            self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertEqual(len(fired), 3)
+        self.assertEqual(world.deletes, [])               # main takes no lock and keeps it too
+        self.assertIsNone(self.status()['reason'])
 
     def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
