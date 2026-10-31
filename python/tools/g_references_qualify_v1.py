@@ -39,7 +39,8 @@ summarizes everything into one qualification record for the run manifest.
 CLI:
   plan    --campaign C.json --spec SPEC.json --out QDIR   offline: trial requests and the pack plan
   launch  --campaign C.json --plan QDIR/plan.json         take the reservation (timed cores) and start ``run``
-  start   --campaign C.json --spec SPEC.json --out QDIR   plan unless planned, then launch (a lease's launch)
+  start   --campaign C.json --spec SPEC.json --out QDIR   plan unless planned (else take the spec's fresh
+                                                          inventory), then launch (a lease's launch)
   run     --campaign C.json --plan QDIR/plan.json         inside the held reservation
   record  --campaign C.json --plan QDIR/plan.json --out QUALIFICATION.json
 """
@@ -129,6 +130,18 @@ def plan(campaign_path: Path, spec: dict, out: Path) -> dict:
              "spec": spec, "inventory": spec["inventory"], "interrupt_at_update": spec.get("interrupt_at_update", 81),
              "root": str(out)}
     return write_json(out / "plan.json", value)
+
+
+def refresh_inventory(plan_path: Path, spec: dict) -> dict:
+    """A lease's later start reuses the volume's plan (its trial and pack evidence stay valid) but takes this
+    lease's inventory, so the choice is made from an inventory refreshed at lease time (at most 24 h old)
+    rather than the first lease's."""
+    value = read(plan_path)
+    if value["inventory"] == spec["inventory"]:
+        return pin(plan_path)
+    value["inventory"] = spec["inventory"]
+    value["spec"] = {**value["spec"], "inventory": spec["inventory"]}
+    return write_json(plan_path, value)
 
 
 # ---------------------------------------------------------------- run (inside the reservation)
@@ -671,6 +684,8 @@ def main(argv: list[str] | None = None) -> int:
         path = args.out / "plan.json"
         if not path.exists():
             plan(args.campaign, read(args.spec), args.out)
+        else:
+            refresh_inventory(path, read(args.spec))
         print(json.dumps(launch(args.campaign, path)))
     elif args.op == "run":
         return run(args.campaign, args.plan)
