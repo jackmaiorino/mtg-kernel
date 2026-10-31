@@ -124,8 +124,7 @@ and avoids an admission deadlock when both generations share a registry.
 logical CPUs. R is one of `timing`, `isolation`, `determinism`, `play-client` or `hardware`, and is recorded on
 the ticket and claim and shown by `status`. A pool is a hard restriction: the request waits while its pool lacks
 room even if CPUs outside the pool are free, so a pool without a reason is refused (exit 2) before any ticket is
-written. To favor some CPUs without that risk, use `--prefer-cores 0-7`: those are tried first and any other CPU is
-used when they lack room. The reservation, ordinary and background claims, queue order and the shared mutex still
+written. Without a reason, drop the pool and the scheduler places the job. The reservation, ordinary and background claims, queue order and the shared mutex still
 govern admission, and the host configuration is unchanged.
 
 ## Shared claims: lend what you do not use
@@ -148,15 +147,25 @@ M-core request) and runs on up to `--cores`. The cores beyond its guarantee are 
 - Timed work that overlaps its guaranteed cores suspends it exactly like any claim.
 
 Use it for release builds, clippy, test compiles and other bursty work. Never use it for timing, isolation or
-deterministic studies: their cores must stay exclusive, so they stay ordinary claims (or `timed`). Tools size their
-parallelism once from the affinity they start with, so pass the job count (`cargo build -j N`).
+deterministic studies: their cores must stay exclusive, so they stay ordinary claims (or `timed`). The command's
+`HOST_SLOTS_CORES` names only the guarantee, since the rest can be taken back at any time. Tools size their
+parallelism once at start, so pass the job count (`cargo build -j N`).
+
+Shared claims are off on a host until its `config.json` says `"lending": true` (kept out of the config digest).
+Without it, `--shared` exits 2 before any ticket. Set it only after an inventory shows that every copy of this tool
+that can queue on that host is c543e1b4 (mtg-kernel e2657b8c, #427) or later: older backfill engines, the #407
+one included, do not honor the lending marker below. As a runtime guard, lenders also give back everything and
+stop growing while an older backfill engine shows itself (a queued request with a limit but no
+`backfill_policy`, or a backfill claim without `deadline_mono`). That guard cannot see an older copy before it
+queues, so the config gate is what keeps such copies away.
 
 Records: `shared`, `guaranteed`, `max_cores`, and `cores` (the current affinity). Older launchers read only
 `cores`, so they treat a shared claim's whole current affinity as held and never land on a lent core. While a
 shared claim lends any core it keeps `delay-lending-<claim id>.json` in the slots folder. The file is deliberately
-not a JSON object: every backfill engine since #407 refuses to backfill while a delay file cannot be read, so no
-backfill is ever proved (by this version or an older one) while a lent core could still be given back. This version
-skips the markers when reading and removes any whose claim is gone.
+not a JSON object: every backfill engine at or after c543e1b4 refuses to backfill while a delay file cannot be read,
+so none of them proves a backfill while a lent core could still be given back. The marker is created before any lent
+core is published and removed only once the read-back record lends nothing. This version skips the markers when
+reading, and it (and `status`) removes any whose claim is gone.
 
 ## Utilization watcher
 

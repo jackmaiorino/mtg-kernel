@@ -335,7 +335,8 @@ class HostSlotsTests(unittest.TestCase):
         self.addCleanup(env.stop)
         os.environ.pop(slots.TOKEN_ENV, None)
         (root / "TESTHOST.slots").mkdir()
-        slots.write_json(root / "TESTHOST.slots/config.json", {"cores": ",".join(map(str, reversed(CPUS)))})
+        slots.write_json(root / "TESTHOST.slots/config.json", {"cores": ",".join(map(str, reversed(CPUS))),
+                                                                "lending": True})
         self.host, self.tmp_path = root, tmp_path
 
     @needs_two
@@ -1331,10 +1332,6 @@ class SharedPolicyTests(unittest.TestCase):
         assert not slots.old_rules_room(config8(), FREE, claims, plain, 3, None)
         assert not slots.old_rules_room(config8(), FREE, claims, {**plain, "shared": True, "max_cores": 4}, 1, None)
 
-    def test_preferred_cores_come_first_and_never_restrict(self):
-        claims = [{"cores": [1, 0]}]
-        assert slots.available(config8(), FREE, claims, prefer=[0, 1, 2]) == [2, 7, 6, 5, 4, 3]
-        assert slots.available(config8(), FREE, [{"cores": [2, 1, 0]}], prefer=[0, 1, 2]) == [7, 6, 5, 4, 3]
 
 
 class SharedStepTests(unittest.TestCase):
@@ -1364,7 +1361,7 @@ class SharedStepTests(unittest.TestCase):
 
     def test_growth_waits_for_an_empty_queue_and_every_lent_core_goes_back_meanwhile(self):
         # review v1 #3: a queued head (of any launcher) never finds lent or newly grown cores
-        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0"})
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
         with patch.object(slots, "cpu_total", return_value=8):
             self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7, 6]))
             self.write(f"queue-00000000000000000001-{'6' * 32}", {"id": "6" * 32, "cores_wanted": 3})
@@ -1378,7 +1375,7 @@ class SharedStepTests(unittest.TestCase):
             assert tree.calls[-1] == [4, 5, 6, 7] and record["cores"] == [4, 5, 6, 7]
 
     def test_a_failed_narrowing_publishes_nothing_and_reports_failure(self):
-        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0"})
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
         with patch.object(slots, "cpu_total", return_value=8):
             self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7, 6]))
             self.write(f"claim-{'7' * 32}", {"id": "7" * 32, "cores": [6], "state": "suspended"})
@@ -1414,13 +1411,13 @@ class PlacementOptionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             slots.run("p", "w", 1, ["unused"], adopted={"pid": 1, "creation": 1})
 
-    def test_reason_and_preference_are_recorded(self):
+    def test_the_reason_is_recorded(self):
         seen = []
         with patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
                 slots.read_json(claim)) or 0):
-            slots.run("p", "w", 1, ["unused"], core_pool=[CPUS[0]], pool_reason="timing", prefer=[CPUS[0]])
+            slots.run("p", "w", 1, ["unused"], core_pool=[CPUS[0]], pool_reason="timing")
         assert seen[0]["core_pool"] == [CPUS[0]] and seen[0]["core_pool_reason"] == "timing"
-        assert seen[0]["prefer_cores"] == [CPUS[0]] and seen[0]["cores"] == [CPUS[0]]
+        assert seen[0]["cores"] == [CPUS[0]] and "prefer_cores" not in seen[0]
         events = [json.loads(line) for path in (self.host / "TESTHOST.util").glob("events-*.jsonl")
                   for line in path.read_text().splitlines()]
         assert [e["event"] for e in events] == ["admit", "end"] and events[0]["old_rules_room"] is True
@@ -1721,7 +1718,7 @@ class LendingMarkerTests(unittest.TestCase):
         old = e2657b8c_engine()
         if old is None:
             self.skipTest("mtg-kernel e2657b8c is not in this checkout")
-        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "0-3"})
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "0-3", "lending": True})
         with patch.object(slots, "cpu_total", return_value=4), patch.object(old, "cpu_total", return_value=4):
             config = old.load_config()
             self.write(f"claim-{'5' * 32}", shared("5" * 32, [0], [0, 1, 2]))
@@ -1742,7 +1739,7 @@ class LendingMarkerTests(unittest.TestCase):
                 assert ran == [[3]]
 
     def test_growth_creates_the_marker_first_and_narrowing_removes_it_last(self):
-        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0"})
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
         events = []
         real_marker, real_update = slots._set_lending_marker, slots._update_claim_locked
 
@@ -1752,7 +1749,7 @@ class LendingMarkerTests(unittest.TestCase):
 
         def update(path, **fields):
             events.append(("publish", fields.get("cores")))
-            real_update(path, **fields)
+            return real_update(path, **fields)
 
         with patch.object(slots, "cpu_total", return_value=8), patch.object(slots, "_set_lending_marker", marker), \
                 patch.object(slots, "_update_claim_locked", update):
@@ -1762,7 +1759,7 @@ class LendingMarkerTests(unittest.TestCase):
             share = {"guaranteed": [7], "max_cores": 2, "pool": None}
             with slots.Mutex():
                 assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
-            assert events[:2] == [("marker", True), ("publish", [6, 7])] and slots._marker_path("5" * 32).exists()
+            assert events == [("publish", [7]), ("marker", True), ("publish", [6, 7])] and slots._marker_path("5" * 32).exists()
             self.write(f"queue-00000000000000000001-{'6' * 32}", {"id": "6" * 32, "cores_wanted": 1})
             events.clear()
             with slots.Mutex():
@@ -1960,6 +1957,154 @@ class OverdueTests(unittest.TestCase):
         finally:
             flagged.terminate()
             flagged.wait(timeout=60)
+
+
+def engine_at(commit, name):
+    """A deployed backfill engine loaded from git, or None when the checkout lacks that commit."""
+    try:
+        source = subprocess.run(["git", "-C", str(TOOLS), "show", f"{commit}:python/tools/host_slots_v1.py"],
+                                capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if source.returncode != 0:
+        return None
+    folder = Path(tempfile.mkdtemp(prefix=f"hs-{commit}-"))
+    (folder / f"{name}.py").write_bytes(source.stdout)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, folder / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class LendingGateTests(unittest.TestCase):
+    """review v4 (Fable) #1: the #407 engine ignores the lending marker, so lending is gated per host."""
+    setUp = HostSlotsTests.setUp
+
+    def write(self, name, record):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/{name}.json", {"pid": pid, "creation_time": creation, **record})
+
+    def test_the_407_engine_backfills_past_the_marker_so_shared_claims_need_the_host_gate(self):
+        old = engine_at("05fd27807", "host_slots_05fd27807")
+        if old is None:
+            self.skipTest("mtg-kernel 05fd27807 is not in this checkout")
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "0-3"})
+        with patch.object(slots, "cpu_total", return_value=4), patch.object(old, "cpu_total", return_value=4):
+            # Without "lending": true, no shared claim can exist on this host, so S below could never be made.
+            with self.assertRaisesRegex(ValueError, "shared claims are off"):
+                slots.run("l", "build", 3, ["unused"], shared=True)
+            proc = cli("run", "--shared", "--lane", "l", "--work-id", "b", "--cores", "2", "--",
+                       sys.executable, "-c", "pass")
+            _, err = proc.communicate(timeout=60)
+            assert proc.returncode == slots.EXIT_USAGE and "lending" in err, err
+            assert not list((self.host / "TESTHOST.slots").glob("queue-*.json"))
+            # Had it existed: S guarantees 0 and lends 1 and 2 with its marker, an old head wants 3 cores.
+            config = old.load_config()
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [0], [0, 1, 2]))
+            with slots.Mutex():
+                slots._set_lending_marker("5" * 32, True)
+            self.write(f"queue-00000000000000000001-{'6' * 32}", {
+                "schema": slots.SCHEMA, "id": "6" * 32, "lane": "l", "work_id": "head", "cores_wanted": 3,
+                "background": False, "config_sha256": old.config_digest(config)})
+            ran = []
+            with patch.object(old, "_run_claimed", side_effect=lambda *a, **k: ran.append(a[1]) or 0):
+                assert old.run("l", "small", 1, ["unused"], max_seconds=99999.0) == 0
+            assert ran == [[3]]   # the #407 engine proves a backfill the lender's give-back turns into a delay
+
+    def test_lenders_close_while_an_older_engine_shows_itself(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7, 6]))
+            claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+            share = {"guaranteed": [7], "max_cores": 4, "pool": None}
+            # a live #407 backfill (no deadline_mono): give everything back, do not grow, even with no queue
+            self.write(f"claim-{'7' * 32}", {"id": "7" * 32, "cores": [0], "backfill": True, "max_seconds": 60.0,
+                                             "deadline_at": "2026-10-31T00:00:00+00:00", "state": "running"})
+            tree = SharedStepTests.FakeTree([7, 6])
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
+            assert tree.cores == [7] and slots.read_json(claim)["cores"] == [7]
+            (self.host / f"TESTHOST.slots/claim-{'7' * 32}.json").unlink()
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
+            assert tree.cores == [4, 5, 6, 7]
+            # lending switched off in the config: everything goes back again
+            slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0"})
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
+            assert tree.cores == [7] and not slots._marker_path("5" * 32).exists()
+        assert slots.legacy_backfill_engine([{"max_seconds": 5.0}], [])
+        assert not slots.legacy_backfill_engine([{"max_seconds": 5.0, "backfill_policy": 2}, {"cores_wanted": 1}], [])
+
+
+class PublishFailureTests(unittest.TestCase):
+    """review v4 (Fable) #3: a publication that did not reach the disk never widens a job or drops a marker."""
+    setUp = HostSlotsTests.setUp
+
+    def write(self, name, record):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/{name}.json", {"pid": pid, "creation_time": creation, **record})
+
+    def test_growth_without_a_confirmed_publish_never_widens(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7]))
+            claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+            tree = SharedStepTests.FakeTree([7])
+            real_read = slots.read_json
+            with slots.Mutex():
+                with patch.object(slots, "read_json", side_effect=lambda path: None if path == claim else real_read(path)):
+                    assert not slots._share_step(tree, claim, "5" * 32, {"guaranteed": [7], "max_cores": 4, "pool": None},
+                                      grow=True)
+            assert tree.cores == [7] and tree.calls == [] and real_read(claim)["cores"] == [7]
+
+    def test_a_narrowing_whose_publish_fails_suspends_and_keeps_the_marker(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7, 6, 5]))
+            self.write(f"queue-00000000000000000001-{'6' * 32}", {"id": "6" * 32, "cores_wanted": 1})
+            claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+            with slots.Mutex():
+                slots._set_lending_marker("5" * 32, True)
+            tree = SharedStepTests.FakeTree([7, 6, 5])
+            with slots.Mutex():
+                with patch.object(slots, "write_json", side_effect=OSError("disk full")):
+                    ok = slots._share_step(tree, claim, "5" * 32, {"guaranteed": [7], "max_cores": 3, "pool": None},
+                                           grow=False)
+            assert ok is False                                   # the caller suspends the tree
+            assert slots.read_json(claim)["cores"] == [7, 6, 5]  # the record still lends ...
+            assert slots._marker_path("5" * 32).exists()         # ... so the marker stays
+            with slots.Mutex():                                  # once the publish works, both settle
+                assert slots._share_step(tree, claim, "5" * 32, {"guaranteed": [7], "max_cores": 3, "pool": None},
+                                         grow=False)
+            assert slots.read_json(claim)["cores"] == [7] and not slots._marker_path("5" * 32).exists()
+
+    def test_update_reports_whether_the_fields_reached_the_disk(self):
+        claim = self.host / "TESTHOST.slots" / "claim-x.json"
+        assert slots._update_claim_locked(claim, cores=[1]) is False          # no record
+        slots.write_json(claim, {"cores": [1, 2]})
+        assert slots._update_claim_locked(claim, cores=[1]) is True and slots.read_json(claim)["cores"] == [1]
+        with patch.object(slots, "write_json", side_effect=OSError("denied")):
+            assert slots._update_claim_locked(claim, cores=[2]) is False
+
+
+class SmallFixTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def test_a_shared_command_sees_only_its_guarantee_and_naive_report_times_are_utc(self):
+        out = cli("run", "--shared", "--cores", str(len(CPUS)), "--lane", "s", "--work-id", "env", "--",
+                  sys.executable, "-c", "import os; print(os.environ['HOST_SLOTS_CORES'])")
+        stdout, err = out.communicate(timeout=60)
+        assert out.returncode == 0, err
+        assert stdout.splitlines()[1] == str(max(CPUS))
+        assert slots.watch_report("2026-10-31T00:00:00")["since"] == "2026-10-31T00:00:00"
+
+    def test_status_removes_a_killed_lenders_marker(self):
+        with slots.Mutex():
+            slots._set_lending_marker("9" * 32, True)
+        slots.status()
+        assert not slots._marker_path("9" * 32).exists()
 
 
 if __name__ == "__main__":
