@@ -422,11 +422,11 @@ class ResponsibilityTests(unittest.TestCase):
             release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
             real = external_guard.handoff_in; fired = []
 
-            def handoff(folder, pod_id, role, epoch):
+            def handoff(folder, pod_id, role, epoch, **options):
                 if not fired:
                     fired.append(pod_id)
                     raise OSError('transient')
-                return real(folder, pod_id, role, epoch)
+                return real(folder, pod_id, role, epoch, **options)
             with no_network(), patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}), \
                     patch.object(external_guard, 'handoff_in', side_effect=handoff):
                 result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
@@ -451,11 +451,11 @@ class ResponsibilityTests(unittest.TestCase):
             release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
             real = external_guard.handoff_in; calls = []
 
-            def handoff(folder, pod_id, role, epoch):
+            def handoff(folder, pod_id, role, epoch, **options):
                 calls.append(list(world.deletes))
                 if not world.deletes:
                     raise OSError('transient')
-                return real(folder, pod_id, role, epoch)
+                return real(folder, pod_id, role, epoch, **options)
             with no_network(), patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}),                     patch.object(external_guard, 'handoff_in', side_effect=handoff):
                 result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
                                            now=NOW, release=release)

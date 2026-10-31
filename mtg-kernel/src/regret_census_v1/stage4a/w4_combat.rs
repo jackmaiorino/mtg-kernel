@@ -15,7 +15,7 @@
 //!   must score exactly as one reset at game start, since continuations
 //!   start from reset policies.
 //! - `score`: replays the recorded actions. At every focal decision (the
-//!   focal seat with two or more legal actions) it records the candidate's
+//!   focal seat acts, forced decisions included) it records the candidate's
 //!   logits, value and scorer hidden and the public material features. At
 //!   each focal blocker-pair decision it adds the rules facts, the state
 //!   hidden, a random-init net's hidden and the raw action and object
@@ -27,7 +27,8 @@
 //! and opponent model sources), `W4_HIDDEN`, `W4_RANDOM_SEED` (default
 //! 20261030), `W4_POSITIONS` (jsonl of `{"id", "index", "worlds"}`),
 //! `W4_ACCEPT` (a2 only: the passed acceptance output; A2 refuses to run
-//! without it).
+//! without it), `W4_RECORDS` (a2 only: `1` adds a continuation record to
+//! every value and playout row; unset or `0` leaves the rows unchanged).
 
 use super::play::{acting, decision};
 use super::replay_labels::LabelJob;
@@ -662,6 +663,57 @@ impl Ending {
     }
 }
 
+/// The include choice at a blocker-inclusion decision, either seat's:
+/// `Some(pair)` if `row` includes, `None` if it excludes; outside a blocker
+/// scan, `Err(())`.
+fn scan_choice(
+    s: &Session,
+    d: &FastActorDecisionV1,
+    row: u32,
+) -> Result<Option<(ObjectId, ObjectId)>, ()> {
+    let scan = blocker_scan(s, d, acting(d)).ok_or(())?;
+    Ok((scan.include_row == Some(row)).then_some(scan.pair))
+}
+
+/// The edges a blocker declaration committed, attackers in first-chosen
+/// order, blockers in choice order.
+fn edges_json(edges: &[(ObjectId, ObjectId)]) -> Value {
+    let mut grouped: Vec<(ObjectId, Vec<u32>)> = Vec::new();
+    for &(a, b) in edges {
+        match grouped.iter_mut().find(|(x, _)| *x == a) {
+            Some((_, bs)) => bs.push(b.0),
+            None => grouped.push((a, vec![b.0])),
+        }
+    }
+    json!(grouped
+        .iter()
+        .map(|(a, bs)| json!([a.0, bs]))
+        .collect::<Vec<_>>())
+}
+
+/// A continuation record (`W4_RECORDS`, result memo observation 5): where it
+/// stopped (round, active seat and step at the stopping decision or
+/// terminal), the edges the position's blocker declaration committed and the
+/// full-state diagnostic hash there. The declaration is the unbroken run of
+/// blocker-inclusion decisions through the position, read from the choices
+/// themselves: the engine's combat state can be pruned by deaths or reset
+/// before the continuation next sees a decision. `blocks` is null when the
+/// declaration may not have committed: a cap or halt inside the scan.
+fn record(s: &Session, blocks: Value) -> Value {
+    let state = s.game_state();
+    json!({"turn": state.turn, "active": state.active_player.0, "step": format!("{:?}", state.step),
+        "blocks": blocks, "digest": format!("{:016x}", s.diagnostic_state_hash())})
+}
+
+/// One continuation's row: its ending, plus its record when kept.
+fn row((end, record): (Ending, Option<Value>)) -> Value {
+    let mut v = end.json();
+    if let Some(r) = record {
+        v["record"] = r;
+    }
+    v
+}
+
 fn ending_at_terminal(s: &Session, focal: PlayerId) -> Option<Ending> {
     terminal_score(s, focal).map(|(score, class)| match class {
         TerminalClassificationV1::Natural => Ending::Terminal(score),
@@ -673,7 +725,9 @@ fn ending_at_terminal(s: &Session, focal: PlayerId) -> Option<Ending> {
 /// Forces `choice` at the position, then plays both seats' policies (reset
 /// with `paired_policy_seeds_v1(seed)`). With `stop_after_combat`, stops at
 /// the first focal decision after combat is over and scores it with the
-/// candidate's value; otherwise plays to the terminal.
+/// candidate's value; otherwise plays to the terminal. With `records` (the
+/// declaration's edges chosen before the position), also returns the
+/// continuation record.
 fn continuation(
     root: &Session,
     choice: u32,
@@ -681,26 +735,53 @@ fn continuation(
     focal: PlayerId,
     panel: &mut Panel,
     stop_after_combat: bool,
-) -> Result<Ending, String> {
+    records: Option<&[(ObjectId, ObjectId)]>,
+) -> Result<(Ending, Option<Value>), String> {
     let d = decision(root).ok_or("the position has no decision")?;
     let turn = (root.game_state().turn, root.game_state().active_player);
     panel.reset(paired_policy_seeds_v1(seed))?;
+    let mut edges = records.map(<[_]>::to_vec);
+    if let Some(edges) = &mut edges {
+        edges.extend(scan_choice(root, &d, choice).ok().flatten());
+    }
+    let mut scanning = true;
     let mut s = root.clone();
     step(&mut s, &d, choice)?;
     // Combat is over once seen at any decision, either seat's; a later
     // opponent spell does not move the stopping point.
     let mut combat_over = false;
     loop {
+        let kept = |s: &Session, edges: &Option<Vec<_>>, committed: bool| {
+            edges.as_deref().map(|e| {
+                record(
+                    s,
+                    if committed {
+                        edges_json(e)
+                    } else {
+                        Value::Null
+                    },
+                )
+            })
+        };
         if let Some(end) = ending_at_terminal(&s, focal) {
-            return Ok(end);
+            // Scan steps leave the game state unchanged until the whole
+            // declaration commits, so only a cap or halt can end inside one.
+            let committed = !scanning || matches!(end, Ending::Terminal(_));
+            return Ok((end, kept(&s, &edges, committed)));
         }
         let d = decision(&s).ok_or("no decision and no terminal")?;
         combat_over |= past_combat(&s, turn);
         if stop_after_combat && combat_over && is_focal(&d, focal) {
             let scores = panel.scorer()?.score_fast_session_v1(&s)?;
-            return Ok(Ending::Value(scores.value));
+            return Ok((Ending::Value(scores.value), kept(&s, &edges, true)));
         }
         let a = panel.select(&s, d, focal)?;
+        if let (Some(edges), true) = (&mut edges, scanning) {
+            match scan_choice(&s, &d, a) {
+                Ok(pair) => edges.extend(pair),
+                Err(()) => scanning = false,
+            }
+        }
         step(&mut s, &d, a)?;
     }
 }
@@ -722,13 +803,27 @@ fn world_seeds(id: &str, index: usize, count: u64) -> Vec<u64> {
         .collect()
 }
 
-fn a2_position(job: &LabelJob, position: &Position, panel: &mut Panel) -> Result<Value, String> {
+fn a2_position(
+    job: &LabelJob,
+    position: &Position,
+    panel: &mut Panel,
+    records: bool,
+) -> Result<Value, String> {
     let focal = PlayerId(job.focal);
     let mut s = session(job)?;
+    // The declaration's edges chosen before the position (records only).
+    let mut prefix = Vec::new();
     for i in 0..position.index {
         let d = checked(&s, job, i)?;
+        if records {
+            match scan_choice(&s, &d, job.decisions[i].selected) {
+                Ok(pair) => prefix.extend(pair),
+                Err(()) => prefix.clear(),
+            }
+        }
         step(&mut s, &d, job.decisions[i].selected)?;
     }
+    let records = records.then_some(prefix.as_slice());
     let d = checked(&s, job, position.index)?;
     let (attacker, blocker, include_row) =
         blocker_pair(&s, &d, focal).ok_or("the position is not a focal blocker-pair decision")?;
@@ -738,11 +833,15 @@ fn a2_position(job: &LabelJob, position: &Position, panel: &mut Panel) -> Result
     for (name, choice) in [("exclude", 1 - include_row), ("include", include_row)] {
         let mut value = Vec::new();
         for seed in VALUE_SEEDS {
-            value.push(continuation(&s, choice, seed, focal, panel, true)?.json());
+            value.push(row(continuation(
+                &s, choice, seed, focal, panel, true, records,
+            )?));
         }
         let mut playout = Vec::new();
         for seed in PLAYOUT_SEEDS {
-            playout.push(continuation(&s, choice, seed, focal, panel, false)?.json());
+            playout.push(row(continuation(
+                &s, choice, seed, focal, panel, false, records,
+            )?));
         }
         let mut worlds = Vec::new();
         if position.worlds {
@@ -750,7 +849,9 @@ fn a2_position(job: &LabelJob, position: &Position, panel: &mut Panel) -> Result
                 let world = s.census_redeterminized_clone_v1(w)?;
                 let mut rows = Vec::new();
                 for seed in WORLD_PLAYOUT_SEEDS {
-                    rows.push(continuation(&world, choice, seed, focal, panel, false)?.json());
+                    rows.push(row(continuation(
+                        &world, choice, seed, focal, panel, false, records,
+                    )?));
                 }
                 worlds.push(json!({"world_seed": w, "playouts": rows}));
             }
@@ -876,6 +977,11 @@ fn run_on_worker(out_path: &str) -> Result<(), String> {
         }
         "a2" => {
             require_acceptance()?;
+            let records = match std::env::var("W4_RECORDS").as_deref() {
+                Err(_) | Ok("0") => false,
+                Ok("1") => true,
+                Ok(other) => return Err(format!("W4_RECORDS must be 0 or 1, not {other}")),
+            };
             let path = env_path("W4_POSITIONS")?;
             let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
             let positions: Vec<Position> = text
@@ -895,7 +1001,7 @@ fn run_on_worker(out_path: &str) -> Result<(), String> {
             let mut loaded = panels(&used, &sources)?;
             for (position, job) in positions.iter().zip(used) {
                 let panel = loaded.get_mut(panel_of(&job.id)).ok_or("panel")?;
-                let row = a2_position(job, position, panel).unwrap_or_else(
+                let row = a2_position(job, position, panel, records).unwrap_or_else(
                     |e| json!({"kind": "error", "id": job.id, "index": position.index, "error": e}),
                 );
                 writeln!(out, "{row}").map_err(|e| e.to_string())?;
