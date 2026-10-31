@@ -697,7 +697,8 @@ fn edges_json(edges: &[(ObjectId, ObjectId)]) -> Value {
 /// full-state diagnostic hash there. The declaration is the unbroken run of
 /// blocker-inclusion decisions through the position, read from the choices
 /// themselves: the engine's combat state can be pruned by deaths or reset
-/// before the continuation next sees a decision.
+/// before the continuation next sees a decision. `blocks` is null when the
+/// declaration may not have committed: a cap or halt inside the scan.
 fn record(s: &Session, blocks: Value) -> Value {
     let state = s.game_state();
     json!({"turn": state.turn, "active": state.active_player.0, "step": format!("{:?}", state.step),
@@ -750,17 +751,29 @@ fn continuation(
     // opponent spell does not move the stopping point.
     let mut combat_over = false;
     loop {
-        let kept = |s: &Session, edges: &Option<Vec<_>>| {
-            edges.as_deref().map(|e| record(s, edges_json(e)))
+        let kept = |s: &Session, edges: &Option<Vec<_>>, committed: bool| {
+            edges.as_deref().map(|e| {
+                record(
+                    s,
+                    if committed {
+                        edges_json(e)
+                    } else {
+                        Value::Null
+                    },
+                )
+            })
         };
         if let Some(end) = ending_at_terminal(&s, focal) {
-            return Ok((end, kept(&s, &edges)));
+            // Scan steps leave the game state unchanged until the whole
+            // declaration commits, so only a cap or halt can end inside one.
+            let committed = !scanning || matches!(end, Ending::Terminal(_));
+            return Ok((end, kept(&s, &edges, committed)));
         }
         let d = decision(&s).ok_or("no decision and no terminal")?;
         combat_over |= past_combat(&s, turn);
         if stop_after_combat && combat_over && is_focal(&d, focal) {
             let scores = panel.scorer()?.score_fast_session_v1(&s)?;
-            return Ok((Ending::Value(scores.value), kept(&s, &edges)));
+            return Ok((Ending::Value(scores.value), kept(&s, &edges, true)));
         }
         let a = panel.select(&s, d, focal)?;
         if let (Some(edges), true) = (&mut edges, scanning) {
