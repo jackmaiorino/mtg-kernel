@@ -127,6 +127,72 @@ pub(crate) fn add_nonzero_message_v1(pooled: &mut [f32], message: &[f32]) {
     }
 }
 
+/// The guarded input column of `action_encoder.0` for an action width: the
+/// include column for the V8 width, none for net-8.
+pub(crate) const fn include_guard_v1(action_feature_dim: usize) -> Option<usize> {
+    if action_feature_dim == V8_ACTION_FEATURE_DIM_V1 {
+        Some(V8_INCLUDE_COLUMN_V1)
+    } else {
+        None
+    }
+}
+
+/// `accumulator[o] += value * weights[o]` for every product that is not
+/// zero: the include column's guard (`add_nonzero_message_v1`'s rule). A
+/// zero product then leaves the accumulator's bits, negative zero included,
+/// as net-8 computes them without the column. The backward still takes the
+/// column's full derivative.
+pub(crate) fn add_nonzero_products_v1(accumulator: &mut [f32], value: f32, weights: &[f32]) {
+    debug_assert_eq!(accumulator.len(), weights.len());
+    for (sum, &weight) in accumulator.iter_mut().zip(weights) {
+        let product = value * weight;
+        if product != 0.0 {
+            *sum += product;
+        }
+    }
+}
+
+/// `accumulate_linear_row_v1` over a whole row, with column `guard` added
+/// through `add_nonzero_products_v1`. Every output keeps one sequential sum
+/// in input order, so the other columns' bits are those of the unguarded
+/// loop.
+pub(super) fn accumulate_guarded_row_v1(
+    linear: &LinearV1,
+    input_row: &[f32],
+    guard: Option<usize>,
+    accumulator: &mut [f32],
+) {
+    let Some(column) = guard else {
+        accumulate_linear_row_v1(linear, input_row, 0, accumulator);
+        return;
+    };
+    let output_dim = linear.output_dim;
+    accumulate_linear_row_v1(linear, &input_row[..column], 0, accumulator);
+    add_nonzero_products_v1(
+        accumulator,
+        input_row[column],
+        &linear.weight_t[column * output_dim..(column + 1) * output_dim],
+    );
+    accumulate_linear_row_v1(linear, &input_row[column + 1..], column + 1, accumulator);
+}
+
+/// `linear_rows_v1` with the guarded column of `accumulate_guarded_row_v1`.
+pub(super) fn linear_rows_guarded_v1(
+    linear: &LinearV1,
+    input: &[f32],
+    rows: usize,
+    guard: Option<usize>,
+) -> Vec<f32> {
+    debug_assert_eq!(input.len(), rows * linear.input_dim);
+    let mut output = Vec::with_capacity(rows * linear.output_dim);
+    for input_row in input.chunks_exact(linear.input_dim).take(rows) {
+        let begin = output.len();
+        output.extend_from_slice(&linear.bias);
+        accumulate_guarded_row_v1(linear, input_row, guard, &mut output[begin..]);
+    }
+    output
+}
+
 /// A view's pairing relation: empty, or (only under the V8 config) whole
 /// `(blocker, attacker)` pairs of two distinct object nodes.
 pub(super) fn validate_pairing_v1(

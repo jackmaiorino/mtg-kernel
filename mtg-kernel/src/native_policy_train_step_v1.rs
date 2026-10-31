@@ -31,8 +31,9 @@
 //! exceeding it aborts before model or optimizer mutation.
 
 use crate::native_policy_value_net_v1::v8_inclusion_v1::{
-    add_nonzero_message_v1, V8_ACTION_ENCODER_INPUT_V1, V8_MODEL_ARCHITECTURE_VERSION_V1,
-    V8_PAIRING_PARAMETER_NAMES_V1, V8_PAIRING_PARAMETER_SHAPES_V1, V8_PARAMETER_COUNT_V1,
+    add_nonzero_message_v1, add_nonzero_products_v1, include_guard_v1, V8_ACTION_ENCODER_INPUT_V1,
+    V8_MODEL_ARCHITECTURE_VERSION_V1, V8_PAIRING_PARAMETER_NAMES_V1,
+    V8_PAIRING_PARAMETER_SHAPES_V1, V8_PARAMETER_COUNT_V1,
 };
 use crate::native_policy_value_net_v1::{
     accumulate_input_major_row_v1,
@@ -5009,7 +5010,10 @@ fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
     }
     let action_input =
         TapeSpanV1::checked_v1(action_input_start, f32_arena.len() - action_input_start)?;
-    let action_encoder = two_layer_forward_into_arena_dims_v1::<D>(
+    // The V8 include column adds only nonzero products
+    // (`v8_inclusion_v1::add_nonzero_products_v1`); the backward takes its
+    // full derivative.
+    let action_encoder = two_layer_forward_into_arena_guarded_dims_v1::<D>(
         parameters,
         input_major,
         action_spec_v1::<D>(action_feature_dim),
@@ -5017,6 +5021,7 @@ fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
         counts.action_count,
         &mut f32_arena,
         math,
+        include_guard_v1(action_feature_dim),
     )?;
 
     let scorer_input_start = f32_arena.len();
@@ -5604,7 +5609,32 @@ fn two_layer_forward_into_arena_dims_v1<D: NetDimsV1>(
     arena: &mut Vec<f32>,
     math: TrainingMathV1,
 ) -> Result<TwoLayerTapeV1, NativePolicyTrainErrorV1> {
-    let first_output = linear_forward_into_arena_v1(
+    two_layer_forward_into_arena_guarded_dims_v1::<D>(
+        parameters,
+        input_major,
+        spec,
+        input,
+        rows,
+        arena,
+        math,
+        None,
+    )
+}
+
+/// [`two_layer_forward_into_arena_dims_v1`] with the first layer's column
+/// `guard` added only where its product is nonzero.
+#[allow(clippy::too_many_arguments)]
+fn two_layer_forward_into_arena_guarded_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
+    spec: TwoLayerSpecV1,
+    input: TapeSpanV1,
+    rows: usize,
+    arena: &mut Vec<f32>,
+    math: TrainingMathV1,
+    guard: Option<usize>,
+) -> Result<TwoLayerTapeV1, NativePolicyTrainErrorV1> {
+    let first_output = linear_forward_into_arena_guarded_v1(
         parameters,
         input_major,
         spec.first_weight,
@@ -5614,6 +5644,7 @@ fn two_layer_forward_into_arena_dims_v1<D: NetDimsV1>(
         spec.input_dim,
         D::HIDDEN,
         arena,
+        guard,
     )?;
     tanh_span_in_place_v1(arena, first_output, math);
     let second_output = linear_forward_into_arena_v1(
@@ -5777,6 +5808,39 @@ fn linear_forward_into_arena_v1(
     output_dim: usize,
     arena: &mut Vec<f32>,
 ) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
+    linear_forward_into_arena_guarded_v1(
+        parameters,
+        input_major,
+        weight_index,
+        bias_index,
+        input,
+        rows,
+        input_dim,
+        output_dim,
+        arena,
+        None,
+    )
+}
+
+/// [`linear_forward_into_arena_v1`] with input column `guard` added through
+/// `add_nonzero_products_v1`. Every output keeps one sequential sum in input
+/// order, so the other columns' bits are unchanged.
+#[allow(clippy::too_many_arguments)]
+fn linear_forward_into_arena_guarded_v1(
+    parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
+    weight_index: usize,
+    bias_index: usize,
+    input: TapeSpanV1,
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    arena: &mut Vec<f32>,
+    guard: Option<usize>,
+) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
+    if guard.is_some_and(|column| column >= input_dim) {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
     let weight = &parameters[weight_index].values;
     let bias = &parameters[bias_index].values;
     let input_len = rows
@@ -5804,12 +5868,23 @@ fn linear_forward_into_arena_v1(
         for row in 0..rows {
             let input_row = &input[row * input_dim..(row + 1) * input_dim];
             let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
-            match input_major {
-                Some(weight_t) => {
+            match (input_major, guard) {
+                (Some(weight_t), None) => {
                     output_row.copy_from_slice(bias);
                     accumulate_input_major_row_v1(weight_t, input_row, output_row);
                 }
-                None => linear_forward_ordered_v1(weight, bias, input_row, output_row),
+                (Some(weight_t), Some(column)) => {
+                    output_row.copy_from_slice(bias);
+                    let (before, rest) = weight_t.split_at(column * output_dim);
+                    let (guarded, after) = rest.split_at(output_dim);
+                    accumulate_input_major_row_v1(before, &input_row[..column], output_row);
+                    add_nonzero_products_v1(output_row, input_row[column], guarded);
+                    accumulate_input_major_row_v1(after, &input_row[column + 1..], output_row);
+                }
+                (None, None) => linear_forward_ordered_v1(weight, bias, input_row, output_row),
+                (None, Some(column)) => {
+                    linear_forward_guarded_v1(weight, bias, input_row, column, output_row)
+                }
             }
         }
     }
@@ -5828,6 +5903,28 @@ fn linear_forward_into_arena_v1(
         record_train_step_v1(|captures| captures.forward.push(capture));
     }
     Ok(output)
+}
+
+/// One sequential sum per output in input order, bias first, with the
+/// products of input column `guard` added only when nonzero.
+fn linear_forward_guarded_v1(
+    weight: &[f32],
+    bias: &[f32],
+    input: &[f32],
+    guard: usize,
+    output: &mut [f32],
+) {
+    let width = input.len();
+    for ((sum, &start), row) in output.iter_mut().zip(bias).zip(weight.chunks_exact(width)) {
+        let mut value = start;
+        for (column, (x, w)) in input.iter().zip(row).enumerate() {
+            let product = *x * *w;
+            if column != guard || product != 0.0 {
+                value += product;
+            }
+        }
+        *sum = value;
+    }
 }
 
 // Four independent dot products expose instruction-level parallelism while

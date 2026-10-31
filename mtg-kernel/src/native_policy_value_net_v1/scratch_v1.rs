@@ -353,7 +353,9 @@ impl NativePolicyValueNetV1 {
                 .input
                 .extend_from_slice(&scratch.action_ref_pooled[begin..begin + HIDDEN_DIM_V1]);
         }
-        two_layer_cached_v1(
+        // The V8 include column adds only nonzero products
+        // (`v8_inclusion_v1::add_nonzero_products_v1`).
+        two_layer_cached_guarded_v1(
             &self.action_encoder,
             &scratch.input,
             counts.action_count,
@@ -362,6 +364,7 @@ impl NativePolicyValueNetV1 {
             &mut scratch.action_hidden,
             rows,
             4,
+            v8_inclusion_v1::include_guard_v1(action_feature_dim),
         );
         clear_for(&mut scratch.state_prefix, self.scorer_first.output_dim);
         scratch
@@ -463,7 +466,28 @@ fn two_layer_into(
     hidden: &mut Vec<f32>,
     output: &mut Vec<f32>,
 ) {
-    linear_into(&encoder.first, input, rows, hidden);
+    two_layer_into_guarded_v1(encoder, input, rows, mode, hidden, output, None);
+}
+
+/// `two_layer_into` with the first layer's column `guard` added only where
+/// its product is nonzero (`v8_inclusion_v1::accumulate_guarded_row_v1`).
+fn two_layer_into_guarded_v1(
+    encoder: &TwoLayerTanhV1,
+    input: &[f32],
+    rows: usize,
+    mode: ForwardActivationModeV1,
+    hidden: &mut Vec<f32>,
+    output: &mut Vec<f32>,
+    guard: Option<usize>,
+) {
+    let first = &encoder.first;
+    debug_assert_eq!(input.len(), rows * first.input_dim);
+    clear_for(hidden, rows * first.output_dim);
+    for input_row in input.chunks_exact(first.input_dim).take(rows) {
+        let begin = hidden.len();
+        hidden.extend_from_slice(&first.bias);
+        v8_inclusion_v1::accumulate_guarded_row_v1(first, input_row, guard, &mut hidden[begin..]);
+    }
     tanh_in_place_v1(hidden, mode);
     linear_into(&encoder.second, hidden, rows, output);
     tanh_in_place_v1(output, mode);
@@ -667,8 +691,27 @@ fn two_layer_cached_v1(
     cache: Option<&mut ForwardRowCacheV1>,
     layer: usize,
 ) {
+    two_layer_cached_guarded_v1(
+        encoder, input, rows, mode, hidden, output, cache, layer, None,
+    );
+}
+
+/// `two_layer_cached_v1` through `two_layer_into_guarded_v1`. A stored row's
+/// key is its whole input row, so the guard changes nothing about hits.
+#[allow(clippy::too_many_arguments, reason = "the layer call plus its cache")]
+fn two_layer_cached_guarded_v1(
+    encoder: &TwoLayerTanhV1,
+    input: &[f32],
+    rows: usize,
+    mode: ForwardActivationModeV1,
+    hidden: &mut Vec<f32>,
+    output: &mut Vec<f32>,
+    cache: Option<&mut ForwardRowCacheV1>,
+    layer: usize,
+    guard: Option<usize>,
+) {
     let Some(cache) = cache else {
-        two_layer_into(encoder, input, rows, mode, hidden, output);
+        two_layer_into_guarded_v1(encoder, input, rows, mode, hidden, output, guard);
         return;
     };
     let width = encoder.first.input_dim;
@@ -712,7 +755,15 @@ fn two_layer_cached_v1(
     {
         layer.misses += miss_rows.len() as u64;
     }
-    two_layer_into(encoder, gather, miss_rows.len(), mode, hidden, miss_output);
+    two_layer_into_guarded_v1(
+        encoder,
+        gather,
+        miss_rows.len(),
+        mode,
+        hidden,
+        miss_output,
+        guard,
+    );
     for (m, (&r, &hash)) in miss_rows.iter().zip(miss_hashes.iter()).enumerate() {
         let computed = &miss_output[m * out..(m + 1) * out];
         output[r * out..(r + 1) * out].copy_from_slice(computed);

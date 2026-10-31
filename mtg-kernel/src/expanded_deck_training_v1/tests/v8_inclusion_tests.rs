@@ -1,6 +1,6 @@
 //! The V8 inclusion contract on collected decisions (collab
 //! LANES/w4-combat-20261030/DESIGN.md v5.1, section 5): the converted b512
-//! gives b512's logits and value under IEEE `==` on decisions it faces in
+//! gives b512's logits and value as the same f32 bits on decisions it faces in
 //! real games, include and pairing rows among them (the converter's own
 //! preservation check, `v8_inclusion_conversion_v1`). The b512 checkpoint and
 //! its play import are not in the repository, so that test is `#[ignore]`d

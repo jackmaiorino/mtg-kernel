@@ -108,17 +108,31 @@ fn convert_v1(
         .state
 }
 
-fn assert_ieee_equal_v1(label: &str, logits: (&[f32], &[f32]), values: (f32, f32)) {
+/// Every logit and the value carry the same f32 bits (so a signed-zero
+/// change fails), and the expected outputs are finite.
+fn assert_bits_equal_v1(label: &str, logits: (&[f32], &[f32]), values: (f32, f32)) {
     assert_eq!(logits.0.len(), logits.1.len(), "{label}");
     for (index, (parent, child)) in logits.0.iter().zip(logits.1).enumerate() {
-        assert!(parent == child, "{label} logit {index}: {parent} {child}");
+        assert!(parent.is_finite(), "{label} logit {index}: {parent}");
+        assert_eq!(
+            parent.to_bits(),
+            child.to_bits(),
+            "{label} logit {index}: {parent} {child}"
+        );
     }
-    assert!(
-        values.0 == values.1,
+    assert!(values.0.is_finite(), "{label} value: {}", values.0);
+    assert_eq!(
+        values.0.to_bits(),
+        values.1.to_bits(),
         "{label} value: {} {}",
         values.0,
         values.1
     );
+}
+
+/// A tensor's values as f32 bits.
+fn tensor_bits_v1(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|value| value.to_bits()).collect()
 }
 
 /// The V8 substeps of the gradient batch, recorded from `model`.
@@ -221,8 +235,8 @@ fn v8_many_update_v1(
         .unwrap()
 }
 
-/// The converted net's logits and value equal the parent's under IEEE `==`
-/// on every synthetic FlatV8 row, with and without include bits and pairing
+/// The converted net's logits and value carry the parent's f32 bits on every
+/// synthetic FlatV8 row, with and without include bits and pairing
 /// relations, through the reference, scratch and row-cached inference
 /// forwards and the train step's tape forward.
 #[test]
@@ -260,7 +274,7 @@ fn v8_conversion_preserves_every_logit_and_value_on_synthetic_flat_v8_rows() {
             let owned = child
                 .forward_feature_transfer_v8_mode(case.view_v1(), mode)
                 .unwrap();
-            assert_ieee_equal_v1(
+            assert_bits_equal_v1(
                 &format!("reference {index} {mode:?}"),
                 (&parent_mode.logits, &owned.logits),
                 (parent_mode.value, owned.value),
@@ -268,7 +282,7 @@ fn v8_conversion_preserves_every_logit_and_value_on_synthetic_flat_v8_rows() {
             let scratched = child
                 .forward_feature_transfer_v8_with_scratch_v1(case.view_v1(), &mut scratch, mode)
                 .unwrap();
-            assert_ieee_equal_v1(
+            assert_bits_equal_v1(
                 &format!("scratch {index} {mode:?}"),
                 (&parent_mode.logits, scratched.logits),
                 (parent_mode.value, scratched.value),
@@ -282,7 +296,7 @@ fn v8_conversion_preserves_every_logit_and_value_on_synthetic_flat_v8_rows() {
                     mode,
                 )
                 .unwrap();
-            assert_ieee_equal_v1(
+            assert_bits_equal_v1(
                 &format!("row cache {index} {mode:?}"),
                 (&parent_mode.logits, cached.logits),
                 (parent_mode.value, cached.value),
@@ -302,15 +316,157 @@ fn v8_conversion_preserves_every_logit_and_value_on_synthetic_flat_v8_rows() {
             TrainingMathV1::PlatformLibm,
         )
         .unwrap();
-        assert_ieee_equal_v1(
+        assert_bits_equal_v1(
             &format!("tape {index}"),
             (narrow_tape.logits_v1(), child_tape.logits_v1()),
             (narrow_tape.value_v1(), child_tape.value_v1()),
         );
-        assert_ieee_equal_v1(
+        assert_bits_equal_v1(
             &format!("tape against inference {index}"),
             (&expected.logits, child_tape.logits_v1()),
             (expected.value, child_tape.value_v1()),
+        );
+        assert_eq!(child_tape.pairing.is_some(), !case.pairs.is_empty());
+    }
+}
+
+/// The include column's +0 weight must not turn a parent's negative-zero
+/// output into +0. The synthetic parent's `action_encoder.0` has -0 weights
+/// and bias over nonnegative inputs (so its pre-activations are -0), and its
+/// downstream layers carry that sign to every logit and the value (positive
+/// state and action-ref hiddens through -0 or +1 weights, -0 biases). An
+/// unguarded child adds `x * (+0) = +0` at column 195, so its accumulators,
+/// and then its logits, would be +0. Every logit and the value must keep the
+/// parent's bits through the reference, scratch, row-cached and tape
+/// forwards, with and without include bits and pairing relations.
+#[test]
+fn v8_include_column_keeps_negative_zero_outputs_bitwise() {
+    let mut parent = narrow_model_v1();
+    let mut parameters = parent.parameter_snapshot_v1();
+    for parameter in &mut parameters {
+        let input_dim = parameter.shape.last().copied().unwrap_or(1);
+        let fill: Option<fn(usize) -> f32> = match parameter.name {
+            "action_encoder.0.weight"
+            | "action_encoder.0.bias"
+            | "action_encoder.2.bias"
+            | "scorer.0.bias"
+            | "scorer.2.bias"
+            | "value_head.0.weight"
+            | "value_head.0.bias"
+            | "value_head.2.bias" => Some(|_| -0.0),
+            "action_encoder.2.weight" | "scorer.2.weight" | "value_head.2.weight" => Some(|_| 1.0),
+            // A positive state hidden and action-ref hidden: tanh(1).
+            "state_encoder.2.weight" | "action_ref_encoder.2.weight" => Some(|_| 0.0),
+            "state_encoder.2.bias" | "action_ref_encoder.2.bias" => Some(|_| 1.0),
+            // State columns -0 (positive inputs), action columns +1.
+            "scorer.0.weight" => Some(|column| if column < HIDDEN_DIM_V1 { -0.0 } else { 1.0 }),
+            _ => None,
+        };
+        if let Some(fill) = fill {
+            for (index, value) in parameter.values.iter_mut().enumerate() {
+                *value = fill(index % input_dim);
+            }
+        }
+    }
+    parent.replace_parameter_snapshot_v1(&parameters).unwrap();
+    let fan_in: Vec<f32> = (0..HIDDEN_DIM_V1 * V8_PAIRING_INPUT_DIM_V1)
+        .map(|index| (index % 7) as f32 * 0.01 - 0.03)
+        .collect();
+    let child = parent.clone().into_v8_inclusion_v1(fan_in).unwrap();
+    let parent_parameters = parent.parameter_snapshot_v1();
+    let child_parameters = child.parameter_snapshot_v1();
+    // Nonnegative action features: every `action_encoder.0` product of the
+    // parent is then -0.
+    let nonnegative = || {
+        gradient_decisions_v1().map(|mut base| {
+            for value in &mut base.action_features {
+                *value = value.abs();
+            }
+            base
+        })
+    };
+    let mut cases = Vec::new();
+    for (index, base) in nonnegative().into_iter().enumerate() {
+        cases.push(V8DecisionV1::new_v1(
+            base,
+            INCLUDE_ROWS_V1[index],
+            PAIRS_V1[index],
+        ));
+    }
+    for base in nonnegative() {
+        cases.push(V8DecisionV1::new_v1(base, &[], &[]));
+    }
+    let negative_zero = (-0.0f32).to_bits();
+    let mut scratch = NativePolicyValueForwardScratchV1::default();
+    let mut rows = ForwardRowCacheV1::default();
+    for (index, case) in cases.iter().enumerate() {
+        let parent_view = case.base.view_v1(false);
+        for mode in [
+            ForwardActivationModeV1::LibmTanh,
+            ForwardActivationModeV1::KernelDeterministicTanh,
+        ] {
+            let expected = parent
+                .forward_feature_transfer_v3_mode(parent_view, mode)
+                .unwrap();
+            if matches!(mode, ForwardActivationModeV1::LibmTanh) {
+                // The scenario is live: every parent output is -0.
+                for output in expected.logits.iter().chain([&expected.value]) {
+                    assert_eq!(output.to_bits(), negative_zero, "case {index}");
+                }
+            }
+            let owned = child
+                .forward_feature_transfer_v8_mode(case.view_v1(), mode)
+                .unwrap();
+            assert_bits_equal_v1(
+                &format!("signed zero reference {index} {mode:?}"),
+                (&expected.logits, &owned.logits),
+                (expected.value, owned.value),
+            );
+            let scratched = child
+                .forward_feature_transfer_v8_with_scratch_v1(case.view_v1(), &mut scratch, mode)
+                .unwrap();
+            assert_bits_equal_v1(
+                &format!("signed zero scratch {index} {mode:?}"),
+                (&expected.logits, scratched.logits),
+                (expected.value, scratched.value),
+            );
+            let cached = child
+                .forward_rows_cached_with_scratch_v1(
+                    case.view_v1(),
+                    child.feature_transfer_config_v8(),
+                    &mut scratch,
+                    &mut rows,
+                    mode,
+                )
+                .unwrap();
+            assert_bits_equal_v1(
+                &format!("signed zero row cache {index} {mode:?}"),
+                (&expected.logits, cached.logits),
+                (expected.value, cached.value),
+            );
+        }
+        let parent_tape = forward_with_tape_dims_v1::<Net8DimsV1>(
+            &parent_parameters,
+            parent.feature_transfer_config_v3(),
+            parent_view,
+            TrainingMathV1::PlatformLibm,
+        )
+        .unwrap();
+        let child_tape = forward_with_tape_dims_v1::<Net8DimsV1>(
+            &child_parameters,
+            child.feature_transfer_config_v8(),
+            case.view_v1(),
+            TrainingMathV1::PlatformLibm,
+        )
+        .unwrap();
+        let parent_value = parent_tape.value_v1();
+        for output in parent_tape.logits_v1().iter().chain([&parent_value]) {
+            assert_eq!(output.to_bits(), negative_zero, "tape case {index}");
+        }
+        assert_bits_equal_v1(
+            &format!("signed zero tape {index}"),
+            (parent_tape.logits_v1(), child_tape.logits_v1()),
+            (parent_value, child_tape.value_v1()),
         );
         assert_eq!(child_tape.pairing.is_some(), !case.pairs.is_empty());
     }
@@ -407,9 +563,14 @@ fn v8_conversion_keeps_old_coordinates_and_zeroes_every_new_moment() {
     // Deterministic, and the seed moves only the drawn coordinates.
     let again = convert_v1(&parent, V8_SEED_V1).snapshot_v1().unwrap();
     assert_eq!(again, child);
+    assert_eq!(
+        again.state_sha256_v1().unwrap(),
+        child.state_sha256_v1().unwrap()
+    );
     let other = convert_v1(&parent, V8_SEED_V1 + 1).snapshot_v1().unwrap();
     for tensor in 0..V8_PARAMETER_TENSOR_COUNT_V1 {
-        let differs = child.parameters[tensor].values != other.parameters[tensor].values;
+        let differs = tensor_bits_v1(&child.parameters[tensor].values)
+            != tensor_bits_v1(&other.parameters[tensor].values);
         assert_eq!(
             differs,
             tensor == PAIRING_FIRST_WEIGHT_V1,
@@ -503,23 +664,52 @@ fn v8_first_update_moves_the_output_projection_and_the_include_column() {
 
 /// The RT1 update's CPU routes agree on a V8 batch with include rows and
 /// pairing relations: the exact parallel backward (sequential backward on 4
-/// forward workers) gives the sequential backward's bits, and the
-/// fixed-partition backward gives the same bits on 1 and 4 workers.
+/// forward workers) gives the sequential backward's gradient and state bits,
+/// and the fixed-partition backward gives the same bits on 1 and 4 workers.
+/// Both are checked at the conversion (output projection +0, so the pairing
+/// first layer and the node inputs get no pairing signal) and after one
+/// update, where the output projection is nonzero and every pairing tensor's
+/// gradient is.
 #[test]
 fn v8_exact_parallel_and_fixed_partition_backward_routes_agree() {
     let (_, parent) = trained_parent_v1();
-    let start = convert_v1(&parent, V8_SEED_V1);
-    let after = |forward_workers, backward| {
-        let mut state = start.clone();
-        let result = v8_many_update_v1(&mut state, forward_workers, backward);
-        assert!(result.gradients[PAIRING_SECOND_WEIGHT_V1]
+    let converted = convert_v1(&parent, V8_SEED_V1);
+    let mut updated = converted.clone();
+    v8_update_v1(&mut updated);
+    assert!(
+        updated.snapshot_v1().unwrap().parameters[PAIRING_SECOND_WEIGHT_V1]
             .values
             .iter()
-            .any(|value| *value != 0.0));
-        state.state_sha256_v1().unwrap()
-    };
-    assert_eq!(after(1, None), after(4, None));
-    assert_eq!(after(1, Some(1)), after(4, Some(4)));
+            .any(|value| *value != 0.0)
+    );
+    for (live, start) in [(false, &converted), (true, &updated)] {
+        let after = |forward_workers, backward| {
+            let mut state = start.clone();
+            let result = v8_many_update_v1(&mut state, forward_workers, backward);
+            for tensor in PAIRING_FIRST_WEIGHT_V1..=PAIRING_SECOND_BIAS_V1 {
+                let nonzero = result.gradients[tensor]
+                    .values
+                    .iter()
+                    .any(|value| *value != 0.0);
+                let expected = live || tensor >= PAIRING_SECOND_WEIGHT_V1;
+                assert_eq!(nonzero, expected, "live {live} tensor {tensor}");
+            }
+            let gradients: Vec<Vec<u32>> = result
+                .gradients
+                .iter()
+                .map(|gradient| tensor_bits_v1(&gradient.values))
+                .collect();
+            (gradients, state.state_sha256_v1().unwrap())
+        };
+        assert!(
+            after(1, None) == after(4, None),
+            "exact parallel, live {live}"
+        );
+        assert!(
+            after(1, Some(1)) == after(4, Some(4)),
+            "fixed partition, live {live}"
+        );
+    }
 }
 
 /// The pairing path's and the include column's gradients against central

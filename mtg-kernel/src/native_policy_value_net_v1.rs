@@ -1100,12 +1100,21 @@ impl NativePolicyValueNetV1 {
             action_input
                 .extend_from_slice(&action_ref_pooled[pooled_begin..pooled_begin + HIDDEN_DIM_V1]);
         }
-        let action_hidden = apply_two_layer_tanh_rows_v1(
-            &self.action_encoder,
+        // The V8 include column adds only nonzero products
+        // (`v8_inclusion_v1::add_nonzero_products_v1`).
+        let mut action_first = v8_inclusion_v1::linear_rows_guarded_v1(
+            &self.action_encoder.first,
             &action_input,
             counts.action_count,
-            activation_mode,
+            v8_inclusion_v1::include_guard_v1(action_feature_dim),
         );
+        tanh_in_place_v1(&mut action_first, activation_mode);
+        let mut action_hidden = linear_rows_v1(
+            &self.action_encoder.second,
+            &action_first,
+            counts.action_count,
+        );
+        tanh_in_place_v1(&mut action_hidden, activation_mode);
 
         let mut scorer_hidden =
             scorer_first_rows_v1(&self.scorer_first, &state_hidden, &action_hidden);

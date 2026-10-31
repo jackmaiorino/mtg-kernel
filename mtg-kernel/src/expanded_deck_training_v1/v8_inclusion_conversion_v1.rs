@@ -19,7 +19,7 @@
 //! without its include column; for an in-game decision these are the V4
 //! tensors) through the parent's V4-generation forward. A row is retained
 //! when it was scored; the receipt counts rows, rows with an include bit set,
-//! rows with a pairing relation and mismatches (IEEE `==` on every logit and
+//! rows with a pairing relation and mismatches (f32 bits, `to_bits`, of every logit and
 //! the value).
 
 use super::*;
@@ -327,13 +327,15 @@ fn preservation_check_v1(
                 .action_features
                 .chunks_exact(V8_ACTION_FEATURE_DIM_V1)
                 .any(|row| row[V8_ACTION_FEATURE_DIM_V1 - 1] == 1.0);
-            let same = parent_output.logits.len() == child_output.logits.len()
-                && parent_output
-                    .logits
-                    .iter()
-                    .zip(&child_output.logits)
-                    .all(|(parent, child)| parent == child)
-                && parent_output.value == child_output.value;
+            // Bitwise: every logit and the value carry the same f32 bits
+            // (so a signed-zero change is a mismatch), all of them finite.
+            let same = parent_output
+                .logits
+                .iter()
+                .chain([&parent_output.value])
+                .all(|value| value.is_finite())
+                && bits(&parent_output.logits) == bits(&child_output.logits)
+                && parent_output.value.to_bits() == child_output.value.to_bits();
             rows += 1;
             game_rows += 1;
             include_active_rows += u64::from(include);
@@ -362,7 +364,7 @@ fn preservation_check_v1(
     }
     ensure(rows > 0, "the preservation check scored no rows")?;
     Ok(json!({
-        "definition": "the converted policy plays every game as both seats; at each decision the parent scores the same decision's FlatV7 tensors (the FlatV8 row without its include column) through its own V4-generation forward; a mismatch is any logit or the value differing under IEEE ==",
+        "definition": "the converted policy plays every game as both seats; at each decision the parent scores the same decision's FlatV7 tensors (the FlatV8 row without its include column) through its own V4-generation forward; a mismatch is any logit or the value whose f32 bits differ (to_bits, so a signed-zero change counts), or any nonfinite parent output",
         "games": games,
         "rows": rows,
         "include_active_rows": include_active_rows,
