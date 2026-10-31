@@ -89,15 +89,18 @@ fn score_v8(policy: &mut FrozenPlayPolicyV1, session: &FastActorSessionV1) -> Sc
     }
 }
 
-/// Plays a session to its end (always the middle action, so every combat
-/// candidate is included and blocks accumulate), checking each decision;
-/// returns (decisions, include rows, decisions with a pairing relation).
+/// Plays a session to its end, checking each decision: every combat
+/// candidate is included, so blocks accumulate, and every other decision is
+/// the sampled choice of a third (FlatV8) policy. Returns (decisions,
+/// include rows, decisions with a pairing relation).
 fn check_game_v1(
     mut session: FastActorSessionV1,
     cases: &mut Vec<serde_json::Value>,
 ) -> (usize, usize, usize) {
     let mut v7 = v7_policy();
     let mut v8 = v8_policy();
+    let mut chooser = v8_policy();
+    chooser.reset_sampling_v1([SEED, SEED + 1]);
     let (mut decisions, mut include_rows, mut pairing_decisions) = (0, 0, 0);
     for _ in 0..4000 {
         let FastActorResponseV1::Decision(d) = session.current_response() else {
@@ -155,9 +158,18 @@ fn check_game_v1(
             }
         }
         decisions += 1;
-        session
-            .step(d.episode_id, d.step, d.legal_action_count / 2)
-            .unwrap();
+        let include = semantics.iter().position(|semantic| {
+            matches!(
+                semantic,
+                ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    | ActionSemanticV1::ChooseBlockerInclusion { include: true, .. }
+            )
+        });
+        let selected = match include {
+            Some(index) => index as u32,
+            None => chooser.select_with_training_tensor_v4(&session).unwrap().0,
+        };
+        session.step(d.episode_id, d.step, selected).unwrap();
     }
     (decisions, include_rows, pairing_decisions)
 }
@@ -221,7 +233,9 @@ fn flat_v8_tensors_include_bits_and_pairs_match_the_sessions() {
     let mut totals = (0, 0, 0);
     for (london, starting, decks) in [
         (false, PlayerId::P0, ["Elves", "Affinity"]),
-        (false, PlayerId::P1, ["CawGates", "Rally"]),
+        (false, PlayerId::P1, ["Elves", "Elves"]),
+        (false, PlayerId::P0, ["CawGates", "Rally"]),
+        (false, PlayerId::P1, ["Rally", "Elves"]),
         (true, PlayerId::P0, ["Burn", "Elves"]),
     ] {
         let (decisions, include_rows, pairing) =

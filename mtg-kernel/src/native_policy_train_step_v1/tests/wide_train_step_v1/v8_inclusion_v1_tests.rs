@@ -160,37 +160,65 @@ fn v8_substeps_v1<'a>(
         .collect()
 }
 
-/// One GAE update of the V8 gradient batch, sequential or fixed-partition.
-fn v8_update_v1(
-    state: &mut NativePolicyValueTrainStateV1,
-    fixed_partitions: bool,
-) -> NativePolicyTrainStepResultV1 {
+/// One sequential GAE update of the V8 gradient batch.
+fn v8_update_v1(state: &mut NativePolicyValueTrainStateV1) -> NativePolicyTrainStepResultV1 {
     let decisions = v8_decisions_v1();
     let recorded = v8_recorded_v1(state.model_v1(), &decisions);
     let steps = v8_substeps_v1(&decisions, &recorded);
     let groups = gradient_groups_v1(&steps);
-    if fixed_partitions {
-        state
-            .train_step_gae_feature_transfer_v4_fixed_partition_v1(
-                &groups,
-                &GRADIENT_TARGETS_V1,
-                &GRADIENT_ADVANTAGES_V1,
-                VC,
-                LR,
-                4,
-            )
-            .unwrap()
-    } else {
-        state
-            .train_step_gae_feature_transfer_v4(
-                &groups,
-                &GRADIENT_TARGETS_V1,
-                &GRADIENT_ADVANTAGES_V1,
-                VC,
-                LR,
-            )
-            .unwrap()
-    }
+    state
+        .train_step_gae_feature_transfer_v4(
+            &groups,
+            &GRADIENT_TARGETS_V1,
+            &GRADIENT_ADVANTAGES_V1,
+            VC,
+            LR,
+        )
+        .unwrap()
+}
+
+/// One GAE update of 100 groups (150 substeps: the V8 gradient batch 50
+/// times) through the profiled CPU route the RT1 update takes:
+/// `forward_workers` forward workers (with the sequential backward, also the
+/// exact parallel backward's workers) and `backward` fixed-partition backward
+/// workers, or the sequential backward.
+fn v8_many_update_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    forward_workers: usize,
+    backward: Option<usize>,
+) -> NativePolicyTrainStepResultV1 {
+    let decisions = v8_decisions_v1();
+    let recorded = v8_recorded_v1(state.model_v1(), &decisions);
+    let one = v8_substeps_v1(&decisions, &recorded);
+    let steps: Vec<Vec<NativePolicySubstepV1<'_>>> =
+        (0..50).flat_map(|_| one.iter().cloned()).collect();
+    let groups: Vec<NativePolicyPhysicalDecisionV1<'_>> = steps
+        .iter()
+        .zip(GRADIENT_TERMINAL_RETURNS_V1.iter().cycle())
+        .map(
+            |(substeps, &terminal_return)| NativePolicyPhysicalDecisionV1 {
+                substeps,
+                terminal_return,
+                baseline_bits: 0,
+            },
+        )
+        .collect();
+    let cycled = |values: &[f32]| -> Vec<f32> {
+        values.iter().cycle().take(groups.len()).copied().collect()
+    };
+    state
+        .train_step_gae_feature_transfer_profiled_v1(
+            FreshLineageGenerationV1::V4,
+            &groups,
+            &cycled(&GRADIENT_TARGETS_V1),
+            &cycled(&GRADIENT_ADVANTAGES_V1),
+            VC,
+            LR,
+            backward,
+            forward_workers,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+        )
+        .unwrap()
 }
 
 /// The converted net's logits and value equal the parent's under IEEE `==`
@@ -401,20 +429,14 @@ fn v8_conversion_keeps_old_coordinates_and_zeroes_every_new_moment() {
 /// moves (the zero guard does not suppress it), the include column of
 /// `action_encoder.0` gets a nonzero gradient and moves, and the pairing
 /// path's first layer, whose fan-out is still +0, gets none until the second
-/// update. Sequential and fixed-partition backward give the same bits.
+/// update.
 #[test]
 fn v8_first_update_moves_the_output_projection_and_the_include_column() {
     let (_, parent) = trained_parent_v1();
     let start = convert_v1(&parent, V8_SEED_V1);
     let before = start.snapshot_v1().unwrap();
     let mut sequential = start.clone();
-    let first = v8_update_v1(&mut sequential, false);
-    let mut partitioned = start.clone();
-    v8_update_v1(&mut partitioned, true);
-    assert_eq!(
-        sequential.state_sha256_v1().unwrap(),
-        partitioned.state_sha256_v1().unwrap()
-    );
+    let first = v8_update_v1(&mut sequential);
     let after = sequential.snapshot_v1().unwrap();
     let nonzero = |values: &[f32]| values.iter().any(|value| *value != 0.0);
     let gradient = |tensor: usize| first.gradients[tensor].values.as_slice();
@@ -443,7 +465,7 @@ fn v8_first_update_moves_the_output_projection_and_the_include_column() {
         after.scorer_bias_anchor_bits,
         before.scorer_bias_anchor_bits
     );
-    let second = v8_update_v1(&mut sequential, false);
+    let second = v8_update_v1(&mut sequential);
     assert!(nonzero(&second.gradients[PAIRING_FIRST_WEIGHT_V1].values));
     // Without pairing rows or include bits the new coordinates take no
     // gradient, and Adam's exact-zero shortcut leaves them, and their
@@ -479,6 +501,27 @@ fn v8_first_update_moves_the_output_projection_and_the_include_column() {
     )));
 }
 
+/// The RT1 update's CPU routes agree on a V8 batch with include rows and
+/// pairing relations: the exact parallel backward (sequential backward on 4
+/// forward workers) gives the sequential backward's bits, and the
+/// fixed-partition backward gives the same bits on 1 and 4 workers.
+#[test]
+fn v8_exact_parallel_and_fixed_partition_backward_routes_agree() {
+    let (_, parent) = trained_parent_v1();
+    let start = convert_v1(&parent, V8_SEED_V1);
+    let after = |forward_workers, backward| {
+        let mut state = start.clone();
+        let result = v8_many_update_v1(&mut state, forward_workers, backward);
+        assert!(result.gradients[PAIRING_SECOND_WEIGHT_V1]
+            .values
+            .iter()
+            .any(|value| *value != 0.0));
+        state.state_sha256_v1().unwrap()
+    };
+    assert_eq!(after(1, None), after(4, None));
+    assert_eq!(after(1, Some(1)), after(4, Some(4)));
+}
+
 /// The pairing path's and the include column's gradients against central
 /// differences of the train step's loss, on a perturbed V8 net (every
 /// pairing coordinate nonzero, so both layers and both members of each pair
@@ -491,7 +534,7 @@ fn v8_pairing_and_include_gradients_match_finite_differences() {
     );
     let loss_and_gradients = |model: &NativePolicyValueNetV1| {
         let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
-        let result = v8_update_v1(&mut state, false);
+        let result = v8_update_v1(&mut state);
         (f64::from(result.loss), result.gradients)
     };
     let (_, gradients) = loss_and_gradients(&model);
@@ -617,7 +660,7 @@ fn v8_adam_step_age_trajectory_probe_v1() {
     let mut rows = Vec::with_capacity(UPDATES);
     for update in 1..=UPDATES {
         let before = state.snapshot_v1().unwrap();
-        let result = v8_update_v1(&mut state, false);
+        let result = v8_update_v1(&mut state);
         let after = state.snapshot_v1().unwrap();
         let mut per_class = BTreeMap::<V8CoordinateClassV1, Vec<f64>>::new();
         for (tensor, tensor_classes) in classes.iter().enumerate() {
