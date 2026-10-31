@@ -10,7 +10,7 @@
 //! 4. cuBLAS SGEMM on the same shapes (not batch invariant; speed reference).
 //!
 //! Run: cargo run --release --example gpu_infer_microbench_v1
-//!      --features cuda-flat-training-capacity-v1 -- <device ordinal>
+//!      --features gpu-exact-v1 -- <device ordinal>
 
 use cudarc::cublas::{sys as blas_sys, CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::{CudaContext, CudaSlice, LaunchConfig, PushKernelArg};
@@ -201,7 +201,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut launch = stream.launch_builder(&naive);
             launch.arg(&x).arg(&w).arg(&mut y_naive).arg(&rows_i).arg(&k_i).arg(&n_i);
             let config = LaunchConfig {
-                grid_dim: (((n + 127) / 128) as u32, rows as u32, 1),
+                grid_dim: (n.div_ceil(128) as u32, rows as u32, 1),
                 block_dim: (128, 1, 1),
                 shared_mem_bytes: 0,
             };
@@ -212,7 +212,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut launch = stream.launch_builder(&tiled);
             launch.arg(&x).arg(&w).arg(&mut y_tiled).arg(&rows_i).arg(&k_i).arg(&n_i);
             let config = LaunchConfig {
-                grid_dim: (((n + 63) / 64) as u32, ((rows + 63) / 64) as u32, 1),
+                grid_dim: (n.div_ceil(64) as u32, rows.div_ceil(64) as u32, 1),
                 block_dim: (256, 1, 1),
                 shared_mem_bytes: 0,
             };

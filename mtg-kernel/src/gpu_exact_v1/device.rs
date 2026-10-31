@@ -13,7 +13,6 @@ const PROGRAM_V1: &str = "mtg-kernel-gpu-exact-v1";
 
 const TANH_SOURCE: &str = include_str!("tanh.cuh");
 const NET8_SOURCE: &str = include_str!("net8_forward.cu");
-const NET8_BACKWARD_SOURCE: &str = include_str!("net8_backward.cu");
 
 /// What a result depends on beyond its inputs: the program and options, the
 /// NVRTC that compiled it and the device that runs it.
@@ -36,9 +35,6 @@ pub(crate) struct ExactDeviceV1 {
     pub(crate) identity: DeviceIdentityV1,
     pub(crate) stream: Arc<CudaStream>,
     pub(crate) net8_forward: CudaFunction,
-    pub(crate) net8_reverse: CudaFunction,
-    pub(crate) net8_param_grad: CudaFunction,
-    pub(crate) net8_embedding_grad: CudaFunction,
     tanh_proof: CudaFunction,
     /// Kept alive for the functions above.
     _ctx: Arc<CudaContext>,
@@ -49,8 +45,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn source_and_options() -> (String, Vec<String>) {
-    let source =
-        format!("#define MTG_HIDDEN 64\n{TANH_SOURCE}\n{NET8_SOURCE}\n{NET8_BACKWARD_SOURCE}");
+    let source = format!("#define MTG_HIDDEN 64\n{TANH_SOURCE}\n{NET8_SOURCE}");
     // --fmad=false: no contraction of a separate multiply and add, so every
     // `a * b + c` the source does not spell as an FMA stays two roundings.
     let options = vec![
@@ -135,9 +130,6 @@ impl ExactDeviceV1 {
         let load = |name: &str| module.load_function(name).map_err(|e| format!("{name}: {e:?}"));
         let device = Self {
             net8_forward: load("mtg_net8_forward")?,
-            net8_reverse: load("mtg_net8_reverse")?,
-            net8_param_grad: load("mtg_net8_param_grad")?,
-            net8_embedding_grad: load("mtg_net8_embedding_grad")?,
             tanh_proof: load("mtg_tanh_proof")?,
             identity,
             stream,

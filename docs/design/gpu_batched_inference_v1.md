@@ -280,11 +280,11 @@ Ranges are net-8's no-FMA order to a new net's FMA order, both exact. Larger net
 | S3a | PR A and PR B as built: exact GPU inference (execution flag) and exact GPU backward, CPU replay, tapes, gauge and Adam unchanged | this lane | about neutral at net-8 (v1 kernels about 58 games/s per 3050 at D1's batch); the machinery and its exactness are the point | bit-identical; full CPU replay |
 | S3b | Kernels: layer-batched exact GEMMs, one launch for all models, separate CUDA streams for learner and inference | this lane | removes the GPU cap (target about 1,350 games/s per 3050 at net-8) | bit-identical |
 | S3c | One long-lived process per host serving several runs; GPU learner forward replaces the CPU tapes; resident Adam on the GPU | this lane, with the throughput lane's formats | about 250 (estimate; CPU-bound with digest features on) | bit-identical; full CPU replay kept |
-| S4 | New-net input contract without the digest features (state and action) | lead and pilot (model decision) | about 460 or more | new contract identity |
+| S4 | New-net input contract without the digest features (state and action); **ruled 2026-10-31: the W7 big-network line drops them, net-8 and V8 keep them** | W7 nets | about 460 or more (estimate) | new contract identity |
 | S5 | Tensorization rewrite: incremental features per changed object, or features built on the GPU from a compact state snapshot | engine/tensorizer work | toward the 855 engine ceiling | exact, tested against the current tensorizer |
 | S6 | Bigger nets within the multiply-add budget; the tensor-core tier only with a lineage decision | lead, pilot, this lane | depends on multiply-adds per decision (table above) | exact (FMA order) or deterministic-GPU lineage |
 
-S1 to S3c keep net-8's numbers bit-identical. Every S row's games/s is an estimate until qualified (8.4). S4 is the first stage that changes a model input, and it is also the biggest single CPU saving after the GPU move: the digest features cost more per decision than the engine.
+S1 to S3c keep net-8's numbers bit-identical. Every S row's games/s is an estimate until qualified (8.4). S4 is the first stage that changes a model input, and it is also the biggest single CPU saving after the GPU move: the digest features cost more per decision than the engine. The lead ruled on 2026-10-31 that new architectures do not use the digest features (they cost 261 us per decision against the engine's 173, and W4 Step A found no learnable meaning in them: include and exclude rows differ only in hash coordinates, AUC 0.53). The big-network serving path and its projections are designed without them; net-8 and the V8 lineage keep them unchanged.
 
 ## 9. PR plan
 

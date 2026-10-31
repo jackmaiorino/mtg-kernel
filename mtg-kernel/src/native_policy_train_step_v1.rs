@@ -82,8 +82,6 @@ mod archive_distillation_v1;
 mod carryover_probe_v1;
 mod e_supported_policy_v1;
 mod exact_parallel_backward_v1;
-#[cfg(feature = "gpu-exact-v1")]
-mod gpu_exact_backward_v1;
 pub(crate) mod exploration_v1;
 mod gae_v1;
 mod head_only_mask_v1;
@@ -1394,12 +1392,6 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     /// refuses a state that trains under it.
     PortableMathUnsupported {
         path: &'static str,
-    },
-    /// The exact GPU learner (`gpu_exact_v1`) failed: a device error, or a
-    /// GPU forward whose bits differ from the CPU tape's.
-    #[cfg(feature = "gpu-exact-v1")]
-    GpuExactBackend {
-        message: String,
     },
     /// The no-state-digest input contract (`no_state_digest_v1`) covers only
     /// the ordinary CPU learner: the terminal and GAE losses on canonical

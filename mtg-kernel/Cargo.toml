@@ -152,6 +152,10 @@ name = "cuda_flat_training_capacity_v1"
 required-features = ["cuda-flat-training-capacity-v1"]
 
 [[example]]
+name = "gpu_infer_microbench_v1"
+required-features = ["gpu-exact-v1"]
+
+[[example]]
 name = "experimental_burn_net8_packed_cuda_v1"
 required-features = ["experimental-burn-net8-packed-cuda-v1"]
 

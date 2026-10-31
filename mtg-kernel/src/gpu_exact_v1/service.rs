@@ -195,6 +195,8 @@ fn serve_v1(device: ExactDeviceV1, policy: BatchPolicyV1, receiver: Receiver<Mes
     let mut armed = false;
     // Blocks for the first message; returns when every sender is gone.
     while let Ok(first) = receiver.recv() {
+        // Mutable only for the test-only fault arm.
+        #[cfg_attr(not(test), allow(unused_mut))]
         let mut take = |message: Message, pending: &mut Vec<Request>| match message {
             Message::Request(request) => {
                 pending.push(request);
