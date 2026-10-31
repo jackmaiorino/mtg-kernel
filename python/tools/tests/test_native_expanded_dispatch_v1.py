@@ -554,6 +554,50 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             with self.assertRaisesRegex(ValueError, "192 GiB"):
                 dispatch.validate_storage(storage)
 
+    def test_block_scratch_is_outside_the_cap_and_apart_from_accounting(self):
+        storage = self.request(2)["storage"]
+        other = tempfile.TemporaryDirectory()  # apart from the accounting root
+        self.addCleanup(other.cleanup)
+        scratch = Path(other.name)/"scratch"
+        (scratch/"G1").mkdir(parents=True)
+        (scratch/"G1"/"episode.json").write_bytes(b"x" * 10**6)
+        with patch.object(dispatch.shutil, "disk_usage", return_value=type("Disk", (), {"free": 100*1024**3})()):
+            before = dispatch.validate_storage(storage)["logical_bytes"]
+            storage["scratch_roots"] = [str(scratch)]
+            self.assertEqual(dispatch.validate_storage(storage)["logical_bytes"], before)
+            storage["scratch_roots"] = [str(self.root/"inside")]
+            with self.assertRaisesRegex(ValueError, "scratch root overlaps"):
+                dispatch.validate_storage(storage)
+            storage["scratch_roots"] = ["relative/scratch"]
+            with self.assertRaisesRegex(ValueError, "absolute scratch roots"):
+                dispatch.validate_storage(storage)
+
+    def test_a_running_attempt_ends_only_on_a_physical_shortage(self):
+        storage = self.request(2)["storage"]
+        roomy = type("Disk", (), {"free": 100*1024**3, "total": 200*1024**3})()
+        with patch.object(dispatch.shutil, "disk_usage", return_value=roomy):
+            observed = dispatch.validate_storage(storage, 0)["logical_bytes"]
+            storage["max_logical_bytes"] = observed - 1  # the cap (a dispatch gate) is passed
+            with self.assertRaisesRegex(ValueError, "retained plus projected"):
+                dispatch.running_storage(storage)  # without the opt-in, as before
+            storage["emergency"] = {"volume_bytes": observed * 10, "margin_fraction": 0.1}
+            self.assertEqual(dispatch.running_storage(storage)["logical_bytes"], observed)
+            storage["emergency"]["volume_bytes"] = observed  # the provisioned volume less its margin is passed
+            with self.assertRaisesRegex(ValueError, "storage emergency"):
+                dispatch.running_storage(storage)
+            storage["emergency"]["volume_bytes"] = observed * 10
+            low = type("Disk", (), {"free": 1, "total": 200*1024**3})()
+            with patch.object(dispatch.shutil, "disk_usage", return_value=low):  # a network volume's df says nothing
+                self.assertEqual(dispatch.running_storage(storage)["logical_bytes"], observed)
+            other = tempfile.TemporaryDirectory()
+            self.addCleanup(other.cleanup)
+            storage["scratch_roots"] = [other.name]
+        tight = type("Disk", (), {"free": 10, "total": 1000})()
+        with patch.object(dispatch.shutil, "disk_usage",
+                          side_effect=lambda path: tight if Path(path) == Path(other.name).resolve() else roomy):
+            with self.assertRaisesRegex(ValueError, "storage emergency: scratch volume"):
+                dispatch.running_storage(storage)
+
     def test_storage_walk_counts_a_file_deleted_mid_walk_as_freed(self):
         # Another job sharing the accounting root removes its outputs between is_file and stat.
         storage = self.request(2)["storage"]

@@ -17,6 +17,15 @@ sections 3, 4 and 6, and FROZEN.md):
 * Every block config is refused unless all 1,620 episodes carry
   ``runtime_rules: "resolution-boundary-v1"`` (AMENDMENT-1.md); each attempt
   records its config pin, which the run manifest pins.
+* Block scratch (AMENDMENT-2.md): with ``scratch`` and ``storage.scratch_roots``
+  the native trees are outside the 120 GB cap. A block is admitted only when
+  every in-flight tree (at least the measured peak times the factor) fits the
+  scratch volume's free space less the margin, and retained plus every
+  in-flight block's projection stays within the cap; otherwise it waits while
+  another block is in flight, else stops at the block boundary. A slot frees
+  only once its tree's prune is verified; a tree left behind latches dispatch.
+  A storage refusal or kill, or an attempt whose native process never started,
+  is not one of the block's three attempts.
 * Failure: an interrupted block reruns from its starting checkpoint, up to
   three attempts; a block classified ``invalid`` (the baseline driver's
   INVALIDITY_MARKERS and classify_failure) or one with non-finite losses ends
@@ -75,6 +84,25 @@ ITEM5_SCHEMA = "g-references-v1/qualification-5"  # the Spellbench scorer loads 
 STUDY_CAP_BYTES = 120 * 10**9  # DESIGN section 6: the study's artifact usage, on either host
 STUDY_WALL_SECONDS = 60 * 3600  # DESIGN section 6: wall hours of training claim time on Jack's PC
 now, pin, sha256_file, write_json, append_jsonl = base.now, base.pin, base.sha256_file, base.write_json, base.append_jsonl
+# AMENDMENT-2.md: block scratch admission, the prune latch and uncounted storage attempts.
+SCRATCH_LOCK = threading.Lock()
+SCRATCH_INFLIGHT: set[str] = set()  # admitted blocks' native trees, for every campaign of this driver process
+SCRATCH_LATCH = "SCRATCH-LATCH.json"
+SCRATCH_LATCHED: list[str] = []  # set once in this process by a failed prune
+ADMISSION_WAIT_SECONDS = 30
+UNCOUNTED = ("unspawned", "storage-refused", "storage-interrupted")
+MAX_UNCOUNTED_PER_LEASE = 3  # a block's uncounted storage attempts in one driver session, then a resumable stop
+STORAGE_MARKERS = ("retained plus projected storage exceeds allowance", "target-volume reserve unavailable",
+                   "storage emergency", "no space left on device", "[errno 28]")
+RECORDS_SCHEMA = "g-references-v1/block-records"
+# Lease 1613's post-run storage kills (clean native exits, no report, no failure.json), by dispatch root.
+LEASE_1613_ROOT = "/workspace/g-references-v1/campaign/"
+STORAGE_KILLED_1613 = frozenset(f"hot/{run}/b001-a1/dispatch" for run in ("G3", "G4", "G5", "G7", "G8"))
+DRIVER_STARTED = time.time()  # the copy-back stall clock starts no earlier than this driver
+DRAIN_IDLE_SECONDS = 180  # a drain stops without a move in this long: polled each 30 s, it ends inside the
+# guard's 300 s work-idle bound with margin for the stop's own writes
+DRAIN = {"moved": -1, "at": DRIVER_STARTED}
+SESSION = f"{os.getpid()}-{DRIVER_STARTED:.0f}"  # this driver session, on its attempts
 
 
 def read_pinned(item: dict) -> dict:
@@ -116,6 +144,27 @@ class Campaign(base.Campaign):
         cap = self.raw["storage"].get("max_logical_bytes")
         if type(cap) is not int or not 0 < cap <= STUDY_CAP_BYTES:
             raise SystemExit("the storage allowance must be at most the study's 120 GB")
+        # AMENDMENT-2.md: native trees outside the cap only as admitted block scratch (roots.native under
+        # storage.scratch_roots, with the measured peak, its factor and the margin).
+        spec, scratch = self.raw.get("scratch"), self.raw["storage"].get("scratch_roots")
+        if spec is not None or scratch is not None:
+            native = self.raw["roots"].get("native")
+            valid = (isinstance(spec, dict) and set(spec) == {"block_peak_bytes", "factor", "margin_fraction"}
+                     and type(spec["block_peak_bytes"]) is int and spec["block_peak_bytes"] > 0
+                     and isinstance(spec["factor"], (int, float)) and spec["factor"] >= 1
+                     and isinstance(spec["margin_fraction"], (int, float)) and 0 <= spec["margin_fraction"] < 1
+                     and isinstance(scratch, list) and native is not None
+                     and any(Path(native).is_relative_to(Path(root)) for root in scratch))
+            if not valid:
+                raise SystemExit("block scratch needs roots.native under storage.scratch_roots and a scratch spec")
+        records = self.raw.get("records")
+        if records is not None:  # AMENDMENT-2.md: the copy-back window of sealed block records
+            roots = [Path(self.raw["roots"][name]) for name in ("state", "cold", "retained", "checkpoints",
+                                                                 "exposure", "hot", "doses")]
+            if not (isinstance(records, dict) and set(records) == {"window_blocks", "stall_seconds"}
+                    and all(type(records[key]) is int and records[key] > 0 for key in records)
+                    and len({root.parent for root in roots}) == 1 and not self.raw["roots"]["hot_by_run"]):
+                raise SystemExit("records needs window_blocks, stall_seconds and one campaign tree")
 
     def admits(self, block: int) -> str | None:
         """None when block may run, else why not.
@@ -353,6 +402,235 @@ def native_lost(campaign: Campaign, run: str, block: int, entry: dict, record: d
     return not ("exposure" in entry and "final_checkpoint" in entry and retained)
 
 
+def storage_failure(root: Path) -> bool:
+    """The attempt failed on the launcher's storage check (or a full disk), not in its block."""
+    texts = []
+    for name in ("failure.json", "execution.json", "stderr.log"):
+        if (root / name).exists():
+            texts.append((root / name).read_text(encoding="utf-8", errors="replace")[-20000:].lower())
+    return any(marker in text for text in texts for marker in STORAGE_MARKERS)
+
+
+def counts(attempt: dict) -> bool:
+    """Whether the attempt is one of its block's three (AMENDMENT-2.md item 5): a storage refusal or kill, and
+    an attempt whose native process never started, are the dispatcher's, not the block's. So are the five
+    lease-1613 attempts the launcher's post-run storage check ended before failure.json existed
+    (STORAGE_KILLED_1613, from evidence/lease-1613-storage-attempts.json), and only those."""
+    outcome = attempt.get("outcome")
+    if outcome in UNCOUNTED:
+        return False
+    if outcome != "interrupted":
+        return True
+    root = Path(attempt["root"])
+    if not (root / "started.json").exists() or storage_failure(root):
+        return False
+    if root.as_posix().removeprefix(LEASE_1613_ROOT) not in STORAGE_KILLED_1613 \
+            or (root / "report.json").exists() or (root / "failure.json").exists() \
+            or not (root / "execution.json").exists():
+        return True
+    record = json.loads((root / "execution.json").read_text(encoding="utf-8"))
+    return not (record.get("exit_code") == 0 and record.get("error") is None)  # the evidence's signature
+
+
+def counted(entry: dict) -> int:
+    return sum(counts(attempt) for attempt in entry["attempts"])
+
+
+def tree_bytes(path: Path) -> int:
+    total = 0
+    for item in path.rglob("*") if path.exists() else []:
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except FileNotFoundError:  # pruned mid-walk: freed
+            pass
+    return total
+
+
+def largest_pruned(campaign: Campaign) -> int:
+    """The largest native tree a retention pruned so far (PRUNE.jsonl), so admission follows trees that
+    outgrow the qualified peak."""
+    if not campaign.prune_log.exists():
+        return 0
+    rows = (json.loads(line) for line in campaign.prune_log.read_text(encoding="utf-8").splitlines() if line.strip())
+    return max((row.get("bytes") or 0 for row in rows if "retained_manifest" in row), default=0)
+
+
+def records_root(campaign: Campaign) -> Path:
+    """The campaign tree the records' paths are relative to (every root's common parent)."""
+    return Path(campaign.raw["roots"]["state"]).parent
+
+
+def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
+    """Seal a finished block's records for the copy-back (AMENDMENT-2.md): its retained and failed-attempt
+    records, dispatch folders, exposure rows, configs and requests, each hashed on its raw bytes, in
+    state/seals/<run>-<label>.json. Qualification's blocks 1 and 2 stay on the volume."""
+    entry = state["blocks"][str(block)]
+    if not campaign.raw.get("records") or block <= QUALIFICATION_BLOCKS or "sealed" in entry or not entry.get("done"):
+        return
+    root, name = records_root(campaign), label(block)
+    published = campaign.state / "seals" / f"{run}-{name}.json"
+    if published.exists():  # published before a stopped driver saved its pin: adopt it, never rebuild it
+        value = json.loads(published.read_text(encoding="utf-8"))
+        if value.get("schema") != RECORDS_SCHEMA or value.get("run") != run or value.get("block") != block:
+            raise RuntimeError(f"a different seal is published at {published}")
+        entry["sealed"] = pin(published)
+        campaign.save_state(run, state)
+        return
+    sources = [campaign.retained / run / f"b{block:02d}",
+               *sorted((campaign.retained / run).glob(f"{name}-a*-failed")),
+               *sorted((campaign.hot(run) / run).glob(f"{name}-a*")),
+               campaign.exposure / f"{run}-{name}-episodes.jsonl",
+               *sorted((campaign.state / "configs").glob(f"{run}-{name}-a*.json")),
+               *sorted((campaign.state / "requests").glob(f"{run}-{name}-a*.json"))]
+    files = []
+    for source in sources:
+        for path in [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file()):
+            files.append({"path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size,
+                          "sha256": sha256_file(path)})
+    entry["sealed"] = write_json(published, {"schema": RECORDS_SCHEMA, "run": run, "block": block, "root": str(root),
+                                        "files": files, "bytes": sum(item["bytes"] for item in files),
+                                        "sealed_at": now(), "epoch": time.time()})
+    campaign.save_state(run, state)
+    touch(campaign)
+
+
+def pending_seals(campaign: Campaign) -> int:
+    seals, markers = campaign.state / "seals", campaign.state / "moved"
+    return sum(not moved(markers / path.name) for path in seals.glob("*.json")) if seals.exists() else 0
+
+
+def moved(path: Path) -> bool:
+    """The copy-back verified this block's archive and confirmed its volume copy gone."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("deleted") is True
+    except (FileNotFoundError, ValueError):
+        return False
+
+
+def records_hold(campaign: Campaign, in_flight: int = 0) -> str | None:
+    """None, or why no block may start (AMENDMENT-2.md item 4): the copy-back moved nothing for
+    ``stall_seconds`` while sealed blocks wait (stalled), or the window is full: sealed blocks not yet moved
+    plus the blocks in flight, each of which will be sealed, reach ``window_blocks`` per lineage."""
+    spec = campaign.raw.get("records")
+    if not spec:
+        return None
+    seals, markers = campaign.state / "seals", campaign.state / "moved"
+    pending = [path for path in sorted(seals.glob("*.json")) if not moved(markers / path.name)] \
+        if seals.exists() else []
+    if pending:
+        done = [path.stat().st_mtime for path in markers.glob("*.json") if moved(path)] if markers.exists() else []
+        if time.time() - max(done + [DRIVER_STARTED]) > spec["stall_seconds"]:
+            return f"records: copy-back stalled, {len(pending)} sealed blocks wait"
+    window = spec["window_blocks"] * len(g.RUNS)
+    if len(pending) + in_flight >= window:
+        return f"records: window full, {len(pending)} sealed and {in_flight} in flight (window {window})"
+    return None
+
+
+def admit(campaign: Campaign, native: Path) -> str | None:
+    """Register ``native`` as an admitted block's scratch tree (None), or say why the block waits
+    (AMENDMENT-2.md item 2): every in-flight tree, each at no less than the measured peak times the factor,
+    fits the scratch volume's free space less the margin, and retained plus each in-flight block's projected
+    retained bytes stays within the cap. Checked under one lock for every campaign of this process."""
+    with SCRATCH_LOCK:
+        latch = campaign.state / SCRATCH_LATCH
+        if latch.exists():
+            return "latched: " + json.loads(latch.read_text(encoding="utf-8"))["reason"]
+        if SCRATCH_LATCHED:
+            return "latched: " + SCRATCH_LATCHED[0]
+        others = sorted(SCRATCH_INFLIGHT)
+        reason = records_hold(campaign, len(others))
+        if reason:
+            return reason
+        storage = campaign.raw["storage"]
+        try:
+            native_dispatch.validate_storage(storage, (len(others) + 1) * storage["projected_additional_bytes"])
+        except ValueError as error:
+            return f"retained: {error}"
+        spec = campaign.raw.get("scratch")
+        if spec:
+            peak = math.ceil(max(spec["block_peak_bytes"], largest_pruned(campaign)) * spec["factor"])
+            sizes = [tree_bytes(Path(path)) for path in others]
+            anchor = Path(campaign.raw["roots"]["native"])
+            while not anchor.exists():
+                anchor = anchor.parent
+            disk = shutil.disk_usage(anchor)
+            available = disk.free + sum(sizes) - spec["margin_fraction"] * disk.total
+            need = sum(max(peak, size) for size in sizes) + peak
+            if need > available:
+                return f"scratch: {len(others) + 1} blocks need {need} B, {math.floor(available)} B available"
+        SCRATCH_INFLIGHT.add(str(native))
+    return None
+
+
+def release(campaign: Campaign, run: str, block: int, native: Path) -> None:
+    """A block's scratch slot frees only once its tree is verified gone (AMENDMENT-2.md item 3); a tree
+    still present latches the campaign, so no block is admitted until the latch is cleared."""
+    with SCRATCH_LOCK:
+        if native.exists():
+            reason = f"scratch tree not pruned: {native}"
+            SCRATCH_LATCHED.append(reason)  # every campaign of this process (qualification's scratch copies)
+            write_json(campaign.state / SCRATCH_LATCH, {"at": now(), "run": run, "block": block, "reason": reason})
+            campaign.event(run=run, block=block, kind="scratch-latch", native=str(native))
+            return
+        SCRATCH_INFLIGHT.discard(str(native))
+
+
+def drain_idle(campaign: Campaign) -> float:
+    """Seconds since this driver saw the copy-back move a block. A move it sees is driver work for the lease
+    guard (touch), so a drain that progresses keeps the Pod; one that does not is stopped in time."""
+    markers = campaign.state / "moved"
+    count = sum(moved(path) for path in markers.glob("*.json")) if markers.exists() else 0
+    with SCRATCH_LOCK:
+        progressed = count != DRAIN["moved"]
+        if progressed:
+            DRAIN.update(moved=count, at=time.time())
+        idle = time.time() - DRAIN["at"]
+    if progressed:
+        touch(campaign)
+    return idle
+
+
+def hold(campaign: Campaign, run: str, block: int, state: dict, reason: str, announce: bool) -> bool:
+    """After a storage refusal: wait (True) while another admitted block can free space, else stop the run
+    at this block boundary with the reason (False). A full copy-back window also waits with nothing in flight
+    (the follower drains it, as at a lease's start) until the copy-back is stalled; a latch or a stall stops."""
+    with SCRATCH_LOCK:
+        idle = not SCRATCH_INFLIGHT
+    # a full window, or a retained refusal while sealed blocks wait: the copy-back frees the volume
+    draining = reason.startswith("records: window full") or (
+        reason.startswith("retained:") and campaign.raw.get("records") and pending_seals(campaign) > 0)
+    if draining and drain_idle(campaign) > DRAIN_IDLE_SECONDS and idle:
+        reason = f"{reason}; no copy-back progress in {DRAIN_IDLE_SECONDS} s"  # before the guard's idle bound
+        draining = False
+    if reason.startswith(("latched", "records: copy-back stalled")) or (idle and not draining):
+        state["stop_reason"] = "storage admission: " + reason
+        campaign.save_state(run, state)
+        campaign.event(run=run, block=block, kind="admission-stop", reason=reason)
+        return False
+    if announce:
+        campaign.event(run=run, block=block, kind="admission-wait", reason=reason)
+    time.sleep(ADMISSION_WAIT_SECONDS)
+    return True
+
+
+def discarded(campaign: Campaign, run: str, block: int, record: dict, reason: str) -> None:
+    try:
+        discard(campaign, run, block, record, reason)
+    finally:  # a tree the discard left behind keeps its slot and latches admission
+        release(campaign, run, block, Path(record["native"]))
+
+
+def finished(campaign: Campaign, run: str, block: int, state: dict, entry: dict, record: dict) -> str:
+    try:
+        result = finish_block(campaign, run, block, state, entry, record)
+        seal(campaign, run, block, state)  # before the slot frees, so the window never undercounts
+    finally:  # a tree a raised finishing step left behind keeps its slot and latches admission
+        release(campaign, run, block, Path(record["native"]))
+    return result
+
+
 def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
     """The baseline's run_block with this recipe's config, request and failure rules."""
     entry = state["blocks"].setdefault(str(block), {"attempts": []})
@@ -366,16 +644,26 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             last["outcome"] = "lost"
             for key in FINISH_KEYS:
                 entry.pop(key, None)
+            release(campaign, run, block, Path(last["native"]))  # gone: its reservation frees
             campaign.save_state(run, state)
             campaign.event(run=run, block=block, attempt=last["attempt"], kind="native-lost")
         elif last.get("outcome") == "complete":
-            return finish_block(campaign, run, block, state, entry, last)
+            return finished(campaign, run, block, state, entry, last)
         if "outcome" not in last:
-            # The driver (and with it the reservation's whole job) ended mid-block.
-            last["outcome"] = "interrupted"
-            discard(campaign, run, block, last, "partial output of an interrupted attempt")
+            # The driver (and with it the reservation's whole job) ended mid-block; an attempt whose native
+            # process never started was refused at dispatch.
+            started = (Path(last["root"]) / "started.json").exists()
+            last["outcome"] = "interrupted" if started else "unspawned"
+            discarded(campaign, run, block, last, "partial output of an interrupted attempt")
             campaign.save_state(run, state)
-    while len(entry["attempts"]) < MAX_ATTEMPTS:
+    waiting = False
+    while counted(entry) < MAX_ATTEMPTS:
+        if sum(attempt.get("outcome") in UNCOUNTED and attempt.get("session") == SESSION
+               for attempt in entry["attempts"]) >= MAX_UNCOUNTED_PER_LEASE:
+            state["stop_reason"] = "storage admission: repeated storage refusals or kills this session"
+            campaign.save_state(run, state)
+            campaign.event(run=run, block=block, kind="admission-stop", reason=state["stop_reason"])
+            return "stopped"
         estimate = None
         if campaign.host() == "runpod":
             estimate = block_estimate(campaign)
@@ -395,24 +683,49 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         folder = campaign.hot(run) / run / f"{label(block)}-a{attempt}"
         native, root = campaign.native(run) / run / f"{label(block)}-a{attempt}" / "native", folder / "dispatch"
         cold = campaign.cold / run / f"{label(block)}-a{attempt}"
-        config = g.block_config(block_spec(campaign, run, block, state, native))
-        g.require_runtime_rules(config)  # amendment 1: refuse a block with any episode outside the profile
-        config_path = campaign.state / "configs" / f"{run}-{label(block)}-a{attempt}.json"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
-        request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json",
-                                 request_for(campaign, run, pin(config_path), root, cold, estimate))
+        reason = admit(campaign, native)
+        if reason:  # no attempt is made
+            if not hold(campaign, run, block, state, reason, not waiting):
+                return "stopped"
+            waiting = True
+            continue
+        waiting = False
+        try:
+            config = g.block_config(block_spec(campaign, run, block, state, native))
+            g.require_runtime_rules(config)  # amendment 1: refuse a block with any episode outside the profile
+            config_path = campaign.state / "configs" / f"{run}-{label(block)}-a{attempt}.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
+            request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json",
+                                     request_for(campaign, run, pin(config_path), root, cold, estimate))
+        except BaseException:
+            release(campaign, run, block, native)  # admitted, never dispatched
+            raise
         record = {"attempt": attempt, "root": str(root), "native": str(native), "cold": str(cold),
-                  "config": pin(config_path), "request": request_pin, "started": now()}
+                  "config": pin(config_path), "request": request_pin, "started": now(), "session": SESSION}
         entry["attempts"].append(record)
         campaign.save_state(run, state)
         campaign.event(run=run, block=block, attempt=attempt, kind="dispatch")
         started = time.monotonic()
-        result = base.dispatch_block(Path(request_pin["path"]), campaign.raw.get("compute_host_name"))
+        try:
+            result = base.dispatch_block(Path(request_pin["path"]), campaign.raw.get("compute_host_name"))
+        except RuntimeError as error:
+            release(campaign, run, block, native)
+            if not any(marker in str(error).lower() for marker in STORAGE_MARKERS):
+                record["outcome"] = "unspawned"
+                campaign.save_state(run, state)
+                raise
+            record["outcome"] = "storage-refused"  # uncounted
+            campaign.save_state(run, state)
+            campaign.event(run=run, block=block, attempt=attempt, kind="storage-refused")
+            if not hold(campaign, run, block, state, "the launcher's storage check refused the dispatch", True):
+                return "stopped"
+            continue
         touch(campaign)
         record["dispatch"] = result
         if result.get("state") != "dispatched":
             record["outcome"] = "spawn-" + str(result.get("state"))
+            release(campaign, run, block, native)
             campaign.save_state(run, state)
             return "stopped"
         outcome = base.wait_block(root, result["pid"])
@@ -422,15 +735,22 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             record["report"] = pin(root / "report.json")
             record["seconds"], record["host"] = time.monotonic() - started, campaign.host()
             campaign.save_state(run, state)
-            return finish_block(campaign, run, block, state, entry, record)
+            return finished(campaign, run, block, state, entry, record)
         kind = base.classify_failure(root)
+        if kind == "interrupted" and not (root / "started.json").exists():
+            kind = "unspawned"  # the launcher failed before the native process started: uncounted
+        elif kind == "interrupted" and storage_failure(root):
+            kind = "storage-interrupted"  # uncounted: the block waits for admission and reruns
         record["outcome"] = kind
-        discard(campaign, run, block, record, "partial output of a failed attempt (design: discarded and logged)")
+        discarded(campaign, run, block, record, "partial output of a failed attempt (design: discarded and logged)")
         campaign.save_state(run, state)
         campaign.event(run=run, block=block, attempt=attempt, kind=kind)
         if kind == "invalid":
             entry["disposition"] = "failed: invalid block (non-natural, non-finite or NaN marker)"
             campaign.save_state(run, state)
+            return "stopped"
+        if kind == "storage-interrupted" and not hold(campaign, run, block, state,
+                                                      "the launcher's storage check ended the attempt", True):
             return "stopped"
     entry["disposition"] = "technical: interrupted three times"
     campaign.save_state(run, state)
@@ -581,6 +901,9 @@ def retire_one(campaign: Campaign, run: str, end: int, entry: dict, proof: dict 
     nearest = max(block for block in g.PERMANENT_BLOCKS if block <= end)
     regenerate = {"from_permanent_block": nearest, "blocks_to_replay": end - nearest,
                   "configs": f"state/configs/{run}-b{nearest + 1:03d}..b{end:03d}", "runtime": campaign.raw["runtime"]}
+    if campaign.raw.get("records"):  # sealed blocks' configs leave the volume (AMENDMENT-2.md item 4)
+        regenerate["configs_moved_to"] = ("the record copy-back's archives: MOVED.jsonl rows by run and block, "
+                                          f"<dest>/{run}/{run}-b<block>.tar.zst, member state/configs/...")
     if entry["checkpoint_state"] in ("kept", "compressed") and proof is None:
         partial = packed.with_name(packed.name + ".partial")
         partial.unlink(missing_ok=True)
@@ -629,6 +952,7 @@ def drive(campaign: Campaign, run: str) -> None:
         for block in range(1, campaign.stop_after + 1):
             entry = state["blocks"].get(str(block))
             if entry and entry.get("done"):
+                seal(campaign, run, block, state)  # a driver stopped between the block's end and its seal
                 continue
             if entry and entry.get("disposition"):
                 state["status"] = "stopped"
@@ -657,10 +981,26 @@ def drive(campaign: Campaign, run: str) -> None:
         campaign.event(run=run, kind="run-" + state["status"])
 
 
+def reconcile(campaign: Campaign, runs: list[str]) -> None:
+    """Before any lineage thread admits work (AMENDMENT-2.md item 4, exact window): seal every finished block a
+    stopped driver left unsealed, and reserve a slot for every completed attempt still to be finished, so
+    the window counts it before a fresh block can enter."""
+    for run in runs:
+        state = campaign.run_state(run)
+        for key, entry in sorted(state["blocks"].items(), key=lambda item: int(item[0])):
+            if entry.get("done"):
+                seal(campaign, run, int(key), state)
+            elif entry.get("attempts") and entry["attempts"][-1].get("outcome") == "complete" \
+                    and not entry.get("disposition"):  # the driver resumes it (a terminal block it skips)
+                with SCRATCH_LOCK:
+                    SCRATCH_INFLIGHT.add(entry["attempts"][-1]["native"])  # freed by its finishing step
+
+
 def run(campaign: Campaign, runs: list[str]) -> int:
     token = os.environ.get(reservations.TOKEN_ENV)
     if not token or reservations.status(token).get("token_fate") != "holds":
         raise SystemExit("the campaign driver runs only inside a held host reservation")
+    reconcile(campaign, runs)
     clock = None
     if campaign.host() == "runpod":
         campaign.lease = LeaseProgress(campaign)

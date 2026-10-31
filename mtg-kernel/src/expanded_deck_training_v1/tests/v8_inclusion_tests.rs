@@ -188,6 +188,39 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
     );
     let parent_saved: ExpandedCheckpointV1 = read_pinned(&parent).unwrap();
     assert_eq!(state.adam_step_v1(), parent_saved.adam_step + 2);
+    // A fixed V8 opponent, the converted checkpoint and the trained one,
+    // loads twice through the opponent cache: the second load is a hit and
+    // serves the full load's receipt (the hit once refused every FlatV8
+    // opponent, comparing the V4 import digest with the V8 identity).
+    let trained = v8_source.clone();
+    for opponent in [
+        ExpandedModelSourceV1 {
+            checkpoint: Some(v8_checkpoint.clone()),
+            ..trained.clone()
+        },
+        trained,
+    ] {
+        let full = load_expanded_inference_any_math_v1(&opponent).unwrap();
+        assert_eq!(
+            full.1.model.feature_contract_digest,
+            FEATURE_CONTRACT_DIGEST_V4
+        );
+        assert_eq!(
+            no_state_digest_v1::effective_contract_digest_v1(&full.0),
+            FEATURE_CONTRACT_DIGEST_V8
+        );
+        let (first, _) =
+            ordered_update_preparation::load_opponent_cached_v1(&opponent, true).unwrap();
+        let (second, hit) =
+            ordered_update_preparation::load_opponent_cached_v1(&opponent, true).unwrap();
+        assert!(hit);
+        assert_eq!(first.behavior.identity, full.1);
+        assert_eq!(second.behavior.identity, full.1);
+        assert_eq!(
+            second.policy.feature_identity_v1(),
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V8
+        );
+    }
     let _ = fs::remove_dir_all(&root);
 }
 
