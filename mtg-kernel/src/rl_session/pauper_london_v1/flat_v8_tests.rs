@@ -302,3 +302,98 @@ fn flat_v8_tensors_include_bits_and_pairs_match_the_sessions() {
     }
     assert_eq!(std::fs::read(&path).unwrap(), fixture);
 }
+
+/// The converted net with its new coordinates made live: the include column
+/// of `action_encoder.0.weight` and the whole pairing path take small
+/// deterministic values, so the include bit and the relation move outputs.
+fn live_v8_policy() -> FrozenPlayPolicyV1 {
+    let mut policy = v8_policy();
+    let mut parameters = policy.training_parameters_v3();
+    let mut state = 0x9e37_79b9u32;
+    let mut next = move || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ((state >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.4
+    };
+    for parameter in &mut parameters {
+        if parameter.name == "action_encoder.0.weight" {
+            let columns = parameter.shape[1];
+            for row in parameter.values.chunks_exact_mut(columns) {
+                row[V7_WIDTH] = next();
+            }
+        } else if parameter.name.starts_with("pairing_encoder.") {
+            parameter
+                .values
+                .iter_mut()
+                .for_each(|value| *value = next());
+        }
+    }
+    policy.replace_training_parameters_v3(&parameters).unwrap();
+    policy
+}
+
+/// The W4 capture's reference forward (`diagnostic_last_hidden_v1`, collab
+/// LANES/w4-combat-20261030/STEP-C-DESIGN.md section 5) gives ordinary
+/// scoring's logits and value bit for bit at every decision, for a V4 net
+/// and for a FlatV8 net whose include column and pairing path are live, and
+/// its hidden widths follow the scored rows. FlatV7 is refused.
+#[test]
+fn w4_hidden_capture_equals_scoring_for_v4_and_v8() {
+    let bits = |x: &[f32]| x.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+    let hidden = crate::native_policy_value_net_v1::HIDDEN_DIM_V1;
+    let mut v4 = FrozenPlayPolicyV1::training_fixture_v4();
+    let mut live = live_v8_policy();
+    let mut preserving = v8_policy();
+    let (mut decisions, mut paired, mut moved) = (0, 0, 0);
+    for (starting, decks) in [
+        (PlayerId::P0, ["Elves", "Affinity"]),
+        (PlayerId::P1, ["Elves", "Elves"]),
+        (PlayerId::P0, ["CawGates", "Rally"]),
+        (PlayerId::P1, ["Rally", "Elves"]),
+        (PlayerId::P0, ["Affinity", "Faeries"]),
+        (PlayerId::P1, ["Elves", "CawGates"]),
+    ] {
+        let mut session = session_v1(false, starting, decks);
+        let mut chooser = v8_policy();
+        chooser.reset_sampling_v1([SEED, SEED + 2]);
+        for _ in 0..4000 {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                break;
+            };
+            for policy in [&mut v4, &mut live] {
+                let scores = policy.score_fast_session_v1(&session).unwrap();
+                let (reference, capture) = policy.diagnostic_last_hidden_v1(None).unwrap();
+                assert_eq!(bits(&scores.logits), bits(&reference.logits));
+                assert_eq!(scores.value.to_bits(), reference.value.to_bits());
+                assert_eq!(capture.state_hidden.len(), hidden);
+                assert_eq!(capture.scorer_hidden.len(), scores.logits.len() * hidden);
+            }
+            if !live.last_scored_pairing_v8().unwrap().is_empty() {
+                paired += 1;
+                let old = preserving.score_fast_session_v1(&session).unwrap();
+                let new = live.score_fast_session_v1(&session).unwrap();
+                moved += usize::from(old.value.to_bits() != new.value.to_bits());
+            }
+            decisions += 1;
+            let semantics = session.diagnostic_current_action_semantics().unwrap();
+            let include = semantics.iter().position(|semantic| {
+                matches!(
+                    semantic,
+                    ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                )
+            });
+            let selected = match include {
+                Some(index) => index as u32,
+                None => chooser.select_with_training_tensor_v4(&session).unwrap().0,
+            };
+            session.step(d.episode_id, d.step, selected).unwrap();
+        }
+    }
+    assert!(decisions > 100, "{decisions}");
+    // The relation path is live at decisions with pending blocks.
+    assert!(paired > 0 && moved > 0, "{paired} {moved}");
+
+    let mut v7 = v7_policy();
+    let session = session_v1(false, PlayerId::P0, ["Elves", "Affinity"]);
+    v7.score_fast_session_v1(&session).unwrap();
+    assert!(v7.diagnostic_last_hidden_v1(None).is_err());
+}

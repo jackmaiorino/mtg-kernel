@@ -372,4 +372,29 @@ impl NativePolicyValueNetV1 {
         let counts = encoded.validate(self.feature_transfer_config_v8())?;
         self.forward_validated_rows_v1(encoded, counts, None, activation_mode)
     }
+
+    /// [`Self::forward_feature_transfer_v8_mode`] that also returns the state
+    /// encoder output and every action row's scorer hidden, as
+    /// [`Self::forward_feature_transfer_v4_hidden_v1`]. Measurement only (W4
+    /// combat diagnostics).
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    pub(crate) fn forward_feature_transfer_v8_hidden_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<(NativePolicyValueOutputV1, NativeHiddenCaptureV1), NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v8())?;
+        let mut capture = NativeHiddenCaptureV1::default();
+        let output = self.forward_registration_validated_rows_v1(
+            encoded,
+            counts,
+            None,
+            activation_mode,
+            None,
+            None,
+            None,
+            Some(&mut capture),
+        )?;
+        Ok((output, capture))
+    }
 }

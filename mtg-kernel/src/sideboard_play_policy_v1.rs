@@ -1831,11 +1831,13 @@ impl FrozenPlayPolicyV1 {
     }
 
     /// Measurement only (W4 combat diagnostics): the reference forward of the
-    /// last V4-scored decision under `model` (the installed one when None),
-    /// with its state and scorer hidden. Uses the scoring call's activation
-    /// mode; the caller compares the output with that call's scores.
-    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_last_v4_hidden_v1(
+    /// last decision the V4 or FlatV8 scorer scored, under `model` (the
+    /// installed one when None), with its state and scorer hidden. FlatV8
+    /// takes its own 196-wide rows and pairing relation. Uses the scoring
+    /// call's activation mode; the caller compares the output with that
+    /// call's scores.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    pub(crate) fn diagnostic_last_hidden_v1(
         &self,
         model: Option<&NativePolicyValueNetV1>,
     ) -> Result<
@@ -1849,14 +1851,30 @@ impl FrozenPlayPolicyV1 {
             self.input_contract.is_none(),
             "hidden capture is not defined under the no-state-digest contract",
         )?;
-        let tensor = self.last_scored_training_tensor_v4()?;
-        let (output, capture) = model
-            .unwrap_or(&self.model)
-            .forward_feature_transfer_v4_hidden_v1(
-                encoded_decision_view_v4(tensor),
-                self.forward_mode_v1(),
-            )
-            .map_err(|e| format!("V4 hidden capture: {e:?}"))?;
+        let fresh = self
+            .fresh_successor
+            .as_ref()
+            .ok_or("native capture requires the V4 scorer")?;
+        require(!fresh.flat_v7, "hidden capture is not defined for FlatV7")?;
+        let model = model.unwrap_or(&self.model);
+        let (output, capture) = if fresh.flat_v8 {
+            model
+                .forward_feature_transfer_v8_hidden_v1(
+                    crate::native_flat_tensorizer_v8::encoded_decision_view_v8(
+                        &fresh.tensor.common,
+                        &fresh.pairing,
+                    ),
+                    self.forward_mode_v1(),
+                )
+                .map_err(|e| format!("V8 hidden capture: {e:?}"))?
+        } else {
+            model
+                .forward_feature_transfer_v4_hidden_v1(
+                    encoded_decision_view_v4(&fresh.tensor),
+                    self.forward_mode_v1(),
+                )
+                .map_err(|e| format!("V4 hidden capture: {e:?}"))?
+        };
         Ok((
             FrozenPlayDecisionScoresV1 {
                 logits: output.logits,
