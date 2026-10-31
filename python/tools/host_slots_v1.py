@@ -34,8 +34,12 @@ never changes what it means. It keeps its own records beside it, under
   start to last deadline) of at most min(15 minutes, H / 10); none starts
   while an earlier one is overdue. Only the first eligible request behind
   the head starts, and only ordinary requests behind an ordinary head. S is
-  at most 30 days. Past S, `status` flags it overdue; nothing is ever
-  preempted.
+  at most 30 days.
+- Any claim with --max-seconds S is handled by its own runner once S has
+  passed (--on-overdue): demote (default) republishes it as background
+  work that ordinary claims and timed holds may suspend; kill ends its own
+  job's processes (never the runner, never another claim); flag only marks
+  it. A flagging request never gets a delaying backfill.
 - Shared claims (`run --shared --cores N --min-cores M`): the claim guarantees
   M cores and lends the rest of its current cores. A later claim may take a
   lent core; the shared claim narrows its job's affinity before it republishes
@@ -65,7 +69,9 @@ verified existing worker and all descendants until its job object empties.
 Idle CI listeners do not need a claim.
 
 Optional per-host config, <root>/<HOST>.slots/config.json:
-  {"cores": "23-0", "keep_free": 0, "priority": "below_normal"}
+  {"cores": "23-0", "keep_free": 0, "priority": "below_normal", "ci_floor": 0}
+"ci_floor" reserves the last that many cores in preference order for background
+(CI) claims, which try them first; no other claim takes them.
 "cores" lists the cores untimed work may use, in order of preference. The
 default is every logical CPU, highest-numbered first, so claims stay off the
 low-numbered cores (P cores on hybrid Intel) that timed work usually
@@ -142,6 +148,11 @@ BACKFILL_POLICY = 2
 POOL_REASONS = ("timing", "isolation", "determinism", "play-client", "hardware")
 # A running shared claim tries to grow onto unclaimed cores at most this often.
 SHARE_GROW_SECONDS = 10.0
+# What a claim's own runner does once the claim outlives its declared --max-seconds (`--on-overdue`, default
+# demote): demote republishes it as background work, which every ordinary claim and timed hold may then take cores
+# from (it suspends, as CI does, and resumes when they are free); kill ends its own job object's tree; flag only
+# marks it. A timed declaration is never a claim, so none of these ever touches timed work.
+OVERDUE_ACTIONS = ("demote", "kill", "flag")
 # While a shared claim lends any core it keeps this file, deliberately not a JSON object, beside the delay windows:
 # every backfill engine since #407 refuses to backfill while a delay file cannot be read, so no engine (this one
 # or an older one, whose proofs know nothing of lending) proves a backfill while a lent core could still be given
@@ -329,6 +340,8 @@ if os.name == "nt":
     _GetLogicalProcessorInformationEx = _fn(_k32, "GetLogicalProcessorInformationEx", wintypes.BOOL,
                                             ctypes.c_int, wintypes.LPVOID, ctypes.POINTER(wintypes.DWORD))
     _NtSuspendProcess = _fn(_ntdll, "NtSuspendProcess", ctypes.c_long, HANDLE)
+    _TerminateProcess = _fn(_k32, "TerminateProcess", wintypes.BOOL, HANDLE, wintypes.UINT)
+    _IsProcessInJob = _fn(_k32, "IsProcessInJob", wintypes.BOOL, HANDLE, HANDLE, ctypes.POINTER(wintypes.BOOL))
     _NtResumeProcess = _fn(_ntdll, "NtResumeProcess", ctypes.c_long, HANDLE)
     _TerminateJobObject = _fn(_k32, "TerminateJobObject", wintypes.BOOL, HANDLE, wintypes.UINT)
     _GetProcessAffinityMask = _fn(_k32, "GetProcessAffinityMask", wintypes.BOOL, HANDLE,
@@ -561,17 +574,30 @@ def read_json(path: Path) -> dict | None:
 
 
 def load_config() -> dict:
-    """The host's slot config with defaults: cores (preference order), keep_free, priority."""
+    """The host's slot config with defaults: cores (preference order), keep_free, priority, and ci_floor (only
+    when above 0, so a host without one keeps the config digest older launchers compute)."""
     raw = read_json(slots_dir() / "config.json") or {}
     total = cpu_total()
     cores = parse_cores(str(raw["cores"])) if raw.get("cores") is not None else list(range(total - 1, -1, -1))
     if any(core >= total for core in cores):
         raise ValueError(f"config cores {format_cores(cores)} exceed this host's {total} logical CPUs")
     keep_free = int(raw.get("keep_free", 0))
+    ci_floor = int(raw.get("ci_floor", 0))
     priority = raw.get("priority", "below_normal")
-    if priority not in PRIORITIES or not 0 <= keep_free < len(cores):
+    if priority not in PRIORITIES or not 0 <= keep_free < len(cores) or not 0 <= ci_floor < len(cores) - keep_free:
         raise ValueError(f"bad slot config {raw}")
-    return {"cores": cores, "keep_free": keep_free, "priority": priority}
+    config = {"cores": cores, "keep_free": keep_free, "priority": priority}
+    if ci_floor:
+        config["ci_floor"] = ci_floor
+    return config
+
+
+def ci_floor_cores(config: dict) -> list[int]:
+    """The CI floor: the last `ci_floor` cores in preference order. Only background (CI) claims may take them;
+    background claims try them first and may also use any other free core. Separate from keep_free, which no
+    claim may take."""
+    count = config.get("ci_floor", 0)
+    return config["cores"][-count:] if count else []
 
 
 class Mutex:
@@ -733,17 +759,23 @@ def _preferred(cores: list[int], prefer: list[int] | None) -> list[int]:
 
 
 def available(config: dict, timed: dict, claims: list[dict], *, background: bool = True,
-              core_pool: list[int] | None = None, prefer: list[int] | None = None) -> list[int]:
+              core_pool: list[int] | None = None, prefer: list[int] | None = None, ci: bool | None = None) -> list[int]:
     """Cores a new claim may take now, in preference order (`prefer` first). A shared claim's lent cores count as
-    free: the new claim may take them, and the shared claim gives them back before the new claim's command starts."""
+    free: the new claim may take them, and the shared claim gives them back before the new claim's command starts.
+    `background` says whether background claims' cores count as used (a background request, or a backfill, which
+    never takes them); `ci` (default: the same) says whether the request is CI work that may use the CI floor."""
+    ci = background if ci is None else ci
     if timed["held"] and timed["cores"] is None:
         return []
     blocked = set(timed["cores"]) if timed["held"] else set()
-    allowed = config["cores"]
+    floor = ci_floor_cores(config)
+    # The CI floor is for background (CI) claims only, which try it first; ordinary work never counts it as room.
+    allowed = config["cores"] if ci else [core for core in config["cores"] if core not in floor]
+    order = _preferred(_preferred(allowed, floor), prefer) if ci else _preferred(allowed, prefer)
     used = {core for claim in claims if background or not claim.get("background", False)
             for core in held(claim)}
     room = len(allowed) - config["keep_free"] - len(used & set(allowed))
-    free = [core for core in _preferred(allowed, prefer) if core not in blocked and core not in used
+    free = [core for core in order if core not in blocked and core not in used
             and (core_pool is None or core in core_pool)]
     return free[:max(0, room)]
 
@@ -755,7 +787,8 @@ def unclaimed(config: dict, timed: dict, claims: list[dict], *, core_pool: list[
     if timed["held"] and timed["cores"] is None:
         return []
     blocked = set(timed["cores"]) if timed["held"] else set()
-    allowed = config["cores"]
+    floor = set(ci_floor_cores(config))
+    allowed = [core for core in config["cores"] if core not in floor]      # growth is ordinary work
     used = {core for claim in claims for core in claim["cores"]}
     room = len(allowed) - config["keep_free"] - len(used & set(allowed))
     free = [core for core in allowed if core not in blocked and core not in used
@@ -881,6 +914,8 @@ def _delay_terms(claims: list[dict], head: dict, ticket: dict, now: float, windo
     head_max, own = _max_seconds(head), _max_seconds(ticket)
     if head_max is None or own is None or not isinstance(head.get("id"), str):
         return None
+    if ticket.get("on_overdue") == "flag":
+        return None        # its own launcher will not enforce its limit, so it may only backfill without delaying
     limit = min(BACKFILL_DELAY_CAP_SECONDS, BACKFILL_DELAY_HEAD_SHARE * head_max)
     for claim in claims:
         if claim.get("backfill") and claim.get("delays_head") == head["id"]:
@@ -931,7 +966,7 @@ def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, t
             return None
     if _head_start(config, timed, claims, head) is not None:
         return None        # the head can start now: it is never jumped
-    room = available(config, timed, claims, core_pool=_pool(ticket), prefer=_prefer(ticket))
+    room = available(config, timed, claims, core_pool=_pool(ticket), prefer=_prefer(ticket), ci=False)
     if len(room) < wanted:
         return None
     cores = sorted(room[:wanted])
@@ -1306,6 +1341,38 @@ class Tree:
             self.suspended = {self.child.pid} if suspend else set()
         return True
 
+    def kill_members(self, timeout: float = 30.0) -> bool:
+        """End every process of this claim's tree except this runner, so the runner survives to release the claim.
+        Windows: each member listed by the job is opened by PID and ended only if that handle is still a process
+        in this job (a reused PID is never touched); repeated until the job holds only the runner. Linux: the
+        command's own process group (the runner is outside it). True when the tree is empty."""
+        if os.name != "nt":
+            if self.child is not None:
+                for sig in (signal.SIGKILL, signal.SIGCONT):
+                    try:
+                        os.killpg(self.child.pid, sig)
+                    except ProcessLookupError:
+                        pass
+            return True
+        deadline = time.monotonic() + timeout
+        while self.members():
+            if time.monotonic() > deadline:
+                return False
+            for pid in self.members():
+                handle = _OpenProcess(0x0001 | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SUSPEND_RESUME, False, pid)
+                if not handle:
+                    continue
+                try:
+                    inside = wintypes.BOOL(False)
+                    if _IsProcessInJob(handle, self.job, ctypes.byref(inside)) and inside.value:
+                        _NtResumeProcess(handle)      # a suspended process still ends, but resume it first
+                        _TerminateProcess(handle, 1)
+                finally:
+                    _CloseHandle(handle)
+            time.sleep(0.05)
+        self.suspended.clear()
+        return True
+
     def kill(self) -> None:
         if os.name == "nt":
             if self.job is not None:
@@ -1348,7 +1415,8 @@ def old_rules_room(config: dict, timed: dict, claims: list[dict], base: dict, wa
     only: the queue order and backfill rules are not replayed."""
     plain = [{**claim, "shared": False} for claim in claims]
     need = base["max_cores"] if base.get("shared") else wanted
-    return len(available(config, timed, plain, background=bool(base.get("background")), core_pool=core_pool)) >= need
+    before = {k: v for k, v in config.items() if k != "ci_floor"}
+    return len(available(before, timed, plain, background=bool(base.get("background")), core_pool=core_pool)) >= need
 
 
 def _event(kind: str, record: dict, **extra) -> None:
@@ -1367,7 +1435,8 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
         wait_timeout: float | None = None, priority: str | None = None, claim_id: str | None = None,
         cwd: str | None = None, on_claim=None, background: bool = False, adopted: dict | None = None,
         core_pool: list[int] | None = None, max_seconds: float | None = None, pool_reason: str | None = None,
-        prefer: list[int] | None = None, shared: bool = False, min_cores: int | None = None) -> int:
+        prefer: list[int] | None = None, shared: bool = False, min_cores: int | None = None,
+        on_overdue: str | None = None) -> int:
     """Claim cores (queueing with wait), run command pinned to them, free them when its tree ends.
     With max_seconds, a waiting request may also start before the queue head (backfill_admits).
     A core pool restricts the request and needs a recorded reason (POOL_REASONS); `prefer` only orders the choice.
@@ -1377,7 +1446,10 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
         raise ValueError("lane, work_id and a command are required")
     if max_seconds is not None and _max_seconds({"max_seconds": max_seconds}) is None:
         raise ValueError(f"max seconds must be a number above 0 and at most {BACKFILL_MAX_SECONDS:.0f}")
-    _check_placement(core_pool, pool_reason, shared, min_cores, background, adopted is not None)
+    _check_placement(core_pool, pool_reason, shared, min_cores, background, adopted is not None,
+                     max_seconds, on_overdue)
+    if max_seconds is not None and on_overdue is None:
+        on_overdue = "demote"
     if adopted is not None and not background:
         raise ValueError("an adopted worker must be a background claim")
     min_cores = (1 if min_cores is None else min_cores) if shared else None
@@ -1421,6 +1493,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     if max_seconds is not None:
         request["max_seconds"] = max_seconds
         request["backfill_policy"] = BACKFILL_POLICY
+        request["on_overdue"] = on_overdue
     with Mutex():
         ticket = _ticket_path(queue_class, claim_id)
         write_json(ticket, request)
@@ -1450,6 +1523,12 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                                                core_pool, alone)
                         if lent(record):
                             _set_lending_marker(claim_id, True)
+                        if max_seconds is not None:
+                            mono = time.monotonic()
+                            record.update(max_seconds=max_seconds, on_overdue=on_overdue,
+                                          deadline_mono=mono + max_seconds, deadline_at=(datetime.now(
+                                              timezone.utc) + timedelta(seconds=max_seconds)).isoformat(
+                                              timespec="milliseconds"))
                         write_json(claim, record)
                         ticket.unlink()
                         _event("admit", record, old_rules_room=old_rules_room(
@@ -1471,7 +1550,8 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                         if terms is not None:
                             terms = dict(terms)
                             write_json(_delay_window_path(tickets[0]["id"]), terms.pop("delay_window"))
-                        backfill = {"backfill": True, "max_seconds": max_seconds, "head_id": tickets[0]["id"],
+                        backfill = {"backfill": True, "max_seconds": max_seconds, "on_overdue": on_overdue,
+                                    "head_id": tickets[0]["id"],
                                     "deadline_at": (started + timedelta(seconds=max_seconds)).isoformat(
                                         timespec="milliseconds"), "deadline_mono": mono + max_seconds,
                                     **(terms or {})}
@@ -1510,7 +1590,9 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
         if adopted is not None:
             code = _run_adopted(claim, cores, priority, claim_id, background, adopted)
         else:
-            code = _run_claimed(claim, cores, priority, command, cwd, claim_id, background=background, share=share)
+            limit = None if max_seconds is None else {"deadline_mono": record["deadline_mono"], "action": on_overdue}
+            code = _run_claimed(claim, cores, priority, command, cwd, claim_id, background=background, share=share,
+                                overdue=limit)
         return code
     finally:
         with Mutex():
@@ -1523,8 +1605,11 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
             _event("end", {"id": claim_id, "lane": lane, "work_id": work_id}, exit_code=code)
 
 
-def _check_placement(core_pool, pool_reason, shared: bool, min_cores, background: bool, adopting: bool) -> None:
+def _check_placement(core_pool, pool_reason, shared: bool, min_cores, background: bool, adopting: bool,
+                     max_seconds=None, on_overdue=None) -> None:
     """Placement options that are refused before any ticket is written."""
+    if on_overdue is not None and (max_seconds is None or on_overdue not in OVERDUE_ACTIONS):
+        raise ValueError("--on-overdue needs --max-seconds and is one of " + ", ".join(OVERDUE_ACTIONS))
     if core_pool is not None and pool_reason not in POOL_REASONS:
         raise ValueError("--core-pool needs --pool-reason, one of " + ", ".join(POOL_REASONS)
                          + "; without one, use --prefer-cores, which never leaves a request waiting while other "
@@ -1599,8 +1684,33 @@ def _budget_wait(claim_id: str) -> bool:
     return budget_pending(config, live_claims(), claim_id)
 
 
+def _overdue_step(tree: "Tree", claim: Path, claim_id: str, overdue: dict, share: dict | None) -> str | None:
+    """Apply the claim's own --on-overdue action once its deadline passed (under the admission mutex, by the
+    runner that owns the job, so only this claim's own processes are ever touched). Returns the action taken, or
+    None when nothing happened yet (not due, or a shared claim could not yet narrow to its guarantee)."""
+    if overdue.get("done") or time.monotonic() <= overdue["deadline_mono"]:
+        return None
+    action = overdue["action"]
+    if action == "demote" and share is not None:
+        # A demoted claim is background work: it lends nothing, so it narrows to its guarantee first.
+        if not tree.set_cores(share["guaranteed"]):
+            return None
+        _update_claim_locked(claim, cores=tree.cores, shared=False)
+        _set_lending_marker(claim_id, False)
+    overdue["done"] = True
+    fields = {"overdue": True, "overdue_action": action, "overdue_at": now_utc()}
+    if action == "demote":
+        fields["background"] = True
+    _update_claim_locked(claim, **fields)
+    _event("overdue", {"id": claim_id, "cores": tree.cores}, action=action)
+    if action == "kill":
+        tree.kill_members()      # its own job's members only, never this runner, never another claim
+    return action
+
+
 def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str], cwd: str | None,
-                 claim_id: str, *, background: bool = False, share: dict | None = None) -> int:
+                 claim_id: str, *, background: bool = False, share: dict | None = None,
+                 overdue: dict | None = None) -> int:
     tree = Tree(cores, priority)
     env = dict(os.environ, **{CLAIM_ENV: claim_id, CORES_ENV: format_cores(cores)})
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
@@ -1644,6 +1754,10 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
             if code is not None:
                 time.sleep(poll_seconds())
             with Mutex():
+                if overdue is not None and code is None:
+                    action = _overdue_step(tree, claim, claim_id, overdue, share)
+                    if action == "demote":
+                        share, background, guard = None, True, tree.cores
                 grow = share is not None and time.monotonic() >= grow_at
                 narrowed = _share_step(tree, claim, claim_id, share, grow=False) if share else True
                 conflict = claim_conflicts(guard, background) or not narrowed
@@ -1770,7 +1884,8 @@ def status() -> dict:
     with Mutex():
         claims, tickets = live_claims(), live_tickets()
     keep = ("id", "lane", "work_id", "pid", "cores", "priority", "state", "acquired_at", "background")
-    shared_keep = ("shared", "guaranteed", "max_cores", "core_pool", "core_pool_reason", "prefer_cores")
+    shared_keep = ("shared", "guaranteed", "max_cores", "core_pool", "core_pool_reason", "prefer_cores",
+                   "max_seconds", "on_overdue", "overdue", "overdue_action")
     now = datetime.now(timezone.utc)
     backfills = []
     for c in claims:
@@ -1803,6 +1918,7 @@ def status() -> dict:
         "foreground_available": format_cores(available(config, timed, claims, background=False)) or "",
         "unclaimed": format_cores(unclaimed(config, timed, claims)) or "",
         "lent": format_cores({core for c in claims for core in lent(c)}) or "",
+        "ci_floor": format_cores(ci_floor_cores(config)) or "",
         "watch": watch_status(),
     }
 
@@ -1866,7 +1982,7 @@ WATCH_LOW_SECONDS = 600.0
 WATCH_QUEUED_SECONDS = 60.0
 WATCH_NOTES_PER_HOUR = 6
 # Holder kinds of a CPU, first match wins.
-KINDS = ("timed", "held", "guaranteed", "lent", "background", "unclaimed")
+KINDS = ("timed", "held", "guaranteed", "lent", "background", "ci_floor", "unclaimed")
 
 if os.name == "nt":
     class _ProcessorTimes(ctypes.Structure):
@@ -1970,6 +2086,8 @@ def queue_cause(config: dict, timed: dict, claims: list[dict], tickets: list[dic
         return "timed"
     if config["keep_free"] and fits(c={**config, "keep_free": 0}):
         return "keep_free"
+    if not background and config.get("ci_floor") and fits(c={k: v for k, v in config.items() if k != "ci_floor"}):
+        return "ci_floor"
     return "too_few_free"
 
 
@@ -1992,7 +2110,9 @@ def holders(config: dict, timed: dict, claims: list[dict]) -> dict[int, str]:
         for cpu in lent(claim):
             if cpu in marks:
                 marks[cpu].add("lent")
-    return {cpu: next((k for k in KINDS if k in found), "unclaimed") for cpu, found in marks.items()}
+    floor = set(ci_floor_cores(config))
+    return {cpu: next((k for k in KINDS if k in found), "ci_floor" if cpu in floor else "unclaimed")
+            for cpu, found in marks.items()}
 
 
 def effective_reserve(config: dict, kinds: dict[int, str]) -> int:
@@ -2009,7 +2129,7 @@ def reserved_idle(idle: dict[int, float], kinds: dict[int, str], reserve: int, c
     0 <= sum <= capacity."""
     left = dict(idle)
     need = float(reserve)
-    rank = {kind: i for i, kind in enumerate(("unclaimed", "lent", "background", "guaranteed", "held"))}
+    rank = {kind: i for i, kind in enumerate(("unclaimed", "ci_floor", "lent", "background", "guaranteed", "held"))}
     for cpu in sorted(left, key=lambda c: (rank.get(kinds.get(c), 9), -left[c])):
         take = min(need, left[cpu])
         left[cpu] -= take
@@ -2036,7 +2156,8 @@ def eligible_idle(config: dict, timed: dict, tickets: list[dict], causes: list[s
         if cause == "unreadable" or not isinstance(wanted, int):
             continue
         pool = _pool(ticket)
-        allowed = [c for c in left if kinds.get(c) != "timed" and (pool is None or c in pool)]
+        floor = set() if ticket.get("background", False) else set(ci_floor_cores(config))
+        allowed = [c for c in left if kinds.get(c) != "timed" and c not in floor and (pool is None or c in pool)]
         need = float(wanted)
         for cpu in sorted(allowed, key=lambda c: -left[c]):
             if need <= 0:
@@ -2377,6 +2498,9 @@ def main(argv: list[str] | None = None) -> int:
                                 "core (this claim narrows first), and it grows back onto unclaimed cores while "
                                 "nothing is queued; for builds and other bursty work, never for timing")
             p.add_argument("--min-cores", type=int, help="cores a --shared claim guarantees and queues for (default 1)")
+            p.add_argument("--on-overdue", choices=OVERDUE_ACTIONS,
+                           help="what this claim's runner does past --max-seconds (default demote: it becomes "
+                                "background work that others may suspend; kill ends its own tree; flag only marks)")
             p.add_argument("--max-seconds", type=float,
                            help="declared run time limit; lets the request start before the queue head when that "
                                 "cannot delay the head (past it, status flags the claim overdue)")
@@ -2414,7 +2538,8 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_OK
         if args.op in ("run", "submit", "adopt"):
             _check_placement(args.core_pool, args.pool_reason, getattr(args, "shared", False),
-                             getattr(args, "min_cores", None), args.background, args.op == "adopt")
+                             getattr(args, "min_cores", None), args.background, args.op == "adopt",
+                             getattr(args, "max_seconds", None), getattr(args, "on_overdue", None))
         command = child_command(command)
         if args.op == "run":
             def announce(claimed):
@@ -2425,7 +2550,7 @@ def main(argv: list[str] | None = None) -> int:
                        background=args.background, core_pool=parse_cores(args.core_pool) if args.core_pool else None,
                        max_seconds=args.max_seconds, pool_reason=args.pool_reason,
                        prefer=parse_cores(args.prefer_cores) if args.prefer_cores else None,
-                       shared=args.shared, min_cores=args.min_cores)
+                       shared=args.shared, min_cores=args.min_cores, on_overdue=args.on_overdue)
             print(json.dumps({"exit_code": code}), flush=True)
             return code
         if args.op == "submit":
@@ -2439,7 +2564,8 @@ def main(argv: list[str] | None = None) -> int:
             for flag, value in (("--priority", args.priority), ("--wait-timeout", args.wait_timeout),
                                 ("--cwd", args.cwd), ("--core-pool", args.core_pool),
                                 ("--pool-reason", args.pool_reason), ("--prefer-cores", args.prefer_cores),
-                                ("--min-cores", args.min_cores), ("--max-seconds", args.max_seconds)):
+                                ("--min-cores", args.min_cores), ("--max-seconds", args.max_seconds),
+                                ("--on-overdue", args.on_overdue)):
                 if value is not None:
                     options += [flag, str(value)]
             print(json.dumps(submit(options, command, args.log)))

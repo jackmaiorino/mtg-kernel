@@ -8,6 +8,13 @@ name: CI
       - '*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_runner:
+        # The hosted fallback (job `hosted-fallback`) sets this to GitHub's
+        # hosted Windows image when a self-hosted runner could not admit a job.
+        description: Windows runs-on override as JSON, for example '"windows-2025"'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -242,7 +249,7 @@ jobs:
           # repository variable routes them elsewhere, for example
           # '["self-hosted", "mtg-ci-windows"]' for the local pool.
           - os: windows-2025
-            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
+            runner: ${{ inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
     # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
@@ -539,7 +546,7 @@ jobs:
           - limited-model-7
     # Linux uses hosted runners. Windows follows the routing variable of the
     # other groups; pull requests from forks never run on self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     steps:
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
@@ -873,7 +880,7 @@ jobs:
           - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
     steps:
@@ -973,6 +980,7 @@ jobs:
           uv run --no-sync python -m unittest discover -v -s tools/search_experiment/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/stage4a/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/t1_diagnosis -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/ci/tests -p 'test_*.py'
 
       - name: Use the runner's persistent Python environment build
         if: runner.environment == 'self-hosted'
@@ -1009,3 +1017,28 @@ jobs:
 
       - name: Run Python test shard against the real Rust environment
         run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.shard_count }}
+
+  # A self-hosted runner's job-started hook waits for host_slots CPU admission
+  # at most MTG_CI_ADMISSION_TIMEOUT seconds and then fails the job before any
+  # step, logging MTG_CI_ADMISSION_TIMEOUT. A job cannot move to another runner
+  # once one accepted it, so this hosted job dispatches the workflow again on
+  # the same branch with Windows on hosted runners. Real failures are not
+  # rerun, and a dispatched run never dispatches again.
+  hosted-fallback:
+    name: Hosted fallback for self-hosted admission timeouts
+    needs: [rust-test-groups, rust-limited-groups, python-tests]
+    if: always() && contains(needs.*.result, 'failure') && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Rerun admission timeouts on hosted runners
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FALLBACK_REF: ${{ github.head_ref || github.ref_name }}
+        run: python3 tools/ci/hosted_fallback.py

@@ -42,9 +42,17 @@ It starts only when all of these hold:
 - no earlier delaying backfill for that head is overdue, and its window file reads (a file that exists but cannot be read refuses);
 - the request comes from a launcher that applies this rule (its ticket records `backfill_policy: 2`). An older launcher's ticket is judged by the zero-delay rule it applies itself, so it never holds back the requests behind it.
 
-Every backfill records `deadline_mono`, which `status` uses for `overdue`. A delaying one also records `delays_head`, `delay_bound_seconds` (the window so far) and `delay_limit_seconds`. `status` shows the bound and the limit for every backfill (0 and none for one that cannot delay its head). The bound relies on backfills keeping their declared limits; nothing is preempted.
+Every backfill records `deadline_mono`, which `status` uses for `overdue`. A delaying one also records `delays_head`, `delay_bound_seconds` (the window so far) and `delay_limit_seconds`. `status` shows the bound and the limit for every backfill (0 and none for one that cannot delay its head). The bound relies on backfills keeping their declared limits, which their own runners now enforce (below).
 
-The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations; the bounded-delay rule uses only the declared limits. `--max-seconds` is at most 30 days. Past it, `status` lists the claim under `backfill` with `overdue: true`; it is not stopped, suspended or preempted for that. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
+The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations; the bounded-delay rule uses only the declared limits. `--max-seconds` is at most 30 days. A request without `--max-seconds` waits its turn as before.
+
+**Past `--max-seconds`.** Every claim that declares `--max-seconds S` records its deadline (`deadline_mono`, `deadline_at`) and `on_overdue`. Once S has passed since admission, the claim's own runner applies `--on-overdue`:
+
+- `demote` (the default): it republishes the claim as background work (`background: true`, `overdue: true`). From then on every ordinary claim and timed hold may take its cores; it suspends while they hold them and resumes afterwards, exactly as CI does. Nothing is killed, and a delaying backfill can hold its head up only until its deadline plus one handoff. A shared claim first narrows to its guarantee.
+- `kill`: it ends the processes of its own job object, never itself and never another claim (each process is matched to the job by handle before it is ended), then releases the claim. Only a launcher that asks for it explicitly gets it.
+- `flag`: it only marks the claim `overdue`. Such a request may still backfill when it cannot delay the head, but never with a bounded delay, because nothing would enforce the bound.
+
+Timed work is never a claim, so none of this touches it. A human-facing claim (the play client) should not declare `--max-seconds`, or should pass `--on-overdue flag`. The #427 window is unchanged: no delaying backfill starts while an earlier one for the same head is overdue. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
 
 Deploying: ticket names are chosen under the admission mutex, but older versions choose them before taking it. Replace every deployed copy while no `host_slots_v1.py` process of any version is running, so no older launcher can publish an earlier-named ticket after a backfill is proved.
 
@@ -84,6 +92,7 @@ The optional file `<HOST>.slots/config.json` controls what claims may use:
 
 - `cores` lists the cores untimed work may use, in order of preference. The default is every logical CPU, highest-numbered first, so claims stay off the low-numbered P cores of hybrid Intel parts, which timed work usually declares.
 - `keep_free` is the number of those cores that are never handed out.
+- `ci_floor` (default 0) reserves the last that many cores in the preference order for background (CI) claims. Ordinary, shared and backfilled work never takes them; CI claims try them first and may also use any other free core. It is separate from `keep_free`, which no claim takes. A config without `ci_floor` keeps the digest older launchers compute.
 - `priority` is the default priority for claims.
 
 On the compute host, its owner's use comes first. Set `keep_free` so the owner always has room, and keep `below_normal`. Use `topology` to see which logical CPUs share a physical core and each core's efficiency class (P cores rank higher).

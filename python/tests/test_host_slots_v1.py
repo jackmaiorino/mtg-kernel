@@ -1803,5 +1803,152 @@ class WatcherBoundTests(unittest.TestCase):
             assert abs(sum(line["eligible_idle_by_cause"].values()) - line["eligible_idle_cs"]) <= eps
 
 
+FLOOR8 = {"cores": [7, 6, 5, 4, 3, 2, 1, 0], "keep_free": 0, "priority": "below_normal", "ci_floor": 2}
+
+
+class CiFloorTests(unittest.TestCase):
+    """The CI floor: the last ci_floor cores in preference order, for background (CI) claims only."""
+
+    def test_only_ci_may_take_the_floor_and_ci_tries_it_first(self):
+        assert slots.ci_floor_cores(FLOOR8) == [1, 0] and slots.ci_floor_cores(config8()) == []
+        assert slots.available(FLOOR8, FREE, [], background=False) == [7, 6, 5, 4, 3, 2]
+        assert slots.available(FLOOR8, FREE, [{"cores": [7, 6, 5, 4, 3, 2]}], background=False) == []
+        assert slots.available(FLOOR8, FREE, []) == [1, 0, 7, 6, 5, 4, 3, 2]
+        # CI may also use other free cores once the floor is taken
+        assert slots.available(FLOOR8, FREE, [{"cores": [1, 0], "background": True}]) == [7, 6, 5, 4, 3, 2]
+        # ordinary work still reclaims CI cores outside the floor, never inside it
+        ci = [{"cores": [1, 0, 7], "background": True}]
+        assert slots.available(FLOOR8, FREE, ci, background=False) == [7, 6, 5, 4, 3, 2]
+
+    def test_backfills_and_shared_growth_never_take_the_floor(self):
+        assert slots.available(FLOOR8, FREE, [], ci=False) == [7, 6, 5, 4, 3, 2]
+        assert slots.unclaimed(FLOOR8, FREE, [{"cores": [7, 6]}]) == [5, 4, 3, 2]
+        claims = [{"id": "c", "cores": [7, 6, 5, 4, 3]}]
+        head = ticket("head", 3, None)
+        assert admits(FLOOR8, FREE, claims, [head, ticket("t", 1)], "t") == [2]
+        assert admits(FLOOR8, FREE, claims, [head, ticket("t", 2)], "t") is None
+
+    def test_keep_free_stays_separate_from_the_floor(self):
+        config = {**FLOOR8, "keep_free": 1}
+        assert slots.available(config, FREE, [], background=False) == [7, 6, 5, 4, 3]
+        assert slots.available(config, FREE, []) == [1, 0, 7, 6, 5, 4, 3]
+
+    def test_config_digest_is_unchanged_without_a_floor_and_bad_floors_are_refused(self):
+        root = Path(tempfile.mkdtemp(prefix="hs-floor-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        with patch.dict(os.environ, {slots.ROOT_ENV: str(root), slots.HOST_ENV: "T"}), \
+                patch.object(slots, "cpu_total", return_value=4):
+            (root / "T.slots").mkdir()
+            for raw, expect in (({"cores": "3-0"}, {"cores": [3, 2, 1, 0], "keep_free": 0, "priority": "below_normal"}),
+                                ({"cores": "3-0", "ci_floor": 0}, {"cores": [3, 2, 1, 0], "keep_free": 0,
+                                                                   "priority": "below_normal"}),
+                                ({"cores": "3-0", "ci_floor": 2}, {"cores": [3, 2, 1, 0], "keep_free": 0,
+                                                                   "priority": "below_normal", "ci_floor": 2})):
+                slots.write_json(root / "T.slots/config.json", raw)
+                assert slots.load_config() == expect
+            for bad in ({"ci_floor": 4}, {"ci_floor": 2, "keep_free": 2}, {"ci_floor": -1}):
+                slots.write_json(root / "T.slots/config.json", {"cores": "3-0", **bad})
+                with self.assertRaises(ValueError):
+                    slots.load_config()
+
+    def test_the_watcher_names_the_floor(self):
+        assert slots.holders(FLOOR8, FREE, [{"cores": [1], "background": True}])[0] == "ci_floor"
+        assert slots.holders(FLOOR8, FREE, [{"cores": [1], "background": True}])[1] == "background"
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        head = ticket("h", 1, None)
+        assert slots.queue_cause(FLOOR8, FREE, claims, [head], head) == "ci_floor"
+        assert slots.old_rules_room(FLOOR8, FREE, claims, {"background": False}, 2, None)
+
+
+class OverdueTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def test_the_overdue_action_needs_a_limit_and_is_recorded(self):
+        with self.assertRaises(ValueError):
+            slots.run("p", "w", 1, ["unused"], on_overdue="kill")
+        with self.assertRaises(ValueError):
+            slots.run("p", "w", 1, ["unused"], max_seconds=5.0, on_overdue="later")
+        proc = cli("run", "--lane", "p", "--work-id", "w", "--cores", "1", "--on-overdue", "flag", "--",
+                   sys.executable, "-c", "pass")
+        _, err = proc.communicate(timeout=60)
+        assert proc.returncode == slots.EXIT_USAGE and "--max-seconds" in err, err
+        seen = []
+        with patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                (slots.read_json(claim), k["overdue"])) or 0):
+            slots.run("p", "w", 1, ["unused"], max_seconds=30.0)
+        record, limit = seen[0]
+        assert record["on_overdue"] == "demote" and record["max_seconds"] == 30.0
+        assert limit == {"deadline_mono": record["deadline_mono"], "action": "demote"}
+
+    def test_a_flagging_request_may_not_delay_a_head(self):
+        window = None
+        head = {**ticket("h" * 32, 4, 3600.0), "config_sha256": slots.config_digest(config8())}
+        for action, admitted in (("demote", True), ("flag", False)):
+            claims = [{"id": "c", "cores": [7, 6, 5, 4], "max_seconds": 60.0, "deadline_mono": 1e12},
+                      {"id": "d", "cores": [3, 2, 1]}]
+            small = {**ticket("s", 1, 120.0, backfill_policy=slots.BACKFILL_POLICY), "on_overdue": action}
+            got = slots.backfill_admission(config8(), FREE, claims, [head, small], "s", 1000.0, window)
+            assert (got is not None) == admitted, (action, got)
+
+    def overdue_run(self, action, seconds="1"):
+        count = self.tmp_path / f"count-{action}"
+        ticker = script(self.tmp_path, f"tick-{action}.py", "n = 0\nwhile True:\n    n += 1\n"
+                        "    open(sys.argv[1], 'w').write(str(n))\n    time.sleep(0.02)\n")
+        args = ["run", "--lane", "o", "--work-id", action, "--cores", "1", "--max-seconds", seconds]
+        if action != "default":
+            args += ["--on-overdue", action]
+        return cli(*args, "--", sys.executable, ticker, str(count)), count
+
+    def claim(self, work_id):
+        return next((c for c in slots.status()["claims"] if c["work_id"] == work_id), None)
+
+    @needs_two
+    def test_an_overdue_claim_demotes_itself_and_yields_like_ci(self):
+        proc, count = self.overdue_run("default")
+        foreground = None
+        release, active = self.tmp_path / "release", self.tmp_path / "active"
+        hold = script(self.tmp_path, "hold.py", "from pathlib import Path\nPath(sys.argv[1]).write_text('up')\n"
+                      "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
+        try:
+            assert wait_for(lambda: (self.claim("default") or {}).get("overdue") is True, timeout=30)
+            claim = self.claim("default")
+            assert claim["background"] is True and claim["overdue_action"] == "demote"
+            assert counter(count) > 0
+            foreground = cli("run", "--lane", "b", "--work-id", "b", "--cores", str(len(CPUS)), "--",
+                             sys.executable, hold, str(active), str(release))
+            assert wait_for(active.exists, timeout=30)
+            assert self.claim("default")["state"] == "suspended"
+            frozen = counter(count)
+            time.sleep(0.3)
+            assert counter(count) == frozen
+            release.write_text("go")
+            assert foreground.wait(timeout=60) == 0
+            assert wait_for(lambda: counter(count) > frozen + 3)
+        finally:
+            release.write_text("go")
+            if foreground is not None:
+                foreground.wait(timeout=60)
+            proc.terminate()
+            proc.wait(timeout=60)
+
+    def test_kill_ends_only_its_own_tree_and_flag_only_marks(self):
+        killed, _ = self.overdue_run("kill")
+        out, err = killed.communicate(timeout=60)
+        assert killed.returncode != 0 and json.loads(out.splitlines()[-1])["exit_code"] != 0, out + err
+        events = [json.loads(line) for path in (self.host / "TESTHOST.util").glob("events-*.jsonl")
+                  for line in path.read_text().splitlines()]
+        assert [e["action"] for e in events if e["event"] == "overdue"] == ["kill"]
+        flagged, count = self.overdue_run("flag")
+        try:
+            assert wait_for(lambda: (self.claim("flag") or {}).get("overdue") is True, timeout=30)
+            claim = self.claim("flag")
+            assert claim["background"] is False and claim["state"] == "running" and flagged.poll() is None
+            before = counter(count)
+            assert wait_for(lambda: counter(count) > before + 3)
+        finally:
+            flagged.terminate()
+            flagged.wait(timeout=60)
+
+
 if __name__ == "__main__":
     unittest.main()
