@@ -1653,9 +1653,10 @@ fn edge_case_fixture_v1(model: &NativePolicyValueNetV1) -> Fixture {
                 *value = -0.0;
             }
         }
-        if let (Some(&source), Some(target)) =
-            (common.edge_source_indices.first(), common.edge_target_indices.first_mut())
-        {
+        if let (Some(&source), Some(target)) = (
+            common.edge_source_indices.first(),
+            common.edge_target_indices.first_mut(),
+        ) {
             *target = source;
         }
         if common.object_card_ids.len() > 1 && common.object_card_ids[0] != 0 {
@@ -1680,7 +1681,9 @@ fn edge_case_fixture_v1(model: &NativePolicyValueNetV1) -> Fixture {
             )
             .unwrap()
     });
-    fixture.logits = outputs.each_ref().map(|o| o.logits.iter().map(|v| v.to_bits()).collect());
+    fixture.logits = outputs
+        .each_ref()
+        .map(|o| o.logits.iter().map(|v| v.to_bits()).collect());
     fixture.values = outputs.each_ref().map(|o| o.value.to_bits());
     fixture
 }
@@ -1702,7 +1705,10 @@ fn gpu_exact_learner_preserves_every_bit() {
     let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
     // The CPU references first: once installed, the learner serves every
     // train step in this process.
-    assert!(!crate::gpu_exact_v1::learner_installed_v1(), "run this test alone");
+    assert!(
+        !crate::gpu_exact_v1::learner_installed_v1(),
+        "run this test alone"
+    );
     let mut cpu = start.clone();
     let expected = profiled_step(&mut cpu, &batch, 4).unwrap();
     let second_fixture = Fixture::capture(&cpu.model);

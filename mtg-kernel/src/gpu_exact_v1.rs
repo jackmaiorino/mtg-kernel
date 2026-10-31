@@ -44,7 +44,8 @@ struct InstalledLearnerV1 {
     cpu_fallbacks: u64,
 }
 
-static LEARNER: std::sync::OnceLock<std::sync::Mutex<InstalledLearnerV1>> = std::sync::OnceLock::new();
+static LEARNER: std::sync::OnceLock<std::sync::Mutex<InstalledLearnerV1>> =
+    std::sync::OnceLock::new();
 
 /// Opens device `ordinal` for the learner backward. The GAE train step then
 /// takes its gradients from it (`native_policy_train_step_v1::
@@ -75,16 +76,19 @@ pub(crate) fn learner_gradients_v1(
     let learner = LEARNER.get().ok_or("no GPU learner installed")?;
     let mut learner = learner.lock().unwrap_or_else(|p| p.into_inner());
     let started = std::time::Instant::now();
-    let InstalledLearnerV1 { device, buffers, .. } = &mut *learner;
-    let gradients = match net8_learner::net8_gradients_v1(device, buffers, config, tensors, substeps) {
-        Ok(gradients) => gradients,
-        // Too big for the device: the caller's CPU backward gives the same bits.
-        Err(error) if net8_learner::is_resource_error_v1(&error) => {
-            learner.cpu_fallbacks += 1;
-            return Ok(None);
-        }
-        Err(error) => return Err(error),
-    };
+    let InstalledLearnerV1 {
+        device, buffers, ..
+    } = &mut *learner;
+    let gradients =
+        match net8_learner::net8_gradients_v1(device, buffers, config, tensors, substeps) {
+            Ok(gradients) => gradients,
+            // Too big for the device: the caller's CPU backward gives the same bits.
+            Err(error) if net8_learner::is_resource_error_v1(&error) => {
+                learner.cpu_fallbacks += 1;
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
     learner.updates += 1;
     learner.substeps += substeps.len() as u64;
     learner.busy_seconds += started.elapsed().as_secs_f64();

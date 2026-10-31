@@ -82,10 +82,10 @@ mod archive_distillation_v1;
 mod carryover_probe_v1;
 mod e_supported_policy_v1;
 mod exact_parallel_backward_v1;
-#[cfg(feature = "gpu-exact-v1")]
-mod gpu_exact_backward_v1;
 pub(crate) mod exploration_v1;
 mod gae_v1;
+#[cfg(feature = "gpu-exact-v1")]
+mod gpu_exact_backward_v1;
 mod head_only_mask_v1;
 mod line_b_auxiliary_v1;
 pub(crate) use archive_distillation_v1::rules_pathway_v1::{

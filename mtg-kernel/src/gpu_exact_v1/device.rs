@@ -160,7 +160,9 @@ impl ExactDeviceV1 {
 
     /// Free and total device memory in bytes.
     pub(crate) fn memory_v1(&self) -> Result<(usize, usize), String> {
-        self._ctx.mem_get_info().map_err(|e| format!("memory query: {e:?}"))
+        self._ctx
+            .mem_get_info()
+            .map_err(|e| format!("memory query: {e:?}"))
     }
 
     /// The proof record's key: the program, this device and NVRTC, and the

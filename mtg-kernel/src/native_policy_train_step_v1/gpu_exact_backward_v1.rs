@@ -14,8 +14,8 @@
 use super::*;
 use crate::gpu_exact_v1::net8_learner::LearnerSubstepV1;
 
-type BackwardResultV1 =
-    Result<(Vec<Vec<f32>>, ScorerBiasGaugeAccumulatorV1), NativePolicyTrainErrorV1>;
+type GradientsAndGaugeV1 = (Vec<Vec<f32>>, ScorerBiasGaugeAccumulatorV1);
+type BackwardResultV1 = Result<GradientsAndGaugeV1, NativePolicyTrainErrorV1>;
 
 /// The gradients and gauge evidence, or None when no exact GPU learner is
 /// installed or this update is outside what it runs (another width, the V8
@@ -60,9 +60,16 @@ pub(super) fn gpu_exact_backward_dims_v1<D: NetDimsV1>(
         }
         views.push(row);
     }
-    backward_v1(parameters, group_tapes, &views, group_count, value_coefficient, input_config, math)
-        .transpose()
-
+    backward_v1(
+        parameters,
+        group_tapes,
+        &views,
+        group_count,
+        value_coefficient,
+        input_config,
+        math,
+    )
+    .transpose()
 }
 
 fn backward_v1(
@@ -73,7 +80,7 @@ fn backward_v1(
     value_coefficient: f32,
     input_config: NativePolicyValueModelConfigV1,
     math: TrainingMathV1,
-) -> Result<Option<(Vec<Vec<f32>>, ScorerBiasGaugeAccumulatorV1)>, NativePolicyTrainErrorV1> {
+) -> Result<Option<GradientsAndGaugeV1>, NativePolicyTrainErrorV1> {
     // The sequential arm's coefficients, visiting order and gauge, as
     // `exact_parallel_backward_v1::backward_dims_v1` computes them.
     let mut gauge = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);

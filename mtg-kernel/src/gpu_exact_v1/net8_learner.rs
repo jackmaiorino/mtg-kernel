@@ -13,7 +13,9 @@ use super::net8::{
     THREADS_PER_BLOCK,
 };
 use super::ExactDeviceV1;
-use crate::native_policy_value_net_v1::{NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1};
+use crate::native_policy_value_net_v1::{
+    NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1,
+};
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 
 const H: usize = 64;
@@ -102,7 +104,12 @@ struct Tape {
 }
 
 fn tape(s: &Shape, dims: &DimsV1) -> Tape {
-    let (o, e, r, a) = (s.objects as i64, s.edges as i64, s.refs as i64, s.actions as i64);
+    let (o, e, r, a) = (
+        s.objects as i64,
+        s.edges as i64,
+        s.refs as i64,
+        s.actions as i64,
+    );
     let h = H as i64;
     let g = i64::from(dims.group_count);
     let edge_h1 = 2 * o * h;
@@ -161,7 +168,12 @@ struct Grad {
 }
 
 fn grad(s: &Shape, dims: &DimsV1) -> Grad {
-    let (o, e, r, a) = (s.objects as i64, s.edges as i64, s.refs as i64, s.actions as i64);
+    let (o, e, r, a) = (
+        s.objects as i64,
+        s.edges as i64,
+        s.refs as i64,
+        s.actions as i64,
+    );
     let h = H as i64;
     let k_obj = i64::from(dims.object_feature_dim + dims.embedding_dim);
     let k_edge = i64::from(dims.edge_feature_dim) + 2 * h;
@@ -286,18 +298,28 @@ pub(crate) fn net8_gradients_v1(
     substeps: &[LearnerSubstepV1<'_>],
 ) -> Result<Vec<Vec<f32>>, String> {
     if tensors.len() != TENSORS {
-        return Err(format!("net-8 has {TENSORS} parameter tensors, not {}", tensors.len()));
+        return Err(format!(
+            "net-8 has {TENSORS} parameter tensors, not {}",
+            tensors.len()
+        ));
     }
     let dims = DimsV1::of_config_v1(&config);
     let stream = &device.stream;
-    let e = |what: &'static str| move |error: cudarc::driver::DriverError| format!("{what}: {error:?}");
+    let e =
+        |what: &'static str| move |error: cudarc::driver::DriverError| format!("{what}: {error:?}");
 
     // Forward with the tape kept; its outputs must be the CPU tape's bits.
     let mut batch = PackedBatchV1::default();
     for substep in substeps {
         batch
             .push_with_config_v1(0, config, substep.view)
-            .map_err(|e| if e.starts_with("batch too large") { resource(e) } else { e })?;
+            .map_err(|e| {
+                if e.starts_with("batch too large") {
+                    resource(e)
+                } else {
+                    e
+                }
+            })?;
     }
     let (forward, forward_layout, torch, torch_offsets) = layouts(tensors);
     // Everything this update allocates, against what the device has free
@@ -320,7 +342,7 @@ pub(crate) fn net8_gradients_v1(
     if needed_floats.saturating_mul(4) > free / 10 * 9 {
         return Err(resource(format!(
             "update needs about {} MiB, device has {} MiB free",
-            needed_floats * 4 >> 20,
+            (needed_floats * 4) >> 20,
             free >> 20
         )));
     }
@@ -333,9 +355,15 @@ pub(crate) fn net8_gradients_v1(
     for (index, (output, substep)) in outputs.iter().zip(substeps).enumerate() {
         let same = output.value.to_bits() == substep.value.to_bits()
             && output.logits.len() == substep.logits.len()
-            && output.logits.iter().zip(substep.logits).all(|(a, b)| a.to_bits() == b.to_bits());
+            && output
+                .logits
+                .iter()
+                .zip(substep.logits)
+                .all(|(a, b)| a.to_bits() == b.to_bits());
         if !same {
-            return Err(format!("GPU forward differs from the CPU tape at substep {index}"));
+            return Err(format!(
+                "GPU forward differs from the CPU tape at substep {index}"
+            ));
         }
     }
 
@@ -350,7 +378,11 @@ pub(crate) fn net8_gradients_v1(
         d_logits[at..at + actions].copy_from_slice(substep.d_logits);
         d_values[index] = substep.d_value;
     }
-    let shapes: Vec<Shape> = batch.requests.chunks_exact(R_FIELDS).map(Shape::of).collect();
+    let shapes: Vec<Shape> = batch
+        .requests
+        .chunks_exact(R_FIELDS)
+        .map(Shape::of)
+        .collect();
     let mut grad_offsets = Vec::with_capacity(shapes.len());
     let mut grad_len = 0i64;
     for shape in &shapes {
@@ -415,27 +447,81 @@ pub(crate) fn net8_gradients_v1(
         let [card_ids, _groups, edge_src, edge_tgt, ref_node, _ref_action] = shape.ints;
         let none = -1;
         let (o, ed, r, a) = (shape.objects, shape.edges, shape.refs, shape.actions);
-        let mut push = |layer: usize, dout: i64, rows: usize, segs: &[(i64, i64, i64, i64, i64)]| {
-            terms[layer].push(term(gs + dout, rows, segs));
-        };
-        push(0, g.d1_obj, o, &[(FLOATS, obj_feat, none, fo, fo), (PARAMS, torch_offsets[0], card_ids, emb, emb)]);
+        let mut push =
+            |layer: usize, dout: i64, rows: usize, segs: &[(i64, i64, i64, i64, i64)]| {
+                terms[layer].push(term(gs + dout, rows, segs));
+            };
+        push(
+            0,
+            g.d1_obj,
+            o,
+            &[
+                (FLOATS, obj_feat, none, fo, fo),
+                (PARAMS, torch_offsets[0], card_ids, emb, emb),
+            ],
+        );
         push(1, g.d2_obj, o, &[(SCRATCH, sc + t.obj_h1, none, h, h)]);
-        push(2, g.d1_edge, ed, &[
-            (FLOATS, edge_feat, none, fe, fe),
-            (SCRATCH, sc + t.obj_base, edge_src, h, h),
-            (SCRATCH, sc + t.obj_base, edge_tgt, h, h),
-        ]);
+        push(
+            2,
+            g.d1_edge,
+            ed,
+            &[
+                (FLOATS, edge_feat, none, fe, fe),
+                (SCRATCH, sc + t.obj_base, edge_src, h, h),
+                (SCRATCH, sc + t.obj_base, edge_tgt, h, h),
+            ],
+        );
         push(3, g.d2_edge, ed, &[(SCRATCH, sc + t.edge_h1, none, h, h)]);
-        push(4, g.d1_node, o, &[(SCRATCH, sc + t.obj_base, none, h, h), (SCRATCH, sc + t.edge_pooled, none, h, h)]);
+        push(
+            4,
+            g.d1_node,
+            o,
+            &[
+                (SCRATCH, sc + t.obj_base, none, h, h),
+                (SCRATCH, sc + t.edge_pooled, none, h, h),
+            ],
+        );
         push(5, g.d2_node, o, &[(SCRATCH, sc + t.node_h1, none, h, h)]);
-        push(6, g.d1_state, 1, &[(FLOATS, state, none, fs, fs), (SCRATCH, sc + t.group_pooled, none, gh, gh)]);
+        push(
+            6,
+            g.d1_state,
+            1,
+            &[
+                (FLOATS, state, none, fs, fs),
+                (SCRATCH, sc + t.group_pooled, none, gh, gh),
+            ],
+        );
         push(7, g.d2_state, 1, &[(SCRATCH, sc + t.state_h1, none, h, h)]);
-        push(8, g.d1_ref, r, &[(FLOATS, ref_feat, none, fr, fr), (SCRATCH, sc + t.obj_hidden, ref_node, h, h)]);
+        push(
+            8,
+            g.d1_ref,
+            r,
+            &[
+                (FLOATS, ref_feat, none, fr, fr),
+                (SCRATCH, sc + t.obj_hidden, ref_node, h, h),
+            ],
+        );
         push(9, g.d2_ref, r, &[(SCRATCH, sc + t.ref_h1, none, h, h)]);
-        push(10, g.d1_act, a, &[(FLOATS, act_feat, none, fa, fa), (SCRATCH, sc + t.ref_pooled, none, h, h)]);
+        push(
+            10,
+            g.d1_act,
+            a,
+            &[
+                (FLOATS, act_feat, none, fa, fa),
+                (SCRATCH, sc + t.ref_pooled, none, h, h),
+            ],
+        );
         push(11, g.d2_act, a, &[(SCRATCH, sc + t.act_h1, none, h, h)]);
         // Every action row reads the same state hidden row: stride 0.
-        push(12, g.d_sh, a, &[(SCRATCH, sc + t.state_hidden, none, 0, h), (SCRATCH, sc + t.act_h, none, h, h)]);
+        push(
+            12,
+            g.d_sh,
+            a,
+            &[
+                (SCRATCH, sc + t.state_hidden, none, 0, h),
+                (SCRATCH, sc + t.act_h, none, h, h),
+            ],
+        );
         push(13, g.d_lg, a, &[(SCRATCH, sc + t.scorer_h, none, h, h)]);
         push(14, g.d_vh, 1, &[(SCRATCH, sc + t.state_hidden, none, h, h)]);
         push(15, g.d_v, 1, &[(SCRATCH, sc + t.value_h, none, h, h)]);

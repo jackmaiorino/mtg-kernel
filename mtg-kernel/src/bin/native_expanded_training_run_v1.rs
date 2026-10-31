@@ -98,7 +98,9 @@ fn run() -> Result<(), String> {
         #[cfg(feature = "gpu-exact-v1")]
         mtg_kernel::gpu_exact_v1::install_learner_v1(ordinal)?;
         #[cfg(not(feature = "gpu-exact-v1"))]
-        return Err(format!("--gpu-exact-learner {ordinal} needs a build with gpu-exact-v1"));
+        return Err(format!(
+            "--gpu-exact-learner {ordinal} needs a build with gpu-exact-v1"
+        ));
     }
     let result = run_native_expanded_training_v1(&config, limit);
     #[cfg(feature = "gpu-exact-v1")]
