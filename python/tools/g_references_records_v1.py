@@ -166,7 +166,7 @@ def moved_rows(dest: Path) -> list[dict]:
 
 def publish(path: Path, text: str) -> None:
     """Write a file atomically and durably (temporary file, fsync, replace)."""
-    temporary = path.with_name(path.name + ".partial")
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.partial")
     with temporary.open("w", encoding="utf-8") as handle:
         handle.write(text)
         handle.flush()

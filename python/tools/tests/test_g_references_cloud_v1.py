@@ -353,8 +353,8 @@ class LeaseTests(unittest.TestCase):
                 cycle.pod = Pod()
                 if answer is True:
                     self.assertTrue(cycle.quiesce_records(timeout=5))
-                    self.assertEqual(json.loads((Path(temp) / "records-backlog.json").read_text())["pending"],
-                                     ["G3-b005.json"])  # the final backlog, after quiescence
+                    self.assertEqual(read(Path(temp) / "records-backlog-final.json")["pending"],
+                                     ["G3-b005.json"])  # the controller's own final backlog, after quiescence
                 else:
                     cycle.recover()  # no positive quiescence: recovery does not enumerate the volume
                     self.assertTrue(cycle.result["recovery"].startswith("skipped"))

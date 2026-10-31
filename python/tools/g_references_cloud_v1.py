@@ -303,6 +303,7 @@ print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 '''
 
 
+RELEASE_RESERVE_SECONDS = 120  # of the recovery window, kept for the release after recovery
 POD_QUIESCE_RECORDS = '''import os, time
 open(ARGS["quiesce"], "w").close()
 deadline = time.monotonic() + ARGS["timeout"]
@@ -402,39 +403,52 @@ class Cycle(cloud.Cycle):
                 "campaign ended without completing or a lease stop: " + json.dumps(status))
         self.result["lease_stopped"] = True
 
-    def quiesce_records(self, timeout: float = 180.0):
+    def quiesce_records(self, timeout: float = 150.0):
         """Stop the record copy-back before recovery reads the volume, so nothing it lists is deleted under it.
         The follower is asked to start no more moves (records-quiesce.json), then, on the Pod, the quiesce flag
         is set and the copy-back's lock taken: a deletion in progress holds it to its end, and every later one
         sees the flag and refuses. ``timeout`` (one block's deletion takes seconds) leaves the rest of the
-        lease's recovery time for recovery itself. Returns True only on positive quiescence, after recording
-        the volume's final backlog (records-backlog.json) for the next lease."""
+        lease's recovery time for recovery itself: one attempt, at most ``timeout`` + 30 s, then a best-effort
+        listing of at most 30 s. Returns True only on positive quiescence, after recording the volume's final
+        backlog in records-backlog-final.json, which only the controller writes (the follower's running
+        records-backlog.json may lag it)."""
         request = self.control / "records-quiesce.json"
         if not request.exists():
             write(request, {"epoch": time.time()})
         result = self.pod.run(POD_QUIESCE_RECORDS, {"lock": records.POD_LOCK, "quiesce": records.POD_QUIESCE,
-                                                    "timeout": timeout}, timeout=timeout + 60, read_only=True)
+                                                    "timeout": timeout}, timeout=timeout + 30)
         self.result["records_quiesced"] = result["quiesced"]
         if result["quiesced"] is not True:
             return False
-        records.backlog(self.pod, str(self.base / "campaign" / "state"), self.control)
+        try:
+            pending = self.pod.run(records.LIST, {"state": str(self.base / "campaign" / "state")}, timeout=30)
+            write(self.control / "records-backlog-final.json", {"at": time.time(), **pending})
+        except cloud.PodUnavailable as error:  # the follower's last records-backlog.json stands
+            self.result["records_backlog_final"] = f"unavailable: {error}"[-400:]
         return True
 
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""
         if not self.remote_ready:
             return
+        started = time.monotonic()
         if not self.quiesce_records():
             # A deletion may still be running: recovery does not enumerate the volume under it. The volume
             # keeps everything; the next lease recovers from it.
             self.result["recovery"] = "skipped: the record copy-back did not quiesce"
             return
+        left = cloud.RECOVERY_SECONDS - RELEASE_RESERVE_SECONDS - (time.monotonic() - started)  # quiescence counts
+        if left < 60:
+            self.result["recovery"] = "skipped: quiescence left too little of the recovery time"
+            return
         since = 0 if self.recover_all else None if self.worker is None else self.worker["epoch"] - 60
         packed = self.pod.run(POD_RECOVER, {"control": self.remote_control, "campaign": str(self.base / "campaign"),
                                             "guard": self.guard, "locks": cloud.LOCK_ROOT, "since": since},
-                              timeout=cloud.RECOVERY_SECONDS)
+                              timeout=left)
         target, recovered = self.control / "results.tar.gz", self.control / "recovered"
-        self.pod.get(self.remote_control + "/results.tar.gz", target, timeout=cloud.RECOVERY_SECONDS)
+        left = cloud.RECOVERY_SECONDS - RELEASE_RESERVE_SECONDS - (time.monotonic() - started)
+        require(left > 0, "recovery time spent before the copy")
+        self.pod.get(self.remote_control + "/results.tar.gz", target, timeout=left)
         require(sha(target) == packed["sha256"], "recovered archive differs")
         recovered.mkdir()
         with tarfile.open(target) as tar:

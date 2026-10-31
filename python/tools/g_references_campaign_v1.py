@@ -990,7 +990,8 @@ def reconcile(campaign: Campaign, runs: list[str]) -> None:
         for key, entry in sorted(state["blocks"].items(), key=lambda item: int(item[0])):
             if entry.get("done"):
                 seal(campaign, run, int(key), state)
-            elif entry.get("attempts") and entry["attempts"][-1].get("outcome") == "complete":
+            elif entry.get("attempts") and entry["attempts"][-1].get("outcome") == "complete" \
+                    and not entry.get("disposition"):  # the driver resumes it (a terminal block it skips)
                 with SCRATCH_LOCK:
                     SCRATCH_INFLIGHT.add(entry["attempts"][-1]["native"])  # freed by its finishing step
 
