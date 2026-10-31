@@ -341,6 +341,7 @@ class LeaseTests(unittest.TestCase):
                 cycle = gcloud.Cycle.__new__(gcloud.Cycle)
                 cycle.control, cycle.result, cycle.base = Path(temp), {}, Path("/workspace/g")
                 cycle.remote_ready, calls = True, []
+                cycle.lease, cycle.guard = {"deadline_epoch": time.time() + 3600}, "/run/phase1/g"
 
                 class Pod:
                     def run(self, program, args, timeout=30, read_only=False):
@@ -349,6 +350,8 @@ class LeaseTests(unittest.TestCase):
                             return {"pending": ["G3-b005.json"]}
                         if program is gcloud.POD_QUIESCE_RECORDS:
                             return {"quiesced": answer}
+                        if program is gcloud.POD_GUARD_RELEASE:
+                            return {"release_epoch": None}
                         raise AssertionError("recovery enumerated the volume")
                 cycle.pod = Pod()
                 if answer is True:
@@ -359,9 +362,24 @@ class LeaseTests(unittest.TestCase):
                     cycle.recover()  # no positive quiescence: recovery does not enumerate the volume
                     self.assertTrue(cycle.result["recovery"].startswith("skipped"))
                     self.assertNotIn("recovered", cycle.result)
-            self.assertTrue(calls[0][0] is gcloud.POD_QUIESCE_RECORDS)
-            self.assertEqual((calls[0][1]["lock"], calls[0][1]["quiesce"]),
-                             (gcloud.records.POD_LOCK, gcloud.records.POD_QUIESCE))
+            quiesce = next(args for program, args in calls if program is gcloud.POD_QUIESCE_RECORDS)
+            self.assertEqual((quiesce["lock"], quiesce["quiesce"]), (gcloud.records.POD_LOCK, gcloud.records.POD_QUIESCE))
+
+    def test_recovery_is_bounded_by_the_earliest_guard_release(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.result, cycle.remote_ready, cycle.guard = {}, True, "/run/phase1/g"
+        cycle.lease = {"deadline_epoch": time.time() + 3600}
+        ran = []
+
+        class Pod:
+            def run(self, program, args, timeout=30, read_only=False):
+                ran.append(program)
+                return {"release_epoch": time.time() + 200}  # the resident guard latched: 200 s left
+        cycle.pod = Pod()
+        self.assertLess(cycle.release_boundary(), time.time() + 201)
+        cycle.recover()  # 200 s less the 120 s release reserve: too little to quiesce and recover
+        self.assertTrue(cycle.result["recovery"].startswith("skipped: too little time"))
+        self.assertEqual(set(ran), {gcloud.POD_GUARD_RELEASE})  # nothing quiesced, packed or copied
 
     @unittest.skipIf(sys.platform == "win32", "fcntl: the Pod is Linux")
     def test_the_pod_quiesce_waits_for_a_deletion_in_progress(self):

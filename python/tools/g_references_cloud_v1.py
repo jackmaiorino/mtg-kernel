@@ -303,7 +303,14 @@ print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 '''
 
 
-RELEASE_RESERVE_SECONDS = 120  # of the recovery window, kept for the release after recovery
+RELEASE_RESERVE_SECONDS = 120  # before the release boundary, kept for the release after recovery
+POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
+try:
+    value = json.load(open(path))
+except (OSError, ValueError):
+    value = {}
+print(json.dumps({"release_epoch": value.get("release_epoch")}))
+'''
 POD_QUIESCE_RECORDS = '''import os, time
 open(ARGS["quiesce"], "w").close()
 deadline = time.monotonic() + ARGS["timeout"]
@@ -427,28 +434,42 @@ class Cycle(cloud.Cycle):
             self.result["records_backlog_final"] = f"unavailable: {error}"[-400:]
         return True
 
+    def release_boundary(self) -> float:
+        """The earliest instant a guard may delete the Pod: the lease's hard deadline, or the resident guard's
+        release_epoch once it latched (its recovery window); unreadable, the deadline alone."""
+        boundary = self.lease["deadline_epoch"]
+        try:
+            latched = self.pod.run(POD_GUARD_RELEASE, {"guard": self.guard}, timeout=30)["release_epoch"]
+        except cloud.PodUnavailable:
+            latched = None
+        return min(boundary, latched) if isinstance(latched, (int, float)) else boundary
+
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""
         if not self.remote_ready:
             return
-        started = time.monotonic()
-        if not self.quiesce_records():
+        boundary = self.release_boundary()
+
+        def left() -> float:  # recovery's time: to the earliest guard release, less the release reserve
+            return min(cloud.RECOVERY_SECONDS, boundary - time.time() - RELEASE_RESERVE_SECONDS)
+        if left() < 120:
+            self.result["recovery"] = "skipped: too little time before the guards' release"
+            return
+        if not self.quiesce_records(timeout=min(150.0, left() - 90)):
             # A deletion may still be running: recovery does not enumerate the volume under it. The volume
             # keeps everything; the next lease recovers from it.
             self.result["recovery"] = "skipped: the record copy-back did not quiesce"
             return
-        left = cloud.RECOVERY_SECONDS - RELEASE_RESERVE_SECONDS - (time.monotonic() - started)  # quiescence counts
-        if left < 60:
-            self.result["recovery"] = "skipped: quiescence left too little of the recovery time"
+        if left() < 60:
+            self.result["recovery"] = "skipped: quiescence left too little time before the guards' release"
             return
         since = 0 if self.recover_all else None if self.worker is None else self.worker["epoch"] - 60
         packed = self.pod.run(POD_RECOVER, {"control": self.remote_control, "campaign": str(self.base / "campaign"),
                                             "guard": self.guard, "locks": cloud.LOCK_ROOT, "since": since},
-                              timeout=left)
+                              timeout=left())
         target, recovered = self.control / "results.tar.gz", self.control / "recovered"
-        left = cloud.RECOVERY_SECONDS - RELEASE_RESERVE_SECONDS - (time.monotonic() - started)
-        require(left > 0, "recovery time spent before the copy")
-        self.pod.get(self.remote_control + "/results.tar.gz", target, timeout=left)
+        require(left() > 0, "recovery time spent before the copy")
+        self.pod.get(self.remote_control + "/results.tar.gz", target, timeout=left())
         require(sha(target) == packed["sha256"], "recovered archive differs")
         recovered.mkdir()
         with tarfile.open(target) as tar:
