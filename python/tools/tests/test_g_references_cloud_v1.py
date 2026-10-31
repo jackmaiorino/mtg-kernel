@@ -60,6 +60,7 @@ class Fixture:
                  "native_root": "/root/g-native", "stop_after_block": 2,
                  "storage": {"max_logical_bytes": 120 * 10**9, "reserve_bytes": 60 << 30,
                              "projected_additional_bytes": 20 << 30},
+                 "scratch": {"block_peak_bytes": 14 * 10**9, "factor": 1.25, "margin_fraction": 0.1},
                  "runtime": {"binary": str(self.binary), "engine_commit": "a" * 40, "tracked_tree_sha256": "b" * 64},
                  "hardware": {"min_memory_bytes": 60 << 30}, "inventory": str(self.inventory)}
         value.update(changes)
@@ -83,7 +84,9 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(campaign["stop_after_block"], 2)
         self.assertEqual(campaign["roots"]["native"], "/root/g-native")
         self.assertTrue(campaign["roots"]["checkpoints"].startswith(f"/workspace/{ROOT}/campaign/"))
-        self.assertEqual(campaign["storage"]["accounting_roots"], [f"/workspace/{ROOT}/campaign", "/root/g-native"])
+        self.assertEqual(campaign["storage"]["accounting_roots"], [f"/workspace/{ROOT}/campaign"])
+        self.assertEqual(campaign["storage"]["scratch_roots"], ["/root/g-native"])  # amendment 2: block scratch
+        self.assertEqual(campaign["scratch"], {"block_peak_bytes": 14 * 10**9, "factor": 1.25, "margin_fraction": 0.1})
         self.assertEqual(campaign["host_slots"]["cores"], "0-31")
         self.assertEqual(campaign["placement_by_run"]["G3"]["cpu_affinity"], [8, 9, 10, 11])
         self.assertEqual(campaign["placement"]["host"], "runpod")

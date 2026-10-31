@@ -236,6 +236,15 @@ def workload(config, kind, keep_seeds=False, family=None):
     return digest(value)
 
 
+def scratch_roots(storage):
+    raw = [Path(path) for path in storage.get("scratch_roots", [])]
+    require(all(path.is_absolute() for path in raw), "absolute scratch roots required")
+    for path in raw:
+        require(all(not item.is_symlink() and not item.is_junction() for item in (path, *path.parents)),
+                "scratch root traverses a link")
+    return [path.resolve() for path in raw]
+
+
 def validate_storage(storage, extra=None):
     cap = storage["max_logical_bytes"]
     require(type(cap) is int and 0 < cap <= CAP, "storage cap exceeds 192 GiB")
@@ -249,6 +258,11 @@ def validate_storage(storage, extra=None):
     require(roots and len(set(roots)) == len(roots), "missing or duplicate accounting roots")
     require(all(not a.is_relative_to(b) for a in roots for b in roots if a != b),
             "overlapping accounting roots")
+    # Opt-in block scratch (G(i) amendment 2): a native output tree there is pruned at its block's end, so it
+    # is outside the artifact cap; the campaign driver admits each block against the scratch volume instead.
+    scratch = scratch_roots(storage)
+    require(all(not a.is_relative_to(b) and not b.is_relative_to(a) for a in scratch for b in roots),
+            "scratch root overlaps an accounting root")
     logical = 0
     for root in roots:
         if root.exists():
@@ -430,9 +444,12 @@ def validate_request(request, qualification):
     require(root.is_absolute() and cold.is_absolute() and root.resolve() != cold.resolve(),
             "distinct absolute hot/recovery roots required")
     accounting = [Path(p).resolve() for p in request["storage"]["accounting_roots"]]
-    outputs = (root, cold) if qualification else (root, cold, Path(config["output_directory"]))
-    for path in outputs:
+    for path in (root, cold):
         require(any(path.resolve().is_relative_to(p) for p in accounting),
+                "output is outside storage accounting")
+    if not qualification:  # the native tree: counted, or block scratch
+        native = Path(config["output_directory"]).resolve()
+        require(any(native.is_relative_to(p) for p in accounting + scratch_roots(request["storage"])),
                 "output is outside storage accounting")
     family = request.get("schedule_family")
     require(family in SCHEDULE_FAMILIES and (family is None or request["kind"] == "training"),
@@ -1222,7 +1239,15 @@ def main():
     request = read(args.request)
     qualification = args.action in ("qualify", "_qualify")
     if args.action.startswith("_"):
-        execute(args.request, qualification)
+        try:
+            execute(args.request, qualification)
+        except BaseException as error:
+            # The attempt's own record of a launcher-side failure (a storage refusal after the native run,
+            # say): its driver reads the cause from failure.json, since this process's stderr is not kept.
+            root = Path(request["root"])
+            if root.is_dir() and not (root/"report.json").exists() and not (root/"failure.json").exists():
+                write(root/"failure.json", {"error": f"{type(error).__name__}: {error}"})
+            raise
     elif args.action == "check-choice":
         selected = require_choice(request["choice"], request, verify_outputs=True)
         write(request["choice_verification_output"], {"schema": CHOICE, "choice": request["choice"],

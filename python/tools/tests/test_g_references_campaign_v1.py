@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import struct
 import tempfile
@@ -384,6 +385,7 @@ class DriverTests(unittest.TestCase):
             {"attempt": 1, "native": str(native), "outcome": "complete"}]}}}
         finished = []
         with patch.object(driver, "finish_block", lambda *a: finished.append(a) or "complete"), \
+                patch.object(driver, "admit", return_value=None), patch.object(driver, "release"), \
                 patch.object(driver, "block_spec", return_value={}), \
                 patch.object(driver.g, "block_config", return_value={}), \
                 patch.object(driver.g, "require_runtime_rules"), \
@@ -404,6 +406,134 @@ class DriverTests(unittest.TestCase):
         self.assertNotIn("final_checkpoint", entry)
         events = [json.loads(line) for line in self.campaign.events.read_text().splitlines()]
         self.assertIn("native-lost", [e["kind"] for e in events])
+
+    def scratch_campaign(self, cap=10**9, projected=1000):
+        """A campaign whose native root is admitted block scratch (AMENDMENT-2.md)."""
+        raw = json.loads(self.path.read_text())
+        container = self.root / "container"
+        raw["roots"]["native"] = str(container)
+        raw["storage"] = {"max_logical_bytes": cap, "reserve_bytes": driver.native_dispatch.DISK_RESERVE_BYTES,
+                          "projected_additional_bytes": projected, "accounting_roots": [str(self.root / "volume")],
+                          "projected_volume_bytes": {self.root.drive.upper(): projected},
+                          "scratch_roots": [str(container)]}
+        raw["scratch"] = {"block_peak_bytes": 100, "factor": 1.25, "margin_fraction": 0.1}
+        self.write(raw)
+        return container
+
+    def disk(self, free, total=1000):
+        # the scratch volume (total, free) and a volume tree with its 60 GiB reserve free
+        def usage(path):
+            if Path(path).is_relative_to(self.root / "container"):
+                return type("Disk", (), {"free": free, "total": total})()
+            return type("Disk", (), {"free": 100 << 30, "total": 200 << 30})()
+        return patch.object(driver.shutil, "disk_usage", usage)
+
+    def test_scratch_admission_counts_every_in_flight_tree(self):
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        container = self.scratch_campaign()
+        trees = [container / "G1" / f"b001-a{k}" / "native" for k in (1, 2, 3)]
+        container.mkdir()
+        with self.disk(free=400):  # 400 free less a 100 B margin: two blocks of 125 B (100 B x 1.25), not three
+            self.assertIsNone(driver.admit(self.campaign, trees[0]))
+            self.assertIsNone(driver.admit(self.campaign, trees[1]))
+            self.assertRegex(driver.admit(self.campaign, trees[2]), "^scratch: 3 blocks need 375 B")
+            trees[0].mkdir(parents=True)
+            (trees[0] / "big").write_bytes(b"x" * 200)  # a tree past its peak counts at its size
+            with self.disk(free=200):
+                self.assertRegex(driver.admit(self.campaign, trees[2]), "^scratch: 3 blocks need 450 B")
+            shutil.rmtree(trees[0])
+            driver.release(self.campaign, "G1", 1, trees[0])  # its prune verified: the slot frees
+            self.assertIsNone(driver.admit(self.campaign, trees[2]))
+        self.assertEqual(driver.SCRATCH_INFLIGHT, {str(trees[1]), str(trees[2])})
+
+    def test_retained_admission_projects_every_in_flight_block(self):
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.scratch_campaign(cap=10**9, projected=4 * 10**8)
+        (self.root / "volume").mkdir()
+        (self.root / "volume" / "kept").write_bytes(b"x" * 1000)
+        with self.disk(free=10**6, total=10**6):
+            self.assertIsNone(driver.admit(self.campaign, self.root / "container" / "a"))
+            self.assertIsNone(driver.admit(self.campaign, self.root / "container" / "b"))
+            self.assertRegex(driver.admit(self.campaign, self.root / "container" / "c"), "^retained: retained plus")
+
+    def test_an_unverified_prune_latches_every_dispatch(self):
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.addCleanup(driver.SCRATCH_LATCHED.clear)
+        container = self.scratch_campaign()
+        tree = container / "G2" / "b001-a1" / "native"
+        with self.disk(free=10**6, total=10**6):
+            self.assertIsNone(driver.admit(self.campaign, tree))
+            tree.mkdir(parents=True)  # the prune left it behind
+            driver.release(self.campaign, "G2", 1, tree)
+            self.assertIn(str(tree), driver.SCRATCH_INFLIGHT)  # its slot stays taken
+            self.assertTrue((self.campaign.state / driver.SCRATCH_LATCH).exists())
+            self.assertRegex(driver.admit(self.campaign, container / "other"), "^latched: scratch tree not pruned")
+            state = {"run": "G3", "status": "running", "blocks": {}}
+            self.assertEqual(driver.run_block(self.campaign, "G3", 1, state), "stopped")
+        self.assertEqual(state["blocks"]["1"]["attempts"], [])  # no attempt was made
+        self.assertTrue(state["stop_reason"].startswith("storage admission: latched"))
+
+    def test_a_storage_refusal_or_kill_does_not_consume_an_attempt(self):
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.scratch_campaign()
+        state = {"run": "G4", "status": "running", "blocks": {}}
+        refused = RuntimeError("dispatch refused: ValueError: retained plus projected storage exceeds allowance")
+        with patch.object(driver, "admit", return_value=None), \
+                patch.object(driver, "block_spec", return_value={}), \
+                patch.object(driver.g, "block_config", return_value={}), \
+                patch.object(driver.g, "require_runtime_rules"), \
+                patch.object(driver, "request_for", return_value={}), \
+                patch.object(driver.Campaign, "wall_stop", return_value=None), \
+                patch.object(driver.base, "dispatch_block", side_effect=refused):
+            # nothing else in flight could free space: the run stops at the block boundary, uncounted
+            self.assertEqual(driver.run_block(self.campaign, "G4", 1, state), "stopped")
+        entry = state["blocks"]["1"]
+        self.assertEqual([a["outcome"] for a in entry["attempts"]], ["storage-refused"])
+        self.assertEqual(driver.counted(entry), 0)
+        self.assertTrue(state["stop_reason"].startswith("storage admission: "))
+
+        def attempt(name, outcome, files):
+            root = self.root / name
+            root.mkdir()
+            for file, value in files.items():
+                (root / file).write_text(json.dumps(value))
+            return {"attempt": 1, "root": str(root), "outcome": outcome}
+        killed_after_run = attempt("a", "interrupted", {"execution.json": {"exit_code": 0, "error": None}})
+        killed_in_run = attempt("b", "interrupted", {"execution.json": {
+            "exit_code": -9, "error": "retained plus projected storage exceeds allowance"}})
+        recorded = attempt("c", "interrupted", {"execution.json": {"exit_code": 0, "error": None},
+                                                "failure.json": {"error": "ValueError: [Errno 28] No space left on device"}})
+        native_failed = attempt("d", "interrupted", {"execution.json": {"exit_code": 1, "error": "native process failed"}})
+        other_failure = attempt("e", "interrupted", {"execution.json": {"exit_code": 0, "error": None},
+                                                     "failure.json": {"error": "RuntimeError: retained copy differs"}})
+        self.assertEqual([driver.counts(a) for a in (killed_after_run, killed_in_run, recorded, native_failed,
+                                                     other_failure)], [False, False, False, True, True])
+        self.assertFalse(driver.counts({"outcome": "unspawned"}))
+        self.assertTrue(driver.counts({"outcome": "lost"}))
+
+    def test_an_attempt_that_never_started_is_unspawned_on_resume(self):
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        (self.root / "started").mkdir()
+        (self.root / "started" / "started.json").write_text("{}")
+        state = {"run": "G5", "status": "running", "blocks": {"1": {"attempts": [
+            {"attempt": 1, "root": str(self.root / "never"), "native": str(self.root / "n1")},
+            {"attempt": 2, "root": str(self.root / "started"), "native": str(self.root / "n2")}]}}}
+        entry = state["blocks"]["1"]
+        with patch.object(driver, "admit", return_value="scratch: full"):
+            driver.run_block(self.campaign, "G5", 1, {**state, "blocks": {"1": {"attempts": [entry["attempts"][0]]}}})
+            driver.run_block(self.campaign, "G5", 1, state)
+        self.assertEqual([a["outcome"] for a in entry["attempts"]], ["unspawned", "interrupted"])
+
+    def test_block_scratch_needs_its_admission_spec(self):
+        self.scratch_campaign()
+        raw = json.loads(self.path.read_text())
+        del raw["scratch"]
+        with self.assertRaisesRegex(SystemExit, "block scratch needs"):
+            self.write(raw)
+        raw["scratch"] = {"block_peak_bytes": 100, "factor": 1.25, "margin_fraction": 0.1}
+        raw["storage"]["scratch_roots"] = [str(self.root / "elsewhere")]
+        with self.assertRaisesRegex(SystemExit, "block scratch needs"):
+            self.write(raw)
 
     def test_status_and_run_labels(self):
         self.assertEqual(len(driver.status_lines(self.campaign)), 8)

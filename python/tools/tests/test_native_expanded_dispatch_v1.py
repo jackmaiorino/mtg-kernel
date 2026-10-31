@@ -554,6 +554,24 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             with self.assertRaisesRegex(ValueError, "192 GiB"):
                 dispatch.validate_storage(storage)
 
+    def test_block_scratch_is_outside_the_cap_and_apart_from_accounting(self):
+        storage = self.request(2)["storage"]
+        other = tempfile.TemporaryDirectory()  # apart from the accounting root
+        self.addCleanup(other.cleanup)
+        scratch = Path(other.name)/"scratch"
+        (scratch/"G1").mkdir(parents=True)
+        (scratch/"G1"/"episode.json").write_bytes(b"x" * 10**6)
+        with patch.object(dispatch.shutil, "disk_usage", return_value=type("Disk", (), {"free": 100*1024**3})()):
+            before = dispatch.validate_storage(storage)["logical_bytes"]
+            storage["scratch_roots"] = [str(scratch)]
+            self.assertEqual(dispatch.validate_storage(storage)["logical_bytes"], before)
+            storage["scratch_roots"] = [str(self.root/"inside")]
+            with self.assertRaisesRegex(ValueError, "scratch root overlaps"):
+                dispatch.validate_storage(storage)
+            storage["scratch_roots"] = ["relative/scratch"]
+            with self.assertRaisesRegex(ValueError, "absolute scratch roots"):
+                dispatch.validate_storage(storage)
+
     def test_storage_walk_counts_a_file_deleted_mid_walk_as_freed(self):
         # Another job sharing the accounting root removes its outputs between is_file and stat.
         storage = self.request(2)["storage"]

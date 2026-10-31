@@ -14,9 +14,10 @@ LANES/g-references-20261028/DESIGN.md v1.2, section 6, and FROZEN.md):
 * Layout (FROZEN disposition 2): native outputs, the trajectories, go on the
   Pod's container disk (``native_root``); checkpoints, records, cold archives
   and dose records on the network volume under /workspace/<campaign root>.
-  Both are storage accounting roots, each with the dispatcher's 60 GiB reserve,
-  so the lease preparation sizes the container disk (prepare_lease
-  ``container_disk_gb``).
+  The volume tree is the storage accounting root, with the dispatcher's 60 GiB
+  reserve; the native root is block scratch (AMENDMENT-2.md), admitted by the
+  driver against the container disk, which the lease preparation sizes
+  (prepare_lease ``container_disk_gb``).
 * A qualification trial runs one update, and a pack admits its packed trials'
   storage projections together, so the qualification spec carries its own
   per-trial projection (spec ``trial_projected_additional_bytes``, at most a
@@ -146,8 +147,13 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
     native = PurePosixPath(spec["native_root"])
     require(native.is_absolute() and not native.is_relative_to(cloud.WORKSPACE), "native root is on the container disk")
     storage = cloud.checked_storage(spec["storage"], base)
-    storage["accounting_roots"] = [str(base / "campaign"), str(native)]
-    campaign = {"recipe": g.PREFIX, "lane": template["lane"],
+    # AMENDMENT-2.md: the trajectories are block scratch, admitted against the container disk (spec "scratch":
+    # the measured per-block peak, its factor and the margin); the cap counts the campaign tree on the volume.
+    storage["scratch_roots"] = [str(native)]
+    scratch = spec["scratch"]
+    require(isinstance(scratch, dict) and set(scratch) == {"block_peak_bytes", "factor", "margin_fraction"},
+            "the spec's scratch names the per-block peak, its factor and the margin")
+    campaign = {"recipe": g.PREFIX, "lane": template["lane"], "scratch": scratch,
                 "decks": str(base / deck_directory / "data/runtime_decks_v1.json"),
                 "play_imports": {run: descriptor(template["play_imports"][run]) for run in g.RUNS},
                 "placement": {**placements[runs[0]], "cpu_affinity": union},
