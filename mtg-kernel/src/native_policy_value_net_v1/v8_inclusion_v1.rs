@@ -377,7 +377,11 @@ impl NativePolicyValueNetV1 {
     /// encoder output and every action row's scorer hidden, as
     /// [`Self::forward_feature_transfer_v4_hidden_v1`]. Measurement only (W4
     /// combat diagnostics).
-    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    // The test lives in flat_v8_tests, which the limited builds leave out.
+    #[cfg(any(
+        all(test, not(feature = "limited-fdn-fixtures")),
+        feature = "experimental-burn-net8-packed-cuda-v1"
+    ))]
     pub(crate) fn forward_feature_transfer_v8_hidden_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,

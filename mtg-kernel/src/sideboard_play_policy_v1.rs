@@ -1836,7 +1836,11 @@ impl FrozenPlayPolicyV1 {
     /// takes its own 196-wide rows and pairing relation. Uses the scoring
     /// call's activation mode; the caller compares the output with that
     /// call's scores.
-    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    // The test lives in flat_v8_tests, which the limited builds leave out.
+    #[cfg(any(
+        all(test, not(feature = "limited-fdn-fixtures")),
+        feature = "experimental-burn-net8-packed-cuda-v1"
+    ))]
     pub(crate) fn diagnostic_last_hidden_v1(
         &self,
         model: Option<&NativePolicyValueNetV1>,
