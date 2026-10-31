@@ -2211,10 +2211,18 @@ def watch(interval: float = 30.0, once: bool = False, notify: list[str] | None =
     stop_at = None if duration is None else time.monotonic() + duration
     while True:
         state = read_json(state_path) or {}
-        config = load_config()
-        timed = timed_state()
-        claims, tickets = _peek()
-        counters = cpu_times()
+        try:
+            config = load_config()
+            timed = timed_state()
+            claims, tickets = _peek()
+            counters = cpu_times()
+        except (OSError, ValueError) as exc:   # a bad config edit or a failed counter read: log it, keep watching
+            _append_jsonl(folder / f"util-{now_utc()[:10].replace('-', '')}.jsonl",
+                          [{"event": "error", "t": now_utc(), "error": str(exc)[:300]}])
+            if once:
+                return EXIT_REFUSED
+            time.sleep(interval)
+            continue
         mono, wall = time.monotonic(), now_utc()
         state, lines, nudges = watch_tick(state, counters, mono, wall, config, timed, claims, tickets,
                                           interval=interval)

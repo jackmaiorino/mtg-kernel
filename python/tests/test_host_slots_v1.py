@@ -1645,6 +1645,16 @@ class WatcherTests(unittest.TestCase):
 class WatcherProcessTests(unittest.TestCase):
     setUp = HostSlotsTests.setUp
 
+    def test_a_bad_config_is_logged_and_never_stops_a_long_watch(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "999"})
+        assert slots.watch(once=True) == slots.EXIT_REFUSED
+        rows = [json.loads(line) for path in (self.host / "TESTHOST.util").glob("util-*.jsonl")
+                for line in path.read_text().splitlines()]
+        assert [row["event"] for row in rows] == ["error"] and "999" in rows[0]["error"]
+        with patch.object(slots.time, "sleep", side_effect=[None, StopIteration]):
+            with self.assertRaises(StopIteration):
+                slots.watch(interval=1.0)
+
     def test_watch_status_events_and_report(self):
         proc = cli("run", "--shared", "--cores", "1", "--lane", "r", "--work-id", "w", "--",
                    sys.executable, "-c", "pass")
