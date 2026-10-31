@@ -64,6 +64,24 @@ class QualifyTests(unittest.TestCase):
         self.assertEqual(g.require_runtime_rules(config), 1620)
         self.assertEqual(value["interrupt_at_update"], 81)
 
+    def test_a_later_start_takes_the_new_lease_inventory_and_keeps_the_plan(self):
+        # lease 2026-10-31 13:26: the volume's plan pinned the first lease's inventory, over 24 h old
+        old = save(self.root / "old" / "inventory.json", b'{"checked": "first lease"}')
+        new = save(self.root / "new" / "inventory.json", b'{"checked": "this lease"}')
+        spec = {"storage": {"accounting_roots": [str(self.root)]}, "wall_seconds": 3600}
+        for inventory in (old, new):
+            path = self.root / f"spec-{inventory['sha256'][:8]}.json"
+            path.write_text(json.dumps({**spec, "inventory": inventory}), encoding="utf-8")
+            with patch.object(qualify, "launch", return_value={"launched": True}) as launched:
+                qualify.main(["start", "--campaign", str(self.path), "--spec", str(path), "--out", str(self.root / "q")])
+            launched.assert_called_once_with(self.path, self.root / "q" / "plan.json")
+            value = json.loads((self.root / "q" / "plan.json").read_text())
+            if inventory is old:
+                first = value
+        self.assertEqual((value["inventory"], value["spec"]["inventory"]), (new, new))
+        self.assertEqual(value["families"], first["families"])     # the trial and pack evidence is reused
+        self.assertEqual(value["root"], first["root"])
+
     def seed_main(self):
         state = {"run": "G1", "status": "complete", "blocks": {}}
         for block in (1, 2):
