@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import copy
 import gzip
+import hashlib
 import json
 import math
 import os
@@ -189,6 +190,19 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
         reports[name] = pin(report)
         log(kind="trial", name=name, report=reports[name])
     pack_index = Path(read(family["pack"]["path"])["root"]) / "pack.json"
+    here = dispatch.host_topology()
+    if pack_index.exists() and read(pack_index).get("topology") != here:
+        # A pack is its host's own (which CPUs share a core; on a Pod, its granted CPUs), and the launcher's
+        # check-choice refuses one qualified elsewhere. On another host the pack is qualified again from this
+        # host's own plan: its root names the topology, so its trials get fresh roots and every earlier pack
+        # stays where its evidence pins it. A restart on this host finds its own pack again.
+        topology = hashlib.sha256(json.dumps(here, sort_keys=True).encode()).hexdigest()[:16]
+        plan_ = read(family["pack"]["path"])
+        root = Path(plan_["root"]).with_name(f"pack-host-{topology}")
+        family = dict(family, pack=write_json(Path(family["pack"]["path"]).with_name(f"pack-plan-host-{topology}.json"),
+                                              dict(plan_, root=str(root))))
+        pack_index = root / "pack.json"
+        log(kind="pack-requalify", topology_sha256=topology, plan=family["pack"])
     if not pack_index.exists():
         plan_ = read(family["pack"]["path"])
         left = campaign.wall_left()
@@ -203,8 +217,9 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
             if base_request["wall_seconds"] > limit or plan_["timeout_seconds"] > limit:
                 base_pin = write_json(Path(plan_["base_request"]["path"]).with_name(f"pack-base-bounded-{limit}.json"),
                                       dict(base_request, wall_seconds=min(base_request["wall_seconds"], limit)))
-                family = dict(family, pack=write_json(Path(family["pack"]["path"]).with_name(
-                    f"pack-plan-bounded-{limit}.json"), dict(plan_, base_request=base_pin,
+                plan_path = Path(family["pack"]["path"])  # keeps its host's name: one bounded plan per host
+                family = dict(family, pack=write_json(plan_path.with_name(
+                    f"{plan_path.stem}-bounded-{limit}.json"), dict(plan_, base_request=base_pin,
                                                              timeout_seconds=min(plan_["timeout_seconds"], limit))))
         # One absolute deadline for the whole pack (its launch retries and barrier waits included): ending the
         # tool fails its waiting trials, and a running trial's own timeout is already inside the claim time.
@@ -215,7 +230,9 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
                                    cwd=str(TOOLS.parents[1]), timeout=deadline)
         except subprocess.TimeoutExpired:
             raise SystemExit("study_wall_cap: the pack qualification reached the study's claim time") from None
-        (pack_index.parent.parent / "pack.stdout").write_text(done.stdout, encoding="utf-8")
+        # Beside its plan, under the plan's own name (one per host and bound); the root may not exist yet
+        # when the tool refused before making it.
+        Path(family["pack"]["path"]).with_suffix(".stdout").write_text(done.stdout, encoding="utf-8")
         if done.returncode != 0:
             raise RuntimeError("pack qualification failed: " + done.stderr.strip()[-2000:])
     log(kind="pack", index=pin(pack_index))

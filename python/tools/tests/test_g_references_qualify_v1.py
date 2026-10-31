@@ -210,6 +210,60 @@ class QualifyTests(unittest.TestCase):
             qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         self.assertLessEqual(json.loads(Path(calls[0]["base_request"]["path"]).read_text())["wall_seconds"], 133)
 
+    def test_a_pack_from_another_host_stays_and_this_host_qualifies_its_own(self):
+        inventory = save(self.root / "inventory.json", b"{}")
+        value = json.loads(Path(qualify.plan(self.path, {"storage": {"accounting_roots": [str(self.root)]},
+                                                         "wall_seconds": 3600, "inventory": inventory},
+                                             self.root / "q")["path"]).read_text())
+        family = value["families"]["empty-pool"]
+        pack_root = Path(json.loads(Path(family["pack"]["path"]).read_text())["root"])
+        for name in family["trials"]:
+            report = Path(json.loads(Path(family["trials"][name]["path"]).read_text())["root"]) / "report.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("{}")
+        here, there = [{"cpus": "0,16", "efficiency_class": 0}], [{"cpus": "0,1", "efficiency_class": 0}]
+        pack_root.mkdir(parents=True)
+        (pack_root / "pack.json").write_text(json.dumps({"topology": there}))  # an earlier Pod's pack
+        runs, events = [], []
+
+        def fake_run(args, **kwargs):  # the pack tool, given its plan
+            runs.append(args)
+            root = Path(json.loads(Path(args[-1]).read_text())["root"])
+            root.mkdir(parents=True)  # the tool requires a fresh root
+            (root / "pack.json").write_text(json.dumps({"topology": here}))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        with patch.object(qualify.dispatch, "host_topology", return_value=here), \
+                patch.object(qualify.subprocess, "run", side_effect=fake_run):
+            first = qualify.trials_and_pack(self.campaign, family, self.root / "q",
+                                            lambda **fields: events.append(fields))
+            self.assertEqual(len(runs), 1)  # qualified again on this host
+            plan = json.loads(Path(runs[0][-1]).read_text())
+            self.assertNotEqual(plan["root"], str(pack_root))  # its own root, so its trials get fresh roots
+            self.assertEqual(json.loads((pack_root / "pack.json").read_text())["topology"], there)  # untouched
+            self.assertEqual(Path(first["pack"]["path"]), Path(plan["root"]) / "pack.json")
+            self.assertIn("pack-requalify", [event["kind"] for event in events])
+            self.assertTrue(Path(runs[0][-1]).with_suffix(".stdout").exists())  # its own record, none overwritten
+            again = qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+            self.assertEqual(len(runs), 1)  # a restart on this host reuses its own pack
+            self.assertEqual(again["pack"], first["pack"])
+        # A pack tool that refuses before making its root reports its own reason.
+        refused = lambda args, **kwargs: subprocess.CompletedProcess(args, 1, stdout="", stderr="a slot's SMT sibling is not declared")
+        with patch.object(qualify.dispatch, "host_topology", return_value=[{"cpus": "0,2", "efficiency_class": 0}]),                 patch.object(qualify.subprocess, "run", side_effect=refused):
+            with self.assertRaisesRegex(RuntimeError, "SMT sibling is not declared"):
+                qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+        # Bounded by the claim time (Jack's PC), two hosts keep one bounded plan each.
+        bounded = []
+        for topology in ([{"cpus": "0,8", "efficiency_class": 0}], [{"cpus": "0,4", "efficiency_class": 0}]):
+            with patch.object(qualify.dispatch, "host_topology", return_value=topology), \
+                    patch.object(qualify.driver.Campaign, "wall_left", return_value=3300), \
+                    patch.object(qualify.subprocess, "run", side_effect=fake_run):
+                qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+            bounded.append(Path(runs[-1][-1]))
+        self.assertEqual(len({path.name for path in bounded}), 2)
+        self.assertTrue(all(path.stem.startswith("pack-plan-host-") and "-bounded-" in path.stem for path in bounded))
+        for path in bounded:  # each pinned plan still has the bytes its pack recorded
+            self.assertEqual(Path(json.loads(path.read_text())["root"]).name.split("-")[2], path.stem.split("-")[3])
+
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):
             qualify.run(self.path, self.root / "plan.json")
