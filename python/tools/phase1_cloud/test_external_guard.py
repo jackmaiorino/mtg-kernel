@@ -1101,9 +1101,16 @@ class StoreClosureTests(Base):
             failing[0] = True                             # then reads of its record fail
             with mock.patch.object(eg, 'handoff_in', side_effect=unreadable):
                 client.census()                           # a refresh that cannot land
+
+                def slow_census(current):                 # every further census takes 15 s (round 17)
+                    clock.advance(15)
+                    return current
+                world.census = slow_census
+                calls = world.log.count(('LIST', None))
                 eg.resolve_or_alert(client, client.release_deadline(), self.root / 'ALERT-pod-not-released.json',
                                     clock.sleep)          # the creator's finish() step
                 self.assertEqual(clock.t, 0.0)            # nothing waited on the refresh
+                self.assertEqual(world.log.count(('LIST', None)), calls)   # and no census was made for it
             client.delete('p')                            # the creator's own price DELETE follows at once
         self.assertEqual(world.deletes, ['p'])
         self.assertTrue((self.root / eg.SYNC_ALERT).exists())

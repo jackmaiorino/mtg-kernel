@@ -818,6 +818,14 @@ class LeaseClient:
         return returned
 
 
+def settle_refresh(client, pod_id):
+    """A guardian-owned ID whose refresh has not landed: one retry; if it fails the refresh is reported
+    and discharged, which is main's behavior (main holds no refresh obligation). Never deletes."""
+    if not client.retain(pod_id, client.retained.get(pod_id, 'census'), presence=True):
+        degraded(client.folder, 'refresh of ' + pod_id + ' not published')
+        client.presence_pending.discard(pod_id); client.unpersisted.discard(pod_id)
+
+
 def release_unhanded(client, pod_ids, deadline, sleep=None):
     """I4 for an ending path that holds IDs it could not hand off: DELETE each and verify absence (I5)
     until the deadline. Confirmation is never terminal: every target is checked on every pass, any
@@ -848,9 +856,7 @@ def release_unhanded(client, pod_ids, deadline, sleep=None):
                 # seen alive, but its presence handoff has not landed: the guardian's Pod is never
                 # deleted here. One retry; if it fails, the refresh is reported and discharged, which
                 # is main's behavior (no refresh obligation at all), so nothing waits on it (I4, I5)
-                if not client.retain(pod_id, client.retained.get(pod_id, 'census'), presence=True):
-                    degraded(client.folder, 'refresh of ' + pod_id + ' not published')
-                    client.presence_pending.discard(pod_id); client.unpersisted.discard(pod_id)
+                settle_refresh(client, pod_id)
                 targets.discard(pod_id)
                 continue
             try:
@@ -878,6 +884,11 @@ def resolve_or_alert(client, deadline, alert_path, sleep=None, also=()):
     absent are released here (release_unhanded); if any remain, an ALERT record is written and
     RuntimeError('ALERT ...') raised. Returns the IDs this call released."""
     targets = {p for p in (set(also) | client.unpersisted) - client.verified_absent if not client.durable_now(p)}
+    # a guardian-owned ID whose refresh has not landed is settled first, without any provider call: one
+    # retry, then reported and discharged (main holds no refresh obligation), so it never delays a release
+    for pod_id in sorted(p for p in targets if p in client.presence_pending and client.guardian_owns(p)):
+        settle_refresh(client, pod_id)
+        targets.discard(pod_id)
     if not targets:
         return set()
     pending = release_unhanded(client, targets, deadline, sleep)
