@@ -154,19 +154,20 @@ fn check_game_v1(
         }
         if !new.pairs.is_empty() {
             pairing_decisions += 1;
-            // Up to two fixture cases with one pending block and three with
-            // more (gang blocks or blocks for earlier attackers).
-            let singles = cases
-                .iter()
-                .filter(|case| {
-                    case["tensor"]["pairing_node_indices"]
-                        .as_array()
-                        .unwrap()
-                        .len()
-                        == 2
-                })
-                .count();
-            let multis = cases.len() - singles;
+            // Up to two fixture cases of each kind: a block for an earlier
+            // attacker of the declaration, a gang block, a single block.
+            let kind = if observation_json["projection"]["surface_context"]["private_blockers"]
+                ["accumulated"]
+                .as_array()
+                .is_some_and(|pairs| !pairs.is_empty())
+            {
+                "accumulated"
+            } else if new.pairs.len() > 2 {
+                "multiple"
+            } else {
+                "single"
+            };
+            let same_kind = cases.iter().filter(|case| case["kind"] == kind).count();
             // Known hand cards are left out: the FlatV4 Python reference
             // encodes them in observation order and the Rust tensorizer in
             // canonical order (`canonical_known_hand_cards`), a FlatV4
@@ -179,10 +180,10 @@ fn check_game_v1(
                             .iter()
                             .all(|cards| cards.as_array().is_some_and(Vec::is_empty))
                     });
-            if no_known_hands
-                && ((new.pairs.len() > 2 && multis < 3) || (new.pairs.len() == 2 && singles < 2))
-            {
-                cases.push(parity_case_v1(&session, d, &new));
+            if no_known_hands && same_kind < 2 {
+                let mut case = parity_case_v1(&session, d, &new);
+                case["kind"] = serde_json::json!(kind);
+                cases.push(case);
             }
         }
         decisions += 1;
@@ -265,6 +266,13 @@ fn flat_v8_tensors_include_bits_and_pairs_match_the_sessions() {
         (false, PlayerId::P1, ["Elves", "CawGates"]),
         (false, PlayerId::P0, ["Rally", "Rally"]),
         (false, PlayerId::P1, ["Affinity", "Elves"]),
+        (false, PlayerId::P0, ["Faeries", "Elves"]),
+        (false, PlayerId::P1, ["CawGates", "CawGates"]),
+        (false, PlayerId::P0, ["Terror", "Rally"]),
+        (false, PlayerId::P1, ["Elves", "Rally"]),
+        (false, PlayerId::P0, ["Affinity", "Affinity"]),
+        (false, PlayerId::P1, ["Rally", "CawGates"]),
+        (false, PlayerId::P0, ["Elves", "Terror"]),
         (true, PlayerId::P0, ["Burn", "Elves"]),
     ] {
         let (decisions, include_rows, pairing) =
