@@ -423,7 +423,12 @@ def counts(attempt: dict) -> bool:
     root = Path(attempt["root"])
     if not (root / "started.json").exists() or storage_failure(root):
         return False
-    return root.as_posix().removeprefix(LEASE_1613_ROOT) not in STORAGE_KILLED_1613
+    if root.as_posix().removeprefix(LEASE_1613_ROOT) not in STORAGE_KILLED_1613 \
+            or (root / "report.json").exists() or (root / "failure.json").exists() \
+            or not (root / "execution.json").exists():
+        return True
+    record = json.loads((root / "execution.json").read_text(encoding="utf-8"))
+    return not (record.get("exit_code") == 0 and record.get("error") is None)  # the evidence's signature
 
 
 def counted(entry: dict) -> int:
@@ -487,6 +492,11 @@ def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
                                         "sealed_at": now(), "epoch": time.time()})
     campaign.save_state(run, state)
     touch(campaign)
+
+
+def pending_seals(campaign: Campaign) -> int:
+    seals, markers = campaign.state / "seals", campaign.state / "moved"
+    return sum(not moved(markers / path.name) for path in seals.glob("*.json")) if seals.exists() else 0
 
 
 def moved(path: Path) -> bool:
@@ -587,7 +597,9 @@ def hold(campaign: Campaign, run: str, block: int, state: dict, reason: str, ann
     (the follower drains it, as at a lease's start) until the copy-back is stalled; a latch or a stall stops."""
     with SCRATCH_LOCK:
         idle = not SCRATCH_INFLIGHT
-    draining = reason.startswith("records: window full")
+    # a full window, or a retained refusal while sealed blocks wait: the copy-back frees the volume
+    draining = reason.startswith("records: window full") or (
+        reason.startswith("retained:") and campaign.raw.get("records") and pending_seals(campaign) > 0)
     if draining and drain_idle(campaign) > DRAIN_IDLE_SECONDS and idle:
         reason = f"records: window full, no copy-back progress in {DRAIN_IDLE_SECONDS} s"  # before the guard's idle bound
         draining = False

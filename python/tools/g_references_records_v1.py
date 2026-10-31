@@ -51,6 +51,7 @@ LEVEL = 10
 POD_LOCK = "/root/g-records.lock"  # Pod-local: the lease controller's recovery takes it to stop deletion
 POD_QUIESCE = "/root/g-records-quiesce"  # Pod-local, so a new Pod starts unquiesced
 BUDGET_ALERT = 0.8
+NO_POD_SECONDS = 2 * 3600
 SCHEMA = "g-references-v1/records-moved"
 SEAL_SCHEMA = "g-references-v1/block-records"
 
@@ -265,6 +266,7 @@ def cycle(pod, state: str, dest: Path, budget: int, control: Path, **options) ->
             moved += 1
         except Exception as error:  # the volume copy stays; the driver's stall latch stops new blocks
             alert = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "seal": name,
+                     "kind": "transport" if isinstance(error, cloud.PodUnavailable) else "copy",
                      "error": f"{type(error).__name__}: {error}"[-2000:]}
             (control / "ALERT-records.json").write_text(json.dumps(alert, indent=1), encoding="utf-8")
             break
@@ -276,7 +278,10 @@ def follow(control: Path, package: Path, dest: Path, budget: int, key: Path, int
     state = json.loads((package / "campaign.json").read_text(encoding="utf-8"))["roots"]["state"]
     publish(control / "records-follow-ready.json", json.dumps({"epoch": time.time(), "pid": os.getpid(),
                                                               "dest": str(dest), "budget_bytes": budget}))
+    started = time.monotonic()
     while True:
+        if not (control / "endpoint.json").exists() and time.monotonic() - started > NO_POD_SECONDS:
+            return 1  # the lease never reached a Pod: nothing to follow
         if (control / "endpoint.json").exists():
             pod = cloud.Pod(json.loads((control / "endpoint.json").read_text(encoding="utf-8")), key,
                             control / "known_hosts", subprocess.run, time.sleep)

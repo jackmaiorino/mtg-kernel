@@ -511,10 +511,13 @@ class DriverTests(unittest.TestCase):
         other_failure = attempt("R7", "interrupted", clean_exit | {
             "failure.json": {"error": "RuntimeError: retained copy differs"}})
         never_started = attempt("R8", "interrupted", {}, started=False)
+        same_root_crash = attempt("G4", "interrupted", {"execution.json": {"exit_code": 1, "error": "native process failed"}})
         cases = (killed_1613, clean_elsewhere, killed_in_run, recorded, emergency, native_failed, other_failure,
-                 never_started)
+                 never_started, same_root_crash)
         with patch.object(driver, "LEASE_1613_ROOT", (self.root / "campaign").as_posix() + "/"):
-            self.assertEqual([driver.counts(a) for a in cases], [False, True, False, False, False, True, True, False])
+            # a 1613 root without the evidence's signature (exit 0, no error, no report, no failure.json) counts
+            self.assertEqual([driver.counts(a) for a in cases],
+                             [False, True, False, False, False, True, True, False, True])
         self.assertTrue(driver.counts(killed_1613))  # the exception names lease 1613's own volume paths only
         self.assertFalse(driver.counts({"outcome": "unspawned"}))
         self.assertTrue(driver.counts({"outcome": "lost"}))
@@ -661,6 +664,17 @@ class DriverTests(unittest.TestCase):
             driver.DRAIN["at"] = time.time() - driver.DRAIN_IDLE_SECONDS - 1
             self.assertFalse(driver.hold(self.campaign, "G6", 3, state, "records: window full, 63 sealed", False))
         self.assertIn("no copy-back progress in 240 s", state["stop_reason"])
+
+    def test_a_retained_refusal_drains_while_sealed_blocks_wait(self):
+        self.records_campaign()
+        state = {"run": "G6", "status": "running", "blocks": {}}
+        with patch.object(driver.time, "sleep"):
+            self.assertFalse(driver.hold(self.campaign, "G6", 3, state, "retained: over the cap", True))  # none sealed
+            (self.campaign.state / "seals").mkdir(parents=True)
+            (self.campaign.state / "seals" / "G1-b003.json").write_text("{}")
+            driver.DRAIN.update(moved=-1, at=time.time())
+            self.addCleanup(driver.DRAIN.update, {"moved": -1, "at": driver.DRIVER_STARTED})
+            self.assertTrue(driver.hold(self.campaign, "G6", 3, state, "retained: over the cap", True))
 
     def test_a_finished_block_is_sealed_before_its_slot_frees(self):
         order = []
