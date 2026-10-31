@@ -241,11 +241,20 @@ impl ResolvedContractV1 {
     }
 
     /// Requires the record's contract to be exactly `policy`'s: the same
-    /// converted digest and conversion, or neither.
+    /// converted digest and conversion, or neither. A FlatV7 or FlatV8 record
+    /// also requires a policy of that identity, and any other record a policy
+    /// of neither, since all of them share the V4 generation.
     pub(crate) fn require_policy_contract_v1(
         &self,
         policy: &FrozenPlayPolicyV1,
     ) -> Result<(), String> {
+        let identity = policy.feature_identity_v1().feature_contract_digest;
+        for (flat, _) in FLAT_V4_FAMILY_IDENTITIES_V1 {
+            ensure(
+                (self.base_contract_digest == flat) == (identity == flat),
+                "record and model feature identities differ (FlatV7 or FlatV8)",
+            )?;
+        }
         ensure(
             self.input_contract_digest_v1() == policy.input_contract_v1()
                 && self.conversion_v1() == policy.input_contract_conversion_v1(),
@@ -254,9 +263,23 @@ impl ResolvedContractV1 {
     }
 }
 
+/// The feature identities of the V4 generation family beyond V4 itself,
+/// `(contract, encoding)`: FlatV7 and FlatV8.
+const FLAT_V4_FAMILY_IDENTITIES_V1: [(&str, &str); 2] = [
+    (
+        crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
+        crate::native_flat_tensorizer_v7::FEATURE_ENCODING_DIGEST_V7,
+    ),
+    (
+        crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+        crate::native_flat_tensorizer_v8::FEATURE_ENCODING_DIGEST_V8,
+    ),
+];
+
 /// The one resolver of a stored `(contract, encoding, cards)` identity and
 /// its `input_contract` member. Without the member it admits exactly the V3
-/// and V4 pairs, as [`identity_valid`] does; with it, exactly a converted
+/// and V4 pairs, as [`identity_valid`] does, and the FlatV7 and FlatV8 pairs
+/// (V4 generation); with it, exactly a converted
 /// digest `converted_contract_digest_v1(base)` beside its own base
 /// generation's encoding digest. The marker and the digest are checked
 /// together, so neither passes without the other.
@@ -279,6 +302,32 @@ pub(crate) fn resolve_contract_v1(
         ),
     ];
     let Some(record) = input_contract else {
+        // FlatV7 (`native_flat_tensorizer_v7.rs`): the V4 generation's tensors
+        // and arithmetic under its own identity, so its records replay and
+        // train through the V4 generation, as a no-state-digest record does
+        // through its base. FlatV8 (`native_flat_tensorizer_v8.rs`) is of the
+        // V4 generation family too, with its own tensors, which its policy's
+        // own replay reads (`score_replay_tensor_v1`). Neither has a
+        // no-state-digest conversion.
+        for (flat_contract, flat_encoding) in FLAT_V4_FAMILY_IDENTITIES_V1 {
+            if contract != flat_contract {
+                continue;
+            }
+            ensure(
+                encoding == flat_encoding,
+                "successor feature identity differs",
+            )?;
+            ensure(
+                cards == format!("{KERNEL_CARDDB_HASH:016x}"),
+                "successor card database differs",
+            )?;
+            return Ok(ResolvedContractV1 {
+                generation: FreshLineageGenerationV1::V4,
+                base_contract_digest: flat_contract,
+                base_encoding_digest: flat_encoding,
+                effective: EffectiveContractV1::None,
+            });
+        }
         identity_valid(contract, encoding, cards)?;
         let (generation, base_contract_digest, base_encoding_digest) = generations
             .into_iter()

@@ -20,6 +20,10 @@ use crate::london_mulligan_v1;
 
 #[cfg(test)]
 mod flat_v7_tests;
+// Binds the Pauper registry (its parity fixture), so the appended-registry
+// builds leave it out.
+#[cfg(all(test, not(feature = "limited-fdn-fixtures")))]
+mod flat_v8_tests;
 #[cfg(test)]
 mod tests;
 

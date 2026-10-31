@@ -1418,6 +1418,29 @@ fn load_opponent_contract_v1(
     Ok(policy.input_contract_v1().map(str::to_owned))
 }
 
+/// The FlatV7 or FlatV8 identity a source declares in its feature transfer,
+/// if any.
+fn flat_identity_declared_v1(
+    source: &ExpandedModelSourceV1,
+) -> Option<(&'static str, &'static str)> {
+    let transfer = &source.feature_transfer;
+    [
+        (
+            crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
+            crate::native_flat_tensorizer_v7::FEATURE_ENCODING_DIGEST_V7,
+        ),
+        (
+            crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+            crate::native_flat_tensorizer_v8::FEATURE_ENCODING_DIGEST_V8,
+        ),
+    ]
+    .into_iter()
+    .find(|(contract, encoding)| {
+        transfer.expected_feature_contract_digest == *contract
+            && transfer.expected_feature_encoding_digest == *encoding
+    })
+}
+
 /// Runs or resumes a declared schedule. The optional invocation limit pauses
 /// only at completed iteration boundaries; it never changes the saved plan.
 pub fn run_native_expanded_training_v1(
@@ -1468,6 +1491,12 @@ pub fn run_native_expanded_training_v1(
         manifest["feature_contract_digest"] = json!(initial.identity.model.feature_contract_digest);
         manifest["feature_encoding_digest"] = json!(initial.identity.model.feature_encoding_digest);
         manifest["input_contract"] = initial.record.clone();
+    }
+    // A FlatV7 or FlatV8 run records its declared identity, which its source
+    // loader enforces; every other unconverted run keeps its plan bytes.
+    if let Some((contract, encoding)) = flat_identity_declared_v1(&config.initial_source) {
+        manifest["feature_contract_digest"] = json!(contract);
+        manifest["feature_encoding_digest"] = json!(encoding);
     }
     config.update_backend.record_run_execution_v1(&mut manifest);
     record_loss_selection_execution(config, &mut manifest);
@@ -2841,6 +2870,127 @@ mod tests {
         let document: Value =
             serde_json::from_str(&fs::read_to_string(&update_pin.path).unwrap()).unwrap();
         document["loss_identity"].as_str().unwrap().to_owned()
+    }
+
+    /// The checkpoint pin of completed iteration `index` of a run result:
+    /// `complete.json`, then its `update.json`, then its `checkpoint`.
+    fn iteration_checkpoint_v1(result: &Value, index: usize) -> PinnedFileV1 {
+        let complete_pin: PinnedFileV1 =
+            serde_json::from_value(result["iterations"][index].clone()).unwrap();
+        let complete: Value =
+            serde_json::from_str(&fs::read_to_string(&complete_pin.path).unwrap()).unwrap();
+        let update_pin: PinnedFileV1 = serde_json::from_value(complete["update"].clone()).unwrap();
+        let update: Value =
+            serde_json::from_str(&fs::read_to_string(&update_pin.path).unwrap()).unwrap();
+        serde_json::from_value(update["checkpoint"].clone()).unwrap()
+    }
+
+    fn checkpoint_identity_v1(pin: &PinnedFileV1) -> (String, String, u64) {
+        let checkpoint: Value =
+            serde_json::from_str(&fs::read_to_string(&pin.path).unwrap()).unwrap();
+        (
+            checkpoint["feature_contract_digest"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            checkpoint["feature_encoding_digest"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            checkpoint["adam_step"].as_u64().unwrap(),
+        )
+    }
+
+    /// FlatV7 and FlatV8 sources through the production run (the RT1 path):
+    /// a FlatV7 run from the V4 descriptor collects, updates, saves, pauses
+    /// after one iteration and resumes from its FlatV7 checkpoint, its
+    /// second iteration with London openings; then the FlatV7 run's first
+    /// checkpoint is converted to the V8 inclusion net and a FlatV8 run does
+    /// the same. Every checkpoint records its run's identity, and each
+    /// update advances Adam by one.
+    #[test]
+    fn flat_v7_and_v8_runs_collect_update_save_and_resume() {
+        use crate::native_flat_tensorizer_v7::{
+            FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+        };
+        use crate::native_flat_tensorizer_v8::{
+            FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8,
+        };
+        use crate::rl_session::pauper_london_v1::{PauperMulliganModeV1, PauperOpeningV1};
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        };
+        let transfer = |contract: &str, encoding: &str| {
+            crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: contract.into(),
+                expected_feature_encoding_digest: encoding.into(),
+            }
+        };
+        let london = |config: &mut NativeExpandedTrainingRunV1| {
+            let episode = &mut config.iterations[1].episodes[0].episode;
+            episode.opening = Some(PauperOpeningV1::LondonV1);
+            episode.mulligan_modes =
+                Some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]);
+        };
+        let mut v7 = real_two_iteration_config_v1("flat-v7", gae, ExpandedUpdateBackendV1::Cpu);
+        v7.initial_source.feature_transfer =
+            transfer(FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7);
+        london(&mut v7);
+        v7.validate_v1().unwrap();
+        run_native_expanded_training_v1(&v7, Some(1)).unwrap();
+        let result = run_native_expanded_training_v1(&v7, None).unwrap();
+        let manifest: Value = read_json(&v7.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert_eq!(
+            manifest["feature_contract_digest"],
+            FEATURE_CONTRACT_DIGEST_V7
+        );
+        let first = iteration_checkpoint_v1(&result, 0);
+        let (contract, encoding, first_step) = checkpoint_identity_v1(&first);
+        assert_eq!(
+            (contract.as_str(), encoding.as_str()),
+            (FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7)
+        );
+        let (contract, _, last_step) = checkpoint_identity_v1(&iteration_checkpoint_v1(&result, 1));
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V7);
+        assert_eq!(last_step, first_step + 1);
+
+        let converted =
+            crate::expanded_deck_training_v1::v8_inclusion_conversion_v1::write_v8_checkpoint_v1(
+                &first,
+                &v7.output_directory.join("v8-start.json"),
+                0x0008_0000_0000_0007,
+            )
+            .unwrap();
+        let mut v8 = real_two_iteration_config_v1("flat-v8", gae, ExpandedUpdateBackendV1::Cpu);
+        v8.initial_source = ExpandedModelSourceV1 {
+            play_import: v7.initial_source.play_import.clone(),
+            feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8),
+            checkpoint: Some(converted.pin.clone()),
+        };
+        london(&mut v8);
+        // The RT1 chains' parallel collection and ordered update preparation.
+        v8.collection_workers = 2;
+        v8.preparation_workers = 2;
+        v8.update_backward_execution = UpdateBackwardExecutionV1::FixedPartition4;
+        v8.validate_v1().unwrap();
+        run_native_expanded_training_v1(&v8, Some(1)).unwrap();
+        let result = run_native_expanded_training_v1(&v8, None).unwrap();
+        let manifest: Value = read_json(&v8.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert_eq!(
+            manifest["feature_contract_digest"],
+            FEATURE_CONTRACT_DIGEST_V8
+        );
+        for (index, step) in [(0, first_step + 1), (1, first_step + 2)] {
+            let (contract, encoding, adam_step) =
+                checkpoint_identity_v1(&iteration_checkpoint_v1(&result, index));
+            assert_eq!(
+                (contract.as_str(), encoding.as_str()),
+                (FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8)
+            );
+            assert_eq!(adam_step, step);
+        }
     }
 
     #[test]

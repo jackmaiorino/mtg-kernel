@@ -30,6 +30,11 @@
 //! `gamma(m-1)*2*sum_j(|c_j|)`. Their sum is recorded beside the raw residual;
 //! exceeding it aborts before model or optimizer mutation.
 
+use crate::native_policy_value_net_v1::v8_inclusion_v1::{
+    add_nonzero_message_v1, add_nonzero_products_v1, include_guard_v1, V8_ACTION_ENCODER_INPUT_V1,
+    V8_MODEL_ARCHITECTURE_VERSION_V1, V8_PAIRING_PARAMETER_NAMES_V1,
+    V8_PAIRING_PARAMETER_SHAPES_V1, V8_PARAMETER_COUNT_V1,
+};
 use crate::native_policy_value_net_v1::{
     accumulate_input_major_row_v1,
     NativeEncodedDecisionViewV1,
@@ -104,6 +109,7 @@ pub(crate) use line_b_auxiliary_v1::{
 mod no_state_digest_tests;
 pub(crate) mod retention_v1;
 pub(crate) mod screen_fit_v1;
+pub(crate) mod v8_inclusion_v1;
 mod weighted_v3;
 pub(crate) mod widening_v1;
 
@@ -790,6 +796,55 @@ pub(crate) fn native_train_state_parameter_layout_v1(
 // unchanged, only hidden_dim/card_embedding_dim differ), so only the shapes
 // table changes. The frozen EXPECTED_PARAMETER_SHAPES and
 // native_train_state_parameter_layout_v1 are untouched.
+/// The V8 inclusion net (`v8_inclusion_v1`): net-8's 33 tensors, then the
+/// pairing path's four at these ordinals.
+pub(crate) const V8_PARAMETER_TENSOR_COUNT_V1: usize = PARAMETER_TENSOR_COUNT + 4;
+const PAIRING_FIRST_WEIGHT_V1: usize = PARAMETER_TENSOR_COUNT;
+const PAIRING_FIRST_BIAS_V1: usize = PARAMETER_TENSOR_COUNT + 1;
+const PAIRING_SECOND_WEIGHT_V1: usize = PARAMETER_TENSOR_COUNT + 2;
+const PAIRING_SECOND_BIAS_V1: usize = PARAMETER_TENSOR_COUNT + 3;
+const V8_ACTION_FIRST_WEIGHT_SHAPE_V1: &[usize] = &[HIDDEN_DIM_V1, V8_ACTION_ENCODER_INPUT_V1];
+
+/// The expected `(name, shape)` of every tensor of an architecture: `D`'s
+/// table, or under `D = Net8DimsV1` with `v8` the V8 inclusion net's (net-8's
+/// table with `action_encoder.0.weight` one column wider, then the pairing
+/// path).
+fn parameter_layout_dims_v1<D: NetDimsV1>(v8: bool) -> Vec<(&'static str, &'static [usize])> {
+    let mut layout: Vec<(&'static str, &'static [usize])> = EXPECTED_PARAMETER_NAMES
+        .iter()
+        .copied()
+        .zip(D::PARAMETER_SHAPES)
+        .collect();
+    if v8 && is_net8_dims_v1::<D>() {
+        layout[ACTION_FIRST_WEIGHT].1 = V8_ACTION_FIRST_WEIGHT_SHAPE_V1;
+        layout.extend(
+            V8_PAIRING_PARAMETER_NAMES_V1
+                .iter()
+                .copied()
+                .zip(V8_PAIRING_PARAMETER_SHAPES_V1),
+        );
+    }
+    layout
+}
+
+/// The parameter count of [`parameter_layout_dims_v1`]'s architecture.
+fn parameter_count_dims_v1<D: NetDimsV1>(v8: bool) -> usize {
+    if v8 && is_net8_dims_v1::<D>() {
+        V8_PARAMETER_COUNT_V1
+    } else {
+        D::PARAMETER_COUNT
+    }
+}
+
+/// The two-layer spec of `action_encoder` for an action width (net-8's, or
+/// the V8 inclusion net's one wider).
+fn action_spec_v1<D: NetDimsV1>(action_feature_dim: usize) -> TwoLayerSpecV1 {
+    TwoLayerSpecV1 {
+        input_dim: action_feature_dim + D::HIDDEN,
+        ..D::ACTION_SPEC
+    }
+}
+
 const W_OBJECT_ENCODER_INPUT: usize = OBJECT_FEATURE_DIM_V1 + W_CARD_EMBEDDING_DIM_V1;
 const W_EDGE_ENCODER_INPUT: usize = EDGE_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1 * 2;
 const W_NODE_UPDATE_INPUT: usize = W_HIDDEN_DIM_V1 * 2;
@@ -1747,15 +1802,14 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         let mut parameter_tensor_count = 0usize;
         let mut parameter_element_count = 0usize;
         let mut scorer_bias_anchor_bits = None;
-        let expected_shapes = D::PARAMETER_SHAPES;
+        let v8 =
+            self.model.config_v1().model_architecture_version == V8_MODEL_ARCHITECTURE_VERSION_V1;
+        let layout = parameter_layout_dims_v1::<D>(v8);
         self.model.visit_parameters_v1(|name, shape, values| {
             let ordinal = parameter_tensor_count;
             parameter_tensor_count += 1;
             parameter_element_count = parameter_element_count.saturating_add(values.len());
-            let Some((expected_name, expected_shape)) = EXPECTED_PARAMETER_NAMES
-                .get(ordinal)
-                .zip(expected_shapes.get(ordinal))
-            else {
+            let Some((expected_name, expected_shape)) = layout.get(ordinal) else {
                 parameter_manifest_invalid = true;
                 return;
             };
@@ -1775,15 +1829,13 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             }
         });
         if parameter_manifest_invalid
-            || parameter_tensor_count != PARAMETER_TENSOR_COUNT
-            || parameter_element_count != D::PARAMETER_COUNT
+            || parameter_tensor_count != layout.len()
+            || parameter_element_count != parameter_count_dims_v1::<D>(v8)
         {
             return Err(NativePolicyTrainErrorV1::ParameterManifest);
         }
 
-        if self.first_moments.len() != PARAMETER_TENSOR_COUNT
-            || self.second_moments.len() != PARAMETER_TENSOR_COUNT
-        {
+        if self.first_moments.len() != layout.len() || self.second_moments.len() != layout.len() {
             return Err(NativePolicyTrainErrorV1::OptimizerState);
         }
         let mut optimizer_state_invalid = false;
@@ -4171,6 +4223,16 @@ impl DecisionTapeArenaCapacityV1 {
     fn checked_dims_v1<D: NetDimsV1>(
         counts: ValidatedCountsV1,
     ) -> Result<Self, NativePolicyTrainErrorV1> {
+        Self::checked_layout_dims_v1::<D>(counts, ACTION_FEATURE_DIM_V1, 0)
+    }
+
+    /// [`Self::checked_dims_v1`] for an action width `action_feature_dim`
+    /// and `pairing_rows` pairing rows (`v8_inclusion_v1`).
+    fn checked_layout_dims_v1<D: NetDimsV1>(
+        counts: ValidatedCountsV1,
+        action_feature_dim: usize,
+        pairing_rows: usize,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
         let mut f32_count = 0usize;
         checked_add_tape_rows_v1(
             &mut f32_count,
@@ -4196,8 +4258,10 @@ impl DecisionTapeArenaCapacityV1 {
         checked_add_tape_rows_v1(
             &mut f32_count,
             counts.action_count,
-            D::ACTION_ENCODER_INPUT + 2 * D::HIDDEN,
+            action_feature_dim + D::HIDDEN + 2 * D::HIDDEN,
         )?;
+        // The pairing path: each row's input, hidden and message.
+        checked_add_tape_rows_v1(&mut f32_count, pairing_rows, 2 * D::HIDDEN + 2 * D::HIDDEN)?;
         checked_add_tape_rows_v1(&mut f32_count, counts.action_count, D::SCORER_INPUT)?;
         checked_add_tape_rows_v1(&mut f32_count, counts.action_count, D::HIDDEN)?;
         checked_add_tape_rows_v1(&mut f32_count, counts.action_count, 1)?;
@@ -4208,6 +4272,7 @@ impl DecisionTapeArenaCapacityV1 {
             .object_count
             .checked_add(counts.edge_count)
             .and_then(|count| count.checked_add(counts.action_ref_count))
+            .and_then(|count| count.checked_add(pairing_rows))
             .and_then(|count| count.checked_mul(2))
             .ok_or_else(decision_tape_arena_overflow_v1)?;
         let object_pool_count = counts
@@ -4317,6 +4382,18 @@ fn append_usize_casts_v1(
     Ok(span)
 }
 
+/// One decision's pairing path (`v8_inclusion_v1`): the flattened
+/// `(blocker, attacker)` node pairs, each row's input (the two object-encoder
+/// outputs), its hidden layer after tanh and its message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PairingTapeV1 {
+    pairs: TapeSpanV1,
+    input: TapeSpanV1,
+    hidden: TapeSpanV1,
+    message: TapeSpanV1,
+    rows: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TwoLayerTapeV1 {
     input: TapeSpanV1,
@@ -4333,6 +4410,12 @@ struct DecisionTapeV1 {
     /// The hidden width of the architecture that recorded it; the reverse
     /// pass refuses a tape of another width before any arithmetic.
     hidden_dim: usize,
+    /// The input contract's action width: 195, or 196 for the V8 inclusion
+    /// net (`v8_inclusion_v1`).
+    action_feature_dim: usize,
+    /// The V8 inclusion net's pairing path, when the decision has a pending
+    /// block; None for every other tape.
+    pairing: Option<PairingTapeV1>,
     f32_arena: Vec<f32>,
     usize_arena: Vec<usize>,
     object_card_ids: TapeSpanV1,
@@ -4592,6 +4675,9 @@ struct ReverseDecisionWorkspaceV1 {
     d_object_input: Vec<f32>,
     two_layer_second_pre: Vec<f32>,
     two_layer_first_output: Vec<f32>,
+    d_pairing_message: Vec<f32>,
+    d_pairing_hidden: Vec<f32>,
+    d_pairing_input: Vec<f32>,
 }
 
 fn forward_with_tape(
@@ -4643,7 +4729,19 @@ fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
     #[cfg(test)]
     FORWARD_WITH_TAPE_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
     let counts = encoded.validate(config)?;
-    let capacities = DecisionTapeArenaCapacityV1::checked_dims_v1::<D>(counts)?;
+    // The V8 inclusion net (`v8_inclusion_v1`) widens the action rows and adds
+    // the pairing path, whose four tensors follow net-8's 33.
+    let action_feature_dim = config.action_feature_dim;
+    let pairing_rows = encoded.pairing_node_indices.len() / 2;
+    let v8 = config.model_architecture_version == V8_MODEL_ARCHITECTURE_VERSION_V1;
+    if v8 != (parameters.len() == V8_PARAMETER_TENSOR_COUNT_V1) || (!v8 && pairing_rows != 0) {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
+    let capacities = DecisionTapeArenaCapacityV1::checked_layout_dims_v1::<D>(
+        counts,
+        action_feature_dim,
+        pairing_rows,
+    )?;
     let mut f32_arena = Vec::with_capacity(capacities.f32_count);
     let mut usize_arena = Vec::with_capacity(capacities.usize_count);
     let object_card_ids = append_usize_casts_v1(&mut usize_arena, encoded.object_card_ids)?;
@@ -4739,6 +4837,65 @@ fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
             edge_target_indices.values_v1(&usize_arena),
         );
         Some(tape)
+    };
+    let pairing = if pairing_rows == 0 {
+        None
+    } else {
+        let pairs = append_usize_casts_v1(&mut usize_arena, encoded.pairing_node_indices)?;
+        let input_start = f32_arena.len();
+        for &node in pairs.values_v1(&usize_arena) {
+            append_arena_f32_v1(
+                &mut f32_arena,
+                object_encoder
+                    .second_output
+                    .checked_subspan_v1(node * D::HIDDEN, D::HIDDEN)?,
+            )?;
+        }
+        let input = TapeSpanV1::checked_v1(input_start, f32_arena.len() - input_start)?;
+        let hidden = linear_forward_into_arena_v1(
+            parameters,
+            input_major,
+            PAIRING_FIRST_WEIGHT_V1,
+            PAIRING_FIRST_BIAS_V1,
+            input,
+            pairing_rows,
+            2 * D::HIDDEN,
+            D::HIDDEN,
+            &mut f32_arena,
+        )?;
+        tanh_span_in_place_v1(&mut f32_arena, hidden, math);
+        let message = linear_forward_into_arena_v1(
+            parameters,
+            input_major,
+            PAIRING_SECOND_WEIGHT_V1,
+            PAIRING_SECOND_BIAS_V1,
+            hidden,
+            pairing_rows,
+            D::HIDDEN,
+            D::HIDDEN,
+            &mut f32_arena,
+        )?;
+        // The inference forward's guarded adds, in its order: each row's
+        // blocker, then its attacker.
+        for (pair, row) in pairs
+            .values_v1(&usize_arena)
+            .chunks_exact(2)
+            .zip(message.values_v1(&f32_arena).chunks_exact(D::HIDDEN))
+        {
+            for &node in pair {
+                add_nonzero_message_v1(
+                    &mut pooling_scratch[node * D::HIDDEN..(node + 1) * D::HIDDEN],
+                    row,
+                );
+            }
+        }
+        Some(PairingTapeV1 {
+            pairs,
+            input,
+            hidden,
+            message,
+            rows: pairing_rows,
+        })
     };
 
     let node_input_start = f32_arena.len();
@@ -4840,10 +4997,10 @@ fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
 
     let action_input_start = f32_arena.len();
     for action in 0..counts.action_count {
-        let feature_begin = action * ACTION_FEATURE_DIM_V1;
+        let feature_begin = action * action_feature_dim;
         append_external_f32_v1(
             &mut f32_arena,
-            &encoded.action_features[feature_begin..feature_begin + ACTION_FEATURE_DIM_V1],
+            &encoded.action_features[feature_begin..feature_begin + action_feature_dim],
         )?;
         let pooled_begin = action * D::HIDDEN;
         append_external_f32_v1(
@@ -4853,14 +5010,18 @@ fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
     }
     let action_input =
         TapeSpanV1::checked_v1(action_input_start, f32_arena.len() - action_input_start)?;
-    let action_encoder = two_layer_forward_into_arena_dims_v1::<D>(
+    // The V8 include column adds only nonzero products
+    // (`v8_inclusion_v1::add_nonzero_products_v1`); the backward takes its
+    // full derivative.
+    let action_encoder = two_layer_forward_into_arena_guarded_dims_v1::<D>(
         parameters,
         input_major,
-        D::ACTION_SPEC,
+        action_spec_v1::<D>(action_feature_dim),
         action_input,
         counts.action_count,
         &mut f32_arena,
         math,
+        include_guard_v1(action_feature_dim),
     )?;
 
     let scorer_input_start = f32_arena.len();
@@ -4931,6 +5092,8 @@ fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
 
     Ok(DecisionTapeV1 {
         hidden_dim: D::HIDDEN,
+        action_feature_dim,
+        pairing,
         f32_arena,
         usize_arena,
         object_card_ids,
@@ -5126,7 +5289,11 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
         d_object_input,
         two_layer_second_pre,
         two_layer_first_output,
+        d_pairing_message,
+        d_pairing_hidden,
+        d_pairing_input,
     } = workspace;
+    let action_encoder_input = tape.action_feature_dim + D::HIDDEN;
 
     sink.linear_v1(
         parameters,
@@ -5205,7 +5372,7 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
     two_layer_backward_into_dims_v1::<D>(
         parameters,
         sink,
-        D::ACTION_SPEC,
+        action_spec_v1::<D>(tape.action_feature_dim),
         &tape.f32_arena,
         &tape.action_encoder,
         d_action_hidden,
@@ -5215,7 +5382,7 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
     )?;
     resize_zeroed_v1(d_action_ref_pooled, action_count * D::HIDDEN);
     for action in 0..action_count {
-        let source = action * D::ACTION_ENCODER_INPUT + ACTION_FEATURE_DIM_V1;
+        let source = action * action_encoder_input + tape.action_feature_dim;
         let destination = action * D::HIDDEN;
         d_action_ref_pooled[destination..destination + D::HIDDEN]
             .copy_from_slice(&d_action_input[source..source + D::HIDDEN]);
@@ -5327,6 +5494,54 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
         }
     }
 
+    // The pairing path (`v8_inclusion_v1`). Each message was added into both
+    // nodes' pooled messages; its gradient is the sum of theirs, as if every
+    // value were added: the forward's zero guard only keeps legacy signed
+    // zeros and never suppresses a gradient.
+    if let Some(pairing) = &tape.pairing {
+        let pairs = tape.usize_values_v1(pairing.pairs);
+        resize_zeroed_v1(d_pairing_message, pairing.rows * D::HIDDEN);
+        for (row, pair) in pairs.chunks_exact(2).enumerate() {
+            let (blocker, attacker) = (pair[0] * D::HIDDEN, pair[1] * D::HIDDEN);
+            for hidden in 0..D::HIDDEN {
+                d_pairing_message[row * D::HIDDEN + hidden] =
+                    d_edge_pooled[blocker + hidden] + d_edge_pooled[attacker + hidden];
+            }
+        }
+        sink.linear_v1(
+            parameters,
+            PAIRING_SECOND_WEIGHT_V1,
+            PAIRING_SECOND_BIAS_V1,
+            tape.f32_values_v1(pairing.hidden),
+            pairing.rows,
+            D::HIDDEN,
+            D::HIDDEN,
+            d_pairing_message,
+            d_pairing_hidden,
+        )?;
+        apply_tanh_gradient(tape.f32_values_v1(pairing.hidden), d_pairing_hidden)?;
+        sink.linear_v1(
+            parameters,
+            PAIRING_FIRST_WEIGHT_V1,
+            PAIRING_FIRST_BIAS_V1,
+            tape.f32_values_v1(pairing.input),
+            pairing.rows,
+            2 * D::HIDDEN,
+            D::HIDDEN,
+            d_pairing_hidden,
+            d_pairing_input,
+        )?;
+        for (row, pair) in pairs.chunks_exact(2).enumerate() {
+            for (half, &node) in pair.iter().enumerate() {
+                let source = row * 2 * D::HIDDEN + half * D::HIDDEN;
+                let destination = node * D::HIDDEN;
+                for hidden in 0..D::HIDDEN {
+                    d_object_base[destination + hidden] += d_pairing_input[source + hidden];
+                }
+            }
+        }
+    }
+
     two_layer_backward_into_dims_v1::<D>(
         parameters,
         sink,
@@ -5394,7 +5609,32 @@ fn two_layer_forward_into_arena_dims_v1<D: NetDimsV1>(
     arena: &mut Vec<f32>,
     math: TrainingMathV1,
 ) -> Result<TwoLayerTapeV1, NativePolicyTrainErrorV1> {
-    let first_output = linear_forward_into_arena_v1(
+    two_layer_forward_into_arena_guarded_dims_v1::<D>(
+        parameters,
+        input_major,
+        spec,
+        input,
+        rows,
+        arena,
+        math,
+        None,
+    )
+}
+
+/// [`two_layer_forward_into_arena_dims_v1`] with the first layer's column
+/// `guard` added only where its product is nonzero.
+#[allow(clippy::too_many_arguments)]
+fn two_layer_forward_into_arena_guarded_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
+    spec: TwoLayerSpecV1,
+    input: TapeSpanV1,
+    rows: usize,
+    arena: &mut Vec<f32>,
+    math: TrainingMathV1,
+    guard: Option<usize>,
+) -> Result<TwoLayerTapeV1, NativePolicyTrainErrorV1> {
+    let first_output = linear_forward_into_arena_guarded_v1(
         parameters,
         input_major,
         spec.first_weight,
@@ -5404,6 +5644,7 @@ fn two_layer_forward_into_arena_dims_v1<D: NetDimsV1>(
         spec.input_dim,
         D::HIDDEN,
         arena,
+        guard,
     )?;
     tanh_span_in_place_v1(arena, first_output, math);
     let second_output = linear_forward_into_arena_v1(
@@ -5567,6 +5808,39 @@ fn linear_forward_into_arena_v1(
     output_dim: usize,
     arena: &mut Vec<f32>,
 ) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
+    linear_forward_into_arena_guarded_v1(
+        parameters,
+        input_major,
+        weight_index,
+        bias_index,
+        input,
+        rows,
+        input_dim,
+        output_dim,
+        arena,
+        None,
+    )
+}
+
+/// [`linear_forward_into_arena_v1`] with input column `guard` added through
+/// `add_nonzero_products_v1`. Every output keeps one sequential sum in input
+/// order, so the other columns' bits are unchanged.
+#[allow(clippy::too_many_arguments)]
+fn linear_forward_into_arena_guarded_v1(
+    parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
+    weight_index: usize,
+    bias_index: usize,
+    input: TapeSpanV1,
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    arena: &mut Vec<f32>,
+    guard: Option<usize>,
+) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
+    if guard.is_some_and(|column| column >= input_dim) {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
     let weight = &parameters[weight_index].values;
     let bias = &parameters[bias_index].values;
     let input_len = rows
@@ -5594,12 +5868,23 @@ fn linear_forward_into_arena_v1(
         for row in 0..rows {
             let input_row = &input[row * input_dim..(row + 1) * input_dim];
             let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
-            match input_major {
-                Some(weight_t) => {
+            match (input_major, guard) {
+                (Some(weight_t), None) => {
                     output_row.copy_from_slice(bias);
                     accumulate_input_major_row_v1(weight_t, input_row, output_row);
                 }
-                None => linear_forward_ordered_v1(weight, bias, input_row, output_row),
+                (Some(weight_t), Some(column)) => {
+                    output_row.copy_from_slice(bias);
+                    let (before, rest) = weight_t.split_at(column * output_dim);
+                    let (guarded, after) = rest.split_at(output_dim);
+                    accumulate_input_major_row_v1(before, &input_row[..column], output_row);
+                    add_nonzero_products_v1(output_row, input_row[column], guarded);
+                    accumulate_input_major_row_v1(after, &input_row[column + 1..], output_row);
+                }
+                (None, None) => linear_forward_ordered_v1(weight, bias, input_row, output_row),
+                (None, Some(column)) => {
+                    linear_forward_guarded_v1(weight, bias, input_row, column, output_row)
+                }
             }
         }
     }
@@ -5618,6 +5903,28 @@ fn linear_forward_into_arena_v1(
         record_train_step_v1(|captures| captures.forward.push(capture));
     }
     Ok(output)
+}
+
+/// One sequential sum per output in input order, bias first, with the
+/// products of input column `guard` added only when nonzero.
+fn linear_forward_guarded_v1(
+    weight: &[f32],
+    bias: &[f32],
+    input: &[f32],
+    guard: usize,
+    output: &mut [f32],
+) {
+    let width = input.len();
+    for ((sum, &start), row) in output.iter_mut().zip(bias).zip(weight.chunks_exact(width)) {
+        let mut value = start;
+        for (column, (x, w)) in input.iter().zip(row).enumerate() {
+            let product = *x * *w;
+            if column != guard || product != 0.0 {
+                value += product;
+            }
+        }
+        *sum = value;
+    }
 }
 
 // Four independent dot products expose instruction-level parallelism while
@@ -5955,13 +6262,17 @@ fn validate_optimizer_state(
 fn validate_parameter_manifest_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
 ) -> Result<(), NativePolicyTrainErrorV1> {
-    if parameters.len() != PARAMETER_TENSOR_COUNT
+    // The V8 inclusion net's manifest is net-8's widened by exactly one
+    // column and four appended tensors (`parameter_layout_dims_v1`).
+    let v8 = parameters.len() == V8_PARAMETER_TENSOR_COUNT_V1;
+    let layout = parameter_layout_dims_v1::<D>(v8);
+    if parameters.len() != layout.len()
         || parameters
             .iter()
-            .zip(EXPECTED_PARAMETER_NAMES.iter().zip(D::PARAMETER_SHAPES))
+            .zip(&layout)
             .any(|(parameter, (expected_name, expected_shape))| {
                 parameter.name != *expected_name
-                    || parameter.shape.as_slice() != expected_shape
+                    || parameter.shape.as_slice() != *expected_shape
                     || expected_shape.iter().product::<usize>() != parameter.values.len()
                     || parameter.values.iter().any(|value| !value.is_finite())
             })
@@ -5969,7 +6280,7 @@ fn validate_parameter_manifest_dims_v1<D: NetDimsV1>(
             .iter()
             .map(|parameter| parameter.values.len())
             .sum::<usize>()
-            != D::PARAMETER_COUNT
+            != parameter_count_dims_v1::<D>(v8)
         || parameters[CARD_EMBEDDING].values[..D::CARD_EMBEDDING]
             .iter()
             .any(|value| value.to_bits() != 0)
@@ -6211,13 +6522,16 @@ fn hash_live_train_state_dims_v1<D: NetDimsV1>(
     state: &NativePolicyValueTrainStateDimsV1<D>,
 ) -> [u8; 32] {
     let mut hasher = begin_train_state_hash_v1(state.adam_step, state.scorer_bias_anchor_bits);
-    begin_train_state_tensor_section_v1(&mut hasher, b"parameters", PARAMETER_TENSOR_COUNT);
+    // One moment per tensor (validated): 33 for net-8, 37 for the V8
+    // inclusion net, as the owned snapshot's hash counts them.
+    let tensor_count = state.first_moments.len();
+    begin_train_state_tensor_section_v1(&mut hasher, b"parameters", tensor_count);
     let mut ordinal = 0usize;
     state.model.visit_parameters_v1(|name, shape, values| {
         hash_train_state_tensor_v1(&mut hasher, ordinal, name, shape, values);
         ordinal += 1;
     });
-    debug_assert_eq!(ordinal, PARAMETER_TENSOR_COUNT);
+    debug_assert_eq!(ordinal, tensor_count);
 
     for (section, moments) in [
         (b"first_moments".as_slice(), state.first_moments.as_slice()),
@@ -6232,7 +6546,7 @@ fn hash_live_train_state_dims_v1<D: NetDimsV1>(
             hash_train_state_tensor_v1(&mut hasher, ordinal, name, shape, &moments[ordinal]);
             ordinal += 1;
         });
-        debug_assert_eq!(ordinal, PARAMETER_TENSOR_COUNT);
+        debug_assert_eq!(ordinal, tensor_count);
     }
     finish_train_state_hash_v1(hasher)
 }

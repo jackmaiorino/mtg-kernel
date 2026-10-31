@@ -192,7 +192,8 @@ fn flat_v7_transfer_requires_both_v7_digests() {
 /// One complete London game collected by a V4 fixture transferred to V7:
 /// pregame rows are ordinary rows with contiguous physical ids, the opening
 /// record is written, collection validates the V7 trajectory and the update
-/// readers keep refusing it. The untransferred V4 policy refuses the episode.
+/// readers resolve it to the V4 generation under the V7 identity. The
+/// untransferred V4 policy refuses the episode.
 #[test]
 #[ignore = "root-owned native qualification: one real complete game"]
 fn london_collection_with_the_v7_transfer_records_pregame_rows_and_the_opening() {
@@ -220,7 +221,16 @@ fn london_collection_with_the_v7_transfer_records_pregame_rows_and_the_opening()
         }
     }
     validate_trajectory(&trajectory).unwrap();
-    assert!(trajectory_contract_v1(&trajectory).is_err());
+    let contract = trajectory_contract_v1(&trajectory).unwrap();
+    assert_eq!(contract.generation, FreshLineageGenerationV1::V4);
+    assert_eq!(
+        contract.base_contract_digest,
+        crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7
+    );
+    contract.require_policy_contract_v1(&policy).unwrap();
+    assert!(contract
+        .require_policy_contract_v1(&FrozenPlayPolicyV1::training_fixture_v4())
+        .is_err());
     let value = serde_json::to_value(&trajectory).unwrap();
     assert_eq!(value["opening_record"]["opening"], "london-v1");
     let mut v4 = FrozenPlayPolicyV1::training_fixture_v4();
@@ -259,4 +269,53 @@ fn opening_record_must_match_the_episode_opening() {
     assert!(validate_opening_record_v1(&frozen, Some(&kept)).is_ok());
     kept.seats[1].exposed_pregame_decisions = 1;
     assert!(validate_opening_record_v1(&frozen, Some(&kept)).is_err());
+}
+
+/// FlatV7 records resolve to the V4 generation under their own identity and
+/// bind only a FlatV7 policy; a V4 record binds only a policy that is not
+/// one. A mixed pair is refused.
+#[test]
+fn flat_v7_records_resolve_to_the_v4_generation_and_bind_only_v7_policies() {
+    use crate::native_flat_tensorizer_v7::{
+        FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+    };
+    let cards = format!("{KERNEL_CARDDB_HASH:016x}");
+    let v7_record = no_state_digest_v1::resolve_contract_v1(
+        FEATURE_CONTRACT_DIGEST_V7,
+        FEATURE_ENCODING_DIGEST_V7,
+        &cards,
+        None,
+    )
+    .unwrap();
+    assert_eq!(v7_record.generation, FreshLineageGenerationV1::V4);
+    assert_eq!(v7_record.base_contract_digest, FEATURE_CONTRACT_DIGEST_V7);
+    assert!(no_state_digest_v1::resolve_contract_v1(
+        FEATURE_CONTRACT_DIGEST_V7,
+        FEATURE_ENCODING_DIGEST_V4,
+        &cards,
+        None
+    )
+    .is_err());
+    assert!(no_state_digest_v1::resolve_contract_v1(
+        FEATURE_CONTRACT_DIGEST_V7,
+        FEATURE_ENCODING_DIGEST_V7,
+        "0000000000000000",
+        None
+    )
+    .is_err());
+    let v4_record = no_state_digest_v1::resolve_contract_v1(
+        FEATURE_CONTRACT_DIGEST_V4,
+        FEATURE_ENCODING_DIGEST_V4,
+        &cards,
+        None,
+    )
+    .unwrap();
+    let v4 = FrozenPlayPolicyV1::training_fixture_v4();
+    let v7 = FrozenPlayPolicyV1::training_fixture_v4()
+        .into_flat_v7_transfer_v1()
+        .unwrap();
+    assert!(v7_record.require_policy_contract_v1(&v7).is_ok());
+    assert!(v7_record.require_policy_contract_v1(&v4).is_err());
+    assert!(v4_record.require_policy_contract_v1(&v4).is_ok());
+    assert!(v4_record.require_policy_contract_v1(&v7).is_err());
 }

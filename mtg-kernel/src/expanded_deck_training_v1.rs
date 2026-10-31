@@ -114,6 +114,7 @@ mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
 mod trajectory_parse_ahead_v1;
+pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub(crate) use trajectory_parse_ahead_v1::{
@@ -1191,6 +1192,11 @@ struct TensorBitsV1 {
     action_ref_card_ids: Vec<i64>,
     action_ref_action_indices: Vec<i64>,
     action_ref_node_indices: Vec<i64>,
+    /// FlatV8's pairing relation (`native_flat_tensorizer_v8.rs`), flattened
+    /// `(blocker, attacker)` node pairs. Absent when empty, so every other
+    /// row keeps its archived bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pairing_node_indices: Vec<i64>,
 }
 
 fn bits(values: &[f32]) -> Vec<u32> {
@@ -1217,6 +1223,7 @@ impl TensorBitsV1 {
             action_ref_card_ids: Vec::new(),
             action_ref_action_indices: Vec::new(),
             action_ref_node_indices: Vec::new(),
+            pairing_node_indices: Vec::new(),
         }
     }
 
@@ -1235,6 +1242,7 @@ impl TensorBitsV1 {
             && self.action_ref_card_ids.is_empty()
             && self.action_ref_action_indices.is_empty()
             && self.action_ref_node_indices.is_empty()
+            && self.pairing_node_indices.is_empty()
     }
 
     /// Generic over the shared inner tensor, not `NativeFlatDecisionTensorV3`
@@ -1257,8 +1265,18 @@ impl TensorBitsV1 {
             action_ref_card_ids: t.action_ref_card_ids.clone(),
             action_ref_action_indices: t.action_ref_action_indices.clone(),
             action_ref_node_indices: t.action_ref_node_indices.clone(),
+            pairing_node_indices: Vec::new(),
         }
     }
+
+    /// [`Self::from_tensor`] of a FlatV8 decision with its pairing relation.
+    fn from_tensor_v8(t: &NativeFlatDecisionTensorV2, pairing: &[i64]) -> Self {
+        Self {
+            pairing_node_indices: pairing.to_vec(),
+            ..Self::from_tensor(t)
+        }
+    }
+
     fn tensor(&self) -> NativeFlatDecisionTensorV2 {
         NativeFlatDecisionTensorV2 {
             state: floats(&self.state),
@@ -1608,12 +1626,56 @@ fn initialize_from_source_bytes_v1(
     ),
     String,
 > {
+    if flat_v8_requested_v1(source)? {
+        // A FlatV8 source (the V8 inclusion contract). Its checkpoint is a V8
+        // one: the first is made by the function-preserving V8 conversion
+        // (`v8_inclusion_conversion_v1`), with its seeded pairing draws, and
+        // every FlatV8 update saves one. The play import loads under its V4
+        // identity and takes the V8 identity (`into_flat_v8_v1`), then the
+        // V8 checkpoint restores every parameter and Adam moment.
+        let pin = source
+            .checkpoint
+            .as_ref()
+            .ok_or("a FlatV8 source requires its V8 checkpoint")?;
+        ensure(
+            checkpoint_feature_contract_v1(pin)?
+                == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+            "a FlatV8 source requires a checkpoint with the FlatV8 identity",
+        )?;
+        let import_only = ExpandedModelSourceV1 {
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+            },
+            checkpoint: None,
+            ..source.clone()
+        };
+        let (policy, _, context) = initialize_from_source_bytes_v1(&import_only, bytes, None)?;
+        ensure(
+            context.is_none(),
+            "a FlatV8 checkpoint resumes only an ordinary source",
+        )?;
+        let mut policy = policy.into_flat_v8_v1()?;
+        let model = policy.training_model_v3();
+        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        if let Some(inputs) = inputs {
+            inputs.validate_v1(
+                &saved.trajectories,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits,
+            )?;
+        }
+        let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+        return Ok((policy, state, None));
+    }
     if flat_v7_transfer_requested_v1(source)? {
-        // The explicit V4-to-V7 transfer (Pauper London mulligans v1): the
-        // source loads and restores under its V4 identity, then its unchanged
-        // parameters score under the FlatV7 identity. Collection only: no
-        // update of FlatV7 rows is admitted yet.
-        ensure(inputs.is_none(), "FlatV7 updates are not admitted")?;
+        // A FlatV7 source (Pauper London mulligans v1). The play import loads
+        // under its V4 identity and takes the FlatV7 identity
+        // (`into_flat_v7_transfer_v1`). A V4 checkpoint is the explicit
+        // V4-to-V7 transfer: it restores under V4 first, with its parameters
+        // and Adam state unchanged. A FlatV7 checkpoint, which every FlatV7
+        // update saves, restores under the FlatV7 identity, so a FlatV7
+        // lineage resumes without another transfer.
         let v4 = ExpandedModelSourceV1 {
             feature_transfer: FrozenPlayObservationTransferV3 {
                 expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
@@ -1621,8 +1683,44 @@ fn initialize_from_source_bytes_v1(
             },
             ..source.clone()
         };
-        let (policy, state, context) = initialize_from_source_bytes_v1(&v4, bytes, None)?;
-        return Ok((policy.into_flat_v7_transfer_v1()?, state, context));
+        let v7_checkpoint = match &source.checkpoint {
+            Some(pin)
+                if checkpoint_feature_contract_v1(pin)?
+                    == crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7 =>
+            {
+                Some(pin)
+            }
+            _ => None,
+        };
+        let Some(pin) = v7_checkpoint else {
+            ensure(
+                inputs.is_none(),
+                "a FlatV7 update's checkpoint has the FlatV7 identity",
+            )?;
+            let (policy, state, context) = initialize_from_source_bytes_v1(&v4, bytes, None)?;
+            return Ok((policy.into_flat_v7_transfer_v1()?, state, context));
+        };
+        let import_only = ExpandedModelSourceV1 {
+            checkpoint: None,
+            ..v4
+        };
+        let (policy, _, context) = initialize_from_source_bytes_v1(&import_only, bytes, None)?;
+        ensure(
+            context.is_none(),
+            "a FlatV7 checkpoint resumes only an ordinary source",
+        )?;
+        let mut policy = policy.into_flat_v7_transfer_v1()?;
+        let model = policy.training_model_v3();
+        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        if let Some(inputs) = inputs {
+            inputs.validate_v1(
+                &saved.trajectories,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits,
+            )?;
+        }
+        let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+        return Ok((policy, state, None));
     }
     if let Some((policy, state)) = loaded_source_cache_v1::lookup_v1(source, bytes, inputs)? {
         return Ok((policy, state, None));
@@ -1721,6 +1819,33 @@ fn flat_v7_transfer_requested_v1(source: &ExpandedModelSourceV1) -> Result<bool,
     ensure(
         contract == encoding,
         "FlatV7 transfer requires both V7 feature digests",
+    )?;
+    Ok(contract)
+}
+
+/// A pinned checkpoint's own `feature_contract_digest`. Every other check
+/// of the checkpoint stays with its restore (`restore_checkpoint_fields_v1`).
+fn checkpoint_feature_contract_v1(pin: &PinnedFileV1) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct IdentityProbeV1 {
+        feature_contract_digest: String,
+    }
+    let probe: IdentityProbeV1 = read_pinned(pin)?;
+    Ok(probe.feature_contract_digest)
+}
+
+/// Whether `source` declares FlatV8 (the V8 inclusion contract): both
+/// expected feature digests are FlatV8's. A half-V8 declaration is refused.
+fn flat_v8_requested_v1(source: &ExpandedModelSourceV1) -> Result<bool, String> {
+    use crate::native_flat_tensorizer_v8::{
+        FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8,
+    };
+    let transfer = &source.feature_transfer;
+    let contract = transfer.expected_feature_contract_digest == FEATURE_CONTRACT_DIGEST_V8;
+    let encoding = transfer.expected_feature_encoding_digest == FEATURE_ENCODING_DIGEST_V8;
+    ensure(
+        contract == encoding,
+        "FlatV8 requires both V8 feature digests",
     )?;
     Ok(contract)
 }
@@ -2166,11 +2291,15 @@ pub(crate) fn require_opening_feature_identity_v1(
     if episode.opening.is_none() {
         return Ok(());
     }
+    // FlatV8 is built on FlatV7 and keeps its pregame rows.
     for policy in seats.iter().flatten() {
         ensure(
-            policy.feature_identity_v1().feature_contract_digest
-                == crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
-            "london-v1 requires the FlatV7 feature identity on every seat",
+            [
+                crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
+                crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+            ]
+            .contains(&policy.feature_identity_v1().feature_contract_digest),
+            "london-v1 requires the FlatV7 (or FlatV8) feature identity on every seat",
         )?;
     }
     Ok(())
@@ -2311,7 +2440,18 @@ fn collect_episode_hooked_v1(
                     if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
                         let (selected, scores, tensor) =
                             acting.select_with_training_tensor_v4(&session)?;
-                        (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        // FlatV8 rows also record their pairing relation.
+                        let bits = if acting.feature_identity_v1().feature_contract_digest
+                            == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
+                        {
+                            TensorBitsV1::from_tensor_v8(
+                                &tensor.common,
+                                acting.last_scored_pairing_v8()?,
+                            )
+                        } else {
+                            TensorBitsV1::from_tensor(&tensor.common)
+                        };
+                        (selected, scores, bits)
                     } else {
                         let (selected, scores, tensor) =
                             acting.select_with_training_tensor_v3(&session)?;
@@ -2738,11 +2878,12 @@ fn validate_actual_behaviors_v1(
 fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     validate_behavior_shape_v1(t)?;
     validate_opening_record_v1(&t.episode, t.opening_record.as_ref())?;
-    if !flat_v7_trajectory_v1(t)? {
-        let contract = trajectory_contract_v1(t)?;
-        if contract.input_contract_digest_v1().is_some() {
-            no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
-        }
+    // FlatV7 and FlatV8 resolve to the V4 generation (`resolve_contract_v1`)
+    // and have no no-state-digest conversion, so their updates, replays and
+    // checkpoints are admitted here like V4's.
+    let contract = trajectory_contract_v1(t)?;
+    if contract.input_contract_digest_v1().is_some() {
+        no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
     }
     validate_episode_records_with_learner_sampler_v1(
         &t.episode,
@@ -2751,26 +2892,6 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         &t.terminal,
         t.learner_sampler.as_deref(),
     )
-}
-
-/// A trajectory collected under the FlatV7 identity (the V4-to-V7
-/// transfer). Collection validates it here; every update, replay and
-/// checkpoint reader keeps refusing this identity (`trajectory_contract_v1`)
-/// until FlatV7 updates are admitted.
-fn flat_v7_trajectory_v1(t: &ExpandedTrajectoryV1) -> Result<bool, String> {
-    use crate::native_flat_tensorizer_v7::{
-        FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
-    };
-    if t.feature_contract_digest != FEATURE_CONTRACT_DIGEST_V7 {
-        return Ok(false);
-    }
-    ensure(
-        t.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V7
-            && t.input_contract.is_none()
-            && t.card_db_hash == format!("{KERNEL_CARDDB_HASH:016x}"),
-        "FlatV7 trajectory identity differs",
-    )?;
-    Ok(true)
 }
 
 /// An episode with `opening` records its opening exactly once, with the
@@ -3110,7 +3231,11 @@ fn replay_learner_groups_v1<'a>(
             } else {
                 opponent.unwrap_or(learner)
             };
-            let output = acting.score_replay_tensor_v1(generation, common.clone())?;
+            let output = acting.score_replay_tensor_v1(
+                generation,
+                common.clone(),
+                &row.tensor.pairing_node_indices,
+            )?;
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
@@ -4156,6 +4281,33 @@ fn execute_update_inner_v1(
             "the no-state-digest contract admits only the ordinary CPU update",
         )?;
     }
+    // FlatV7 and FlatV8 train through the V4 generation's ordinary CPU update
+    // (the RT1 recipe's): the terminal or GAE loss, sequential or
+    // fixed-partition backward, without an auxiliary term, teacher or the
+    // CUDA backend. None of those has been checked against London pregame
+    // rows, and the Burn CUDA trainer has no V8 inclusion net (its manifest
+    // is net-8's), so FlatV8 is refused there explicitly.
+    if [
+        crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
+        crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+    ]
+    .contains(&policy.feature_identity_v1().feature_contract_digest)
+    {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::TerminalReinforceValueV3
+                        | ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "FlatV7 and FlatV8 admit only the ordinary CPU update",
+        )?;
+    }
     if let Some(context) = &transfer {
         context.validate_scalars(learning_rate, value_coefficient)?;
         // Risk (design section 6, "Registry-transfer scalar pinning"): the
@@ -4270,6 +4422,10 @@ fn execute_update_inner_v1(
     // the loaded policy through the same accessor every other stamping site
     // uses, never a hardcoded V3 constant on a fresh-V4 policy.
     let generation = policy.feature_identity_v1().generation;
+    // FlatV8 rows train under their own schema and pairing relation; the
+    // V8 inclusion net's V4-generation input config is FlatV8's.
+    let flat_v8 = policy.feature_identity_v1().feature_contract_digest
+        == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8;
     // Config-driven fixed-partition backward is a fresh-V4-lineage-only
     // option (`UpdateBackwardExecutionV1`). Any other combination is
     // rejected here, before any learner tensor is built, so a V3-generation
@@ -4293,9 +4449,14 @@ fn execute_update_inner_v1(
             group
                 .iter()
                 .map(|(row, t)| NativePolicySubstepV1 {
-                    forward: NativePolicyForwardInputV1::Encoded(Box::new(
-                        encoded_decision_view_generic_v1(t, generation),
-                    )),
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(if flat_v8 {
+                        crate::native_flat_tensorizer_v8::encoded_decision_view_v8(
+                            t,
+                            &row.tensor.pairing_node_indices,
+                        )
+                    } else {
+                        encoded_decision_view_generic_v1(t, generation)
+                    })),
                     selected_action_index: row.selected as usize,
                     expected_raw_action_logit_bits: &row.logits,
                     expected_value_bits: row.value,
@@ -9053,6 +9214,39 @@ pub(crate) mod tests {
         loss_selection: ExpandedLossSelectionV1,
         training_math: TrainingMathV1,
     ) -> Result<(String, String, String), String> {
+        run_two_iteration_fixture_declared_v1(
+            feature_identity,
+            None,
+            label,
+            mutate,
+            decks,
+            backward_execution,
+            update_backend,
+            loss_selection,
+            training_math,
+        )
+    }
+
+    /// [`run_ordinary_two_iteration_fixture_with_math_v1`] whose source
+    /// declares `declared` (a FlatV7 transfer of the V4 descriptor, with
+    /// London openings when `opening`) instead of the descriptor's own
+    /// identity.
+    #[allow(clippy::too_many_arguments)]
+    fn run_two_iteration_fixture_declared_v1(
+        feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+        declared: Option<(
+            crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+            bool,
+        )>,
+        label: &str,
+        mutate: impl FnOnce(&mut Vec<NativeNamedParameterV1>),
+        decks: [ExpandedDeckListV1; 2],
+        backward_execution: UpdateBackwardExecutionV1,
+        update_backend: ExpandedUpdateBackendV1,
+        loss_selection: ExpandedLossSelectionV1,
+        training_math: TrainingMathV1,
+    ) -> Result<(String, String, String), String> {
+        let opening = declared.is_some_and(|(_, opening)| opening);
         let root = std::env::temp_dir().join(format!(
             "ordinary-two-iteration-{label}-{}",
             std::process::id()
@@ -9070,9 +9264,10 @@ pub(crate) mod tests {
             path: descriptor_path.canonicalize().unwrap(),
             sha256: sha(&descriptor_bytes),
         };
+        let declared_identity = declared.map_or(feature_identity, |(identity, _)| identity);
         let feature_transfer = FrozenPlayObservationTransferV3 {
-            expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
-            expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            expected_feature_contract_digest: declared_identity.feature_contract_digest.into(),
+            expected_feature_encoding_digest: declared_identity.feature_encoding_digest.into(),
         };
         let mut source = ExpandedModelSourceV1 {
             play_import,
@@ -9098,8 +9293,9 @@ pub(crate) mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
-                opening: None,
-                mulligan_modes: None,
+                opening: opening.then_some(PauperOpeningV1::LondonV1),
+                mulligan_modes: opening
+                    .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -9205,6 +9401,74 @@ pub(crate) mod tests {
             state, ORDINARY_SEQUENTIAL_STATE_SHA256_V1,
             "the V4 ordinary-trainer path over real constructed decks must stay reproducible"
         );
+    }
+
+    /// FlatV7 training without London: the V4 descriptor under a FlatV7
+    /// source collects, updates, saves a FlatV7 checkpoint, and the second
+    /// iteration resumes from it as FlatV7 (no second transfer). In-game V7
+    /// tensors and arithmetic are V4's, so the state equals the V4 sibling's
+    /// pinned state bit for bit.
+    #[test]
+    fn flat_v7_training_without_london_equals_v4_and_resumes_as_v7() {
+        use crate::native_flat_tensorizer_v7::{
+            FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+        };
+        let (contract, encoding, state) = run_two_iteration_fixture_declared_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            Some((
+                crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V7,
+                false,
+            )),
+            "v7-in-game",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cpu,
+            ExpandedLossSelectionV1::default(),
+            TrainingMathV1::PlatformLibm,
+        )
+        .unwrap();
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V7);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V7);
+        assert_eq!(state, ORDINARY_SEQUENTIAL_STATE_SHA256_V1);
+    }
+
+    /// FlatV7 training with London pregame rows (Spy against Burn, both
+    /// seats learned): collect, update, save and resume through two
+    /// iterations of the GAE recipe under the fixed-partition backward.
+    #[test]
+    #[ignore = "root-owned native qualification: two real London games"]
+    fn flat_v7_london_training_updates_saves_and_resumes() {
+        use crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7;
+        let deck = |id: &str| {
+            let registered =
+                crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+            ExpandedDeckListV1 {
+                label: id.into(),
+                mainboard: registered.registered_configuration().mainboard().to_vec(),
+                sideboard: registered.registered_configuration().sideboard().to_vec(),
+            }
+        };
+        let (contract, _, _) = run_two_iteration_fixture_declared_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            Some((
+                crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V7,
+                true,
+            )),
+            "v7-london",
+            |_parameters| {},
+            [deck("Spy"), deck("Burn")],
+            UpdateBackwardExecutionV1::FixedPartition4,
+            ExpandedUpdateBackendV1::Cpu,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.95,
+                entropy_coefficient: 0.0,
+            },
+            TrainingMathV1::PlatformLibm,
+        )
+        .unwrap();
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V7);
     }
 
     /// Pinned against the value this exact fixture (same seeds, decks,
@@ -11283,5 +11547,6 @@ pub(crate) mod tests {
 
     mod pauper_opening_tests;
     mod reset_start_tests;
+    mod v8_inclusion_tests;
     mod widening_b512_tests;
 }

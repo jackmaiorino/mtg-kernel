@@ -22,6 +22,7 @@ use crate::native_policy_train_step_v1::widening_v1::{
 };
 
 mod screen_fit_v1_tests;
+mod v8_inclusion_v1_tests;
 mod widening_v1_tests;
 
 const VC: f32 = 0.75;

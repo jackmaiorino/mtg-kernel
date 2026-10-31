@@ -1741,7 +1741,7 @@ fn converted_run_end_to_end_v1() {
     for (bits, admitted) in [(0_u32, true), (0x8000_0000, false), (0x3f80_0000, false)] {
         let mut tensor = common.clone();
         tensor.state[DIGEST.start + 7] = f32::from_bits(bits);
-        match initial.score_replay_tensor_v1(FreshLineageGenerationV1::V4, tensor) {
+        match initial.score_replay_tensor_v1(FreshLineageGenerationV1::V4, tensor, &[]) {
             Ok(scores) => {
                 assert!(admitted, "{bits:#x}");
                 assert_eq!(
