@@ -658,7 +658,11 @@ mod tests {
                             })
                             .unwrap();
                         if let J::Paid { original, .. } = &mut row.value {
-                            original.objects.get_mut(drake).counters.incubation += 1;
+                            std::sync::Arc::make_mut(original)
+                                .objects
+                                .get_mut(drake)
+                                .counters
+                                .incubation += 1;
                         }
                     }
                     3 => bad
@@ -851,7 +855,7 @@ mod tests {
                     let J::Enclosing { output, .. } = &mut row.value else {
                         unreachable!()
                     };
-                    let nested = &mut output
+                    let nested = &mut std::sync::Arc::make_mut(output)
                         .engine
                         .linked_aura_operation_v1
                         .pending_general_v36
@@ -1018,6 +1022,48 @@ mod tests {
     }
 
     #[test]
+    fn drake_saved_worlds_are_shared_by_state_clones_both_seats() {
+        use custody::JournalV1 as J;
+        // Every enclosing operation saves two whole worlds. A state clone must
+        // share them, or each step's clones grow with the game's history (#375).
+        fn saved(state: &GameState) -> (Vec<*const GameState>, usize) {
+            let mut enclosing = 0;
+            let worlds = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(custody::journal)
+                .flat_map(|row| match &row.value {
+                    J::CombatInput { world, .. } => vec![world],
+                    J::Paid { original, .. } | J::Removed { original, .. } => vec![original],
+                    J::Completed { output, .. } => vec![output],
+                    J::Enclosing {
+                        original, output, ..
+                    } => {
+                        enclosing += 1;
+                        vec![original, output]
+                    }
+                    _ => vec![],
+                })
+                .map(std::sync::Arc::as_ptr)
+                .collect();
+            (worlds, enclosing)
+        }
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, _) = paid_replay_memo_state(actor);
+            let copy = state.clone();
+            let (worlds, enclosing) = saved(&state);
+            assert!(enclosing > 0);
+            assert_eq!(saved(&copy), (worlds, enclosing));
+            assert_eq!(
+                serde_json::to_vec(&copy).unwrap(),
+                serde_json::to_vec(&state).unwrap()
+            );
+            custody::validate(&copy).unwrap();
+        }
+    }
+
+    #[test]
     fn genuine_paid_enclosing_replay_memo_warm_restore_and_ordinary_segment_tamper_both_seats() {
         use custody::{journal, JournalV1 as J};
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1107,7 +1153,7 @@ mod tests {
             .find_map(|event| {
                 if let event::CommittedEvent::DrakeJournalV1 { record } = event {
                     if let custody::JournalV1::Enclosing { output, .. } = &mut record.value {
-                        return Some(output.as_mut());
+                        return Some(std::sync::Arc::make_mut(output));
                     }
                 }
                 None
@@ -1350,7 +1396,9 @@ mod tests {
             let custody::JournalV1::Enclosing { output, .. } = &mut record.value else {
                 unreachable!()
             };
-            crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(output);
+            crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
+                std::sync::Arc::make_mut(output),
+            );
             assert_eq!(
                 serde_json::to_vec(&private).unwrap(),
                 serde_json::to_vec(&state).unwrap()

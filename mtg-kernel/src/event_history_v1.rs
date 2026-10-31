@@ -25,7 +25,7 @@ use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// One value per `CommittedEvent` variant, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -767,31 +767,69 @@ impl CommittedEvent {
     }
 }
 
-/// The v2 hash chain over a prefix of the events: the prefix length and the
-/// SHA-256 state after it. Only an acceleration: the chain is a function of
-/// the events, so it never enters a comparison, hash, print or record.
+/// The v2 hash chain over prefixes of the events: each prefix length and the
+/// SHA-256 state after it, shortest first. Only an acceleration: the chain is
+/// a function of the events, so it never enters a comparison, hash, print or
+/// record. Earlier prefixes let a copy of a prefix (a Drake enclosing replay
+/// input) resume its chain instead of rehashing every event.
 #[derive(Default)]
-struct ChainV2(Mutex<Option<(usize, Sha256)>>);
+struct ChainV2(Mutex<Arc<Vec<(usize, Sha256)>>>);
+
+/// The most recent prefix states one history keeps; the oldest are dropped
+/// first.
+const CHAIN_V2_PREFIXES: usize = 16;
+/// Every prefix whose length is a multiple of this is kept as well, so a copy
+/// of any earlier prefix rehashes fewer than this many events.
+const CHAIN_V2_STRIDE: usize = 64;
 
 impl ChainV2 {
-    fn get(&self) -> Option<(usize, Sha256)> {
-        self.0.lock().ok().and_then(|chain| chain.clone())
+    fn get(&self) -> Arc<Vec<(usize, Sha256)>> {
+        self.0
+            .lock()
+            .map(|chain| Arc::clone(&chain))
+            .unwrap_or_default()
     }
 
-    fn set(&self, chain: (usize, Sha256)) {
+    /// The longest chained prefix of at most `len` events.
+    fn longest(&self, len: usize) -> Option<(usize, Sha256)> {
+        self.get()
+            .iter()
+            .rev()
+            .find(|(covered, _)| *covered <= len)
+            .cloned()
+    }
+
+    /// Records `chains`, shortest first, past every kept prefix they extend.
+    fn set(&self, chains: Vec<(usize, Sha256)>) {
+        let Some(&(shortest, _)) = chains.first() else {
+            return;
+        };
         if let Ok(mut slot) = self.0.lock() {
-            *slot = Some(chain);
+            let prefixes = Arc::make_mut(&mut slot);
+            prefixes.retain(|(covered, _)| *covered < shortest);
+            prefixes.extend(chains);
+            let recent = |covered: usize| !covered.is_multiple_of(CHAIN_V2_STRIDE);
+            let mut excess = prefixes
+                .iter()
+                .filter(|(covered, _)| recent(*covered))
+                .count()
+                .saturating_sub(CHAIN_V2_PREFIXES);
+            prefixes.retain(|(covered, _)| {
+                let drop = excess > 0 && recent(*covered);
+                excess -= usize::from(drop);
+                !drop
+            });
         }
     }
 
-    /// Drops the chain unless it covers at most the first `len` events.
+    /// Drops every chained prefix longer than the first `len` events.
     fn keep(&mut self, len: usize) {
         let slot = self
             .0
             .get_mut()
             .unwrap_or_else(|poison| poison.into_inner());
-        if slot.as_ref().is_some_and(|(covered, _)| *covered > len) {
-            *slot = None;
+        if slot.iter().any(|(covered, _)| *covered > len) {
+            Arc::make_mut(slot).retain(|(covered, _)| *covered <= len);
         }
     }
 
@@ -799,7 +837,7 @@ impl ChainV2 {
         *self
             .0
             .get_mut()
-            .unwrap_or_else(|poison| poison.into_inner()) = None;
+            .unwrap_or_else(|poison| poison.into_inner()) = Arc::default();
     }
 }
 
@@ -918,6 +956,16 @@ impl EventHistoryV1 {
         self.events.truncate(len);
     }
 
+    /// A copy of the first `len` events (all of them if `len` is longer),
+    /// keeping the chained prefixes it contains.
+    pub(crate) fn prefix_v1(&self, len: usize) -> Self {
+        let len = len.min(self.events.len());
+        let mut prefix = Self::from(self.events[..len].to_vec());
+        prefix.chain = self.chain.clone();
+        prefix.chain.keep(len);
+        prefix
+    }
+
     pub fn clear(&mut self) {
         self.events.clear();
         self.counts = [0; EVENT_KIND_COUNT_V1];
@@ -929,16 +977,16 @@ impl EventHistoryV1 {
     /// each event's canonical JSON length (u64, little-endian) and bytes, in
     /// order. Hashes only the events past the longest prefix chained before.
     pub(crate) fn chain_digest_v2(&self) -> [u8; 32] {
-        let (covered, mut chain) = self
-            .chain
-            .get()
-            .filter(|(covered, _)| *covered <= self.events.len())
-            .unwrap_or_else(|| {
-                let mut chain = Sha256::new();
-                chain.update(b"mtg-kernel/event-history-chain/v2");
-                (0, chain)
-            });
-        for event in &self.events[covered..] {
+        let (covered, mut chain) = self.chain.longest(self.events.len()).unwrap_or_else(|| {
+            let mut chain = Sha256::new();
+            chain.update(b"mtg-kernel/event-history-chain/v2");
+            (0, chain)
+        });
+        let mut chains = Vec::new();
+        for (position, event) in self.events.iter().enumerate().skip(covered) {
+            if position > covered && position.is_multiple_of(CHAIN_V2_STRIDE) {
+                chains.push((position, chain.clone()));
+            }
             let bytes = serde_json::to_vec(event).expect("committed events serialize");
             chain.update(
                 u64::try_from(bytes.len())
@@ -947,7 +995,8 @@ impl EventHistoryV1 {
             );
             chain.update(&bytes);
         }
-        self.chain.set((self.events.len(), chain.clone()));
+        chains.push((self.events.len(), chain.clone()));
+        self.chain.set(chains);
         chain.finalize().into()
     }
 

@@ -794,7 +794,7 @@ fn genuine_paid_prepared_validation_key_scope_keeps_full_input_foreign_history_c
                 _ => None,
             })
             .expect("genuine paid enclosing output absent");
-        output.players[actor.index()].life += 1;
+        std::sync::Arc::make_mut(output).players[actor.index()].life += 1;
         let corrupt_before = corrupt.clone();
         let error = validate_state_unframed_for_test(&corrupt).unwrap_err();
         assert_eq!(validate_state(&corrupt).unwrap_err(), error);
