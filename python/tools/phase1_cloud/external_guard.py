@@ -334,9 +334,10 @@ class StoreLock:
     lands before completion's final check sees it or meets the closure (I4). The OS releases it when the
     process dies; a wait longer than STORE_LOCK_SECONDS raises (the caller fails closed)."""
 
-    def __init__(self, folder):
+    def __init__(self, folder, wait=None):
         self.path = Path(folder).parent / (Path(folder).name + '.lock')
         self.handle = None
+        self.wait = wait                # seconds to wait for the lock; None is STORE_LOCK_SECONDS
 
     def _try(self):
         if os.name == 'nt':
@@ -352,7 +353,7 @@ class StoreLock:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.handle = open(self.path, 'a+b')
-            deadline = time.monotonic() + STORE_LOCK_SECONDS
+            deadline = time.monotonic() + (STORE_LOCK_SECONDS if self.wait is None else self.wait)
         except Exception as e:  # noqa: BLE001
             raise LockError('store lock setup: ' + type(e).__name__) from e
         while True:
@@ -406,10 +407,10 @@ def degraded(folder, what, error=None):
 
 
 @contextlib.contextmanager
-def lock_or_degrade(folder, what):
+def lock_or_degrade(folder, what, wait=None):
     """The store lock, or, when it cannot be set up or acquired, no lock and a degraded() report. Yields
     whether the lock is held."""
-    lock = StoreLock(folder)
+    lock = StoreLock(folder, wait)
     try:
         lock.__enter__()
     except SyncError as e:
@@ -422,13 +423,13 @@ def lock_or_degrade(folder, what):
         lock.__exit__(None, None, None)
 
 
-def handoff_in(folder, pod_id, role, epoch, presence=True):
+def handoff_in(folder, pod_id, role, epoch, presence=True, lock_wait=None):
     """I4: under the store lock, refuse a closed store, write the record and read it back; raises unless
     it now durably names this ID (and a create role). A handoff of positive presence (an ID a census,
     GET or POST just returned, known or not) also advances the ID's presence revision, which voids the
     guard's absence confirmation of that ID. When the lock or the closure probe fails, the handoff is
     main's (record and read-back, no presence revision) and degraded() reports it."""
-    with lock_or_degrade(folder, 'handoff of ' + pod_id) as locked:
+    with lock_or_degrade(folder, 'handoff of ' + pod_id, lock_wait) as locked:
         state = store_state(folder)
         if state == 'closed':
             raise StoreClosed('the guard completed; the caller keeps ' + pod_id)
@@ -574,8 +575,9 @@ class LeaseClient:
     an ALERT record is written and RuntimeError raised. The raw clients refuse to run outside it."""
 
     def __init__(self, folder, name, key, provider=None, pods=None, clock=None, sleep=None, alert_path=None,
-                 lease_deadline=0.0, min_release_seconds=120):
+                 lease_deadline=0.0, min_release_seconds=120, lock_wait=None):
         self.folder = Path(folder); self.name = name; self.key = key
+        self.lock_wait = lock_wait      # the guard's own client passes 0: a release never waits on the lock
         self._provider = provider or PodApi
         self._pods = pods or list_pods
         self.clock = clock or time.time
@@ -733,7 +735,8 @@ class LeaseClient:
             self.retained[pod_id] = role
         self.retained.setdefault(pod_id, role)
         try:
-            handoff_in(self.folder, pod_id, self.retained[pod_id], self.clock(), presence=presence)
+            handoff_in(self.folder, pod_id, self.retained[pod_id], self.clock(), presence=presence,
+                       lock_wait=self.lock_wait)
         except StoreClosed:   # expected after completion, not a store fault: the obligation stays this process's
             return False
         except SyncError as e:   # the obligation stays and blocks completion; not a store fault
@@ -899,7 +902,8 @@ def run(root, key, pods=None, provider=None, clock=time.time, sleep=time.sleep,
     # Leaving this block (completion, a --once pass, any exception) resolves every ID that is neither
     # durable nor verified absent, or fails loudly (I4).
     with LeaseClient(root / KNOWN_DIR, lease['name'], key, provider, pods, clock, sleep,
-                     root / 'ALERT-pod-not-released.json', min_release_seconds=ONCE_RELEASE_SECONDS) as client:
+                     root / 'ALERT-pod-not-released.json', min_release_seconds=ONCE_RELEASE_SECONDS,
+                     lock_wait=0) as client:
         return _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, funds, monotonic)
 
 
@@ -976,32 +980,31 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         recorded, receipt_error = receipt_state(root)
         if receipt_error:
             store_errors.append(receipt_error)
-        # (B) after the deadline every known ID is deleted first, before any synchronized handoff can wait
-        # on the store lock and before anything can fail
-        deleted_first = set()
-        if reason == 'deadline':
-            early = set(memory) | ({recorded} if recorded else set())
-            for name in ('lease/create-ambiguous.json', 'lease/create-pod-failure.json'):
-                try:
-                    fallback = read(root / name).get('pod_id') if (root / name).exists() else None
-                except Exception:  # noqa: BLE001 - read again below, where a failure is recorded
-                    fallback = None
-                if valid_id(fallback):
-                    early.add(fallback)
-            for pod_id in sorted(p for p in early if p not in confirmed):
-                delete(pod_id, 'deadline_first'); deleted_first.add(pod_id)
-        if recorded:
-            client.mark_durable(recorded)
-            client.retain(recorded, 'receipt', presence=False)
+        fallbacks = []                              # IDs the create records name, read once this pass
         for name in ('lease/create-ambiguous.json', 'lease/create-pod-failure.json'):
             try:
                 if (root / name).exists():
                     fallback = read(root / name).get('pod_id')
                     if valid_id(fallback):
-                        client.mark_durable(fallback)
-                        client.retain(fallback, 'receipt', presence=False)
+                        fallbacks.append(fallback)
             except Exception as e:  # noqa: BLE001
                 store_errors.append(name + ':' + type(e).__name__)
+        # every ID this pass knows is retained in memory first (no I/O), so a failed DELETE below never
+        # loses one (I4)
+        for pod_id in ([recorded] if recorded else []) + fallbacks:
+            memory.setdefault(pod_id, 'receipt')
+        # (B) after the deadline every known ID is deleted first, before any synchronized handoff and
+        # before anything can fail
+        deleted_first = set()
+        if reason == 'deadline':
+            for pod_id in sorted(p for p in memory if p not in confirmed):
+                delete(pod_id, 'deadline_first'); deleted_first.add(pod_id)
+        if recorded:
+            client.mark_durable(recorded)
+            client.retain(recorded, 'receipt', presence=False)
+        for fallback in fallbacks:
+            client.mark_durable(fallback)
+            client.retain(fallback, 'receipt', presence=False)
         client.retry()                              # every unpersisted ID, every pass (I2, I4)
         # A presence handoff of an ID since this process last read it (any process saw that Pod alive)
         # voids its absence confirmation and the census confirmation (I5)

@@ -1017,6 +1017,33 @@ class StoreClosureTests(Base):
         self.assertEqual(world.deletes, [])
         self.assertTrue((self.root / 'external-quiet-clock-error.json').exists())
 
+    def test_a_fallback_id_is_kept_after_its_first_deadline_delete_fails(self):
+        self.clock.t = lease()['deadline_epoch']
+        write(self.root / 'lease/create-attempt.json', {'epoch': 1.0})
+        write(self.root / 'lease/create-ambiguous.json', {'pod_id': 'pod1'})
+        world = World([pod('pod1')]); world.delete_failures = 1
+        world.census = lambda current: []                 # the census never lists it
+        real = eg.read
+
+        def unreadable_after_the_failed_delete(path):
+            if Path(path).name == 'create-ambiguous.json' and 'pod1' in world.deletes:
+                raise PermissionError('record unreadable')
+            return real(path)
+        with mock.patch.object(eg, 'read', side_effect=unreadable_after_the_failed_delete):
+            self.loop(world, polls=8)
+        self.assertGreaterEqual(world.deletes.count('pod1'), 2)   # retried after the failed first DELETE
+        self.assertNotIn('pod1', world.pods)
+
+    def test_a_contended_lock_never_delays_a_release(self):
+        world = self.healthy_primary()
+        write(self.root / 'release-authorized.json', {})
+        started = time.monotonic()
+        with eg.StoreLock(self.root / eg.KNOWN_DIR):      # another process holds the lock throughout
+            self.once(world)
+        self.assertIn('pod1', world.deletes)
+        self.assertLess(time.monotonic() - started, eg.STORE_LOCK_SECONDS / 4)   # main's handoff never waits
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+
     def test_a_handoff_waits_for_the_store_lock_and_degrades_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):
