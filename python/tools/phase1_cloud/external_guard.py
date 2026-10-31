@@ -70,12 +70,19 @@ reason. Release authorization never proves that a create failed, and neither
 does quiet: account spend is account-wide and RunPod bounds no create delay.
 After AMBIGUOUS_QUIET_SECONDS of unbroken clear exact-name censuses (monotonic
 time, reset by a failure, a gap or any retained ID) the guard writes
-ambiguous-create-quiet.json (diagnostic evidence for the operator, account
-spend included) and ALERT-ambiguous-create.json, and keeps supervising: only
-an operator's resolution ends it. A census entry with an ID but no name is
-malformed, never absence. Completion re-reads the durable store first, so an ID
-a concurrent --once pass retained is never left behind. once=True runs a
-single pass (a watchdog).
+ambiguous-create-quiet.json (diagnostic evidence for the operator) and
+ALERT-ambiguous-create.json, retrying a failed write each pass, and keeps
+supervising: only an operator's resolution ends it. The account read runs once
+per window on its own thread and writes ambiguous-create-funds.json when it
+returns; it never holds a pass. A census entry with an ID but no nonblank name
+is malformed, never absence.
+
+Completion is a state transition under an OS lock (lease/known-pods.lock) that
+every handoff also takes: it re-reads the store and, when the store names no ID
+beyond memory and reads cleanly, writes lease/known-pods-closed.json. A handoff
+after that is refused (StoreClosed), so its creator keeps the ID and releases it
+itself (I4); a pass that finds the store closed treats nothing as handed off and
+deletes every Pod it sees. once=True runs a single pass (a watchdog).
 
 usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json required)
 """
@@ -87,6 +94,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import threading
 import time
 import urllib.request
 
@@ -107,7 +115,9 @@ AMBIGUOUS_QUIET_SECONDS = 1800    # unbroken clear censuses before the operator 
 QUIET_GAP_SECONDS = 3 * POLL_SECONDS   # a longer gap between clear censuses starts the quiet window again
 QUIET_NOTE = 'ambiguous-create-quiet.json'
 QUIET_ALERT = 'ALERT-ambiguous-create.json'
+QUIET_FUNDS = 'ambiguous-create-funds.json'   # the account read, written by its own thread when it returns
 KNOWN_DIR = 'lease/known-pods'
+STORE_LOCK_SECONDS = 20           # a handoff or completion waiting longer for the store lock fails closed
 CREATE_ROLES = ('receipt', 'adopted')   # roles that mark a retained ID as the create result (I3)
 POD_ID = re.compile('[A-Za-z0-9]+')
 
@@ -151,8 +161,9 @@ def census_entries(census, name):
         pod_id = entry.get('id')
         if valid_id(pod_id):
             listed.add(pod_id)
-        if valid_id(pod_id) and not isinstance(entry.get('name'), str):
-            malformed = True                # an unnamed entry may be this lease's Pod: never absence
+        named = entry.get('name')
+        if valid_id(pod_id) and not (isinstance(named, str) and named.strip()):
+            malformed = True                # an unnamed or blank-named entry may be this lease's Pod: never absence
         if entry.get('name') == name:
             if valid_id(pod_id):
                 if pod_id not in owned:
@@ -233,15 +244,91 @@ def remember_in(folder, pod_id, role, epoch):
         remember_in(folder, pod_id, role, epoch)
 
 
+class StoreClosed(RuntimeError):
+    """The guard completed: no supervisor reads the store any more, so a handoff to it is refused."""
+
+
+def closed_path(folder):
+    return Path(folder).parent / (Path(folder).name + '-closed.json')
+
+
+def store_closed(folder):
+    return closed_path(folder).exists()
+
+
+class StoreLock:
+    """An exclusive OS lock shared by every handoff and by completion, so a handoff either lands before
+    the completion re-read sees the store or meets the closure (I4). The OS releases it when the process
+    dies; a wait longer than STORE_LOCK_SECONDS raises (the caller fails closed)."""
+
+    def __init__(self, folder):
+        self.path = Path(folder).parent / (Path(folder).name + '.lock')
+        self.handle = None
+
+    def _try(self):
+        if os.name == 'nt':
+            import msvcrt
+            self.handle.seek(0)
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = open(self.path, 'a+b')
+        deadline = time.monotonic() + STORE_LOCK_SECONDS
+        while True:
+            try:
+                self._try()
+                return self
+            except OSError:
+                if time.monotonic() >= deadline:
+                    self.handle.close()
+                    raise
+                time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                self.handle.seek(0)
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+        finally:
+            self.handle.close()
+        return False
+
+
 def handoff_in(folder, pod_id, role, epoch):
-    """I4: write the record and read it back; raises unless it now durably names this ID (and a create role)."""
-    remember_in(folder, pod_id, role, epoch)
-    value = read(Path(folder) / (pod_id + '.json'))
+    """I4: under the store lock, refuse a closed store, then write the record and read it back; raises
+    unless it now durably names this ID (and a create role)."""
+    with StoreLock(folder):
+        if store_closed(folder):
+            raise StoreClosed('the guard completed; the creator keeps ' + pod_id)
+        remember_in(folder, pod_id, role, epoch)
+        value = read(Path(folder) / (pod_id + '.json'))
     if not isinstance(value, dict) or value.get('id') != pod_id:
         raise ValueError('known-Pod record does not read back')
     if role in CREATE_ROLES and value.get('role') not in CREATE_ROLES:
         raise ValueError('known-Pod record lost its create role')
     return True
+
+
+def close_store(root, memory, errors, epoch):
+    """Completion's state transition, under the store lock: re-read the store, and only when it names no
+    ID beyond `memory` and reads cleanly write the closure (read back). True when the store is closed."""
+    folder = Path(root) / KNOWN_DIR
+    try:
+        with StoreLock(folder):
+            late = set(known_pods(root, errors)) - set(memory)
+            if late or errors:
+                return False
+            write(closed_path(folder), {'closed': True, 'known_pods': sorted(memory), 'epoch': epoch},
+                  replace=True)
+            return read(closed_path(folder)).get('closed') is True
+    except Exception as e:  # noqa: BLE001 - an unreadable store or a lock timeout never permits completion
+        errors.append('close:' + type(e).__name__)
+        return False
 
 
 def remember(root, pod_id, role, epoch):
@@ -359,7 +446,9 @@ class LeaseClient:
 
     def load_durable(self):
         """What is already handed off is never an obligation: known-Pod records that read back and IDs
-        named by readable receipts start resolved."""
+        named by readable receipts start resolved. A closed store hands nothing off: no supervisor remains."""
+        if store_closed(self.folder):
+            return
         try:
             names = [path.name for path in self.folder.iterdir()] if self.folder.exists() else []
         except Exception:  # noqa: BLE001
@@ -374,7 +463,10 @@ class LeaseClient:
 
     def durable_now(self, pod_id):
         """Reconciled from disk at the moment of asking: a known-Pod record that reads back, or a
-        readable receipt naming the ID. Destructive cleanup never touches such an ID."""
+        readable receipt naming the ID. Destructive cleanup never touches such an ID. After the guard
+        closed the store nothing is durable: this process keeps every ID it holds."""
+        if store_closed(self.folder):
+            return False
         if pod_id in self.durable or self.record_reads_back(pod_id) or pod_id in self.receipt_ids():
             self.persisted.add(pod_id); self.unpersisted.discard(pod_id)
             return True
@@ -579,17 +671,28 @@ def run(root, key, pods=None, provider=None, clock=time.time, sleep=time.sleep,
 
 def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, funds=None, monotonic=time.monotonic):
     highest = lease['rate_ceiling_usd_hour']; preserved = False; deletes = 0; last_probe = None
-    quiet_since = last_clear = None; quiet_censuses = 0; quiet_noted = False  # diagnostics only
+    quiet_since = last_clear = None; quiet_censuses = 0  # diagnostics only
+    quiet_noted = quiet_funds_started = False     # alert published; account read started (once per window)
     census_absence = AbsenceConfirmer(clock)
     id_absence = {}
     memory = client.retained      # known ID -> role; nothing leaves it (I4)
     confirmed = set()             # IDs confirmed absent by evidence seen in this process (I5)
 
     def note(name, value):
+        """True when the record was written; a failed write never blocks a DELETE."""
         try:
             write(root / name, value, replace=True)
-        except Exception:  # noqa: BLE001 - a receipt never blocks a DELETE
-            pass
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def account_read(read_funds, requested):
+        """The quiet window's account read, off the supervision loop; it only ever writes QUIET_FUNDS."""
+        try:
+            account = read_funds()
+        except Exception as e:  # noqa: BLE001 - diagnostic only
+            account = {'error_type': type(e).__name__}
+        note(QUIET_FUNDS, {'requested_epoch': requested, 'account_now': account})
 
     def delete(pod_id, why):
         nonlocal deletes
@@ -617,27 +720,36 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             reason = 'deadline'
         elif (root / 'release-authorized.json').exists():
             reason = 'controller_release'
+        # After completion closed the store nothing is handed off: this pass deletes what it sees and keeps
+        # every ID it registers until verified absent (I4)
+        closed = store_closed(root / KNOWN_DIR)
+        if closed:
+            reason = reason or 'store_closed'
         # local records: the durable store (restart load), the receipt, fallback IDs of create records
         try:
             for pod_id, role in known_pods(root, store_errors).items():
                 if role in CREATE_ROLES and memory.get(pod_id) not in CREATE_ROLES:
                     memory[pod_id] = role
                 memory.setdefault(pod_id, role)
-                if role is not None:
+                if role is not None and not closed:
                     client.mark_persisted(pod_id)   # its own record read back (an unreadable one stays open)
         except Exception as e:  # noqa: BLE001
             store_errors.append('store:' + type(e).__name__)
         recorded, receipt_error = receipt_state(root)
         if receipt_error:
             store_errors.append(receipt_error)
-        if recorded:
+        if recorded and closed:
+            memory[recorded] = 'receipt'
+        elif recorded:
             client.mark_durable(recorded)
             client.retain(recorded, 'receipt', presence=False)
         for name in ('lease/create-ambiguous.json', 'lease/create-pod-failure.json'):
             try:
                 if (root / name).exists():
                     fallback = read(root / name).get('pod_id')
-                    if valid_id(fallback):
+                    if valid_id(fallback) and closed:
+                        memory.setdefault(fallback, 'receipt')
+                    elif valid_id(fallback):
                         client.mark_durable(fallback)
                         client.retain(fallback, 'receipt', presence=False)
             except Exception as e:  # noqa: BLE001
@@ -733,29 +845,28 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         tick = monotonic()
         if census_ok and not malformed and not listed and not failures and not memory and create_unresolved(root):
             if quiet_since is None or tick - last_clear > QUIET_GAP_SECONDS:
-                quiet_since, quiet_censuses, quiet_noted = tick, 0, False
+                quiet_since, quiet_censuses, quiet_noted, quiet_funds_started = tick, 0, False, False
             quiet_censuses += 1; last_clear = tick
         else:
-            quiet_since = last_clear = None; quiet_censuses = 0; quiet_noted = False
+            quiet_since = last_clear = None; quiet_censuses = 0; quiet_noted = quiet_funds_started = False
         if quiet_since is not None and not quiet_noted and tick - quiet_since >= AMBIGUOUS_QUIET_SECONDS:
-            quiet_noted = True
-            account = None
-            if funds is not None:
-                try:
-                    account = funds()
-                except Exception as e:  # noqa: BLE001 - diagnostic only
-                    account = {'error_type': type(e).__name__}
+            if funds is not None and not quiet_funds_started:
+                # once per window, on its own thread: a slow or hung account read never holds a pass
+                quiet_funds_started = True
+                threading.Thread(target=account_read, args=(funds, clock()), daemon=True).start()
             evidence = {'exact_name': lease['name'], 'epoch': clock(), 'quiet_seconds': tick - quiet_since,
-                        'clear_censuses': quiet_censuses, 'retained_ids': sorted(memory), 'account_now': account,
+                        'clear_censuses': quiet_censuses, 'retained_ids': sorted(memory),
+                        'account_now': QUIET_FUNDS if funds is not None else None,
                         'account_before_create': None, 'resolution': 'operator only (lease/' +
                         OPERATOR_RESOLUTION.split('/', 1)[1] + ')'}
             try:
                 evidence['account_before_create'] = read(root / 'lease/funding-at-create.json')
             except Exception:  # noqa: BLE001 - absent on older leases
                 pass
-            note(QUIET_NOTE, evidence)
-            note(QUIET_ALERT, {'reason': 'ambiguous create quiet; operator resolution needed', 'epoch': clock(),
-                               'evidence': QUIET_NOTE})
+            # published only when both writes land; a failed write is retried next pass
+            quiet_noted = note(QUIET_NOTE, evidence) and note(QUIET_ALERT, {
+                'reason': 'ambiguous create quiet; operator resolution needed', 'epoch': clock(),
+                'evidence': QUIET_NOTE})
         ambiguous = primary is None and ambiguous_unresolved(root)
         if ambiguous:
             reason = reason or 'ambiguous_create'
@@ -772,15 +883,12 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         may_finish = (not open_known if memory else bool(reason or controller_done)) \
             and not store_errors and not client.unpersisted
         unresolved = create_unresolved(root)
-        if census_done and may_finish and not unresolved and not ambiguous:
-            # a concurrent --once pass may have retained an ID since this pass loaded the store
-            try:
-                late = set(known_pods(root, store_errors)) - set(memory)
-            except Exception as e:  # noqa: BLE001 - an unreadable store never permits completion
-                store_errors.append('store:' + type(e).__name__); late = {None}
-        else:
-            late = {None}
-        if not late and not store_errors:
+        # Completion is a state transition under the store lock: a concurrent pass's handoff either lands
+        # before the re-read (and blocks completion) or meets the closure and stays its creator's (I4)
+        if census_done and may_finish and not unresolved and not ambiguous and \
+                close_store(root, memory, store_errors, clock()):
+            if closed:
+                return                                  # an earlier run already recorded the completion
             note('external-guard-completion.json', {
                 'exact_name': lease['name'], 'pod_id': primary, 'known_pods': sorted(memory),
                 'provider_absent': True, 'absent_confirmations': 2, 'reason': reason, 'deletes': deletes,

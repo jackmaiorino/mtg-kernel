@@ -4,6 +4,8 @@ Every run uses a fake clock with a hard sleep cap and a fake provider with a har
 call cap (lease_test_support); a guard that never finishes ends the test with Stop.
 """
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -18,6 +20,14 @@ NAME = lease()['name']
 
 def pod(pid='pod1', **changes):
     return {'id': pid, 'name': NAME, 'costPerHr': 0.96, **changes}
+
+
+def wait_for(path, seconds=5.0):
+    """Real time, for a record a helper thread writes."""
+    end = time.monotonic() + seconds
+    while not path.exists() and time.monotonic() < end:
+        time.sleep(0.01)
+    return path.exists()
 
 
 def failing_handoff(ids, first=None, first_only_once=False):
@@ -380,7 +390,9 @@ class QuietCreateTests(Base):
         self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=funds, monotonic=self.clock), 'running')
         quiet = read(self.root / eg.QUIET_NOTE)
         self.assertGreaterEqual(quiet['quiet_seconds'], eg.AMBIGUOUS_QUIET_SECONDS)
-        self.assertEqual((quiet['retained_ids'], quiet['account_now']['account_spend_usd_hour']), ([], 0.05))
+        self.assertEqual((quiet['retained_ids'], quiet['account_now']), ([], eg.QUIET_FUNDS))
+        self.assertTrue(wait_for(self.root / eg.QUIET_FUNDS))
+        self.assertEqual(read(self.root / eg.QUIET_FUNDS)['account_now']['account_spend_usd_hour'], 0.05)
         self.assertEqual(quiet['account_before_create'], {'account_spend_usd_hour': 0.05})
         self.assertTrue((self.root / eg.QUIET_ALERT).exists())
         self.assertIsNone(self.completion())
@@ -430,23 +442,146 @@ class QuietCreateTests(Base):
         self.assertIn('census:malformed', self.status()['failures'])
         self.assertFalse((self.root / eg.QUIET_NOTE).exists())
         self.assertEqual(eg.census_entries([{'id': 'ours'}], NAME), ([], {'ours'}, True))
+        for blank in ('', '   '):
+            self.assertEqual(eg.census_entries([{'id': 'ours', 'name': blank}], NAME), ([], {'ours'}, True))
+        self.assertEqual(eg.census_entries([{'id': 'theirs', 'name': 'other-lane'}], NAME), ([], {'theirs'}, False))
+        world.census = lambda current: [{'id': 'ours', 'name': ''}]
+        self.assertEqual(self.loop(world, polls=self.polls() + 20, monotonic=self.clock), 'running')
+        self.assertFalse(self.status()['absent_now'])
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())
 
-    def test_completion_rereads_the_store_for_an_id_a_watchdog_retained(self):
-        self.ambiguous(operator=True)
+    def test_the_alert_never_waits_for_the_account_read(self):
+        self.ambiguous()
         world = World([])
-        real = eg.known_pods; seen = []; injected = []
+        release, returned = threading.Event(), threading.Event()
 
-        def known(root, errors=None):
-            if seen and seen[-1] == self.clock.t and not injected:   # the completion re-read of one pass
-                eg.remember(root, 'late', 'census', self.clock.t)    # a --once pass retained it meanwhile
-                injected.append(self.clock.t)
-            seen.append(self.clock.t)
-            return real(root, errors)
-        with mock.patch.object(eg, 'known_pods', side_effect=known):
+        def funds():                                      # a hung account read
+            release.wait(10); returned.set()
+            return {'account_spend_usd_hour': 0.07}
+        self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=funds, monotonic=self.clock), 'running')
+        self.assertFalse(returned.is_set())               # every pass ran while the read was held
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertEqual(read(self.root / eg.QUIET_NOTE)['account_now'], eg.QUIET_FUNDS)
+        self.assertFalse((self.root / eg.QUIET_FUNDS).exists())
+        release.set()
+        self.assertTrue(wait_for(self.root / eg.QUIET_FUNDS))
+        self.assertEqual(read(self.root / eg.QUIET_FUNDS)['account_now'], {'account_spend_usd_hour': 0.07})
+
+    def test_a_failed_alert_write_is_retried_without_a_second_account_read(self):
+        self.ambiguous()
+        world = World([])
+        real = eg.write; failed = []
+
+        def flaky(path, value, replace=False):
+            if Path(path).name == eg.QUIET_ALERT and not failed:
+                failed.append(path)
+                raise OSError('disk busy')
+            return real(path, value, replace)
+        with mock.patch.object(eg, 'write', side_effect=flaky):
+            self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=world.provider('k', 'funding').funds,
+                                       monotonic=self.clock), 'running')
+        self.assertTrue(failed)
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertTrue(wait_for(self.root / eg.QUIET_FUNDS))
+        self.assertEqual(world.funds_calls, 1)
+
+
+class StoreClosureTests(Base):
+    """Completion closes the store under the lock every handoff takes (I4)."""
+
+    def complete(self, at_deadline=False):
+        if at_deadline:
+            self.clock.t = lease()['deadline_epoch']
+        else:                                             # an unused lease, well before its deadline
+            write(self.root / 'completion.json', {})
+            self.clock.t = lease()['created_epoch'] + eg.CONTROLLER_DONE_SECONDS + 1
+        self.assertEqual(self.loop(World([])), 'returned')
+        self.clock.max_sleeps = 400; self.clock.sleeps = 0
+        return self.completion()
+
+    def test_completion_rereads_the_store_under_its_lock(self):
+        QuietCreateTests.ambiguous(self, operator=True)
+        world = World([])
+        real = eg.close_store; injected = []
+
+        def close(root, memory, errors, epoch):
+            if not injected:                              # handed off after this pass's last store load
+                eg.remember(root, 'late', 'census', epoch)
+                injected.append(epoch)
+            return real(root, memory, errors, epoch)
+        with mock.patch.object(eg, 'close_store', side_effect=close):
             self.assertEqual(self.loop(world, polls=200, monotonic=self.clock), 'returned')
-        self.assertTrue(injected)
+        self.assertEqual(len(injected), 1)
         self.assertIn('late', self.completion()['known_pods'])     # completed only after confirming it absent
         self.assertIn(('GET', 'late'), world.log)
+
+    def store_failing_inside_close(self, failure):
+        real_close, real_known = eg.close_store, eg.known_pods; inside = [False]
+
+        def close(*args):
+            inside[0] = True
+            try:
+                return real_close(*args)
+            finally:
+                inside[0] = False
+
+        def known(root, errors=None):
+            if inside[0] and failure == 'raise':
+                raise OSError('store unreadable')
+            result = real_known(root, errors)
+            if inside[0] and errors is not None:
+                errors.append('late:ValueError')          # an unreadable record seen by the re-read
+            return result
+        return mock.patch.object(eg, 'close_store', side_effect=close), \
+            mock.patch.object(eg, 'known_pods', side_effect=known)
+
+    def test_a_store_error_at_the_completion_reread_blocks_completion(self):
+        self.clock.t = lease()['deadline_epoch']
+        for failure, error in (('raise', 'close:OSError'), ('record', 'late:ValueError')):
+            first, second = self.store_failing_inside_close(failure)
+            with first, second:
+                self.assertEqual(self.loop(World([]), polls=20), 'running')
+            self.assertIsNone(self.completion())
+            self.assertIn(error, self.status()['store_errors'])
+            self.assertFalse(eg.store_closed(self.root / eg.KNOWN_DIR))
+
+    def test_a_handoff_after_completion_is_refused(self):
+        self.complete()
+        self.assertTrue(eg.store_closed(self.root / eg.KNOWN_DIR))
+        with self.assertRaises(eg.StoreClosed):
+            eg.handoff(self.root, 'late', 'census', 1.0)
+        self.assertFalse((self.root / eg.KNOWN_DIR / 'late.json').exists())
+
+    def test_a_watchdog_pass_after_completion_releases_what_it_finds(self):
+        before = self.complete()
+        world = World([pod('late')])
+        self.once(world)
+        self.assertIn(('DELETE', 'late'), world.log)
+        self.assertNotIn('late', world.pods)
+        self.assertFalse((self.root / eg.KNOWN_DIR / 'late.json').exists())
+        self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+        self.assertEqual(self.completion(), before)                 # the completion record stands
+
+    def test_a_watchdog_pass_after_completion_that_cannot_delete_alerts(self):
+        self.complete(at_deadline=True)                   # the release bound is then this pass's own
+        world = World([pod('late')]); world.delete_failures = -1
+        with self.assertRaises(eg.AlertError):
+            self.once(world)
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['late'])
+
+    def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
+        folder = self.root / eg.KNOWN_DIR; done = []
+        with eg.StoreLock(folder):
+            worker = threading.Thread(target=lambda: done.append(eg.handoff(self.root, 'late', 'census', 1.0)))
+            worker.start(); worker.join(0.3)
+            self.assertEqual(done, [])
+            self.assertFalse((folder / 'late.json').exists())
+        worker.join(5)
+        self.assertEqual(done, [True])
+        with eg.StoreLock(folder), mock.patch.object(eg, 'STORE_LOCK_SECONDS', 0.2):
+            with self.assertRaises(OSError):
+                eg.handoff(self.root, 'later', 'census', 1.0)
+        self.assertFalse((folder / 'later.json').exists())
 
 
 class CensusAbsenceTests(Base):
