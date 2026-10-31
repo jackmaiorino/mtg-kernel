@@ -594,6 +594,10 @@ def slots_command(spec, args, claim_id=None):
         command += ["--id", claim_id]
     if spec.get("core_pool"):
         command += ["--core-pool", spec["core_pool"]]
+        # Allocators that require a recorded reason for a hard pool expose POOL_REASONS; older pinned ones
+        # reject the option, so it is passed only when the pinned helper has it.
+        if hasattr(allocator(spec), "POOL_REASONS"):
+            command += ["--pool-reason", "determinism"]
     if spec.get("wait_for_cores"):
         command += ["--wait", "--wait-timeout", str(spec["wait_timeout_seconds"])]
     return command + ["--", sys.executable, "-B", str(Path(__file__).resolve()), "worker",

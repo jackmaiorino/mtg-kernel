@@ -109,10 +109,72 @@ and avoids an admission deadlock when both generations share a registry.
 - On Linux (WSL runners, tests), containment is a process group. A process that leaves the group escapes affinity bookkeeping and suspension.
 - Cores above 63 (a second Windows processor group) are not supported.
 - During a v1 reclaim the lock is briefly absent, so claims may resume for one poll interval (2 s).
-# Per-request core pools
+## Per-request core pools
 
-`run` and `submit` accept `--core-pool 8-15` to restrict one request to those
-configured logical CPUs. The existing reservation, ordinary/background claims,
-queue order and shared mutex still govern admission. A request waits when its
-pool lacks room even if CPUs outside the pool are free. The host configuration
-is unchanged; omitting this option preserves the existing allocation behavior.
+`run`, `submit` and `adopt` accept `--core-pool 8-15 --pool-reason R` to restrict one request to those configured
+logical CPUs. R is one of `timing`, `isolation`, `determinism`, `play-client` or `hardware`, and is recorded on
+the ticket and claim and shown by `status`. A pool is a hard restriction: the request waits while its pool lacks
+room even if CPUs outside the pool are free, so a pool without a reason is refused (exit 2) before any ticket is
+written. To favor some CPUs without that risk, use `--prefer-cores 0-7`: those are tried first and any other CPU is
+used when they lack room. The reservation, ordinary and background claims, queue order and the shared mutex still
+govern admission, and the host configuration is unchanged.
+
+## Shared claims: lend what you do not use
+
+```
+python host_slots_v1.py run --shared --cores 8 --min-cores 1 --lane LANE --work-id WORK -- cargo build --release -j 8
+```
+
+A shared claim guarantees `--min-cores` cores (default 1; it queues for those, so the queue and backfill see an
+M-core request) and runs on up to `--cores`. The cores beyond its guarantee are lent:
+
+- Any later claim may take a lent core. The shared claim narrows its job's affinity off that core and only then
+  republishes its cores; the later claim starts its command after that (the same handshake as with background
+  claims, at most one or two polls).
+- While any request is queued, a shared claim gives back every lent core, so it lends only while nobody waits. It
+  also gives back lent cores that timed work declares, and enough of them to keep the occupied cores within the
+  configured cores minus `keep_free`.
+- While nothing is queued, it grows (every 10 s at most) onto cores no claim of any class runs on, within
+  `keep_free` and its own pool. It never takes a background claim's cores.
+- Timed work that overlaps its guaranteed cores suspends it exactly like any claim.
+
+Use it for release builds, clippy, test compiles and other bursty work. Never use it for timing, isolation or
+deterministic studies: their cores must stay exclusive, so they stay ordinary claims (or `timed`). Tools size their
+parallelism once from the affinity they start with, so pass the job count (`cargo build -j N`).
+
+Records: `shared`, `guaranteed`, `max_cores`, and `cores` (the current affinity). Older launchers read only
+`cores`, so they treat a shared claim's whole current affinity as held and never land on a lent core. While a
+shared claim lends any core it keeps `delay-lending-<claim id>.json` in the slots folder. The file is deliberately
+not a JSON object: every backfill engine since #407 refuses to backfill while a delay file cannot be read, so no
+backfill is ever proved (by this version or an older one) while a lent core could still be given back. This version
+skips the markers when reading and removes any whose claim is gone.
+
+## Utilization watcher
+
+```
+python host_slots_v1.py watch [--interval 30] [--once] [--duration S] [-- NOTIFY_CMD...]
+python host_slots_v1.py watch-report [--since ISO] [--until ISO]
+```
+
+`watch` samples per-CPU busy time (Windows `NtQuerySystemInformation`, Linux `/proc/stat`) and the slot records,
+without the admission mutex and without deleting anything, and never changes a claim. It writes to
+`<root>/<HOST>.util/`:
+
+- `util-YYYYMMDD.jsonl`, one line per sample: per-CPU busy fraction and holder kind (timed, held, guaranteed,
+  lent, background, unclaimed; first match wins), the queue with each ticket's cause, and the integrals
+  `capacity_cs`, `idle_cs` by kind, `eligible_idle_cs` (idle capacity queued tickets were allowed to use, taken in
+  queue order without double counting and attributed to their causes; an upper bound, since a request is
+  indivisible) and `coincident_idle_cs`; plus a `claim_end` line with each claim's busy and held core-seconds;
+- `nudges.jsonl`, one line per new flag, and `watch-state.json`, whose current flags `status` shows as `watch`.
+
+Flags: `low_use`, a running ordinary claim whose held cores average under 30% busy for 10 minutes (an 8-core build
+with one busy CPU is 12.5%); `queued_idle`, a ticket queued 60 s while a core is unclaimed beyond `keep_free`, with
+its cause (`pool`, `head_of_line`, `no_max_seconds`, `timed`, `keep_free`, `too_few_free`). With a notify command
+(for example collab `tools/fleet_note.py`), each new flag runs it with `--to LANE --title T --body B --sender
+"host_slots watch"`, at most 6 per hour.
+
+Runners also append `admit`, `start` and `end` events to `events-YYYYMMDD.jsonl` (lane, cores, queued seconds,
+`took_lent`, and `old_rules_room`: whether the rules before shared claims had room on the same snapshot). A failed
+append never blocks a claim, so event counts are lower bounds. `watch-report` sums both logs: observed hours and
+coverage, queued hours, mean utilization, eligible idle core-hours per queued hour and by cause, shared share of
+claimed CPU time, lent transfers, handoff time and censored admissions.
