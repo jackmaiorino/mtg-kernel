@@ -6509,6 +6509,7 @@ impl state_digest_memo_v1::DigestStreamV1 for NativePolicyValueTrainSnapshotV1 {
     }
 }
 
+/// The owned snapshot's digest, computed: the hash itself, unchanged.
 fn compute_owned_train_snapshot_sha256_v1(snapshot: &NativePolicyValueTrainSnapshotV1) -> [u8; 32] {
     let mut hasher =
         begin_train_state_hash_v1(snapshot.adam_step, snapshot.scorer_bias_anchor_bits);
@@ -6553,9 +6554,8 @@ fn hash_live_train_state_v1(state: &NativePolicyValueTrainStateV1) -> [u8; 32] {
 }
 
 /// [`hash_live_train_state_v1`] at the dims `D`: the same byte stream as the
-/// owned snapshot's hash.
-/// Through the process memo (`state_digest_memo_v1`), which hashes only a
-/// stream it does not hold.
+/// owned snapshot's hash, through the process memo (`state_digest_memo_v1`),
+/// which hashes only a stream it does not hold.
 fn hash_live_train_state_dims_v1<D: NetDimsV1>(
     state: &NativePolicyValueTrainStateDimsV1<D>,
 ) -> [u8; 32] {
@@ -6610,6 +6610,7 @@ impl<D: NetDimsV1> state_digest_memo_v1::DigestStreamV1 for NativePolicyValueTra
     }
 }
 
+/// The live state's digest, computed: the hash itself, unchanged.
 fn compute_live_train_state_sha256_dims_v1<D: NetDimsV1>(
     state: &NativePolicyValueTrainStateDimsV1<D>,
 ) -> [u8; 32] {

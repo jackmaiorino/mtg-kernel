@@ -6,13 +6,16 @@ use crate::native_policy_train_step_v1::{
 use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
 use std::sync::atomic::Ordering;
 
+/// One fake tensor: name, shape and values.
+type FakeTensorV1 = (&'static str, Vec<usize>, Vec<f32>);
+
 /// A small digest stream with a stand-in digest: SHA-256 of a plain encoding
 /// of every item, so any changed item changes it.
 #[derive(Clone)]
 struct FakeV1 {
     adam_step: u64,
     anchor: u32,
-    sections: Vec<(usize, Vec<(&'static str, Vec<usize>, Vec<f32>)>)>,
+    sections: Vec<(usize, Vec<FakeTensorV1>)>,
 }
 
 impl DigestStreamV1 for FakeV1 {
