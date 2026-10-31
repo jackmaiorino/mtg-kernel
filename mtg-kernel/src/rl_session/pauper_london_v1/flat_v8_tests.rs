@@ -251,9 +251,7 @@ fn parity_case_v1(
 /// declarations that have pending pairs among them. The blocker parity
 /// fixture shared with `python/tests/test_features_v11.py` holds the first
 /// pairing decisions; `MTG_KERNEL_WRITE_FLAT_V8_FIXTURE=1` rewrites it,
-/// otherwise it must match byte for byte. It binds the Pauper registry, so
-/// the appended-registry builds skip this test.
-#[cfg(not(feature = "limited-fdn-fixtures"))]
+/// otherwise it must match byte for byte.
 #[test]
 fn flat_v8_tensors_include_bits_and_pairs_match_the_sessions() {
     let mut cases = Vec::new();
