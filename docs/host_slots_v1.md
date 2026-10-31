@@ -48,11 +48,11 @@ The guarantee covers claims ending. A timed reservation outranks the queue and c
 
 **Past `--max-seconds`.** Every claim that declares `--max-seconds S` records its deadline (`deadline_mono`, `deadline_at`) and `on_overdue`. Once S has passed since admission, the claim's own runner applies `--on-overdue`:
 
-- `demote` (the default): it republishes the claim as background work (`background: true`, `overdue: true`). From then on every ordinary claim and timed hold may take its cores; it suspends while they hold them and resumes afterwards, exactly as CI does. Nothing is killed, and a delaying backfill can hold its head up only until its deadline plus one handoff. A shared claim first narrows to its guarantee.
-- `kill`: it ends the processes of its own job object, never itself and never another claim (each process is matched to the job by handle before it is ended), then releases the claim. Only a launcher that asks for it explicitly gets it.
-- `flag`: it only marks the claim `overdue`. Such a request may still backfill when it cannot delay the head, but never with a bounded delay, because nothing would enforce the bound.
+- `flag` (the default): it only marks the claim `overdue`. Today's callers pass `--max-seconds` as an estimate, so enforcement is opt-in. A flag request carries `backfill_policy` 0: it may still backfill when it cannot delay the head, but never with a bounded delay, because nothing would enforce the bound. So the #427 bounded-delay backfill now applies only to requests that opt into `demote` or `kill`. Changing the default later needs a note to every caller first.
+- `demote` (opt-in): it republishes the claim as background work (`background: true`, `overdue: true`). From then on every ordinary claim and timed hold may take its cores; it suspends while they hold them and resumes afterwards, exactly as CI does. Nothing is killed, and a delaying backfill can hold its head up only until its deadline plus one handoff. A shared claim first narrows to its guarantee. A demoted claim that cannot suspend completely makes a claim waiting for its cores give up after 60 s ("did not vacate", exit 6), the same exit a slow background claim causes today; demotion makes that exit possible on more cores.
+- `kill`: it ends the processes of its own job object, never itself and never another claim (each process is matched to the job by handle before it is ended), then releases the claim. The runner does this outside the admission mutex, with a 30 s limit, so other launchers keep admitting meanwhile. A member that refuses to die is recorded as `kill_failed`. Only a launcher that asks for it explicitly gets it.
 
-Timed work is never a claim, so none of this touches it. A human-facing claim (the play client) should not declare `--max-seconds`, or should pass `--on-overdue flag`. The #427 window is unchanged: no delaying backfill starts while an earlier one for the same head is overdue. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
+Timed work is never a claim, so none of this touches it. A human-facing claim (the play client, which passes `--max-seconds`) keeps the default `flag`. The #427 window is unchanged: no delaying backfill starts while an earlier one for the same head is overdue. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
 
 Deploying: ticket names are chosen under the admission mutex, but older versions choose them before taking it. Replace every deployed copy while no `host_slots_v1.py` process of any version is running, so no older launcher can publish an earlier-named ticket after a backfill is proved.
 
@@ -123,7 +123,9 @@ and avoids an admission deadlock when both generations share a registry.
 `run`, `submit` and `adopt` accept `--core-pool 8-15 --pool-reason R` to restrict one request to those configured
 logical CPUs. R is one of `timing`, `isolation`, `determinism`, `play-client` or `hardware`, and is recorded on
 the ticket and claim and shown by `status`. A pool is a hard restriction: the request waits while its pool lacks
-room even if CPUs outside the pool are free, so a pool without a reason is refused (exit 2) before any ticket is
+room even if CPUs outside the pool are free, so a pool needs a reason. Until `POOL_REASON_REQUIRED_FROM` (2026-11-17,
+14 days after the deploy) a missing reason is accepted with a warning and recorded as `core_pool_reason:
+"unspecified"`, and the watcher nudges the owning lane; from that date it is refused (exit 2) before any ticket is
 written. Without a reason, drop the pool and the scheduler places the job. The reservation, ordinary and background claims, queue order and the shared mutex still
 govern admission, and the host configuration is unchanged.
 

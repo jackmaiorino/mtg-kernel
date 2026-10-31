@@ -61,10 +61,12 @@ class FallbackTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         assert "windows_runner:" in text
         # every place that chooses the self-hosted pool honors the dispatch input first
-        assert text.count("vars.MTG_CI_WINDOWS_RUNNER") == text.count(
-            "inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER")
+        choice = "vars.MTG_CI_WINDOWS_RUNNER || '\"windows-2025\"'"
+        assert text.count(choice) == 3
+        assert text.count("inputs.windows_runner || " + choice) == 3
         block = text[text.index("  hosted-fallback:"):]
         assert "inputs.windows_runner == ''" in block.split("steps:")[0]
+        assert "contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted')" in block.split("steps:")[0]
         assert "actions: write" in block.split("steps:")[0]
         for needed in ("rust-test-groups", "rust-limited-groups", "python-tests"):
             assert needed in block.split("steps:")[0]

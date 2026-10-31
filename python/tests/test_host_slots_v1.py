@@ -932,7 +932,8 @@ class BackfillAdmissionTests(unittest.TestCase):
         with patch.object(slots, "backfill_admission", side_effect=admission), \
                 patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
                     slots.read_json(claim)) or 0):
-            slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, max_seconds=60.0)
+            slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, max_seconds=60.0,
+                      on_overdue="demote")   # a bounded delay needs an enforced limit
         claim = seen[0]
         self.assertEqual((claim["head_id"], claim["delays_head"], claim["delay_bound_seconds"],
                           claim["delay_limit_seconds"], claim["deadline_mono"]), (head_id, head_id, 60.0, 360.0, 1060.0))
@@ -1397,6 +1398,10 @@ class PlacementOptionTests(unittest.TestCase):
 
     def test_options_that_could_leave_cores_idle_or_break_exclusivity_are_refused_before_any_ticket(self):
         base = ("--lane", "p", "--work-id", "w", "--cores", "1")
+        # after the pool-reason transition (see PoolReasonTransitionTests for the window itself)
+        late = patch.dict(os.environ, {"HOST_SLOTS_TODAY": "2026-12-01"})
+        late.start()
+        self.addCleanup(late.stop)
         self.assert_usage("run", *base, "--core-pool", str(CPUS[0]), needle="--pool-reason")
         self.assert_usage("submit", "--log", str(self.tmp_path / "s.log"), *base, "--core-pool", str(CPUS[0]),
                           needle="--pool-reason")
@@ -1886,8 +1891,8 @@ class OverdueTests(unittest.TestCase):
                 (slots.read_json(claim), k["overdue"])) or 0):
             slots.run("p", "w", 1, ["unused"], max_seconds=30.0)
         record, limit = seen[0]
-        assert record["on_overdue"] == "demote" and record["max_seconds"] == 30.0
-        assert limit == {"deadline_mono": record["deadline_mono"], "action": "demote"}
+        assert record["on_overdue"] == "flag" and record["max_seconds"] == 30.0   # enforcement is opt-in
+        assert limit == {"deadline_mono": record["deadline_mono"], "action": "flag"}
 
     def test_a_flagging_request_may_not_delay_a_head(self):
         window = None
@@ -1904,7 +1909,7 @@ class OverdueTests(unittest.TestCase):
         ticker = script(self.tmp_path, f"tick-{action}.py", "n = 0\nwhile True:\n    n += 1\n"
                         "    open(sys.argv[1], 'w').write(str(n))\n    time.sleep(0.02)\n")
         args = ["run", "--lane", "o", "--work-id", action, "--cores", "1", "--max-seconds", seconds]
-        if action != "default":
+        if action != "flag":           # flag is the default
             args += ["--on-overdue", action]
         return cli(*args, "--", sys.executable, ticker, str(count)), count
 
@@ -1913,20 +1918,20 @@ class OverdueTests(unittest.TestCase):
 
     @needs_two
     def test_an_overdue_claim_demotes_itself_and_yields_like_ci(self):
-        proc, count = self.overdue_run("default")
+        proc, count = self.overdue_run("demote")
         foreground = None
         release, active = self.tmp_path / "release", self.tmp_path / "active"
         hold = script(self.tmp_path, "hold.py", "from pathlib import Path\nPath(sys.argv[1]).write_text('up')\n"
                       "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
         try:
-            assert wait_for(lambda: (self.claim("default") or {}).get("overdue") is True, timeout=30)
-            claim = self.claim("default")
+            assert wait_for(lambda: (self.claim("demote") or {}).get("overdue") is True, timeout=30)
+            claim = self.claim("demote")
             assert claim["background"] is True and claim["overdue_action"] == "demote"
             assert counter(count) > 0
             foreground = cli("run", "--lane", "b", "--work-id", "b", "--cores", str(len(CPUS)), "--",
                              sys.executable, hold, str(active), str(release))
             assert wait_for(active.exists, timeout=30)
-            assert self.claim("default")["state"] == "suspended"
+            assert self.claim("demote")["state"] == "suspended"
             frozen = counter(count)
             time.sleep(0.3)
             assert counter(count) == frozen
@@ -2105,6 +2110,165 @@ class SmallFixTests(unittest.TestCase):
             slots._set_lending_marker("9" * 32, True)
         slots.status()
         assert not slots._marker_path("9" * 32).exists()
+
+
+class FlagTicketTests(unittest.TestCase):
+    """review v6 (Fable) #6: a flag ticket carries backfill_policy 0, so the #427 engine and this one pick the
+    same first eligible candidate."""
+
+    def test_both_engines_agree_on_the_first_eligible_candidate(self):
+        old = e2657b8c_engine()
+        if old is None:
+            self.skipTest("mtg-kernel e2657b8c is not in this checkout")
+        config = config8()
+        head = {**ticket("h" * 32, 4, 3600.0, backfill_policy=slots.BACKFILL_POLICY),
+                "config_sha256": slots.config_digest(config)}
+        claims = [{"id": "c", "cores": [7, 6, 5, 4]}, {"id": "d", "cores": [3, 2, 1]}]
+        later = ticket("p", 1, 120.0, backfill_policy=slots.BACKFILL_POLICY, on_overdue="demote")
+        for policy, agree in ((0, True), (slots.BACKFILL_POLICY, False)):
+            flag = ticket("f", 1, 120.0, backfill_policy=policy, on_overdue="flag")
+            tickets = [head, flag, later]
+            new = slots.backfill_admission(config, FREE, claims, tickets, "p", 1000.0, None)
+            before = old.backfill_admission(config, FREE, claims, tickets, "p", 1000.0, None)
+            assert (new == before) is agree, (policy, new, before)
+        assert new is not None   # with policy 0 both admit the later request; with 2 the old engine picks f
+
+    def test_run_writes_policy_zero_for_flag_tickets(self):
+        root = Path(tempfile.mkdtemp(prefix="hs-flag-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        published = []
+        real = slots.write_json
+
+        def record(path, value):
+            if Path(path).name.startswith("queue-"):
+                published.append(value)
+            real(path, value)
+
+        with patch.dict(os.environ, {slots.ROOT_ENV: str(root), slots.HOST_ENV: "T"}), \
+                patch.object(slots, "write_json", side_effect=record), \
+                patch.object(slots, "_run_claimed", return_value=0):
+            (root / "T.slots").mkdir()
+            for action in ("flag", "demote"):
+                slots.run("p", action, 1, ["unused"], max_seconds=60.0, on_overdue=action)
+        assert [(t["on_overdue"], t["backfill_policy"]) for t in published] == [("flag", 0), ("demote", 2)]
+
+
+class PoolReasonTransitionTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def test_a_missing_reason_is_accepted_as_unspecified_until_the_date_and_nudged(self):
+        seen = []
+        with patch.dict(os.environ, {"HOST_SLOTS_TODAY": "2026-11-16"}), \
+                patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                    slots.read_json(claim)) or 0):
+            slots.run("p", "w", 1, ["unused"], core_pool=[CPUS[0]])
+        assert seen[0]["core_pool_reason"] == "unspecified"
+        with patch.dict(os.environ, {"HOST_SLOTS_TODAY": slots.POOL_REASON_REQUIRED_FROM}):
+            with self.assertRaisesRegex(ValueError, "--pool-reason"):
+                slots.run("p", "w", 1, ["unused"], core_pool=[CPUS[0]])
+        claim = {"id": "u" * 32, "lane": "bignet", "work_id": "q", "cores": [0], "state": "running",
+                 "core_pool": [0], "core_pool_reason": "unspecified"}
+        _, _, nudges = sample({}, 0, {0: 1.0}, [claim], config={"cores": [0], "keep_free": 0,
+                                                                "priority": "below_normal"})
+        assert [n["kind"] for n in nudges] == ["pool_unspecified"] and slots.POOL_REASON_REQUIRED_FROM in nudges[0]["detail"]
+
+    def test_the_cli_warns_during_the_window(self):
+        with patch.dict(os.environ, {"HOST_SLOTS_TODAY": "2026-11-01"}):
+            proc = cli("run", "--lane", "p", "--work-id", "w", "--cores", "1", "--core-pool", str(CPUS[0]), "--",
+                       sys.executable, "-c", "pass")
+            out, err = proc.communicate(timeout=60)
+        assert proc.returncode == 0 and "unspecified" in err and slots.POOL_REASON_REQUIRED_FROM in err, err
+
+
+class KillOutsideMutexTests(unittest.TestCase):
+    """review v6 (Fable) #2: a kill never holds the admission mutex, and a member that refuses to die is bounded."""
+
+    def test_the_kill_runs_with_the_mutex_released_and_a_survivor_is_recorded(self):
+        locked = [False]
+        events, updates = [], []
+
+        class TestMutex:
+            def __enter__(inner):
+                assert not locked[0]
+                locked[0] = True
+
+            def __exit__(inner, *_):
+                locked[0] = False
+
+        child = MagicMock()
+        child.wait.side_effect = [subprocess.TimeoutExpired("probe", 0), subprocess.TimeoutExpired("probe", 0), 1]
+        tree = MagicMock()
+        tree.cores = tree.applied = [0]
+        tree.members.return_value = []
+        tree.start.return_value = child
+        tree.set_suspended.return_value = True
+
+        def kill_members(timeout=30.0):
+            assert not locked[0], "kill under the admission mutex"
+            return False          # a member refused to die
+
+        tree.kill_members.side_effect = kill_members
+        with patch.object(slots, "Tree", return_value=tree), patch.object(slots, "Mutex", TestMutex), \
+                patch.object(slots, "conflicts", return_value=False), \
+                patch.object(slots, "background_busy", return_value=False), \
+                patch.object(slots, "_budget_wait", return_value=False), \
+                patch.object(slots, "_set_state_locked"), \
+                patch.object(slots, "_update_claim_locked", side_effect=lambda c, **f: updates.append(f) or True), \
+                patch.object(slots, "_event", side_effect=lambda kind, rec, **extra: events.append((kind, extra))), \
+                patch.object(slots.time, "sleep"), patch.object(slots.signal, "signal"):
+            code = slots._run_claimed(Path("unused.json"), [0], "normal", ["probe"], None, "x",
+                                      overdue={"deadline_mono": 0.0, "action": "kill"})
+        assert code == 1 and tree.kill_members.call_count == 1
+        assert ("overdue", {"action": "kill", "ended": False}) in events
+        assert {"kill_failed": True} in updates
+
+    @unittest.skipUnless(os.name == "nt", "job members are Windows processes")
+    def test_kill_members_gives_up_after_its_timeout(self):
+        tree = slots.Tree.__new__(slots.Tree)
+        tree.job, tree.suspended = None, set()
+        with patch.object(slots.Tree, "members", return_value=[4321]), \
+                patch.object(slots, "_OpenProcess", return_value=0):
+            started = time.monotonic()
+            assert tree.kill_members(timeout=0.3) is False
+        assert time.monotonic() - started < 5
+
+
+class AppliedMaskTests(unittest.TestCase):
+    """review v6 (Fable) #5: after a failed growth restore the OS may hold a wider mask; it is re-applied before
+    the claim may resume."""
+    setUp = HostSlotsTests.setUp
+
+    class ScriptedTree:
+        def __init__(self, cores, script):
+            self.cores = self.applied = sorted(cores)
+            self.script, self.calls = list(script), []
+
+        def set_cores(self, cores):
+            cores = sorted(cores)
+            self.calls.append(cores)
+            accepted, ok = self.script.pop(0) if self.script else (True, True)
+            if accepted:
+                self.applied = cores
+            if ok:
+                self.cores = cores
+            return ok
+
+    def test_a_wider_mask_left_by_a_failed_restore_is_reapplied_before_resuming(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        pid, creation = slots.self_identity()
+        claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+        slots.write_json(claim, {"pid": pid, "creation_time": creation, **shared("5" * 32, [7], [7])})
+        share = {"guaranteed": [7], "max_cores": 2, "pool": None}
+        # widening: the OS takes the wider mask but a member disagrees; the restore then fails outright
+        tree = self.ScriptedTree([7], [(True, False), (False, False)])
+        with patch.object(slots, "cpu_total", return_value=8):
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True) is False
+            assert tree.applied == [6, 7] and tree.cores == [7]
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=False) is True
+        assert tree.calls[-1] == [7] and tree.applied == tree.cores == [7]
+        assert slots.read_json(claim)["cores"] == [7] and not slots._marker_path("5" * 32).exists()
 
 
 if __name__ == "__main__":

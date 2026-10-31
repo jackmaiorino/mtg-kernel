@@ -1023,11 +1023,12 @@ jobs:
   # step, logging MTG_CI_ADMISSION_TIMEOUT. A job cannot move to another runner
   # once one accepted it, so this hosted job dispatches the workflow again on
   # the same branch with Windows on hosted runners. Real failures are not
-  # rerun, and a dispatched run never dispatches again.
+  # rerun, and a dispatched run never dispatches again. It runs only while the
+  # routing variable sends Windows jobs to the self-hosted pool.
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [rust-test-groups, rust-limited-groups, python-tests]
-    if: always() && contains(needs.*.result, 'failure') && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && contains(needs.*.result, 'failure') && contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

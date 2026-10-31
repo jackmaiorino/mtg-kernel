@@ -36,10 +36,11 @@ never changes what it means. It keeps its own records beside it, under
   the head starts, and only ordinary requests behind an ordinary head. S is
   at most 30 days.
 - Any claim with --max-seconds S is handled by its own runner once S has
-  passed (--on-overdue): demote (default) republishes it as background
-  work that ordinary claims and timed holds may suspend; kill ends its own
-  job's processes (never the runner, never another claim); flag only marks
-  it. A flagging request never gets a delaying backfill.
+  passed (--on-overdue): flag (default) only marks it; demote (opt-in)
+  republishes it as background work that ordinary claims and timed holds
+  may suspend; kill (opt-in) ends its own job's processes outside the
+  admission mutex (never the runner, never another claim). A flag request
+  carries backfill_policy 0 and never gets a delaying backfill.
 - Shared claims (`run --shared --cores N --min-cores M`): the claim guarantees
   M cores and lends the rest of its current cores. A later claim may take a
   lent core; the shared claim narrows its job's affinity before it republishes
@@ -151,10 +152,22 @@ POOL_REASONS = ("timing", "isolation", "determinism", "play-client", "hardware")
 # A running shared claim tries to grow onto unclaimed cores at most this often.
 SHARE_GROW_SECONDS = 10.0
 # What a claim's own runner does once the claim outlives its declared --max-seconds (`--on-overdue`, default
-# demote): demote republishes it as background work, which every ordinary claim and timed hold may then take cores
-# from (it suspends, as CI does, and resumes when they are free); kill ends its own job object's tree; flag only
-# marks it. A timed declaration is never a claim, so none of these ever touches timed work.
-OVERDUE_ACTIONS = ("demote", "kill", "flag")
+# flag): flag only marks it; demote (opt-in) republishes it as background work, which every ordinary claim and
+# timed hold may then take cores from (it suspends, as CI does, and resumes when they are free); kill (opt-in) ends
+# its own job object's processes. A timed declaration is never a claim, so none of these ever touches timed work.
+# Today's callers pass --max-seconds as an estimate, so enforcement is opt-in; flipping the default needs its own
+# note to every caller.
+OVERDUE_ACTIONS = ("flag", "demote", "kill")
+# A --core-pool without --pool-reason is accepted until this UTC date (14 days after the deploy), recorded as
+# core_pool_reason "unspecified" and nudged by the watcher; from this date on it is refused (exit 2).
+POOL_REASON_REQUIRED_FROM = "2026-11-17"
+POOL_REASON_UNSPECIFIED = "unspecified"
+
+
+def pool_reason_required(today=None) -> bool:
+    """Whether the pool-reason transition is over (HOST_SLOTS_TODAY, an ISO date, overrides today for tests)."""
+    today = today or os.environ.get("HOST_SLOTS_TODAY") or datetime.now(timezone.utc).date().isoformat()
+    return today >= POOL_REASON_REQUIRED_FROM
 # While a shared claim lends any core it keeps this file, deliberately not a JSON object, beside the delay windows:
 # every backfill engine at or after c543e1b4 (mtg-kernel e2657b8c, #427) refuses to backfill while a delay file
 # cannot be read, so none of them (this one included) proves a backfill while a lent core could still be given
@@ -1139,6 +1152,9 @@ class Tree:
 
     def __init__(self, cores, priority: str | None, *, contain_self: bool = True):
         self.cores = sorted(cores)
+        # The last mask the OS accepted for the job (None when unknown). It can differ from `cores` after a failed
+        # change; a shared claim's runner re-applies `cores` before it resumes.
+        self.applied = self.cores
         self.priority = priority
         self.job = None
         self.child = None
@@ -1199,6 +1215,7 @@ class Tree:
             if not _SetInformationJobObject(self.job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info),
                                             ctypes.sizeof(info)):
                 return False
+            self.applied = cores      # the job limit took effect, even if a member's read-back disagrees below
             # Read back every member's affinity: the limit must have reached all of them (a nested job could
             # refuse it).
             for pid in [os.getpid(), *self.members()]:
@@ -1217,6 +1234,7 @@ class Tree:
             return True
         physical = physical_cpus(cores)
         ok = True
+        self.applied = None           # some threads may already have the new mask
         try:
             os.sched_setaffinity(0, physical)
         except OSError:
@@ -1242,7 +1260,7 @@ class Tree:
                     except OSError:
                         ok = False
         if ok:
-            self.cores = cores
+            self.cores = self.applied = cores
         return ok
 
     def adopt(self, pid: int, creation: int, *, suspend: bool = False) -> None:
@@ -1479,7 +1497,9 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     _check_placement(core_pool, pool_reason, shared, min_cores, background, adopted is not None,
                      max_seconds, on_overdue)
     if max_seconds is not None and on_overdue is None:
-        on_overdue = "demote"
+        on_overdue = "flag"
+    if core_pool is not None and pool_reason is None:
+        pool_reason = POOL_REASON_UNSPECIFIED       # the transition window (_check_placement refused after it)
     if adopted is not None and not background:
         raise ValueError("an adopted worker must be a background claim")
     min_cores = (1 if min_cores is None else min_cores) if shared else None
@@ -1523,7 +1543,9 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     request = {**base, "cores_wanted": wanted, "enqueued_at": enqueued_at, "config_sha256": config_digest(config)}
     if max_seconds is not None:
         request["max_seconds"] = max_seconds
-        request["backfill_policy"] = BACKFILL_POLICY
+        # A flag request's limit is not enforced, so it never takes a bounded delay; backfill_policy 0 makes every
+        # engine (the #427 one included) judge it by the zero-delay rule only, so all agree on the first eligible.
+        request["backfill_policy"] = BACKFILL_POLICY if on_overdue != "flag" else 0
         request["on_overdue"] = on_overdue
     with Mutex():
         ticket = _ticket_path(queue_class, claim_id)
@@ -1641,7 +1663,11 @@ def _check_placement(core_pool, pool_reason, shared: bool, min_cores, background
     """Placement options that are refused before any ticket is written."""
     if on_overdue is not None and (max_seconds is None or on_overdue not in OVERDUE_ACTIONS):
         raise ValueError("--on-overdue needs --max-seconds and is one of " + ", ".join(OVERDUE_ACTIONS))
-    if core_pool is not None and pool_reason not in POOL_REASONS:
+    if core_pool is not None and pool_reason is None and not pool_reason_required():
+        print(json.dumps({"warning": "--core-pool without --pool-reason is accepted as \"unspecified\" until "
+                          + POOL_REASON_REQUIRED_FROM + " and refused after; add --pool-reason ("
+                          + ", ".join(POOL_REASONS) + ") or drop the pool"}), file=sys.stderr)
+    elif core_pool is not None and pool_reason not in POOL_REASONS:
         raise ValueError("--core-pool needs --pool-reason, one of " + ", ".join(POOL_REASONS)
                          + "; without one, drop the pool and the scheduler places the job, so it never waits "
                            "while other cores are free")
@@ -1703,6 +1729,10 @@ def _share_step(tree: "Tree", claim: Path, claim_id: str, share: dict, *, grow: 
     # cannot see an older copy that has not queued yet; the config gate is what keeps those away).
     closed = (config is None or not lending_enabled()
               or (snap is not None and legacy_backfill_engine(snap["tickets"], claims)))
+    # After a failed change the OS may still hold another mask: re-apply the intended cores before anything else,
+    # and report failure (the caller keeps the tree suspended) until that succeeds.
+    if getattr(tree, "applied", tree.cores) != tree.cores and not tree.set_cores(tree.cores):
+        return False
     me = {"id": claim_id, "shared": True, "guaranteed": share["guaranteed"], "cores": tree.cores}
     back = give_back(me, timed, claims, config, queued=queued or closed)
     if back and not tree.set_cores(sorted(set(tree.cores) - set(back))):
@@ -1758,9 +1788,9 @@ def _overdue_step(tree: "Tree", claim: Path, claim_id: str, overdue: dict, share
     if not _update_claim_locked(claim, **fields) and action != "kill":
         return None           # retried next poll; a kill does not depend on its record
     overdue["done"] = True
-    _event("overdue", {"id": claim_id, "cores": tree.cores}, action=action)
-    if action == "kill":
-        tree.kill_members()      # its own job's members only, never this runner, never another claim
+    if action != "kill":
+        _event("overdue", {"id": claim_id, "cores": tree.cores}, action=action)
+    # A kill happens in the caller, outside the admission mutex (it may take up to its timeout).
     return action
 
 
@@ -1799,8 +1829,17 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                 deadline = time.monotonic() + TIMED_VACATE_SECONDS
             time.sleep(poll_seconds())
         code = None
+        kill_pending = False
         grow_at = time.monotonic() + grow_seconds()
         while True:
+            if kill_pending:
+                # Outside the admission mutex: other runners keep admitting while this claim's own processes end.
+                kill_pending = False
+                ended = tree.kill_members()   # its own job's members only, never this runner or another claim
+                with Mutex():
+                    _event("overdue", {"id": claim_id, "cores": tree.cores}, action="kill", ended=ended)
+                    if not ended:
+                        _update_claim_locked(claim, kill_failed=True)
             if code is None:
                 try:
                     code = child.wait(timeout=poll_seconds())
@@ -1815,6 +1854,8 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                     action = _overdue_step(tree, claim, claim_id, overdue, share)
                     if action == "demote":
                         share, background, guard = None, True, tree.cores
+                    elif action == "kill":
+                        kill_pending = True
                 grow = share is not None and time.monotonic() >= grow_at
                 narrowed = _share_step(tree, claim, claim_id, share, grow=False) if share else True
                 conflict = claim_conflicts(guard, background) or not narrowed
@@ -2330,6 +2371,13 @@ def watch_tick(state: dict, counters: dict, mono: float, wall: str, config: dict
                                         f"for {(mono - since) / 60:.0f} min (now {load:.1f} busy cores)"
                                         + ("" if claim.get("shared") else
                                            "; a build or other bursty job can run with --shared so idle cores are lent")})
+    for record in [*claims, *tickets]:
+        if record.get("core_pool_reason") == POOL_REASON_UNSPECIFIED and isinstance(record.get("id"), str):
+            flags.append({"kind": "pool_unspecified", "id": record["id"], "lane": record.get("lane"),
+                          "work_id": record.get("work_id"),
+                          "detail": f"--core-pool {format_cores(_pool(record) or [])} has no --pool-reason; it is "
+                                    f"refused from {POOL_REASON_REQUIRED_FROM}: add --pool-reason ("
+                                    + ", ".join(POOL_REASONS) + ") or drop the pool"})
     live_ids = {c.get("id") for c in claims}
     for cid in [cid for cid in acc if cid not in live_ids]:
         entry = acc.pop(cid)
@@ -2563,8 +2611,8 @@ def main(argv: list[str] | None = None) -> int:
                                 "nothing is queued; for builds and other bursty work, never for timing")
             p.add_argument("--min-cores", type=int, help="cores a --shared claim guarantees and queues for (default 1)")
             p.add_argument("--on-overdue", choices=OVERDUE_ACTIONS,
-                           help="what this claim's runner does past --max-seconds (default demote: it becomes "
-                                "background work that others may suspend; kill ends its own tree; flag only marks)")
+                           help="what this claim's runner does past --max-seconds (default flag: only marks it; "
+                                "demote: it becomes background work that others may suspend; kill: ends its own tree)")
             p.add_argument("--max-seconds", type=float,
                            help="declared run time limit; lets the request start before the queue head when that "
                                 "cannot delay the head (past it, status flags the claim overdue)")
