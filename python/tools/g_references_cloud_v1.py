@@ -307,9 +307,10 @@ RELEASE_RESERVE_SECONDS = 120  # before the release boundary, kept for the relea
 POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
 try:
     value = json.load(open(path))
+    readable = isinstance(value, dict)
 except (OSError, ValueError):
-    value = {}
-print(json.dumps({"release_epoch": value.get("release_epoch")}))
+    value, readable = {}, False
+print(json.dumps({"readable": readable, "release_epoch": value.get("release_epoch") if readable else None}))
 '''
 POD_QUIESCE_RECORDS = '''import os, time
 open(ARGS["quiesce"], "w").close()
@@ -443,9 +444,12 @@ class Cycle(cloud.Cycle):
         bounds = [self.lease["deadline_epoch"] - max(self.lease["recovery_seconds"], cloud.RECOVERY_SECONDS),
                   started + cloud.RECOVERY_SECONDS]
         try:
-            latched = self.pod.run(POD_GUARD_RELEASE, {"guard": self.guard}, timeout=30)["release_epoch"]
+            guard = self.pod.run(POD_GUARD_RELEASE, {"guard": self.guard}, timeout=30)
         except cloud.PodUnavailable:
             return None
+        if guard.get("readable") is not True:  # missing or malformed guard.json: a latch may be hidden
+            return None
+        latched = guard.get("release_epoch")
         if isinstance(latched, (int, float)):
             bounds.append(latched)
         return min(bounds)

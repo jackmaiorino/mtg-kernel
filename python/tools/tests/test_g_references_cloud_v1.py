@@ -351,7 +351,7 @@ class LeaseTests(unittest.TestCase):
                         if program is gcloud.POD_QUIESCE_RECORDS:
                             return {"quiesced": answer}
                         if program is gcloud.POD_GUARD_RELEASE:
-                            return {"release_epoch": None}
+                            return {"readable": True, "release_epoch": None}
                         raise AssertionError("recovery enumerated the volume")
                 cycle.pod = Pod()
                 if answer is True:
@@ -369,7 +369,7 @@ class LeaseTests(unittest.TestCase):
         cycle = gcloud.Cycle.__new__(gcloud.Cycle)
         cycle.result, cycle.remote_ready, cycle.guard = {}, True, "/run/phase1/g"
         cycle.lease = {"deadline_epoch": time.time() + 3600, "recovery_seconds": 600}
-        ran, latched = [], {"release_epoch": time.time() + 200}  # the resident guard latched: 200 s left
+        ran, latched = [], {"readable": True, "release_epoch": time.time() + 200}  # latched: 200 s left
 
         class Pod:
             def run(self, program, args, timeout=30, read_only=False):
@@ -380,17 +380,33 @@ class LeaseTests(unittest.TestCase):
         cycle.pod = Pod()
         now = time.time()
         self.assertLess(cycle.release_boundary(now), now + 201)
-        latched = {"release_epoch": None}  # unlatched: the recovery's own 600 s, one deadline for all of it
+        latched = {"readable": True, "release_epoch": None}  # unlatched: the recovery's own 600 s for all of it
         self.assertLessEqual(cycle.release_boundary(now), now + gcloud.cloud.RECOVERY_SECONDS)
         cycle.lease["deadline_epoch"] = now + 650  # near the deadline: the guards start at deadline - 600
         self.assertLessEqual(cycle.release_boundary(now), now + 50)
         latched = None
-        self.assertIsNone(cycle.release_boundary(now))  # unreadable: a latched boundary may be earlier
+        self.assertIsNone(cycle.release_boundary(now))  # unreachable: a latched boundary may be earlier
+        latched = {"readable": False, "release_epoch": None}
+        self.assertIsNone(cycle.release_boundary(now))  # a missing or malformed guard.json likewise
         cycle.lease["deadline_epoch"] = now + 3600
-        latched = {"release_epoch": time.time() + 200}
+        latched = {"readable": True, "release_epoch": time.time() + 200}
         cycle.recover()  # 200 s less the 120 s release reserve: too little to quiesce and recover
         self.assertTrue(cycle.result["recovery"].startswith("skipped: too little time"))
         self.assertEqual(set(ran), {gcloud.POD_GUARD_RELEASE})  # nothing quiesced, packed or copied
+
+    def test_the_pod_guard_read_tells_unreadable_from_unlatched(self):
+        with tempfile.TemporaryDirectory() as temp:
+            def read_guard():
+                code = cloud.PRELUDE % json.dumps({"guard": temp}) + gcloud.POD_GUARD_RELEASE
+                done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+                return json.loads(done.stdout.decode().splitlines()[-1])
+            self.assertEqual(read_guard(), {"readable": False, "release_epoch": None})  # missing
+            (Path(temp) / "guard.json").write_text("{torn")
+            self.assertEqual(read_guard(), {"readable": False, "release_epoch": None})  # malformed
+            (Path(temp) / "guard.json").write_text(json.dumps({"latched": None}))
+            self.assertEqual(read_guard(), {"readable": True, "release_epoch": None})  # read, unlatched
+            (Path(temp) / "guard.json").write_text(json.dumps({"latched": "deadline", "release_epoch": 5.0}))
+            self.assertEqual(read_guard(), {"readable": True, "release_epoch": 5.0})
 
     @unittest.skipIf(sys.platform == "win32", "fcntl: the Pod is Linux")
     def test_the_pod_quiesce_waits_for_a_deletion_in_progress(self):
