@@ -189,6 +189,17 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
         reports[name] = pin(report)
         log(kind="trial", name=name, report=reports[name])
     pack_index = Path(read(family["pack"]["path"])["root"]) / "pack.json"
+    if pack_index.exists() and read(pack_index).get("topology") != dispatch.host_topology():
+        # A pack is its host's own (which CPUs share a core; on a Pod, its granted CPUs): a later lease on
+        # another host qualifies the pack again, and the launcher's check-choice would refuse the old one.
+        # The earlier pack's evidence is kept beside it.
+        root = pack_index.parent
+        kept = root.with_name(f"{root.name}-other-host-{driver.sha256_file(pack_index)[:12]}")
+        if not kept.exists():
+            os.replace(root, kept)
+        else:
+            shutil.rmtree(root)  # the same pack, already kept
+        log(kind="pack-requalify", kept=str(kept))
     if not pack_index.exists():
         plan_ = read(family["pack"]["path"])
         left = campaign.wall_left()

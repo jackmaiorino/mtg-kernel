@@ -210,6 +210,37 @@ class QualifyTests(unittest.TestCase):
             qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         self.assertLessEqual(json.loads(Path(calls[0]["base_request"]["path"]).read_text())["wall_seconds"], 133)
 
+    def test_a_pack_from_another_host_is_kept_and_qualified_again(self):
+        inventory = save(self.root / "inventory.json", b"{}")
+        value = json.loads(Path(qualify.plan(self.path, {"storage": {"accounting_roots": [str(self.root)]},
+                                                         "wall_seconds": 3600, "inventory": inventory},
+                                             self.root / "q")["path"]).read_text())
+        family = value["families"]["empty-pool"]
+        pack_root = Path(json.loads(Path(family["pack"]["path"]).read_text())["root"])
+        for name in family["trials"]:
+            report = Path(json.loads(Path(family["trials"][name]["path"]).read_text())["root"]) / "report.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("{}")
+        here, there = [{"cpus": "0,16", "efficiency_class": 0}], [{"cpus": "0,1", "efficiency_class": 0}]
+        pack_root.mkdir(parents=True)
+        (pack_root / "pack.json").write_text(json.dumps({"topology": there}))  # an earlier Pod's pack
+        runs, events = [], []
+
+        def fake_run(args, **kwargs):
+            runs.append(args)
+            pack_root.mkdir(parents=True, exist_ok=True)
+            (pack_root / "pack.json").write_text(json.dumps({"topology": here}))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        with patch.object(qualify.dispatch, "host_topology", return_value=here), \
+                patch.object(qualify.subprocess, "run", side_effect=fake_run):
+            qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: events.append(fields))
+            self.assertEqual(len(runs), 1)  # qualified again on this host
+            kept = [path for path in pack_root.parent.iterdir() if path.name.startswith("pack-other-host-")]
+            self.assertEqual([json.loads((path / "pack.json").read_text())["topology"] for path in kept], [there])
+            self.assertIn("pack-requalify", [event["kind"] for event in events])
+            qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+            self.assertEqual(len(runs), 1)  # this host's own pack is reused
+
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):
             qualify.run(self.path, self.root / "plan.json")
