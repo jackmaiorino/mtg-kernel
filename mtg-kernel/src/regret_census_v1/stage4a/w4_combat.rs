@@ -15,7 +15,7 @@
 //!   must score exactly as one reset at game start, since continuations
 //!   start from reset policies.
 //! - `score`: replays the recorded actions. At every focal decision (the
-//!   focal seat with two or more legal actions) it records the candidate's
+//!   focal seat acts, forced decisions included) it records the candidate's
 //!   logits, value and scorer hidden and the public material features. At
 //!   each focal blocker-pair decision it adds the rules facts, the state
 //!   hidden, a random-init net's hidden and the raw action and object
@@ -27,7 +27,8 @@
 //! and opponent model sources), `W4_HIDDEN`, `W4_RANDOM_SEED` (default
 //! 20261030), `W4_POSITIONS` (jsonl of `{"id", "index", "worlds"}`),
 //! `W4_ACCEPT` (a2 only: the passed acceptance output; A2 refuses to run
-//! without it).
+//! without it), `W4_RECORDS` (a2 only: `1` adds a continuation record to
+//! every value and playout row; unset or `0` leaves the rows unchanged).
 
 use super::play::{acting, decision};
 use super::replay_labels::LabelJob;
@@ -662,6 +663,40 @@ impl Ending {
     }
 }
 
+/// The blocks committed in the position's combat, once its declaration is
+/// complete: (attacker, blockers in declaration order).
+fn committed_blocks(s: &Session, turn: (u32, PlayerId)) -> Option<Value> {
+    let state = s.game_state();
+    let combat = &state.engine.combat;
+    ((state.turn, state.active_player) == turn && combat.blockers_declared).then(|| {
+        let edges: Vec<Value> = combat
+            .blocked_by
+            .iter()
+            .map(|(a, bs)| json!([a.0, bs.iter().map(|b| b.0).collect::<Vec<_>>()]))
+            .collect();
+        json!(edges)
+    })
+}
+
+/// A continuation record (`W4_RECORDS`, result memo observation 5): where it
+/// stopped (round, active seat and step at the stopping decision or
+/// terminal), the blocks committed in the position's combat (null if never
+/// seen complete) and the full-state diagnostic hash there.
+fn record(s: &Session, blocks: Option<Value>) -> Value {
+    let state = s.game_state();
+    json!({"turn": state.turn, "active": state.active_player.0, "step": format!("{:?}", state.step),
+        "blocks": blocks, "digest": format!("{:016x}", s.diagnostic_state_hash())})
+}
+
+/// One continuation's row: its ending, plus its record when kept.
+fn row((end, record): (Ending, Option<Value>)) -> Value {
+    let mut v = end.json();
+    if let Some(r) = record {
+        v["record"] = r;
+    }
+    v
+}
+
 fn ending_at_terminal(s: &Session, focal: PlayerId) -> Option<Ending> {
     terminal_score(s, focal).map(|(score, class)| match class {
         TerminalClassificationV1::Natural => Ending::Terminal(score),
@@ -673,7 +708,8 @@ fn ending_at_terminal(s: &Session, focal: PlayerId) -> Option<Ending> {
 /// Forces `choice` at the position, then plays both seats' policies (reset
 /// with `paired_policy_seeds_v1(seed)`). With `stop_after_combat`, stops at
 /// the first focal decision after combat is over and scores it with the
-/// candidate's value; otherwise plays to the terminal.
+/// candidate's value; otherwise plays to the terminal. With `records`, also
+/// returns the continuation record.
 fn continuation(
     root: &Session,
     choice: u32,
@@ -681,7 +717,8 @@ fn continuation(
     focal: PlayerId,
     panel: &mut Panel,
     stop_after_combat: bool,
-) -> Result<Ending, String> {
+    records: bool,
+) -> Result<(Ending, Option<Value>), String> {
     let d = decision(root).ok_or("the position has no decision")?;
     let turn = (root.game_state().turn, root.game_state().active_player);
     panel.reset(paired_policy_seeds_v1(seed))?;
@@ -690,15 +727,20 @@ fn continuation(
     // Combat is over once seen at any decision, either seat's; a later
     // opponent spell does not move the stopping point.
     let mut combat_over = false;
+    let mut blocks = None;
     loop {
+        if records && blocks.is_none() {
+            blocks = committed_blocks(&s, turn);
+        }
+        let kept = |s: &Session, blocks: &Option<Value>| records.then(|| record(s, blocks.clone()));
         if let Some(end) = ending_at_terminal(&s, focal) {
-            return Ok(end);
+            return Ok((end, kept(&s, &blocks)));
         }
         let d = decision(&s).ok_or("no decision and no terminal")?;
         combat_over |= past_combat(&s, turn);
         if stop_after_combat && combat_over && is_focal(&d, focal) {
             let scores = panel.scorer()?.score_fast_session_v1(&s)?;
-            return Ok(Ending::Value(scores.value));
+            return Ok((Ending::Value(scores.value), kept(&s, &blocks)));
         }
         let a = panel.select(&s, d, focal)?;
         step(&mut s, &d, a)?;
@@ -722,7 +764,12 @@ fn world_seeds(id: &str, index: usize, count: u64) -> Vec<u64> {
         .collect()
 }
 
-fn a2_position(job: &LabelJob, position: &Position, panel: &mut Panel) -> Result<Value, String> {
+fn a2_position(
+    job: &LabelJob,
+    position: &Position,
+    panel: &mut Panel,
+    records: bool,
+) -> Result<Value, String> {
     let focal = PlayerId(job.focal);
     let mut s = session(job)?;
     for i in 0..position.index {
@@ -738,11 +785,15 @@ fn a2_position(job: &LabelJob, position: &Position, panel: &mut Panel) -> Result
     for (name, choice) in [("exclude", 1 - include_row), ("include", include_row)] {
         let mut value = Vec::new();
         for seed in VALUE_SEEDS {
-            value.push(continuation(&s, choice, seed, focal, panel, true)?.json());
+            value.push(row(continuation(
+                &s, choice, seed, focal, panel, true, records,
+            )?));
         }
         let mut playout = Vec::new();
         for seed in PLAYOUT_SEEDS {
-            playout.push(continuation(&s, choice, seed, focal, panel, false)?.json());
+            playout.push(row(continuation(
+                &s, choice, seed, focal, panel, false, records,
+            )?));
         }
         let mut worlds = Vec::new();
         if position.worlds {
@@ -750,7 +801,9 @@ fn a2_position(job: &LabelJob, position: &Position, panel: &mut Panel) -> Result
                 let world = s.census_redeterminized_clone_v1(w)?;
                 let mut rows = Vec::new();
                 for seed in WORLD_PLAYOUT_SEEDS {
-                    rows.push(continuation(&world, choice, seed, focal, panel, false)?.json());
+                    rows.push(row(continuation(
+                        &world, choice, seed, focal, panel, false, records,
+                    )?));
                 }
                 worlds.push(json!({"world_seed": w, "playouts": rows}));
             }
@@ -876,6 +929,11 @@ fn run_on_worker(out_path: &str) -> Result<(), String> {
         }
         "a2" => {
             require_acceptance()?;
+            let records = match std::env::var("W4_RECORDS").as_deref() {
+                Err(_) | Ok("0") => false,
+                Ok("1") => true,
+                Ok(other) => return Err(format!("W4_RECORDS must be 0 or 1, not {other}")),
+            };
             let path = env_path("W4_POSITIONS")?;
             let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
             let positions: Vec<Position> = text
@@ -895,7 +953,7 @@ fn run_on_worker(out_path: &str) -> Result<(), String> {
             let mut loaded = panels(&used, &sources)?;
             for (position, job) in positions.iter().zip(used) {
                 let panel = loaded.get_mut(panel_of(&job.id)).ok_or("panel")?;
-                let row = a2_position(job, position, panel).unwrap_or_else(
+                let row = a2_position(job, position, panel, records).unwrap_or_else(
                     |e| json!({"kind": "error", "id": job.id, "index": position.index, "error": e}),
                 );
                 writeln!(out, "{row}").map_err(|e| e.to_string())?;
