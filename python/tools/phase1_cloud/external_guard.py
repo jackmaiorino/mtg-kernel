@@ -575,9 +575,11 @@ class LeaseClient:
     an ALERT record is written and RuntimeError raised. The raw clients refuse to run outside it."""
 
     def __init__(self, folder, name, key, provider=None, pods=None, clock=None, sleep=None, alert_path=None,
-                 lease_deadline=0.0, min_release_seconds=120, lock_wait=None):
+                 lease_deadline=0.0, min_release_seconds=120, lock_wait=0):
         self.folder = Path(folder); self.name = name; self.key = key
-        self.lock_wait = lock_wait      # the guard's own client passes 0: a release never waits on the lock
+        # a holder of allocated Pods never waits on the store lock: on contention its handoff degrades at
+        # once to main's lock-free one (plus ALERT), so no release or cleanup is delayed
+        self.lock_wait = lock_wait
         self._provider = provider or PodApi
         self._pods = pods or list_pods
         self.clock = clock or time.time

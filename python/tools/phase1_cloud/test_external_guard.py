@@ -1044,6 +1044,28 @@ class StoreClosureTests(Base):
         self.assertLess(time.monotonic() - started, eg.STORE_LOCK_SECONDS / 4)   # main's handoff never waits
         self.assertTrue((self.root / eg.SYNC_ALERT).exists())
 
+    def test_a_creator_never_waits_on_the_lock_before_releasing_an_unguarded_pod(self):
+        world = World([])
+        real = eg.write
+
+        def unwritable_record(path, value, replace=False):   # the known-Pod record cannot be written
+            if Path(path).name == 'p.json':
+                raise PermissionError('store unwritable')
+            return real(path, value, replace)
+
+        def poster(body):
+            world.pods['p'] = pod('p')
+            return pod('p')
+        started = time.monotonic()
+        with eg.StoreLock(self.root / eg.KNOWN_DIR), no_network(), \
+                mock.patch.object(eg, 'write', side_effect=unwritable_record), \
+                eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list, self.clock,
+                               self.clock.sleep, self.root / 'ALERT-pod-not-released.json') as client:
+            client.post({'name': NAME}, poster=poster)        # the default client, as creators build it
+        self.assertLess(time.monotonic() - started, eg.STORE_LOCK_SECONDS / 4)   # main's cleanup starts at once
+        self.assertIn(('DELETE', 'p'), world.log)
+        self.assertNotIn('p', world.pods)
+
     def test_a_handoff_waits_for_the_store_lock_and_degrades_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):
