@@ -1,10 +1,11 @@
 {
  "schema": "mtg-kernel-v8-inclusion-conversion-summary/v1",
- "description": "OH2 r2 b512 doses converted to the V8 inclusion net (native_policy_train_step_v1::v8_inclusion_v1) by examples/v8_inclusion_convert_v1.rs, with the preservation check of 24 real games per chain (the converted policy as both seats, 4 of them London; IEEE == on every logit and the value against the parent on the same decisions). Bulk receipt and checkpoints: D:/e-scratch/w4-combat-20261030/v8-convert (not committed).",
+ "description": "OH2 r2 b512 doses converted to the V8 inclusion net (native_policy_train_step_v1::v8_inclusion_v1) by examples/v8_inclusion_convert_v1.rs, with the preservation check of 24 real games per chain (the converted policy as both seats, 4 of them London; f32 bits (to_bits) of every logit and the value against the parent on the same decisions, the include column adding only nonzero products). Bulk receipt and checkpoints: D:/e-scratch/w4-combat-20261030/v8-convert (not committed).",
  "receipt": {
   "path": "D:/e-scratch/w4-combat-20261030/v8-convert/receipt.json",
-  "sha256": "6654978c9a4e70f562d7a60ea7994202940f949ed0b276a06b2d259659f28525"
+  "sha256": "7d4b7625c20937fb582b5de0f87fc7bfe99fad737eacdaf4adb6c0367f2142cd"
  },
+ "definition": "a mismatch is any logit or the value whose f32 bits differ (to_bits, so a signed-zero change counts), or any nonfinite parent output",
  "init_law": "torch_default_uniform_v1",
  "seed_rule": "2026103100 + chain number",
  "chains": [
