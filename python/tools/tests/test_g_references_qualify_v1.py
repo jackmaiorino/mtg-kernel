@@ -242,6 +242,7 @@ class QualifyTests(unittest.TestCase):
             self.assertEqual(json.loads((pack_root / "pack.json").read_text())["topology"], there)  # untouched
             self.assertEqual(Path(first["pack"]["path"]), Path(plan["root"]) / "pack.json")
             self.assertIn("pack-requalify", [event["kind"] for event in events])
+            self.assertTrue((Path(plan["root"]) / "pack.stdout").exists())  # its own record, none overwritten
             again = qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
             self.assertEqual(len(runs), 1)  # a restart on this host reuses its own pack
             self.assertEqual(again["pack"], first["pack"])
