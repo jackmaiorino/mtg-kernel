@@ -82,15 +82,15 @@ fn env_list(name: &str) -> Result<Vec<u64>, String> {
 }
 
 /// The root session rebuilt from its job, and what the replay saw.
-struct Rebuilt {
-    root: FastActorSessionV1,
-    focal: PlayerId,
+pub(super) struct Rebuilt {
+    pub(super) root: FastActorSessionV1,
+    pub(super) focal: PlayerId,
     /// Recorded decisions from the root up to (excluding) the certified
     /// decision: all, focal nonforced, opponent nonforced.
-    prefix: Option<(u64, u64, u64)>,
+    pub(super) prefix: Option<(u64, u64, u64)>,
     /// Product of the policy's probabilities of the recorded focal nonforced
     /// actions from the root up to (excluding) the certified decision.
-    witness: Option<f64>,
+    pub(super) witness: Option<f64>,
 }
 
 /// The student's probabilities from its deployed logits, on the same pinned
@@ -179,16 +179,16 @@ fn rebuild(r: &ReachRoot, scorer: &mut FrozenPlayPolicyV1) -> Result<Rebuilt, St
 }
 
 /// One search's result (the Selection, the tree and the passive records).
-struct Searched {
-    sel: super::arms::Selection,
-    tree: Tree,
+pub(super) struct Searched {
+    pub(super) sel: super::arms::Selection,
+    pub(super) tree: Tree,
     trace: Option<Trace>,
     records: Vec<SimRecord>,
-    cpu: f64,
-    wall: f64,
+    pub(super) cpu: f64,
+    pub(super) wall: f64,
 }
 
-fn search(
+pub(super) fn search(
     policy: &FrozenPlayPolicyV1,
     rb: &Rebuilt,
     root_id: &str,
@@ -374,7 +374,7 @@ fn sim_ends(trace: &Trace) -> (Vec<SimEnd>, Option<u64>) {
 
 /// O2: `ex1-target-v1` at the root, with live-order counts from the refresh
 /// cursor (as EX1 maps them) and the policy's logits at the root.
-fn o2(
+pub(super) fn o2(
     tree: Tree,
     rb: &Rebuilt,
     scorer: &mut FrozenPlayPolicyV1,
