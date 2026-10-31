@@ -14,9 +14,10 @@ LANES/g-references-20261028/DESIGN.md v1.2, section 6, and FROZEN.md):
 * Layout (FROZEN disposition 2): native outputs, the trajectories, go on the
   Pod's container disk (``native_root``); checkpoints, records, cold archives
   and dose records on the network volume under /workspace/<campaign root>.
-  Both are storage accounting roots, each with the dispatcher's 60 GiB reserve,
-  so the lease preparation sizes the container disk (prepare_lease
-  ``container_disk_gb``).
+  The volume tree is the storage accounting root, with the dispatcher's 60 GiB
+  reserve; the native root is block scratch (AMENDMENT-2.md), admitted by the
+  driver against the container disk, which the lease preparation sizes
+  (prepare_lease ``container_disk_gb``).
 * A qualification trial runs one update, and a pack admits its packed trials'
   storage projections together, so the qualification spec carries its own
   per-trial projection (spec ``trial_projected_additional_bytes``, at most a
@@ -58,6 +59,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 import g_references_campaign_v1 as driver
+import g_references_records_v1 as records
 import g_references_v1 as g
 import host_slots_v1
 import nine_deck_cloud_v1 as cloud
@@ -146,8 +148,22 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
     native = PurePosixPath(spec["native_root"])
     require(native.is_absolute() and not native.is_relative_to(cloud.WORKSPACE), "native root is on the container disk")
     storage = cloud.checked_storage(spec["storage"], base)
-    storage["accounting_roots"] = [str(base / "campaign"), str(native)]
-    campaign = {"recipe": g.PREFIX, "lane": template["lane"],
+    # AMENDMENT-2.md: the trajectories are block scratch, admitted against the container disk (spec "scratch":
+    # the measured per-block peak, its factor and the margin); the cap counts the campaign tree on the volume.
+    storage["scratch_roots"] = [str(native)]
+    scratch = spec["scratch"]
+    require(isinstance(scratch, dict) and set(scratch) == {"block_peak_bytes", "factor", "margin_fraction"},
+            "the spec's scratch names the per-block peak, its factor and the margin")
+    # A running attempt ends only on a physical shortage (the provisioned volume less its margin, or the
+    # container disk's free space below it); the cap gates new dispatches. Sealed block records leave the
+    # volume through the copy-back window (g_references_records_v1.py).
+    emergency, records = spec["emergency"], spec["records"]
+    require(isinstance(emergency, dict) and set(emergency) == {"volume_bytes", "margin_fraction"},
+            "the spec's emergency names the provisioned volume and the margin")
+    require(isinstance(records, dict) and set(records) == {"window_blocks", "stall_seconds"},
+            "the spec's records name the copy-back window and its stall bound")
+    storage["emergency"] = emergency
+    campaign = {"recipe": g.PREFIX, "lane": template["lane"], "scratch": scratch, "records": records,
                 "decks": str(base / deck_directory / "data/runtime_decks_v1.json"),
                 "play_imports": {run: descriptor(template["play_imports"][run]) for run in g.RUNS},
                 "placement": {**placements[runs[0]], "cpu_affinity": union},
@@ -287,6 +303,28 @@ print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 '''
 
 
+POD_QUIESCE_RECORDS = '''import os, time
+open(ARGS["quiesce"], "w").close()
+deadline = time.monotonic() + ARGS["timeout"]
+try:
+    import fcntl
+    with open(ARGS["lock"], "a") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                quiesced = True
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    quiesced = "timed out"
+                    break
+                time.sleep(1)
+except ImportError:
+    quiesced = True
+print(json.dumps({"quiesced": quiesced}))
+'''
+
+
 class Cycle(cloud.Cycle):
     """nine_deck_cloud_v1.Cycle with the G driver (or the qualification tool) and G statuses."""
 
@@ -356,15 +394,32 @@ class Cycle(cloud.Cycle):
         if all(value == "complete" or run in failed for run, value in status.items()):
             self.result["complete"] = True
             return
-        exhausted = {run for run, reason in reasons.items() if reason == "lease_time_exhausted" and status[run] == "stopped"}
+        # Resumable at a block boundary: the lease's time, or storage admission (AMENDMENT-2.md: the record
+        # window, its stall latch or a scratch refusal; the next lease drains the window and resumes).
+        exhausted = {run for run, reason in reasons.items() if status[run] == "stopped"
+                     and (reason == "lease_time_exhausted" or reason.startswith("storage admission: "))}
         require(exhausted and all(status[run] == "complete" or run in exhausted or run in failed for run in status),
                 "campaign ended without completing or a lease stop: " + json.dumps(status))
         self.result["lease_stopped"] = True
+
+    def quiesce_records(self, timeout: float = 660.0):
+        """Stop the record copy-back before recovery reads the volume, so nothing it lists is deleted under it.
+        The follower is asked to start no more moves (records-quiesce.json), then, on the Pod, the quiesce flag
+        is set and the copy-back's lock taken: a deletion in progress holds it to its end, and every later one
+        sees the flag and refuses. ``timeout`` covers one deletion (its own bound is 600 s) within the lease's
+        recovery time; past it the record says so and recovery proceeds."""
+        request = self.control / "records-quiesce.json"
+        if not request.exists():
+            write(request, {"epoch": time.time()})
+        result = self.pod.run(POD_QUIESCE_RECORDS, {"lock": records.POD_LOCK, "quiesce": records.POD_QUIESCE,
+                                                    "timeout": timeout}, timeout=timeout + 60)
+        self.result["records_quiesced"] = result["quiesced"]
 
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""
         if not self.remote_ready:
             return
+        self.quiesce_records()
         since = 0 if self.recover_all else None if self.worker is None else self.worker["epoch"] - 60
         packed = self.pod.run(POD_RECOVER, {"control": self.remote_control, "campaign": str(self.base / "campaign"),
                                             "guard": self.guard, "locks": cloud.LOCK_ROOT, "since": since},

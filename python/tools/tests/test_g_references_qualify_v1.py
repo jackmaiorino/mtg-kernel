@@ -42,6 +42,24 @@ class QualifyTests(unittest.TestCase):
         self.path.write_text(json.dumps(raw), encoding="utf-8")
         self.campaign = driver.Campaign(self.path)
 
+    def test_item2_checks_the_eight_trees_against_the_scratch_volume(self):
+        raw = json.loads(self.path.read_text())
+        container = self.root / "container"
+        (container / "G1").mkdir(parents=True)
+        (container / "G1" / "left").write_bytes(b"x" * 50)  # a tree still on the disk counts as reclaimable
+        raw["roots"]["native"] = str(container)
+        raw["storage"]["scratch_roots"] = [str(container)]
+        raw["scratch"] = {"block_peak_bytes": 100, "factor": 1.25, "margin_fraction": 0.1}
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        campaign = driver.Campaign(self.path)
+        disk = type("Disk", (), {"free": 1050, "total": 1000})()
+        with patch.object(qualify.shutil, "disk_usage", return_value=disk):
+            fits = qualify.scratch_item2(campaign, 90, 8)  # 8 x 125 = 1000 <= 1050 + 50 - 100
+            over = qualify.scratch_item2(campaign, 120, 8)  # measured above the admission peak: 8 x 150
+        self.assertEqual((fits["need_bytes"], fits["budget_bytes"], fits["fits"], fits["peak_within_spec"]),
+                         (1000, 1000, True, True))
+        self.assertEqual((over["need_bytes"], over["fits"], over["peak_within_spec"]), (1200, False, False))
+
     def test_plan_writes_the_empty_pool_family_and_keeps_the_spec(self):
         inventory = save(self.root / "inventory.json", b"{}")
         spec = {"storage": {"accounting_roots": [str(self.root)]}, "wall_seconds": 3600, "inventory": inventory}

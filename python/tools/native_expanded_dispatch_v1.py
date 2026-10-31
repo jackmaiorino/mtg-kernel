@@ -236,10 +236,18 @@ def workload(config, kind, keep_seeds=False, family=None):
     return digest(value)
 
 
-def validate_storage(storage, extra=None):
-    cap = storage["max_logical_bytes"]
-    require(type(cap) is int and 0 < cap <= CAP, "storage cap exceeds 192 GiB")
-    require(storage["reserve_bytes"] >= DISK_RESERVE_BYTES, "reserve below 60 GiB")
+def scratch_roots(storage):
+    raw = [Path(path) for path in storage.get("scratch_roots", [])]
+    require(all(path.is_absolute() for path in raw), "absolute scratch roots required")
+    for path in raw:
+        require(all(not item.is_symlink() and not item.is_junction() for item in (path, *path.parents)),
+                "scratch root traverses a link")
+    return [path.resolve() for path in raw]
+
+
+def accounting_bytes(storage):
+    """The accounting roots (checked: absolute, link-free, disjoint, apart from any scratch root) and the
+    logical bytes of every file under them."""
     raw_roots = [Path(path) for path in storage["accounting_roots"]]
     require(all(path.is_absolute() for path in raw_roots), "absolute accounting roots required")
     for raw in raw_roots:
@@ -249,6 +257,11 @@ def validate_storage(storage, extra=None):
     require(roots and len(set(roots)) == len(roots), "missing or duplicate accounting roots")
     require(all(not a.is_relative_to(b) for a in roots for b in roots if a != b),
             "overlapping accounting roots")
+    # Opt-in block scratch (G(i) amendment 2): a native output tree there is pruned at its block's end, so it
+    # is outside the artifact cap; the campaign driver admits each block against the scratch volume instead.
+    scratch = scratch_roots(storage)
+    require(all(not a.is_relative_to(b) and not b.is_relative_to(a) for a in scratch for b in roots),
+            "scratch root overlaps an accounting root")
     logical = 0
     for root in roots:
         if root.exists():
@@ -261,6 +274,15 @@ def validate_storage(storage, extra=None):
                     except FileNotFoundError:
                         # Jobs sharing this root delete their own outputs; a file gone mid-walk is freed space.
                         pass
+    return roots, logical
+
+
+def validate_storage(storage, extra=None):
+    cap = storage["max_logical_bytes"]
+    require(type(cap) is int and 0 < cap <= CAP, "storage cap exceeds 192 GiB")
+    require(storage["reserve_bytes"] >= DISK_RESERVE_BYTES, "reserve below 60 GiB")
+    roots, logical = accounting_bytes(storage)
+    for root in roots:
         anchor = root
         while not anchor.exists():
             anchor = anchor.parent
@@ -277,6 +299,30 @@ def validate_storage(storage, extra=None):
                 "volume projection omits planned writes")
     require(logical + projected <= cap, "retained plus projected storage exceeds allowance")
     return {"logical_bytes": logical, "cap_bytes": cap}
+
+
+def running_storage(storage):
+    """The storage check of a running attempt. With the opt-in ``storage.emergency`` (G(i) amendment 2) it ends
+    the attempt only on a physical shortage: the accounting trees past the provisioned volume less its margin,
+    or a scratch volume's free space below its margin. The cap and projections then gate new dispatches only.
+    Without it, the cap check as before."""
+    spec = storage.get("emergency")
+    if spec is None:
+        return validate_storage(storage, 0)
+    volume, margin = spec["volume_bytes"], spec["margin_fraction"]
+    require(type(volume) is int and volume > 0 and isinstance(margin, (int, float)) and 0 <= margin < 1,
+            "invalid storage emergency spec")
+    # A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes.
+    _, logical = accounting_bytes(storage)
+    require(logical <= volume * (1 - margin), "storage emergency: the volume's use passed its provisioned size "
+                                              "less the margin")
+    for root in scratch_roots(storage):
+        anchor = root
+        while not anchor.exists():
+            anchor = anchor.parent
+        disk = shutil.disk_usage(anchor)
+        require(disk.free >= margin * disk.total, "storage emergency: scratch volume free space below its margin")
+    return {"logical_bytes": logical, "cap_bytes": storage["max_logical_bytes"]}
 
 
 def runtime_for(request, resolve=checked):
@@ -430,9 +476,12 @@ def validate_request(request, qualification):
     require(root.is_absolute() and cold.is_absolute() and root.resolve() != cold.resolve(),
             "distinct absolute hot/recovery roots required")
     accounting = [Path(p).resolve() for p in request["storage"]["accounting_roots"]]
-    outputs = (root, cold) if qualification else (root, cold, Path(config["output_directory"]))
-    for path in outputs:
+    for path in (root, cold):
         require(any(path.resolve().is_relative_to(p) for p in accounting),
+                "output is outside storage accounting")
+    if not qualification:  # the native tree: counted, or block scratch
+        native = Path(config["output_directory"]).resolve()
+        require(any(native.is_relative_to(p) for p in accounting + scratch_roots(request["storage"])),
                 "output is outside storage accounting")
     family = request.get("schedule_family")
     require(family in SCHEDULE_FAMILIES and (family is None or request["kind"] == "training"),
@@ -1128,7 +1177,7 @@ def execute(request_path, qualification):
                     child.wait(timeout=min(30, remaining))
                 except subprocess.TimeoutExpired:
                     sample = process_sample(child)
-                    sample.update(validate_storage(request["storage"], 0))
+                    sample.update(running_storage(request["storage"]))
                     telemetry.write(json.dumps(sample) + "\n"); telemetry.flush()
                     require(sample["rss_bytes"] <= request["placement"]["memory_bytes"],
                             "native memory limit exceeded")
@@ -1172,13 +1221,13 @@ def execute(request_path, qualification):
         validated_files[str(exposure_path.resolve())] = exposure_pin["sha256"]
     fingerprint_seconds = time.monotonic() - fingerprint_started
     storage_started = time.monotonic()
-    validate_storage(request["storage"], 0)
+    running_storage(request["storage"])
     storage_validation_seconds = time.monotonic() - storage_started
     # Existing checked, durable, two-shard archive includes full readback. Raw
     # outputs remain. Both locations count against the same campaign allowance.
     archive = archive_native(Path(placed["output_directory"]), cold, validated_files)
     storage_started = time.monotonic()
-    validate_storage(request["storage"], 0)
+    running_storage(request["storage"])
     storage_validation_seconds += time.monotonic() - storage_started
     games = len(placed["iterations"][0]["episodes"]) if request["kind"] == "training" and qualification else (
         sum(len(i["episodes"]) for i in placed["iterations"]) if request["kind"] == "training" else len(placed["episodes"]))
@@ -1222,7 +1271,15 @@ def main():
     request = read(args.request)
     qualification = args.action in ("qualify", "_qualify")
     if args.action.startswith("_"):
-        execute(args.request, qualification)
+        try:
+            execute(args.request, qualification)
+        except BaseException as error:
+            # The attempt's own record of a launcher-side failure (a storage refusal after the native run,
+            # say): its driver reads the cause from failure.json, since this process's stderr is not kept.
+            root = Path(request["root"])
+            if root.is_dir() and not (root/"report.json").exists() and not (root/"failure.json").exists():
+                write(root/"failure.json", {"error": f"{type(error).__name__}: {error}"})
+            raise
     elif args.action == "check-choice":
         selected = require_choice(request["choice"], request, verify_outputs=True)
         write(request["choice_verification_output"], {"schema": CHOICE, "choice": request["choice"],
