@@ -81,16 +81,22 @@ Every handoff, every create attempt (record_create_attempt) and completion take
 one OS lock (lease/known-pods.lock). A handoff of positive presence (an ID a
 census, GET or POST returned, known or new) advances that ID's presence
 revision (known-pods/<id>.presence.json); a changed revision voids the guard's
-absence confirmation of the ID and its census confirmation. Completion is the
+absence confirmation of the ID and its census confirmation. A refresh (presence of
+an ID a record or receipt already names) stays an obligation of the observer
+until its own presence handoff lands: no older record discharges it, the
+observer never deletes such a guardian-owned Pod, and if the handoff never lands
+it fails loudly (ALERT). Completion is the
 store's closure: under the lock it checks that no ID's presence revision changed
 since the pass read it, that the store names no ID beyond
 memory and reads cleanly, and that the receipt and create records name only IDs
 confirmed absent with no create unresolved; only then does it write
 external-guard-completion.json (read back; a failed write leaves the store open).
 After it exists a handoff or create attempt is refused (StoreClosed), nothing on
-disk counts as handed off, and a guard started on the closed store runs one pass
-whose exit must verify every ID it holds absent or alert (I4). once=True runs a
-single pass (a watchdog).
+disk counts as handed off, every valid stored ID (readable or not) is held, and a
+guard that sees the closure, at start or mid-run, ends through one pass whose exit
+must verify every ID it holds absent within its own bound, or alert (I4). A
+completion record never ends supervision while a create is unresolved. once=True
+runs a single pass (a watchdog).
 
 usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json required)
 """
@@ -356,6 +362,8 @@ def complete_store(root, memory, basis, settled, errors, record):
     folder = Path(root) / KNOWN_DIR
     try:
         with StoreLock(folder):
+            if store_closed(folder):          # another guard completed first: its record stands
+                return False
             if any(read_presence(folder, p) != basis.get(p) for p in memory):
                 return False
             late = set(known_pods(root, errors)) - set(memory)
@@ -366,6 +374,12 @@ def complete_store(root, memory, basis, settled, errors, record):
     except Exception as e:  # noqa: BLE001 - an unreadable store or a lock timeout never permits completion
         errors.append('complete:' + type(e).__name__)
         return False
+
+
+def closed_and_settled(root):
+    """The store is closed and no create is unresolved: supervision may end through the bounded exit. A
+    stale or forged completion never ends supervision of a create that may still allocate a Pod."""
+    return store_closed(Path(root) / KNOWN_DIR) and not create_unresolved(root) and not ambiguous_unresolved(root)
 
 
 def record_create_attempt(lease_dir, value):
@@ -463,6 +477,7 @@ class LeaseClient:
         self.durable = set()        # IDs named by another readable record (a receipt), durable without a handoff
         self.verified_absent = set()
         self.persisted = set()      # IDs whose own known-Pod record was written (or read) back
+        self.presence_pending = set()   # IDs seen alive whose presence handoff has not landed: never durable
         self.errors = []            # retention failures since the caller last cleared it
         self._active = False
 
@@ -511,13 +526,21 @@ class LeaseClient:
     def durable_now(self, pod_id):
         """Reconciled from disk at the moment of asking: a known-Pod record that reads back, or a
         readable receipt naming the ID. Destructive cleanup never touches such an ID. After the guard
-        closed the store nothing is durable: this process keeps every ID it holds."""
-        if store_closed(self.folder):
+        closed the store nothing is durable: this process keeps every ID it holds. An ID seen alive whose
+        presence handoff has not landed is never durable, whatever older record names it."""
+        if store_closed(self.folder) or pod_id in self.presence_pending:
             return False
         if pod_id in self.durable or self.record_reads_back(pod_id) or pod_id in self.receipt_ids():
             self.persisted.add(pod_id); self.unpersisted.discard(pod_id)
             return True
         return False
+
+    def guardian_owns(self, pod_id):
+        """An open store already names the ID (its own record reads back, or a readable receipt): the
+        guardian supervises it, so this process never deletes it, even while a presence handoff of it is
+        pending."""
+        return not store_closed(self.folder) and (pod_id in self.durable or self.record_reads_back(pod_id)
+                                                  or pod_id in self.receipt_ids())
 
     def open_obligations(self):
         """The unresolved obligations now: registered, not verified absent, not durable on disk."""
@@ -567,14 +590,22 @@ class LeaseClient:
 
     def register(self, pod_ids, presence=True):
         """The obligation comes first: every new ID joins `unpersisted` in one set update, before any
-        handoff I/O, so an interrupt at any later point leaves it for the exit to resolve. On a closed
-        store an earlier handoff no longer covers anything: every ID registered is an obligation again."""
+        handoff I/O, so an interrupt at any later point leaves it for the exit to resolve. A positive
+        observation (presence) of an ID something already names (a refresh) is an obligation, whatever
+        older record or receipt names it, until its own presence handoff lands; a brand-new ID is an
+        obligation until any durable record names it. On a closed store an earlier handoff no longer
+        covers anything."""
         if store_closed(self.folder):
             self.persisted.difference_update(pod_ids); self.durable.difference_update(pod_ids)
+        if presence:
+            seen = [p for p in pod_ids if valid_id(p)]
+            self.presence_pending.update(p for p in seen if p in self.persisted or p in self.durable
+                                         or self.record_reads_back(p) or p in self.receipt_ids())
+            self.unpersisted.update(seen)
+            self.verified_absent.difference_update(pod_ids)
+            return
         fresh = [p for p in pod_ids if valid_id(p) and p not in self.persisted and p not in self.durable]
         self.unpersisted.update(fresh)
-        if presence:
-            self.verified_absent.difference_update(pod_ids)
 
     def retain(self, pod_id, role, presence=True):
         """Register, then hand off; the obligation is cleared only after the durable readback."""
@@ -592,7 +623,10 @@ class LeaseClient:
             self.errors.append('retain:' + pod_id + ':' + type(e).__name__)
             return False
         self.persisted.add(pod_id)
-        self.unpersisted.discard(pod_id)
+        if presence:
+            self.presence_pending.discard(pod_id)
+        if pod_id not in self.presence_pending:
+            self.unpersisted.discard(pod_id)
         return True
 
     def mark_persisted(self, pod_id, hold=True):
@@ -603,7 +637,9 @@ class LeaseClient:
             if hold:
                 self.register([pod_id], presence=False)
             return
-        self.persisted.add(pod_id); self.unpersisted.discard(pod_id)
+        self.persisted.add(pod_id)
+        if pod_id not in self.presence_pending:   # an older record never discharges a failed presence handoff
+            self.unpersisted.discard(pod_id)
 
     def mark_durable(self, pod_id, hold=True):
         """The ID is named by a readable record the guard rereads (create receipt or ambiguity record); on
@@ -612,11 +648,13 @@ class LeaseClient:
             if hold:
                 self.register([pod_id], presence=False)
             return
-        self.durable.add(pod_id); self.unpersisted.discard(pod_id)
+        self.durable.add(pod_id)
+        if pod_id not in self.presence_pending:
+            self.unpersisted.discard(pod_id)
 
     def retry(self):
         for pod_id in sorted(self.unpersisted):
-            self.retain(pod_id, self.retained.get(pod_id, 'census'), presence=False)
+            self.retain(pod_id, self.retained.get(pod_id, 'census'), presence=pod_id in self.presence_pending)
 
     def census(self):
         """(raw census, owned IDs, every listed ID, malformed); each owned ID is retained first."""
@@ -682,6 +720,14 @@ def release_unhanded(client, pod_ids, deadline, sleep=None):
                 # target's provider call was in flight): the guardian's, never deleted here
                 targets.discard(pod_id)
                 continue
+            if client.guardian_owns(pod_id):
+                # seen alive, but its presence handoff has not landed: the guardian's Pod is never
+                # deleted here; the handoff is retried and, if it never lands, reported (I4, I5)
+                if client.retain(pod_id, client.retained.get(pod_id, 'census'), presence=True):
+                    targets.discard(pod_id)
+                else:
+                    state[pod_id] = False
+                continue
             try:
                 client.delete(pod_id)
             except Exception:  # noqa: BLE001 - retried
@@ -697,6 +743,7 @@ def release_unhanded(client, pod_ids, deadline, sleep=None):
             client.verified_absent |= targets
             return []
         if client.clock() >= deadline:
+            client.verified_absent |= {pod_id for pod_id in targets if state.get(pod_id)}
             return sorted(pod_id for pod_id in targets if not state.get(pod_id))
         sleep(RELEASE_POLL_SECONDS)
 
@@ -728,7 +775,7 @@ def live_funds(key):
 def run(root, key, pods=None, provider=None, clock=time.time, sleep=time.sleep,
         once=False, preserve=None, marker_probe=None, funds=None, monotonic=time.monotonic):
     root = Path(root); lease = read(root / 'lease/lease.json'); validate(lease)
-    once = once or store_closed(root / KNOWN_DIR)   # after completion a guard runs one releasing pass
+    once = once or closed_and_settled(root)   # after completion a guard runs one releasing pass
     # Leaving this block (completion, a --once pass, any exception) resolves every ID that is neither
     # durable nor verified absent, or fails loudly (I4).
     with LeaseClient(root / KNOWN_DIR, lease['name'], key, provider, pods, clock, sleep,
@@ -799,8 +846,10 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
                 if role in CREATE_ROLES and memory.get(pod_id) not in CREATE_ROLES:
                     memory[pod_id] = role
                 memory.setdefault(pod_id, role)
-                if role is not None:
-                    client.mark_persisted(pod_id)   # its own record read back (an unreadable one stays open)
+                if role is not None or closed:
+                    # its own record read back (an unreadable one stays open); on a closed store every
+                    # stored ID is held, readable or not
+                    client.mark_persisted(pod_id)
         except Exception as e:  # noqa: BLE001
             store_errors.append('store:' + type(e).__name__)
         recorded, receipt_error = receipt_state(root)
@@ -1011,8 +1060,9 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             delete(target, reason or 'duplicate_pod')
         if reason and clock() >= lease['deadline_epoch'] and (targets or not absent_now):
             note('ALERT-pod-not-released.json', {'targets': targets, 'epoch': clock(), 'reason': reason})
-        if once:
-            # I4: the LeaseClient exit resolves any ID that is neither durable nor verified absent
+        if once or closed_and_settled(root):
+            # I4: the LeaseClient exit resolves any ID that is neither durable nor verified absent; a
+            # closure seen mid-run (another guard completed) ends this one through the same bounded exit
             client.retry()
             return
         sleep(POLL_SECONDS)

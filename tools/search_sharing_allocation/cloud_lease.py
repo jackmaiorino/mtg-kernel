@@ -250,7 +250,7 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
 
         def finish(also=()):
             """I4 at every exit: IDs not handed off are released here, or the create fails loudly."""
-            return external_guard.resolve_or_alert(client, max(lease["deadline_epoch"], clock() + MIN_RELEASE_SECONDS),
+            return external_guard.resolve_or_alert(client, client.release_deadline(),
                                                    root / "ALERT-pod-not-released.json", sleep, also)
         try:   # fresh funding through the API, at most FUNDING_MAX_AGE_SECONDS old at the POST
             observed = (funds or live_funds)(key)

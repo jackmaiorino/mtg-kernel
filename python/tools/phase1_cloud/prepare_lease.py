@@ -353,7 +353,7 @@ def _post_and_record(client, api, body, output, now, deadline, clock, sleep):
     pod_id = returned.get('id') if isinstance(returned, dict) and valid_id(returned.get('id')) else None
     if client.unpersisted:
         # I4: without a durable handoff this process releases the Pod itself, or fails loudly.
-        released = resolve_or_alert(client, max(deadline, clock() + MIN_RELEASE_SECONDS),
+        released = resolve_or_alert(client, client.release_deadline(),
                                     output / 'ALERT-pod-not-released.json', sleep)
         if pod_id in released:
             raise RuntimeError('create handoff failed; the Pod was deleted and verified absent')

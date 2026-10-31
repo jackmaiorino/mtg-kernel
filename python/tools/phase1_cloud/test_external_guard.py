@@ -663,6 +663,96 @@ class StoreClosureTests(Base):
         self.assertNotIn('new', world.pods)
         self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
 
+    def lease_client(self, world):
+        return eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list, self.clock,
+                              self.clock.sleep, self.root / 'ALERT-pod-not-released.json', min_release_seconds=180)
+
+    def test_closure_inside_a_presence_handoff_keeps_the_obligation(self):
+        eg.remember(self.root, 'a', 'census', 1.0)        # handed off earlier; the client caches it
+        world = World([pod('a')])
+        real = eg.handoff_in
+
+        def completion_wins(folder, pod_id, role, epoch, **options):
+            write(self.root / eg.COMPLETION, {'provider_absent': True})   # completion takes the lock first
+            return real(folder, pod_id, role, epoch, **options)
+        with no_network(), self.lease_client(world) as client, \
+                mock.patch.object(eg, 'handoff_in', side_effect=completion_wins):
+            client.census()
+            self.assertIn('a', client.unpersisted)
+        self.assertIn(('DELETE', 'a'), world.log)
+        self.assertNotIn('a', world.pods)
+
+    def test_a_failed_presence_handoff_is_never_discharged_by_an_older_record(self):
+        for failure in ('presence write', 'lock timeout'):
+            with self.subTest(failure=failure):
+                eg.remember(self.root, 'a', 'census', 1.0)
+                world = World([pod('a')])
+                real_write = eg.write
+
+                def no_presence(path, value, replace=False):
+                    if Path(path).name.endswith('.presence.json'):
+                        raise OSError('disk full')
+                    return real_write(path, value, replace)
+                if failure == 'presence write':
+                    failing = mock.patch.object(eg, 'write', side_effect=no_presence)
+                else:
+                    failing = mock.patch.object(eg, 'STORE_LOCK_SECONDS', 0.1)
+                lock = eg.StoreLock(self.root / eg.KNOWN_DIR) if failure == 'lock timeout' else mock.MagicMock()
+                with self.assertRaises(eg.AlertError), no_network(), failing, lock, self.lease_client(world) as client:
+                    client.census()
+                    self.assertFalse(client.durable_now('a'))
+                self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
+                self.assertNotIn('a', world.deletes)          # the guardian's Pod is reported, never deleted
+                (self.root / 'ALERT-pod-not-released.json').unlink()
+
+    def test_a_corrupt_stored_record_is_held_on_a_closed_store(self):
+        self.complete(at_deadline=True)
+        (self.root / eg.KNOWN_DIR).mkdir(parents=True, exist_ok=True)
+        (self.root / eg.KNOWN_DIR / 'a.json').write_text('{not json')
+        world = World([]); world.get_failures = -1; world.delete_failures = -1
+        with self.assertRaises(eg.AlertError):
+            self.once(world)
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
+
+    def test_a_forged_completion_never_ends_supervision_of_an_unresolved_create(self):
+        write(self.root / 'lease/create-attempt.json', {'epoch': 1.0})
+        write(self.root / eg.COMPLETION, {'provider_absent': True, 'forged': True})
+        world = World([])
+        self.assertEqual(self.loop(world, polls=20), 'running')
+        world.pods['late'] = pod('late')                    # the pending POST materializes
+        self.assertEqual(self.loop(world, polls=20), 'running')
+        self.assertIn(('DELETE', 'late'), world.log)
+
+    def test_a_closure_seen_mid_run_ends_the_guard_through_the_bounded_exit(self):
+        for case in ('another guard completed', 'readback failed'):
+            with self.subTest(case=case):
+                temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+                self.root = Path(temporary.name); write(self.root / 'lease/lease.json', lease())
+                self.clock = FakeClock(lease()['deadline_epoch'])
+                world = World([])
+                if case == 'another guard completed':
+                    calls = [0]
+
+                    def census(current):
+                        calls[0] += 1
+                        if calls[0] == 2:
+                            write(self.root / eg.COMPLETION, {'provider_absent': True, 'by': 'other'})
+                        return current
+                    world.census = census
+                    self.assertEqual(self.loop(world, polls=20), 'returned')
+                    self.assertEqual(self.completion()['by'], 'other')     # never overwritten
+                else:
+                    real_read = eg.read; failed = []
+
+                    def flaky(path):
+                        if Path(path).name == eg.COMPLETION and not failed:
+                            failed.append(path)
+                            raise OSError('read failed')
+                        return real_read(path)
+                    with mock.patch.object(eg, 'read', side_effect=flaky):
+                        self.assertEqual(self.loop(world, polls=20), 'returned')
+                    self.assertTrue(failed)
+
     def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):
@@ -1379,12 +1469,15 @@ class RecheckTests(unittest.TestCase):
                 return call(method)
             api.call = wrapped
             return api
-        with no_network(), failing_handoff({'A', 'B'}), \
+        # B was seen alive and its presence handoff never lands: the guardian's Pod is never deleted
+        # here, and the unlanded handoff is reported (round 4 finding 1)
+        with self.assertRaises(eg.AlertError), no_network(), failing_handoff({'A', 'B'}), \
                 eg.LeaseClient(self.folder, NAME, 'k', provider, world.list, clock, clock.sleep,
                                self.root / 'ALERT-pod-not-released.json') as client:
             pending = eg.release_unhanded(client, ['A', 'B'], 1300., clock.sleep)
         self.assertEqual(published, ['DELETE'])
-        self.assertEqual(pending, [])
+        self.assertEqual(pending, ['B'])
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['B'])
         self.assertNotIn('B', world.deletes)
         self.assertIn('B', world.pods)
         self.assertIn('A', world.deletes)
