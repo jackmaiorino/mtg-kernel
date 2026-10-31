@@ -3,7 +3,9 @@
 //!     --lib gpu_exact_v1 -- --ignored --test-threads 1
 //! Host-only tests run everywhere.
 
-use super::net8::{forward_batch_v1, DeviceBuffersV1, Net8DeviceModelV1, Net8HostModelV1, PackedBatchV1};
+use super::net8::{
+    forward_batch_v1, DeviceBuffersV1, Net8DeviceModelV1, Net8HostModelV1, PackedBatchV1,
+};
 use super::service::{BatchPolicyV1, InferenceServiceV1};
 use super::ExactDeviceV1;
 use crate::inference_cache_v1::ForwardPathV1;
@@ -35,8 +37,9 @@ fn unit(rng: &mut SplitMix64) -> f32 {
 /// A net-8 with every parameter random, so no structure hides an order
 /// difference.
 fn random_net(seed: u64) -> NativePolicyValueNetV1 {
-    let mut net = NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
-        .expect("net-8");
+    let mut net =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .expect("net-8");
     let mut rng = SplitMix64::seed(seed);
     let mut snapshot = net.parameter_snapshot_v1();
     for parameter in &mut snapshot {
@@ -48,7 +51,8 @@ fn random_net(seed: u64) -> NativePolicyValueNetV1 {
             parameter.values[..16].fill(0.0);
         }
     }
-    net.replace_parameter_snapshot_v1(&snapshot).expect("replace");
+    net.replace_parameter_snapshot_v1(&snapshot)
+        .expect("replace");
     net
 }
 
@@ -83,11 +87,17 @@ fn random_decision(seed: u64) -> RandomDecision {
         object_features: floats(objects * schema.object_feature_dim, &mut rng),
         // Card 0 is padding; real ids span the vocabulary.
         object_card_ids: (0..objects).map(|_| below(65_537, &mut rng)).collect(),
-        object_groups: (0..objects).map(|_| below(schema.object_group_count as u64, &mut rng)).collect(),
+        object_groups: (0..objects)
+            .map(|_| below(schema.object_group_count as u64, &mut rng))
+            .collect(),
         object_node_ids: (0..objects as i64).collect(),
         edge_features: floats(edges * schema.edge_feature_dim, &mut rng),
-        edge_sources: (0..edges).map(|_| below(objects as u64, &mut rng)).collect(),
-        edge_targets: (0..edges).map(|_| below(objects as u64, &mut rng)).collect(),
+        edge_sources: (0..edges)
+            .map(|_| below(objects as u64, &mut rng))
+            .collect(),
+        edge_targets: (0..edges)
+            .map(|_| below(objects as u64, &mut rng))
+            .collect(),
         action_features: floats(actions * schema.action_feature_dim, &mut rng),
         ref_features: floats(refs * schema.action_ref_feature_dim, &mut rng),
         ref_card_ids: (0..refs).map(|_| below(65_537, &mut rng)).collect(),
@@ -138,8 +148,12 @@ fn appended_requests_keep_their_own_offsets() {
     for seed in 0..5 {
         single.clear();
         let decision = random_decision(seed);
-        single.push_v1(0, &net, ForwardPathV1::Flat, decision.view()).expect("pack");
-        merged.append_v1(&single, (seed % 2) as usize).expect("append");
+        single
+            .push_v1(0, &net, ForwardPathV1::Flat, decision.view())
+            .expect("pack");
+        merged
+            .append_v1(&single, (seed % 2) as usize)
+            .expect("append");
     }
     assert_eq!(merged.len(), 5);
 }
@@ -162,16 +176,28 @@ fn gpu_forward_equals_cpu_forward_bit_for_bit() {
         let net = random_net(100 + net_seed);
         let host = Net8HostModelV1::from_net_v1(&net).expect("host model");
         let model = Net8DeviceModelV1::upload_v1(&device, &host).expect("upload");
-        let decisions: Vec<RandomDecision> = (0..500).map(|i| random_decision(net_seed * 10_000 + i)).collect();
+        let decisions: Vec<RandomDecision> = (0..500)
+            .map(|i| random_decision(net_seed * 10_000 + i))
+            .collect();
         batch.clear();
         for decision in &decisions {
-            batch.push_v1(0, &net, ForwardPathV1::Flat, decision.view()).expect("pack");
+            batch
+                .push_v1(0, &net, ForwardPathV1::Flat, decision.view())
+                .expect("pack");
         }
         let outputs = forward_batch_v1(&device, &[&model], &batch, &mut buffers).expect("forward");
         for (index, (decision, gpu)) in decisions.iter().zip(&outputs).enumerate() {
             let cpu = net.forward_v1(decision.view()).expect("cpu forward");
-            assert_eq!(bits(&gpu.logits), bits(&cpu.logits), "net {net_seed} decision {index} logits");
-            assert_eq!(gpu.value.to_bits(), cpu.value.to_bits(), "net {net_seed} decision {index} value");
+            assert_eq!(
+                bits(&gpu.logits),
+                bits(&cpu.logits),
+                "net {net_seed} decision {index} logits"
+            );
+            assert_eq!(
+                gpu.value.to_bits(),
+                cpu.value.to_bits(),
+                "net {net_seed} decision {index} value"
+            );
         }
     }
 }
@@ -183,9 +209,14 @@ fn gpu_forward_equals_cpu_forward_bit_for_bit() {
 fn gpu_replies_do_not_depend_on_batch_composition() {
     let device = ExactDeviceV1::open_v1(ordinal()).expect("device");
     let nets = [random_net(7), random_net(8), random_net(9)];
-    let hosts: Vec<Net8HostModelV1> = nets.iter().map(|n| Net8HostModelV1::from_net_v1(n).expect("host")).collect();
-    let models: Vec<Net8DeviceModelV1> =
-        hosts.iter().map(|h| Net8DeviceModelV1::upload_v1(&device, h).expect("upload")).collect();
+    let hosts: Vec<Net8HostModelV1> = nets
+        .iter()
+        .map(|n| Net8HostModelV1::from_net_v1(n).expect("host"))
+        .collect();
+    let models: Vec<Net8DeviceModelV1> = hosts
+        .iter()
+        .map(|h| Net8DeviceModelV1::upload_v1(&device, h).expect("upload"))
+        .collect();
     let model_refs: Vec<&Net8DeviceModelV1> = models.iter().collect();
     let pool: Vec<RandomDecision> = (0..400).map(|i| random_decision(50_000 + i)).collect();
     let mut buffers = DeviceBuffersV1::default();
@@ -195,22 +226,41 @@ fn gpu_replies_do_not_depend_on_batch_composition() {
     for (i, decision) in pool.iter().enumerate() {
         let slot = i % nets.len();
         batch.clear();
-        batch.push_v1(slot, &nets[slot], ForwardPathV1::Flat, decision.view()).expect("pack");
-        alone.push(forward_batch_v1(&device, &model_refs, &batch, &mut buffers).expect("forward").remove(0));
+        batch
+            .push_v1(slot, &nets[slot], ForwardPathV1::Flat, decision.view())
+            .expect("pack");
+        alone.push(
+            forward_batch_v1(&device, &model_refs, &batch, &mut buffers)
+                .expect("forward")
+                .remove(0),
+        );
     }
     let mut rng = SplitMix64::seed(99);
     for &size in &[2usize, 7, 64, 256, 400] {
         for _trial in 0..4 {
-            let picks: Vec<usize> = (0..size).map(|_| (rng.next_u64() % pool.len() as u64) as usize).collect();
+            let picks: Vec<usize> = (0..size)
+                .map(|_| (rng.next_u64() % pool.len() as u64) as usize)
+                .collect();
             batch.clear();
             for &i in &picks {
                 let slot = i % nets.len();
-                batch.push_v1(slot, &nets[slot], ForwardPathV1::Flat, pool[i].view()).expect("pack");
+                batch
+                    .push_v1(slot, &nets[slot], ForwardPathV1::Flat, pool[i].view())
+                    .expect("pack");
             }
-            let outputs = forward_batch_v1(&device, &model_refs, &batch, &mut buffers).expect("forward");
+            let outputs =
+                forward_batch_v1(&device, &model_refs, &batch, &mut buffers).expect("forward");
             for (&i, output) in picks.iter().zip(&outputs) {
-                assert_eq!(bits(&output.logits), bits(&alone[i].logits), "size {size} decision {i}");
-                assert_eq!(output.value.to_bits(), alone[i].value.to_bits(), "size {size} decision {i}");
+                assert_eq!(
+                    bits(&output.logits),
+                    bits(&alone[i].logits),
+                    "size {size} decision {i}"
+                );
+                assert_eq!(
+                    output.value.to_bits(),
+                    alone[i].value.to_bits(),
+                    "size {size} decision {i}"
+                );
             }
         }
     }
@@ -222,12 +272,18 @@ fn gpu_replies_do_not_depend_on_batch_composition() {
 #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
 fn service_replies_equal_cpu_under_any_timing() {
     let nets = Arc::new([random_net(11), random_net(12)]);
-    let hosts: Arc<Vec<Arc<Net8HostModelV1>>> =
-        Arc::new(nets.iter().map(|n| Arc::new(Net8HostModelV1::from_net_v1(n).expect("host"))).collect());
+    let hosts: Arc<Vec<Arc<Net8HostModelV1>>> = Arc::new(
+        nets.iter()
+            .map(|n| Arc::new(Net8HostModelV1::from_net_v1(n).expect("host")))
+            .collect(),
+    );
     for latency in [0u64, 200, 5_000] {
         let service = InferenceServiceV1::start_v1(
             ordinal(),
-            BatchPolicyV1 { max_latency: Duration::from_micros(latency), ..BatchPolicyV1::default() },
+            BatchPolicyV1 {
+                max_latency: Duration::from_micros(latency),
+                ..BatchPolicyV1::default()
+            },
         )
         .expect("service");
         std::thread::scope(|s| {
@@ -240,7 +296,12 @@ fn service_replies_equal_cpu_under_any_timing() {
                         let decision = random_decision(worker * 1_000 + i);
                         let slot = ((worker + i) % 2) as usize;
                         let gpu = client
-                            .forward_v1(&hosts[slot], &nets[slot], ForwardPathV1::Flat, decision.view())
+                            .forward_v1(
+                                &hosts[slot],
+                                &nets[slot],
+                                ForwardPathV1::Flat,
+                                decision.view(),
+                            )
                             .expect("service forward");
                         let cpu = nets[slot].forward_v1(decision.view()).expect("cpu forward");
                         assert_eq!(bits(&gpu.logits), bits(&cpu.logits));
@@ -280,7 +341,9 @@ fn gpu_forward_timing_receipt() {
             let t = std::time::Instant::now();
             batch.clear();
             for decision in pool.iter().cycle().skip(trial * 7).take(size) {
-                batch.push_v1(0, &net, ForwardPathV1::Flat, decision.view()).expect("pack");
+                batch
+                    .push_v1(0, &net, ForwardPathV1::Flat, decision.view())
+                    .expect("pack");
             }
             forward_batch_v1(&device, &[&model], &batch, &mut buffers).expect("forward");
             if trial >= 10 {
@@ -301,12 +364,19 @@ fn gpu_forward_timing_receipt() {
 #[test]
 #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
 fn service_serves_more_models_than_resident_slots() {
-    let nets: Arc<Vec<NativePolicyValueNetV1>> = Arc::new((0..12).map(|i| random_net(300 + i)).collect());
-    let hosts: Arc<Vec<Arc<Net8HostModelV1>>> =
-        Arc::new(nets.iter().map(|n| Arc::new(Net8HostModelV1::from_net_v1(n).expect("host"))).collect());
+    let nets: Arc<Vec<NativePolicyValueNetV1>> =
+        Arc::new((0..12).map(|i| random_net(300 + i)).collect());
+    let hosts: Arc<Vec<Arc<Net8HostModelV1>>> = Arc::new(
+        nets.iter()
+            .map(|n| Arc::new(Net8HostModelV1::from_net_v1(n).expect("host")))
+            .collect(),
+    );
     let service = InferenceServiceV1::start_v1(
         ordinal(),
-        BatchPolicyV1 { max_latency: Duration::from_millis(20), ..BatchPolicyV1::default() },
+        BatchPolicyV1 {
+            max_latency: Duration::from_millis(20),
+            ..BatchPolicyV1::default()
+        },
     )
     .expect("service");
     let barrier = std::sync::Barrier::new(12);
@@ -319,9 +389,16 @@ fn service_serves_more_models_than_resident_slots() {
                     let decision = random_decision(9_000 + worker as u64 * 100 + i);
                     barrier.wait();
                     let gpu = client
-                        .forward_v1(&hosts[worker], &nets[worker], ForwardPathV1::Flat, decision.view())
+                        .forward_v1(
+                            &hosts[worker],
+                            &nets[worker],
+                            ForwardPathV1::Flat,
+                            decision.view(),
+                        )
                         .expect("service forward");
-                    let cpu = nets[worker].forward_v1(decision.view()).expect("cpu forward");
+                    let cpu = nets[worker]
+                        .forward_v1(decision.view())
+                        .expect("cpu forward");
                     assert_eq!(bits(&gpu.logits), bits(&cpu.logits));
                     assert_eq!(gpu.value.to_bits(), cpu.value.to_bits());
                 }
@@ -330,7 +407,10 @@ fn service_serves_more_models_than_resident_slots() {
     });
     let stats = service.stats_v1().expect("stats");
     assert_eq!(stats.requests, 72);
-    assert!(stats.model_uploads > 12, "eviction and re-upload expected: {stats:?}");
+    assert!(
+        stats.model_uploads > 12,
+        "eviction and re-upload expected: {stats:?}"
+    );
     eprintln!("{stats:?}");
 }
 
@@ -341,7 +421,8 @@ fn service_serves_more_models_than_resident_slots() {
 fn a_service_fault_fails_the_waiting_client() {
     let net = random_net(41);
     let host = Arc::new(Net8HostModelV1::from_net_v1(&net).expect("host"));
-    let service = InferenceServiceV1::start_v1(ordinal(), BatchPolicyV1::default()).expect("service");
+    let service =
+        InferenceServiceV1::start_v1(ordinal(), BatchPolicyV1::default()).expect("service");
     let mut client = service.client_v1();
     service.panic_on_next_request_for_test_v1();
     let (done, wait) = std::sync::mpsc::channel();
@@ -350,9 +431,16 @@ fn a_service_fault_fails_the_waiting_client() {
             let decision = random_decision(1);
             let _ = done.send(client.forward_v1(&host, &net, ForwardPathV1::Flat, decision.view()));
         });
-        let reply = wait.recv_timeout(Duration::from_secs(30)).expect("the client must not hang");
+        let reply = wait
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the client must not hang");
         assert!(reply.is_err(), "a dead service cannot answer");
     });
+    // The receipt of a dead service still names its device and says why it
+    // has no counters.
+    let receipt = super::service::service_receipt_v1(&service);
+    assert!(receipt["device"]["program_sha256"].is_string(), "{receipt}");
+    assert!(receipt["stats_error"].is_string(), "{receipt}");
     // Its thread panicked by design; dropping would only join it.
     std::mem::forget(service);
 }
@@ -368,9 +456,11 @@ fn non_finite_outputs_fail_closed_like_the_cpu() {
             parameter.values.fill(f32::MAX);
         }
     }
-    net.replace_parameter_snapshot_v1(&snapshot).expect("replace");
+    net.replace_parameter_snapshot_v1(&snapshot)
+        .expect("replace");
     let host = Arc::new(Net8HostModelV1::from_net_v1(&net).expect("host"));
-    let service = InferenceServiceV1::start_v1(ordinal(), BatchPolicyV1::default()).expect("service");
+    let service =
+        InferenceServiceV1::start_v1(ordinal(), BatchPolicyV1::default()).expect("service");
     let mut client = service.client_v1();
     let mut refused = 0;
     for seed in 0..20 {
@@ -380,7 +470,10 @@ fn non_finite_outputs_fail_closed_like_the_cpu() {
         assert_eq!(cpu.is_err(), gpu.is_err(), "seed {seed}");
         refused += usize::from(gpu.is_err());
     }
-    assert!(refused > 0, "the overflowing net must produce non-finite outputs");
+    assert!(
+        refused > 0,
+        "the overflowing net must produce non-finite outputs"
+    );
 }
 
 /// The policy hook: a collector thread's forwards go to the installed
@@ -398,10 +491,18 @@ fn policy_hook_follows_parameter_replacement_and_falls_back_exactly() {
     let session = || {
         let (mut state, hunter, _, _) =
             crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
-        crate::rl_session::shuffle_trigger_source_into_library_v1(&mut state, hunter, crate::ids::PlayerId::P0);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
         FastActorSessionV1::from_v3_fixture_state(state)
     };
-    let requests = || super::inference_receipt_v1().unwrap().unwrap()["requests"].as_u64().unwrap();
+    let requests = || {
+        super::inference_receipt_v1().unwrap()["requests"]
+            .as_u64()
+            .unwrap()
+    };
     let perturb = |policy: &FrozenPlayPolicyV1| {
         let mut parameters = policy.training_parameters_v3();
         for parameter in &mut parameters {
@@ -418,7 +519,9 @@ fn policy_hook_follows_parameter_replacement_and_falls_back_exactly() {
         (bits(&scores.logits), scores.value.to_bits())
     };
     // CPU references run on threads without a client.
-    let on_cpu = |policy: &mut FrozenPlayPolicyV1| std::thread::scope(|t| t.spawn(|| score_bits(policy)).join().unwrap());
+    let on_cpu = |policy: &mut FrozenPlayPolicyV1| {
+        std::thread::scope(|t| t.spawn(|| score_bits(policy)).join().unwrap())
+    };
     std::thread::scope(|s| {
         s.spawn(|| {
             let _guard = super::service::enter_collector_v1();
@@ -427,26 +530,69 @@ fn policy_hook_follows_parameter_replacement_and_falls_back_exactly() {
             let original = on_cpu(&mut cpu);
             let before = requests();
             assert_eq!(score_bits(&mut gpu), original);
-            assert!(requests() > before, "the collector thread must use the service");
+            assert!(
+                requests() > before,
+                "the collector thread must use the service"
+            );
             // replace_training_parameters_v3 clears the cached host copy.
             let parameters = perturb(&gpu);
-            cpu.replace_training_parameters_v3(&parameters).expect("cpu replace");
-            gpu.replace_training_parameters_v3(&parameters).expect("gpu replace");
+            cpu.replace_training_parameters_v3(&parameters)
+                .expect("cpu replace");
+            gpu.replace_training_parameters_v3(&parameters)
+                .expect("gpu replace");
             let replaced = on_cpu(&mut cpu);
-            assert_ne!(replaced, original, "the perturbation must change the forward");
-            assert_eq!(score_bits(&mut gpu), replaced, "after replace_training_parameters_v3");
+            assert_ne!(
+                replaced, original,
+                "the perturbation must change the forward"
+            );
+            assert_eq!(
+                score_bits(&mut gpu),
+                replaced,
+                "after replace_training_parameters_v3"
+            );
             // apply_no_state_digest_v1 converts the parameters and clears it too.
-            cpu.apply_no_state_digest_v1("converted".into(), 123..219, 1_499, true).expect("cpu convert");
-            gpu.apply_no_state_digest_v1("converted".into(), 123..219, 1_499, true).expect("gpu convert");
+            cpu.apply_no_state_digest_v1("converted".into(), 123..219, 1_499, true)
+                .expect("cpu convert");
+            gpu.apply_no_state_digest_v1("converted".into(), 123..219, 1_499, true)
+                .expect("gpu convert");
             let converted = on_cpu(&mut cpu);
-            assert_eq!(score_bits(&mut gpu), converted, "after apply_no_state_digest_v1");
+            assert_eq!(
+                score_bits(&mut gpu),
+                converted,
+                "after apply_no_state_digest_v1"
+            );
             // into_flat_v8_v1: the V8 net never reaches the service.
-            let mut cpu = FrozenPlayPolicyV1::training_fixture_v4().into_flat_v8_v1().expect("v8");
-            let mut gpu = FrozenPlayPolicyV1::training_fixture_v4().into_flat_v8_v1().expect("v8");
+            let mut cpu = FrozenPlayPolicyV1::training_fixture_v4()
+                .into_flat_v8_v1()
+                .expect("v8");
+            let mut gpu = FrozenPlayPolicyV1::training_fixture_v4()
+                .into_flat_v8_v1()
+                .expect("v8");
             let v8 = on_cpu(&mut cpu);
             let before = requests();
             assert_eq!(score_bits(&mut gpu), v8, "V8 falls back to the CPU forward");
-            assert_eq!(requests(), before, "a V8 forward must not reach the service");
+            assert_eq!(
+                requests(),
+                before,
+                "a V8 forward must not reach the service"
+            );
         });
     });
+}
+
+/// Concurrent invocation receipts never overwrite each other.
+#[test]
+fn invocation_receipts_reserve_distinct_files() {
+    let root = std::env::temp_dir().join(format!("gpu-exact-receipts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::thread::scope(|s| {
+        for _ in 0..8 {
+            s.spawn(|| super::invocation_receipt_v1(&root, Err("no run")).expect("receipt"));
+        }
+    });
+    let written = std::fs::read_dir(root.join("gpu-exact-receipts"))
+        .expect("dir")
+        .count();
+    assert_eq!(written, 8);
+    let _ = std::fs::remove_dir_all(&root);
 }

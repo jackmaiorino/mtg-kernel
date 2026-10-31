@@ -29,7 +29,7 @@ pub fn install_inference_service_v1(ordinal: usize, max_latency_micros: u64) -> 
 }
 
 /// The installed service's device identity and counters, if one is installed.
-pub fn inference_receipt_v1() -> Option<Result<serde_json::Value, String>> {
+pub fn inference_receipt_v1() -> Option<serde_json::Value> {
     service::global_receipt_v1()
 }
 
@@ -120,7 +120,7 @@ pub fn invocation_receipt_v1(
     output_directory: &std::path::Path,
     result: Result<&serde_json::Value, &str>,
 ) -> Result<serde_json::Value, String> {
-    let inference = inference_receipt_v1().transpose()?;
+    let inference = inference_receipt_v1();
     let receipt = serde_json::json!({
         "schema": "mtg-kernel-gpu-exact-invocation-receipt/v1",
         "inference": inference,
@@ -128,17 +128,27 @@ pub fn invocation_receipt_v1(
         "completed_iterations": result.ok().and_then(|r| r.get("completed_iterations").cloned()),
         "error": result.err(),
     });
+    let bytes = serde_json::to_vec_pretty(&receipt).map_err(|e| e.to_string())?;
     let directory = output_directory.join("gpu-exact-receipts");
     std::fs::create_dir_all(&directory).map_err(|e| format!("{}: {e}", directory.display()))?;
-    let mut index = 0usize;
-    let path = loop {
-        let candidate = directory.join(format!("invocation-{index:06}.json"));
-        if !candidate.exists() {
-            break candidate;
+    // `create_new` reserves the name atomically, so concurrent invocations
+    // never overwrite each other's receipts.
+    for index in 0usize.. {
+        let path = directory.join(format!("invocation-{index:06}.json"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                file.write_all(&bytes)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+                return Ok(receipt);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("{}: {error}", path.display())),
         }
-        index += 1;
-    };
-    let bytes = serde_json::to_vec_pretty(&receipt).map_err(|e| e.to_string())?;
-    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(receipt)
+    }
+    unreachable!("receipt names are unbounded")
 }

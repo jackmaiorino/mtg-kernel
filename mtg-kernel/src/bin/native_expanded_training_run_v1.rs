@@ -104,11 +104,16 @@ fn run() -> Result<(), String> {
     #[cfg(feature = "gpu-exact-v1")]
     if gpu_inference.is_some() || gpu_learner.is_some() {
         // Written for failed invocations too: which backend ran is provenance.
-        let receipt = mtg_kernel::gpu_exact_v1::invocation_receipt_v1(
+        match mtg_kernel::gpu_exact_v1::invocation_receipt_v1(
             &config.output_directory,
             result.as_ref().map_err(String::as_str),
-        )?;
-        eprintln!("{}", serde_json::to_string(&receipt).map_err(|e| e.to_string())?);
+        ) {
+            Ok(receipt) => eprintln!("{receipt}"),
+            // A run error stays the reported failure; an otherwise complete
+            // run without its provenance receipt fails.
+            Err(error) if result.is_err() => eprintln!("gpu-exact receipt not written: {error}"),
+            Err(error) => return Err(format!("gpu-exact receipt not written: {error}")),
+        }
     }
     let result = result?;
     println!(

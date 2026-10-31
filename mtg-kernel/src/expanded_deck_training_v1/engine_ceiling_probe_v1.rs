@@ -39,7 +39,11 @@ enum Workload {
 /// Plays `episode` to its terminal; returns the decision count, or None when
 /// the fixture policy cannot encode a decision of this deck pool (the game is
 /// then left out of the rates and counted).
-fn play(episode: &ExpandedEpisodeV1, workload: Workload, policy: &mut FrozenPlayPolicyV1) -> Option<u64> {
+fn play(
+    episode: &ExpandedEpisodeV1,
+    workload: Workload,
+    policy: &mut FrozenPlayPolicyV1,
+) -> Option<u64> {
     let configs = episode.configurations().unwrap();
     let mut session = episode_session_v1(episode, &configs).unwrap();
     restore_reset_cut_v1(&mut session, episode).unwrap();
@@ -69,8 +73,8 @@ fn engine_ceiling_probe_v1() {
         .split(',')
         .map(|t| t.parse().unwrap())
         .collect();
-    let games: usize = std::env::var("MTG_KERNEL_CEILING_GAMES_PER_THREAD")
-        .map_or(20, |g| g.parse().unwrap());
+    let games: usize =
+        std::env::var("MTG_KERNEL_CEILING_GAMES_PER_THREAD").map_or(20, |g| g.parse().unwrap());
     let mut template = FrozenPlayPolicyV1::training_fixture_v3();
     let mut no_digest = FrozenPlayPolicyV1::training_fixture_v3();
     no_digest
@@ -82,9 +86,14 @@ fn engine_ceiling_probe_v1() {
         ("policy-no-digest", Workload::PolicyNoDigest),
     ] {
         for &count in &threads {
-            let base = if workload == Workload::PolicyNoDigest { &mut no_digest } else { &mut template };
-            let forks: Vec<FrozenPlayPolicyV1> =
-                (0..count).map(|_| base.fork_for_collection_v3().unwrap()).collect();
+            let base = if workload == Workload::PolicyNoDigest {
+                &mut no_digest
+            } else {
+                &mut template
+            };
+            let forks: Vec<FrozenPlayPolicyV1> = (0..count)
+                .map(|_| base.fork_for_collection_v3().unwrap())
+                .collect();
             let started = Instant::now();
             let (decisions, completed): (u64, u64) = std::thread::scope(|s| {
                 let handles: Vec<_> = forks

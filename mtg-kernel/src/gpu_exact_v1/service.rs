@@ -32,7 +32,11 @@ pub(crate) struct BatchPolicyV1 {
 
 impl Default for BatchPolicyV1 {
     fn default() -> Self {
-        Self { max_requests: 256, max_latency: Duration::from_micros(200), max_models: 10 }
+        Self {
+            max_requests: 256,
+            max_latency: Duration::from_micros(200),
+            max_models: 10,
+        }
     }
 }
 
@@ -89,7 +93,9 @@ impl InferenceServiceV1 {
     /// and returns once the device is ready (kernels loaded, tanh proved).
     pub(crate) fn start_v1(ordinal: usize, policy: BatchPolicyV1) -> Result<Self, String> {
         let (sender, receiver) = mpsc::channel();
-        let shared = Arc::new(Shared { clients: AtomicUsize::new(0) });
+        let shared = Arc::new(Shared {
+            clients: AtomicUsize::new(0),
+        });
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let thread_shared = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
@@ -107,16 +113,28 @@ impl InferenceServiceV1 {
         let identity = ready_receiver
             .recv()
             .map_err(|_| "inference service exited during startup".to_owned())??;
-        Ok(Self { identity, sender: Some(sender), shared, thread: Some(thread) })
+        Ok(Self {
+            identity,
+            sender: Some(sender),
+            shared,
+            thread: Some(thread),
+        })
     }
 
     pub(crate) fn client_v1(&self) -> InferenceClientV1 {
-        InferenceClientV1::new(self.sender.clone().expect("service running"), Arc::clone(&self.shared))
+        InferenceClientV1::new(
+            self.sender.clone().expect("service running"),
+            Arc::clone(&self.shared),
+        )
     }
 
     #[cfg(test)]
     pub(crate) fn panic_on_next_request_for_test_v1(&self) {
-        let _ = self.sender.as_ref().expect("service running").send(Message::PanicOnNextRequest);
+        let _ = self
+            .sender
+            .as_ref()
+            .expect("service running")
+            .send(Message::PanicOnNextRequest);
     }
 
     pub(crate) fn stats_v1(&self) -> Result<ServiceStatsV1, String> {
@@ -126,7 +144,9 @@ impl InferenceServiceV1 {
             .expect("service running")
             .send(Message::Stats(reply))
             .map_err(|_| "inference service stopped".to_owned())?;
-        receiver.recv().map_err(|_| "inference service stopped".to_owned())
+        receiver
+            .recv()
+            .map_err(|_| "inference service stopped".to_owned())
     }
 }
 
@@ -161,9 +181,15 @@ impl InferenceClientV1 {
         // drops the sender and this wait fails at once instead of hanging.
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send(Message::Request(Request { model: Arc::clone(model), packed, reply }))
+            .send(Message::Request(Request {
+                model: Arc::clone(model),
+                packed,
+                reply,
+            }))
             .map_err(|_| "inference service stopped".to_owned())?;
-        receiver.recv().map_err(|_| "inference service stopped".to_owned())?
+        receiver
+            .recv()
+            .map_err(|_| "inference service stopped".to_owned())?
     }
 }
 
@@ -184,7 +210,12 @@ struct Resident {
     last_used: u64,
 }
 
-fn serve_v1(device: ExactDeviceV1, policy: BatchPolicyV1, receiver: Receiver<Message>, shared: Arc<Shared>) {
+fn serve_v1(
+    device: ExactDeviceV1,
+    policy: BatchPolicyV1,
+    receiver: Receiver<Message>,
+    shared: Arc<Shared>,
+) {
     let mut resident: HashMap<[u8; 32], Resident> = HashMap::new();
     let mut buffers = DeviceBuffersV1::default();
     let mut batch = PackedBatchV1::default();
@@ -243,8 +274,13 @@ fn serve_v1(device: ExactDeviceV1, policy: BatchPolicyV1, receiver: Receiver<Mes
         for (request, reply) in pending.drain(..).zip(result) {
             // The CPU forward refuses a non-finite output the same way.
             let reply = reply.and_then(|output| {
-                let finite = output.value.is_finite() && output.logits.iter().all(|x| x.is_finite());
-                if finite { Ok(output) } else { Err("non-finite GPU forward output".into()) }
+                let finite =
+                    output.value.is_finite() && output.logits.iter().all(|x| x.is_finite());
+                if finite {
+                    Ok(output)
+                } else {
+                    Err("non-finite GPU forward output".into())
+                }
             });
             let _ = request.reply.send(reply);
         }
@@ -276,8 +312,9 @@ fn run_batch_v1(
     }
     let mut replies: Vec<Option<Reply>> = (0..pending.len()).map(|_| None).collect();
     for group in digests.chunks(policy.max_models.max(1)) {
-        let members: Vec<usize> =
-            (0..pending.len()).filter(|&i| group.contains(&pending[i].model.digest)).collect();
+        let members: Vec<usize> = (0..pending.len())
+            .filter(|&i| group.contains(&pending[i].model.digest))
+            .collect();
         let result = run_group_v1(
             device, policy, resident, buffers, batch, pending, &members, group, tick, stats,
         );
@@ -294,7 +331,10 @@ fn run_batch_v1(
             }
         }
     }
-    replies.into_iter().map(|reply| reply.expect("every request is in one group")).collect()
+    replies
+        .into_iter()
+        .map(|reply| reply.expect("every request is in one group"))
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -325,13 +365,22 @@ fn run_group_v1(
             }
             let model = Net8DeviceModelV1::upload_v1(device, &pending[i].model)?;
             stats.model_uploads += 1;
-            resident.insert(digest, Resident { model, last_used: tick });
+            resident.insert(
+                digest,
+                Resident {
+                    model,
+                    last_used: tick,
+                },
+            );
         }
         resident.get_mut(&digest).expect("resident").last_used = tick;
     }
     batch.clear();
     for &i in members {
-        let slot = group.iter().position(|d| *d == pending[i].model.digest).expect("slot");
+        let slot = group
+            .iter()
+            .position(|d| *d == pending[i].model.digest)
+            .expect("slot");
         batch.append_v1(&pending[i].packed, slot)?;
     }
     let models: Vec<&Net8DeviceModelV1> = group.iter().map(|d| &resident[d].model).collect();
@@ -351,27 +400,47 @@ std::thread_local! {
 
 /// Installs the process's service. Fails if one is already installed.
 pub(crate) fn install_global_v1(service: InferenceServiceV1) -> Result<(), String> {
-    GLOBAL.set(service).map_err(|_| "a GPU inference service is already installed".to_owned())
+    GLOBAL
+        .set(service)
+        .map_err(|_| "a GPU inference service is already installed".to_owned())
 }
 
-/// The installed service's device and counters, for receipts.
-pub(crate) fn global_receipt_v1() -> Option<Result<serde_json::Value, String>> {
-    GLOBAL.get().map(|service| {
-        let stats = service.stats_v1()?;
-        let id = &service.identity;
-        Ok(serde_json::json!({
-            "schema": "mtg-kernel-gpu-exact-inference-receipt/v1",
-            "device": {"ordinal": id.ordinal, "name": id.name,
-                "compute_capability": [id.compute_capability.0, id.compute_capability.1],
-                "driver_version": id.driver_version,
-                "nvrtc_version": [id.nvrtc_version.0, id.nvrtc_version.1],
-                "program_sha256": id.program_sha256,
-                "host_tanhf_identity": id.host_tanhf_identity, "tanh_proof_key": id.tanh_proof_key},
-            "batches": stats.batches, "requests": stats.requests, "launches": stats.launches,
-            "model_uploads": stats.model_uploads, "busy_seconds": stats.busy_micros as f64 / 1e6,
-            "mean_batch": if stats.batches == 0 { 0.0 } else { stats.requests as f64 / stats.batches as f64 },
-        }))
-    })
+/// A service's device identity and counters, for receipts. The identity is
+/// always present; counters a stopped service cannot report become a
+/// `stats_error`, so a receipt still records which device ran.
+pub(crate) fn service_receipt_v1(service: &InferenceServiceV1) -> serde_json::Value {
+    let id = &service.identity;
+    let mut receipt = serde_json::json!({
+        "schema": "mtg-kernel-gpu-exact-inference-receipt/v1",
+        "device": {"ordinal": id.ordinal, "name": id.name,
+            "compute_capability": [id.compute_capability.0, id.compute_capability.1],
+            "driver_version": id.driver_version,
+            "nvrtc_version": [id.nvrtc_version.0, id.nvrtc_version.1],
+            "program_sha256": id.program_sha256,
+            "host_tanhf_identity": id.host_tanhf_identity, "tanh_proof_key": id.tanh_proof_key},
+    });
+    match service.stats_v1() {
+        Ok(stats) => {
+            receipt["batches"] = stats.batches.into();
+            receipt["requests"] = stats.requests.into();
+            receipt["launches"] = stats.launches.into();
+            receipt["model_uploads"] = stats.model_uploads.into();
+            receipt["busy_seconds"] = (stats.busy_micros as f64 / 1e6).into();
+            receipt["mean_batch"] = if stats.batches == 0 {
+                0.0
+            } else {
+                stats.requests as f64 / stats.batches as f64
+            }
+            .into();
+        }
+        Err(error) => receipt["stats_error"] = error.into(),
+    }
+    receipt
+}
+
+/// The installed service's receipt, if one is installed.
+pub(crate) fn global_receipt_v1() -> Option<serde_json::Value> {
+    GLOBAL.get().map(service_receipt_v1)
 }
 
 /// While alive, this thread's policy forwards go to the installed service

@@ -86,7 +86,10 @@ fn percentile(samples: &mut [f64], p: f64) -> f64 {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let ordinal: usize = std::env::args().nth(1).map(|s| s.parse().unwrap()).unwrap_or(1);
+    let ordinal: usize = std::env::args()
+        .nth(1)
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(1);
     let ctx = CudaContext::new(ordinal)?;
     let stream = ctx.default_stream();
     let started = Instant::now();
@@ -106,7 +109,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let noop = module.load_function("noop")?;
     let naive = module.load_function("linear_naive")?;
     let tiled = module.load_function("linear_tiled")?;
-    println!("{{\"probe\":\"compile\",\"device\":{ordinal},\"nvrtc_and_load_ms\":{compile_ms:.1}}}");
+    println!(
+        "{{\"probe\":\"compile\",\"device\":{ordinal},\"nvrtc_and_load_ms\":{compile_ms:.1}}}"
+    );
 
     // 1. Round trip at several upload sizes (bytes per batch).
     for &upload_floats in &[1_024usize, 16_384, 262_144] {
@@ -170,8 +175,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     ] {
         let k = width;
         let n = width;
-        let x_host: Vec<f32> = (0..rows * k).map(|i| ((i * 2_654_435_761usize) % 1_000) as f32 * 1e-3 - 0.5).collect();
-        let w_host: Vec<f32> = (0..k * n).map(|i| ((i * 40_503usize) % 997) as f32 * 1e-3 - 0.5).collect();
+        let x_host: Vec<f32> = (0..rows * k)
+            .map(|i| ((i * 2_654_435_761usize) % 1_000) as f32 * 1e-3 - 0.5)
+            .collect();
+        let w_host: Vec<f32> = (0..k * n)
+            .map(|i| ((i * 40_503usize) % 997) as f32 * 1e-3 - 0.5)
+            .collect();
         let x = stream.clone_htod(&x_host)?;
         let w = stream.clone_htod(&w_host)?;
         let mut y_naive: CudaSlice<f32> = stream.alloc_zeros(rows * n)?;
@@ -181,7 +190,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let macs = (rows * k * n) as f64;
         let repeats = ((2e9 / macs) as usize).clamp(3, 2_000);
 
-        let time_it = |label: &str, run: &mut dyn FnMut() -> Result<(), Box<dyn Error>>| -> Result<f64, Box<dyn Error>> {
+        let time_it = |label: &str,
+                       run: &mut dyn FnMut() -> Result<(), Box<dyn Error>>|
+         -> Result<f64, Box<dyn Error>> {
             run()?;
             stream.synchronize()?;
             let t = Instant::now();
@@ -199,7 +210,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         time_it("exact_naive", &mut || {
             let mut launch = stream.launch_builder(&naive);
-            launch.arg(&x).arg(&w).arg(&mut y_naive).arg(&rows_i).arg(&k_i).arg(&n_i);
+            launch
+                .arg(&x)
+                .arg(&w)
+                .arg(&mut y_naive)
+                .arg(&rows_i)
+                .arg(&k_i)
+                .arg(&n_i);
             let config = LaunchConfig {
                 grid_dim: (n.div_ceil(128) as u32, rows as u32, 1),
                 block_dim: (128, 1, 1),
@@ -210,7 +227,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         })?;
         time_it("exact_tiled", &mut || {
             let mut launch = stream.launch_builder(&tiled);
-            launch.arg(&x).arg(&w).arg(&mut y_tiled).arg(&rows_i).arg(&k_i).arg(&n_i);
+            launch
+                .arg(&x)
+                .arg(&w)
+                .arg(&mut y_tiled)
+                .arg(&rows_i)
+                .arg(&k_i)
+                .arg(&n_i);
             let config = LaunchConfig {
                 grid_dim: (n.div_ceil(64) as u32, rows.div_ceil(64) as u32, 1),
                 block_dim: (256, 1, 1),
@@ -251,12 +274,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 for i in 0..k {
                     acc += x_host[row * k + i] * w_host[i * n + col];
                 }
-                if acc.to_bits() != a[row * n + col].to_bits() || acc.to_bits() != b[row * n + col].to_bits() {
+                if acc.to_bits() != a[row * n + col].to_bits()
+                    || acc.to_bits() != b[row * n + col].to_bits()
+                {
                     mismatches += 1;
                 }
             }
         }
-        let naive_vs_tiled = a.iter().zip(&b).filter(|(p, q)| p.to_bits() != q.to_bits()).count();
+        let naive_vs_tiled = a
+            .iter()
+            .zip(&b)
+            .filter(|(p, q)| p.to_bits() != q.to_bits())
+            .count();
         println!(
             "{{\"probe\":\"linear_bits\",\"rows\":{rows},\"k\":{k},\"cpu_mismatches_checked_rows\":{mismatches},\"naive_vs_tiled_mismatches\":{naive_vs_tiled}}}"
         );
