@@ -153,7 +153,20 @@ fn check_game_v1(
         }
         if !new.pairs.is_empty() {
             pairing_decisions += 1;
-            if cases.len() < 4 {
+            // Up to two fixture cases with one pending block and three with
+            // more (gang blocks or blocks for earlier attackers).
+            let singles = cases
+                .iter()
+                .filter(|case| {
+                    case["tensor"]["pairing_node_indices"]
+                        .as_array()
+                        .unwrap()
+                        .len()
+                        == 2
+                })
+                .count();
+            let multis = cases.len() - singles;
+            if (new.pairs.len() > 2 && multis < 3) || (new.pairs.len() == 2 && singles < 2) {
                 cases.push(parity_case_v1(&session, d, &new));
             }
         }

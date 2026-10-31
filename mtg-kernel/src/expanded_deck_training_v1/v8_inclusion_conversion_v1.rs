@@ -29,6 +29,10 @@ use crate::native_policy_train_step_v1::v8_inclusion_v1::{
 use crate::native_policy_train_step_v1::widening_v1::TORCH_DEFAULT_UNIFORM_V1;
 use crate::native_policy_value_net_v1::v8_inclusion_v1::V8_ACTION_FEATURE_DIM_V1;
 
+/// FlatV7's London pregame stage column (`features_v10.py`), 1.0 exactly at
+/// a pregame decision.
+const LONDON_PREGAME_STAGE_COLUMN_V1: usize = 89;
+
 pub const V8_CONVERSION_REQUEST_SCHEMA_V1: &str = "mtg-kernel-v8-inclusion-conversion-request/v1";
 pub const V8_CONVERSION_RECEIPT_SCHEMA_V1: &str = "mtg-kernel-v8-inclusion-conversion-receipt/v1";
 
@@ -260,6 +264,7 @@ fn preservation_check_v1(
     let mut pairing_active_rows = 0u64;
     let mut pairing_rows = 0u64;
     let mut pregame_rows = 0u64;
+    let mut exposed_pregame = 0u64;
     let mut mismatches = 0u64;
     let mut games = Vec::new();
     for (index, game) in request.preservation_games.iter().enumerate() {
@@ -291,6 +296,7 @@ fn preservation_check_v1(
             "a preservation game did not record the FlatV8 identity",
         )?;
         let mut game_rows = 0u64;
+        let mut game_pregame_rows = 0u64;
         for row in &trajectory.decisions {
             let tensor = row.tensor.tensor();
             let pairs = &row.tensor.pairing_node_indices;
@@ -334,19 +340,25 @@ fn preservation_check_v1(
             pairing_active_rows += u64::from(!pairs.is_empty());
             pairing_rows += (pairs.len() / 2) as u64;
             mismatches += u64::from(!same);
+            // A London pregame row sets the FlatV7 pregame stage column.
+            game_pregame_rows += u64::from(
+                game.london
+                    && tensor.state.get(LONDON_PREGAME_STAGE_COLUMN_V1).copied() == Some(1.0),
+            );
         }
-        let pregame: u64 = trajectory.opening_record.as_ref().map_or(0, |record| {
+        let exposed: u64 = trajectory.opening_record.as_ref().map_or(0, |record| {
             record
                 .seats
                 .iter()
                 .map(|seat| u64::from(seat.exposed_pregame_decisions))
                 .sum()
         });
-        pregame_rows += pregame;
-        games.push(
-            json!({"game": game, "rows": game_rows, "london_pregame_rows": pregame,
-            "terminal_classification": trajectory.terminal.terminal_classification}),
-        );
+        pregame_rows += game_pregame_rows;
+        exposed_pregame += exposed;
+        games.push(json!({"game": game, "rows": game_rows,
+            "london_pregame_rows": game_pregame_rows,
+            "opening_record_exposed_pregame_decisions": exposed,
+            "terminal_classification": trajectory.terminal.terminal_classification}));
     }
     ensure(rows > 0, "the preservation check scored no rows")?;
     Ok(json!({
@@ -357,6 +369,7 @@ fn preservation_check_v1(
         "pairing_active_rows": pairing_active_rows,
         "pairing_relation_rows": pairing_rows,
         "london_pregame_rows": pregame_rows,
+        "opening_record_exposed_pregame_decisions": exposed_pregame,
         "mismatches": mismatches,
         "preserved": mismatches == 0,
     }))

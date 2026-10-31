@@ -641,9 +641,8 @@ fn v8_net_and_net8_refuse_each_others_inputs_and_bad_pairings() {
 /// Design section 5 (Adam): the measured step-age trajectory of the V8
 /// conversion's new coordinates under the unchanged optimizer, as widening_v1
 /// section 7.6 measured it for the width arm. The parent is the synthetic
-/// trained parent with the b512 dose checkpoint's Adam step, or the b512
-/// checkpoint at `MTG_KERNEL_PR4A_B512_CHECKPOINT`; 100 GAE updates of the
-/// V8 gradient batch. Writes JSON to `MTG_KERNEL_V8_STEP_AGE_OUT` when set,
+/// trained parent with the b512 dose checkpoint's Adam step (118,584); 100
+/// GAE updates of the V8 gradient batch. Writes JSON to `MTG_KERNEL_V8_STEP_AGE_OUT` when set,
 /// else prints it.
 #[test]
 #[ignore = "measurement probe: run explicitly; writes the V8 step-age JSON"]
