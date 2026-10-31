@@ -484,6 +484,7 @@ class LeaseClient:
         self.persisted = set()      # IDs whose own known-Pod record was written (or read) back
         self.presence_pending = set()   # IDs seen alive whose presence handoff has not landed: never durable
         self.errors = []            # retention failures since the caller last cleared it
+        self.presence_errors = []   # failed presence refreshes of IDs an open store already names
         self._active = False
 
     def __enter__(self):
@@ -631,7 +632,13 @@ class LeaseClient:
         except StoreClosed:   # expected after completion, not a store fault: the obligation stays this process's
             return False
         except Exception as e:  # noqa: BLE001 - the obligation stays; the exit resolves it
-            self.errors.append('retain:' + pod_id + ':' + type(e).__name__)
+            failure = 'retain:' + pod_id + ':' + type(e).__name__
+            if presence and pod_id in self.presence_pending and self.guardian_owns(pod_id):
+                # the ownership evidence still reads back: only the refresh is unpublished; the obligation
+                # stays (and blocks completion), but it is not a store fault that ends the lease
+                self.presence_errors.append(failure)
+            else:
+                self.errors.append(failure)
             return False
         self.persisted.add(pod_id)
         if presence:
@@ -838,7 +845,7 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
     while True:
         failures = []
         store_errors = []
-        del client.errors[:]
+        del client.errors[:]; del client.presence_errors[:]
         now = clock()
         # (A) reasons from the clock and local files only; persisted results never end the guard (I5)
         reason = None
@@ -970,6 +977,8 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
                 now - lease['created_epoch'] > lease['startup_idle_seconds']:
             reason = 'startup_idle'
         store_errors.extend(client.errors)
+        if client.presence_errors:   # diagnostic: completion stays blocked by the pending obligation
+            note('external-presence-error.json', {'epoch': clock(), 'errors': list(client.presence_errors)})
         open_known = sorted(p for p in memory if p not in confirmed)
         if store_errors:
             failures.append('store:' + ','.join(store_errors))
@@ -1014,6 +1023,10 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             seen_absent = census_ok and not malformed and pod_id not in census_ids and observed.get(pod_id) == 'absent'
             if id_absence.setdefault(pod_id, AbsenceConfirmer(clock)).observe(seen_absent):
                 confirmed.add(pod_id)
+                if pod_id in client.presence_pending and client.guardian_owns(pod_id):
+                    # its record reads back and this process's own evidence supersedes the refresh it
+                    # could not publish (I2 still holds: the record itself is durable)
+                    client.presence_pending.discard(pod_id); client.unpersisted.discard(pod_id)
         open_known = sorted(p for p in memory if p not in confirmed)
         census_clear = census_ok and not malformed and not listed
         census_done = census_absence.observe(census_clear)

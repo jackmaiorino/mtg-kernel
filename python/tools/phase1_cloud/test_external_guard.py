@@ -829,6 +829,26 @@ class StoreClosureTests(Base):
         self.assertEqual(eg.known_pods(self.root)['w'], 'receipt')   # durably handed off, as main does
         self.assertFalse(eg.store_closed(self.root / eg.KNOWN_DIR))
 
+    def test_a_full_disk_never_deletes_a_healthy_recorded_primary(self):
+        self.record('pod1'); self.started()
+        eg.remember(self.root, 'pod1', 'receipt', 1.0)
+        world = World([pod('pod1')])
+        real = eg.write
+
+        def no_presence(path, value, replace=False):      # metadata writes fail; existing records read back
+            if Path(path).name.endswith('.presence.json'):
+                raise OSError(28, 'No space left on device')
+            return real(path, value, replace)
+        with mock.patch.object(eg, 'write', side_effect=no_presence):
+            self.assertEqual(self.loop(world, polls=20), 'running')
+            self.assertEqual(world.deletes, [])               # main keeps it too
+            self.assertIsNone(self.status()['reason'])
+            self.assertTrue((self.root / 'external-presence-error.json').exists())
+            write(self.root / 'release-authorized.json', {})  # an independent release reason
+            self.assertEqual(self.loop(world, polls=40), 'returned')
+        self.assertIn('pod1', world.deletes)
+        self.assertTrue(self.completion()['provider_absent'])  # the lease still completes
+
     def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):
