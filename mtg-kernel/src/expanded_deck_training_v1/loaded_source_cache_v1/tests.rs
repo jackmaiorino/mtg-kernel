@@ -521,3 +521,104 @@ fn flat_entries_serve_only_flat_lookups() {
         .is_none());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_flat_v7_source_with_a_v4_checkpoint_is_never_kept_and_still_refuses_an_update() {
+    use crate::native_flat_tensorizer_v7::{
+        FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+    };
+    let root = temp_root("flat-v7-transfer");
+    let v4 = fresh_source_with_v1(
+        &root,
+        crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+    );
+    let (resumed, saved) = write_checkpoint(&root, &v4);
+    let source = ExpandedModelSourceV1 {
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V7.into(),
+            expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V7.into(),
+        },
+        ..resumed
+    };
+    let descriptor_bytes = fs::read(&source.play_import.path).unwrap();
+    let full = bypassed(|| initialize(&source)).unwrap();
+    let before = flat_matches();
+    for _ in 0..2 {
+        assert_same_load(&initialize(&source).unwrap(), &full, &source);
+    }
+    assert_eq!(
+        flat_matches(),
+        before,
+        "the V4-to-V7 transfer is never a flat hit"
+    );
+    assert!(lookup_flat_checkpoint_v1(&source, &descriptor_bytes, None)
+        .unwrap()
+        .is_none());
+    let load = || {
+        load_expanded_update_inference_v1(
+            &source,
+            &saved.trajectories,
+            LEARNING_RATE,
+            VALUE_COEFFICIENT,
+        )
+        .unwrap_err()
+    };
+    let refusal = bypassed(load);
+    assert_eq!(
+        refusal,
+        "a FlatV7 update's checkpoint has the FlatV7 identity"
+    );
+    assert_eq!(load(), refusal);
+    assert_eq!(load(), refusal);
+    assert_eq!(flat_matches(), before);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_flat_checkpoint_that_names_another_file_is_never_kept() {
+    let root = temp_root("flat-phase1");
+    let (source, _) = flat_sources_v1(&root).remove(0);
+    let descriptor_bytes = fs::read(&source.play_import.path).unwrap();
+    let saved: ExpandedCheckpointV1 =
+        serde_json::from_slice(&fs::read(&source.checkpoint.as_ref().unwrap().path).unwrap())
+            .unwrap();
+    let (policy, state) = bypassed(|| initialize(&source)).unwrap();
+    clear_for_test_v1();
+    let pin = |name: &str, fill: char| PinnedFileV1 {
+        path: root.join(name),
+        sha256: fill.to_string().repeat(64),
+    };
+    let mut phase1 = saved.clone();
+    phase1.archive_distillation = Some(ArchiveDistillationProvenanceV1 {
+        method: "archive-distillation".into(),
+        lineage: "r1".into(),
+        arm: ArchiveDistillationArmV1::Uniform,
+        parent: source.checkpoint.clone().unwrap(),
+        parent_state_sha256: saved.state_sha256.clone(),
+        games: pin("games.jsonl", 'd'),
+        archive_sources: vec![pin("ARCHIVE.jsonl", '5')],
+        bank: pin("bank.json", 'e'),
+        bank_rows_sha256: "f".repeat(64),
+        anchor_sha256: "1".repeat(64),
+        steps: 179,
+        learning_rate_bits: LEARNING_RATE.to_bits(),
+        phase1_state_sha256: "2".repeat(64),
+        runtime_commit: "test".into(),
+        cell: None,
+        update_scope: Default::default(),
+        rules_pathway: None,
+    });
+    remember_flat_checkpoint_v1(&source, &descriptor_bytes, &policy, &state, &phase1);
+    let before = flat_matches();
+    assert!(lookup_flat_checkpoint_v1(&source, &descriptor_bytes, None)
+        .unwrap()
+        .is_none());
+    assert_eq!(flat_matches(), before);
+    // The same load with its own checkpoint record is kept.
+    remember_flat_checkpoint_v1(&source, &descriptor_bytes, &policy, &state, &saved);
+    assert!(lookup_flat_checkpoint_v1(&source, &descriptor_bytes, None)
+        .unwrap()
+        .is_some());
+    assert_eq!(flat_matches(), before + 1);
+    fs::remove_dir_all(root).unwrap();
+}

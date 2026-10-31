@@ -6571,9 +6571,10 @@ impl<D: NetDimsV1> state_digest_memo_v1::DigestStreamV1 for NativePolicyValueTra
         self.scorer_bias_anchor_bits
     }
 
-    /// Exactly what [`compute_live_train_state_sha256_dims_v1`] hashes: each
-    /// section's count is the moment tensor count, and each moment section
-    /// takes the parameters' names and shapes. A moment tensor missing for a
+    /// Exactly what [`compute_live_train_state_sha256_dims_v1`] hashes: the
+    /// parameter section's count is the first moments' tensor count, each
+    /// moment section's count is its own tensor count, and each moment
+    /// section takes the parameters' names and shapes. A moment tensor missing for a
     /// visited parameter (which that hash would index out of bounds) yields
     /// a section count no held stream has, so that hash runs and fails as
     /// before.
@@ -6592,7 +6593,7 @@ impl<D: NetDimsV1> state_digest_memo_v1::DigestStreamV1 for NativePolicyValueTra
         });
         for moments in [&self.first_moments, &self.second_moments] {
             visitor(StreamItemV1::Section {
-                count: tensor_count,
+                count: moments.len(),
             });
             let mut ordinal = 0usize;
             self.model.visit_parameters_v1(|name, shape, _| {
