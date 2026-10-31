@@ -264,7 +264,8 @@ def scratch(campaign: driver.Campaign, name: str, stop_after: int, out: Path,
     if "native" in campaign.raw["roots"]:
         raw["roots"]["native"] = str(Path(campaign.raw["roots"]["native"]) / "scratch" / name)
     raw["stop_after_block"] = stop_after
-    for key in ("ancestry_receipt", "placement_record", "continuation", "qualification_synthetic_block"):
+    # A scratch lineage is discarded: its blocks are never sealed for the record copy-back (AMENDMENT-2.md).
+    for key in ("ancestry_receipt", "placement_record", "continuation", "qualification_synthetic_block", "records"):
         raw.pop(key, None)
     if synthetic:
         if stop_after != driver.SYNTHETIC_BLOCK:
@@ -608,6 +609,11 @@ def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120
                   # Non-permanent ends stay compressed while no byte-identical receipt exists (DESIGN section 6).
                   "compressed_ancestry_bytes_study": lineages * ancestry * compressed * checkpoint // sample.stat().st_size,
                   "qualification_bytes_kept": tree_bytes(root)}
+    records = campaign.raw.get("records")
+    if records:  # AMENDMENT-2.md: sealed records past qualification leave the volume through the copy-back window
+        kept = driver.QUALIFICATION_BLOCKS + records["window_blocks"]
+        projection["records_bytes_study"] = lineages * kept * per_block_kept
+        projection["config_bytes_study"] = lineages * kept * per_block_config
     scratch_check = None
     if campaign.raw.get("scratch"):  # AMENDMENT-2.md: the trajectories are block scratch, checked apart
         scratch_check = scratch_item2(campaign, peak_native, lineages)

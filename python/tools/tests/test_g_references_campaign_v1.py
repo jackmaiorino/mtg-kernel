@@ -535,6 +535,54 @@ class DriverTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "block scratch needs"):
             self.write(raw)
 
+    def records_campaign(self, window=1, stall=60):
+        raw = json.loads(self.path.read_text())
+        raw["records"] = {"window_blocks": window, "stall_seconds": stall}
+        self.write(raw)
+
+    def test_a_finished_block_past_qualification_is_sealed_with_its_records(self):
+        self.records_campaign()
+        files = {"retained/G2/b03/run.json": b"{}", "retained/G2/b03/iterations/000001/episode-0.json": b"e",
+                 "retained/G2/b003-a1-failed/RETAINED.json": b"f", "hot/G2/b003-a1/dispatch/report.json": b"r",
+                 "hot/G2/b003-a2/dispatch/report.json": b"s", "exposure/G2-b003-episodes.jsonl": b"row",
+                 "state/configs/G2-b003-a1.json": b"c", "state/requests/G2-b003-a2.json": b"q",
+                 "exposure/G2-b003-exposure.json": b"summary", "retained/G2/b02/run.json": b"{}",
+                 "hot/G2/b004-a1/dispatch/report.json": b"next"}
+        for name, data in files.items():
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_bytes(data)
+        state = {"run": "G2", "blocks": {"2": {"attempts": [], "done": True}, "3": {"attempts": [], "done": True}}}
+        driver.seal(self.campaign, "G2", 2, state)  # qualification's block stays on the volume
+        driver.seal(self.campaign, "G2", 3, state)
+        self.assertNotIn("sealed", state["blocks"]["2"])
+        value = json.loads(Path(state["blocks"]["3"]["sealed"]["path"]).read_text())
+        sealed = {item["path"]: item["sha256"] for item in value["files"]}
+        expected = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()
+                    if "b003" in name or "/b03/" in name}
+        expected.pop("exposure/G2-b003-exposure.json")  # the summary stays for the driver
+        self.assertEqual(sealed, expected)
+        self.assertEqual((value["root"], value["block"], value["bytes"]), (str(self.root), 3, 11))
+        self.assertEqual(self.campaign.run_state("G2")["blocks"]["3"]["sealed"], state["blocks"]["3"]["sealed"])
+
+    def test_the_copy_back_window_and_its_stall_hold_new_blocks(self):
+        self.records_campaign(window=1, stall=60)
+        seals, moved = self.campaign.state / "seals", self.campaign.state / "moved"
+        seals.mkdir(parents=True)
+        for k in range(8):  # one window block per lineage
+            (seals / f"G{k + 1}-b003.json").write_text("{}")
+        self.assertRegex(driver.records_hold(self.campaign), r"^records: 8 sealed blocks await copy-back \(window 8\)")
+        moved.mkdir()
+        (moved / "G1-b003.json").write_text("{}")
+        with patch.object(driver, "DRIVER_STARTED", time.time() - 1000):
+            os.utime(moved / "G1-b003.json", (time.time() - 1000, time.time() - 1000))
+            self.assertRegex(driver.records_hold(self.campaign), "^records: copy-back stalled, 7 sealed blocks wait")
+            self.assertRegex(driver.admit(self.campaign, self.root / "n"), "^records: copy-back stalled")
+            state = {"run": "G2", "status": "running", "blocks": {}}
+            self.assertEqual(driver.run_block(self.campaign, "G2", 3, state), "stopped")  # nothing in flight
+            self.assertEqual(state["blocks"]["3"]["attempts"], [])
+            (moved / "G2-b003.json").write_text("{}")  # the copy-back moved a block just now
+            self.assertIsNone(driver.records_hold(self.campaign))
+
     def test_status_and_run_labels(self):
         self.assertEqual(len(driver.status_lines(self.campaign)), 8)
         for runs in ("r1", "G1,G1", "G9"):

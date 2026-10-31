@@ -153,7 +153,16 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
     scratch = spec["scratch"]
     require(isinstance(scratch, dict) and set(scratch) == {"block_peak_bytes", "factor", "margin_fraction"},
             "the spec's scratch names the per-block peak, its factor and the margin")
-    campaign = {"recipe": g.PREFIX, "lane": template["lane"], "scratch": scratch,
+    # A running attempt ends only on a physical shortage (the provisioned volume less its margin, or the
+    # container disk's free space below it); the cap gates new dispatches. Sealed block records leave the
+    # volume through the copy-back window (g_references_records_v1.py).
+    emergency, records = spec["emergency"], spec["records"]
+    require(isinstance(emergency, dict) and set(emergency) == {"volume_bytes", "margin_fraction"},
+            "the spec's emergency names the provisioned volume and the margin")
+    require(isinstance(records, dict) and set(records) == {"window_blocks", "stall_seconds"},
+            "the spec's records name the copy-back window and its stall bound")
+    storage["emergency"] = emergency
+    campaign = {"recipe": g.PREFIX, "lane": template["lane"], "scratch": scratch, "records": records,
                 "decks": str(base / deck_directory / "data/runtime_decks_v1.json"),
                 "play_imports": {run: descriptor(template["play_imports"][run]) for run in g.RUNS},
                 "placement": {**placements[runs[0]], "cpu_affinity": union},

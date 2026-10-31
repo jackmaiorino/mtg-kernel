@@ -293,6 +293,30 @@ def validate_storage(storage, extra=None):
     return {"logical_bytes": logical, "cap_bytes": cap}
 
 
+def running_storage(storage):
+    """The storage check of a running attempt. With the opt-in ``storage.emergency`` (G(i) amendment 2) it ends
+    the attempt only on a physical shortage: the accounting trees past the provisioned volume less its margin,
+    or a scratch volume's free space below its margin. The cap and projections then gate new dispatches only.
+    Without it, the cap check as before."""
+    spec = storage.get("emergency")
+    if spec is None:
+        return validate_storage(storage, 0)
+    volume, margin = spec["volume_bytes"], spec["margin_fraction"]
+    require(type(volume) is int and volume > 0 and isinstance(margin, (int, float)) and 0 <= margin < 1,
+            "invalid storage emergency spec")
+    try:
+        result = validate_storage({**storage, "max_logical_bytes": min(CAP, math.floor(volume * (1 - margin)))}, 0)
+    except ValueError as error:
+        raise ValueError(f"storage emergency: {error}") from None
+    for root in scratch_roots(storage):
+        anchor = root
+        while not anchor.exists():
+            anchor = anchor.parent
+        disk = shutil.disk_usage(anchor)
+        require(disk.free >= margin * disk.total, "storage emergency: scratch volume free space below its margin")
+    return {**result, "cap_bytes": storage["max_logical_bytes"]}
+
+
 def runtime_for(request, resolve=checked):
     runtime = read(resolve(request["runtime"]))
     require(len(runtime["engine_commit"]) == 40 and len(runtime["tracked_tree_sha256"]) == 64,
@@ -1145,7 +1169,7 @@ def execute(request_path, qualification):
                     child.wait(timeout=min(30, remaining))
                 except subprocess.TimeoutExpired:
                     sample = process_sample(child)
-                    sample.update(validate_storage(request["storage"], 0))
+                    sample.update(running_storage(request["storage"]))
                     telemetry.write(json.dumps(sample) + "\n"); telemetry.flush()
                     require(sample["rss_bytes"] <= request["placement"]["memory_bytes"],
                             "native memory limit exceeded")
@@ -1189,13 +1213,13 @@ def execute(request_path, qualification):
         validated_files[str(exposure_path.resolve())] = exposure_pin["sha256"]
     fingerprint_seconds = time.monotonic() - fingerprint_started
     storage_started = time.monotonic()
-    validate_storage(request["storage"], 0)
+    running_storage(request["storage"])
     storage_validation_seconds = time.monotonic() - storage_started
     # Existing checked, durable, two-shard archive includes full readback. Raw
     # outputs remain. Both locations count against the same campaign allowance.
     archive = archive_native(Path(placed["output_directory"]), cold, validated_files)
     storage_started = time.monotonic()
-    validate_storage(request["storage"], 0)
+    running_storage(request["storage"])
     storage_validation_seconds += time.monotonic() - storage_started
     games = len(placed["iterations"][0]["episodes"]) if request["kind"] == "training" and qualification else (
         sum(len(i["episodes"]) for i in placed["iterations"]) if request["kind"] == "training" else len(placed["episodes"]))

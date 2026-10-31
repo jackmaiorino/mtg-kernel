@@ -92,7 +92,9 @@ SCRATCH_LATCHED: list[str] = []  # set once in this process by a failed prune
 ADMISSION_WAIT_SECONDS = 30
 UNCOUNTED = ("unspawned", "storage-refused", "storage-interrupted")
 STORAGE_MARKERS = ("retained plus projected storage exceeds allowance", "target-volume reserve unavailable",
-                   "no space left on device", "[errno 28]")
+                   "storage emergency", "no space left on device", "[errno 28]")
+RECORDS_SCHEMA = "g-references-v1/block-records"
+DRIVER_STARTED = time.time()  # the copy-back stall clock starts no earlier than this driver
 
 
 def read_pinned(item: dict) -> dict:
@@ -147,6 +149,14 @@ class Campaign(base.Campaign):
                      and any(Path(native).is_relative_to(Path(root)) for root in scratch))
             if not valid:
                 raise SystemExit("block scratch needs roots.native under storage.scratch_roots and a scratch spec")
+        records = self.raw.get("records")
+        if records is not None:  # AMENDMENT-2.md: the copy-back window of sealed block records
+            roots = [Path(self.raw["roots"][name]) for name in ("state", "cold", "retained", "checkpoints",
+                                                                 "exposure", "hot", "doses")]
+            if not (isinstance(records, dict) and set(records) == {"window_blocks", "stall_seconds"}
+                    and all(type(records[key]) is int and records[key] > 0 for key in records)
+                    and len({root.parent for root in roots}) == 1 and not self.raw["roots"]["hot_by_run"]):
+                raise SystemExit("records needs window_blocks, stall_seconds and one campaign tree")
 
     def admits(self, block: int) -> str | None:
         """None when block may run, else why not.
@@ -428,6 +438,58 @@ def tree_bytes(path: Path) -> int:
     return total
 
 
+def records_root(campaign: Campaign) -> Path:
+    """The campaign tree the records' paths are relative to (every root's common parent)."""
+    return Path(campaign.raw["roots"]["state"]).parent
+
+
+def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
+    """Seal a finished block's records for the copy-back (AMENDMENT-2.md): its retained and failed-attempt
+    records, dispatch folders, exposure rows, configs and requests, each hashed on its raw bytes, in
+    state/seals/<run>-<label>.json. Qualification's blocks 1 and 2 stay on the volume."""
+    entry = state["blocks"][str(block)]
+    if not campaign.raw.get("records") or block <= QUALIFICATION_BLOCKS or "sealed" in entry or not entry.get("done"):
+        return
+    root, name = records_root(campaign), label(block)
+    sources = [campaign.retained / run / f"b{block:02d}",
+               *sorted((campaign.retained / run).glob(f"{name}-a*-failed")),
+               *sorted((campaign.hot(run) / run).glob(f"{name}-a*")),
+               campaign.exposure / f"{run}-{name}-episodes.jsonl",
+               *sorted((campaign.state / "configs").glob(f"{run}-{name}-a*.json")),
+               *sorted((campaign.state / "requests").glob(f"{run}-{name}-a*.json"))]
+    files = []
+    for source in sources:
+        for path in [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file()):
+            files.append({"path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size,
+                          "sha256": sha256_file(path)})
+    entry["sealed"] = write_json(campaign.state / "seals" / f"{run}-{name}.json",
+                                 {"schema": RECORDS_SCHEMA, "run": run, "block": block, "root": str(root),
+                                  "files": files, "bytes": sum(item["bytes"] for item in files),
+                                  "sealed_at": now(), "epoch": time.time()})
+    campaign.save_state(run, state)
+    touch(campaign)
+
+
+def records_hold(campaign: Campaign) -> str | None:
+    """None, or why no block may start (AMENDMENT-2.md item 2): the volume's window of sealed blocks the
+    copy-back has not moved is full, or the copy-back moved nothing for ``stall_seconds`` while blocks wait."""
+    spec = campaign.raw.get("records")
+    if not spec:
+        return None
+    seals, moved = campaign.state / "seals", campaign.state / "moved"
+    pending = [path for path in sorted(seals.glob("*.json")) if not (moved / path.name).exists()] \
+        if seals.exists() else []
+    window = spec["window_blocks"] * len(g.RUNS)
+    if len(pending) >= window:
+        return f"records: {len(pending)} sealed blocks await copy-back (window {window})"
+    if pending:
+        last = max([path.stat().st_mtime for path in moved.glob("*.json")] if moved.exists() else [],
+                   default=DRIVER_STARTED)
+        if time.time() - max(last, DRIVER_STARTED) > spec["stall_seconds"]:
+            return f"records: copy-back stalled, {len(pending)} sealed blocks wait"
+    return None
+
+
 def admit(campaign: Campaign, native: Path) -> str | None:
     """Register ``native`` as an admitted block's scratch tree (None), or say why the block waits
     (AMENDMENT-2.md item 2): every in-flight tree, each at no less than the measured peak times the factor,
@@ -438,6 +500,9 @@ def admit(campaign: Campaign, native: Path) -> str | None:
         return "latched: " + json.loads(latch.read_text(encoding="utf-8"))["reason"]
     if SCRATCH_LATCHED:
         return "latched: " + SCRATCH_LATCHED[0]
+    reason = records_hold(campaign)
+    if reason:
+        return reason
     with SCRATCH_LOCK:
         others = sorted(SCRATCH_INFLIGHT)
         storage = campaign.raw["storage"]
@@ -493,6 +558,7 @@ def hold(campaign: Campaign, run: str, block: int, state: dict, reason: str, ann
 def finished(campaign: Campaign, run: str, block: int, state: dict, entry: dict, record: dict) -> str:
     result = finish_block(campaign, run, block, state, entry, record)
     release(campaign, run, block, Path(record["native"]))
+    seal(campaign, run, block, state)
     return result
 
 
@@ -803,6 +869,7 @@ def drive(campaign: Campaign, run: str) -> None:
         for block in range(1, campaign.stop_after + 1):
             entry = state["blocks"].get(str(block))
             if entry and entry.get("done"):
+                seal(campaign, run, block, state)  # a driver stopped between the block's end and its seal
                 continue
             if entry and entry.get("disposition"):
                 state["status"] = "stopped"
