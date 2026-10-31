@@ -2878,8 +2878,8 @@ fn validate_actual_behaviors_v1(
 fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     validate_behavior_shape_v1(t)?;
     validate_opening_record_v1(&t.episode, t.opening_record.as_ref())?;
-    // FlatV7 resolves to the V4 generation (`resolve_contract_v1`) and has
-    // no no-state-digest conversion, so its updates, replays and
+    // FlatV7 and FlatV8 resolve to the V4 generation (`resolve_contract_v1`)
+    // and have no no-state-digest conversion, so their updates, replays and
     // checkpoints are admitted here like V4's.
     let contract = trajectory_contract_v1(t)?;
     if contract.input_contract_digest_v1().is_some() {

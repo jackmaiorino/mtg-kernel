@@ -167,7 +167,21 @@ fn check_game_v1(
                 })
                 .count();
             let multis = cases.len() - singles;
-            if (new.pairs.len() > 2 && multis < 3) || (new.pairs.len() == 2 && singles < 2) {
+            // Known hand cards are left out: the FlatV4 Python reference
+            // encodes them in observation order and the Rust tensorizer in
+            // canonical order (`canonical_known_hand_cards`), a FlatV4
+            // difference outside FlatV8.
+            let no_known_hands =
+                observation_json["known_hand_cards"]
+                    .as_array()
+                    .is_some_and(|seats| {
+                        seats
+                            .iter()
+                            .all(|cards| cards.as_array().is_some_and(Vec::is_empty))
+                    });
+            if no_known_hands
+                && ((new.pairs.len() > 2 && multis < 3) || (new.pairs.len() == 2 && singles < 2))
+            {
                 cases.push(parity_case_v1(&session, d, &new));
             }
         }
