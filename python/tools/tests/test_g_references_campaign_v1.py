@@ -378,6 +378,33 @@ class DriverTests(unittest.TestCase):
         log = json.loads(self.campaign.prune_log.read_text().splitlines()[-1])
         self.assertEqual(log["retained_records"], attempt["failed_records"])
 
+    def test_a_completed_block_whose_native_tree_went_with_its_pod_reruns(self):
+        native = self.root / "container" / "G1" / "b001-a1" / "native"
+        state = {"run": "G1", "status": "running", "blocks": {"1": {"attempts": [
+            {"attempt": 1, "native": str(native), "outcome": "complete"}]}}}
+        finished = []
+        with patch.object(driver, "finish_block", lambda *a: finished.append(a) or "complete"), \
+                patch.object(driver, "block_spec", return_value={}), \
+                patch.object(driver.g, "block_config", return_value={}), \
+                patch.object(driver.g, "require_runtime_rules"), \
+                patch.object(driver, "request_for", return_value={}), \
+                patch.object(driver.Campaign, "wall_stop", return_value=None), \
+                patch.object(driver.base, "dispatch_block", return_value={"state": "refused"}):
+            native.mkdir(parents=True)  # still on this pod's disk: finished as before
+            self.assertEqual(driver.run_block(self.campaign, "G1", 1, state), "complete")
+            native.rmdir()
+            entry = state["blocks"]["1"]
+            entry.update(exposure={}, final_checkpoint={}, retained={})  # retained: finishing reads no native tree
+            self.assertEqual(driver.run_block(self.campaign, "G1", 1, state), "complete")
+            del entry["retained"]
+            self.assertEqual(driver.run_block(self.campaign, "G1", 1, state), "stopped")
+        self.assertEqual(len(finished), 2)
+        self.assertEqual([a.get("outcome") for a in entry["attempts"]], ["lost", "spawn-refused"])
+        self.assertNotIn("exposure", entry)
+        self.assertNotIn("final_checkpoint", entry)
+        events = [json.loads(line) for line in self.campaign.events.read_text().splitlines()]
+        self.assertIn("native-lost", [e["kind"] for e in events])
+
     def test_status_and_run_labels(self):
         self.assertEqual(len(driver.status_lines(self.campaign)), 8)
         for runs in ("r1", "G1,G1", "G9"):

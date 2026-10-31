@@ -340,6 +340,19 @@ def discard(campaign: Campaign, run: str, block: int, attempt: dict, reason: str
                                           "retained_records": attempt["failed_records"]})
 
 
+FINISH_KEYS = ("exposure", "final_checkpoint", "final_adam_step", "final_state_sha256", "checkpoint_state",
+               "embedding_gate", "embedding_gate_pass")
+
+
+def native_lost(campaign: Campaign, run: str, block: int, entry: dict, record: dict) -> bool:
+    """A completed attempt's native tree is gone while a finishing step still reads it (collection, the kept
+    checkpoint, retention)."""
+    if Path(record["native"]).exists():
+        return False
+    retained = "retained" in entry or (campaign.retained / run / f"b{block:02d}" / "RETAINED.json").exists()
+    return not ("exposure" in entry and "final_checkpoint" in entry and retained)
+
+
 def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
     """The baseline's run_block with this recipe's config, request and failure rules."""
     entry = state["blocks"].setdefault(str(block), {"attempts": []})
@@ -347,7 +360,15 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         campaign.lease.active[run] = entry
     if entry["attempts"]:
         last = entry["attempts"][-1]
-        if last.get("outcome") == "complete":
+        if last.get("outcome") == "complete" and native_lost(campaign, run, block, entry, last):
+            # A pod's container disk (roots.native) went with a released pod before the block was retained:
+            # an interruption, so the block reruns from its block-start checkpoint (design section 4).
+            last["outcome"] = "lost"
+            for key in FINISH_KEYS:
+                entry.pop(key, None)
+            campaign.save_state(run, state)
+            campaign.event(run=run, block=block, attempt=last["attempt"], kind="native-lost")
+        elif last.get("outcome") == "complete":
             return finish_block(campaign, run, block, state, entry, last)
         if "outcome" not in last:
             # The driver (and with it the reservation's whole job) ended mid-block.
