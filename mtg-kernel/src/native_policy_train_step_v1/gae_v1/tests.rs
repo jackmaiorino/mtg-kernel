@@ -1612,3 +1612,115 @@ fn gae_stage_b2_empty_packets_are_the_ordinary_update_with_receipts() {
         );
     }
 }
+
+/// A net-8 with every parameter random (the padding embedding row stays
+/// zero), so no structure hides an order difference.
+#[cfg(feature = "gpu-exact-v1")]
+fn random_model_v1(seed: u64) -> NativePolicyValueNetV1 {
+    let mut net = model();
+    let mut rng = crate::state::SplitMix64::seed(seed);
+    let mut parameters = net.parameter_snapshot_v1();
+    for parameter in &mut parameters {
+        for value in &mut parameter.values {
+            *value = ((rng.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0) * 0.3;
+        }
+        if parameter.name == "card_embedding.weight" {
+            parameter.values[..16].fill(0.0);
+        }
+    }
+    net.replace_parameter_snapshot_v1(&parameters).unwrap();
+    net
+}
+
+/// The fixture's two tensors with the edge cases an order bug would show:
+/// signed zeros and subnormals among the features, a self-loop edge (its
+/// message added to one node twice) and a repeated card (one embedding row
+/// gathering two objects' gradients).
+#[cfg(feature = "gpu-exact-v1")]
+fn edge_case_fixture_v1(model: &NativePolicyValueNetV1) -> Fixture {
+    let mut fixture = Fixture::capture(model);
+    for tensor in &mut fixture.tensors {
+        let common = &mut tensor.common;
+        for (i, value) in common.state.iter_mut().enumerate() {
+            if i % 7 == 3 {
+                *value = -0.0;
+            }
+        }
+        for (i, value) in common.object_features.iter_mut().enumerate() {
+            if i % 11 == 5 {
+                *value = 1.0e-40;
+            } else if i % 13 == 6 {
+                *value = -0.0;
+            }
+        }
+        if let (Some(&source), Some(target)) =
+            (common.edge_source_indices.first(), common.edge_target_indices.first_mut())
+        {
+            *target = source;
+        }
+        if common.object_card_ids.len() > 1 && common.object_card_ids[0] != 0 {
+            common.object_card_ids[1] = common.object_card_ids[0];
+        }
+    }
+    let outputs = fixture.tensors.each_ref().map(|tensor| {
+        model
+            .forward_feature_transfer_v3_mode(
+                encoded_decision_view_v3(tensor),
+                ForwardActivationModeV1::LibmTanh,
+            )
+            .unwrap()
+    });
+    fixture.logits = outputs.each_ref().map(|o| o.logits.iter().map(|v| v.to_bits()).collect());
+    fixture.values = outputs.each_ref().map(|o| o.value.to_bits());
+    fixture
+}
+
+/// The exact GPU learner (`gpu_exact_v1`) gives every gradient, gauge and
+/// state bit of the CPU update, over two consecutive updates.
+#[cfg(feature = "gpu-exact-v1")]
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
+fn gpu_exact_learner_preserves_every_bit() {
+    let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .parse()
+        .unwrap();
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = many_substeps(&fixture, 200);
+    let batch = physical_groups(&steps);
+    let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    // The CPU references first: once installed, the learner serves every
+    // train step in this process.
+    assert!(!crate::gpu_exact_v1::learner_installed_v1(), "run this test alone");
+    let mut cpu = start.clone();
+    let expected = profiled_step(&mut cpu, &batch, 4).unwrap();
+    let second_fixture = Fixture::capture(&cpu.model);
+    let second_steps = many_substeps(&second_fixture, 120);
+    let second_batch = physical_groups(&second_steps);
+    let expected_second = profiled_step(&mut cpu, &second_batch, 4).unwrap();
+    // A random net on the edge-case inputs, from its own start.
+    let random = random_model_v1(77);
+    let edge_fixture = edge_case_fixture_v1(&random);
+    let edge_steps = many_substeps(&edge_fixture, 150);
+    let edge_batch = physical_groups(&edge_steps);
+    let edge_start = NativePolicyValueTrainStateV1::new_v1(random).unwrap();
+    let mut edge_cpu = edge_start.clone();
+    let edge_expected = profiled_step(&mut edge_cpu, &edge_batch, 4).unwrap();
+    crate::gpu_exact_v1::install_learner_v1(ordinal).unwrap();
+    let mut gpu = start.clone();
+    let actual = profiled_step(&mut gpu, &batch, 4).unwrap();
+    assert_eq!(gradient_bits(&actual), gradient_bits(&expected));
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    let actual_second = profiled_step(&mut gpu, &second_batch, 4).unwrap();
+    assert_eq!(format!("{actual_second:?}"), format!("{expected_second:?}"));
+    assert_eq!(state_bits(&gpu), state_bits(&cpu));
+    let mut edge_gpu = edge_start.clone();
+    let edge_actual = profiled_step(&mut edge_gpu, &edge_batch, 4).unwrap();
+    assert_eq!(gradient_bits(&edge_actual), gradient_bits(&edge_expected));
+    assert_eq!(format!("{edge_actual:?}"), format!("{edge_expected:?}"));
+    assert_eq!(state_bits(&edge_gpu), state_bits(&edge_cpu));
+    let receipt = crate::gpu_exact_v1::learner_receipt_v1().unwrap();
+    assert_eq!(receipt["updates"], 3, "{receipt}");
+    eprintln!("{receipt}");
+}
