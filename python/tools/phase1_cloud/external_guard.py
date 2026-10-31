@@ -69,7 +69,7 @@ completion is blocked, and lease/create-ambiguous.json is also a release
 reason. Release authorization never proves that a create failed, and neither
 does quiet: account spend is account-wide and RunPod bounds no create delay.
 After AMBIGUOUS_QUIET_SECONDS of unbroken clear exact-name censuses (monotonic
-time, reset by a failure, a gap or any retained ID) the guard writes
+time, reset by a failure, a gap or any retained ID not freshly confirmed absent) the guard writes
 ambiguous-create-quiet.json (diagnostic evidence for the operator) and
 ALERT-ambiguous-create.json, retrying a failed write each pass, and keeps
 supervising: only an operator's resolution ends it. The account read runs once
@@ -595,21 +595,23 @@ class LeaseClient:
         older record or receipt names it, until its own presence handoff lands; a brand-new ID is an
         obligation until any durable record names it. On a closed store an earlier handoff no longer
         covers anything."""
-        if store_closed(self.folder):
-            self.persisted.difference_update(pod_ids); self.durable.difference_update(pod_ids)
+        seen = [p for p in pod_ids if valid_id(p)]
         if presence:
-            seen = [p for p in pod_ids if valid_id(p)]
-            # obligation first, as a refresh, before any disk read: an interrupt during classification
-            # leaves every seen ID held (a named one is reported, never deleted)
+            # obligation first, as a refresh, before any disk read (the closure probe included): an
+            # interrupt or a read failure during classification leaves every seen ID held (a named one is
+            # reported, never deleted)
             self.presence_pending.update(seen); self.unpersisted.update(seen)
             self.verified_absent.difference_update(pod_ids)
+        else:
+            self.unpersisted.update(p for p in seen if p not in self.persisted and p not in self.durable)
+        if store_closed(self.folder):
+            self.persisted.difference_update(seen); self.durable.difference_update(seen)
+            self.unpersisted.update(seen)
+        if presence:
             receipts = self.receipt_ids()
             self.presence_pending.difference_update(
                 p for p in seen if not (p in self.persisted or p in self.durable or self.record_reads_back(p)
                                         or p in receipts))
-            return
-        fresh = [p for p in pod_ids if valid_id(p) and p not in self.persisted and p not in self.durable]
-        self.unpersisted.update(fresh)
 
     def retain(self, pod_id, role, presence=True):
         """Register, then hand off; the obligation is cleared only after the durable readback."""
@@ -970,7 +972,9 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             reason = reason or 'guard_failure'
         # Quiet after a create that named no Pod is evidence for the operator, never a resolution
         tick = monotonic()
-        if census_ok and not malformed and not listed and not failures and not memory and create_unresolved(root):
+        # every retained ID (a delayed Pod already deleted, say) must hold a fresh absence confirmation
+        settled_memory = all(p in confirmed for p in memory)
+        if census_ok and not malformed and not listed and not failures and settled_memory and create_unresolved(root):
             if quiet_since is None or tick - last_clear > QUIET_GAP_SECONDS:
                 quiet_since, quiet_censuses, quiet_noted, quiet_funds_started = tick, 0, False, False
             quiet_censuses += 1; last_clear = tick

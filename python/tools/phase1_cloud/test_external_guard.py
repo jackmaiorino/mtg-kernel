@@ -785,6 +785,33 @@ class StoreClosureTests(Base):
             self.loop(world, polls=200)                   # the closed exit's own 180 s release bound
         self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
 
+    def test_a_failed_closure_probe_never_loses_a_new_id(self):
+        world = World([pod('n')])
+        real = eg.store_closed; fired = []
+
+        def probe(folder):
+            if not fired:
+                fired.append(True)
+                raise PermissionError('store unreadable')
+            return real(folder)
+        with self.assertRaises(PermissionError), no_network(), failing_handoff({'n'}), \
+                self.lease_client(world) as client:
+            with mock.patch.object(eg, 'store_closed', side_effect=probe):   # inside the census only
+                client.census()
+        self.assertEqual(fired, [True])
+        self.assertIn('n', world.deletes)                 # held, then released by the exit
+        self.assertNotIn('n', world.pods)
+
+    def test_quiet_after_a_delayed_pod_was_deleted_still_alerts(self):
+        QuietCreateTests.ambiguous(self)
+        world = World([pod('late')])                      # the pending create's Pod appears, then is deleted
+        self.assertEqual(self.loop(world, polls=QuietCreateTests.polls(self) + 40, monotonic=self.clock), 'running')
+        self.assertIn(('DELETE', 'late'), world.log)
+        quiet = read(self.root / eg.QUIET_NOTE)
+        self.assertEqual(quiet['retained_ids'], ['late'])
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertIsNone(self.completion())
+
     def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):
