@@ -95,13 +95,19 @@ After it exists a handoff or create attempt is refused (StoreClosed), nothing on
 disk counts as handed off, every valid stored ID (readable or not) is held, and a
 guard that sees the closure, at start or mid-run, ends through one pass whose exit
 must verify every ID it holds absent within its own bound, or alert (I4). A
-completion record never ends supervision while a create is unresolved. once=True
-runs a single pass (a watchdog).
+completion record never ends supervision while a create is unresolved.
+
+When this synchronization itself fails (the store lock cannot be set up or
+acquired, the closure probe errs, a presence file cannot be read or written),
+each operation degrades to main's behavior, which has none of it, and
+ALERT-sync-degraded.json tells the operator: main is the floor. once=True runs a
+single pass (a watchdog).
 
 usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json required)
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import os
@@ -130,6 +136,7 @@ QUIET_GAP_SECONDS = 3 * POLL_SECONDS   # a longer gap between clear censuses sta
 QUIET_NOTE = 'ambiguous-create-quiet.json'
 QUIET_ALERT = 'ALERT-ambiguous-create.json'
 QUIET_FUNDS = 'ambiguous-create-funds.json'   # the account read, written by its own thread when it returns
+SYNC_ALERT = 'ALERT-sync-degraded.json'      # the store lock, closure probe or a presence file failed
 KNOWN_DIR = 'lease/known-pods'
 STORE_LOCK_SECONDS = 20           # a handoff or completion waiting longer for the store lock fails closed
 CREATE_ROLES = ('receipt', 'adopted')   # roles that mark a retained ID as the create result (I3)
@@ -387,25 +394,54 @@ class StoreLock:
         return False
 
 
+def degraded(folder, what, error=None):
+    """A failure of this module's own synchronization (the store lock, the closure probe, a presence
+    file): the operation goes on as it would without that synchronization, which is main's behavior,
+    and the operator is told. Never raises."""
+    try:
+        write(lease_root(folder) / SYNC_ALERT, {'what': what, 'epoch': time.time(),
+              'error_type': type(error).__name__ if error is not None else None}, replace=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@contextlib.contextmanager
+def lock_or_degrade(folder, what):
+    """The store lock, or, when it cannot be set up or acquired, no lock and a degraded() report. Yields
+    whether the lock is held."""
+    lock = StoreLock(folder)
+    try:
+        lock.__enter__()
+    except SyncError as e:
+        degraded(folder, what + ': store lock', e)
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        lock.__exit__(None, None, None)
+
+
 def handoff_in(folder, pod_id, role, epoch, presence=True):
     """I4: under the store lock, refuse a closed store, write the record and read it back; raises unless
     it now durably names this ID (and a create role). A handoff of positive presence (an ID a census,
     GET or POST just returned, known or not) also advances the ID's presence revision, which voids the
-    guard's absence confirmation of that ID."""
-    with StoreLock(folder):
+    guard's absence confirmation of that ID. When the lock or the closure probe fails, the handoff is
+    main's (record and read-back, no presence revision) and degraded() reports it."""
+    with lock_or_degrade(folder, 'handoff of ' + pod_id) as locked:
         state = store_state(folder)
         if state == 'closed':
             raise StoreClosed('the guard completed; the caller keeps ' + pod_id)
         if state != 'open':
-            raise ClosureUnknown('closure of the store unknown; the caller keeps ' + pod_id)
+            degraded(folder, 'handoff of ' + pod_id + ': closure probe')
         remember_in(folder, pod_id, role, epoch)
         value = read(Path(folder) / (pod_id + '.json'))
-        if presence:
+        if presence and locked and state == 'open':
             try:
                 write(presence_path(folder, pod_id), {'revision': read_presence(folder, pod_id) + 1,
                                                       'epoch': epoch}, replace=True)
-            except Exception as e:  # noqa: BLE001 - the record above is durable; only the refresh is not
-                raise PresenceError('presence revision of ' + pod_id + ': ' + type(e).__name__) from e
+            except Exception as e:  # noqa: BLE001 - the record above is durable, as main's would be
+                degraded(folder, 'presence revision of ' + pod_id, e)
     if not isinstance(value, dict) or value.get('id') != pod_id:
         raise ValueError('known-Pod record does not read back')
     if role in CREATE_ROLES and value.get('role') not in CREATE_ROLES:
@@ -420,11 +456,20 @@ def complete_store(root, memory, basis, settled, errors, record):
     then is the completion record, which closes the store, written and read back. True when it was."""
     folder = Path(root) / KNOWN_DIR
     try:
-        with StoreLock(folder):
-            if store_state(folder) != 'open':  # another guard completed first (its record stands), or unknown
+        with lock_or_degrade(folder, 'completion'):
+            state = store_state(folder)
+            if state == 'closed':              # another guard completed first: its record stands
                 return False
-            if any(read_presence(folder, p) != basis.get(p) for p in memory):
-                return False
+            if state != 'open':
+                degraded(folder, 'completion: closure probe')
+            for pod_id in memory:
+                try:
+                    revision = read_presence(folder, pod_id)
+                except Exception as e:  # noqa: BLE001 - main has no presence check
+                    degraded(folder, 'completion: presence revision of ' + pod_id, e)
+                    continue
+                if revision != basis.get(pod_id, 0):
+                    return False
             late = set(known_pods(root, errors)) - set(memory)
             if late or errors or not settled():
                 return False
@@ -448,12 +493,12 @@ def record_create_attempt(lease_dir, value):
     """A creator's attempt record, written under the store lock; refused once the guard has completed,
     so a create never starts after completion's final check (I4)."""
     folder = Path(lease_dir) / 'known-pods'
-    with StoreLock(folder):
+    with lock_or_degrade(folder, 'create attempt'):
         state = store_state(folder)
         if state == 'closed':
             raise StoreClosed('the guard completed; no create after completion')
         if state != 'open':
-            raise ClosureUnknown('closure of the store unknown; no create')
+            degraded(folder, 'create attempt: closure probe')
         write(Path(lease_dir) / 'create-attempt.json', value)
 
 
@@ -594,7 +639,7 @@ class LeaseClient:
         readable receipt naming the ID. Destructive cleanup never touches such an ID. After the guard
         closed the store nothing is durable: this process keeps every ID it holds. An ID seen alive whose
         presence handoff has not landed is never durable, whatever older record names it."""
-        if store_state(self.folder) != 'open' or pod_id in self.presence_pending:
+        if store_closed(self.folder) or pod_id in self.presence_pending:
             return False
         if pod_id in self.durable or self.record_reads_back(pod_id) or pod_id in self.receipt_ids():
             self.persisted.add(pod_id); self.unpersisted.discard(pod_id)
@@ -949,8 +994,8 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         for pod_id in sorted(memory):
             try:
                 revision = read_presence(root / KNOWN_DIR, pod_id)
-            except Exception as e:  # noqa: BLE001 - voids the confirmation and blocks completion; not a store fault
-                sync_errors.append('presence:' + pod_id + ':' + type(e).__name__); revision = None
+            except Exception as e:  # noqa: BLE001 - main has no presence files: keep the last revision read
+                degraded(root / KNOWN_DIR, 'presence revision of ' + pod_id, e); revision = basis.get(pod_id, 0)
             if basis.get(pod_id, 0) != revision:
                 confirmed.discard(pod_id); id_absence.pop(pod_id, None); census_absence = AbsenceConfirmer(clock)
             basis[pod_id] = revision

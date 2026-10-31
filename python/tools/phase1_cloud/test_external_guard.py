@@ -682,7 +682,9 @@ class StoreClosureTests(Base):
         self.assertIn(('DELETE', 'a'), world.log)
         self.assertNotIn('a', world.pods)
 
-    def test_a_failed_presence_handoff_is_never_discharged_by_an_older_record(self):
+    def test_a_failed_presence_refresh_degrades_to_main_and_alerts(self):
+        # without its synchronization the handoff is main's: the record lands, the Pod is never
+        # deleted, and ALERT-sync-degraded.json tells the operator the refresh was not published
         for failure in ('presence write', 'lock timeout'):
             with self.subTest(failure=failure):
                 eg.remember(self.root, 'a', 'census', 1.0)
@@ -698,12 +700,13 @@ class StoreClosureTests(Base):
                 else:
                     failing = mock.patch.object(eg, 'STORE_LOCK_SECONDS', 0.1)
                 lock = eg.StoreLock(self.root / eg.KNOWN_DIR) if failure == 'lock timeout' else mock.MagicMock()
-                with self.assertRaises(eg.AlertError), no_network(), failing, lock, self.lease_client(world) as client:
+                with no_network(), failing, lock, self.lease_client(world) as client:
                     client.census()
-                    self.assertFalse(client.durable_now('a'))
-                self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
-                self.assertNotIn('a', world.deletes)          # the guardian's Pod is reported, never deleted
-                (self.root / 'ALERT-pod-not-released.json').unlink()
+                    self.assertTrue(client.durable_now('a'))
+                self.assertNotIn('a', world.deletes)
+                self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+                self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+                (self.root / eg.SYNC_ALERT).unlink()
 
     def test_a_corrupt_stored_record_is_held_on_a_closed_store(self):
         self.complete(at_deadline=True)
@@ -821,7 +824,7 @@ class StoreClosureTests(Base):
             return real(path, *args, **kwargs)
         return mock.patch.object(Path, 'exists', failing)
 
-    def test_a_persistently_failing_closure_probe_releases_a_post_id_it_cannot_hand_off(self):
+    def test_a_persistently_failing_closure_probe_degrades_a_post_handoff_to_main(self):
         world = World([])
 
         def poster(body):                                 # a valid ID under an unexpected name
@@ -830,20 +833,42 @@ class StoreClosureTests(Base):
         with no_network(), self.failing_completion_probe(), self.lease_client(world) as client:
             client.post({'name': NAME}, poster=poster)    # the fault persists through the exit
             self.assertEqual(eg.store_state(self.root / eg.KNOWN_DIR), 'unknown')
-        # a store not known open takes no handoff: the creator released the Pod itself and verified it
-        self.assertIn(('DELETE', 'w'), world.log)
-        self.assertNotIn('w', world.pods)
+        self.assertEqual(eg.known_pods(self.root)['w'], 'receipt')   # durably handed off, as main does
+        self.assertEqual(world.deletes, [])
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())
 
-    def test_an_unknown_closure_never_discharges_a_pass_that_raced_completion(self):
+    def test_a_first_handoff_blocked_by_synchronization_never_deletes_a_healthy_pod(self):
+        # round 11: lock setup, a lock timeout or a failed probe before a POST ID's first handoff
+        for fault in ('probe', 'lock setup', 'lock timeout'):
+            with self.subTest(fault=fault):
+                temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+                self.root = Path(temporary.name); write(self.root / 'lease/lease.json', lease())
+                world = World([])
+
+                def poster(body):
+                    world.pods['p'] = pod('p')
+                    return pod('p')
+                if fault == 'probe':
+                    failing = self.failing_completion_probe()
+                elif fault == 'lock setup':
+                    failing = mock.patch.object(eg.StoreLock, '__enter__', side_effect=eg.LockError('setup'))
+                else:
+                    failing = mock.patch.object(eg.StoreLock, '__enter__', side_effect=eg.LockTimeout('held'))
+                with no_network(), self.lease_client(world) as client, failing:
+                    client.post({'name': NAME}, poster=poster)
+                self.assertEqual(world.deletes, [])       # main keeps it, and so does this
+                self.assertEqual(eg.known_pods(self.root)['p'], 'receipt')
+                self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+
+    def test_an_unknown_closure_degrades_a_raced_handoff_to_main_and_alerts(self):
         world = World([pod('late')])
         with no_network(), self.lease_client(world) as client:
             write(self.root / eg.COMPLETION, {'provider_absent': True, 'by': 'other'})   # completion lands
             with self.failing_completion_probe():          # and every later probe fails
                 client.census()
-                self.assertIn('late', client.unpersisted)
-                self.assertFalse(client.durable_now('late'))
-        self.assertIn(('DELETE', 'late'), world.log)
-        self.assertNotIn('late', world.pods)
+        self.assertEqual(world.deletes, [])               # main's behavior: the record is written
+        self.assertIn('late', eg.known_pods(self.root))
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())   # and the operator is told
 
     def test_a_lock_setup_failure_never_deletes_a_healthy_primary(self):
         world = self.healthy_primary()
@@ -902,7 +927,7 @@ class StoreClosureTests(Base):
             self.assertEqual(self.loop(world, polls=20), 'running')
             self.assertEqual(world.deletes, [])               # main keeps it too
             self.assertIsNone(self.status()['reason'])
-            self.assertTrue((self.root / 'external-sync-error.json').exists())
+            self.assertTrue((self.root / eg.SYNC_ALERT).exists())
             write(self.root / 'release-authorized.json', {})  # an independent release reason
             self.assertEqual(self.loop(world, polls=40), 'returned')
         self.assertIn('pod1', world.deletes)
@@ -927,7 +952,7 @@ class StoreClosureTests(Base):
         self.assertTrue(fired)
         self.assertEqual(world.deletes, [])               # main ignores presence files and keeps it too
         self.assertIsNone(self.status()['reason'])
-        self.assertTrue((self.root / 'external-sync-error.json').exists())
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())
 
     def test_a_store_lock_timeout_never_deletes_a_healthy_primary(self):
         world = self.healthy_primary()
@@ -944,7 +969,7 @@ class StoreClosureTests(Base):
         self.assertEqual(world.deletes, [])               # main takes no lock and keeps it too
         self.assertIsNone(self.status()['reason'])
 
-    def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
+    def test_a_handoff_waits_for_the_store_lock_and_degrades_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):
             worker = threading.Thread(target=lambda: done.append(eg.handoff(self.root, 'late', 'census', 1.0)))
@@ -954,9 +979,9 @@ class StoreClosureTests(Base):
         worker.join(5)
         self.assertEqual(done, [True])
         with eg.StoreLock(folder), mock.patch.object(eg, 'STORE_LOCK_SECONDS', 0.2):
-            with self.assertRaises(OSError):
-                eg.handoff(self.root, 'later', 'census', 1.0)
-        self.assertFalse((folder / 'later.json').exists())
+            self.assertTrue(eg.handoff(self.root, 'later', 'census', 1.0))   # past the bound: main's handoff
+        self.assertEqual(read(folder / 'later.json')['id'], 'later')
+        self.assertIn('store lock', read(self.root / eg.SYNC_ALERT)['what'])
 
 
 class CensusAbsenceTests(Base):
