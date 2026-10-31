@@ -27,7 +27,9 @@ host (Jack's PC, or a RunPod lease) drives, inside one held host reservation
 5. Item 6: that synthetic block, straight and interrupted, which must be
    identical and draw both history checkpoints; it is discarded afterwards.
 6. ``record``: item 2 (bytes per completed block and the projected eight-lineage
-   peak, qualification leftovers included, against the 120 GB cap) and item 7
+   peak, qualification leftovers included, against the 120 GB cap; with block
+   scratch, AMENDMENT-2.md, the eight trajectory trees against the scratch
+   volume instead) and item 7
    (every dispatched config carries the runtime profile on all 1,620 episodes,
    and a stripped config is refused). Its ``pass`` is every check together; the
    driver runs no block past 2 without a placement record citing a passing one.
@@ -262,7 +264,8 @@ def scratch(campaign: driver.Campaign, name: str, stop_after: int, out: Path,
     if "native" in campaign.raw["roots"]:
         raw["roots"]["native"] = str(Path(campaign.raw["roots"]["native"]) / "scratch" / name)
     raw["stop_after_block"] = stop_after
-    for key in ("ancestry_receipt", "placement_record", "continuation", "qualification_synthetic_block"):
+    # A scratch lineage is discarded: its blocks are never sealed for the record copy-back (AMENDMENT-2.md).
+    for key in ("ancestry_receipt", "placement_record", "continuation", "qualification_synthetic_block", "records"):
         raw.pop(key, None)
     if synthetic:
         if stop_after != driver.SYNTHETIC_BLOCK:
@@ -564,6 +567,22 @@ def block_bytes(campaign: driver.Campaign) -> list[dict]:
     return rows
 
 
+def scratch_item2(campaign: driver.Campaign, peak_native: int, lineages: int) -> dict:
+    """Item 2 for block scratch (AMENDMENT-2.md): every lineage's tree at the larger of the measured and the
+    admission peak, times the factor, fits the scratch volume less the margin, and the measured peak is
+    within the admission spec."""
+    scratch, native = campaign.raw["scratch"], Path(campaign.raw["roots"]["native"])
+    anchor = native
+    while not anchor.exists():
+        anchor = anchor.parent
+    disk = shutil.disk_usage(anchor)
+    need = lineages * math.ceil(max(peak_native, scratch["block_peak_bytes"]) * scratch["factor"])
+    budget = disk.free + driver.tree_bytes(native) - scratch["margin_fraction"] * disk.total
+    return {"measured_peak_native_bytes": peak_native, "spec": scratch, "lineages": lineages, "need_bytes": need,
+            "disk_total_bytes": disk.total, "budget_bytes": math.floor(budget),
+            "peak_within_spec": peak_native <= scratch["block_peak_bytes"], "fits": need <= budget}
+
+
 def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120 * 10**9) -> dict:
     campaign, value = driver.Campaign(campaign_path), read(plan_path)
     root = Path(value["root"])
@@ -590,6 +609,15 @@ def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120
                   # Non-permanent ends stay compressed while no byte-identical receipt exists (DESIGN section 6).
                   "compressed_ancestry_bytes_study": lineages * ancestry * compressed * checkpoint // sample.stat().st_size,
                   "qualification_bytes_kept": tree_bytes(root)}
+    records = campaign.raw.get("records")
+    if records:  # AMENDMENT-2.md: sealed records past qualification leave the volume through the copy-back window
+        kept = driver.QUALIFICATION_BLOCKS + records["window_blocks"]
+        projection["records_bytes_study"] = lineages * kept * per_block_kept
+        projection["config_bytes_study"] = lineages * kept * per_block_config
+    scratch_check = None
+    if campaign.raw.get("scratch"):  # AMENDMENT-2.md: the trajectories are block scratch, checked apart
+        scratch_check = scratch_item2(campaign, peak_native, lineages)
+        scratch_check["eight_trees_bytes"] = projection.pop("hot_peak_bytes")
     projection["study_peak_bytes"] = sum(projection.values())
     value_out = {"schema": RECORD_SCHEMA, "host": campaign.host(), "plan": pin(plan_path),
                  "campaign": pin(campaign_path), "runtime": campaign.raw["runtime"],
@@ -602,8 +630,10 @@ def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120
                            "updates_per_wall_hour_eight": (lineages * 2 * g.ndb.UPDATES_PER_BLOCK * 3600
                                                            / max(1, stamp.get("wave-end-eight", 0)
                                                                  - stamp.get("wave-eight", 0)))},
-                 "item2": {"blocks": rows, "projection": projection, "cap_bytes": cap_bytes,
-                           "launch_refused": projection["study_peak_bytes"] > cap_bytes},
+                 "item2": {"blocks": rows, "projection": projection, "cap_bytes": cap_bytes, "scratch": scratch_check,
+                           "launch_refused": projection["study_peak_bytes"] > cap_bytes or (
+                               scratch_check is not None
+                               and not (scratch_check["fits"] and scratch_check["peak_within_spec"]))},
                  "item3": read(root / "REGENERATION-RECEIPT.json"),
                  "item6": read(root / "ITEM6-SYNTHETIC.json"),
                  "repeat_g1": read(root / "REPEAT-G1.json"),

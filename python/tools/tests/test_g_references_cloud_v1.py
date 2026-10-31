@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -60,6 +62,9 @@ class Fixture:
                  "native_root": "/root/g-native", "stop_after_block": 2,
                  "storage": {"max_logical_bytes": 120 * 10**9, "reserve_bytes": 60 << 30,
                              "projected_additional_bytes": 20 << 30},
+                 "scratch": {"block_peak_bytes": 14 * 10**9, "factor": 1.25, "margin_fraction": 0.1},
+                 "emergency": {"volume_bytes": 200 * 10**9, "margin_fraction": 0.1},
+                 "records": {"window_blocks": 8, "stall_seconds": 2700},
                  "runtime": {"binary": str(self.binary), "engine_commit": "a" * 40, "tracked_tree_sha256": "b" * 64},
                  "hardware": {"min_memory_bytes": 60 << 30}, "inventory": str(self.inventory)}
         value.update(changes)
@@ -83,7 +88,11 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(campaign["stop_after_block"], 2)
         self.assertEqual(campaign["roots"]["native"], "/root/g-native")
         self.assertTrue(campaign["roots"]["checkpoints"].startswith(f"/workspace/{ROOT}/campaign/"))
-        self.assertEqual(campaign["storage"]["accounting_roots"], [f"/workspace/{ROOT}/campaign", "/root/g-native"])
+        self.assertEqual(campaign["storage"]["accounting_roots"], [f"/workspace/{ROOT}/campaign"])
+        self.assertEqual(campaign["storage"]["scratch_roots"], ["/root/g-native"])  # amendment 2: block scratch
+        self.assertEqual(campaign["scratch"], {"block_peak_bytes": 14 * 10**9, "factor": 1.25, "margin_fraction": 0.1})
+        self.assertEqual(campaign["storage"]["emergency"], {"volume_bytes": 200 * 10**9, "margin_fraction": 0.1})
+        self.assertEqual(campaign["records"], {"window_blocks": 8, "stall_seconds": 2700})
         self.assertEqual(campaign["host_slots"]["cores"], "0-31")
         self.assertEqual(campaign["placement_by_run"]["G3"]["cpu_affinity"], [8, 9, 10, 11])
         self.assertEqual(campaign["placement"]["host"], "runpod")
@@ -323,6 +332,96 @@ class LeaseTests(unittest.TestCase):
         self.assertEqual(result["failed_lineages"], ["G3"])
         with self.assertRaises(ValueError):
             self.conclude({"G1": done, "G2": {"status": "stopped", "blocks_done": []}})
+        held = {"status": "stopped", "blocks_done": [3], "stop_reason": "storage admission: records: copy-back stalled"}
+        self.assertTrue(self.conclude({"G1": done, "G2": held})["lease_stopped"])  # amendment 2: resumable
+
+    def test_recovery_first_quiesces_the_record_copy_back_on_the_pod(self):
+        for answer in (True, "timed out"):
+            with tempfile.TemporaryDirectory() as temp:
+                cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+                cycle.control, cycle.result, cycle.base = Path(temp), {}, Path("/workspace/g")
+                cycle.remote_ready, calls = True, []
+                cycle.lease, cycle.guard = {"deadline_epoch": time.time() + 3600, "recovery_seconds": 600}, "/run/phase1/g"
+
+                class Pod:
+                    def run(self, program, args, timeout=30, read_only=False):
+                        calls.append((program, args))
+                        if program is gcloud.records.LIST:
+                            return {"pending": ["G3-b005.json"]}
+                        if program is gcloud.POD_QUIESCE_RECORDS:
+                            return {"quiesced": answer}
+                        if program is gcloud.POD_GUARD_RELEASE:
+                            return {"readable": True, "release_epoch": None}
+                        raise AssertionError("recovery enumerated the volume")
+                cycle.pod = Pod()
+                if answer is True:
+                    self.assertTrue(cycle.quiesce_records(timeout=5))
+                    self.assertEqual(read(Path(temp) / "records-backlog-final.json")["pending"],
+                                     ["G3-b005.json"])  # the controller's own final backlog, after quiescence
+                else:
+                    cycle.recover()  # no positive quiescence: recovery does not enumerate the volume
+                    self.assertTrue(cycle.result["recovery"].startswith("skipped"))
+                    self.assertNotIn("recovered", cycle.result)
+            quiesce = next(args for program, args in calls if program is gcloud.POD_QUIESCE_RECORDS)
+            self.assertEqual((quiesce["lock"], quiesce["quiesce"]), (gcloud.records.POD_LOCK, gcloud.records.POD_QUIESCE))
+
+    def test_recovery_is_bounded_by_the_earliest_guard_release(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.result, cycle.remote_ready, cycle.guard = {}, True, "/run/phase1/g"
+        cycle.lease = {"deadline_epoch": time.time() + 3600, "recovery_seconds": 600}
+        ran, latched = [], {"readable": True, "release_epoch": time.time() + 200}  # latched: 200 s left
+
+        class Pod:
+            def run(self, program, args, timeout=30, read_only=False):
+                ran.append(program)
+                if latched is None:
+                    raise cloud.PodUnavailable("guard unreadable")
+                return latched
+        cycle.pod = Pod()
+        now = time.time()
+        self.assertLess(cycle.release_boundary(now), now + 201)
+        latched = {"readable": True, "release_epoch": None}  # unlatched: the recovery's own 600 s for all of it
+        self.assertLessEqual(cycle.release_boundary(now), now + gcloud.cloud.RECOVERY_SECONDS)
+        cycle.lease["deadline_epoch"] = now + 650  # near the deadline: the guards start at deadline - 600
+        self.assertLessEqual(cycle.release_boundary(now), now + 50)
+        latched = None
+        self.assertIsNone(cycle.release_boundary(now))  # unreachable: a latched boundary may be earlier
+        latched = {"readable": False, "release_epoch": None}
+        self.assertIsNone(cycle.release_boundary(now))  # a missing or malformed guard.json likewise
+        cycle.lease["deadline_epoch"] = now + 3600
+        latched = {"readable": True, "release_epoch": time.time() + 200}
+        cycle.recover()  # 200 s less the 120 s release reserve: too little to quiesce and recover
+        self.assertTrue(cycle.result["recovery"].startswith("skipped: too little time"))
+        self.assertEqual(set(ran), {gcloud.POD_GUARD_RELEASE})  # nothing quiesced, packed or copied
+
+    def test_the_pod_guard_read_tells_unreadable_from_unlatched(self):
+        with tempfile.TemporaryDirectory() as temp:
+            def read_guard():
+                code = cloud.PRELUDE % json.dumps({"guard": temp}) + gcloud.POD_GUARD_RELEASE
+                done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+                return json.loads(done.stdout.decode().splitlines()[-1])
+            self.assertEqual(read_guard(), {"readable": False, "release_epoch": None})  # missing
+            (Path(temp) / "guard.json").write_text("{torn")
+            self.assertEqual(read_guard(), {"readable": False, "release_epoch": None})  # malformed
+            (Path(temp) / "guard.json").write_text(json.dumps({"latched": None}))
+            self.assertEqual(read_guard(), {"readable": True, "release_epoch": None})  # read, unlatched
+            (Path(temp) / "guard.json").write_text(json.dumps({"latched": "deadline", "release_epoch": 5.0}))
+            self.assertEqual(read_guard(), {"readable": True, "release_epoch": 5.0})
+
+    @unittest.skipIf(sys.platform == "win32", "fcntl: the Pod is Linux")
+    def test_the_pod_quiesce_waits_for_a_deletion_in_progress(self):
+        import fcntl
+        with tempfile.TemporaryDirectory() as temp:
+            lock, flag = Path(temp) / "lock", Path(temp) / "quiesce"
+            code = cloud.PRELUDE % json.dumps({"lock": str(lock), "quiesce": str(flag), "timeout": 1}) + \
+                gcloud.POD_QUIESCE_RECORDS
+            with open(lock, "a") as held:
+                fcntl.flock(held, fcntl.LOCK_EX)  # a deletion holds the lock
+                busy = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertEqual(json.loads(busy.stdout.decode().splitlines()[-1]), {"quiesced": "timed out"})
+            self.assertTrue(flag.exists())
+            free = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertEqual(json.loads(free.stdout.decode().splitlines()[-1]), {"quiesced": True})
 
     def test_ledger_and_caps(self):
         with tempfile.TemporaryDirectory() as temp:
