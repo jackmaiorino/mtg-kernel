@@ -1927,7 +1927,7 @@ class OverdueTests(unittest.TestCase):
             assert wait_for(lambda: (self.claim("demote") or {}).get("overdue") is True, timeout=30)
             claim = self.claim("demote")
             assert claim["background"] is True and claim["overdue_action"] == "demote"
-            assert counter(count) > 0
+            assert wait_for(lambda: counter(count) > 0)
             foreground = cli("run", "--lane", "b", "--work-id", "b", "--cores", str(len(CPUS)), "--",
                              sys.executable, hold, str(active), str(release))
             assert wait_for(active.exists, timeout=30)

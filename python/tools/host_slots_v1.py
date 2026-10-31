@@ -1659,14 +1659,15 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
 
 
 def _check_placement(core_pool, pool_reason, shared: bool, min_cores, background: bool, adopting: bool,
-                     max_seconds=None, on_overdue=None) -> None:
+                     max_seconds=None, on_overdue=None, warn: bool = False) -> None:
     """Placement options that are refused before any ticket is written."""
     if on_overdue is not None and (max_seconds is None or on_overdue not in OVERDUE_ACTIONS):
         raise ValueError("--on-overdue needs --max-seconds and is one of " + ", ".join(OVERDUE_ACTIONS))
     if core_pool is not None and pool_reason is None and not pool_reason_required():
-        print(json.dumps({"warning": "--core-pool without --pool-reason is accepted as \"unspecified\" until "
-                          + POOL_REASON_REQUIRED_FROM + " and refused after; add --pool-reason ("
-                          + ", ".join(POOL_REASONS) + ") or drop the pool"}), file=sys.stderr)
+        if warn:              # once, from the CLI
+            print(json.dumps({"warning": "--core-pool without --pool-reason is accepted as \"unspecified\" until "
+                              + POOL_REASON_REQUIRED_FROM + " and refused after; add --pool-reason ("
+                              + ", ".join(POOL_REASONS) + ") or drop the pool"}), file=sys.stderr)
     elif core_pool is not None and pool_reason not in POOL_REASONS:
         raise ValueError("--core-pool needs --pool-reason, one of " + ", ".join(POOL_REASONS)
                          + "; without one, drop the pool and the scheduler places the job, so it never waits "
@@ -1864,7 +1865,10 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                 # transitions on later polls without acknowledging vacated cores.
                 _set_state_locked(claim, "suspended" if conflict and complete else "running")
                 if grow and not conflict:
-                    _share_step(tree, claim, claim_id, share, grow=True)
+                    if not _share_step(tree, claim, claim_id, share, grow=True):
+                        # The job's mask or record is not settled: suspend until a later step settles it.
+                        complete = tree.set_suspended(True)
+                        _set_state_locked(claim, "suspended" if complete else "running")
                     grow_at = time.monotonic() + grow_seconds()
         return code
     except BaseException:
@@ -2654,7 +2658,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.op in ("run", "submit", "adopt"):
             _check_placement(args.core_pool, args.pool_reason, getattr(args, "shared", False),
                              getattr(args, "min_cores", None), args.background, args.op == "adopt",
-                             getattr(args, "max_seconds", None), getattr(args, "on_overdue", None))
+                             getattr(args, "max_seconds", None), getattr(args, "on_overdue", None), warn=True)
         command = child_command(command)
         if args.op == "run":
             def announce(claimed):
