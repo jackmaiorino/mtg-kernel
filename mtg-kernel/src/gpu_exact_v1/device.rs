@@ -26,6 +26,10 @@ pub(crate) struct DeviceIdentityV1 {
     pub(crate) nvrtc_version: (i32, i32),
     /// SHA-256 of the program name, source and options.
     pub(crate) program_sha256: String,
+    /// `vector_tanh_v1`'s key over the loaded `tanhf` image and CPU features.
+    pub(crate) host_tanhf_identity: String,
+    /// The proof record's key: the program, this device and the host tanhf.
+    pub(crate) tanh_proof_key: String,
 }
 
 pub(crate) struct ExactDeviceV1 {
@@ -123,6 +127,8 @@ impl ExactDeviceV1 {
             driver_version: driver_version()?,
             nvrtc_version: nvrtc_version()?,
             program_sha256: hex(&h.finalize()),
+            host_tanhf_identity: String::new(),
+            tanh_proof_key: String::new(),
         };
         let ptx = load_or_compile_v1(&identity, &source, &options)?;
         let module = ctx.load_module(ptx).map_err(|e| format!("load module: {e:?}"))?;
@@ -137,6 +143,10 @@ impl ExactDeviceV1 {
             stream,
             _ctx: ctx,
         };
+        let mut device = device;
+        device.identity.host_tanhf_identity =
+            crate::vector_tanh_v1::host_tanhf_identity_v1().unwrap_or_default();
+        device.identity.tanh_proof_key = device.tanh_proof_key_v1()?;
         device.ensure_tanh_proved_v1()?;
         Ok(device)
     }
@@ -159,7 +169,7 @@ impl ExactDeviceV1 {
     }
 
     fn ensure_tanh_proved_v1(&self) -> Result<(), String> {
-        let key = self.tanh_proof_key_v1()?;
+        let key = self.identity.tanh_proof_key.clone();
         let record = record_dir().map(|dir| dir.join("tanh-proof").join(format!("{key}.proved")));
         if let Some(path) = &record {
             if std::fs::read_to_string(path).is_ok_and(|s| s.trim() == key) {

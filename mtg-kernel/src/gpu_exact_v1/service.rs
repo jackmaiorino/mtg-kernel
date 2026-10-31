@@ -57,6 +57,10 @@ struct Request {
 enum Message {
     Request(Request),
     Stats(SyncSender<ServiceStatsV1>),
+    /// Test only: panic while holding the next request, as a device fault
+    /// would end the thread.
+    #[cfg(test)]
+    PanicOnNextRequest,
 }
 
 struct Shared {
@@ -78,9 +82,6 @@ pub(crate) struct InferenceServiceV1 {
 pub(crate) struct InferenceClientV1 {
     sender: Sender<Message>,
     shared: Arc<Shared>,
-    packed: PackedBatchV1,
-    reply_sender: SyncSender<Reply>,
-    reply_receiver: Receiver<Reply>,
 }
 
 impl InferenceServiceV1 {
@@ -113,6 +114,11 @@ impl InferenceServiceV1 {
         InferenceClientV1::new(self.sender.clone().expect("service running"), Arc::clone(&self.shared))
     }
 
+    #[cfg(test)]
+    pub(crate) fn panic_on_next_request_for_test_v1(&self) {
+        let _ = self.sender.as_ref().expect("service running").send(Message::PanicOnNextRequest);
+    }
+
     pub(crate) fn stats_v1(&self) -> Result<ServiceStatsV1, String> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
@@ -137,8 +143,7 @@ impl Drop for InferenceServiceV1 {
 impl InferenceClientV1 {
     fn new(sender: Sender<Message>, shared: Arc<Shared>) -> Self {
         shared.clients.fetch_add(1, Ordering::SeqCst);
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        Self { sender, shared, packed: PackedBatchV1::default(), reply_sender, reply_receiver }
+        Self { sender, shared }
     }
 
     /// The exact forward of `view` under `model`, from the service.
@@ -149,17 +154,16 @@ impl InferenceClientV1 {
         path: ForwardPathV1,
         view: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<ExactOutputV1, String> {
-        let mut packed = std::mem::take(&mut self.packed);
-        packed.clear();
+        let mut packed = PackedBatchV1::default();
         packed.push_v1(0, net, path, view)?;
+        // A channel per request: its only sender travels with the request,
+        // so a service that ends with it pending (a panic, a device fault)
+        // drops the sender and this wait fails at once instead of hanging.
+        let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send(Message::Request(Request {
-                model: Arc::clone(model),
-                packed,
-                reply: self.reply_sender.clone(),
-            }))
+            .send(Message::Request(Request { model: Arc::clone(model), packed, reply }))
             .map_err(|_| "inference service stopped".to_owned())?;
-        self.reply_receiver.recv().map_err(|_| "inference service stopped".to_owned())?
+        receiver.recv().map_err(|_| "inference service stopped".to_owned())?
     }
 }
 
@@ -187,13 +191,23 @@ fn serve_v1(device: ExactDeviceV1, policy: BatchPolicyV1, receiver: Receiver<Mes
     let mut stats = ServiceStatsV1::default();
     let mut tick = 0u64;
     let mut pending: Vec<Request> = Vec::new();
+    #[cfg(test)]
+    let mut armed = false;
     // Blocks for the first message; returns when every sender is gone.
     while let Ok(first) = receiver.recv() {
-        let take = |message: Message, pending: &mut Vec<Request>| match message {
-            Message::Request(request) => pending.push(request),
+        let mut take = |message: Message, pending: &mut Vec<Request>| match message {
+            Message::Request(request) => {
+                pending.push(request);
+                #[cfg(test)]
+                if armed {
+                    panic!("injected service fault with a request pending");
+                }
+            }
             Message::Stats(reply) => {
                 let _ = reply.send(stats);
             }
+            #[cfg(test)]
+            Message::PanicOnNextRequest => armed = true,
         };
         take(first, &mut pending);
         if pending.is_empty() {
@@ -224,26 +238,23 @@ fn serve_v1(device: ExactDeviceV1, policy: BatchPolicyV1, receiver: Receiver<Mes
             tick,
             &mut stats,
         );
-        match result {
-            Ok(outputs) => {
-                for (request, output) in pending.drain(..).zip(outputs) {
-                    // The CPU forward refuses a non-finite output the same way.
-                    let finite = output.value.is_finite() && output.logits.iter().all(|x| x.is_finite());
-                    let reply = if finite { Ok(output) } else { Err("non-finite GPU forward output".into()) };
-                    let _ = request.reply.send(reply);
-                }
-            }
-            Err(error) => {
-                for request in pending.drain(..) {
-                    let _ = request.reply.send(Err(error.clone()));
-                }
-            }
+        for (request, reply) in pending.drain(..).zip(result) {
+            // The CPU forward refuses a non-finite output the same way.
+            let reply = reply.and_then(|output| {
+                let finite = output.value.is_finite() && output.logits.iter().all(|x| x.is_finite());
+                if finite { Ok(output) } else { Err("non-finite GPU forward output".into()) }
+            });
+            let _ = request.reply.send(reply);
         }
         stats.batches += 1;
         stats.busy_micros += started.elapsed().as_micros() as u64;
     }
 }
 
+/// Every pending request's reply, in order. Requests run in groups of at
+/// most `max_models` distinct models (first-use order), so any mix of models
+/// is served; a group's device error fails only that group's requests.
+/// Grouping changes launches, never a reply's bits.
 #[allow(clippy::too_many_arguments)]
 fn run_batch_v1(
     device: &ExactDeviceV1,
@@ -254,44 +265,75 @@ fn run_batch_v1(
     pending: &[Request],
     tick: u64,
     stats: &mut ServiceStatsV1,
-) -> Result<Vec<ExactOutputV1>, String> {
-    // Models in first-use order within the batch; slots index `digests`.
+) -> Vec<Reply> {
     let mut digests: Vec<[u8; 32]> = Vec::new();
     for request in pending {
         if !digests.contains(&request.model.digest) {
             digests.push(request.model.digest);
         }
     }
-    if digests.len() > policy.max_models {
-        return Err(format!("a batch names {} models, above max_models", digests.len()));
-    }
-    for request in pending {
-        let digest = request.model.digest;
-        if !resident.contains_key(&digest) {
-            if resident.len() >= policy.max_models {
-                // Drop the least recently used model not in this batch.
-                let victim = resident
-                    .iter()
-                    .filter(|(d, _)| !digests.contains(d))
-                    .min_by_key(|(_, r)| r.last_used)
-                    .map(|(d, _)| *d);
-                if let Some(victim) = victim {
-                    resident.remove(&victim);
+    let mut replies: Vec<Option<Reply>> = (0..pending.len()).map(|_| None).collect();
+    for group in digests.chunks(policy.max_models.max(1)) {
+        let members: Vec<usize> =
+            (0..pending.len()).filter(|&i| group.contains(&pending[i].model.digest)).collect();
+        let result = run_group_v1(
+            device, policy, resident, buffers, batch, pending, &members, group, tick, stats,
+        );
+        match result {
+            Ok(outputs) => {
+                for (&i, output) in members.iter().zip(outputs) {
+                    replies[i] = Some(Ok(output));
                 }
             }
-            let model = Net8DeviceModelV1::upload_v1(device, &request.model)?;
+            Err(error) => {
+                for &i in &members {
+                    replies[i] = Some(Err(error.clone()));
+                }
+            }
+        }
+    }
+    replies.into_iter().map(|reply| reply.expect("every request is in one group")).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_group_v1(
+    device: &ExactDeviceV1,
+    policy: &BatchPolicyV1,
+    resident: &mut HashMap<[u8; 32], Resident>,
+    buffers: &mut DeviceBuffersV1,
+    batch: &mut PackedBatchV1,
+    pending: &[Request],
+    members: &[usize],
+    group: &[[u8; 32]],
+    tick: u64,
+    stats: &mut ServiceStatsV1,
+) -> Result<Vec<ExactOutputV1>, String> {
+    for &i in members {
+        let digest = pending[i].model.digest;
+        if !resident.contains_key(&digest) {
+            while resident.len() >= policy.max_models {
+                // Drop the least recently used model this group does not use.
+                let victim = resident
+                    .iter()
+                    .filter(|(d, _)| !group.contains(d))
+                    .min_by_key(|(_, r)| r.last_used)
+                    .map(|(d, _)| *d)
+                    .ok_or("every resident model is in use by this group")?;
+                resident.remove(&victim);
+            }
+            let model = Net8DeviceModelV1::upload_v1(device, &pending[i].model)?;
             stats.model_uploads += 1;
             resident.insert(digest, Resident { model, last_used: tick });
         }
         resident.get_mut(&digest).expect("resident").last_used = tick;
     }
     batch.clear();
-    for request in pending {
-        let slot = digests.iter().position(|d| *d == request.model.digest).expect("slot");
-        batch.append_v1(&request.packed, slot)?;
+    for &i in members {
+        let slot = group.iter().position(|d| *d == pending[i].model.digest).expect("slot");
+        batch.append_v1(&pending[i].packed, slot)?;
     }
-    let models: Vec<&Net8DeviceModelV1> = digests.iter().map(|d| &resident[d].model).collect();
-    stats.requests += pending.len() as u64;
+    let models: Vec<&Net8DeviceModelV1> = group.iter().map(|d| &resident[d].model).collect();
+    stats.requests += members.len() as u64;
     stats.launches += models.len() as u64;
     forward_batch_v1(device, &models, batch, buffers)
 }
@@ -321,7 +363,8 @@ pub(crate) fn global_receipt_v1() -> Option<Result<serde_json::Value, String>> {
                 "compute_capability": [id.compute_capability.0, id.compute_capability.1],
                 "driver_version": id.driver_version,
                 "nvrtc_version": [id.nvrtc_version.0, id.nvrtc_version.1],
-                "program_sha256": id.program_sha256},
+                "program_sha256": id.program_sha256,
+                "host_tanhf_identity": id.host_tanhf_identity, "tanh_proof_key": id.tanh_proof_key},
             "batches": stats.batches, "requests": stats.requests, "launches": stats.launches,
             "model_uploads": stats.model_uploads, "busy_seconds": stats.busy_micros as f64 / 1e6,
             "mean_batch": if stats.batches == 0 { 0.0 } else { stats.requests as f64 / stats.batches as f64 },
@@ -380,6 +423,12 @@ pub(crate) fn collector_forward_v1(
     view: NativeEncodedDecisionViewV1<'_>,
 ) -> Option<Result<ExactOutputV1, String>> {
     if matches!(path, ForwardPathV1::TransferV8) || !view.pairing_node_indices.is_empty() {
+        return None;
+    }
+    // The kernel's tanh is proved equal to the platform tanhf in the default
+    // floating-point environment only; a thread in another state (MXCSR
+    // control bits, UCRT's FMA3 switch) keeps the CPU forward.
+    if !crate::vector_tanh_v1::default_tanhf_environment_v1() {
         return None;
     }
     COLLECTOR.with(|client| {

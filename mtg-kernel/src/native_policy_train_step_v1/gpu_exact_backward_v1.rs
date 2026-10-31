@@ -34,6 +34,7 @@ pub(super) fn gpu_exact_backward_dims_v1<D: NetDimsV1>(
     if !is_net8_dims_v1::<D>()
         || parameters.len() != PARAMETER_TENSOR_COUNT
         || !math.is_platform_libm()
+        || !crate::vector_tanh_v1::default_tanhf_environment_v1()
         || !crate::gpu_exact_v1::learner_installed_v1()
     {
         return None;

@@ -1,6 +1,6 @@
 # GPU batched inference and GPU learner for self-play (v1 design)
 
-Status: draft for review, 2026-10-31. Engineering only. Nothing here changes a study, gate, frozen measurement or production lineage until the qualification in section 7 passes.
+Status: revised after design review (GPT-6 Astra ultra and Fable max, both PROCEED WITH CHANGES; findings and dispositions in section 10), 2026-10-31. Engineering only. Nothing here changes a study, gate, frozen measurement or production lineage until the qualification in section 7 passes.
 
 ## 0. Goal and the decision that shapes everything
 
@@ -38,11 +38,13 @@ collector threads (one game each)          inference service thread (owns the CU
   sample with the seat's own RNG (unchanged)
 ```
 
-- **Concurrency without rewriting the game loop.** The game loop stays synchronous. RT1 runs more collector threads than cores (one per in-flight game), and a thread waiting on the GPU frees its core. `ordered_parallel_jobs_v1` already returns outputs in schedule order, so how many threads exist and which finishes first cannot change the collection's bytes.
+- **Concurrency without rewriting the game loop.** The game loop stays synchronous. RT1 runs more collector threads than cores (one per in-flight game), and a thread waiting on the GPU frees its core. `collection_workers` is part of the run config and is bound on resume (`collection_workers_requested` in each completion receipt), so a GPU-path run declares its worker count like any other run; the CPU and GPU paths of one run use the same count, and only the backend flags differ. `ordered_parallel_jobs_v1` already returns outputs in schedule order, so how many threads exist and which finishes first cannot change the collection's bytes.
 - **The hook** (`FrozenPlayPolicyV1::score_owned`). Each collector thread enters the service once (`enter_collector_v1`, one client per thread, so a game's two seats count as one waiting client). The `cached_forward_v1` call gains one branch: on a thread with a client, under the platform tanh, with no prediction cache or call probe attached, the policy sends its view and uses the reply. Tensorization before and the output checks, the no-state-digest cross-check and sampling after are unchanged. The policy caches its net's host copy and digest, cleared at every site that already resets its row cache when parameters change.
-- **An execution option, not a run identity.** Replies equal the CPU forward's bits, so the backend is a command-line option of the RT1 binary (`--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]`), outside the config, its run identity and `completion.json` (which resume compares byte for byte). A run can resume across backends. The binary prints a receipt line on stderr: device identity, program digest, batches, requests, launches, model uploads, busy seconds.
+- **An execution option, not a run identity.** Replies equal the CPU forward's bits, so the backend is a command-line option of the RT1 binary (`--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]`), outside the config, its run identity and `completion.json` (which resume compares byte for byte). A run can resume across backends. Each invocation writes `gpu-exact-receipts/invocation-NNNNNN.json` in the run's output directory (outside every iteration directory, so it is no part of the run identity or the byte comparison) and prints it on stderr: device identity, program digest, host `tanhf` identity and tanh proof key, batches, requests, launches, model uploads, busy seconds, and the learner's updates and substeps.
 - **Batch policy.** Flush when every live client has a request pending (nothing else can arrive), when the batch reaches 256 requests, or when `max_latency_us` (default 200) passes since the oldest request.
-- **Models.** Requests carry their model's digest (parameters, layout and dims). The service keeps up to 10 resident models (LRU, never evicting one the batch uses) and uploads a model on first use (5 MB at net-8). A batch may mix models: one launch per model, each block reading its own model's parameters.
+- **Models.** Requests carry their model's digest (parameters, layout and dims). The service keeps up to 10 resident models (LRU) and uploads a model on first use (5 MB at net-8). A batch may mix any number of models: it runs in groups of at most 10 distinct models, never evicting a model its group uses, one launch per model. A device error fails only its group's requests.
+- **Liveness.** Each request carries its own reply channel, and the service holds its only sender, so a service that dies with requests pending fails those waits at once.
+- **Floating-point environment.** The tanh proof holds in the default MXCSR state with UCRT's FMA3 paths on. The hook checks the calling thread's state before every GPU forward and keeps the CPU forward otherwise; the learner hook checks it too.
 - **Randomness stays in the worker.** The service returns logits and value only.
 - **Fail closed, fall back exactly.** A non-finite output or a device error fails that request, which fails the episode as a CPU forward error would. A request the exact kernel does not run (V8 pairing, other widths, public/stack/registration inputs, other activation modes) never reaches the service: the policy runs the CPU forward, which gives the same bits by definition. The receipt's request count shows how much the GPU served.
 
@@ -54,7 +56,7 @@ Batch invariance is then immediate: a block's result is a function of its reques
 
 ### 2.3 The activation
 
-`gpu_exact_v1/tanh.cuh` is `tanh8`'s per-lane operations with correctly rounded intrinsics and bit-pattern constants. Before a device is used, a proof kernel evaluates all 2^32 inputs and the host compares them with the loaded `tanhf` (the same proof `vector_tanh_v1` runs for `tanh8`). The record is keyed by the kernel source digest, the NVRTC version, the device name and compute capability, the driver version, and the host `tanhf` image digest. The portable `KernelDeterministicTanh` math is not ported in v1; under it every forward stays on the CPU.
+`gpu_exact_v1/tanh.cuh` is `tanh8`'s per-lane operations with correctly rounded intrinsics and bit-pattern constants. Before a device is used, a proof kernel evaluates all 2^32 inputs and the host compares every non-NaN result with the loaded `tanhf` (NaN inputs are excluded: any NaN reaches an output, which both paths refuse) (the same proof `vector_tanh_v1` runs for `tanh8`). The record is keyed by the kernel source digest, the NVRTC version, the device name and compute capability, the driver version, and the host `tanhf` image digest. The portable `KernelDeterministicTanh` math is not ported in v1; under it every forward stays on the CPU.
 
 Lineage note: on Linux the CPU path's `tanhf` is glibc's, so a Linux CPU run differs from a Windows one today. The GPU kernel implements the Windows UCRT-FMA3 lineage, the production one. The GPU path refuses to start on a host whose `tanhf` identity is unavailable (not Windows UCRT with FMA3 in the default MXCSR state), and the proof compares against the loaded `tanhf` itself, so a mismatch anywhere refuses the device.
 
@@ -136,7 +138,8 @@ Receipts: lane `evidence/microbench-gpu1.jsonl` (`examples/gpu_infer_microbench_
 
 What this says:
 
-- **At net-8 the GPU is latency-bound, not compute-bound.** A decision is 0.65M multiply-adds, about 1 us of exact math at these rates. The round trip and one launch (about 70 us) dominate, so per-decision cost depends on the batch: at 10 requests about 7 us per decision, at 100 requests about 1 us, against about 20 to 50 us on one CPU core. The fused one-launch kernel is what makes this hold (24 launches would cost 200 us).
+- **The v1 fused net-8 kernel, measured** (`gpu_forward_timing_receipt`, random decisions of up to 40 objects, 60 edges and 24 actions, so larger than D1's): 355 us at batch 1, 61 us per decision at batch 10, 25 at 64, 19 at 256 and 512. The same random decisions cost 378 us each on one E-core CPU thread (that comparison is for these synthetic shapes only; D1's own CPU forward is about 50 us). One block per request runs every stage in order, and the state encoder's 1,499-term chain on 64 threads sets the latency.
+- **What the math alone would allow.** A decision is 0.65M multiply-adds, about 1 us at the exact rates below, so v1 is about 20x off the math. The proposed fix (not built): run the large layers (state, edge and object encoders) as one batched exact GEMM per layer across all requests and models, keep the small per-request stages fused, and launch once per batch for all models. Target about 3 us per decision; every row that depends on it below is marked as a target.
 - **Exact order costs about 2.5x against cuBLAS at large shapes**, half of it from separate multiply and add (no FMA). A new net whose CPU reference uses `f32::mul_add` in the same order gets the FMA rate and stays exact. Tuned exact kernels (double buffering, vector loads) should reach 1.5 TMAC/s; that is engineering, not a measured number.
 - **The 4070 SUPER** has about 3.9x the 3050's FP32 rate (35 against 9 TFLOPS). Projections below scale by that ratio; GPU 0 belongs to the pilot until it reports, so it is not measured here.
 
@@ -158,13 +161,27 @@ Status on 2026-10-31 (GPU 1, RTX 3050, driver 13030, NVRTC 12.8, program sha256 
 | `gpu_exact_learner_preserves_every_bit` | two consecutive GAE updates (399 and 240 substeps) through the GPU backward | gradients, gauge, loss terms and train state identical to the CPU; 65 us per substep |
 | host tests | random fixtures validate on the CPU forward; packed-batch offsets | pass |
 
+Round 2, after the design review (same device; lane `evidence/devtests-round2-20261031.txt`). All passed:
+
+| Test | What it checks | Result |
+|---|---|---|
+| all round-1 tests above (tanh proof reused from its record) | as above, with the review fixes | pass |
+| `service_serves_more_models_than_resident_slots` | 12 models pending at once against 10 slots, 72 requests | every reply equal to the CPU; 6 batches, 72 launches, 31 uploads (eviction and re-upload) |
+| `a_service_fault_fails_the_waiting_client` | a service thread that panics with a request pending | the client fails within 0.4 s, no hang |
+| `non_finite_outputs_fail_closed_like_the_cpu` | a net whose outputs overflow | the GPU refuses exactly where the CPU forward does |
+| `policy_hook_follows_parameter_replacement_and_falls_back_exactly` | the hook through `replace_training_parameters_v3`, `apply_no_state_digest_v1` and `into_flat_v8_v1` | GPU replies equal the CPU after each; the V8 policy never reaches the service |
+| `phase1_parallel_episodes_with_gpu_inference_match_serial_cpu` | now with a distinct opponent model | byte-identical; 2 model uploads, 2,598 forwards served |
+| `gpu_exact_learner_preserves_every_bit` | adds a random net on edge-case inputs (signed zeros, subnormals, a self-loop edge, a repeated card), 939 substeps over 3 updates | every gradient, gauge and state bit equal |
+
 Still to add in the PRs: the 14 golden fixture cases and recorded RT1 decisions on the forward test, a fresh-process and cross-device (GPU 0) determinism run, and fault injection (non-finite output, device error) failing closed.
 
 ### 7.2 Qualification (done criteria)
 
 On Jack's PC, GPU 1, the D1 recipe (prepared root, chain r2-s1, 18 updates), through the lane's segment runner (`tools/run_segment.py`, a small timing and correctness check under COMPUTE-POLICY):
 
-1. A CPU segment and a GPU segment (GPU inference plus GPU learner) produce identical per-update `after_state_sha256` and identical output bytes. The GPU segment is rerun in a fresh process and matches.
+1. Four segments with the same config (same `collection_workers`): CPU, GPU inference only, GPU learner only, and both. All produce identical per-update `after_state_sha256` and identical output bytes outside the timing receipts and `gpu-exact-receipts/`. The combined segment is rerun in a fresh process and matches. A cross-backend resume (first half on the CPU, second half on the GPU, and the reverse) matches the uninterrupted CPU run.
+1b. A device fault (the injected service fault) fails the segment closed, and a CPU rerun resumes from the same checkpoint.
+1c. Later, once the pilot releases GPU 0: the combined segment on GPU 0 (sm_89) matches GPU 1 (sm_86). The component profile on recorded D1 decisions and the whole-host probe that 8.4 needs.
 2. Updates per hour for both at the same core claim, plus CPU-seconds per update and GPU utilization, recorded in the run manifest. Expected at net-8 with the v1 kernels: roughly a wash (section 8.4); the point is the machinery.
 3. A short note (chart and table) in the lane folder.
 
@@ -192,7 +209,7 @@ Ownership is agreed with the throughput lead (2026-10-31): they own the on-disk 
 
 - **Train state:** a digest per update stays, but over 1 MiB chunks combined in order (computable in parallel, on the host or the GPU), so it costs milliseconds at 50M parameters instead of about 0.4 s for one serial SHA-256 pass over 600 MB. The current `after_state_sha256` stays computable until the equivalence receipt (throughput lane) maps old to new on a pinned replay.
 - **Trajectories:** hashed once at write over the compact binary record; no per-decision JSON.
-- **Behavior replay:** today it re-runs the CPU forward on every stored tensor. In the split the learner's GPU forward already recomputes every learner substep and must reproduce the collection bits (it is the tape). The opponent rows are replayed on the GPU in the same batch (exact kernels, so this is still a bit-for-bit check), which costs one batched forward per update instead of 1,387 CPU forwards. Nothing is sampled away.
+- **Behavior replay stays an independent CPU check.** A GPU replay of GPU-collected bits would be a self-check: a kernel bug would agree with itself. So every stage keeps the full CPU behavior replay until a ratified equivalence receipt exists. After that, a lead decision may reduce it to a deterministic, outcome-blind subset (for example every k-th decision by a digest of its tensor bits, chosen before the outcome is known), never to zero. The learner's GPU tape check (logits and value only, not hidden activations) is an extra check, not a replacement. Cost: the CPU replay is about 4% of an update today and stays on the CPU in S3.
 - **Per-state digest:** none is needed for replay exactness; the trajectory digest, the tensor bits replayed on the GPU and the train-state digest cover the chain.
 
 ### 8.3 The architecture
@@ -210,6 +227,8 @@ one long-lived process per host (no per-segment processes)
 COMPUTE-POLICY item 3 forbids stale-policy batches, so a run never collects with parameters older than its last update. The pipeline stays busy by interleaving independent runs (seeds, arms), as D1's 16 concurrent runs already do, not by overlapping one run's collection with its own learning.
 
 ### 8.4 Measured ceiling and projected games per second, Jack's PC
+
+**Status of these numbers: scenario estimates and upper bounds, not qualified throughput.** The component split subtracts workloads that played different games (the no-digest policy has different weights, so its games differ), imports the memo's forward-to-tensorization ratio, and extrapolates a 6-thread run on three SMT P-cores to all 24 threads. Before the lead plans on them, they need (a) a component profile on identical recorded D1 decision surfaces and (b) a whole-host probe with D1's decision mix (both listed in 7.2). The memo's own shares give a cross-check: removing bookkeeping, records and waits (56% of today's CPU) is 2.3x, against the 4.3x the extrapolation gives for the same row, so the host rows below are upper bounds.
 
 **Engine ceiling probe** (`expanded_deck_training_v1::engine_ceiling_probe_v1`, lane `evidence/ceiling.jsonl`): D1's real episodes (decks, seeds, reset cuts), 24 games per thread, a host_slots claim of P-core threads 8-13, 2026-10-31. Per decision, one thread among six sharing three P-cores:
 
@@ -236,17 +255,17 @@ Caveats: uniform and fixture-policy games run about 270 decisions against D1's 1
 
 | Net | multiply-adds per decision | RTX 3050 | RTX 4070 SUPER | RTX 4060 (HaleysPC) |
 |---|---:|---:|---:|---:|
-| net-8, v1 kernels as measured (fused forward 25 us at batch 64, learner 65 us per substep) | 0.65M | 103 | not measured | not measured |
-| net-8, target kernels (layer-batched exact GEMMs; about 1 us per decision) | 0.65M | about 1,350 | about 2,000 | about 1,600 |
+| net-8, v1 kernels as measured, at D1's attainable per-model batch (about 10 games in flight per run: fused forward 61 us per decision, learner 65 us per substep) | 0.65M | about 58 | not measured | not measured |
+| net-8, target kernels (not built: layer-batched exact GEMMs, all models in one launch; about 1 us per decision of math) | 0.65M | about 1,350 (target) | about 2,000 (target) | about 1,600 (target) |
 | 30x net-8 compute | 20M | 101 to 129 | 393 to 503 | 167 to 214 |
 | Dense 20M transformer over 48 tokens | 0.92G | 2.2 to 2.8 | 8.5 to 10.9 | 3.6 to 4.6 |
 | Dense 50M transformer over 48 tokens | 2.4G | 0.8 to 1.1 | 3.3 to 4.2 | 1.4 to 1.8 |
 
-Ranges are net-8's no-FMA order to a new net's FMA order, both exact. Larger nets scale from the 3050's measured exact GEMM rate (0.84 to 1.08 TMAC/s) by FP32 peak; the 4070 SUPER and 4060 rows are scaled, not measured.
+Ranges are net-8's no-FMA order to a new net's FMA order, both exact. Larger nets scale from the 3050's measured exact GEMM rate (0.84 to 1.08 TMAC/s) by FP32 peak; the 4070 SUPER and 4060 rows are scaled, not measured. Large-net rows use forward GEMM rates for the backward as well; parameter-gradient shapes and Adam and receipt costs at 20M+ are not benchmarked. The 420 forward-equivalents assume D1's mix (learner rows 49%, opponent rows 51% of forwards, memo section 1); a pure self-play run has both seats as learner substeps and about 556. D1's per-model batch is about 10 (one run's games), and independent runs have different weights, so batching across runs needs the multi-model launch above.
 
 **What this means for the big-network track:**
 
-1. **The budget is multiply-adds per decision, not parameters.** At the S4 CPU floor (464 games/s), one 4070 SUPER with exact kernels keeps up with about **17M multiply-adds per decision**, about 26x net-8. Parameters in lookup tables (rich card embeddings) are nearly free; dense width times tokens is what costs.
+1. **The budget is multiply-adds per decision, not parameters.** At the S4 CPU floor (464 games/s, an upper-bound estimate), one 4070 SUPER with exact kernels keeps up with about **17M multiply-adds per decision**, about 26x net-8 (same caveats). Parameters in lookup tables (rich card embeddings) are nearly free; dense width times tokens is what costs.
 2. **A dense 20M to 50M transformer is GPU-bound far below today's rate**: about 15 to 20 games/s (20M) and about 6 to 7 games/s (50M) across all three GPUs, against 49 today and 464 at the CPU floor. That holds even before the learner's extra passes for larger batches.
 3. **The deterministic tensor-core tier (section 5)** would raise the GPU rows by an estimated 4 to 5x (not measured), which still leaves a dense 50M net near 30 games/s and needs a lineage decision (exact against the same GPU, bounded against the CPU).
 4. **Architectures that fit:** compute per physical decision once and score substeps cheaply (most forwards share a state); keep dense width modest and tokens few; put capacity in embeddings; consider a large net that trains on a slice of games while net-sized policies act only if the lead accepts that learning semantics, which this design does not assume.
@@ -258,15 +277,37 @@ Ranges are net-8's no-FMA order to a new net's FMA order, both exact. Larger net
 | S0 | Today: D1, 16 runs, all CPU | | 49 | unchanged |
 | S1 | Parameter-work lever: binary train state, resident learner, cached sources (exact) | throughput lane | about 60 (the memo's 1.23x) | same hashes |
 | S2 | Records written once in binary, hashed at write; columnar trajectory tensors | throughput lane (format), this lane (layout) | about 80 | new trajectory digest with a one-time equivalence receipt |
-| S3 | One long-lived process per host: exact GPU inference service, exact GPU learner, replay on the GPU, optimized kernels (layer-batched GEMMs) | this lane (PR A, PR B, then kernels) | about 250 (CPU-bound with the digest features still on; v1 kernels would cap it near 100 per 3050, so the kernel work belongs to S3) | bit-identical outputs; replay still full |
+| S3a | PR A and PR B as built: exact GPU inference (execution flag) and exact GPU backward, CPU replay, tapes, gauge and Adam unchanged | this lane | about neutral at net-8 (v1 kernels about 58 games/s per 3050 at D1's batch); the machinery and its exactness are the point | bit-identical; full CPU replay |
+| S3b | Kernels: layer-batched exact GEMMs, one launch for all models, separate CUDA streams for learner and inference | this lane | removes the GPU cap (target about 1,350 games/s per 3050 at net-8) | bit-identical |
+| S3c | One long-lived process per host serving several runs; GPU learner forward replaces the CPU tapes; resident Adam on the GPU | this lane, with the throughput lane's formats | about 250 (estimate; CPU-bound with digest features on) | bit-identical; full CPU replay kept |
 | S4 | New-net input contract without the digest features (state and action) | lead and pilot (model decision) | about 460 or more | new contract identity |
 | S5 | Tensorization rewrite: incremental features per changed object, or features built on the GPU from a compact state snapshot | engine/tensorizer work | toward the 855 engine ceiling | exact, tested against the current tensorizer |
 | S6 | Bigger nets within the multiply-add budget; the tensor-core tier only with a lineage decision | lead, pilot, this lane | depends on multiply-adds per decision (table above) | exact (FMA order) or deterministic-GPU lineage |
 
-S1 to S3 keep net-8's numbers bit-identical. S4 is the first stage that changes a model input, and it is also the biggest single CPU saving after the GPU move: the digest features cost more per decision than the engine.
+S1 to S3c keep net-8's numbers bit-identical. Every S row's games/s is an estimate until qualified (8.4). S4 is the first stage that changes a model input, and it is also the biggest single CPU saving after the GPU move: the digest features cost more per decision than the engine.
 
 ## 9. PR plan
 
-1. **PR A: exact GPU inference.** `gpu_exact_v1` module (NVRTC compile cache, tanh proof, net-8 fused forward, service and client), the `cached_forward_v1` hook, RT1 config `inference_backend: {kind: gpu_exact_v1, device_ordinal, max_latency_us}` and receipts. Tests 7.1 rows 1 to 5.
-2. **PR B: exact GPU learner.** Replay on the GPU, tapes, phase A and B, gauge, Adam, `update_backend: {kind: gpu_exact_v1}`. Tests 7.1 row 6.
-3. **Qualification note** (collab lane `LANES/gpu-infer-20261031/`).
+1. **PR A: exact GPU inference.** `gpu_exact_v1` (NVRTC compile cache, tanh proof, the net-8 fused forward, the batching service with per-request replies and model groups, the per-thread client), the hook in `score_owned`, the collector entry in `ordered_parallel_jobs_v1`, the RT1 execution flags `--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]` (outside the run identity) and the invocation receipt in `gpu-exact-receipts/`. Tests: tanh, forward, batch composition, service timing, more models than slots, service fault, non-finite outputs, the hook across parameter replacement and the V8 fallback, and GPU-served collection with a distinct opponent. The engine ceiling probe and the GPU microbenchmark ride along (measurement only).
+2. **PR B: exact GPU backward** (stacked on A). `net8_backward.cu`, `net8_learner.rs`, `gpu_exact_backward_v1` in the GAE train step and `--gpu-exact-learner ORDINAL`. The CPU keeps the forward tapes, behavior replay, loss head, gauge and Adam. Tests: learner parity on the fixture over two updates and on a random net with edge-case inputs.
+3. **Deferred, each its own PR:** S3b kernels, S3c (long-lived multi-run process, GPU tapes, resident Adam), the S4 input contract.
+4. **Qualification note** (collab lane `LANES/gpu-infer-20261031/`): section 7.2 items 1 and 1b.
+
+## 10. Review record
+
+Reviewed at mtg-kernel `b3277aaa2` by GPT-6 Astra ultra (`codex exec`, read-only) and a Fable max-effort adversarial reviewer; both PROCEED WITH CHANGES and both found no arithmetic-order defect on the supported paths. Full texts: lane `reviews/`. Dispositions:
+
+| Finding | Disposition |
+|---|---|
+| Collector blocks forever if the service dies (Astra P1) | Fixed: one reply channel per request, held only by the service; test `a_service_fault_fails_the_waiting_client` |
+| More than 10 models in a batch fails every request (both) | Fixed: groups of at most 10 models; test `service_serves_more_models_than_resident_slots` |
+| Caller's MXCSR and FMA3 state not checked (Astra) | Fixed: checked per forward in the inference hook and per update in the learner hook |
+| Tests too narrow: distinct opponent, random backward, edge cases, fault paths (Astra) | Added the distinct opponent, the random-net edge-case learner case, the fault and non-finite tests; golden and recorded-decision cases, fresh process and cross-device are in 7.2 |
+| Projection assumes batch 64; section 6 states targets as measured (both) | Fixed: D1's per-model batch of about 10 (about 58 games/s per 3050 with v1 kernels); measured and target rows separated |
+| Digest cost and CPU floor not isolated; host scaling not reconciled with the memo (both) | Relabeled as upper-bound scenario estimates with the memo's 2.3x cross-check; isolating measurements listed as prerequisites |
+| PR plan contradicted 2.1 and 3.1 (both) | Fixed (section 9) |
+| GPU replay in S3 would drop the only independent check (Fable) | Fixed: full CPU replay kept in every stage (8.2) |
+| Receipt on stderr only (Fable) | Fixed: `gpu-exact-receipts/` in the output directory, with the tanh identity and proof keys |
+| Hook test across parameter replacement sites; `collection_workers` bound on resume (Fable) | Test `policy_hook_follows_parameter_replacement_and_falls_back_exactly`; 2.1 states the worker count is identity |
+| `append_v1` checked offsets after the adds; repeatable latency flag (Fable) | Fixed |
+| Process-wide host model cache; separate CUDA streams; split S3 (Fable, optional) | Streams and the split are in S3b/S3c; the host cache is noted for S3c |

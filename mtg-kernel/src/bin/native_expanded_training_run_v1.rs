@@ -38,7 +38,7 @@ fn run() -> Result<(), String> {
     let path = PathBuf::from(args.next().ok_or(usage)?);
     let mut limit = None;
     let mut gpu_inference: Option<usize> = None;
-    let mut gpu_latency_us: u64 = 200;
+    let mut gpu_latency_us: Option<u64> = None;
     let mut gpu_learner: Option<usize> = None;
     let number = |value: Option<std::ffi::OsString>, what: &str| -> Result<u64, String> {
         value
@@ -59,12 +59,16 @@ fn run() -> Result<(), String> {
             Some("--gpu-exact-learner") if gpu_learner.is_none() => {
                 gpu_learner = Some(number(args.next(), "GPU ordinal")? as usize);
             }
-            Some("--gpu-exact-latency-us") => {
-                gpu_latency_us = number(args.next(), "latency")?;
+            Some("--gpu-exact-latency-us") if gpu_latency_us.is_none() => {
+                gpu_latency_us = Some(number(args.next(), "latency")?);
             }
             _ => return Err(format!("unknown option; {usage}")),
         }
     }
+    if gpu_latency_us.is_some() && gpu_inference.is_none() {
+        return Err("--gpu-exact-latency-us needs --gpu-exact-inference".into());
+    }
+    let gpu_latency_us = gpu_latency_us.unwrap_or(200);
     if !path.is_absolute() {
         return Err("absolute config path required".into());
     }
@@ -79,8 +83,8 @@ fn run() -> Result<(), String> {
     let config: NativeExpandedTrainingRunV1 =
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     // Exact GPU inference changes timing only: replies equal the CPU
-    // forward's bits, so it is an execution option outside the run identity,
-    // recorded on stderr as its own receipt.
+    // forward's bits, so it is an execution option outside the run identity.
+    // Its receipt goes to stderr and to the output's gpu-exact-receipts/.
     if let Some(ordinal) = gpu_inference {
         #[cfg(feature = "gpu-exact-v1")]
         mtg_kernel::gpu_exact_v1::install_inference_service_v1(ordinal, gpu_latency_us)?;
@@ -96,16 +100,17 @@ fn run() -> Result<(), String> {
         #[cfg(not(feature = "gpu-exact-v1"))]
         return Err(format!("--gpu-exact-learner {ordinal} needs a build with gpu-exact-v1"));
     }
-    let result = run_native_expanded_training_v1(&config, limit)?;
+    let result = run_native_expanded_training_v1(&config, limit);
     #[cfg(feature = "gpu-exact-v1")]
-    {
-        if let Some(receipt) = mtg_kernel::gpu_exact_v1::inference_receipt_v1() {
-            eprintln!("{}", serde_json::to_string(&receipt?).map_err(|e| e.to_string())?);
-        }
-        if let Some(receipt) = mtg_kernel::gpu_exact_v1::learner_receipt_v1() {
-            eprintln!("{}", serde_json::to_string(&receipt).map_err(|e| e.to_string())?);
-        }
+    if gpu_inference.is_some() || gpu_learner.is_some() {
+        // Written for failed invocations too: which backend ran is provenance.
+        let receipt = mtg_kernel::gpu_exact_v1::invocation_receipt_v1(
+            &config.output_directory,
+            result.as_ref().map_err(String::as_str),
+        )?;
+        eprintln!("{}", serde_json::to_string(&receipt).map_err(|e| e.to_string())?);
     }
+    let result = result?;
     println!(
         "{}",
         serde_json::to_string(&result).map_err(|e| e.to_string())?

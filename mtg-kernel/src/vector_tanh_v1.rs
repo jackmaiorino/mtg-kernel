@@ -66,6 +66,21 @@ pub(crate) fn host_tanhf_identity_v1() -> Option<String> {
     None
 }
 
+/// Whether this thread computes `tanhf` in the state the identity above
+/// covers: the default MXCSR and UCRT's FMA3 paths on. Checked per call by
+/// callers that rely on a proof made on another thread (`gpu_exact_v1`).
+#[cfg_attr(not(feature = "gpu-exact-v1"), allow(dead_code))]
+pub(crate) fn default_tanhf_environment_v1() -> bool {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        windows::default_mxcsr() && windows::fma3_enabled()
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        false
+    }
+}
+
 /// `*v = v.tanh()` for every value, with the same bits.
 pub(crate) fn libm_tanh_in_place_v1(values: &mut [f32]) {
     #[cfg(all(windows, target_arch = "x86_64"))]

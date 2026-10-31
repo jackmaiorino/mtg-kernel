@@ -148,6 +148,12 @@ impl PackedBatchV1 {
         let scratch = offset_i32(self.scratch_len, "scratch")?;
         let logits = offset_i32(self.logits_len, "logits")?;
         let values = offset_i32(self.replies.len(), "value")?;
+        // Every rebased offset must fit before anything is appended.
+        offset_i32(self.floats.len() + other.floats.len(), "float")?;
+        offset_i32(self.ints.len() + other.ints.len(), "int")?;
+        offset_i32(self.scratch_len + other.scratch_len, "scratch")?;
+        offset_i32(self.logits_len + other.logits_len, "logits")?;
+        offset_i32(self.replies.len() + other.replies.len(), "value")?;
         for descriptor in other.requests.chunks_exact(R_FIELDS) {
             let mut d: [i32; R_FIELDS] = descriptor.try_into().expect("descriptor width");
             d[0] = slot as i32;
@@ -169,9 +175,6 @@ impl PackedBatchV1 {
         );
         self.scratch_len += other.scratch_len;
         self.logits_len += other.logits_len;
-        offset_i32(self.floats.len(), "float")?;
-        offset_i32(self.ints.len(), "int")?;
-        offset_i32(self.scratch_len, "scratch")?;
         Ok(())
     }
 

@@ -898,11 +898,23 @@ mod tests {
                 mulligan_modes: None,
             })
             .collect();
+        // The separate opponent seat gets its own parameters, so the service
+        // serves two models in the same batches.
+        let mut opponent_parameters = template.training_parameters_v3();
+        for parameter in &mut opponent_parameters {
+            if parameter.name == "object_encoder.0.weight" {
+                for value in parameter.values.iter_mut().step_by(3) {
+                    *value *= 1.5;
+                }
+            }
+        }
         let context = || {
+            let mut opponent = template.fork_for_collection_v3().unwrap();
+            opponent.replace_training_parameters_v3(&opponent_parameters).unwrap();
             (
                 template.fork_for_collection_v3().unwrap(),
                 LoadedOpponentV1 {
-                    policy: template.fork_for_collection_v3().unwrap(),
+                    policy: opponent,
                     behavior: learner.clone(),
                 },
             )
@@ -930,6 +942,10 @@ mod tests {
         let after = crate::gpu_exact_v1::inference_receipt_v1().unwrap().unwrap();
         let served = after["requests"].as_u64().unwrap() - before["requests"].as_u64().unwrap();
         assert!(served > 100, "the service answered only {served} forwards: {after}");
+        assert!(
+            after["model_uploads"].as_u64().unwrap() >= 2,
+            "learner and opponent are distinct models: {after}"
+        );
         eprintln!("{after}");
     }
 

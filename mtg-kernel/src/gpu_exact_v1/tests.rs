@@ -295,3 +295,158 @@ fn gpu_forward_timing_receipt() {
         );
     }
 }
+
+/// Twelve models pending at once (above `max_models` = 10): the service runs
+/// them in groups and every reply still equals the CPU forward.
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
+fn service_serves_more_models_than_resident_slots() {
+    let nets: Arc<Vec<NativePolicyValueNetV1>> = Arc::new((0..12).map(|i| random_net(300 + i)).collect());
+    let hosts: Arc<Vec<Arc<Net8HostModelV1>>> =
+        Arc::new(nets.iter().map(|n| Arc::new(Net8HostModelV1::from_net_v1(n).expect("host"))).collect());
+    let service = InferenceServiceV1::start_v1(
+        ordinal(),
+        BatchPolicyV1 { max_latency: Duration::from_millis(20), ..BatchPolicyV1::default() },
+    )
+    .expect("service");
+    let barrier = std::sync::Barrier::new(12);
+    std::thread::scope(|s| {
+        for worker in 0..12usize {
+            let mut client = service.client_v1();
+            let (nets, hosts, barrier) = (Arc::clone(&nets), Arc::clone(&hosts), &barrier);
+            s.spawn(move || {
+                for i in 0..6u64 {
+                    let decision = random_decision(9_000 + worker as u64 * 100 + i);
+                    barrier.wait();
+                    let gpu = client
+                        .forward_v1(&hosts[worker], &nets[worker], ForwardPathV1::Flat, decision.view())
+                        .expect("service forward");
+                    let cpu = nets[worker].forward_v1(decision.view()).expect("cpu forward");
+                    assert_eq!(bits(&gpu.logits), bits(&cpu.logits));
+                    assert_eq!(gpu.value.to_bits(), cpu.value.to_bits());
+                }
+            });
+        }
+    });
+    let stats = service.stats_v1().expect("stats");
+    assert_eq!(stats.requests, 72);
+    assert!(stats.model_uploads > 12, "eviction and re-upload expected: {stats:?}");
+    eprintln!("{stats:?}");
+}
+
+/// A service that dies with a request pending fails the waiting client at
+/// once instead of leaving it blocked.
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
+fn a_service_fault_fails_the_waiting_client() {
+    let net = random_net(41);
+    let host = Arc::new(Net8HostModelV1::from_net_v1(&net).expect("host"));
+    let service = InferenceServiceV1::start_v1(ordinal(), BatchPolicyV1::default()).expect("service");
+    let mut client = service.client_v1();
+    service.panic_on_next_request_for_test_v1();
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::scope(|s| {
+        s.spawn(move || {
+            let decision = random_decision(1);
+            let _ = done.send(client.forward_v1(&host, &net, ForwardPathV1::Flat, decision.view()));
+        });
+        let reply = wait.recv_timeout(Duration::from_secs(30)).expect("the client must not hang");
+        assert!(reply.is_err(), "a dead service cannot answer");
+    });
+    // Its thread panicked by design; dropping would only join it.
+    std::mem::forget(service);
+}
+
+/// A net whose outputs overflow fails closed on both paths.
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
+fn non_finite_outputs_fail_closed_like_the_cpu() {
+    let mut net = random_net(42);
+    let mut snapshot = net.parameter_snapshot_v1();
+    for parameter in &mut snapshot {
+        if parameter.name == "scorer.2.weight" || parameter.name == "value_head.2.weight" {
+            parameter.values.fill(f32::MAX);
+        }
+    }
+    net.replace_parameter_snapshot_v1(&snapshot).expect("replace");
+    let host = Arc::new(Net8HostModelV1::from_net_v1(&net).expect("host"));
+    let service = InferenceServiceV1::start_v1(ordinal(), BatchPolicyV1::default()).expect("service");
+    let mut client = service.client_v1();
+    let mut refused = 0;
+    for seed in 0..20 {
+        let decision = random_decision(500 + seed);
+        let cpu = net.forward_v1(decision.view());
+        let gpu = client.forward_v1(&host, &net, ForwardPathV1::Flat, decision.view());
+        assert_eq!(cpu.is_err(), gpu.is_err(), "seed {seed}");
+        refused += usize::from(gpu.is_err());
+    }
+    assert!(refused > 0, "the overflowing net must produce non-finite outputs");
+}
+
+/// The policy hook: a collector thread's forwards go to the installed
+/// service and equal the CPU forward, also after each site that replaces the
+/// policy's parameters (which must clear its cached host copy); a V8 policy
+/// keeps the CPU forward.
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
+fn policy_hook_follows_parameter_replacement_and_falls_back_exactly() {
+    use crate::rl_session::FastActorSessionV1;
+    use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
+    if super::inference_receipt_v1().is_none() {
+        super::install_inference_service_v1(ordinal(), 200).expect("install");
+    }
+    let session = || {
+        let (mut state, hunter, _, _) =
+            crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(&mut state, hunter, crate::ids::PlayerId::P0);
+        FastActorSessionV1::from_v3_fixture_state(state)
+    };
+    let requests = || super::inference_receipt_v1().unwrap().unwrap()["requests"].as_u64().unwrap();
+    let perturb = |policy: &FrozenPlayPolicyV1| {
+        let mut parameters = policy.training_parameters_v3();
+        for parameter in &mut parameters {
+            if parameter.name == "object_encoder.0.weight" {
+                for value in parameter.values.iter_mut().step_by(5) {
+                    *value *= 1.25;
+                }
+            }
+        }
+        parameters
+    };
+    let score_bits = |policy: &mut FrozenPlayPolicyV1| {
+        let scores = policy.score_fast_session_v1(&session()).expect("score");
+        (bits(&scores.logits), scores.value.to_bits())
+    };
+    // CPU references run on threads without a client.
+    let on_cpu = |policy: &mut FrozenPlayPolicyV1| std::thread::scope(|t| t.spawn(|| score_bits(policy)).join().unwrap());
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let _guard = super::service::enter_collector_v1();
+            let mut cpu = FrozenPlayPolicyV1::training_fixture_v3();
+            let mut gpu = FrozenPlayPolicyV1::training_fixture_v3();
+            let original = on_cpu(&mut cpu);
+            let before = requests();
+            assert_eq!(score_bits(&mut gpu), original);
+            assert!(requests() > before, "the collector thread must use the service");
+            // replace_training_parameters_v3 clears the cached host copy.
+            let parameters = perturb(&gpu);
+            cpu.replace_training_parameters_v3(&parameters).expect("cpu replace");
+            gpu.replace_training_parameters_v3(&parameters).expect("gpu replace");
+            let replaced = on_cpu(&mut cpu);
+            assert_ne!(replaced, original, "the perturbation must change the forward");
+            assert_eq!(score_bits(&mut gpu), replaced, "after replace_training_parameters_v3");
+            // apply_no_state_digest_v1 converts the parameters and clears it too.
+            cpu.apply_no_state_digest_v1("converted".into(), 123..219, 1_499, true).expect("cpu convert");
+            gpu.apply_no_state_digest_v1("converted".into(), 123..219, 1_499, true).expect("gpu convert");
+            let converted = on_cpu(&mut cpu);
+            assert_eq!(score_bits(&mut gpu), converted, "after apply_no_state_digest_v1");
+            // into_flat_v8_v1: the V8 net never reaches the service.
+            let mut cpu = FrozenPlayPolicyV1::training_fixture_v4().into_flat_v8_v1().expect("v8");
+            let mut gpu = FrozenPlayPolicyV1::training_fixture_v4().into_flat_v8_v1().expect("v8");
+            let v8 = on_cpu(&mut cpu);
+            let before = requests();
+            assert_eq!(score_bits(&mut gpu), v8, "V8 falls back to the CPU forward");
+            assert_eq!(requests(), before, "a V8 forward must not reach the service");
+        });
+    });
+}
