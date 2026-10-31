@@ -94,7 +94,7 @@ external-guard-completion.json (read back; a failed write leaves the store open)
 After it exists a handoff or create attempt is refused (StoreClosed), nothing on
 disk counts as handed off, every valid stored ID (readable or not) is held, and a
 guard that sees the closure, at start or mid-run, ends through one pass whose exit
-must verify every ID it holds absent within its own bound, or alert (I4). A
+must verify every ID it holds absent within main's release bound, or alert (I4). A
 completion record never ends supervision while a create is unresolved.
 
 When this synchronization itself fails (the store lock cannot be set up or
@@ -687,9 +687,8 @@ class LeaseClient:
             pass
 
     def release_deadline(self):
-        """The exit's release bound; on a closed store no supervisor follows, so it is this process's own."""
-        if store_closed(self.folder):
-            return self.clock() + self.min_release_seconds
+        """The exit's release bound, main's on every store: a recoverable outage is retried to the lease
+        deadline (closed or not), so no Pod is left alive sooner than main would leave it."""
         return max(self.lease_deadline, self.clock() + self.min_release_seconds)
 
     def _require_active(self):

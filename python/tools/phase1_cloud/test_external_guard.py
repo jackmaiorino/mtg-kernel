@@ -1066,6 +1066,18 @@ class StoreClosureTests(Base):
         self.assertIn(('DELETE', 'p'), world.log)
         self.assertNotIn('p', world.pods)
 
+    def test_closed_store_cleanup_retries_to_the_lease_deadline(self):
+        write(self.root / eg.COMPLETION, {'provider_absent': True})   # completed earlier
+        clock = FakeClock(0.0)
+        world = World([pod('p')]); world.delete_failures = 36       # DELETE recovers at about 180 s
+        with no_network(), eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list, clock,
+                                          clock.sleep, self.root / 'ALERT-pod-not-released.json',
+                                          lease_deadline=600.0, min_release_seconds=120) as client:
+            client.census()                                # a fresh Pod found after completion
+        self.assertNotIn('p', world.pods)                  # main's horizon: retried until it went away
+        self.assertGreater(clock.t, 150)
+        self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+
     def test_a_handoff_waits_for_the_store_lock_and_degrades_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):
