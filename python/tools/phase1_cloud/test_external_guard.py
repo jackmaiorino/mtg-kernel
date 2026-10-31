@@ -3,6 +3,7 @@
 Every run uses a fake clock with a hard sleep cap and a fake provider with a hard
 call cap (lease_test_support); a guard that never finishes ends the test with Stop.
 """
+import contextlib
 import tempfile
 import threading
 import time
@@ -968,6 +969,53 @@ class StoreClosureTests(Base):
         self.assertEqual(len(fired), 3)
         self.assertEqual(world.deletes, [])               # main takes no lock and keeps it too
         self.assertIsNone(self.status()['reason'])
+
+    def test_cached_ownership_survives_an_unreadable_record(self):
+        eg.remember(self.root, 'pod1', 'census', 1.0)     # loaded as handed off on entry; no receipt
+        real_reads_back, real_handoff = eg.LeaseClient.record_reads_back, eg.handoff_in
+        for persistent in (False, True):
+            with self.subTest(persistent=persistent):
+                world = World([pod('pod1')]); armed = [False]
+
+                def reads_back(client, pod_id):
+                    return False if armed[0] else real_reads_back(client, pod_id)
+
+                def handoff(folder, pod_id, role, epoch, **options):
+                    if armed[0]:
+                        raise OSError('record unreadable')
+                    return real_handoff(folder, pod_id, role, epoch, **options)
+                expect = self.assertRaises(eg.AlertError) if persistent else contextlib.nullcontext()
+                with expect, no_network(), mock.patch.object(eg.LeaseClient, 'record_reads_back', reads_back), \
+                        mock.patch.object(eg, 'handoff_in', side_effect=handoff), self.lease_client(world) as client:
+                    self.assertIn('pod1', client.persisted)
+                    armed[0] = True
+                    client.census()                       # the refresh cannot land and the record reads fail
+                    self.assertTrue(client.guardian_owns('pod1'))
+                    armed[0] = persistent                 # a lasting fault spans the exit's retries
+                self.assertEqual(world.deletes, [])       # main keeps it too; a lasting fault is reported
+                self.assertIn('pod1', world.pods)
+
+    def test_deadline_deletes_come_before_any_store_lock_wait(self):
+        world = self.healthy_primary()
+        self.clock.t = lease()['deadline_epoch']
+        real = eg.StoreLock.__enter__
+
+        def contended(lock):
+            world.log.append(('LOCK', None))
+            raise eg.LockTimeout('held by another process')
+        with mock.patch.object(eg.StoreLock, '__enter__', contended):
+            self.once(world)
+        first_delete = world.log.index(('DELETE', 'pod1'))
+        self.assertLess(first_delete, world.log.index(('LOCK', None)))
+
+    def test_a_failing_quiet_clock_never_ends_supervision(self):
+        world = self.healthy_primary()
+
+        def broken():
+            raise OSError('clock unavailable')
+        self.assertEqual(self.loop(world, polls=10, monotonic=broken), 'running')
+        self.assertEqual(world.deletes, [])
+        self.assertTrue((self.root / 'external-quiet-clock-error.json').exists())
 
     def test_a_handoff_waits_for_the_store_lock_and_degrades_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []

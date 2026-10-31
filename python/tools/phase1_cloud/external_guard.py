@@ -647,11 +647,11 @@ class LeaseClient:
         return False
 
     def guardian_owns(self, pod_id):
-        """An open store already names the ID (its own record reads back, or a readable receipt): the
-        guardian supervises it, so this process never deletes it, even while a presence handoff of it is
-        pending."""
-        return not store_closed(self.folder) and (pod_id in self.durable or self.record_reads_back(pod_id)
-                                                  or pod_id in self.receipt_ids())
+        """An open store already names the ID (a record this process read or wrote back, its own record
+        reading back now, or a readable receipt): the guardian supervises it, so this process never
+        deletes it, even while a presence handoff of it is pending or the record is unreadable now."""
+        return not store_closed(self.folder) and (pod_id in self.durable or pod_id in self.persisted
+                                                  or self.record_reads_back(pod_id) or pod_id in self.receipt_ids())
 
     def open_obligations(self):
         """The unresolved obligations now: registered, not verified absent, not durable on disk."""
@@ -976,6 +976,20 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         recorded, receipt_error = receipt_state(root)
         if receipt_error:
             store_errors.append(receipt_error)
+        # (B) after the deadline every known ID is deleted first, before any synchronized handoff can wait
+        # on the store lock and before anything can fail
+        deleted_first = set()
+        if reason == 'deadline':
+            early = set(memory) | ({recorded} if recorded else set())
+            for name in ('lease/create-ambiguous.json', 'lease/create-pod-failure.json'):
+                try:
+                    fallback = read(root / name).get('pod_id') if (root / name).exists() else None
+                except Exception:  # noqa: BLE001 - read again below, where a failure is recorded
+                    fallback = None
+                if valid_id(fallback):
+                    early.add(fallback)
+            for pod_id in sorted(p for p in early if p not in confirmed):
+                delete(pod_id, 'deadline_first'); deleted_first.add(pod_id)
         if recorded:
             client.mark_durable(recorded)
             client.retain(recorded, 'receipt', presence=False)
@@ -1009,9 +1023,9 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
                 if candidates:
                     return candidates[0]
             return None
-        # (B) after the deadline every known ID is deleted first, before anything can fail
+        # (B) and any ID this pass's records added since
         if reason == 'deadline':
-            for pod_id in sorted(p for p in memory if p not in confirmed):
+            for pod_id in sorted(p for p in memory if p not in confirmed and p not in deleted_first):
                 delete(pod_id, 'deadline_first')
         # (C1) census through the client (each owned ID retained first); every listed ID, whatever
         # its name, is presence; malformed provider data is a guard failure, never absence
@@ -1089,10 +1103,15 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         if failures and open_known:
             reason = reason or 'guard_failure'
         # Quiet after a create that named no Pod is evidence for the operator, never a resolution
-        tick = monotonic()
+        try:
+            tick = monotonic()
+        except Exception as e:  # noqa: BLE001 - diagnostic timing only: the window starts again, supervision goes on
+            tick = None
+            note('external-quiet-clock-error.json', {'epoch': clock(), 'error_type': type(e).__name__})
         # every retained ID (a delayed Pod already deleted, say) must hold a fresh absence confirmation
         settled_memory = all(p in confirmed for p in memory)
-        if census_ok and not malformed and not listed and not failures and settled_memory and create_unresolved(root):
+        if tick is not None and census_ok and not malformed and not listed and not failures and settled_memory \
+                and create_unresolved(root):
             if quiet_since is None or tick - last_clear > QUIET_GAP_SECONDS:
                 quiet_since, quiet_censuses, quiet_noted, quiet_funds_started = tick, 0, False, False
             quiet_censuses += 1; last_clear = tick
