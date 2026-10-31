@@ -230,7 +230,9 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
                                    cwd=str(TOOLS.parents[1]), timeout=deadline)
         except subprocess.TimeoutExpired:
             raise SystemExit("study_wall_cap: the pack qualification reached the study's claim time") from None
-        (pack_index.parent / "pack.stdout").write_text(done.stdout, encoding="utf-8")  # each pack's own
+        # Beside its plan, under the plan's own name (one per host and bound); the root may not exist yet
+        # when the tool refused before making it.
+        Path(family["pack"]["path"]).with_suffix(".stdout").write_text(done.stdout, encoding="utf-8")
         if done.returncode != 0:
             raise RuntimeError("pack qualification failed: " + done.stderr.strip()[-2000:])
     log(kind="pack", index=pin(pack_index))

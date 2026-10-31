@@ -242,10 +242,15 @@ class QualifyTests(unittest.TestCase):
             self.assertEqual(json.loads((pack_root / "pack.json").read_text())["topology"], there)  # untouched
             self.assertEqual(Path(first["pack"]["path"]), Path(plan["root"]) / "pack.json")
             self.assertIn("pack-requalify", [event["kind"] for event in events])
-            self.assertTrue((Path(plan["root"]) / "pack.stdout").exists())  # its own record, none overwritten
+            self.assertTrue(Path(runs[0][-1]).with_suffix(".stdout").exists())  # its own record, none overwritten
             again = qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
             self.assertEqual(len(runs), 1)  # a restart on this host reuses its own pack
             self.assertEqual(again["pack"], first["pack"])
+        # A pack tool that refuses before making its root reports its own reason.
+        refused = lambda args, **kwargs: subprocess.CompletedProcess(args, 1, stdout="", stderr="a slot's SMT sibling is not declared")
+        with patch.object(qualify.dispatch, "host_topology", return_value=[{"cpus": "0,2", "efficiency_class": 0}]),                 patch.object(qualify.subprocess, "run", side_effect=refused):
+            with self.assertRaisesRegex(RuntimeError, "SMT sibling is not declared"):
+                qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         # Bounded by the claim time (Jack's PC), two hosts keep one bounded plan each.
         bounded = []
         for topology in ([{"cpus": "0,8", "efficiency_class": 0}], [{"cpus": "0,4", "efficiency_class": 0}]):
