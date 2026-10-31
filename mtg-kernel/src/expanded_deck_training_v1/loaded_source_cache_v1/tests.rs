@@ -49,7 +49,14 @@ fn temp_root(label: &str) -> PathBuf {
 
 /// A fresh-initialization source without a checkpoint, written under `root`.
 fn fresh_source(root: &Path) -> ExpandedModelSourceV1 {
-    let identity = FRESH_FEATURE_IDENTITY_V3;
+    fresh_source_with_v1(root, FRESH_FEATURE_IDENTITY_V3)
+}
+
+/// [`fresh_source`] under the feature identity `identity`.
+fn fresh_source_with_v1(
+    root: &Path,
+    identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+) -> ExpandedModelSourceV1 {
     let descriptor =
         write_synthetic_fresh_source_with_parameters_v1(&root.join("source"), identity, |_| {});
     let bytes = serde_json::to_vec(&descriptor).unwrap();
@@ -327,5 +334,190 @@ fn checkpoints_that_name_another_file_are_not_cached() {
         .unwrap()
         .is_some());
     assert_eq!(matches(), before + 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Flat-checkpoint hits on this thread.
+fn flat_matches() -> u64 {
+    FLAT_MATCHES_FOR_TEST_V1.with(Cell::get)
+}
+
+/// A V4 fresh source with a GAE checkpoint, its FlatV8 conversion and a
+/// FlatV7 checkpoint of the same state: the two flat sources, each with the
+/// update inputs its checkpoint records.
+fn flat_sources_v1(root: &Path) -> Vec<(ExpandedModelSourceV1, Vec<PinnedFileV1>)> {
+    use crate::native_flat_tensorizer_v7::{
+        FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+    };
+    use crate::native_flat_tensorizer_v8::{
+        FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8,
+    };
+    let v4 = fresh_source_with_v1(
+        root,
+        crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+    );
+    let (resumed, saved) = write_checkpoint(root, &v4);
+    let v8 = crate::expanded_deck_training_v1::v8_inclusion_conversion_v1::write_v8_checkpoint_v1(
+        resumed.checkpoint.as_ref().unwrap(),
+        &root.join("v8").join("checkpoint.json"),
+        7,
+    )
+    .unwrap();
+    let v7_saved = ExpandedCheckpointV1 {
+        feature_contract_digest: FEATURE_CONTRACT_DIGEST_V7.into(),
+        feature_encoding_digest: FEATURE_ENCODING_DIGEST_V7.into(),
+        ..saved.clone()
+    };
+    let directory = root.join("v7");
+    fs::create_dir_all(&directory).unwrap();
+    let v7_pin = publish_json(&directory, "checkpoint.json", &v7_saved).unwrap();
+    let flat = |contract: &str, encoding: &str, pin: PinnedFileV1| ExpandedModelSourceV1 {
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: contract.into(),
+            expected_feature_encoding_digest: encoding.into(),
+        },
+        checkpoint: Some(pin),
+        ..v4.clone()
+    };
+    vec![
+        (
+            flat(
+                FEATURE_CONTRACT_DIGEST_V8,
+                FEATURE_ENCODING_DIGEST_V8,
+                v8.pin,
+            ),
+            v8.parent.trajectories,
+        ),
+        (
+            flat(
+                FEATURE_CONTRACT_DIGEST_V7,
+                FEATURE_ENCODING_DIGEST_V7,
+                v7_pin,
+            ),
+            saved.trajectories,
+        ),
+    ]
+}
+
+#[test]
+fn a_flat_checkpoint_hit_equals_a_full_load_and_binds_the_update_inputs() {
+    let root = temp_root("flat-hit");
+    for (source, trajectories) in flat_sources_v1(&root) {
+        let full = bypassed(|| initialize(&source)).unwrap();
+        let before = flat_matches();
+        let first = initialize(&source).unwrap();
+        assert_eq!(flat_matches(), before, "the first load reads everything");
+        let second = initialize(&source).unwrap();
+        assert_eq!(flat_matches(), before + 1, "the second load is a cache hit");
+        assert_same_load(&first, &full, &source);
+        assert_same_load(&second, &full, &source);
+        assert_eq!(
+            second.0.feature_identity_v1(),
+            full.0.feature_identity_v1(),
+            "a hit keeps the flat identity"
+        );
+        // Every parameter and moment bit of the restored state.
+        assert_eq!(
+            second.1.snapshot_v1().unwrap(),
+            full.1.snapshot_v1().unwrap()
+        );
+
+        let before = flat_matches();
+        load_expanded_update_inference_v1(&source, &trajectories, LEARNING_RATE, VALUE_COEFFICIENT)
+            .unwrap();
+        assert_eq!(flat_matches(), before + 1);
+        let mut other_trajectory = trajectories.clone();
+        other_trajectory[1].sha256 = "d".repeat(64);
+        let cases = [
+            (other_trajectory, LEARNING_RATE, VALUE_COEFFICIENT),
+            (trajectories[..1].to_vec(), LEARNING_RATE, VALUE_COEFFICIENT),
+            (trajectories.clone(), 0.0003, VALUE_COEFFICIENT),
+            (trajectories.clone(), LEARNING_RATE, 0.25),
+        ];
+        for (inputs, learning_rate, value_coefficient) in cases {
+            let load = || {
+                load_expanded_update_inference_v1(
+                    &source,
+                    &inputs,
+                    learning_rate,
+                    value_coefficient,
+                )
+                .unwrap_err()
+            };
+            let full = bypassed(load);
+            let before = flat_matches();
+            assert_eq!(load(), full);
+            assert_eq!(flat_matches(), before + 1);
+            assert_eq!(full, "checkpoint inputs or optimizer settings differ");
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_changed_or_missing_file_fails_a_flat_hit_as_it_fails_a_full_load() {
+    let root = temp_root("flat-files");
+    for (source, _) in flat_sources_v1(&root) {
+        let descriptor: ExpandedFreshInitializationSourceV1 =
+            serde_json::from_slice(&fs::read(&source.play_import.path).unwrap()).unwrap();
+        let reference = initialize(&source).unwrap();
+        let files = [
+            source.checkpoint.as_ref().unwrap().path.clone(),
+            descriptor.parameters.path.clone(),
+            descriptor.initialization.path.clone(),
+        ];
+        for path in files {
+            let original = fs::read(&path).unwrap();
+            let mut changed = original.clone();
+            changed[original.len() / 2] ^= 1;
+            for (label, bytes) in [("changed", Some(changed)), ("missing", None)] {
+                match bytes {
+                    Some(bytes) => fs::write(&path, bytes).unwrap(),
+                    None => fs::remove_file(&path).unwrap(),
+                }
+                let full = bypassed(|| initialize(&source)).err().unwrap();
+                let before = flat_matches();
+                let cached = initialize(&source).err().unwrap();
+                assert_eq!(flat_matches(), before + 1, "{label} {}", path.display());
+                assert_eq!(cached, full, "{label} {}", path.display());
+                fs::write(&path, &original).unwrap();
+            }
+            let before = flat_matches();
+            let restored = initialize(&source).unwrap();
+            assert_eq!(flat_matches(), before + 1);
+            assert_same_load(&restored, &reference, &source);
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn flat_entries_serve_only_flat_lookups() {
+    let root = temp_root("flat-kinds");
+    let (source, _) = flat_sources_v1(&root).remove(0);
+    let descriptor_bytes = fs::read(&source.play_import.path).unwrap();
+    initialize(&source).unwrap();
+    // The generic lookup never serves a flat entry, even for its own source.
+    let before = matches();
+    assert!(lookup_v1(&source, &descriptor_bytes, None)
+        .unwrap()
+        .is_none());
+    assert_eq!(matches(), before);
+    assert!(lookup_flat_checkpoint_v1(&source, &descriptor_bytes, None)
+        .unwrap()
+        .is_some());
+    // Other descriptor bytes, or the source without its checkpoint, miss.
+    let mut other = descriptor_bytes.clone();
+    other.push(b' ');
+    assert!(lookup_flat_checkpoint_v1(&source, &other, None)
+        .unwrap()
+        .is_none());
+    let without = ExpandedModelSourceV1 {
+        checkpoint: None,
+        ..source.clone()
+    };
+    assert!(lookup_flat_checkpoint_v1(&without, &descriptor_bytes, None)
+        .unwrap()
+        .is_none());
     fs::remove_dir_all(root).unwrap();
 }
