@@ -663,26 +663,42 @@ impl Ending {
     }
 }
 
-/// The blocks committed in the position's combat, once its declaration is
-/// complete: (attacker, blockers in declaration order).
-fn committed_blocks(s: &Session, turn: (u32, PlayerId)) -> Option<Value> {
-    let state = s.game_state();
-    let combat = &state.engine.combat;
-    ((state.turn, state.active_player) == turn && combat.blockers_declared).then(|| {
-        let edges: Vec<Value> = combat
-            .blocked_by
-            .iter()
-            .map(|(a, bs)| json!([a.0, bs.iter().map(|b| b.0).collect::<Vec<_>>()]))
-            .collect();
-        json!(edges)
-    })
+/// The include choice at a blocker-inclusion decision, either seat's:
+/// `Some(pair)` if `row` includes, `None` if it excludes; outside a blocker
+/// scan, `Err(())`.
+fn scan_choice(
+    s: &Session,
+    d: &FastActorDecisionV1,
+    row: u32,
+) -> Result<Option<(ObjectId, ObjectId)>, ()> {
+    let scan = blocker_scan(s, d, acting(d)).ok_or(())?;
+    Ok((scan.include_row == Some(row)).then_some(scan.pair))
+}
+
+/// The edges a blocker declaration committed, attackers in first-chosen
+/// order, blockers in choice order.
+fn edges_json(edges: &[(ObjectId, ObjectId)]) -> Value {
+    let mut grouped: Vec<(ObjectId, Vec<u32>)> = Vec::new();
+    for &(a, b) in edges {
+        match grouped.iter_mut().find(|(x, _)| *x == a) {
+            Some((_, bs)) => bs.push(b.0),
+            None => grouped.push((a, vec![b.0])),
+        }
+    }
+    json!(grouped
+        .iter()
+        .map(|(a, bs)| json!([a.0, bs]))
+        .collect::<Vec<_>>())
 }
 
 /// A continuation record (`W4_RECORDS`, result memo observation 5): where it
 /// stopped (round, active seat and step at the stopping decision or
-/// terminal), the blocks committed in the position's combat (null if never
-/// seen complete) and the full-state diagnostic hash there.
-fn record(s: &Session, blocks: Option<Value>) -> Value {
+/// terminal), the edges the position's blocker declaration committed and the
+/// full-state diagnostic hash there. The declaration is the unbroken run of
+/// blocker-inclusion decisions through the position, read from the choices
+/// themselves: the engine's combat state can be pruned by deaths or reset
+/// before the continuation next sees a decision.
+fn record(s: &Session, blocks: Value) -> Value {
     let state = s.game_state();
     json!({"turn": state.turn, "active": state.active_player.0, "step": format!("{:?}", state.step),
         "blocks": blocks, "digest": format!("{:016x}", s.diagnostic_state_hash())})
@@ -708,8 +724,9 @@ fn ending_at_terminal(s: &Session, focal: PlayerId) -> Option<Ending> {
 /// Forces `choice` at the position, then plays both seats' policies (reset
 /// with `paired_policy_seeds_v1(seed)`). With `stop_after_combat`, stops at
 /// the first focal decision after combat is over and scores it with the
-/// candidate's value; otherwise plays to the terminal. With `records`, also
-/// returns the continuation record.
+/// candidate's value; otherwise plays to the terminal. With `records` (the
+/// declaration's edges chosen before the position), also returns the
+/// continuation record.
 fn continuation(
     root: &Session,
     choice: u32,
@@ -717,32 +734,41 @@ fn continuation(
     focal: PlayerId,
     panel: &mut Panel,
     stop_after_combat: bool,
-    records: bool,
+    records: Option<&[(ObjectId, ObjectId)]>,
 ) -> Result<(Ending, Option<Value>), String> {
     let d = decision(root).ok_or("the position has no decision")?;
     let turn = (root.game_state().turn, root.game_state().active_player);
     panel.reset(paired_policy_seeds_v1(seed))?;
+    let mut edges = records.map(<[_]>::to_vec);
+    if let Some(edges) = &mut edges {
+        edges.extend(scan_choice(root, &d, choice).ok().flatten());
+    }
+    let mut scanning = true;
     let mut s = root.clone();
     step(&mut s, &d, choice)?;
     // Combat is over once seen at any decision, either seat's; a later
     // opponent spell does not move the stopping point.
     let mut combat_over = false;
-    let mut blocks = None;
     loop {
-        if records && blocks.is_none() {
-            blocks = committed_blocks(&s, turn);
-        }
-        let kept = |s: &Session, blocks: &Option<Value>| records.then(|| record(s, blocks.clone()));
+        let kept = |s: &Session, edges: &Option<Vec<_>>| {
+            edges.as_deref().map(|e| record(s, edges_json(e)))
+        };
         if let Some(end) = ending_at_terminal(&s, focal) {
-            return Ok((end, kept(&s, &blocks)));
+            return Ok((end, kept(&s, &edges)));
         }
         let d = decision(&s).ok_or("no decision and no terminal")?;
         combat_over |= past_combat(&s, turn);
         if stop_after_combat && combat_over && is_focal(&d, focal) {
             let scores = panel.scorer()?.score_fast_session_v1(&s)?;
-            return Ok((Ending::Value(scores.value), kept(&s, &blocks)));
+            return Ok((Ending::Value(scores.value), kept(&s, &edges)));
         }
         let a = panel.select(&s, d, focal)?;
+        if let (Some(edges), true) = (&mut edges, scanning) {
+            match scan_choice(&s, &d, a) {
+                Ok(pair) => edges.extend(pair),
+                Err(()) => scanning = false,
+            }
+        }
         step(&mut s, &d, a)?;
     }
 }
@@ -772,10 +798,19 @@ fn a2_position(
 ) -> Result<Value, String> {
     let focal = PlayerId(job.focal);
     let mut s = session(job)?;
+    // The declaration's edges chosen before the position (records only).
+    let mut prefix = Vec::new();
     for i in 0..position.index {
         let d = checked(&s, job, i)?;
+        if records {
+            match scan_choice(&s, &d, job.decisions[i].selected) {
+                Ok(pair) => prefix.extend(pair),
+                Err(()) => prefix.clear(),
+            }
+        }
         step(&mut s, &d, job.decisions[i].selected)?;
     }
+    let records = records.then_some(prefix.as_slice());
     let d = checked(&s, job, position.index)?;
     let (attacker, blocker, include_row) =
         blocker_pair(&s, &d, focal).ok_or("the position is not a focal blocker-pair decision")?;
