@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import g_references_records_v1 as records
 import nine_deck_cloud_v1 as cloud
@@ -131,6 +132,27 @@ class RecordsTests(unittest.TestCase):
         self.assertEqual(self.cycle(), 1)  # the archive is reused, its seal written again, the deletion finished
         self.assertEqual(json.loads((self.dest / "G3" / "G3-b003.seal.json").read_text()), self.seal)
         self.assertIs(json.loads((self.state / "moved" / "G3-b003.json").read_text())["deleted"], True)
+
+    def test_torn_metadata_is_repaired_from_the_verified_seal(self):
+        self.cycle()
+        sidecar, ledger = self.dest / "G3" / "G3-b003.seal.json", self.dest / "MOVED.jsonl"
+        sidecar.write_text('{"schema": ')  # a crash mid-write
+        ledger.write_text(ledger.read_text() + '{"run": "G4", "blo')  # an append cut short
+        (self.state / "moved" / "G3-b003.json").write_text(json.dumps({"deleted": False}))
+        self.assertEqual(self.cycle(), 1)
+        self.assertEqual(json.loads(sidecar.read_text()), self.seal)
+        self.assertEqual([json.loads(line)["block"] for line in ledger.read_text().splitlines()], [3])
+        ledger.write_text('{"broken\n' + ledger.read_text())  # a damaged earlier row is an error, not dropped
+        with self.assertRaisesRegex(ValueError, "row 1 is damaged"):
+            records.moved_rows(self.dest)
+
+    def test_a_quiesced_pod_refuses_deletion(self):
+        flag = Path(self.temp.name) / "quiesce"
+        flag.write_text("")
+        with patch.object(records, "POD_QUIESCE", str(flag)):
+            self.assertEqual(self.cycle(), 0)
+        self.assertIn("quiesced for the lease's recovery", json.loads((self.control / "ALERT-records.json").read_text())["error"])
+        self.assertTrue(all((self.volume / item["path"]).exists() for item in self.seal["files"]))
 
     def test_a_quiesce_request_stops_moving_and_is_acknowledged(self):
         (self.control / "records-quiesce.json").write_text("{}")

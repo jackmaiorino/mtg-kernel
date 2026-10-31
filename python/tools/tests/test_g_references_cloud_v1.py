@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -333,19 +335,37 @@ class LeaseTests(unittest.TestCase):
         held = {"status": "stopped", "blocks_done": [3], "stop_reason": "storage admission: records: copy-back stalled"}
         self.assertTrue(self.conclude({"G1": done, "G2": held})["lease_stopped"])  # amendment 2: resumable
 
-    def test_recovery_waits_for_the_record_copy_back_to_quiesce(self):
+    def test_recovery_first_quiesces_the_record_copy_back_on_the_pod(self):
         with tempfile.TemporaryDirectory() as temp:
             cycle = gcloud.Cycle.__new__(gcloud.Cycle)
             cycle.control, cycle.result = Path(temp), {}
-            cycle.quiesce_records(timeout=1)
-            self.assertEqual(cycle.result["records_quiesced"], "no follower")
-            self.assertTrue((Path(temp) / "records-quiesce.json").exists())
-            (Path(temp) / "records-follow-started.json").write_text("{}")
-            cycle.quiesce_records(timeout=0.1)
-            self.assertEqual(cycle.result["records_quiesced"], "timed out")
-            (Path(temp) / "records-quiesced.json").write_text(json.dumps({"epoch": time.time() + 1}))
-            cycle.quiesce_records(timeout=1)
-            self.assertIs(cycle.result["records_quiesced"], True)
+            calls = []
+
+            class Pod:
+                def run(self, program, args, timeout=30, read_only=False):
+                    calls.append((program, args))
+                    return {"quiesced": True}
+            cycle.pod = Pod()
+            cycle.quiesce_records(timeout=5)
+        self.assertTrue(calls[0][0] is gcloud.POD_QUIESCE_RECORDS)
+        self.assertEqual((calls[0][1]["lock"], calls[0][1]["quiesce"]),
+                         (gcloud.records.POD_LOCK, gcloud.records.POD_QUIESCE))
+        self.assertIs(cycle.result["records_quiesced"], True)
+
+    @unittest.skipIf(sys.platform == "win32", "fcntl: the Pod is Linux")
+    def test_the_pod_quiesce_waits_for_a_deletion_in_progress(self):
+        import fcntl
+        with tempfile.TemporaryDirectory() as temp:
+            lock, flag = Path(temp) / "lock", Path(temp) / "quiesce"
+            code = cloud.PRELUDE % json.dumps({"lock": str(lock), "quiesce": str(flag), "timeout": 1}) + \
+                gcloud.POD_QUIESCE_RECORDS
+            with open(lock, "a") as held:
+                fcntl.flock(held, fcntl.LOCK_EX)  # a deletion holds the lock
+                busy = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertEqual(json.loads(busy.stdout.decode().splitlines()[-1]), {"quiesced": "timed out"})
+            self.assertTrue(flag.exists())
+            free = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertEqual(json.loads(free.stdout.decode().splitlines()[-1]), {"quiesced": True})
 
     def test_ledger_and_caps(self):
         with tempfile.TemporaryDirectory() as temp:

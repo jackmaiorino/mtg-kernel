@@ -570,6 +570,10 @@ class DriverTests(unittest.TestCase):
         expected.pop("exposure/G2-b003-exposure.json")  # the summary stays for the driver
         self.assertEqual(sealed, expected)
         self.assertEqual((value["root"], value["block"], value["bytes"]), (str(self.root), 3, 11))
+        self.assertEqual(Path(state["blocks"]["3"]["sealed"]["path"]),
+                         (self.campaign.state / "seals" / "G2-b003.json").resolve())  # its own place
+        for name, data in files.items():  # no source file was touched
+            self.assertEqual((self.root / name).read_bytes(), data)
         self.assertEqual(self.campaign.run_state("G2")["blocks"]["3"]["sealed"], state["blocks"]["3"]["sealed"])
 
     def test_the_copy_back_window_and_its_stall_hold_new_blocks(self):
@@ -639,6 +643,32 @@ class DriverTests(unittest.TestCase):
             self.assertFalse(driver.hold(self.campaign, "G6", 3, state, "records: copy-back stalled, 8 wait", True))
         self.assertEqual(slept.call_count, 1)
         self.assertTrue(state["stop_reason"].startswith("storage admission: records: copy-back stalled"))
+
+    def test_a_drain_without_progress_stops_before_the_lease_guard_and_progress_counts_as_work(self):
+        self.addCleanup(driver.DRAIN.update, {"moved": -1, "at": driver.DRIVER_STARTED})
+        self.records_campaign()
+        markers = self.campaign.state / "moved"
+        markers.mkdir(parents=True)
+        state = {"run": "G6", "status": "running", "blocks": {}}
+        touched = []
+        with patch.object(driver, "touch", lambda campaign: touched.append(1)), patch.object(driver.time, "sleep"):
+            driver.DRAIN.update(moved=-1, at=time.time())
+            self.assertTrue(driver.hold(self.campaign, "G6", 3, state, "records: window full, 64 sealed", True))
+            self.assertEqual(len(touched), 1)  # the first count it sees
+            (markers / "G1-b003.json").write_text('{"deleted": true}')
+            self.assertTrue(driver.hold(self.campaign, "G6", 3, state, "records: window full, 63 sealed", False))
+            self.assertEqual(len(touched), 2)  # a move it saw is driver work for the guard
+            driver.DRAIN["at"] = time.time() - driver.DRAIN_IDLE_SECONDS - 1
+            self.assertFalse(driver.hold(self.campaign, "G6", 3, state, "records: window full, 63 sealed", False))
+        self.assertIn("no copy-back progress in 240 s", state["stop_reason"])
+
+    def test_a_finished_block_is_sealed_before_its_slot_frees(self):
+        order = []
+        with patch.object(driver, "finish_block", lambda *a: order.append("finish") or "complete"), \
+                patch.object(driver, "seal", lambda *a: order.append("seal")), \
+                patch.object(driver, "release", lambda *a: order.append("release")):
+            driver.finished(self.campaign, "G1", 3, {"blocks": {"3": {}}}, {}, {"native": "n"})
+        self.assertEqual(order, ["finish", "seal", "release"])
 
     def test_uncounted_storage_attempts_are_bounded_per_session(self):
         self.addCleanup(driver.SCRATCH_INFLIGHT.clear)

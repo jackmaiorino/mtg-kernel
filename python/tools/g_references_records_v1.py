@@ -48,6 +48,8 @@ import time
 import nine_deck_cloud_v1 as cloud
 
 LEVEL = 10
+POD_LOCK = "/root/g-records.lock"  # Pod-local: the lease controller's recovery takes it to stop deletion
+POD_QUIESCE = "/root/g-records-quiesce"  # Pod-local, so a new Pod starts unquiesced
 BUDGET_ALERT = 0.8
 SCHEMA = "g-references-v1/records-moved"
 SEAL_SCHEMA = "g-references-v1/block-records"
@@ -75,6 +77,13 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode="w|", format=tarfile.PAX_FORMA
 '''
 
 FINALIZE = '''import os
+try:
+    import fcntl
+    lock = open(ARGS["lock"], "a")
+    fcntl.flock(lock, fcntl.LOCK_EX)  # held through the deletion; recovery waits for it
+except ImportError:
+    lock = None
+need(not os.path.exists(ARGS["quiesce"]), "the copy-back is quiesced for the lease's recovery")
 path = ARGS["state"] + "/seals/" + ARGS["name"]
 need(digest(path) == ARGS["seal_sha256"], "seal changed since it was copied")
 seal = json.load(open(path))
@@ -137,10 +146,35 @@ def verify(archive: Path, seal: dict, reader) -> None:
     cloud.require(seen == expected, "archive members differ from the seal")
 
 
+def moved_rows(dest: Path) -> list[dict]:
+    """MOVED.jsonl's rows. A torn last line (an append cut short) is dropped, rewriting the ledger atomically
+    with every complete row kept; a damaged earlier row is an error."""
+    path = dest / "MOVED.jsonl"
+    if not path.exists():
+        return []
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = []
+    for index, line in enumerate(lines):
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            cloud.require(index == len(lines) - 1, f"MOVED.jsonl row {index + 1} is damaged")
+            publish(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+    return rows
+
+
+def publish(path: Path, text: str) -> None:
+    """Write a file atomically and durably (temporary file, fsync, replace)."""
+    temporary = path.with_name(path.name + ".partial")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
 def archived_bytes(dest: Path) -> int:
-    moved = dest / "MOVED.jsonl"
-    return sum(json.loads(line)["archive_bytes"] for line in moved.read_text(encoding="utf-8").splitlines()
-               if line.strip()) if moved.exists() else 0
+    return sum(row["archive_bytes"] for row in moved_rows(dest))
 
 
 def move(pod, state: str, name: str, dest: Path, budget: int, stream=subprocess.Popen, codec=None) -> dict:
@@ -176,25 +210,26 @@ def move(pod, state: str, name: str, dest: Path, budget: int, stream=subprocess.
             os.fsync(handle.fileno())
         os.replace(partial, final)
     verify(final, seal, reader)  # again from its final place, before anything on the volume goes
-    if not sidecar.exists() or json.loads(sidecar.read_text(encoding="utf-8")) != seal:
-        with sidecar.open("w", encoding="utf-8") as handle:  # the archive's own seal, durable before deletion
-            handle.write(json.dumps(seal, indent=1, sort_keys=True))
-            handle.flush()
-            os.fsync(handle.fileno())
+    try:
+        current = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):  # missing, or torn by a crash: written again from the verified seal
+        current = None
+    if current != seal:  # the archive's own seal, durable before anything on the volume goes
+        publish(sidecar, json.dumps(seal, indent=1, sort_keys=True))
     archive_sha256 = sha256_file(final)
     row = {"schema": SCHEMA, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "run": seal["run"],
            "block": seal["block"], "seal": name, "seal_sha256": seal_sha256, "volume_root": seal["root"],
            "archive": str(final), "archive_sha256": archive_sha256, "archive_bytes": final.stat().st_size,
            "files": len(seal["files"]), "raw_bytes": seal["bytes"], "level": LEVEL}
     moved = dest / "MOVED.jsonl"
-    rows = [json.loads(line) for line in moved.read_text(encoding="utf-8").splitlines() if line.strip()] \
-        if moved.exists() else []
+    rows = moved_rows(dest)
     if not any((other["run"], other["block"]) == (seal["run"], seal["block"]) for other in rows):
         with moved.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
-    pod.run(FINALIZE, {"state": state, "name": name, "seal_sha256": seal_sha256,
+    pod.run(FINALIZE, {"state": state, "name": name, "seal_sha256": seal_sha256, "lock": POD_LOCK,
+                       "quiesce": POD_QUIESCE,
                        "marker": {key: row[key] for key in ("archive", "archive_sha256", "archive_bytes", "at")}},
             timeout=600)
     return row
@@ -209,12 +244,18 @@ def quiesced(control: Path) -> bool:
     return True
 
 
+def backlog(pod, state: str, control: Path) -> list[str]:
+    """What the volume still holds, recorded in the lease folder (the last record names a released lease's
+    unmoved blocks for the next lease)."""
+    pending = pod.run(LIST, {"state": state}, timeout=120, read_only=True)["pending"]
+    publish(control / "records-backlog.json", json.dumps(
+        {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "state": state, "pending": pending}, indent=1))
+    return pending
+
+
 def cycle(pod, state: str, dest: Path, budget: int, control: Path, **options) -> int:
     """Move every pending sealed block; on a failure, alert and stop this cycle (the next one retries)."""
-    pending = pod.run(LIST, {"state": state}, timeout=120, read_only=True)["pending"]
-    (control / "records-backlog.json").write_text(json.dumps(
-        {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "state": state, "pending": pending},
-        indent=1), encoding="utf-8")  # what the volume still holds, should this be the lease's last cycle
+    pending = backlog(pod, state, control)
     moved = 0
     for name in pending:
         if quiesced(control):
@@ -227,17 +268,23 @@ def cycle(pod, state: str, dest: Path, budget: int, control: Path, **options) ->
                      "error": f"{type(error).__name__}: {error}"[-2000:]}
             (control / "ALERT-records.json").write_text(json.dumps(alert, indent=1), encoding="utf-8")
             break
+    backlog(pod, state, control)
     return moved
 
 
 def follow(control: Path, package: Path, dest: Path, budget: int, key: Path, interval: float, once: bool) -> int:
     state = json.loads((package / "campaign.json").read_text(encoding="utf-8"))["roots"]["state"]
+    publish(control / "records-follow-ready.json", json.dumps({"epoch": time.time(), "pid": os.getpid(),
+                                                              "dest": str(dest), "budget_bytes": budget}))
     while True:
-        if not quiesced(control) and (control / "endpoint.json").exists():
+        if (control / "endpoint.json").exists():
             pod = cloud.Pod(json.loads((control / "endpoint.json").read_text(encoding="utf-8")), key,
                             control / "known_hosts", subprocess.run, time.sleep)
             try:
-                cycle(pod, state, dest, budget, control)
+                if quiesced(control):
+                    backlog(pod, state, control)  # refreshed after quiescence, for the release record
+                else:
+                    cycle(pod, state, dest, budget, control)
             except cloud.PodUnavailable:
                 pass  # the Pod is starting or gone; nothing was deleted
         if once or (control / "release-authorized.json").exists():

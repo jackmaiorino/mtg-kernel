@@ -59,6 +59,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 import g_references_campaign_v1 as driver
+import g_references_records_v1 as records
 import g_references_v1 as g
 import host_slots_v1
 import nine_deck_cloud_v1 as cloud
@@ -302,6 +303,28 @@ print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 '''
 
 
+POD_QUIESCE_RECORDS = '''import os, time
+open(ARGS["quiesce"], "w").close()
+deadline = time.monotonic() + ARGS["timeout"]
+try:
+    import fcntl
+    with open(ARGS["lock"], "a") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                quiesced = True
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    quiesced = "timed out"
+                    break
+                time.sleep(1)
+except ImportError:
+    quiesced = True
+print(json.dumps({"quiesced": quiesced}))
+'''
+
+
 class Cycle(cloud.Cycle):
     """nine_deck_cloud_v1.Cycle with the G driver (or the qualification tool) and G statuses."""
 
@@ -379,25 +402,18 @@ class Cycle(cloud.Cycle):
                 "campaign ended without completing or a lease stop: " + json.dumps(status))
         self.result["lease_stopped"] = True
 
-    def quiesce_records(self, timeout: float = 300.0):
-        """Stop the record copy-back (g_references_records_v1.py follow) before recovery reads the volume, so
-        nothing it lists is deleted under it: request, then wait for the acknowledgement. A follower that
-        never started, or one that does not answer within ``timeout`` (it then deletes only blocks it had
-        verified), is recorded and recovery proceeds within the lease's deadlines."""
+    def quiesce_records(self, timeout: float = 660.0):
+        """Stop the record copy-back before recovery reads the volume, so nothing it lists is deleted under it.
+        The follower is asked to start no more moves (records-quiesce.json), then, on the Pod, the quiesce flag
+        is set and the copy-back's lock taken: a deletion in progress holds it to its end, and every later one
+        sees the flag and refuses. ``timeout`` covers one deletion (its own bound is 600 s) within the lease's
+        recovery time; past it the record says so and recovery proceeds."""
         request = self.control / "records-quiesce.json"
         if not request.exists():
             write(request, {"epoch": time.time()})
-        if not (self.control / "records-follow-started.json").exists():
-            self.result["records_quiesced"] = "no follower"
-            return
-        asked, ack = read(request)["epoch"], self.control / "records-quiesced.json"
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if ack.exists() and read(ack)["epoch"] >= asked:
-                self.result["records_quiesced"] = True
-                return
-            time.sleep(5)
-        self.result["records_quiesced"] = "timed out"
+        result = self.pod.run(POD_QUIESCE_RECORDS, {"lock": records.POD_LOCK, "quiesce": records.POD_QUIESCE,
+                                                    "timeout": timeout}, timeout=timeout + 60)
+        self.result["records_quiesced"] = result["quiesced"]
 
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""

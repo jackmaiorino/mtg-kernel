@@ -99,6 +99,8 @@ RECORDS_SCHEMA = "g-references-v1/block-records"
 LEASE_1613_ROOT = "/workspace/g-references-v1/campaign/"
 STORAGE_KILLED_1613 = frozenset(f"hot/{run}/b001-a1/dispatch" for run in ("G3", "G4", "G5", "G7", "G8"))
 DRIVER_STARTED = time.time()  # the copy-back stall clock starts no earlier than this driver
+DRAIN_IDLE_SECONDS = 240  # a full window's drain stops without a move in this long, inside the guard's 300 s
+DRAIN = {"moved": -1, "at": DRIVER_STARTED}
 SESSION = f"{os.getpid()}-{DRIVER_STARTED:.0f}"  # this driver session, on its attempts
 
 
@@ -461,12 +463,12 @@ def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
     if not campaign.raw.get("records") or block <= QUALIFICATION_BLOCKS or "sealed" in entry or not entry.get("done"):
         return
     root, name = records_root(campaign), label(block)
-    path = campaign.state / "seals" / f"{run}-{name}.json"
-    if path.exists():  # published before a stopped driver saved its pin: adopt it, never rebuild it
-        value = json.loads(path.read_text(encoding="utf-8"))
+    published = campaign.state / "seals" / f"{run}-{name}.json"
+    if published.exists():  # published before a stopped driver saved its pin: adopt it, never rebuild it
+        value = json.loads(published.read_text(encoding="utf-8"))
         if value.get("schema") != RECORDS_SCHEMA or value.get("run") != run or value.get("block") != block:
-            raise RuntimeError(f"a different seal is published at {path}")
-        entry["sealed"] = pin(path)
+            raise RuntimeError(f"a different seal is published at {published}")
+        entry["sealed"] = pin(published)
         campaign.save_state(run, state)
         return
     sources = [campaign.retained / run / f"b{block:02d}",
@@ -480,7 +482,7 @@ def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
         for path in [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file()):
             files.append({"path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size,
                           "sha256": sha256_file(path)})
-    entry["sealed"] = write_json(path, {"schema": RECORDS_SCHEMA, "run": run, "block": block, "root": str(root),
+    entry["sealed"] = write_json(published, {"schema": RECORDS_SCHEMA, "run": run, "block": block, "root": str(root),
                                         "files": files, "bytes": sum(item["bytes"] for item in files),
                                         "sealed_at": now(), "epoch": time.time()})
     campaign.save_state(run, state)
@@ -564,6 +566,21 @@ def release(campaign: Campaign, run: str, block: int, native: Path) -> None:
         SCRATCH_INFLIGHT.discard(str(native))
 
 
+def drain_idle(campaign: Campaign) -> float:
+    """Seconds since this driver saw the copy-back move a block. A move it sees is driver work for the lease
+    guard (touch), so a drain that progresses keeps the Pod; one that does not is stopped in time."""
+    markers = campaign.state / "moved"
+    count = sum(moved(path) for path in markers.glob("*.json")) if markers.exists() else 0
+    with SCRATCH_LOCK:
+        progressed = count != DRAIN["moved"]
+        if progressed:
+            DRAIN.update(moved=count, at=time.time())
+        idle = time.time() - DRAIN["at"]
+    if progressed:
+        touch(campaign)
+    return idle
+
+
 def hold(campaign: Campaign, run: str, block: int, state: dict, reason: str, announce: bool) -> bool:
     """After a storage refusal: wait (True) while another admitted block can free space, else stop the run
     at this block boundary with the reason (False). A full copy-back window also waits with nothing in flight
@@ -571,6 +588,9 @@ def hold(campaign: Campaign, run: str, block: int, state: dict, reason: str, ann
     with SCRATCH_LOCK:
         idle = not SCRATCH_INFLIGHT
     draining = reason.startswith("records: window full")
+    if draining and drain_idle(campaign) > DRAIN_IDLE_SECONDS and idle:
+        reason = f"records: window full, no copy-back progress in {DRAIN_IDLE_SECONDS} s"  # before the guard's idle bound
+        draining = False
     if reason.startswith(("latched", "records: copy-back stalled")) or (idle and not draining):
         state["stop_reason"] = "storage admission: " + reason
         campaign.save_state(run, state)
@@ -592,9 +612,9 @@ def discarded(campaign: Campaign, run: str, block: int, record: dict, reason: st
 def finished(campaign: Campaign, run: str, block: int, state: dict, entry: dict, record: dict) -> str:
     try:
         result = finish_block(campaign, run, block, state, entry, record)
+        seal(campaign, run, block, state)  # before the slot frees, so the window never undercounts
     finally:  # a tree a raised finishing step left behind keeps its slot and latches admission
         release(campaign, run, block, Path(record["native"]))
-    seal(campaign, run, block, state)
     return result
 
 
