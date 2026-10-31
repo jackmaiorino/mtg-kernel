@@ -30,21 +30,21 @@ def source(tag, sha="2" * 64):
 class GNamespaces(unittest.TestCase):
     def test_the_two_namespaces_are_registered_after_every_earlier_one(self):
         self.assertEqual(G, ("g-references-v1/panel/mirror", "g-references-v1/panel/cross"))
-        self.assertEqual(pilot.PANEL_NAMESPACES[-2:], G)
+        self.assertEqual(pilot.PANEL_NAMESPACES[13:15], G)
         self.assertEqual(pilot.PANEL_NAMESPACES[10:13], (pilot.D1_PANEL_NS_A, pilot.D1_PANEL_NS_B, pilot.D1_H2H_NS))
         self.assertEqual(len(set(pilot.PANEL_NAMESPACES)), len(pilot.PANEL_NAMESPACES))
 
     def test_the_names_differ_from_the_training_namespaces(self):
         for ns in G:
             self.assertNotIn(ns, TRAINING)
-            self.assertNotIn(ns, pilot.PANEL_NAMESPACES[:-2])
+            self.assertNotIn(ns, pilot.PANEL_NAMESPACES[:13])
 
     def test_the_seeds_are_fresh_and_never_shared_between_the_two_panels(self):
         mirror = {pilot.panel_seed(*key, pilot.G_MIRROR_NS) for key in MIRROR_KEYS}
         cross = {pilot.panel_seed(*key, pilot.G_CROSS_NS) for key in CROSS_KEYS}
         self.assertEqual((len(mirror), len(cross)), (len(MIRROR_KEYS), len(CROSS_KEYS)))
         self.assertFalse(mirror & cross)
-        for other in pilot.PANEL_NAMESPACES[:-2]:
+        for other in pilot.PANEL_NAMESPACES[:13]:
             earlier = {pilot.panel_seed(*key, other) for key in CROSS_KEYS + MIRROR_KEYS}
             self.assertFalse((mirror | cross) & earlier, other)
         training = {pilot.seed([ns, o, t, k]) for ns in TRAINING for o, t, k in CROSS_KEYS + MIRROR_KEYS}
