@@ -753,6 +753,38 @@ class StoreClosureTests(Base):
                         self.assertEqual(self.loop(world, polls=20), 'returned')
                     self.assertTrue(failed)
 
+    def test_an_interrupt_while_classifying_a_census_loses_no_id(self):
+        eg.remember(self.root, 'a', 'census', 1.0)        # named already; 'n' is brand new
+        world = World([pod('a'), pod('n')])
+        real = eg.LeaseClient.receipt_ids; fired = []
+
+        def interrupted(client):
+            if not fired:
+                fired.append(True)
+                raise KeyboardInterrupt()
+            return real(client)
+        with self.assertRaises(KeyboardInterrupt), no_network(), failing_handoff({'a', 'n'}), \
+                self.lease_client(world) as client:
+            with mock.patch.object(eg.LeaseClient, 'receipt_ids', interrupted):   # inside the census only
+                client.census()
+        self.assertEqual(fired, [True])
+        self.assertIn('n', world.deletes)                 # brand new and never handed off: released
+        self.assertNotIn('a', world.deletes)              # named: never deleted here, reported instead
+        self.assertIn('a', read(self.root / 'ALERT-pod-not-released.json')['pod_ids'])
+
+    def test_a_closure_mid_pass_holds_stored_ids_the_census_omits(self):
+        self.clock.t = lease()['deadline_epoch']
+        eg.remember(self.root, 'a', 'census', 1.0)
+        world = World([pod('a')]); world.get_failures = -1; world.delete_failures = -1
+
+        def census(current):                              # another guard completes during this census
+            write(self.root / eg.COMPLETION, {'provider_absent': True, 'by': 'other'})
+            return []
+        world.census = census
+        with self.assertRaises(eg.AlertError):
+            self.loop(world, polls=200)                   # the closed exit's own 180 s release bound
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
+
     def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
         with eg.StoreLock(folder):

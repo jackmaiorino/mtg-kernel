@@ -599,10 +599,14 @@ class LeaseClient:
             self.persisted.difference_update(pod_ids); self.durable.difference_update(pod_ids)
         if presence:
             seen = [p for p in pod_ids if valid_id(p)]
-            self.presence_pending.update(p for p in seen if p in self.persisted or p in self.durable
-                                         or self.record_reads_back(p) or p in self.receipt_ids())
-            self.unpersisted.update(seen)
+            # obligation first, as a refresh, before any disk read: an interrupt during classification
+            # leaves every seen ID held (a named one is reported, never deleted)
+            self.presence_pending.update(seen); self.unpersisted.update(seen)
             self.verified_absent.difference_update(pod_ids)
+            receipts = self.receipt_ids()
+            self.presence_pending.difference_update(
+                p for p in seen if not (p in self.persisted or p in self.durable or self.record_reads_back(p)
+                                        or p in receipts))
             return
         fresh = [p for p in pod_ids if valid_id(p) and p not in self.persisted and p not in self.durable]
         self.unpersisted.update(fresh)
@@ -1062,7 +1066,11 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             note('ALERT-pod-not-released.json', {'targets': targets, 'epoch': clock(), 'reason': reason})
         if once or closed_and_settled(root):
             # I4: the LeaseClient exit resolves any ID that is neither durable nor verified absent; a
-            # closure seen mid-run (another guard completed) ends this one through the same bounded exit
+            # closure seen mid-run (another guard completed) ends this one through the same bounded exit,
+            # holding every retained ID this process has not itself confirmed absent
+            if store_closed(root / KNOWN_DIR):
+                client.verified_absent |= confirmed
+                client.register(sorted(p for p in memory if p not in confirmed), presence=False)
             client.retry()
             return
         sleep(POLL_SECONDS)
