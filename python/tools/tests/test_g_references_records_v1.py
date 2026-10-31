@@ -53,6 +53,9 @@ class RecordsTests(unittest.TestCase):
         (self.state / "seals" / "G3-b003.json").write_text(json.dumps(self.seal))
 
     def cycle(self, budget=10**9):
+        lock = patch.object(records, "POD_LOCK", str(Path(self.temp.name) / "g-records.lock"))  # not /root
+        self.addCleanup(lock.stop)
+        lock.start()
         return records.cycle(LocalPod(), str(self.state), self.dest, budget, self.control, stream=stream, codec=GZIP)
 
     def test_a_verified_archive_replaces_the_volume_copy(self):

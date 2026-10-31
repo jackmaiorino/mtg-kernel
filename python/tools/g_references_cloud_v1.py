@@ -413,7 +413,7 @@ class Cycle(cloud.Cycle):
         if not request.exists():
             write(request, {"epoch": time.time()})
         result = self.pod.run(POD_QUIESCE_RECORDS, {"lock": records.POD_LOCK, "quiesce": records.POD_QUIESCE,
-                                                    "timeout": timeout}, timeout=timeout + 60)
+                                                    "timeout": timeout}, timeout=timeout + 60, read_only=True)
         self.result["records_quiesced"] = result["quiesced"]
         if result["quiesced"] is not True:
             return False

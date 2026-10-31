@@ -181,6 +181,7 @@ def archived_bytes(dest: Path) -> int:
 def move(pod, state: str, name: str, dest: Path, budget: int, stream=subprocess.Popen, codec=None) -> dict:
     """Copy, verify and record one sealed block, then delete its volume copy."""
     writer, reader = codec or zstd_codec()
+    began = time.monotonic()
     read = pod.run(READ, {"state": state, "name": name}, timeout=120, read_only=True)
     seal, seal_sha256 = read["seal"], read["sha256"]
     cloud.require(seal.get("schema") == SEAL_SCHEMA and f"{seal['run']}-" in name, "not a block-records seal")
@@ -221,7 +222,8 @@ def move(pod, state: str, name: str, dest: Path, budget: int, stream=subprocess.
     row = {"schema": SCHEMA, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "run": seal["run"],
            "block": seal["block"], "seal": name, "seal_sha256": seal_sha256, "volume_root": seal["root"],
            "archive": str(final), "archive_sha256": archive_sha256, "archive_bytes": final.stat().st_size,
-           "files": len(seal["files"]), "raw_bytes": seal["bytes"], "level": LEVEL}
+           "files": len(seal["files"]), "raw_bytes": seal["bytes"], "level": LEVEL,
+           "seconds": round(time.monotonic() - began, 1)}  # the move's time, for the drain's bound
     moved = dest / "MOVED.jsonl"
     rows = moved_rows(dest)
     if not any((other["run"], other["block"]) == (seal["run"], seal["block"]) for other in rows):

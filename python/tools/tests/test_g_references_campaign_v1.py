@@ -663,7 +663,7 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(len(touched), 2)  # a move it saw is driver work for the guard
             driver.DRAIN["at"] = time.time() - driver.DRAIN_IDLE_SECONDS - 1
             self.assertFalse(driver.hold(self.campaign, "G6", 3, state, "records: window full, 63 sealed", False))
-        self.assertIn("no copy-back progress in 240 s", state["stop_reason"])
+        self.assertIn("window full, 63 sealed; no copy-back progress in 180 s", state["stop_reason"])
 
     def test_a_retained_refusal_drains_while_sealed_blocks_wait(self):
         self.records_campaign()

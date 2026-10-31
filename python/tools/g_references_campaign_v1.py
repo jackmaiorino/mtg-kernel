@@ -99,7 +99,8 @@ RECORDS_SCHEMA = "g-references-v1/block-records"
 LEASE_1613_ROOT = "/workspace/g-references-v1/campaign/"
 STORAGE_KILLED_1613 = frozenset(f"hot/{run}/b001-a1/dispatch" for run in ("G3", "G4", "G5", "G7", "G8"))
 DRIVER_STARTED = time.time()  # the copy-back stall clock starts no earlier than this driver
-DRAIN_IDLE_SECONDS = 240  # a full window's drain stops without a move in this long, inside the guard's 300 s
+DRAIN_IDLE_SECONDS = 180  # a drain stops without a move in this long: polled each 30 s, it ends inside the
+# guard's 300 s work-idle bound with margin for the stop's own writes
 DRAIN = {"moved": -1, "at": DRIVER_STARTED}
 SESSION = f"{os.getpid()}-{DRIVER_STARTED:.0f}"  # this driver session, on its attempts
 
@@ -601,7 +602,7 @@ def hold(campaign: Campaign, run: str, block: int, state: dict, reason: str, ann
     draining = reason.startswith("records: window full") or (
         reason.startswith("retained:") and campaign.raw.get("records") and pending_seals(campaign) > 0)
     if draining and drain_idle(campaign) > DRAIN_IDLE_SECONDS and idle:
-        reason = f"records: window full, no copy-back progress in {DRAIN_IDLE_SECONDS} s"  # before the guard's idle bound
+        reason = f"{reason}; no copy-back progress in {DRAIN_IDLE_SECONDS} s"  # before the guard's idle bound
         draining = False
     if reason.startswith(("latched", "records: copy-back stalled")) or (idle and not draining):
         state["stop_reason"] = "storage admission: " + reason
