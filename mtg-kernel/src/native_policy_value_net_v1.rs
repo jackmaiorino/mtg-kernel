@@ -1450,6 +1450,60 @@ pub(crate) fn sha256_update_f32_le_v1(hasher: &mut Sha256, values: &[f32]) {
     }
 }
 
+/// The parameters as `gpu_exact_v1::net8` reads them: one buffer, and the
+/// offset of each tensor in `net8_forward.cu`'s `MtgLayout` order (input-major
+/// weights, as `LinearV1::weight_t`).
+#[cfg(feature = "gpu-exact-v1")]
+pub(crate) struct GpuExactNet8ParametersV1 {
+    pub(crate) values: Vec<f32>,
+    pub(crate) layout: Vec<i64>,
+}
+
+#[cfg(feature = "gpu-exact-v1")]
+impl NativePolicyValueNetV1 {
+    /// The parameters for the exact GPU forward, or None for a net it does
+    /// not run (the V8 pairing net, or other widths).
+    pub(crate) fn gpu_exact_parameters_v1(&self) -> Option<GpuExactNet8ParametersV1> {
+        if self.pairing.is_some()
+            || v8_inclusion_v1::include_guard_v1(self.config.action_feature_dim).is_some()
+            || self.config.hidden_dim != HIDDEN_DIM_V1
+            || self.config.card_embedding_dim != CARD_EMBEDDING_DIM_V1
+        {
+            return None;
+        }
+        let mut values = Vec::with_capacity(PARAMETER_COUNT_V1);
+        let mut layout = Vec::with_capacity(33);
+        let mut push = |values: &mut Vec<f32>, tensor: &[f32]| {
+            layout.push(values.len() as i64);
+            values.extend_from_slice(tensor);
+        };
+        push(&mut values, &self.card_embedding);
+        let linears = [
+            &self.object_encoder.first,
+            &self.object_encoder.second,
+            &self.edge_encoder.first,
+            &self.edge_encoder.second,
+            &self.node_update.first,
+            &self.node_update.second,
+            &self.state_encoder.first,
+            &self.state_encoder.second,
+            &self.action_ref_encoder.first,
+            &self.action_ref_encoder.second,
+            &self.action_encoder.first,
+            &self.action_encoder.second,
+            &self.scorer_first,
+            &self.scorer_second,
+            &self.value_first,
+            &self.value_second,
+        ];
+        for linear in linears {
+            push(&mut values, &linear.weight_t);
+            push(&mut values, &linear.bias);
+        }
+        Some(GpuExactNet8ParametersV1 { values, layout })
+    }
+}
+
 fn visit_linear_v1(
     visitor: &mut impl FnMut(&'static str, &[usize], &[f32]),
     prefix: &'static str,

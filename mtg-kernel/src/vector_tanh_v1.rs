@@ -53,6 +53,19 @@ pub(crate) fn prepare_v1() {
     }
 }
 
+/// The identity of the `tanhf` every activation computes with, for proofs
+/// that compare another implementation with it (`gpu_exact_v1`): the proof
+/// record key above, when this process is in the state `tanh8` is proved
+/// for. None elsewhere (another OS, MXCSR state or FMA3 setting).
+#[cfg_attr(not(feature = "gpu-exact-v1"), allow(dead_code))]
+pub(crate) fn host_tanhf_identity_v1() -> Option<String> {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    if windows::default_mxcsr() && windows::fma3_enabled() {
+        return windows::key();
+    }
+    None
+}
+
 /// `*v = v.tanh()` for every value, with the same bits.
 pub(crate) fn libm_tanh_in_place_v1(values: &mut [f32]) {
     #[cfg(all(windows, target_arch = "x86_64"))]

@@ -30,28 +30,40 @@ fn run() -> Result<(), String> {
             .join()
             .map_err(|_| "config validation thread panicked".to_owned())?;
     }
-    let mut args = std::env::args_os().skip(1);
-    let path = PathBuf::from(
-        args.next()
-            .ok_or("usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N]")?,
+    let usage = concat!(
+        "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
+        "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL]"
     );
-    let limit = if let Some(flag) = args.next() {
-        if flag != "--max-new-iterations" {
-            return Err("unknown option".into());
-        }
-        Some(
-            args.next()
-                .ok_or("missing iteration limit")?
-                .to_str()
-                .ok_or("invalid iteration limit")?
-                .parse::<usize>()
-                .map_err(|e| e.to_string())?,
-        )
-    } else {
-        None
+    let mut args = std::env::args_os().skip(1);
+    let path = PathBuf::from(args.next().ok_or(usage)?);
+    let mut limit = None;
+    let mut gpu_inference: Option<usize> = None;
+    let mut gpu_latency_us: u64 = 200;
+    let mut gpu_learner: Option<usize> = None;
+    let number = |value: Option<std::ffi::OsString>, what: &str| -> Result<u64, String> {
+        value
+            .ok_or(format!("missing {what}"))?
+            .to_str()
+            .ok_or(format!("invalid {what}"))?
+            .parse::<u64>()
+            .map_err(|e| format!("{what}: {e}"))
     };
-    if args.next().is_some() {
-        return Err("unexpected arguments".into());
+    while let Some(flag) = args.next() {
+        match flag.to_str() {
+            Some("--max-new-iterations") if limit.is_none() => {
+                limit = Some(number(args.next(), "iteration limit")? as usize);
+            }
+            Some("--gpu-exact-inference") if gpu_inference.is_none() => {
+                gpu_inference = Some(number(args.next(), "GPU ordinal")? as usize);
+            }
+            Some("--gpu-exact-learner") if gpu_learner.is_none() => {
+                gpu_learner = Some(number(args.next(), "GPU ordinal")? as usize);
+            }
+            Some("--gpu-exact-latency-us") => {
+                gpu_latency_us = number(args.next(), "latency")?;
+            }
+            _ => return Err(format!("unknown option; {usage}")),
+        }
     }
     if !path.is_absolute() {
         return Err("absolute config path required".into());
@@ -66,7 +78,34 @@ fn run() -> Result<(), String> {
     }
     let config: NativeExpandedTrainingRunV1 =
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    // Exact GPU inference changes timing only: replies equal the CPU
+    // forward's bits, so it is an execution option outside the run identity,
+    // recorded on stderr as its own receipt.
+    if let Some(ordinal) = gpu_inference {
+        #[cfg(feature = "gpu-exact-v1")]
+        mtg_kernel::gpu_exact_v1::install_inference_service_v1(ordinal, gpu_latency_us)?;
+        #[cfg(not(feature = "gpu-exact-v1"))]
+        return Err(format!(
+            "--gpu-exact-inference {ordinal} ({gpu_latency_us} us) needs a build with gpu-exact-v1"
+        ));
+    }
+    // The exact GPU learner likewise gives the CPU backward's gradients.
+    if let Some(ordinal) = gpu_learner {
+        #[cfg(feature = "gpu-exact-v1")]
+        mtg_kernel::gpu_exact_v1::install_learner_v1(ordinal)?;
+        #[cfg(not(feature = "gpu-exact-v1"))]
+        return Err(format!("--gpu-exact-learner {ordinal} needs a build with gpu-exact-v1"));
+    }
     let result = run_native_expanded_training_v1(&config, limit)?;
+    #[cfg(feature = "gpu-exact-v1")]
+    {
+        if let Some(receipt) = mtg_kernel::gpu_exact_v1::inference_receipt_v1() {
+            eprintln!("{}", serde_json::to_string(&receipt?).map_err(|e| e.to_string())?);
+        }
+        if let Some(receipt) = mtg_kernel::gpu_exact_v1::learner_receipt_v1() {
+            eprintln!("{}", serde_json::to_string(&receipt).map_err(|e| e.to_string())?);
+        }
+    }
     println!(
         "{}",
         serde_json::to_string(&result).map_err(|e| e.to_string())?

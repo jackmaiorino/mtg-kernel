@@ -446,6 +446,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]

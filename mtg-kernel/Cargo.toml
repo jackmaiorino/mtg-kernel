@@ -43,6 +43,10 @@ eternal-fixtures = ["standard-magezero-fixtures"]
 # system allocator. Off by default; no effect on any normal build/test.
 count_allocs = []
 cuda-flat-training-capacity-v1 = ["dep:cudarc"]
+# Exact-order GPU kernels (docs/design/gpu_batched_inference_v1.md): results
+# bit-identical to the CPU forward. cudarc loads the driver and NVRTC at run
+# time, so building needs no CUDA toolkit.
+gpu-exact-v1 = ["dep:cudarc"]
 # Experimental production-parameter forward backend. This is deliberately
 # opt-in and is not a matched-training or evidence identity.
 experimental-burn-net8-packed-cuda-v1 = ["dep:burn", "dep:burn-cuda", "dep:cudarc"]

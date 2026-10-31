@@ -1612,3 +1612,40 @@ fn gae_stage_b2_empty_packets_are_the_ordinary_update_with_receipts() {
         );
     }
 }
+
+/// The exact GPU learner (`gpu_exact_v1`) gives every gradient, gauge and
+/// state bit of the CPU update, over two consecutive updates.
+#[cfg(feature = "gpu-exact-v1")]
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
+fn gpu_exact_learner_preserves_every_bit() {
+    let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .parse()
+        .unwrap();
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = many_substeps(&fixture, 200);
+    let batch = physical_groups(&steps);
+    let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    // The CPU references first: once installed, the learner serves every
+    // train step in this process.
+    assert!(!crate::gpu_exact_v1::learner_installed_v1(), "run this test alone");
+    let mut cpu = start.clone();
+    let expected = profiled_step(&mut cpu, &batch, 4).unwrap();
+    let second_fixture = Fixture::capture(&cpu.model);
+    let second_steps = many_substeps(&second_fixture, 120);
+    let second_batch = physical_groups(&second_steps);
+    let expected_second = profiled_step(&mut cpu, &second_batch, 4).unwrap();
+    crate::gpu_exact_v1::install_learner_v1(ordinal).unwrap();
+    let mut gpu = start.clone();
+    let actual = profiled_step(&mut gpu, &batch, 4).unwrap();
+    assert_eq!(gradient_bits(&actual), gradient_bits(&expected));
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    let actual_second = profiled_step(&mut gpu, &second_batch, 4).unwrap();
+    assert_eq!(format!("{actual_second:?}"), format!("{expected_second:?}"));
+    assert_eq!(state_bits(&gpu), state_bits(&cpu));
+    let receipt = crate::gpu_exact_v1::learner_receipt_v1().unwrap();
+    assert_eq!(receipt["updates"], 2, "{receipt}");
+    eprintln!("{receipt}");
+}

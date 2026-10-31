@@ -66,6 +66,10 @@ where
                 .name(format!("expanded-collector-{worker}"))
                 .stack_size(8 * 1024 * 1024)
                 .spawn_scoped(scope, move || {
+                    // Policy forwards on this thread may use the exact GPU
+                    // service when the run installed one (same bits).
+                    #[cfg(feature = "gpu-exact-v1")]
+                    let _gpu = crate::gpu_exact_v1::service::enter_collector_v1();
                     let mut results = Vec::new();
                     let mut busy_seconds = 0.0;
                     let mut episode_seconds = Vec::new();
@@ -830,6 +834,103 @@ mod tests {
                 ordered_parallel_jobs_v1(contexts, episodes.len(), collect, || ()).unwrap();
             assert_eq!(parallel, serial, "worker count {workers}");
         }
+    }
+
+    /// The same four games with every collector forward served by the exact
+    /// GPU service (`gpu_exact_v1`): byte-identical trajectories, and the
+    /// service really answered the forwards.
+    #[cfg(feature = "gpu-exact-v1")]
+    #[test]
+    #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL) and native engine compute"]
+    fn phase1_parallel_episodes_with_gpu_inference_match_serial_cpu() {
+        let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+            .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+            .parse()
+            .unwrap();
+        let template = FrozenPlayPolicyV1::training_fixture_v3();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: "fixture-only-import.json".into(),
+                sha256: "a".repeat(64),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            },
+            checkpoint: None,
+        };
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        model
+            .replace_parameter_snapshot_v1(&template.training_parameters_v3())
+            .unwrap();
+        let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            identity: inference_identity_v1(&source, &template, &state).unwrap(),
+            source: source.clone(),
+        };
+        drop(state);
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episodes: Vec<_> = (0..6)
+            .map(|index| ExpandedEpisodeV1 {
+                id: format!("gpu-exact-parallel-fixture-{index}"),
+                seed: 2_026_103_101 + index,
+                starting_player: (index % 2) as u8,
+                learner_seat: (index % 2) as u8,
+                opponent: (index >= 3).then(|| source.clone()),
+                opponent_kind: None,
+                opponent_search: None,
+                registered: [deck.clone(), deck.clone()],
+                selected: [deck.clone(), deck.clone()],
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
+                opening: None,
+                mulligan_modes: None,
+            })
+            .collect();
+        let context = || {
+            (
+                template.fork_for_collection_v3().unwrap(),
+                LoadedOpponentV1 {
+                    policy: template.fork_for_collection_v3().unwrap(),
+                    behavior: learner.clone(),
+                },
+            )
+        };
+        let collect = |context: &mut (FrozenPlayPolicyV1, LoadedOpponentV1), index: usize| {
+            let opponent = episodes[index].opponent.as_ref().map(|_| &mut context.1);
+            let trajectory = collect_episode(&mut context.0, &learner, opponent, &episodes[index])?;
+            serde_json::to_vec(&trajectory).map_err(err)
+        };
+        // CPU reference on this thread, before any service exists.
+        let mut serial_context = context();
+        let serial: Vec<_> = (0..episodes.len())
+            .map(|index| collect(&mut serial_context, index).unwrap())
+            .collect();
+        if crate::gpu_exact_v1::inference_receipt_v1().is_none() {
+            crate::gpu_exact_v1::install_inference_service_v1(ordinal, 200).unwrap();
+        }
+        let before = crate::gpu_exact_v1::inference_receipt_v1().unwrap().unwrap();
+        for workers in [1, 3, 6] {
+            let contexts = (0..workers).map(|_| context()).collect();
+            let (parallel, _) =
+                ordered_parallel_jobs_v1(contexts, episodes.len(), collect, || ()).unwrap();
+            assert_eq!(parallel, serial, "GPU inference, worker count {workers}");
+        }
+        let after = crate::gpu_exact_v1::inference_receipt_v1().unwrap().unwrap();
+        let served = after["requests"].as_u64().unwrap() - before["requests"].as_u64().unwrap();
+        assert!(served > 100, "the service answered only {served} forwards: {after}");
+        eprintln!("{after}");
     }
 
     /// Line (b) collection sampler end to end through the real commands:
