@@ -15,7 +15,15 @@ the volume still holds, oldest first:
    every member is ``<volume_root>/<member path>``), then, on the Pod, writes
    ``state/moved/<run>-<label>.json`` and deletes the seal's files.
 
-Nothing on the volume is deleted before step 2 passes. A failed cycle leaves the
+The moved marker first records the verified copy (``deleted`` false); it says
+``deleted`` true only once every file is confirmed gone, and only then does the
+driver count the block moved, so an interrupted deletion is retried. Nothing on
+the volume is deleted before step 2 passes. Before the lease controller's
+recovery reads the volume it writes ``records-quiesce.json``; the follower then
+moves nothing more and acknowledges (``records-quiesced.json``). Each cycle
+records what the volume still holds (``records-backlog.json``), so a lease
+released with sealed blocks unmoved leaves them named for the next lease, whose
+follower drains them first. A failed cycle leaves the
 volume copy, writes ``<control>/ALERT-records.json`` and retries; the driver's
 own latch stops new blocks while the copy-back moves nothing (``records.stall_seconds``)
 or the window of unmoved blocks is full. An archive that would pass the
@@ -40,14 +48,19 @@ import time
 import nine_deck_cloud_v1 as cloud
 
 LEVEL = 10
+BUDGET_ALERT = 0.8
 SCHEMA = "g-references-v1/records-moved"
 SEAL_SCHEMA = "g-references-v1/block-records"
 
 LIST = '''import os
 seals, moved = ARGS["state"] + "/seals", ARGS["state"] + "/moved"
 names = sorted(n for n in os.listdir(seals) if n.endswith(".json")) if os.path.isdir(seals) else []
-done = set(os.listdir(moved)) if os.path.isdir(moved) else set()
-print(json.dumps({"pending": [n for n in names if n not in done]}))
+def deleted(name):
+    try:
+        return json.load(open(moved + "/" + name)).get("deleted") is True
+    except (OSError, ValueError):
+        return False
+print(json.dumps({"pending": [n for n in names if not deleted(n)]}))
 '''
 
 READ = '''path = ARGS["state"] + "/seals/" + ARGS["name"]
@@ -67,9 +80,13 @@ need(digest(path) == ARGS["seal_sha256"], "seal changed since it was copied")
 seal = json.load(open(path))
 os.makedirs(ARGS["state"] + "/moved", exist_ok=True)
 marker = ARGS["state"] + "/moved/" + ARGS["name"]
-with open(marker + ".partial", "w") as stream:
-    json.dump(ARGS["marker"], stream, indent=1, sort_keys=True)
-os.replace(marker + ".partial", marker)
+def publish(value):
+    with open(marker + ".partial", "w") as stream:
+        json.dump(value, stream, indent=1, sort_keys=True)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(marker + ".partial", marker)
+publish({**ARGS["marker"], "deleted": False})  # copied and verified; the volume copy not yet gone
 parents = set()
 for item in seal["files"]:
     target = os.path.join(seal["root"], item["path"])
@@ -84,6 +101,9 @@ for parent in sorted(parents, key=lambda p: -p.count("/")):
         os.rmdir(os.path.join(seal["root"], parent))
     except OSError:
         pass
+left = [item["path"] for item in seal["files"] if os.path.lexists(os.path.join(seal["root"], item["path"]))]
+need(not left, "volume copy not gone: " + ", ".join(left[:5]))
+publish({**ARGS["marker"], "deleted": True})  # only now does the driver count the block moved
 print(json.dumps({"deleted": len(seal["files"])}))
 '''
 
@@ -133,6 +153,7 @@ def move(pod, state: str, name: str, dest: Path, budget: int, stream=subprocess.
     folder.mkdir(parents=True, exist_ok=True)
     final = folder / name.replace(".json", ".tar.zst")
     partial = final.with_name(final.name + ".partial")
+    sidecar = folder / name.replace(".json", ".seal.json")
     if not final.exists():
         with stream([*pod.ssh, "python3", "-B", "-", f"{state}/seals/{name}"], stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
@@ -144,24 +165,31 @@ def move(pod, state: str, name: str, dest: Path, budget: int, stream=subprocess.
             error = child.stderr.read().decode(errors="replace")
         cloud.require(child.returncode == 0, "record stream failed: " + error[-400:])
         verify(partial, seal, reader)
-        size = partial.stat().st_size
-        if archived_bytes(dest) + size > budget:
+        size, used = partial.stat().st_size, archived_bytes(dest)
+        if used + size > budget:
             partial.unlink()
             raise RuntimeError(f"the study's record budget on E: ({budget} B) would be passed")
+        if used + size > BUDGET_ALERT * budget:  # warn well before the budget stalls the study
+            (dest / "ALERT-budget.json").write_text(json.dumps({"used_bytes": used + size, "budget_bytes": budget}),
+                                                    encoding="utf-8")
         with partial.open("rb+") as handle:
             os.fsync(handle.fileno())
         os.replace(partial, final)
-        (folder / name.replace(".json", ".seal.json")).write_text(json.dumps(seal, indent=1, sort_keys=True),
-                                                                  encoding="utf-8")
     verify(final, seal, reader)  # again from its final place, before anything on the volume goes
+    if not sidecar.exists() or json.loads(sidecar.read_text(encoding="utf-8")) != seal:
+        with sidecar.open("w", encoding="utf-8") as handle:  # the archive's own seal, durable before deletion
+            handle.write(json.dumps(seal, indent=1, sort_keys=True))
+            handle.flush()
+            os.fsync(handle.fileno())
     archive_sha256 = sha256_file(final)
     row = {"schema": SCHEMA, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "run": seal["run"],
            "block": seal["block"], "seal": name, "seal_sha256": seal_sha256, "volume_root": seal["root"],
            "archive": str(final), "archive_sha256": archive_sha256, "archive_bytes": final.stat().st_size,
            "files": len(seal["files"]), "raw_bytes": seal["bytes"], "level": LEVEL}
     moved = dest / "MOVED.jsonl"
-    rows = moved.read_text(encoding="utf-8").splitlines() if moved.exists() else []
-    if not any(json.loads(line).get("seal_sha256") == seal_sha256 for line in rows if line.strip()):
+    rows = [json.loads(line) for line in moved.read_text(encoding="utf-8").splitlines() if line.strip()] \
+        if moved.exists() else []
+    if not any((other["run"], other["block"]) == (seal["run"], seal["block"]) for other in rows):
         with moved.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
             handle.flush()
@@ -172,11 +200,25 @@ def move(pod, state: str, name: str, dest: Path, budget: int, stream=subprocess.
     return row
 
 
+def quiesced(control: Path) -> bool:
+    """The lease controller asked the copy-back to stop before its recovery reads the volume: acknowledge."""
+    request = control / "records-quiesce.json"
+    if not request.exists():
+        return False
+    (control / "records-quiesced.json").write_text(json.dumps({"epoch": time.time()}), encoding="utf-8")
+    return True
+
+
 def cycle(pod, state: str, dest: Path, budget: int, control: Path, **options) -> int:
     """Move every pending sealed block; on a failure, alert and stop this cycle (the next one retries)."""
     pending = pod.run(LIST, {"state": state}, timeout=120, read_only=True)["pending"]
+    (control / "records-backlog.json").write_text(json.dumps(
+        {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "state": state, "pending": pending},
+        indent=1), encoding="utf-8")  # what the volume still holds, should this be the lease's last cycle
     moved = 0
     for name in pending:
+        if quiesced(control):
+            break
         try:
             move(pod, state, name, dest, budget, **options)
             moved += 1
@@ -191,7 +233,7 @@ def cycle(pod, state: str, dest: Path, budget: int, control: Path, **options) ->
 def follow(control: Path, package: Path, dest: Path, budget: int, key: Path, interval: float, once: bool) -> int:
     state = json.loads((package / "campaign.json").read_text(encoding="utf-8"))["roots"]["state"]
     while True:
-        if (control / "endpoint.json").exists():
+        if not quiesced(control) and (control / "endpoint.json").exists():
             pod = cloud.Pod(json.loads((control / "endpoint.json").read_text(encoding="utf-8")), key,
                             control / "known_hosts", subprocess.run, time.sleep)
             try:

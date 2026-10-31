@@ -245,10 +245,9 @@ def scratch_roots(storage):
     return [path.resolve() for path in raw]
 
 
-def validate_storage(storage, extra=None):
-    cap = storage["max_logical_bytes"]
-    require(type(cap) is int and 0 < cap <= CAP, "storage cap exceeds 192 GiB")
-    require(storage["reserve_bytes"] >= DISK_RESERVE_BYTES, "reserve below 60 GiB")
+def accounting_bytes(storage):
+    """The accounting roots (checked: absolute, link-free, disjoint, apart from any scratch root) and the
+    logical bytes of every file under them."""
     raw_roots = [Path(path) for path in storage["accounting_roots"]]
     require(all(path.is_absolute() for path in raw_roots), "absolute accounting roots required")
     for raw in raw_roots:
@@ -275,6 +274,15 @@ def validate_storage(storage, extra=None):
                     except FileNotFoundError:
                         # Jobs sharing this root delete their own outputs; a file gone mid-walk is freed space.
                         pass
+    return roots, logical
+
+
+def validate_storage(storage, extra=None):
+    cap = storage["max_logical_bytes"]
+    require(type(cap) is int and 0 < cap <= CAP, "storage cap exceeds 192 GiB")
+    require(storage["reserve_bytes"] >= DISK_RESERVE_BYTES, "reserve below 60 GiB")
+    roots, logical = accounting_bytes(storage)
+    for root in roots:
         anchor = root
         while not anchor.exists():
             anchor = anchor.parent
@@ -304,17 +312,17 @@ def running_storage(storage):
     volume, margin = spec["volume_bytes"], spec["margin_fraction"]
     require(type(volume) is int and volume > 0 and isinstance(margin, (int, float)) and 0 <= margin < 1,
             "invalid storage emergency spec")
-    try:
-        result = validate_storage({**storage, "max_logical_bytes": min(CAP, math.floor(volume * (1 - margin)))}, 0)
-    except ValueError as error:
-        raise ValueError(f"storage emergency: {error}") from None
+    # A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes.
+    _, logical = accounting_bytes(storage)
+    require(logical <= volume * (1 - margin), "storage emergency: the volume's use passed its provisioned size "
+                                              "less the margin")
     for root in scratch_roots(storage):
         anchor = root
         while not anchor.exists():
             anchor = anchor.parent
         disk = shutil.disk_usage(anchor)
         require(disk.free >= margin * disk.total, "storage emergency: scratch volume free space below its margin")
-    return {**result, "cap_bytes": storage["max_logical_bytes"]}
+    return {"logical_bytes": logical, "cap_bytes": storage["max_logical_bytes"]}
 
 
 def runtime_for(request, resolve=checked):

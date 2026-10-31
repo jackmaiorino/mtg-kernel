@@ -371,15 +371,39 @@ class Cycle(cloud.Cycle):
         if all(value == "complete" or run in failed for run, value in status.items()):
             self.result["complete"] = True
             return
-        exhausted = {run for run, reason in reasons.items() if reason == "lease_time_exhausted" and status[run] == "stopped"}
+        # Resumable at a block boundary: the lease's time, or storage admission (AMENDMENT-2.md: the record
+        # window, its stall latch or a scratch refusal; the next lease drains the window and resumes).
+        exhausted = {run for run, reason in reasons.items() if status[run] == "stopped"
+                     and (reason == "lease_time_exhausted" or reason.startswith("storage admission: "))}
         require(exhausted and all(status[run] == "complete" or run in exhausted or run in failed for run in status),
                 "campaign ended without completing or a lease stop: " + json.dumps(status))
         self.result["lease_stopped"] = True
+
+    def quiesce_records(self, timeout: float = 300.0):
+        """Stop the record copy-back (g_references_records_v1.py follow) before recovery reads the volume, so
+        nothing it lists is deleted under it: request, then wait for the acknowledgement. A follower that
+        never started, or one that does not answer within ``timeout`` (it then deletes only blocks it had
+        verified), is recorded and recovery proceeds within the lease's deadlines."""
+        request = self.control / "records-quiesce.json"
+        if not request.exists():
+            write(request, {"epoch": time.time()})
+        if not (self.control / "records-follow-started.json").exists():
+            self.result["records_quiesced"] = "no follower"
+            return
+        asked, ack = read(request)["epoch"], self.control / "records-quiesced.json"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if ack.exists() and read(ack)["epoch"] >= asked:
+                self.result["records_quiesced"] = True
+                return
+            time.sleep(5)
+        self.result["records_quiesced"] = "timed out"
 
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""
         if not self.remote_ready:
             return
+        self.quiesce_records()
         since = 0 if self.recover_all else None if self.worker is None else self.worker["epoch"] - 60
         packed = self.pod.run(POD_RECOVER, {"control": self.remote_control, "campaign": str(self.base / "campaign"),
                                             "guard": self.guard, "locks": cloud.LOCK_ROOT, "since": since},

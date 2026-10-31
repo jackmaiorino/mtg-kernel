@@ -586,6 +586,9 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             with self.assertRaisesRegex(ValueError, "storage emergency"):
                 dispatch.running_storage(storage)
             storage["emergency"]["volume_bytes"] = observed * 10
+            low = type("Disk", (), {"free": 1, "total": 200*1024**3})()
+            with patch.object(dispatch.shutil, "disk_usage", return_value=low):  # a network volume's df says nothing
+                self.assertEqual(dispatch.running_storage(storage)["logical_bytes"], observed)
             other = tempfile.TemporaryDirectory()
             self.addCleanup(other.cleanup)
             storage["scratch_roots"] = [other.name]

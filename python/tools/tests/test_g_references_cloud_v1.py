@@ -330,6 +330,22 @@ class LeaseTests(unittest.TestCase):
         self.assertEqual(result["failed_lineages"], ["G3"])
         with self.assertRaises(ValueError):
             self.conclude({"G1": done, "G2": {"status": "stopped", "blocks_done": []}})
+        held = {"status": "stopped", "blocks_done": [3], "stop_reason": "storage admission: records: copy-back stalled"}
+        self.assertTrue(self.conclude({"G1": done, "G2": held})["lease_stopped"])  # amendment 2: resumable
+
+    def test_recovery_waits_for_the_record_copy_back_to_quiesce(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+            cycle.control, cycle.result = Path(temp), {}
+            cycle.quiesce_records(timeout=1)
+            self.assertEqual(cycle.result["records_quiesced"], "no follower")
+            self.assertTrue((Path(temp) / "records-quiesce.json").exists())
+            (Path(temp) / "records-follow-started.json").write_text("{}")
+            cycle.quiesce_records(timeout=0.1)
+            self.assertEqual(cycle.result["records_quiesced"], "timed out")
+            (Path(temp) / "records-quiesced.json").write_text(json.dumps({"epoch": time.time() + 1}))
+            cycle.quiesce_records(timeout=1)
+            self.assertIs(cycle.result["records_quiesced"], True)
 
     def test_ledger_and_caps(self):
         with tempfile.TemporaryDirectory() as temp:
