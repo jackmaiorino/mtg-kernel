@@ -1065,6 +1065,9 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     if cfg.mode == "s4a-win-check" {
         return stage4a::run_win_check(&cfg);
     }
+    if cfg.mode == "s4a-w4" {
+        return stage4a::run_w4(&cfg);
+    }
     let policy = load_policy_v1(&cfg.source)?;
     if stage4a::is_mode(&cfg.mode) {
         return stage4a::run(&cfg, &policy);

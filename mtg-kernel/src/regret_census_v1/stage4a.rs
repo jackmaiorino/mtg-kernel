@@ -81,6 +81,8 @@ mod seeds;
 mod sharing;
 mod tree;
 mod utility_root;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod w4_combat;
 mod win_check;
 mod wm_dump;
 pub(crate) use ex1_search::{
@@ -117,6 +119,19 @@ pub(super) fn run_win_check(cfg: &super::CensusConfigV1) -> Result<(), String> {
     win_check::run(cfg)
 }
 
+/// `s4a-w4` loads its own policies from the panel sources, so `run_v1`
+/// calls it before loading one. It needs the evaluator's loader, which the
+/// `experimental-burn-net8-packed-cuda-v1` feature builds.
+pub(super) fn run_w4(cfg: &super::CensusConfigV1) -> Result<(), String> {
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    return w4_combat::run(cfg);
+    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+    {
+        let _ = cfg;
+        Err("s4a-w4 requires the experimental-burn-net8-packed-cuda-v1 feature".into())
+    }
+}
+
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
@@ -128,6 +143,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-bank-parity"
             | "s4a-label-replay"
             | "s4a-win-check"
+            | "s4a-w4"
             | "s4a-bank-trace"
             | "s4a-refresh"
             | "s4a-branch"
