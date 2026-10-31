@@ -138,7 +138,7 @@ thread_local! {
 // `Arc`), so its JSON volume is far larger than what it holds. Each enclosing
 // row writes two whole worlds (about 170 KB of JSON per row by decision 1,400
 // of a random game), and every row past the prefix is serialized and parsed
-// again on each validation, so the budget covers a 6,000-decision game.
+// again on each validation, so the budget holds about 12,000 such rows.
 pub(super) const REPLAY_PREFIX_EVENTS: usize = 1 << 16;
 pub(super) const REPLAY_PREFIX_CANONICAL_BYTES: usize = 1 << 31;
 struct ReplayPrefixRow {
