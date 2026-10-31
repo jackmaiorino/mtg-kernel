@@ -272,6 +272,14 @@ class PresenceError(SyncError):
     """A presence revision could not be read or advanced."""
 
 
+class LockError(SyncError):
+    """The store lock could not be set up or acquired."""
+
+
+class ClosureUnknown(SyncError):
+    """The completion-record probe failed: the store is not known to be open."""
+
+
 class StoreClosed(RuntimeError):
     """The guard completed: no supervisor reads the store any more, so a handoff to it is refused."""
 
@@ -284,15 +292,19 @@ def lease_root(folder):
     return Path(folder).parent.parent
 
 
-def store_closed(folder):
-    """The guard's completion record is the store's closure: once it exists (readable or not) no
-    supervisor reads the store, so nothing is handed off to it. A probe that fails counts as open,
-    which is the store's behavior without a closure, so a failing probe never blocks a handoff, a
-    cleanup or an ALERT."""
+def store_state(folder):
+    """'closed' once the guard's completion record exists (readable or not), 'open' before, 'unknown'
+    when the probe fails. Nothing is handed off to a store that is not known open, and an unknown state
+    never discharges an obligation; everywhere else it counts as open (main's behavior), so it never
+    shortens supervision, blocks a cleanup or an ALERT, or makes a guardian-owned Pod deletable."""
     try:
-        return (lease_root(folder) / COMPLETION).exists()
+        return 'closed' if (lease_root(folder) / COMPLETION).exists() else 'open'
     except Exception:  # noqa: BLE001
-        return False
+        return 'unknown'
+
+
+def store_closed(folder):
+    return store_state(folder) == 'closed'
 
 
 def presence_path(folder, pod_id):
@@ -329,27 +341,49 @@ class StoreLock:
             fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
     def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = open(self.path, 'a+b')
-        deadline = time.monotonic() + STORE_LOCK_SECONDS
+        """Every failure to set up or acquire the lock is a SyncError (never a store fault)."""
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.handle = open(self.path, 'a+b')
+            deadline = time.monotonic() + STORE_LOCK_SECONDS
+        except Exception as e:  # noqa: BLE001
+            raise LockError('store lock setup: ' + type(e).__name__) from e
         while True:
             try:
                 self._try()
                 return self
-            except OSError:
-                if time.monotonic() >= deadline:
-                    self.handle.close()
-                    raise LockTimeout('store lock held past %s s' % STORE_LOCK_SECONDS)
-                time.sleep(0.05)
+            except Exception:  # noqa: BLE001 - held elsewhere (or not yet acquirable): retried to the bound
+                pass
+            try:
+                expired = time.monotonic() >= deadline
+                if not expired:
+                    time.sleep(0.05)
+            except Exception:  # noqa: BLE001
+                expired = True
+            if expired:
+                self._close()
+                raise LockTimeout('store lock held past %s s' % STORE_LOCK_SECONDS)
+
+    def _release(self):
+        if os.name == 'nt':
+            import msvcrt
+            self.handle.seek(0)
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+    def _close(self):
+        try:
+            self.handle.close()
+        except Exception:  # noqa: BLE001 - the OS releases the lock with the handle or the process
+            pass
 
     def __exit__(self, *exc):
+        """Best effort: closing the handle releases the lock, so a teardown failure never replaces the
+        body's result or exception."""
         try:
-            if os.name == 'nt':
-                import msvcrt
-                self.handle.seek(0)
-                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
-        finally:
-            self.handle.close()
+            self._release()
+        except Exception:  # noqa: BLE001
+            pass
+        self._close()
         return False
 
 
@@ -359,8 +393,11 @@ def handoff_in(folder, pod_id, role, epoch, presence=True):
     GET or POST just returned, known or not) also advances the ID's presence revision, which voids the
     guard's absence confirmation of that ID."""
     with StoreLock(folder):
-        if store_closed(folder):
+        state = store_state(folder)
+        if state == 'closed':
             raise StoreClosed('the guard completed; the caller keeps ' + pod_id)
+        if state != 'open':
+            raise ClosureUnknown('closure of the store unknown; the caller keeps ' + pod_id)
         remember_in(folder, pod_id, role, epoch)
         value = read(Path(folder) / (pod_id + '.json'))
         if presence:
@@ -384,7 +421,7 @@ def complete_store(root, memory, basis, settled, errors, record):
     folder = Path(root) / KNOWN_DIR
     try:
         with StoreLock(folder):
-            if store_closed(folder):          # another guard completed first: its record stands
+            if store_state(folder) != 'open':  # another guard completed first (its record stands), or unknown
                 return False
             if any(read_presence(folder, p) != basis.get(p) for p in memory):
                 return False
@@ -401,7 +438,10 @@ def complete_store(root, memory, basis, settled, errors, record):
 def closed_and_settled(root):
     """The store is closed and no create is unresolved: supervision may end through the bounded exit. A
     stale or forged completion never ends supervision of a create that may still allocate a Pod."""
-    return store_closed(Path(root) / KNOWN_DIR) and not create_unresolved(root) and not ambiguous_unresolved(root)
+    try:
+        return store_closed(Path(root) / KNOWN_DIR) and not create_unresolved(root) and not ambiguous_unresolved(root)
+    except Exception:  # noqa: BLE001 - an unreadable record means unresolved: supervision goes on
+        return False
 
 
 def record_create_attempt(lease_dir, value):
@@ -409,8 +449,11 @@ def record_create_attempt(lease_dir, value):
     so a create never starts after completion's final check (I4)."""
     folder = Path(lease_dir) / 'known-pods'
     with StoreLock(folder):
-        if store_closed(folder):
+        state = store_state(folder)
+        if state == 'closed':
             raise StoreClosed('the guard completed; no create after completion')
+        if state != 'open':
+            raise ClosureUnknown('closure of the store unknown; no create')
         write(Path(lease_dir) / 'create-attempt.json', value)
 
 
@@ -551,7 +594,7 @@ class LeaseClient:
         readable receipt naming the ID. Destructive cleanup never touches such an ID. After the guard
         closed the store nothing is durable: this process keeps every ID it holds. An ID seen alive whose
         presence handoff has not landed is never durable, whatever older record names it."""
-        if store_closed(self.folder) or pod_id in self.presence_pending:
+        if store_state(self.folder) != 'open' or pod_id in self.presence_pending:
             return False
         if pod_id in self.durable or self.record_reads_back(pod_id) or pod_id in self.receipt_ids():
             self.persisted.add(pod_id); self.unpersisted.discard(pod_id)

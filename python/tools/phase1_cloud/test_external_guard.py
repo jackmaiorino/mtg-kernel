@@ -812,22 +812,81 @@ class StoreClosureTests(Base):
         self.assertTrue((self.root / eg.QUIET_ALERT).exists())
         self.assertIsNone(self.completion())
 
-    def test_a_persistently_failing_closure_probe_still_hands_a_post_id_off(self):
-        world = World([])
+    def failing_completion_probe(self):
         real = Path.exists
 
         def failing(path, *args, **kwargs):
             if path.name == eg.COMPLETION:
                 raise PermissionError('stat denied')
             return real(path, *args, **kwargs)
+        return mock.patch.object(Path, 'exists', failing)
+
+    def test_a_persistently_failing_closure_probe_releases_a_post_id_it_cannot_hand_off(self):
+        world = World([])
 
         def poster(body):                                 # a valid ID under an unexpected name
             world.pods['w'] = {'id': 'w', 'name': 'someone-else', 'costPerHr': 0.5}
             return dict(world.pods['w'])
-        with no_network(), mock.patch.object(Path, 'exists', failing), self.lease_client(world) as client:
+        with no_network(), self.failing_completion_probe(), self.lease_client(world) as client:
             client.post({'name': NAME}, poster=poster)    # the fault persists through the exit
-        self.assertEqual(eg.known_pods(self.root)['w'], 'receipt')   # durably handed off, as main does
-        self.assertFalse(eg.store_closed(self.root / eg.KNOWN_DIR))
+            self.assertEqual(eg.store_state(self.root / eg.KNOWN_DIR), 'unknown')
+        # a store not known open takes no handoff: the creator released the Pod itself and verified it
+        self.assertIn(('DELETE', 'w'), world.log)
+        self.assertNotIn('w', world.pods)
+
+    def test_an_unknown_closure_never_discharges_a_pass_that_raced_completion(self):
+        world = World([pod('late')])
+        with no_network(), self.lease_client(world) as client:
+            write(self.root / eg.COMPLETION, {'provider_absent': True, 'by': 'other'})   # completion lands
+            with self.failing_completion_probe():          # and every later probe fails
+                client.census()
+                self.assertIn('late', client.unpersisted)
+                self.assertFalse(client.durable_now('late'))
+        self.assertIn(('DELETE', 'late'), world.log)
+        self.assertNotIn('late', world.pods)
+
+    def test_a_lock_setup_failure_never_deletes_a_healthy_primary(self):
+        world = self.healthy_primary()
+        real = Path.mkdir
+
+        def denied(path, *args, **kwargs):
+            if path.name == 'lease':
+                raise PermissionError('mkdir denied')
+            return real(path, *args, **kwargs)
+        with mock.patch.object(Path, 'mkdir', denied):
+            self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertEqual(world.deletes, [])               # main takes no lock and keeps it too
+        self.assertIsNone(self.status()['reason'])
+
+    def test_a_lock_teardown_failure_never_undoes_the_work_inside_it(self):
+        with mock.patch.object(eg.StoreLock, '_release', side_effect=OSError('unlock failed')):
+            eg.record_create_attempt(self.root / 'lease', {'epoch': 1.0})   # the create goes on to its POST
+            self.assertTrue(eg.handoff(self.root, 'a', 'census', 1.0))
+        self.assertTrue((self.root / 'lease/create-attempt.json').exists())
+        self.assertEqual(eg.known_pods(self.root)['a'], 'census')
+        lock = eg.StoreLock(self.root / eg.KNOWN_DIR)
+        lock.handle = mock.Mock(close=mock.Mock(side_effect=OSError('close failed')))
+        lock._close()                                     # a failing close is swallowed: the OS releases it
+
+    def test_a_failed_startup_closure_read_never_skips_deadline_cleanup(self):
+        self.complete(at_deadline=True)
+        eg.remember(self.root, 'a', 'census', 1.0)
+        write(self.root / 'lease/create-attempt.json', {'epoch': 1.0})
+        write(self.root / 'lease/created-pod.json', {'id': 'a', 'name': NAME})
+        world = World([pod('a')])
+        real = Path.exists
+
+        def failing(path, *args, **kwargs):
+            if path.name == 'create-attempt.json':
+                raise PermissionError('stat denied')
+            return real(path, *args, **kwargs)
+        with mock.patch.object(Path, 'exists', failing):
+            try:
+                self.loop(world, polls=60)
+            except PermissionError:
+                pass                                      # main raises too, after deleting the Pod
+        self.assertIn(('DELETE', 'a'), world.log)
+        self.assertNotIn('a', world.pods)
 
     def test_a_full_disk_never_deletes_a_healthy_recorded_primary(self):
         self.record('pod1'); self.started()
