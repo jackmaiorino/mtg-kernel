@@ -676,6 +676,18 @@ class DriverTests(unittest.TestCase):
             self.addCleanup(driver.DRAIN.update, {"moved": -1, "at": driver.DRIVER_STARTED})
             self.assertTrue(driver.hold(self.campaign, "G6", 3, state, "retained: over the cap", True))
 
+    def test_a_restart_reconciles_seals_and_reserves_resumed_completions_first(self):
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.records_campaign()
+        for run, blocks in (("G1", {"3": {"attempts": [], "done": True}}),
+                            ("G2", {"3": {"attempts": [{"attempt": 1, "native": "n-G2", "outcome": "complete"}]}})):
+            self.campaign.save_state(run, {"run": run, "status": "running", "blocks": blocks})
+        sealed = []
+        with patch.object(driver, "seal", lambda campaign, run, block, state: sealed.append((run, block))):
+            driver.reconcile(self.campaign, ["G1", "G2"])
+        self.assertEqual(sealed, [("G1", 3)])
+        self.assertEqual(driver.SCRATCH_INFLIGHT, {"n-G2"})  # counted by the window before any admission
+
     def test_a_finished_block_is_sealed_before_its_slot_frees(self):
         order = []
         with patch.object(driver, "finish_block", lambda *a: order.append("finish") or "complete"), \

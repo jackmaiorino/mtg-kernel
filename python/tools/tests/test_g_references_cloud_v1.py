@@ -336,21 +336,32 @@ class LeaseTests(unittest.TestCase):
         self.assertTrue(self.conclude({"G1": done, "G2": held})["lease_stopped"])  # amendment 2: resumable
 
     def test_recovery_first_quiesces_the_record_copy_back_on_the_pod(self):
-        with tempfile.TemporaryDirectory() as temp:
-            cycle = gcloud.Cycle.__new__(gcloud.Cycle)
-            cycle.control, cycle.result = Path(temp), {}
-            calls = []
+        for answer in (True, "timed out"):
+            with tempfile.TemporaryDirectory() as temp:
+                cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+                cycle.control, cycle.result, cycle.base = Path(temp), {}, Path("/workspace/g")
+                cycle.remote_ready, calls = True, []
 
-            class Pod:
-                def run(self, program, args, timeout=30, read_only=False):
-                    calls.append((program, args))
-                    return {"quiesced": True}
-            cycle.pod = Pod()
-            cycle.quiesce_records(timeout=5)
-        self.assertTrue(calls[0][0] is gcloud.POD_QUIESCE_RECORDS)
-        self.assertEqual((calls[0][1]["lock"], calls[0][1]["quiesce"]),
-                         (gcloud.records.POD_LOCK, gcloud.records.POD_QUIESCE))
-        self.assertIs(cycle.result["records_quiesced"], True)
+                class Pod:
+                    def run(self, program, args, timeout=30, read_only=False):
+                        calls.append((program, args))
+                        if program is gcloud.records.LIST:
+                            return {"pending": ["G3-b005.json"]}
+                        if program is gcloud.POD_QUIESCE_RECORDS:
+                            return {"quiesced": answer}
+                        raise AssertionError("recovery enumerated the volume")
+                cycle.pod = Pod()
+                if answer is True:
+                    self.assertTrue(cycle.quiesce_records(timeout=5))
+                    self.assertEqual(json.loads((Path(temp) / "records-backlog.json").read_text())["pending"],
+                                     ["G3-b005.json"])  # the final backlog, after quiescence
+                else:
+                    cycle.recover()  # no positive quiescence: recovery does not enumerate the volume
+                    self.assertTrue(cycle.result["recovery"].startswith("skipped"))
+                    self.assertNotIn("recovered", cycle.result)
+            self.assertTrue(calls[0][0] is gcloud.POD_QUIESCE_RECORDS)
+            self.assertEqual((calls[0][1]["lock"], calls[0][1]["quiesce"]),
+                             (gcloud.records.POD_LOCK, gcloud.records.POD_QUIESCE))
 
     @unittest.skipIf(sys.platform == "win32", "fcntl: the Pod is Linux")
     def test_the_pod_quiesce_waits_for_a_deletion_in_progress(self):

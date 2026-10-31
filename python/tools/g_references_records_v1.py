@@ -225,6 +225,8 @@ def move(pod, state: str, name: str, dest: Path, budget: int, stream=subprocess.
     moved = dest / "MOVED.jsonl"
     rows = moved_rows(dest)
     if not any((other["run"], other["block"]) == (seal["run"], seal["block"]) for other in rows):
+        if moved.exists() and moved.stat().st_size and not moved.read_bytes().endswith(b"\n"):
+            publish(moved, "".join(json.dumps(other, sort_keys=True) + "\n" for other in rows))  # every kept row
         with moved.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
             handle.flush()

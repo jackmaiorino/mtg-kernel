@@ -643,6 +643,7 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             last["outcome"] = "lost"
             for key in FINISH_KEYS:
                 entry.pop(key, None)
+            release(campaign, run, block, Path(last["native"]))  # gone: its reservation frees
             campaign.save_state(run, state)
             campaign.event(run=run, block=block, attempt=last["attempt"], kind="native-lost")
         elif last.get("outcome") == "complete":
@@ -979,10 +980,25 @@ def drive(campaign: Campaign, run: str) -> None:
         campaign.event(run=run, kind="run-" + state["status"])
 
 
+def reconcile(campaign: Campaign, runs: list[str]) -> None:
+    """Before any lineage thread admits work (AMENDMENT-2.md item 4, exact window): seal every finished block a
+    stopped driver left unsealed, and reserve a slot for every completed attempt still to be finished, so
+    the window counts it before a fresh block can enter."""
+    for run in runs:
+        state = campaign.run_state(run)
+        for key, entry in sorted(state["blocks"].items(), key=lambda item: int(item[0])):
+            if entry.get("done"):
+                seal(campaign, run, int(key), state)
+            elif entry.get("attempts") and entry["attempts"][-1].get("outcome") == "complete":
+                with SCRATCH_LOCK:
+                    SCRATCH_INFLIGHT.add(entry["attempts"][-1]["native"])  # freed by its finishing step
+
+
 def run(campaign: Campaign, runs: list[str]) -> int:
     token = os.environ.get(reservations.TOKEN_ENV)
     if not token or reservations.status(token).get("token_fate") != "holds":
         raise SystemExit("the campaign driver runs only inside a held host reservation")
+    reconcile(campaign, runs)
     clock = None
     if campaign.host() == "runpod":
         campaign.lease = LeaseProgress(campaign)

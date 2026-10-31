@@ -146,6 +146,25 @@ class RecordsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "row 1 is damaged"):
             records.moved_rows(self.dest)
 
+    def test_an_unterminated_ledger_row_survives_the_next_append(self):
+        self.cycle()
+        ledger = self.dest / "MOVED.jsonl"
+        ledger.write_bytes(ledger.read_bytes().rstrip(b"\n"))  # a complete row without its newline
+        second = dict(self.seal, block=4, files=self.seal["files"])
+        for item in self.seal["files"]:  # the same files again, sealed as block 4
+            path = self.volume / item["path"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x" * 0)
+        files = []
+        for item in self.seal["files"]:
+            data = (item["path"] + "4").encode()
+            (self.volume / item["path"]).write_bytes(data)
+            files.append({"path": item["path"], "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+        second.update(files=files, bytes=sum(item["bytes"] for item in files))
+        (self.state / "seals" / "G3-b004.json").write_text(json.dumps(second))
+        self.assertEqual(self.cycle(), 1)
+        self.assertEqual([row["block"] for row in records.moved_rows(self.dest)], [3, 4])
+
     def test_a_quiesced_pod_refuses_deletion(self):
         flag = Path(self.temp.name) / "quiesce"
         flag.write_text("")

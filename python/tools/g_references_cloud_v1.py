@@ -402,24 +402,33 @@ class Cycle(cloud.Cycle):
                 "campaign ended without completing or a lease stop: " + json.dumps(status))
         self.result["lease_stopped"] = True
 
-    def quiesce_records(self, timeout: float = 660.0):
+    def quiesce_records(self, timeout: float = 180.0):
         """Stop the record copy-back before recovery reads the volume, so nothing it lists is deleted under it.
         The follower is asked to start no more moves (records-quiesce.json), then, on the Pod, the quiesce flag
         is set and the copy-back's lock taken: a deletion in progress holds it to its end, and every later one
-        sees the flag and refuses. ``timeout`` covers one deletion (its own bound is 600 s) within the lease's
-        recovery time; past it the record says so and recovery proceeds."""
+        sees the flag and refuses. ``timeout`` (one block's deletion takes seconds) leaves the rest of the
+        lease's recovery time for recovery itself. Returns True only on positive quiescence, after recording
+        the volume's final backlog (records-backlog.json) for the next lease."""
         request = self.control / "records-quiesce.json"
         if not request.exists():
             write(request, {"epoch": time.time()})
         result = self.pod.run(POD_QUIESCE_RECORDS, {"lock": records.POD_LOCK, "quiesce": records.POD_QUIESCE,
                                                     "timeout": timeout}, timeout=timeout + 60)
         self.result["records_quiesced"] = result["quiesced"]
+        if result["quiesced"] is not True:
+            return False
+        records.backlog(self.pod, str(self.base / "campaign" / "state"), self.control)
+        return True
 
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""
         if not self.remote_ready:
             return
-        self.quiesce_records()
+        if not self.quiesce_records():
+            # A deletion may still be running: recovery does not enumerate the volume under it. The volume
+            # keeps everything; the next lease recovers from it.
+            self.result["recovery"] = "skipped: the record copy-back did not quiesce"
+            return
         since = 0 if self.recover_all else None if self.worker is None else self.worker["epoch"] - 60
         packed = self.pod.run(POD_RECOVER, {"control": self.remote_control, "campaign": str(self.base / "campaign"),
                                             "guard": self.guard, "locks": cloud.LOCK_ROOT, "since": since},
