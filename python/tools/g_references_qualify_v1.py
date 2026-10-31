@@ -216,8 +216,9 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
             if base_request["wall_seconds"] > limit or plan_["timeout_seconds"] > limit:
                 base_pin = write_json(Path(plan_["base_request"]["path"]).with_name(f"pack-base-bounded-{limit}.json"),
                                       dict(base_request, wall_seconds=min(base_request["wall_seconds"], limit)))
-                family = dict(family, pack=write_json(Path(family["pack"]["path"]).with_name(
-                    f"pack-plan-bounded-{limit}.json"), dict(plan_, base_request=base_pin,
+                plan_path = Path(family["pack"]["path"])  # keeps its host's name: one bounded plan per host
+                family = dict(family, pack=write_json(plan_path.with_name(
+                    f"{plan_path.stem}-bounded-{limit}.json"), dict(plan_, base_request=base_pin,
                                                              timeout_seconds=min(plan_["timeout_seconds"], limit))))
         # One absolute deadline for the whole pack (its launch retries and barrier waits included): ending the
         # tool fails its waiting trials, and a running trial's own timeout is already inside the claim time.

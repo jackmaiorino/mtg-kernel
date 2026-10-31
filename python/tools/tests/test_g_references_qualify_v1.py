@@ -245,6 +245,18 @@ class QualifyTests(unittest.TestCase):
             again = qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
             self.assertEqual(len(runs), 1)  # a restart on this host reuses its own pack
             self.assertEqual(again["pack"], first["pack"])
+        # Bounded by the claim time (Jack's PC), two hosts keep one bounded plan each.
+        bounded = []
+        for topology in ([{"cpus": "0,8", "efficiency_class": 0}], [{"cpus": "0,4", "efficiency_class": 0}]):
+            with patch.object(qualify.dispatch, "host_topology", return_value=topology), \
+                    patch.object(qualify.driver.Campaign, "wall_left", return_value=3300), \
+                    patch.object(qualify.subprocess, "run", side_effect=fake_run):
+                qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+            bounded.append(Path(runs[-1][-1]))
+        self.assertEqual(len({path.name for path in bounded}), 2)
+        self.assertTrue(all(path.stem.startswith("pack-plan-host-") and "-bounded-" in path.stem for path in bounded))
+        for path in bounded:  # each pinned plan still has the bytes its pack recorded
+            self.assertEqual(Path(json.loads(path.read_text())["root"]).name.split("-")[2], path.stem.split("-")[3])
 
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):
