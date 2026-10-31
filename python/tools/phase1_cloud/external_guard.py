@@ -846,11 +846,12 @@ def release_unhanded(client, pod_ids, deadline, sleep=None):
                 continue
             if client.guardian_owns(pod_id):
                 # seen alive, but its presence handoff has not landed: the guardian's Pod is never
-                # deleted here; the handoff is retried and, if it never lands, reported (I4, I5)
-                if client.retain(pod_id, client.retained.get(pod_id, 'census'), presence=True):
-                    targets.discard(pod_id)
-                else:
-                    state[pod_id] = False
+                # deleted here. One retry; if it fails, the refresh is reported and discharged, which
+                # is main's behavior (no refresh obligation at all), so nothing waits on it (I4, I5)
+                if not client.retain(pod_id, client.retained.get(pod_id, 'census'), presence=True):
+                    degraded(client.folder, 'refresh of ' + pod_id + ' not published')
+                    client.presence_pending.discard(pod_id); client.unpersisted.discard(pod_id)
+                targets.discard(pod_id)
                 continue
             try:
                 client.delete(pod_id)

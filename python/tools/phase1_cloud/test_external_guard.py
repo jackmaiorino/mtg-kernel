@@ -774,7 +774,7 @@ class StoreClosureTests(Base):
         self.assertEqual(fired, [True])
         self.assertIn('n', world.deletes)                 # brand new and never handed off: released
         self.assertNotIn('a', world.deletes)              # named: never deleted here, reported instead
-        self.assertIn('a', read(self.root / 'ALERT-pod-not-released.json')['pod_ids'])
+        self.assertIn('refresh of a', read(self.root / eg.SYNC_ALERT)['what'])
 
     def test_a_closure_mid_pass_holds_stored_ids_the_census_omits(self):
         self.clock.t = lease()['deadline_epoch']
@@ -984,8 +984,7 @@ class StoreClosureTests(Base):
                     if armed[0]:
                         raise OSError('record unreadable')
                     return real_handoff(folder, pod_id, role, epoch, **options)
-                expect = self.assertRaises(eg.AlertError) if persistent else contextlib.nullcontext()
-                with expect, no_network(), mock.patch.object(eg.LeaseClient, 'record_reads_back', reads_back), \
+                with no_network(), mock.patch.object(eg.LeaseClient, 'record_reads_back', reads_back), \
                         mock.patch.object(eg, 'handoff_in', side_effect=handoff), self.lease_client(world) as client:
                     self.assertIn('pod1', client.persisted)
                     armed[0] = True
@@ -994,6 +993,9 @@ class StoreClosureTests(Base):
                     armed[0] = persistent                 # a lasting fault spans the exit's retries
                 self.assertEqual(world.deletes, [])       # main keeps it too; a lasting fault is reported
                 self.assertIn('pod1', world.pods)
+                self.assertEqual((self.root / eg.SYNC_ALERT).exists(), persistent)
+                if persistent:
+                    (self.root / eg.SYNC_ALERT).unlink()
 
     def test_deadline_deletes_come_before_any_store_lock_wait(self):
         world = self.healthy_primary()
@@ -1077,6 +1079,34 @@ class StoreClosureTests(Base):
         self.assertNotIn('p', world.pods)                  # main's horizon: retried until it went away
         self.assertGreater(clock.t, 150)
         self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+
+    def test_an_unlanded_refresh_never_delays_a_creator_cleanup(self):
+        world = World([])
+        clock = FakeClock(0.0)
+        real = eg.LeaseClient.record_reads_back; failing = [False]
+
+        def poster(body):                                 # a Pod above the rate ceiling
+            world.pods['p'] = pod('p', costPerHr=9.0)
+            return dict(world.pods['p'])
+
+        def reads_back(client, pod_id):
+            return False if failing[0] else real(client, pod_id)
+
+        def unreadable(folder, pod_id, role, epoch, **options):
+            raise PermissionError('record unreadable')
+        with no_network(), mock.patch.object(eg.LeaseClient, 'record_reads_back', reads_back), \
+                eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list, clock, clock.sleep,
+                               self.root / 'ALERT-pod-not-released.json', lease_deadline=600.0) as client:
+            client.post({'name': NAME}, poster=poster)    # the initial handoff succeeds
+            failing[0] = True                             # then reads of its record fail
+            with mock.patch.object(eg, 'handoff_in', side_effect=unreadable):
+                client.census()                           # a refresh that cannot land
+                eg.resolve_or_alert(client, client.release_deadline(), self.root / 'ALERT-pod-not-released.json',
+                                    clock.sleep)          # the creator's finish() step
+                self.assertEqual(clock.t, 0.0)            # nothing waited on the refresh
+            client.delete('p')                            # the creator's own price DELETE follows at once
+        self.assertEqual(world.deletes, ['p'])
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())
 
     def test_a_handoff_waits_for_the_store_lock_and_degrades_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
@@ -1795,14 +1825,14 @@ class RecheckTests(unittest.TestCase):
             api.call = wrapped
             return api
         # B was seen alive and its presence handoff never lands: the guardian's Pod is never deleted
-        # here, and the unlanded handoff is reported (round 4 finding 1)
-        with self.assertRaises(eg.AlertError), no_network(), failing_handoff({'A', 'B'}), \
+        # here; the unlanded refresh is reported and discharged, as main holds none (round 16)
+        with no_network(), failing_handoff({'A', 'B'}), \
                 eg.LeaseClient(self.folder, NAME, 'k', provider, world.list, clock, clock.sleep,
                                self.root / 'ALERT-pod-not-released.json') as client:
             pending = eg.release_unhanded(client, ['A', 'B'], 1300., clock.sleep)
         self.assertEqual(published, ['DELETE'])
-        self.assertEqual(pending, ['B'])
-        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['B'])
+        self.assertEqual(pending, [])
+        self.assertIn('refresh of B', read(self.root / eg.SYNC_ALERT)['what'])
         self.assertNotIn('B', world.deletes)
         self.assertIn('B', world.pods)
         self.assertIn('A', world.deletes)
