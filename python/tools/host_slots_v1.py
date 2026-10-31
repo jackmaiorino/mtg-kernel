@@ -1465,9 +1465,11 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     priority = priority or config["priority"]
     if priority not in PRIORITIES:
         raise ValueError(f"priority must be one of {PRIORITIES}")
-    if not 1 <= cores_wanted <= len(config["cores"]) - config["keep_free"]:
-        raise ValueError(f"{cores_wanted} cores: this host hands out 1 to "
-                         f"{len(config['cores']) - config['keep_free']}")
+    # Ordinary work never gets the CI floor, so a request larger than the rest could never start.
+    most = len(config["cores"]) - config["keep_free"] - (0 if background else config.get("ci_floor", 0))
+    if not 1 <= cores_wanted <= most:
+        raise ValueError(f"{cores_wanted} cores: this host hands out 1 to {most}"
+                         + ("" if background else " to work other than CI"))
     claim_id = claim_id or uuid.uuid4().hex
     if not re.fullmatch(r"[0-9a-f]{32}", claim_id):
         raise ValueError("claim id must be 32 lowercase hex digits")

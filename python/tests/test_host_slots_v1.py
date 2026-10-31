@@ -1828,6 +1828,18 @@ class CiFloorTests(unittest.TestCase):
         assert admits(FLOOR8, FREE, claims, [head, ticket("t", 1)], "t") == [2]
         assert admits(FLOOR8, FREE, claims, [head, ticket("t", 2)], "t") is None
 
+    def test_an_ordinary_request_larger_than_the_rest_is_refused(self):
+        root = Path(tempfile.mkdtemp(prefix="hs-floor-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        with patch.dict(os.environ, {slots.ROOT_ENV: str(root), slots.HOST_ENV: "T"}),                 patch.object(slots, "cpu_total", return_value=4):
+            (root / "T.slots").mkdir()
+            slots.write_json(root / "T.slots/config.json", {"cores": "3-0", "ci_floor": 1})
+            with self.assertRaisesRegex(ValueError, "hands out 1 to 3 to work other than CI"):
+                slots.run("p", "w", 4, ["unused"])
+            with patch.object(slots, "_run_claimed", return_value=0), patch.object(slots, "_run_adopted",
+                                                                                     return_value=0):
+                assert slots.run("ci", "w", 4, ["unused"], background=True) == 0
+
     def test_keep_free_stays_separate_from_the_floor(self):
         config = {**FLOOR8, "keep_free": 1}
         assert slots.available(config, FREE, [], background=False) == [7, 6, 5, 4, 3]
