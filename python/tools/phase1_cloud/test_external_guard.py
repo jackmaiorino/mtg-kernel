@@ -35,13 +35,13 @@ def failing_handoff(ids, first=None, first_only_once=False):
     `first_only_once`, only the very first call) raises that instead."""
     real = eg.handoff_in; fired = []
 
-    def handoff(folder, pod_id, role, epoch):
+    def handoff(folder, pod_id, role, epoch, **options):
         if pod_id in ids:
             if first is not None and pod_id not in fired and not (first_only_once and fired):
                 fired.append(pod_id)
                 raise first()
             raise OSError('read-only store')
-        return real(folder, pod_id, role, epoch)
+        return real(folder, pod_id, role, epoch, **options)
     return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
 
 
@@ -144,7 +144,9 @@ class ExternalGuardTests(Base):
         world = World([pod()])
         self.once(world)
         self.assertGreater(world.calls, 0)
-        self.assertEqual(world.deletes, ['pod1'])
+        # the completion record closes the store, so this pass verifies the release itself (repeated DELETEs)
+        self.assertEqual(set(world.deletes), {'pod1'})
+        self.assertNotIn('pod1', world.pods)
 
 
 class DuplicateTests(Base):
@@ -467,6 +469,22 @@ class QuietCreateTests(Base):
         self.assertTrue(wait_for(self.root / eg.QUIET_FUNDS))
         self.assertEqual(read(self.root / eg.QUIET_FUNDS)['account_now'], {'account_spend_usd_hour': 0.07})
 
+    def test_a_failed_thread_start_never_ends_supervision(self):
+        self.ambiguous()
+        world = World([])
+
+        class Unstartable:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError('cannot start new thread')
+        with mock.patch.object(eg, 'threading', mock.Mock(Thread=Unstartable)):
+            self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=world.provider('k', 'funding').funds,
+                                       monotonic=self.clock), 'running')
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertEqual(read(self.root / eg.QUIET_FUNDS)['error_type'], 'RuntimeError')
+
     def test_a_failed_alert_write_is_retried_without_a_second_account_read(self):
         self.ambiguous()
         world = World([])
@@ -487,7 +505,7 @@ class QuietCreateTests(Base):
 
 
 class StoreClosureTests(Base):
-    """Completion closes the store under the lock every handoff takes (I4)."""
+    """Completion is the store's closure, written under the lock every handoff and create attempt takes (I4)."""
 
     def complete(self, at_deadline=False):
         if at_deadline:
@@ -499,29 +517,61 @@ class StoreClosureTests(Base):
         self.clock.max_sleeps = 400; self.clock.sleeps = 0
         return self.completion()
 
+    def injecting(self, inject):
+        """complete_store, with `inject(root, epoch)` run once just before its first final check."""
+        real = eg.complete_store; injected = []
+
+        def complete(root, memory, basis, settled, errors, record):
+            if not injected:
+                injected.append(inject(root, record['epoch']))
+            return real(root, memory, basis, settled, errors, record)
+        return mock.patch.object(eg, 'complete_store', side_effect=complete), injected
+
     def test_completion_rereads_the_store_under_its_lock(self):
         QuietCreateTests.ambiguous(self, operator=True)
         world = World([])
-        real = eg.close_store; injected = []
-
-        def close(root, memory, errors, epoch):
-            if not injected:                              # handed off after this pass's last store load
-                eg.remember(root, 'late', 'census', epoch)
-                injected.append(epoch)
-            return real(root, memory, errors, epoch)
-        with mock.patch.object(eg, 'close_store', side_effect=close):
+        patch, injected = self.injecting(lambda root, epoch: eg.remember(root, 'late', 'census', epoch))
+        with patch:
             self.assertEqual(self.loop(world, polls=200, monotonic=self.clock), 'returned')
         self.assertEqual(len(injected), 1)
         self.assertIn('late', self.completion()['known_pods'])     # completed only after confirming it absent
         self.assertIn(('GET', 'late'), world.log)
 
-    def store_failing_inside_close(self, failure):
-        real_close, real_known = eg.close_store, eg.known_pods; inside = [False]
+    def test_renewed_presence_of_a_known_id_voids_its_confirmations(self):
+        self.clock.t = lease()['deadline_epoch']
+        eg.remember(self.root, 'a', 'census', 1.0)
+        world = World([])
 
-        def close(*args):
+        def seen_alive(root, epoch):                      # another process saw 'a' alive and handed it off
+            eg.handoff(root, 'a', 'census', epoch)
+            return len(world.log)
+        patch, injected = self.injecting(seen_alive)
+        with patch:
+            self.assertEqual(self.loop(world, polls=200), 'returned')
+        self.assertGreaterEqual(world.log[injected[0]:].count(('GET', 'a')), 2)   # two fresh absences
+        self.assertEqual(self.completion()['presence_revisions']['a'], 1)
+
+    def test_a_receipt_written_before_the_final_check_blocks_completion(self):
+        write(self.root / 'completion.json', {})
+        self.clock.t = lease()['created_epoch'] + eg.CONTROLLER_DONE_SECONDS + 1
+        world = World([])
+
+        def receipt_only(root, epoch):                    # the creator's handoff failed, its receipt landed
+            write(root / 'lease/create-attempt.json', {'epoch': epoch})
+            write(root / 'lease/created-pod.json', {'id': 'r', 'name': NAME})
+        patch, injected = self.injecting(receipt_only)
+        with patch:
+            self.assertEqual(self.loop(world, polls=200), 'returned')
+        self.assertIn('r', self.completion()['known_pods'])
+        self.assertIn(('GET', 'r'), world.log)
+
+    def store_failing_inside_complete(self, failure):
+        real_complete, real_known = eg.complete_store, eg.known_pods; inside = [False]
+
+        def complete(*args):
             inside[0] = True
             try:
-                return real_close(*args)
+                return real_complete(*args)
             finally:
                 inside[0] = False
 
@@ -530,27 +580,43 @@ class StoreClosureTests(Base):
                 raise OSError('store unreadable')
             result = real_known(root, errors)
             if inside[0] and errors is not None:
-                errors.append('late:ValueError')          # an unreadable record seen by the re-read
+                errors.append('late:ValueError')          # an unreadable record seen by the final check
             return result
-        return mock.patch.object(eg, 'close_store', side_effect=close), \
+        return mock.patch.object(eg, 'complete_store', side_effect=complete), \
             mock.patch.object(eg, 'known_pods', side_effect=known)
 
-    def test_a_store_error_at_the_completion_reread_blocks_completion(self):
+    def test_a_store_error_at_the_final_check_blocks_completion(self):
         self.clock.t = lease()['deadline_epoch']
-        for failure, error in (('raise', 'close:OSError'), ('record', 'late:ValueError')):
-            first, second = self.store_failing_inside_close(failure)
+        for failure, error in (('raise', 'complete:OSError'), ('record', 'late:ValueError')):
+            first, second = self.store_failing_inside_complete(failure)
             with first, second:
                 self.assertEqual(self.loop(World([]), polls=20), 'running')
             self.assertIsNone(self.completion())
             self.assertIn(error, self.status()['store_errors'])
             self.assertFalse(eg.store_closed(self.root / eg.KNOWN_DIR))
 
-    def test_a_handoff_after_completion_is_refused(self):
+    def test_a_failed_completion_write_leaves_the_store_open_and_is_retried(self):
+        real = eg.write; failed = []
+
+        def flaky(path, value, replace=False):
+            if Path(path).name == eg.COMPLETION and not failed:
+                failed.append(path)
+                raise OSError('disk busy')
+            return real(path, value, replace)
+        with mock.patch.object(eg, 'write', side_effect=flaky):
+            self.complete()
+        self.assertTrue(failed)
+        self.assertTrue(self.completion()['provider_absent'])
+
+    def test_a_handoff_or_create_attempt_after_completion_is_refused(self):
         self.complete()
         self.assertTrue(eg.store_closed(self.root / eg.KNOWN_DIR))
         with self.assertRaises(eg.StoreClosed):
             eg.handoff(self.root, 'late', 'census', 1.0)
         self.assertFalse((self.root / eg.KNOWN_DIR / 'late.json').exists())
+        with self.assertRaises(eg.StoreClosed):
+            eg.record_create_attempt(self.root / 'lease', {'epoch': 1.0})
+        self.assertFalse((self.root / 'lease/create-attempt.json').exists())
 
     def test_a_watchdog_pass_after_completion_releases_what_it_finds(self):
         before = self.complete()
@@ -568,6 +634,34 @@ class StoreClosureTests(Base):
         with self.assertRaises(eg.AlertError):
             self.once(world)
         self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['late'])
+
+    def test_a_closed_pass_must_verify_every_stored_id_it_cannot_see(self):
+        self.complete(at_deadline=True)
+        eg.remember(self.root, 'a', 'census', 1.0)        # a record from before the closure
+        world = World([]); world.get_failures = -1; world.delete_failures = -1
+        with self.assertRaises(eg.AlertError):
+            self.once(world)
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
+
+    def test_a_cached_handoff_is_void_once_the_store_closes(self):
+        eg.remember(self.root, 'a', 'census', 1.0)
+        world = World([pod('a')])
+        with no_network(), eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list,
+                                          self.clock, self.clock.sleep, self.root / 'ALERT-pod-not-released.json',
+                                          min_release_seconds=180) as client:
+            self.assertNotIn('a', client.unpersisted)     # handed off before the closure
+            write(self.root / eg.COMPLETION, {'provider_absent': True})
+            client.census()
+            self.assertIn('a', client.unpersisted)        # presence after closure is this process's again
+        self.assertIn(('DELETE', 'a'), world.log)
+        self.assertNotIn('a', world.pods)
+
+    def test_a_continuous_guard_started_after_completion_releases_and_ends(self):
+        self.complete()
+        world = World([pod('new')])
+        self.assertEqual(self.loop(world), 'returned')
+        self.assertNotIn('new', world.pods)
+        self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
 
     def test_a_handoff_waits_for_the_store_lock_and_fails_closed_after_the_bound(self):
         folder = self.root / eg.KNOWN_DIR; done = []
@@ -810,13 +904,13 @@ class PersistenceTests(Base):
         world = World([pod('pod1'), pod('dup2')])
         real = eg.handoff_in; failures = [6]; durable_at = []
 
-        def flaky(root, pod_id, role, epoch):
+        def flaky(root, pod_id, role, epoch, **options):
             if pod_id == 'dup2' and failures[0]:
                 failures[0] -= 1
                 raise OSError('disk full')
             if pod_id == 'dup2' and not durable_at:
                 durable_at.append(self.clock.t)
-            return real(root, pod_id, role, epoch)
+            return real(root, pod_id, role, epoch, **options)
         with mock.patch.object(eg, 'handoff_in', side_effect=flaky):
             self.assertEqual(self.loop(world, polls=40), 'returned')       # one process: retried until durable
         # both Pods were absent from the second pass (1115 s), so only the unpersisted dup2 delayed completion
@@ -830,10 +924,10 @@ class PersistenceTests(Base):
         world = World([pod('pod1'), pod('dup2')])
         real = eg.handoff_in
 
-        def never_dup2(root, pod_id, role, epoch):
+        def never_dup2(root, pod_id, role, epoch, **options):
             if pod_id == 'dup2':
                 raise OSError('disk full')
-            return real(root, pod_id, role, epoch)
+            return real(root, pod_id, role, epoch, **options)
         with mock.patch.object(eg, 'handoff_in', side_effect=never_dup2):
             self.assertEqual(self.loop(world, polls=10), 'running')
         self.assertIsNone(self.completion())
@@ -881,10 +975,10 @@ class OnceEndingTests(Base):
     def failing_dup2(self):
         real = eg.handoff_in
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id == 'dup2':
                 raise OSError('read-only store')
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
 
     def test_once_releases_an_unpersisted_duplicate_and_verifies_it(self):
@@ -967,10 +1061,10 @@ class ReleaseReappearanceTests(unittest.TestCase):
         world = World([pod('A'), pod('B')])
         real = eg.handoff_in
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id == 'B':
                 raise OSError('read-only store')
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         with no_network(), mock.patch.object(eg, 'handoff_in', side_effect=handoff), \
                 self.client(world, clock) as client:
             pending = eg.release_unhanded(client, ['A'], 1300., clock.sleep)
@@ -1112,11 +1206,11 @@ class InterruptTests(unittest.TestCase):
     def interrupting(self, ids):
         real = eg.handoff_in; fired = []
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id in ids and not fired:
                 fired.append(pod_id)
                 raise KeyboardInterrupt()
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
 
     @staticmethod
@@ -1197,8 +1291,8 @@ class ReconcileTests(unittest.TestCase):
         world = World([pod('B')]); clock = FakeClock(1000.)
         real = eg.handoff_in
 
-        def write_then_interrupt(folder, pod_id, role, epoch):
-            real(folder, pod_id, role, epoch)
+        def write_then_interrupt(folder, pod_id, role, epoch, **options):
+            real(folder, pod_id, role, epoch, **options)
             raise KeyboardInterrupt()
         with self.assertRaises(KeyboardInterrupt), no_network(), \
                 mock.patch.object(eg, 'handoff_in', side_effect=write_then_interrupt), \
@@ -1212,11 +1306,11 @@ class ReconcileTests(unittest.TestCase):
         world = World([pod('B')]); clock = FakeClock(1000.)
         real = eg.handoff_in; fired = []
 
-        def interrupt_once(folder, pod_id, role, epoch):
+        def interrupt_once(folder, pod_id, role, epoch, **options):
             if not fired:
                 fired.append(pod_id)
                 raise KeyboardInterrupt()
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         with self.assertRaises(KeyboardInterrupt), no_network(), \
                 mock.patch.object(eg, 'handoff_in', side_effect=interrupt_once), \
                 self.client(world, clock) as client:
@@ -1245,13 +1339,13 @@ class ReconcileTests(unittest.TestCase):
         world.census = census
         real = eg.handoff_in; fired = []
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id in ('A', 'B') and pod_id not in fired:
                 fired.append(pod_id)
                 raise KeyboardInterrupt('first' if pod_id == 'A' else 'second')
             if pod_id == 'A':
                 raise OSError('read-only store')
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         with self.assertRaises(KeyboardInterrupt) as raised, no_network(), \
                 mock.patch.object(eg, 'handoff_in', side_effect=handoff), self.client(world, clock) as client:
             client.census()

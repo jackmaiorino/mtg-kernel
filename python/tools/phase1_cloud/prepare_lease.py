@@ -32,7 +32,7 @@ import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
 from lease_guard import Provider as AccountProvider, validate
-from external_guard import LeaseClient, require_boundary, resolve_or_alert, valid_id
+from external_guard import LeaseClient, record_create_attempt, require_boundary, resolve_or_alert, valid_id
 from runtime_observation import IMAGE_REFERENCE
 
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
@@ -339,7 +339,8 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
                 'funding observation older than %d s at the create attempt' % FUNDING_MAX_AGE_SECONDS)
         # The external guard treats an attempt without a receipt or a definite
         # refusal as a create that may have allocated a Pod no receipt names.
-        write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
+        # Under the store lock, and refused once the guard has completed (I4).
+        record_create_attempt(output, {'epoch': now, 'exact_name': body.get('name')})
         return _post_and_record(client, api, body, output, now, deadline, clock, sleep)
 
 

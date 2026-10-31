@@ -274,7 +274,8 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
         metadata = read(root / "preparation.json")
         body["env"]["RUNPOD_API_KEY"] = key
         body["env"]["SSH_PUBLIC_KEY"] = Path(metadata["public_key_path"]).read_text().strip()
-        write(root / "lease/create-attempt.json", {"epoch": clock(), "exact_name": lease["name"]})
+        # under the store lock, and refused once the guardian has completed (I4)
+        external_guard.record_create_attempt(root / "lease", {"epoch": clock(), "exact_name": lease["name"]})
         # ---- the POST: the raw returned ID is retained by the client whatever its name (I1) ----
         returned = None; post_error = None
         try:
@@ -462,19 +463,19 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
         try:
             ids = set(external_guard.known_pods(root))   # strict: any unreadable record raises (I2)
             for pod_id in ids:
-                client.mark_persisted(pod_id)             # read from its own durable record
+                client.mark_persisted(pod_id, hold=False)   # read from its own durable record; reported, not held
             receipt_id, receipt_error = external_guard.receipt_state(root)
             if receipt_error:
                 raise ValueError(receipt_error)
             if receipt_id:
-                ids.add(receipt_id); client.mark_durable(receipt_id)
+                ids.add(receipt_id); client.mark_durable(receipt_id, hold=False)
             for name in ("lease/create-ambiguous.json", "lease/create-pod-failure.json"):
                 if (root / name).exists():
                     fallback = read(root / name).get("pod_id")
                     if fallback is not None:
                         ids.add(fallback)
                         if external_guard.valid_id(fallback):
-                            client.mark_durable(fallback)
+                            client.mark_durable(fallback, hold=False)
             ids_ok = all(external_guard.valid_id(pod_id) for pod_id in ids)
         except Exception:  # noqa: BLE001 - unreadable retained IDs: never absence
             ids, ids_ok = set(), False
@@ -510,7 +511,9 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
             guard_done = completion.exists() and read(completion).get("absent_confirmations") == 2
         except Exception:  # noqa: BLE001
             guard_done = False
-        unpersisted = sorted(client.unpersisted)   # the block's exit releases these, or fails loudly (I4)
+        if absent:   # this check's own two spaced observations (I5): on a closed store they settle its IDs
+            client.verified_absent |= ids
+        unpersisted = sorted(client.unpersisted - client.verified_absent)   # the exit releases these, or fails (I4)
         released = absent and guard_done and not unresolved and not unpersisted
         record = {"observations": observations, "provider_absent_twice": absent, "guardian_completion": guard_done,
                   "create_unresolved": unresolved, "retained_ids": sorted(ids), "discovered_ids": discovered,
