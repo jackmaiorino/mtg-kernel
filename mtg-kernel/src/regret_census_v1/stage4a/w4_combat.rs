@@ -19,7 +19,9 @@
 //!   logits, value and scorer hidden and the public material features. At
 //!   each focal blocker-pair decision it adds the rules facts, the state
 //!   hidden, a random-init net's hidden and the raw action and object
-//!   features. Hidden vectors go to the `W4_HIDDEN` f32 file by offset.
+//!   features. Hidden vectors go to the `W4_HIDDEN` f32 file by offset. The
+//!   candidate's own contract sets the capture: V4 (195-wide action rows) or
+//!   FlatV8 (196-wide rows, and its pairing relation is recorded too).
 //! - `a2`: the forced-action continuation and playout driver at the
 //!   positions in `W4_POSITIONS`.
 //!
@@ -566,7 +568,7 @@ fn score_job(
         if is_focal(&d, focal) {
             let policy = panel.scorer()?;
             let scores = policy.score_fast_session_v1(&s)?;
-            let (reference, hidden) = policy.diagnostic_last_v4_hidden_v1(None)?;
+            let (reference, hidden) = policy.diagnostic_last_hidden_v1(None)?;
             if !bits_equal(&scores.logits, &reference.logits)
                 || scores.value.to_bits() != reference.value.to_bits()
             {
@@ -584,8 +586,14 @@ fn score_job(
             if let Some((attacker, blocker, include_row)) = pair {
                 let (start, earlier) = declaration.as_ref().ok_or("declaration")?;
                 let tensor = policy.last_scored_training_tensor_v4()?.common.clone();
+                // The action width is the candidate's contract's: 195 for V4,
+                // 196 for FlatV8, which also has a pairing relation.
+                let width = policy.diagnostic_model_v1().config_v1().action_feature_dim;
+                let pairing = (width != ACTION_FEATURE_DIM_V1)
+                    .then(|| policy.last_scored_pairing_v8().map(<[i64]>::to_vec))
+                    .transpose()?;
                 let (random_scores, random_hidden) =
-                    policy.diagnostic_last_v4_hidden_v1(Some(random))?;
+                    policy.diagnostic_last_hidden_v1(Some(random))?;
                 let refs: Vec<usize> = tensor
                     .action_ref_action_indices
                     .iter()
@@ -612,8 +620,12 @@ fn score_job(
                     "random_state_hidden": sidecar.put(&random_hidden.state_hidden)?,
                     "random_scorer_hidden": sidecar.put(&random_hidden.scorer_hidden)?,
                     "random_value": random_scores.value,
-                    "action_features": sidecar.put(&tensor.action_features[..rows * ACTION_FEATURE_DIM_V1])?,
+                    "action_features": sidecar.put(&tensor.action_features[..rows * width])?,
                     "ref_nodes": refs, "ref_object_features": sidecar.put(&objects)?});
+                if let Some(pairing) = pairing {
+                    row["block"]["action_width"] = json!(width);
+                    row["block"]["pairing"] = json!(pairing);
+                }
             }
             writeln!(out, "{row}").map_err(|e| e.to_string())?;
             focal_rows += 1;
@@ -968,6 +980,9 @@ fn run_on_worker(out_path: &str) -> Result<(), String> {
                     random = Some(random_like(panel.scorer()?.diagnostic_model_v1(), seed)?);
                 }
                 let random = random.as_ref().ok_or("random net")?;
+                if random.config_v1() != panel.scorer()?.diagnostic_model_v1().config_v1() {
+                    return Err("every panel's candidate must share one model contract".into());
+                }
                 let row = score_job(job, panel, random, &mut sidecar, &mut out)
                     .unwrap_or_else(|e| json!({"kind": "error", "id": job.id, "error": e}));
                 writeln!(out, "{row}").map_err(|e| e.to_string())?;
