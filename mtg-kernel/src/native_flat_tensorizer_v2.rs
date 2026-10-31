@@ -1671,6 +1671,127 @@ pub(crate) fn fill_native_flat_decision_tensors_v7_with_scratch(
     fill_native_flat_decision_tensors_v4_or_v7(view, scratch, output)
 }
 
+/// FlatV8 (`native_flat_tensorizer_v8.rs`): the explicit include bit of each
+/// action row, in row order. 1.0 exactly on the `include: true` row of an
+/// attacker- or blocker-inclusion decision, 0.0 on every other row.
+pub(crate) fn include_bits_v8(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+) -> impl Iterator<Item = f32> + '_ {
+    view.common().actions().iter().map(|action| {
+        let inclusion = matches!(
+            action.kind,
+            FlatScorerActionKindV1::ChooseAttackerInclusion
+                | FlatScorerActionKindV1::ChooseBlockerInclusion
+        );
+        f32::from(u8::from(
+            inclusion && action.flags & FLAT_ACTION_FLAG_INCLUDE_V1 != 0,
+        ))
+    })
+}
+
+/// FlatV8 (`native_flat_tensorizer_v8.rs`): the blocks already chosen in the
+/// pending blocker declaration, as flattened `(blocker node, attacker node)`
+/// pairs of the decision's object nodes. First each pair of
+/// `private_blockers.accumulated` (blocks for earlier attackers of this
+/// declaration), in order, then each blocker already selected for the
+/// current attacker (`private_combat_selection` at a blocker-inclusion
+/// decision), in order. Empty at every other decision.
+///
+/// An accumulated pair is the engine's `(blocker, attacker)`. The flat
+/// relations label its first member `PrivateBlockersAccumulatedAttacker` and
+/// its second `PrivateBlockersAccumulatedBlocker` (the canonical observation
+/// keeps the engine's order); the controllers are checked here, so a pair is
+/// never read reversed: the blocker is the actor's, the attacker the
+/// opponent's.
+pub(crate) fn pending_block_pairs_v8(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+    pairs: &mut Vec<i64>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    use FlatContextKindV2 as C;
+    use FlatContextSubroleV2 as S;
+    use FlatRelationRoleV2 as R;
+    pairs.clear();
+    let decision = view.common();
+    let projection = build_object_projection_v4(view)?;
+    let member = |raw: Option<u32>,
+                  controller: FlatRelativePlayerV1|
+     -> Result<i64, NativeFlatTensorErrorV2> {
+        let index = usize::try_from(raw.ok_or(NativeFlatTensorErrorV2::ContextShape)?)
+            .map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?;
+        let object = decision
+            .objects()
+            .get(index)
+            .ok_or(NativeFlatTensorErrorV2::ObjectShape)?;
+        if object.controller != controller {
+            return Err(NativeFlatTensorErrorV2::ContextShape);
+        }
+        i64::try_from(projected_required_node_v2(raw, &projection)?)
+            .map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)
+    };
+    let firsts = context_rows_v2(
+        decision,
+        R::PrivateContext,
+        C::PrivateBlockers,
+        S::PrivateBlockersAccumulatedAttacker,
+    )?;
+    let seconds = context_rows_v2(
+        decision,
+        R::PrivateContext,
+        C::PrivateBlockers,
+        S::PrivateBlockersAccumulatedBlocker,
+    )?;
+    if firsts.len() != seconds.len() {
+        return Err(NativeFlatTensorErrorV2::ContextShape);
+    }
+    for (order, ((blocker, _), (attacker, _))) in firsts.iter().zip(&seconds).enumerate() {
+        if usize::try_from(blocker.primary_order).ok() != Some(order)
+            || usize::try_from(attacker.primary_order).ok() != Some(order)
+            || blocker.associated_order != 0
+            || attacker.associated_order != 1
+        {
+            return Err(NativeFlatTensorErrorV2::RelationOrder);
+        }
+        pairs.push(member(
+            blocker.target_object,
+            FlatRelativePlayerV1::SelfPlayer,
+        )?);
+        pairs.push(member(
+            attacker.target_object,
+            FlatRelativePlayerV1::Opponent,
+        )?);
+    }
+    let current = context_rows_v2(
+        decision,
+        R::PrivateContext,
+        C::PrivateCombatSelection,
+        S::PrivateCombatAttacker,
+    )?;
+    match current.as_slice() {
+        [] => {}
+        [(attacker, _)] => {
+            let attacker = member(attacker.target_object, FlatRelativePlayerV1::Opponent)?;
+            let selected = context_rows_v2(
+                decision,
+                R::PrivateContext,
+                C::PrivateCombatSelection,
+                S::PrivateCombatSelected,
+            )?;
+            for (order, (blocker, _)) in selected.iter().enumerate() {
+                if usize::try_from(blocker.primary_order).ok() != Some(order) {
+                    return Err(NativeFlatTensorErrorV2::RelationOrder);
+                }
+                pairs.push(member(
+                    blocker.target_object,
+                    FlatRelativePlayerV1::SelfPlayer,
+                )?);
+                pairs.push(attacker);
+            }
+        }
+        _ => return Err(NativeFlatTensorErrorV2::ContextShape),
+    }
+    Ok(())
+}
+
 fn fill_native_flat_decision_tensors_v4_or_v7(
     view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
     scratch: &mut NativeFlatTensorScratchV3,

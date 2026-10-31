@@ -580,7 +580,11 @@ where
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();
-            let output = acting.score_replay_tensor_v1(generation, common.clone())?;
+            let output = acting.score_replay_tensor_v1(
+                generation,
+                common.clone(),
+                &row.tensor.pairing_node_indices,
+            )?;
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",

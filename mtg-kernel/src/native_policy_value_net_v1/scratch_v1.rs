@@ -96,6 +96,18 @@ impl NativePolicyValueNetV1 {
         self.forward_validated_with_scratch_v1(encoded, counts, scratch, activation_mode, None)
     }
 
+    /// FlatV8 sibling (`v8_inclusion_v1`): the view's pairing relation feeds
+    /// the V8 net's pairing path.
+    pub(crate) fn forward_feature_transfer_v8_with_scratch_v1<'a>(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        scratch: &'a mut NativePolicyValueForwardScratchV1,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputViewV1<'a>, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v8())?;
+        self.forward_validated_with_scratch_v1(encoded, counts, scratch, activation_mode, None)
+    }
+
     /// `forward_with_scratch_v1` (flat, V3 or V4 transfer by `config`) using
     /// `rows` for the five row layers: the same output, bit for bit.
     pub(crate) fn forward_rows_cached_with_scratch_v1<'a>(
@@ -239,6 +251,14 @@ impl NativePolicyValueNetV1 {
                 encoded.edge_target_indices,
             );
         }
+        if let Some(pairing) = &self.pairing {
+            pairing.add_messages_v1(
+                encoded.pairing_node_indices,
+                &scratch.object_base_hidden,
+                &mut scratch.edge_pooled,
+                mode,
+            );
+        }
 
         clear_for(
             &mut scratch.input,
@@ -317,15 +337,17 @@ impl NativePolicyValueNetV1 {
             );
         }
 
+        // The config's action width (`v8_inclusion_v1` widens it by one).
+        let action_feature_dim = self.config.action_feature_dim;
         clear_for(
             &mut scratch.input,
-            counts.action_count * ACTION_ENCODER_INPUT_V1,
+            counts.action_count * self.action_encoder.first.input_dim,
         );
         for action in 0..counts.action_count {
-            let begin = action * ACTION_FEATURE_DIM_V1;
+            let begin = action * action_feature_dim;
             scratch
                 .input
-                .extend_from_slice(&encoded.action_features[begin..begin + ACTION_FEATURE_DIM_V1]);
+                .extend_from_slice(&encoded.action_features[begin..begin + action_feature_dim]);
             let begin = action * HIDDEN_DIM_V1;
             scratch
                 .input

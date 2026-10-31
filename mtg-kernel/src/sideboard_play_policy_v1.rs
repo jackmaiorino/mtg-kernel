@@ -284,6 +284,13 @@ struct FrozenPlayFreshSuccessorStateV1 {
     /// resets keep it. The V7 tensors share `tensor`'s storage.
     flat_v7: bool,
     tensorizer_v7: crate::native_flat_tensorizer_v7::NativeFlatTensorizerV7,
+    /// FlatV8 (`native_flat_tensorizer_v8.rs`): set only by the V8 inclusion
+    /// conversion (`into_flat_v8_v1`); forks and sampling resets keep it. The
+    /// V8 tensors (196-wide action rows) share `tensor`'s storage, beside
+    /// their pairing relation.
+    flat_v8: bool,
+    tensorizer_v8: crate::native_flat_tensorizer_v8::NativeFlatTensorizerV8,
+    pairing: Vec<i64>,
 }
 
 impl FrozenPlayFreshSuccessorStateV1 {
@@ -291,6 +298,7 @@ impl FrozenPlayFreshSuccessorStateV1 {
     fn fresh_like_v1(&self) -> Self {
         Self {
             flat_v7: self.flat_v7,
+            flat_v8: self.flat_v8,
             ..Self::default()
         }
     }
@@ -411,6 +419,21 @@ pub(crate) const FRESH_FEATURE_IDENTITY_V7: FreshFeatureIdentityV1 = FreshFeatur
     feature_encoding_digest: crate::native_flat_tensorizer_v7::FEATURE_ENCODING_DIGEST_V7,
     features_source_sha256: crate::native_flat_tensorizer_v7::FEATURES_SOURCE_SHA256_V7,
     feature_descriptor_sha256: crate::native_flat_tensorizer_v7::FEATURE_DESCRIPTOR_SHA256_V7,
+};
+
+/// FlatV8 (the V8 inclusion contract, collab LANES/w4-combat-20261030/
+/// DESIGN.md v5.1, section 5): FlatV7 plus the include column and the pairing
+/// relation, scored by the V8 inclusion net. Of the V4 generation family, but
+/// its tensors are its own shapes: the generation alone never distinguishes
+/// V8, its digests do, and every V4 reader refuses its action width.
+pub(crate) const FRESH_FEATURE_IDENTITY_V8: FreshFeatureIdentityV1 = FreshFeatureIdentityV1 {
+    generation: FreshLineageGenerationV1::V4,
+    feature_schema_version: crate::native_flat_tensorizer_v8::FEATURE_SCHEMA_VERSION_V8,
+    feature_registry_version: crate::native_flat_tensorizer_v8::FEATURE_REGISTRY_VERSION_V8,
+    feature_contract_digest: crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+    feature_encoding_digest: crate::native_flat_tensorizer_v8::FEATURE_ENCODING_DIGEST_V8,
+    features_source_sha256: crate::native_flat_tensorizer_v8::FEATURES_SOURCE_SHA256_V8,
+    feature_descriptor_sha256: crate::native_flat_tensorizer_v8::FEATURE_DESCRIPTOR_SHA256_V8,
 };
 
 /// Computes the two byte-identity hashes `from_fresh_initialization_generation_v1`
@@ -620,7 +643,9 @@ impl FrozenPlayPolicyV1 {
     /// mislabel is that every stamping site instead reads this.
     pub(crate) fn feature_identity_v1(&self) -> FreshFeatureIdentityV1 {
         if let Some(fresh) = &self.fresh_successor {
-            if fresh.flat_v7 {
+            if fresh.flat_v8 {
+                FRESH_FEATURE_IDENTITY_V8
+            } else if fresh.flat_v7 {
                 FRESH_FEATURE_IDENTITY_V7
             } else {
                 FRESH_FEATURE_IDENTITY_V4
@@ -1200,12 +1225,64 @@ impl FrozenPlayPolicyV1 {
             .fresh_successor
             .as_mut()
             .ok_or("the V4-to-V7 transfer requires a V4 fresh-lineage policy")?;
-        require(!fresh.flat_v7, "the policy already has the V7 identity")?;
+        require(
+            !fresh.flat_v7 && !fresh.flat_v8,
+            "the policy already has the V7 identity",
+        )?;
         *fresh = FrozenPlayFreshSuccessorStateV1 {
             flat_v7: true,
             ..FrozenPlayFreshSuccessorStateV1::default()
         };
         Ok(self)
+    }
+
+    /// The V8 inclusion conversion of a V4 (or FlatV7) fresh-lineage policy
+    /// (collab LANES/w4-combat-20261030/DESIGN.md v5.1, section 5): its net
+    /// becomes the V8 inclusion net with every new coordinate +0, which
+    /// computes the same function (the pairing path's first layer is also +0
+    /// here; a converted checkpoint, restored next, supplies the seeded
+    /// draws, `native_policy_train_step_v1::v8_inclusion_v1`), and it scores
+    /// FlatV8 rows. Refused for every other generation, an already converted
+    /// policy and the no-state-digest contract.
+    pub(crate) fn into_flat_v8_v1(mut self) -> Result<Self, String> {
+        require(
+            self.successor.is_none()
+                && self.input_contract.is_none()
+                && self.no_digest_check.is_none(),
+            "the V8 conversion requires a V4 policy with its original inputs",
+        )?;
+        let fresh = self
+            .fresh_successor
+            .as_mut()
+            .ok_or("the V8 conversion requires a V4 fresh-lineage policy")?;
+        require(!fresh.flat_v8, "the policy already has the V8 identity")?;
+        *fresh = FrozenPlayFreshSuccessorStateV1 {
+            flat_v8: true,
+            ..FrozenPlayFreshSuccessorStateV1::default()
+        };
+        self.model = self
+            .model
+            .clone()
+            .into_v8_inclusion_v1(vec![
+                0.0;
+                crate::native_policy_value_net_v1::HIDDEN_DIM_V1
+                    * crate::native_policy_value_net_v1::v8_inclusion_v1::V8_PAIRING_INPUT_DIM_V1
+            ])
+            .map_err(|e| e.to_string())?;
+        // Cached predictions and rows belong to the old net.
+        self.inference_cache = None;
+        self.inference_probe = None;
+        self.row_cache = Default::default();
+        Ok(self)
+    }
+
+    /// The pairing relation of the decision the V8 scorer last scored.
+    pub(crate) fn last_scored_pairing_v8(&self) -> Result<&[i64], String> {
+        self.fresh_successor
+            .as_ref()
+            .filter(|fresh| fresh.flat_v8)
+            .map(|fresh| fresh.pairing.as_slice())
+            .ok_or_else(|| "the pairing relation requires the V8 scorer".into())
     }
 
     /// An exact duplicate of a policy in the state its loader returned it:
@@ -1640,7 +1717,35 @@ impl FrozenPlayPolicyV1 {
         &self,
         generation: FreshLineageGenerationV1,
         common: NativeFlatDecisionTensorV2,
+        pairing: &[i64],
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        // FlatV8 (`into_flat_v8_v1`): its own tensors and pairing relation,
+        // scored by the V8 inclusion net; every other policy has no relation.
+        if self
+            .fresh_successor
+            .as_ref()
+            .is_some_and(|fresh| fresh.flat_v8)
+        {
+            require(
+                generation == FreshLineageGenerationV1::V4 && self.input_contract.is_none(),
+                "FlatV8 replays are of the V4 generation without input contract",
+            )?;
+            let output = self
+                .model
+                .forward_feature_transfer_v8_mode(
+                    crate::native_flat_tensorizer_v8::encoded_decision_view_v8(&common, pairing),
+                    self.training_math.forward_activation_v1(),
+                )
+                .map_err(|e| e.to_string())?;
+            return Ok(FrozenPlayDecisionScoresV1 {
+                logits: output.logits,
+                value: output.value,
+            });
+        }
+        require(
+            pairing.is_empty(),
+            "only a FlatV8 policy replays a pairing relation",
+        )?;
         let Some(contract) = &self.input_contract else {
             return match generation {
                 FreshLineageGenerationV1::V3 => {
@@ -2187,7 +2292,24 @@ impl FrozenPlayPolicyV1 {
                 encoded_decision_view_v3(&successor.tensor),
             )
         } else if let Some(fresh) = &mut self.fresh_successor {
-            if fresh.flat_v7 {
+            if fresh.flat_v8 {
+                fresh.tensorizer_v8.set_state_digest_v1(state_digest);
+                fresh
+                    .tensorizer_v8
+                    .fill(
+                        FlatScoringDecisionViewV4::new(self.owned.view(), &fresh.extensions),
+                        &mut fresh.tensor.common,
+                        &mut fresh.pairing,
+                    )
+                    .map_err(|e| format!("V8 visible tensorization: {e:?}"))?;
+                (
+                    ForwardPathV1::TransferV8,
+                    crate::native_flat_tensorizer_v8::encoded_decision_view_v8(
+                        &fresh.tensor.common,
+                        &fresh.pairing,
+                    ),
+                )
+            } else if fresh.flat_v7 {
                 fresh.tensorizer_v7.set_state_digest_v1(state_digest);
                 fresh
                     .tensorizer_v7
@@ -2438,6 +2560,9 @@ fn uncached_forward_v1(
         ForwardPathV1::TransferV7 => model
             .forward_feature_transfer_v7_with_scratch_v1(view, scratch, mode)
             .map_err(|e| format!("explicit V7 frozen feature transfer: {e:?}"))?,
+        ForwardPathV1::TransferV8 => model
+            .forward_feature_transfer_v8_with_scratch_v1(view, scratch, mode)
+            .map_err(|e| format!("explicit V8 inclusion forward: {e:?}"))?,
         ForwardPathV1::Flat => model
             .forward_with_scratch_v1(view, scratch, mode)
             .map_err(|e| format!("frozen scalar inference: {e:?}"))?,
@@ -2505,6 +2630,10 @@ fn cached_forward_v1(
                 model.feature_transfer_config_v7(),
                 "explicit V7 frozen feature transfer",
             ),
+            ForwardPathV1::TransferV8 => (
+                model.feature_transfer_config_v8(),
+                "explicit V8 inclusion forward",
+            ),
             ForwardPathV1::Flat => (model.config_v1(), "frozen scalar inference"),
         };
         model
@@ -2521,6 +2650,9 @@ fn cached_forward_v1(
             ForwardPathV1::TransferV7 => model
                 .forward_feature_transfer_v7_with_scratch_v1(view, scratch, mode)
                 .map_err(|e| format!("explicit V7 frozen feature transfer: {e:?}"))?,
+            ForwardPathV1::TransferV8 => model
+                .forward_feature_transfer_v8_with_scratch_v1(view, scratch, mode)
+                .map_err(|e| format!("explicit V8 inclusion forward: {e:?}"))?,
             ForwardPathV1::Flat => model
                 .forward_with_scratch_v1(view, scratch, mode)
                 .map_err(|e| format!("frozen scalar inference: {e:?}"))?,

@@ -33,6 +33,7 @@ pub(crate) enum ForwardPathV1 {
     TransferV3 = 3,
     TransferV4 = 4,
     TransferV7 = 7,
+    TransferV8 = 8,
 }
 
 /// Cache byte budget from `MTG_KERNEL_INFERENCE_CACHE_MIB` (None when unset
@@ -117,6 +118,10 @@ pub(crate) fn write_key_v1(
     integers(key, view.action_ref_card_ids);
     integers(key, view.action_ref_action_indices);
     integers(key, view.action_ref_node_indices);
+    // FlatV8's pairing relation; every other path's key keeps its bytes.
+    if path == ForwardPathV1::TransferV8 {
+        integers(key, view.pairing_node_indices);
+    }
 }
 
 /// Bucketing hash (not an identity: hits compare keys in full).

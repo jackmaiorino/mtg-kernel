@@ -21,6 +21,8 @@ use crate::london_mulligan_v1;
 #[cfg(test)]
 mod flat_v7_tests;
 #[cfg(test)]
+mod flat_v8_tests;
+#[cfg(test)]
 mod tests;
 
 /// Opening protocol of an episode. Absent keeps every existing byte.
