@@ -209,10 +209,11 @@ class DriverTests(unittest.TestCase):
         children = {}
         for name, code in (("idle", "import time; time.sleep(30)"), ("busy", "while True: pass")):
             children[name] = subprocess.Popen([sys.executable, "-c", code])
+            started_unix = time.time()  # as the dispatcher records it, just after Popen
             self.addCleanup(children[name].wait)
             self.addCleanup(children[name].kill)
             root = self.root / name; root.mkdir()
-            (root / "started.json").write_text(json.dumps({"pid": children[name].pid}))
+            (root / "started.json").write_text(json.dumps({"pid": children[name].pid, "started_unix": started_unix}))
         time.sleep(1)  # interpreter start-up is over
         progress.active["r1"] = {"attempts": [{"root": str(self.root / "idle")}]}
         progress.beat(); time.sleep(0.3); progress.beat()
@@ -253,13 +254,14 @@ class DriverTests(unittest.TestCase):
         me, clock = os.getpid(), {"wall": 2000., "cpu": 10.}
         ticks = {"command": 0, "supervisor": 0, "executor": 0, "worker": 0}
         def table():  # the dispatch command and the reservation supervisor are the driver's children
-            return {me: (1, 0), 800: (me, ticks["command"]), 900: (me, ticks["supervisor"]),
+            return {me: (1, 0), 800: (me, ticks["command"]), 900: (ticks.get("parent", me), ticks["supervisor"]),
                     901: (900, ticks["executor"]), 902: (901, ticks["worker"])}
         def activity_after_beat(wall=15., cpu=0., **advance):
             clock["wall"] += wall; clock["cpu"] += cpu
             for name, value in advance.items():
                 ticks[name] += value
-            with patch.object(driver.time, "time", return_value=clock["wall"]),                  patch.object(driver, "driver_cpu_seconds", return_value=clock["cpu"]),                  patch.object(driver, "process_table", side_effect=table):
+            with patch.object(driver.time, "time", return_value=clock["wall"]),                  patch.object(driver, "driver_cpu_seconds", return_value=clock["cpu"]),                  patch.object(driver, "process_table", side_effect=table), \
+                    patch.object(driver, "supervisor_owned", side_effect=lambda pid, token: token == "t900"):
                 progress.beat()
             return json.loads((folder / "progress.json").read_text())["last_activity_epoch"]
         progress.cpu, progress.activity = (clock["wall"], clock["cpu"]), 0
@@ -269,7 +271,11 @@ class DriverTests(unittest.TestCase):
         progress.activity = 0
         self.assertEqual(activity_after_beat(command=3), clock["wall"])  # the dispatch command's checks
         progress.activity = 0
-        attempt["dispatch"] = {"state": "dispatched", "pid": 900}
+        attempt["dispatch"] = {"state": "dispatched", "pid": 900, "token": "other"}
+        ticks["parent"] = 1  # PID 900 reused by an unrelated process outside the driver's tree
+        self.assertEqual(activity_after_beat(executor=2), 0)  # not this attempt's supervisor: never credited
+        ticks.pop("parent")
+        attempt["dispatch"] = {"state": "dispatched", "pid": 900, "token": "t900"}
         self.assertEqual(activity_after_beat(), 0)  # the supervised baseline
         self.assertEqual(activity_after_beat(supervisor=2), 0)  # the supervisor only waits and polls
         self.assertEqual(activity_after_beat(executor=2), clock["wall"])  # preparation before the native start
@@ -285,6 +291,52 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(activity_after_beat(executor=5), 0)  # wait_block returned: the driver's own work counts
         progress.touch()  # a finished driver step
         self.assertGreater(activity_after_beat(), time.time() - 60)
+
+    def test_native_ticks_need_the_recorded_process(self):
+        root = self.root / "attempt-identity"; root.mkdir()
+        (root / "started.json").write_text(json.dumps({"pid": os.getpid(), "started_unix": 1000.0}))
+        with patch.object(driver, "process_start_unix", return_value=1000.0 + 60):  # the PID was reused
+            self.assertEqual(driver.native_ticks(root), -1)
+        with patch.object(driver, "process_start_unix", return_value=None):
+            self.assertEqual(driver.native_ticks(root), -1)
+        (root / "started.json").write_text(json.dumps({"pid": os.getpid()}))  # no start time recorded
+        self.assertEqual(driver.native_ticks(root), -1)
+        self.assertFalse(driver.supervisor_owned(os.getpid(), None))
+        self.assertFalse(driver.supervisor_owned(os.getpid(), ""))
+
+    def test_a_terminal_attempt_never_counts(self):
+        self.runpod()
+        folder = self.root / "guard"
+        lease_guard_files(folder)
+        with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", driver.native_dispatch.LEASE_GUARD_ENV: str(folder)}):
+            progress = driver.LeaseProgress(self.campaign)
+        root = self.root / "interrupted"; root.mkdir()
+        (root / "started.json").write_text(json.dumps({"pid": 4242, "started_unix": 1.0}))  # no execution.json
+        attempt = {"root": str(root), "outcome": "interrupted"}
+        progress.active["r1"] = {"attempts": [attempt]}
+        ticks = iter(range(10, 10 ** 6, 10))
+        with patch.object(driver, "native_ticks", side_effect=lambda root: next(ticks)) as sampled, \
+                patch.object(driver, "process_table", return_value={}), \
+                patch.object(driver, "driver_cpu_seconds", return_value=progress.cpu[1]):
+            progress.activity = 0
+            progress.beat(); progress.beat()
+        self.assertEqual(sampled.call_count, 0)
+        self.assertEqual(json.loads((folder / "progress.json").read_text())["last_activity_epoch"], 0)
+
+    @unittest.skipUnless(LINUX, "reads /proc")
+    def test_process_identity_on_linux(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "tok-431"])
+        try:
+            started = time.time()
+            for _ in range(50):
+                if driver.supervisor_owned(child.pid, "tok-431"):
+                    break
+                time.sleep(0.1)
+            self.assertTrue(driver.supervisor_owned(child.pid, "tok-431"))
+            self.assertFalse(driver.supervisor_owned(child.pid, "tok-other"))
+            self.assertLess(abs(driver.process_start_unix(child.pid) - started), driver.START_TOLERANCE_SECONDS)
+        finally:
+            child.kill(); child.wait()
 
     def test_descendant_ticks(self):
         table = {1: (0, 5), 10: (1, 100), 11: (10, 7), 12: (11, 3), 20: (1, 9), 21: (20, 4)}

@@ -269,12 +269,16 @@ def completed_updates(native: Path) -> int:
 
 
 class LeaseProgress(base.LeaseProgress):
-    """progress.json for the pod's resident lease guard, advanced by completed work only.
+    """progress.json for the pod's resident lease guard.
 
     Activity is a newly completed native update (each run's ``iterations/*/update.json``
-    count), or a driver step finishing (``touch``: a dispatch, a collection, a
-    retention, a block). A run stuck outside its native part therefore goes idle
-    and the guard's work_idle_seconds bound releases the pod. ``completed_updates``
+    count), a driver step finishing (``touch``: a dispatch, a collection, a
+    retention, a block), or the base's CPU-time evidence (``observe``: the driver
+    computing, as in the exposure collection, and an in-flight attempt's
+    fingerprints and archive after its native part). On 2026-10-30 those two steps
+    ran over five minutes between touches after a block's last update, and the
+    guard released a working Pod. A run stuck without CPU work still goes idle, and
+    the guard's work_idle_seconds bound releases the pod. ``completed_updates``
     counts this driver's updates for the lease adapter's session.
     """
 
@@ -288,13 +292,12 @@ class LeaseProgress(base.LeaseProgress):
 
     def beat(self, finished: bool = False) -> None:
         with self.lock:
-            stamp, alive = time.time(), False
+            stamp = time.time()
+            alive = self.observe(stamp)  # native_alive from in-flight attempts' own processes
             for run, entry in list(self.active.items()):
                 attempt = entry["attempts"][-1] if entry["attempts"] else None
-                if attempt is None or "outcome" in attempt:
+                if attempt is None or "outcome" in attempt or "finished" in attempt:
                     continue
-                ticks = base.native_ticks(Path(attempt["root"]))
-                alive = alive or (ticks is not None and ticks >= 0)
                 count = completed_updates(Path(attempt["native"]))
                 key = attempt["native"]
                 if count > self.counts.get(key, 0):

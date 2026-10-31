@@ -179,33 +179,58 @@ class DriverTests(unittest.TestCase):
                 (folder / "update" / "update.json").write_text("{}")
         self.assertEqual(driver.completed_updates(native), 2)
 
-    def test_lease_activity_advances_only_with_completed_work(self):
+    def test_lease_activity_counts_updates_steps_and_cpu_work(self):
         guard = self.root / "guard"
         lease_guard_files(guard)
         native = self.root / "hot" / "native"
-        (self.root / "hot" / "dispatch").mkdir(parents=True)
-        (self.root / "hot" / "dispatch" / "started.json").write_text(json.dumps({"pid": os.getpid()}))
+        dispatch = self.root / "hot" / "dispatch"
+        dispatch.mkdir(parents=True)
+        (dispatch / "started.json").write_text(json.dumps({"pid": 2 ** 22 + 7}))  # native child not readable
         with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", "MTG_LEASE_GUARD_DIR": str(guard)}):
             progress = driver.LeaseProgress(self.campaign)
-        entry = {"attempts": [{"root": str(self.root / "hot" / "dispatch"), "native": str(native)}]}
-        progress.active["G1"] = entry
-        progress.activity = 0
-        progress.beat()
-        record = json.loads((guard / "progress.json").read_text())
-        self.assertEqual((record["last_activity_epoch"], record["completed_updates"]), (0, 0))
+        attempt = {"root": str(dispatch), "native": str(native),
+                   "dispatch": {"state": "dispatched", "pid": 900, "token": "t900"}}
+        progress.active["G1"] = {"attempts": [attempt]}
+        me, clock, ticks = os.getpid(), {"wall": 2000., "cpu": 10.}, {"worker": 0}
+
+        def table():  # the reservation supervisor (900) and its fingerprint/archive worker (901)
+            return {me: (1, 0), 900: (me, 0), 901: (900, ticks["worker"])}
+
+        def beat(wall=15., cpu=0., worker=0):
+            clock["wall"] += wall; clock["cpu"] += cpu; ticks["worker"] += worker
+            with patch.object(driver.time, "time", return_value=clock["wall"]),                     patch.object(driver.base.time, "time", return_value=clock["wall"]),                     patch.object(driver.base, "driver_cpu_seconds", return_value=clock["cpu"]),                     patch.object(driver.base, "process_table", side_effect=table), \
+                    patch.object(driver.base, "supervisor_owned", side_effect=lambda pid, token: token == "t900"):
+                progress.beat()
+            return json.loads((guard / "progress.json").read_text())
+        progress.cpu, progress.activity = (clock["wall"], clock["cpu"]), 0
+        beat()
+        self.assertEqual(beat()["last_activity_epoch"], 0)                     # a beat alone is not activity
         folder = native / "iterations" / "000000" / "attempt-000000" / "update"
         folder.mkdir(parents=True)
         (folder / "update.json").write_text("{}")
-        progress.beat()
-        record = json.loads((guard / "progress.json").read_text())
-        self.assertGreater(record["last_activity_epoch"], 0)
-        self.assertEqual(record["completed_updates"], 1)
+        record = beat()
+        self.assertEqual((record["last_activity_epoch"], record["completed_updates"]), (clock["wall"], 1))
         progress.activity = 0
-        progress.beat()  # no new update, no activity
-        self.assertEqual(json.loads((guard / "progress.json").read_text())["last_activity_epoch"], 0)
+        (dispatch / "execution.json").write_text("{}")                        # the native part ended
+        self.assertEqual(beat()["last_activity_epoch"], 0)                     # the supervised baseline
+        self.assertEqual(beat(worker=4)["last_activity_epoch"], clock["wall"])  # fingerprints and archive
+        progress.activity = 0
+        attempt["outcome"] = "complete"
+        self.assertEqual(beat(cpu=4.0)["last_activity_epoch"], clock["wall"])  # the driver's exposure collection
+        progress.activity = 0
+        self.assertEqual(beat(cpu=0.5)["last_activity_epoch"], 0)              # under a quarter of a core: idle
         progress.touch()
-        progress.beat()
-        self.assertGreater(json.loads((guard / "progress.json").read_text())["last_activity_epoch"], time.time() - 60)
+        self.assertGreater(beat()["last_activity_epoch"], 0)
+        self.assertEqual(beat()["completed_updates"], 1)
+        for marker in ("finished", "outcome"):  # a terminal attempt's later updates are never counted
+            terminal = {"root": str(dispatch), "native": str(native), "dispatch": attempt["dispatch"], marker: "x"}
+            progress.active["G1"] = {"attempts": [terminal]}
+            folder = native / "iterations" / f"00000{2 if marker == 'finished' else 3}" / "attempt-000000" / "update"
+            folder.mkdir(parents=True)
+            (folder / "update.json").write_text("{}")
+            progress.activity = 0
+            record = beat()
+            self.assertEqual((record["last_activity_epoch"], record["completed_updates"]), (0, 1))
 
     def test_pack_slots_and_native_root(self):
         raw = json.loads(self.path.read_text())
