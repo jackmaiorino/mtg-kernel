@@ -1416,6 +1416,17 @@ impl FrozenPlayPolicyV1 {
         }
     }
 
+    /// The contract digest `actual_model_identity_v1` reports: the installed
+    /// input contract's, else the import's. A FlatV7 or FlatV8 transfer keeps
+    /// the import's (V4) digest here; its effective identity is
+    /// `feature_identity_v1`.
+    pub(crate) fn model_feature_contract_digest_v1(&self) -> &str {
+        self.input_contract.as_ref().map_or_else(
+            || self.identity.feature_contract_digest_v1(),
+            |contract| contract.digest.as_str(),
+        )
+    }
+
     pub fn actual_model_identity_v1(&self) -> PlayModelIdentityV1 {
         let mut weights = Sha256::new();
         let mut embeddings = Sha256::new();
@@ -1433,10 +1444,7 @@ impl FrozenPlayPolicyV1 {
             weights_sha256: format!("{:x}", weights.finalize()),
             model_parameter_sha256: self.model.parameter_manifest_sha256_v1(),
             embedding_table_sha256: format!("{:x}", embeddings.finalize()),
-            feature_contract_digest: self.input_contract.as_ref().map_or_else(
-                || self.identity.feature_contract_digest_v1().to_owned(),
-                |contract| contract.digest.clone(),
-            ),
+            feature_contract_digest: self.model_feature_contract_digest_v1().to_owned(),
             feature_encoding_digest: self.identity.feature_encoding_digest_v1().to_owned(),
             card_db_hash: self.identity.destination_card_db_hash_v1().to_owned(),
         }

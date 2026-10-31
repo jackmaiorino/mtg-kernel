@@ -386,11 +386,13 @@ pub(super) fn load_opponent_cached_v1(
                 .all(|(path, bytes)| no_state_digest_v1::holds_bytes_v1(path, bytes))
     });
     if let Some((policy, identity, _)) = cached {
-        // A hit bypasses loading, so the entry's effective input contract is
-        // resolved again: its receipt and its policy must still agree.
+        // A hit bypasses loading, so the entry's input contract is resolved
+        // again: its receipt and its policy must still agree. The receipt's
+        // model digest is the policy's model digest (the installed contract's,
+        // else the import's), never the effective FlatV7 or FlatV8 identity,
+        // which a transferred opponent's import does not carry.
         ensure(
-            identity.model.feature_contract_digest
-                == no_state_digest_v1::effective_contract_digest_v1(&policy),
+            identity.model.feature_contract_digest == policy.model_feature_contract_digest_v1(),
             "cached opponent no-state-digest contract differs from its receipt",
         )?;
         return Ok((
