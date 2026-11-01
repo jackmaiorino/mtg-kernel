@@ -58,6 +58,7 @@ class ArchiveTests(unittest.TestCase):
         save(self.root / "tooling" / "abc" / "tool.py", b"print()")  # staged tooling: regenerable
         save(self.root / "control" / "lease-a" / "execute.log", b"log")
         save(self.root / "control" / "lease-a" / "results.tar.gz", b"packed")
+        save(self.root / "control" / "lease-a" / "native-0.zip", b"z")  # not in a cold folder: kept
 
     def baselines(self):
         return pod(archive.POD_BASELINES, {"tools": str(TOOLS), "campaign": str(self.root / "campaign"),
@@ -87,7 +88,7 @@ class ArchiveTests(unittest.TestCase):
         for name in ("campaign/state/G1.json", "campaign/hot/G2/b001-a1/dispatch/report.json",
                      "campaign/retained/G2/b01/episode.json", "campaign/checkpoints/G1/b002.json",
                      "campaign/cold/G1/b1/archive.json", "control/lease-a/execute.log",
-                     "control/lease-a/results.tar.gz"):
+                     "control/lease-a/results.tar.gz", "control/lease-a/native-0.zip"):
             self.assertIn(name, kept)
         for name in ("campaign/checkpoints/G1/ancestry.json", "campaign/hot/G2/b001-a1/native/big.bin",
                      "campaign/cold/G1/b1/native-0.zip", "campaign/qualification/empty-pool/trials-cold/w1/native-1.zip",

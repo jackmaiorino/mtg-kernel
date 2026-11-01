@@ -41,9 +41,10 @@ BASELINES = [("G1", 1), ("G1", 2)] + [(run, 1) for run in ("G2", "G3", "G4", "G5
 # than the named final ones, and the old root's staged tooling, runtime and inputs (in the packages).
 PAYLOAD_FOLDERS = ("native",)
 PAYLOAD_SHARD = r"native-[0-9]+\.zip"
+SHARD_FOLDERS = ("cold", "trials-cold")  # a shard is payload only inside a cold folder
 STAGED_FOLDERS = ("tooling", "runtime", "inputs")
 PACK_RULES = {"payload_folders": list(PAYLOAD_FOLDERS), "payload_shard": PAYLOAD_SHARD,
-              "staged_folders": list(STAGED_FOLDERS)}
+              "shard_folders": list(SHARD_FOLDERS), "staged_folders": list(STAGED_FOLDERS)}
 POD_OUT = "/root/superseded-archive"  # the container disk: the archive never adds to the volume
 FILES = ("records.tar.gz", "manifest.json", "prune-listing.json", "baselines.json")
 STEP_SECONDS = 3000  # a Pod step's bound (a walk of the old root took 11 min alone)
@@ -93,6 +94,7 @@ with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=6) as tar:
             parts = relative.parts
             payload = (any(part in ARGS["payload_folders"] for part in parts[:-1])
                        or re.fullmatch(ARGS["payload_shard"], name) is not None
+                       and any(part in ARGS["shard_folders"] for part in parts[:-1])
                        or parts[:2] == ("campaign", "checkpoints") and str(path) not in keep
                        or len(parts) > 1 and parts[0] in ARGS["staged_folders"])
             entry = {"path": relative.as_posix(), "bytes": size}
@@ -136,6 +138,20 @@ def sha256_file(path) -> str:
         for chunk in iter(lambda: stream.read(1 << 20), b""):
             value.update(chunk)
     return value.hexdigest()
+
+
+def flush_durable(folder: Path, names) -> None:
+    """Flush each copied file, then its folder where the platform allows, to stable storage: a verified copy must
+    survive a crash of this host before the Pod's copy is pruned."""
+    for name in names:
+        with open(Path(folder) / name, "rb+") as stream:
+            os.fsync(stream.fileno())
+    if hasattr(os, "O_DIRECTORY"):  # POSIX: the folder's entries too (Windows flushes them with the files)
+        handle = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(handle)
+        finally:
+            os.close(handle)
 
 
 def verify_copy(dest: Path, reported: dict) -> dict:
@@ -202,9 +218,11 @@ class ArchiveCycle(gcloud.Cycle):
         self.dest.mkdir(parents=True)
         for name in FILES:
             self.pod.get(f"{POD_OUT}/{name}", self.dest / name, timeout=STEP_SECONDS)
+        flush_durable(self.dest, FILES)  # on disk before anything depends on these copies
         verified = verify_copy(self.dest, reported)
         write(self.dest / "VERIFIED.json", {"schema": SCHEMA + "/verified", "epoch": time.time(),
                                             "files": {name: pin(self.dest / name) for name in FILES}, **verified})
+        flush_durable(self.dest, ["VERIFIED.json"])
         pruned = self.step(POD_PRUNE, {"root": str(self.old), "expected_root": str(self.old), "keep_root": str(self.base),
                                        "out": POD_OUT, "verified": reported})
         require(pruned["pruned"] is True, "the superseded root is still present")
