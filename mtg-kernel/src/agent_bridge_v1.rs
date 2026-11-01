@@ -270,6 +270,10 @@ struct SpellbenchBridgeGameV1 {
     history_cursor: (usize, usize, usize),
     #[cfg(test)]
     force_flat_v4_encode_error: bool,
+    /// Test hook: the action id handed to the session on the next step, so
+    /// a step the bridge validated can be refused by the session.
+    #[cfg(test)]
+    force_session_action_id: Option<String>,
 }
 
 /// In-process spellbench/v1 environment-role server. The stdio binary is a
@@ -578,6 +582,8 @@ impl SpellbenchBridgeServerV1 {
                 history_cursor: game.history_cursor,
                 #[cfg(test)]
                 force_flat_v4_encode_error: game.force_flat_v4_encode_error,
+                #[cfg(test)]
+                force_session_action_id: None,
             });
             (copy, 0)
         };
@@ -819,6 +825,8 @@ impl SpellbenchBridgeServerV1 {
             history_cursor: (0, 0, 0),
             #[cfg(test)]
             force_flat_v4_encode_error: false,
+            #[cfg(test)]
+            force_session_action_id: None,
         };
         let flat_v4 = match lockstep_failure {
             Some(reason) => Err(reason),
@@ -940,11 +948,17 @@ impl SpellbenchBridgeServerV1 {
             .halt_reason();
             return self.fail_game_halted(request_id, answered_counts, &reason);
         }
+        #[cfg(test)]
+        let forced_action_id = game.force_session_action_id.take();
+        #[cfg(test)]
+        let action_id = forced_action_id.as_deref().unwrap_or(&chosen.stable_id);
+        #[cfg(not(test))]
+        let action_id = &chosen.stable_id;
         let applied = game.session.step(
             game.episode_id,
             expected_step,
             selection.candidate_id,
-            &chosen.stable_id,
+            action_id,
         );
         match applied {
             Ok(response) => {
@@ -2887,6 +2901,107 @@ mod tests {
         );
     }
 
+    /// End to end: a step the bridge validated but the session refuses ends
+    /// the game halted with the session's code and message (the injected
+    /// action id stands in for a kernel defect such as 92ec2393's goad scan).
+    #[test]
+    fn a_validated_step_the_session_refuses_halts_with_its_code_end_to_end() {
+        let mut server = test_server();
+        let decision = parse_line(&server.handle_line(&reset_line("r", "g-refused", 7)));
+        assert_eq!(decision["response_type"], "decision");
+        let step = decision["step"].as_u64().unwrap();
+        let game = server.game.as_mut().unwrap();
+        let bogus = "not-a-live-action-id";
+        let expected = game
+            .session
+            .clone()
+            .step(game.episode_id, step, 0, bogus)
+            .unwrap_err();
+        assert_eq!(
+            session_error_to_bridge_code_v1(&expected),
+            None,
+            "{expected:?}"
+        );
+        game.force_session_action_id = Some(bogus.to_string());
+        let terminal = parse_line(&server.handle_line(&step_line_for("s", &decision, 0)));
+        assert_eq!(terminal["response_type"], "terminal", "{terminal}");
+        assert_eq!(terminal["outcome"], "halted");
+        assert_eq!(terminal["classification"], "halted");
+        assert_eq!(
+            terminal["reason"],
+            json!(session_rejection_reason_v1(&expected))
+        );
+        assert!(terminal["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("engine_contract_failure:session_step_rejected_after_validation:"));
+        assert_eq!(terminal["step_count"], json!(step + 1));
+    }
+
+    /// Regression anchor for main's goad fix: in the Elves sweep game that
+    /// halted on the 92ec2393 line, every attacker-inclusion scan of a
+    /// creature that must attack because it is goaded offers no
+    /// `include: false` row, and the game ends naturally.
+    #[test]
+    fn goaded_attacker_scans_offer_no_exclusion_in_the_former_halt_game() {
+        fn splitmix64(state: u64) -> u64 {
+            let mut z = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+        let seed = 11_u64;
+        let mut server = test_server();
+        let reset = json!({
+            "request_type": "reset", "protocol": SPELLBENCH_PROTOCOL_V1, "request_id": "r-0",
+            "game_id": "g-goad-scan", "format": "pauper-bo1",
+            "seats": [{"seat": "p0", "deck": {"catalog_id": "Elves"}},
+                      {"seat": "p1", "deck": {"catalog_id": "Elves"}}],
+            "game_seed": seed, "max_decisions": 600, "max_steps": 6000,
+        })
+        .to_string();
+        let mut current = parse_line(&server.handle_line(&reset));
+        let mut goaded_scans = 0;
+        while current["response_type"] == "decision" {
+            let candidates = current["candidates"].as_array().unwrap();
+            let state = server.game.as_ref().unwrap().session.game_state();
+            for candidate in candidates {
+                let semantic = &candidate["semantic"];
+                if semantic["kind"] != "choose_attacker_inclusion" {
+                    continue;
+                }
+                let object_id = semantic["attacker"]["object_id"].as_str().unwrap();
+                let arena: u32 = object_id[4..10].parse().unwrap();
+                let attacker = crate::ids::ObjectId(arena);
+                if crate::engine::required_goaded_attackers(state, &[attacker]).is_empty() {
+                    continue;
+                }
+                goaded_scans += 1;
+                assert!(
+                    !candidates.iter().any(|other| {
+                        other["semantic"]["kind"] == "choose_attacker_inclusion"
+                            && other["semantic"]["attacker"]["object_id"] == object_id
+                            && other["semantic"]["include"] == false
+                    }),
+                    "goaded attacker {object_id} may be excluded: {current}"
+                );
+            }
+            let step = current["step"].as_u64().unwrap();
+            let choice = (splitmix64(seed ^ step.wrapping_mul(0xD1B5_4A32_D192_ED03))
+                % candidates.len() as u64) as usize;
+            current = parse_line(&server.handle_line(&step_line_for(
+                &format!("s-{step}"),
+                &current,
+                choice,
+            )));
+        }
+        assert_eq!(current["classification"], "natural", "{current}");
+        assert!(
+            goaded_scans > 0,
+            "the former halt game reached no goaded attacker scan"
+        );
+    }
+
     #[test]
     fn session_rejection_reason_names_the_code_as_the_kernel_spells_it() {
         for code in [
@@ -3461,6 +3576,7 @@ mod tests {
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
             force_flat_v4_encode_error: false,
+            force_session_action_id: None,
         };
         let response = game.session.current_response();
         let flat_v4 = flat_v4_extension_v1(&mut game, &response).unwrap();
