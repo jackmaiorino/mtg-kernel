@@ -598,25 +598,42 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             with self.assertRaisesRegex(ValueError, "storage emergency: scratch volume"):
                 dispatch.running_storage(storage)
 
-    def test_storage_walk_counts_a_file_deleted_mid_walk_as_freed(self):
-        # Another job sharing the accounting root removes its outputs between is_file and stat.
+    def test_storage_walk_survives_a_file_deleted_mid_walk(self):
+        # Another job sharing the accounting root removes its outputs while the walk lists their folder.
         storage = self.request(2)["storage"]
         doomed = self.root/"sibling/native/raced-episode.json"
         doomed.parent.mkdir(parents=True)
         doomed.write_bytes(b"x" * 4096)
-        is_file = Path.is_file
+        scandir = dispatch.os.scandir
 
-        def racing_is_file(path, *args, **kwargs):
-            answer = is_file(path, *args, **kwargs)
-            if path.name == doomed.name and answer:  # the walk sees resolved paths
-                path.unlink()
-            return answer
+        def racing_scandir(path):
+            listed = scandir(path)
+            if Path(path) == doomed.parent.resolve() and doomed.exists():
+                doomed.unlink()  # listed, then gone before its stat
+            return listed
 
         with patch.object(dispatch.shutil, "disk_usage", return_value=type("Disk", (), {"free": 100*1024**3})()):
-            with patch.object(Path, "is_file", racing_is_file):
+            with patch.object(dispatch.os, "scandir", racing_scandir):
                 raced = dispatch.validate_storage(storage, 0)["logical_bytes"]
             self.assertFalse(doomed.exists())
-            self.assertEqual(raced, dispatch.validate_storage(storage, 0)["logical_bytes"])
+            after = dispatch.validate_storage(storage, 0)["logical_bytes"]
+            # freed (Linux: its lstat fails) or counted from the listing (Windows caches it): never an error
+            self.assertIn(raced, (after, after + 4096))
+
+    def test_the_emergency_sample_walks_at_most_every_ten_minutes(self):
+        storage = self.request(2)["storage"]
+        storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        walks = []
+        real = dispatch.accounting_bytes
+        self.addCleanup(dispatch.EMERGENCY_WALK.update, {"at": 0.0, "logical": None})
+        dispatch.EMERGENCY_WALK.update(at=0.0, logical=None)
+        with patch.object(dispatch, "accounting_bytes", lambda s: walks.append(1) or real(s)):
+            dispatch.running_storage(storage)
+            dispatch.running_storage(storage)
+            self.assertEqual(len(walks), 1)
+            dispatch.EMERGENCY_WALK["at"] -= dispatch.EMERGENCY_WALK_SECONDS + 1
+            dispatch.running_storage(storage)
+            self.assertEqual(len(walks), 2)
 
     def test_evaluation_serial_payload_has_no_parallel_field(self):
         config = {"mode": "collect_parallel", "workers": 4, "source": {},
