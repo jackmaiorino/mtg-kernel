@@ -358,15 +358,28 @@ def dispatchers():
             request = argv[scripts[0] + 2].decode(errors="replace") if scripts[0] + 2 < len(argv) else None
             found.append((int(entry.name), seen[1], request))
     return found
-# Per dispatcher: its request (which names the attempt) and the Pod-clock time just before its signal, the evidence
-# AMENDMENT-3 3(b) compares with the attempt's interruption.json (also written on the Pod clock).
+# Per dispatcher: its request (which names the attempt), the release marker written in its dispatch root before the
+# signal (the dispatcher notes whether it existed when it latched its first stop: AMENDMENT-3 3(b)), and the
+# Pod-clock time of the signal.
+def mark(request):
+    try:
+        root = pathlib.Path(json.loads(pathlib.Path(request).read_text())["root"])
+        marker = root / ARGS["marker"]
+        partial = marker.with_name(marker.name + ".partial")
+        partial.write_text(json.dumps({"epoch": time.time(), "request": request}))
+        os.replace(partial, marker)
+        return str(marker)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 signalled = []
 for pid, ticks, request in dispatchers():
     if running(pid, ticks):  # the same process, not a reused PID
+        marker = mark(request) if request else None
         at = time.time()
         try:
             os.kill(pid, signal.SIGTERM)
-            signalled.append({"pid": pid, "start_ticks": ticks, "request": request, "signalled_unix": at})
+            signalled.append({"pid": pid, "start_ticks": ticks, "request": request, "marker": marker,
+                              "signalled_unix": at})
         except OSError:
             pass
 deadline = time.monotonic() + ARGS["seconds"]
@@ -493,7 +506,8 @@ class Cycle(cloud.Cycle):
                 write(self.control / "release-path-started.json",
                       {"epoch": time.time(), "cause": self.result.get("error") or "controller release",
                        "error_type": self.result.get("error_type")}, replace=True)
-                stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS},
+                stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS,
+                                                              "marker": cloud.native_dispatch.RELEASE_MARKER},
                                        timeout=DISPATCHER_GRACE_SECONDS + 30)
                 write(self.control / "dispatchers-stopped.json", stopped, replace=True)
                 self.result["dispatchers_signalled"] = len(stopped["signalled"])

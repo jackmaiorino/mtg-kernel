@@ -445,8 +445,12 @@ class LeaseTests(unittest.TestCase):
                     "signal.signal(signal.SIGTERM, stop)\n"
                     "print('ready', flush=True)\n"
                     "time.sleep(60)\n")
+            request = Path(temp) / "request.json"
+            request.write_text(json.dumps({"root": str(Path(temp) / "dispatch")}))
+            (Path(temp) / "dispatch").mkdir()
+            body = body.replace("sys.argv[3]", "sys.argv[4]")
             fake = subprocess.Popen([sys.executable, "-c", body, "native_expanded_dispatch_v1.py", "_dispatch",
-                                     str(marker)], stdout=subprocess.PIPE)
+                                     str(request), str(marker)], stdout=subprocess.PIPE)
             other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "unrelated"])
             # A reservation supervisor names the dispatcher's command after its own script: never signalled.
             wrapper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "host_reservation_v1.py",
@@ -454,12 +458,16 @@ class LeaseTests(unittest.TestCase):
                                         "native_expanded_dispatch_v1.py", "_dispatch", "request.json"])
             try:
                 self.assertEqual(fake.stdout.readline().strip(), b"ready")
-                code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10}) + gcloud.POD_STOP_DISPATCHERS
+                code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10, "marker": dispatch.RELEASE_MARKER}) + \
+                    gcloud.POD_STOP_DISPATCHERS
                 done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
                 result = json.loads(done.stdout.decode().splitlines()[-1])
                 fake.wait(10)
                 self.assertEqual(([item["pid"] for item in result["signalled"]], result["still_running"]), ([fake.pid], []))
-                self.assertEqual(result["signalled"][0]["request"], str(marker))  # the argument after the action
+                self.assertEqual(result["signalled"][0]["request"], str(request))  # the argument after the action
+                written = Path(temp) / "dispatch" / dispatch.RELEASE_MARKER  # in its dispatch root, before the signal
+                self.assertEqual(result["signalled"][0]["marker"], str(written))
+                self.assertEqual(json.loads(written.read_text())["request"], str(request))
                 self.assertLessEqual(result["signalled"][0]["signalled_unix"], time.time())
                 self.assertEqual(marker.read_text(), "stopped")  # the dispatcher saw SIGTERM, not SIGKILL
                 self.assertIsNone(other.poll())  # nothing else signalled
