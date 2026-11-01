@@ -819,12 +819,15 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
                 patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
                 patch("host_reservation_v1.record_descendant"), \
                 patch.object(dispatch.subprocess, "Popen", side_effect=lambda *a, **k: Child()) as spawn:
-            for name, value in patches.items():
-                stack = patch.object(dispatch, name, value)
-                stack.start()
-                self.addCleanup(stack.stop)
-            with self.assertRaises(Exception):  # the stand-in writes no native result
-                dispatch.execute(Path(request_ref["path"]), True)
+            extra = [patch.object(dispatch, name, value) for name, value in patches.items()]
+            for each in extra:
+                each.start()
+            try:
+                with self.assertRaises(Exception):  # the stand-in writes no native result
+                    dispatch.execute(Path(request_ref["path"]), True)
+            finally:
+                for each in reversed(extra):  # this run's patches only
+                    each.stop()
             self.spawned = spawn.call_count
         path = Path(request["root"]) / "execution.json"
         return dispatch.read(path) if path.exists() else None
@@ -907,6 +910,28 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         record = dispatch.read(Path(request["root"]) / "interruption.json")
         self.assertEqual((record["signal"], record["child_running"]), ("SIGTERM", True))
         self.assertIn("not mapped", execution["error"])
+
+        def polling_check(child, runtime, checkpoint=None):  # the library check's own poll sees the stop
+            dispatch.STOP.update(signal=dispatch.signal.SIGHUP, at=time.time())
+            checkpoint()
+        request = self.request(1)
+        request["root"] += "-poll"
+        request["cold_root"] += "-poll"
+        with patch.object(dispatch, "WINDOWS", False):
+            execution = self.run_native(request, child_seconds=5.0, require_mapped_libraries=polling_check)
+        record = dispatch.read(Path(request["root"]) / "interruption.json")
+        self.assertEqual((record["signal"], record["child_running"]), ("SIGHUP", True))
+        self.assertIn("stopped from outside by SIGHUP", execution["error"])
+
+        def latch_at_native_end():  # a stop after the native part, then another error ends the attempt
+            dispatch.STOP.update(signal=dispatch.signal.SIGTERM, at=time.time())
+        request = self.request(1)
+        request["root"] += "-after"
+        request["cold_root"] += "-after"
+        execution = self.run_native(request, child_seconds=0.1, close_emergency=latch_at_native_end)
+        self.assertIsNone(execution["error"])  # the native part itself succeeded
+        record = dispatch.read(Path(request["root"]) / "interruption.json")
+        self.assertEqual((record["child_running"], record["child_exit_code"]), (False, 0))
         barrier = {"ready": str(self.root / "ready.json"), "release": str(self.root / "release.json"),
                    "timeout_seconds": 30, "owner": owner()}
         dispatch.STOP.update(signal=dispatch.signal.SIGTERM, at=time.time())

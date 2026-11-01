@@ -1444,7 +1444,10 @@ def execute(request_path, qualification):
                            placed, command, started, token, archive_native, reservations)
     except BaseException:
         if STOP["signal"] is not None:  # a stop latched while another error ended the attempt: its evidence
-            record_interruption(root, STOP["child"], STOP["signal"], STOP["at"])
+            try:  # evidence only: the original error is the one raised
+                record_interruption(root, STOP["child"], STOP["signal"], STOP["at"])
+            except Exception:
+                pass
         raise
     finally:
         restore_handlers(handlers)
@@ -1498,7 +1501,10 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
         except BaseException as error:
             failure = str(error)
             if STOP["signal"] is not None:  # a stop latched while another error ended the loop: its evidence
-                record_interruption(root, child, STOP["signal"], STOP["at"])  # before the kill below
+                try:  # before the kill below; evidence only, so a failed write never skips the cleanup
+                    record_interruption(root, child, STOP["signal"], STOP["at"])
+                except Exception:
+                    pass
             if child.poll() is None:
                 child.kill()
             child.wait()
