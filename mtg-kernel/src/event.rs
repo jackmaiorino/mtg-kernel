@@ -5512,6 +5512,12 @@ fn materialize_event_v1(
             if g.amount <= 0 {
                 return None;
             }
+            // Sulfuric Vortex: "If a player would gain life, that player
+            // gains no life instead." (eternal wave P1a)
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::eternal_premodern_p1a_v1::statics::prevents_life_gain(state) {
+                return None;
+            }
             state.players[g.player.index()].life += g.amount;
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_cards_v1::record_life(state, g.player, g.amount, 0);

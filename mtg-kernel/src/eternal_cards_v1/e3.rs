@@ -287,6 +287,8 @@ pub enum E3ChoiceKindV1 {
     E9bV1(crate::eternal_e9b_v1::E9bChoiceV1),
     /// A wave E9a choice (`eternal_legacy_e9a_v1`).
     E9aV1(crate::eternal_legacy_e9a_v1::E9aChoiceV1),
+    /// A Premodern wave P1a choice (`eternal_premodern_p1a_v1`).
+    P1aV1(crate::eternal_premodern_p1a_v1::P1aChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -335,6 +337,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::E9aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::P1aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -358,6 +363,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E7aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E8aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E9aV1(kind) => kind.library_search(),
+            E3ChoiceKindV1::P1aV1(kind) => kind.library_search(),
             _ => false,
         }
     }
@@ -373,6 +379,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::P1aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
             | E3ChoiceKindV1::OracleV1 { .. }
@@ -424,6 +431,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::P1aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -653,6 +661,13 @@ pub(crate) fn finish_selection(
             bindings,
         ),
         E3ChoiceKindV1::E9aV1(kind) => crate::eternal_legacy_e9a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::P1aV1(kind) => crate::eternal_premodern_p1a_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -997,6 +1012,9 @@ pub(crate) fn drive(
         EternalOpV1::E9aV1(op) => {
             crate::eternal_legacy_e9a_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::P1aV1(op) => {
+            crate::eternal_premodern_p1a_v1::drive(state, continuation, op, path)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -1026,6 +1044,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
         || matches!(op, EternalOpV1::E7bV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::E8aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::E9aV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::P1aV1(op) if op.contains_player_choice())
 }
 
 /// The cards (not tokens or copies) in `player`'s graveyard, in order.
@@ -2319,6 +2338,10 @@ pub(crate) fn power_modifier(state: &GameState, object: ObjectId) -> i32 {
 pub(crate) fn cant_attack(state: &GameState, object: ObjectId) -> bool {
     // Ensnaring Bridge and kicked Orim's Chant (wave E9a).
     if crate::eternal_legacy_e9a_v1::statics::cant_attack(state, object) {
+        return true;
+    }
+    // Goblin Goon (wave P1a).
+    if crate::eternal_premodern_p1a_v1::statics::cant_attack(state, object) {
         return true;
     }
     e3(state).is_some_and(|e3| {

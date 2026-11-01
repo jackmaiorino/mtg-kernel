@@ -147,6 +147,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_legacy_e9a_v1::E9aStateV1::is_empty"
     )]
     pub e9a: crate::eternal_legacy_e9a_v1::E9aStateV1,
+    /// Premodern wave P1a's state (`eternal_premodern_p1a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p1a_v1::P1aStateV1::is_empty"
+    )]
+    pub p1a: crate::eternal_premodern_p1a_v1::P1aStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -356,6 +362,8 @@ pub enum EternalOpV1 {
     E9bV1(crate::eternal_e9b_v1::E9bOpV1),
     /// A leaf owned by wave E9a's module.
     E9aV1(crate::eternal_legacy_e9a_v1::E9aOpV1),
+    /// A leaf owned by Premodern wave P1a's module.
+    P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -409,6 +417,7 @@ impl EternalOpV1 {
             EternalOpV1::E8aV1(op) => op.contains_player_choice(),
             EternalOpV1::E9bV1(op) => op.contains_player_choice(),
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
+            EternalOpV1::P1aV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -907,6 +916,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E8aV1(op) => crate::eternal_legacy_e8a_v1::execute(op, ctx, state),
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::execute(op, ctx, state),
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
+        EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1395,12 +1405,19 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_pauper_e8b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_e9b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_legacy_e9a_v1::statics::blocker_allowed(state, blocker)
+        && crate::eternal_premodern_p1a_v1::statics::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
 /// among cards in your graveyard and its toughness is equal to that number
 /// plus 1." A characteristic-defining ability works in every zone.
 pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    // Terravore sets both stats (wave P1a).
+    if let Some(value) =
+        crate::eternal_premodern_p1a_v1::statics::characteristic_defining_power(state, id)
+    {
+        return Some(value);
+    }
     if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_power(state, id) {
         return Some(value);
     }
@@ -1422,6 +1439,11 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
 }
 
 pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    if let Some(value) =
+        crate::eternal_premodern_p1a_v1::statics::characteristic_defining_power(state, id)
+    {
+        return Some(value);
+    }
     // Barrowgoyf's toughness is its power plus 1.
     if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_toughness(state, id) {
         return Some(value);
@@ -1448,6 +1470,7 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_vintage_e7b_v1::statics::apply_entry_counters(state, object, input);
     crate::eternal_legacy_e8a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_legacy_e9a_v1::statics::apply_entry_counters(state, object, input);
+    crate::eternal_premodern_p1a_v1::statics::apply_entry_counters(state, object);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -1620,6 +1643,9 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_legacy_e9a_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_premodern_p1a_v1::delayed_triggers(
+        state, events,
+    ));
     triggers
 }
 
@@ -1724,6 +1750,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_legacy_e7a_v1::begin_turn(state, player);
     crate::eternal_legacy_e8a_v1::begin_turn(state, player);
     crate::eternal_legacy_e9a_v1::begin_turn(state, player);
+    crate::eternal_premodern_p1a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

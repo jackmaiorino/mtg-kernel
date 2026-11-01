@@ -310,7 +310,7 @@ pub(crate) fn protected_from_source(state: &GameState, object: ObjectId, source:
 // ---- Regeneration -------------------------------------------------------------------
 
 /// "Regenerate this creature" (701.15a): a shield that lasts this turn.
-pub(crate) fn add_regeneration_shield(state: &mut GameState, creature: ObjectId) {
+pub fn add_regeneration_shield(state: &mut GameState, creature: ObjectId) {
     let link = live_link(state, creature);
     let controller = state.objects.get(creature).controller;
     let turn = TurnCountV1::now(state, controller);
@@ -326,6 +326,10 @@ pub(crate) fn regenerate_instead(state: &mut GameState, creature: ObjectId) -> b
         return false;
     };
     if live.zone != Zone::Battlefield {
+        return false;
+    }
+    // Incinerate and Smother: "It can't be regenerated." (wave P1a)
+    if crate::eternal_premodern_p1a_v1::statics::cant_be_regenerated(state, creature) {
         return false;
     }
     let link = live_link(state, creature);

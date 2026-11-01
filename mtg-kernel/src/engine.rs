@@ -2054,6 +2054,10 @@ fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
     {
         return true;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(mask) = crate::eternal_premodern_p1a_v1::statics::color_override(state, id) {
+        return mask & card_def::mana_color_mask(color) != 0;
+    }
     card_def::CARD_DEFS[def_idx as usize]
         .colors
         .contains(&color)
@@ -3409,6 +3413,13 @@ pub(crate) fn stack_spell_has_type(
 pub(crate) fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16 {
     if state.objects.get(item.source).v4.face_down_v1.is_some() {
         return 0;
+    }
+    // A split card's half (eternal wave P1a) has only its own mana value.
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(value) =
+        crate::eternal_premodern_p1a_v1::statics::split_spell_mana_value(state, item)
+    {
+        return value;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if let Some((_, value, _)) = crate::standard_cards_v1::room_characteristics(state, item.source)
@@ -6141,6 +6152,14 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 graveyard_exile_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::ExileXCardsFromOwnGraveyardV1 { .. } => {
+                graveyard_exile_count += 1;
+                saw_source_changing_component = true;
+            }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                hand_exile_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::Mana(cost) => {
                 if mana.is_some() || saw_source_changing_component {
                     return false;
@@ -6319,6 +6338,8 @@ fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
                         | CostComponent::ExileCardsFromHandWithColorV1 { .. }
                         | CostComponent::DiscardLandCardsV1(_)
                         | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+                        | CostComponent::ExileXCardsFromOwnGraveyardV1 { .. }
+                        | CostComponent::DiscardIslandAndAnotherCardV1
                         | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
                         | CostComponent::TapUntappedControlledPermanentsV1 { .. }
                 )
@@ -6680,6 +6701,13 @@ fn can_pay_components(
                     },
                 )
             }
+            // X may be zero: exiling no cards always pays.
+            CostComponent::ExileXCardsFromOwnGraveyardV1 { .. } => {
+                checked_graveyard_exile_candidates(player, source, state, &[]).is_some()
+            }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                !island_discard_cost_candidates(player, source, state, &[]).is_empty()
+            }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
                     player,
@@ -7030,6 +7058,33 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
+    let x_graveyard_exile = components.iter().find_map(|component| match component {
+        CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => Some(*blue_only),
+        _ => None,
+    });
+    if let Some(blue_only) = x_graveyard_exile {
+        if checked_graveyard_exile_candidates(player, source, state, object_cost_chosen).is_none()
+            || (blue_only
+                && object_cost_chosen.iter().any(|&card| {
+                    object_color_mask(state, card) & card_def::mana_color_mask(ManaColor::U) == 0
+                }))
+        {
+            return None;
+        }
+    }
+    if components
+        .iter()
+        .any(|component| matches!(component, CostComponent::DiscardIslandAndAnotherCardV1))
+    {
+        let valid = object_cost_chosen.len() == 2
+            && island_discard_cost_candidates(player, source, state, &[])
+                .contains(&object_cost_chosen[0])
+            && island_discard_cost_candidates(player, source, state, &object_cost_chosen[..1])
+                .contains(&object_cost_chosen[1]);
+        if !valid {
+            return None;
+        }
+    }
     let graveyard_types_needed = components.iter().find_map(|component| match component {
         CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => Some(*minimum),
         _ => None,
@@ -7210,9 +7265,12 @@ fn commit_cost_components_from_plan_v1(
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
             }
             CostComponent::DiscardSelf => {
-                // Cycling discards its card (Hollow One counts it).
+                // Cycling discards its card (Hollow One counts it; Gempalm
+                // Incinerator's cycle trigger sees it).
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_vintage_e7b_v1::statics::note_discard(state, source);
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
                     state,
                     ProposedEvent::zone_change(source, Zone::Graveyard),
@@ -7402,8 +7460,14 @@ fn commit_cost_components_from_plan_v1(
                     commit_discarded_card(state, card);
                 }
             }
-            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_) => {
+            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+            | CostComponent::ExileXCardsFromOwnGraveyardV1 { .. } => {
                 commit_graveyard_exile(state, object_cost_chosen);
+            }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                for &card in object_cost_chosen {
+                    commit_discarded_card(state, card);
+                }
             }
             CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. } => {
                 for &object in object_cost_chosen {
@@ -7895,7 +7959,9 @@ pub(crate) fn permanent_matches_filter(
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_land
         }
         PermanentFilter::AnotherArtifact => object_has_type(state, id, CardType::Artifact),
-        PermanentFilter::AnotherWithSubtype(subtype) => has_effective_subtype(state, id, subtype),
+        PermanentFilter::AnotherWithSubtype(subtype) | PermanentFilter::WithSubtypeV1(subtype) => {
+            has_effective_subtype(state, id, subtype)
+        }
         PermanentFilter::BlueV1 => {
             object_color_mask(state, id) & (1 << ManaColor::U.pool_index()) != 0
         }
@@ -8069,6 +8135,11 @@ fn graveyard_exile_cards_needed(
     def: &card_def::CardDef,
     state: &GameState,
 ) -> u8 {
+    // "Exile X cards from your graveyard" (eternal wave P1a): the chosen
+    // cards so far; the caster stops when they choose (X is their number).
+    if pending_x_graveyard_exile(pending, def).is_some() {
+        return u8::try_from(pending.sacrifice_chosen.len()).unwrap_or(u8::MAX);
+    }
     if pending.source_contract.cast_method != CastMethodV4::Escape {
         // Abhorrent Oculus: "As an additional cost to cast this spell, exile
         // six cards from your graveyard."
@@ -8124,10 +8195,13 @@ fn escape_extra_exile_candidates(
     def: &card_def::CardDef,
     state: &GameState,
 ) -> Option<Vec<ObjectId>> {
-    if !cfg!(feature = "eternal-fixtures")
-        || pending.escape_exile_finished_v1
-        || pending.source_contract.cast_method != CastMethodV4::Escape
-    {
+    if !cfg!(feature = "eternal-fixtures") || pending.escape_exile_finished_v1 {
+        return None;
+    }
+    if let Some(blue_only) = pending_x_graveyard_exile(pending, def) {
+        return x_graveyard_exile_candidates(pending, def, state, blue_only);
+    }
+    if pending.source_contract.cast_method != CastMethodV4::Escape {
         return None;
     }
     let minimum = def
@@ -8151,6 +8225,98 @@ fn escape_extra_exile_candidates(
         &pending.sacrifice_chosen,
     )?;
     (!candidates.is_empty()).then_some(candidates)
+}
+
+/// The "exile X cards from your graveyard" cost of this cast, if any:
+/// Skeletal Scrying's additional cost, or Flash of Insight's flashback (with
+/// `blue_only`). Eternal wave P1a.
+fn pending_x_graveyard_exile(pending: &PendingCast, def: &card_def::CardDef) -> Option<bool> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    let cost = match pending.source_contract.cast_method {
+        CastMethodV4::Flashback => def.flashback.as_ref()?.cost,
+        CastMethodV4::Normal if pending.cast_mode != Some(CastMode::Alternative) => {
+            def.additional_cost?
+        }
+        _ => return None,
+    };
+    cost.iter().find_map(|component| match component {
+        CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => Some(*blue_only),
+        _ => None,
+    })
+}
+
+/// The graveyard cards an "exile X cards" cost may take next, while
+/// exiling one more keeps the cast payable (X is the number exiled, and the
+/// announced X adds that much generic mana). `None` once none may.
+fn x_graveyard_exile_candidates(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+    blue_only: bool,
+) -> Option<Vec<ObjectId>> {
+    let candidates = checked_graveyard_exile_candidates(
+        pending.controller,
+        pending.spell,
+        state,
+        &pending.sacrifice_chosen,
+    )?
+    .into_iter()
+    .filter(|&card| {
+        !blue_only || object_color_mask(state, card) & card_def::mana_color_mask(ManaColor::U) != 0
+    })
+    .collect::<Vec<_>>();
+    let first = *candidates.first()?;
+    let mut more = pending.clone();
+    more.sacrifice_chosen.push(first);
+    let x = u16::try_from(more.sacrifice_chosen.len()).ok()?;
+    let method = finalized_cast_method(&more, more.source_contract.cast_method, def);
+    pending_cast_quote_v1(def, &more, method, more.kicked == Some(true), x, state)?;
+    Some(candidates)
+}
+
+/// An "exile X cards from your graveyard" cast announces X as the number of
+/// cards it exiled.
+pub(crate) fn forced_cast_x(pending: &PendingCast, def: &card_def::CardDef) -> Option<u16> {
+    pending_x_graveyard_exile(pending, def)?;
+    u16::try_from(pending.sacrifice_chosen.len()).ok()
+}
+
+/// Foil's "discard an Island card and another card": the hand cards
+/// `player` may choose next after `chosen`, other than the spell `source`.
+/// The first is an Island card, and some other card must remain to be the
+/// second.
+fn island_discard_cost_candidates(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    let hand = state.players[player.index()]
+        .hand
+        .iter()
+        .copied()
+        .filter(|&id| {
+            id != source
+                && state
+                    .objects
+                    .try_get(id)
+                    .is_some_and(|object| object.zone == Zone::Hand && object.owner == player)
+        })
+        .collect::<Vec<_>>();
+    match chosen {
+        [] if hand.len() >= 2 => hand
+            .into_iter()
+            .filter(|&id| {
+                card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+                    .subtypes
+                    .contains(&card_def::Subtype::Island)
+            })
+            .collect(),
+        [first] => hand.into_iter().filter(|id| id != first).collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Exiles one more graveyard card for Nethergoyf's escape after its card
@@ -8279,6 +8445,8 @@ enum CastSingleObjectCostV1 {
     /// Retrace's discarded land cards (Wrenn and Six's emblem).
     #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
     DiscardLandCards(u8),
+    /// Foil's discarded Island card and another card.
+    DiscardIslandAndAnother,
 }
 
 impl CastSingleObjectCostV1 {
@@ -8291,6 +8459,7 @@ impl CastSingleObjectCostV1 {
             | CastSingleObjectCostV1::DiscardLandCards(count) => count,
             CastSingleObjectCostV1::ReturnPermanent(_)
             | CastSingleObjectCostV1::ExileHandCard(_) => 1,
+            CastSingleObjectCostV1::DiscardIslandAndAnother => 2,
         }
     }
 }
@@ -8339,6 +8508,9 @@ fn cast_single_object_cost_needed(
             CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
                 Some(CastSingleObjectCostV1::ReturnPermanents(*filter, *count))
             }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                Some(CastSingleObjectCostV1::DiscardIslandAndAnother)
+            }
             _ => None,
         })
 }
@@ -8381,6 +8553,12 @@ fn cast_single_object_cost_candidates(
             pending.controller,
             state,
             filter,
+            &pending.sacrifice_chosen,
+        ),
+        CastSingleObjectCostV1::DiscardIslandAndAnother => island_discard_cost_candidates(
+            pending.controller,
+            pending.spell,
+            state,
             &pending.sacrifice_chosen,
         ),
     }
@@ -8442,6 +8620,7 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         | PermanentFilter::Token
         | PermanentFilter::Creature
         | PermanentFilter::AnotherWithSubtype(_)
+        | PermanentFilter::WithSubtypeV1(_)
         | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
         PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
             CostKind::SacrificePermanents
@@ -9575,6 +9754,11 @@ fn maximum_payable_x(
     state: &GameState,
 ) -> Option<u16> {
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+    // "Exile X cards from your graveyard": X is the number exiled.
+    if let Some(x) = forced_cast_x(pending, def) {
+        return pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
+            .map(|_| x);
+    }
     // Splice onto Arcane: at most the splice cards in hand.
     let cap =
         crate::eternal_pauper_e8b_v1::splice_cap(def, pending.spell, pending.controller, state)
@@ -10414,7 +10598,33 @@ fn rich_mana_ability_is_payable(
                 || creature_summoning_sick(state, source, def)
                 || sacrificeable_mana_cost_creatures(player, state).is_empty())
         }
+        // No tap symbol: summoning sickness doesn't matter.
+        ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype) => {
+            !sacrificeable_mana_cost_subtype(player, subtype, state).is_empty()
+        }
     }
+}
+
+/// The permanents `player` may sacrifice for "Sacrifice a Goblin" (Skirk
+/// Prospector, eternal wave P1a): controlled permanents with `subtype`, the
+/// source included.
+fn sacrificeable_mana_cost_subtype(
+    player: PlayerId,
+    subtype: card_def::Subtype,
+    state: &GameState,
+) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .filter(|&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && has_effective_subtype(state, candidate, subtype)
+        })
+        .collect()
 }
 
 /// The creatures `player` may sacrifice for "{T}, Sacrifice a creature"
@@ -10521,7 +10731,9 @@ pub(crate) fn available_mana_ability_choices_into(
         return;
     };
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_pauper_e8b_v1::mana_ability_blocked(state, source) {
+    if crate::eternal_pauper_e8b_v1::mana_ability_blocked(state, source)
+        || crate::eternal_premodern_p1a_v1::statics::mana_ability_blocked(state, source)
+    {
         return;
     }
     if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, source) {
@@ -10758,6 +10970,11 @@ pub(crate) fn mana_ability_cost_targets(
     let Some(definition) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return Vec::new();
     };
+    if let Some(ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype)) =
+        definition.mana_ability_def.map(|ability| ability.cost)
+    {
+        return sacrificeable_mana_cost_subtype(player, subtype, state);
+    }
     if !matches!(
         definition.mana_ability_def.map(|ability| ability.cost),
         Some(ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature)
@@ -10922,7 +11139,8 @@ fn activate_mana_ability_for_with_checkpoint(
             mana_ability_cost_targets_for_choice(player, source, choice, state);
         match rich.cost {
             ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
-            | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
+            | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
+            | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
                 let target = cost_target.ok_or_else(|| {
                     format!("{source} requires another untapped controlled creature as a cost")
                 })?;
@@ -11066,6 +11284,9 @@ fn activate_mana_ability_for_with_checkpoint(
             }
             ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
+                commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
+            }
+            ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
                 commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
             }
         }
@@ -14905,6 +15126,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::ArtifactOrCreature
                     | PermanentFilter::Token
                     | PermanentFilter::AnotherWithSubtype(_)
+                    | PermanentFilter::WithSubtypeV1(_)
                     | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
                     PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
                         CostKind::SacrificePermanents
@@ -14979,7 +15201,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     CastSingleObjectCostV1::ExileHandCard(_)
                     | CastSingleObjectCostV1::ExileHandCards(..) => CostKind::ExileFromHandV1,
                     CastSingleObjectCostV1::TapPermanents(..) => CostKind::TapPermanents,
-                    CastSingleObjectCostV1::DiscardLandCards(_) => CostKind::DiscardCards,
+                    CastSingleObjectCostV1::DiscardLandCards(_)
+                    | CastSingleObjectCostV1::DiscardIslandAndAnother => CostKind::DiscardCards,
                 },
                 remaining,
                 candidates,
@@ -18652,6 +18875,13 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
     }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
+        // A split card's second half (Fire // Ice, eternal wave P1a) is an
+        // ordinary instant or sorcery: it goes to its owner's graveyard.
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_premodern_p1a_v1::statics::split_card(def.name) {
+            let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
+            return apply_spell_departure(state, departure);
+        }
         if supported_adventure(def).is_some() {
             let departure = plan_spell_departure(state, item, Zone::Exile)?;
             if item.is_copy {
@@ -20127,7 +20357,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             hidden_by: None,
             hidden_by_source: None,
         });
-        state.objects.get_mut(item.source).v4.ward_generic = 2;
+        // A morph card (eternal wave P1a) is face down without disguise's
+        // ward.
+        let morph = cfg!(feature = "eternal-fixtures")
+            && crate::eternal_premodern_p1a_v1::statics::is_morph(
+                card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize].name,
+            );
+        state.objects.get_mut(item.source).v4.ward_generic = if morph { 0 } else { 2 };
     }
     // A permanent spell cast for its warp cost remembers that on the
     // battlefield incarnation it just became.
@@ -20649,6 +20885,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             #[cfg(feature = "eternal-fixtures")]
             let vintage_draw_step = crate::eternal_vintage_v1::begin_draw_step(state, p);
             if !is_first_turn_of_the_game {
+                // Sylvan Library: "At the beginning of your draw step"; put
+                // on the stack after the draw (eternal wave P1a).
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_premodern_p1a_v1::begin_draw_step(state, p);
                 // Dredge (eternal waves E7a and E7b): the draw waits for its
                 // player's choice to dredge instead.
                 let dredge = cfg!(feature = "eternal-fixtures")
@@ -21327,6 +21567,12 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
 fn unpainted_object_color_mask(state: &GameState, id: ObjectId) -> u8 {
     if crate::continuous_characteristics_v1::land_colorless(state, id) {
         return 0;
+    }
+    // Wild Mongrel's chosen color; a split card's half on the stack
+    // (eternal wave P1a).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(mask) = crate::eternal_premodern_p1a_v1::statics::color_override(state, id) {
+        return mask;
     }
     if let Some(object) = state.objects.try_get(id) {
         if object.zone == Zone::Stack
@@ -22915,6 +23161,13 @@ fn is_still_in_combat(state: &GameState, id: ObjectId) -> bool {
     state.objects.get(id).zone == Zone::Battlefield
 }
 
+/// Goblin Vandal: "this creature assigns no combat damage this turn"
+/// (eternal wave P1a).
+fn assigns_no_combat_damage(state: &GameState, creature: ObjectId) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && crate::eternal_premodern_p1a_v1::statics::assigns_no_combat_damage(state, creature)
+}
+
 fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) -> bool {
     let attackers = state.engine.combat.attackers.clone();
     let blocked_by = state.engine.combat.blocked_by.clone();
@@ -22927,7 +23180,7 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) -> bool {
             continue;
         }
         let power = effective_power(state, attacker);
-        if power <= 0 {
+        if power <= 0 || assigns_no_combat_damage(state, attacker) {
             continue;
         }
         if let Some((_, blockers)) = blocked_by.iter().find(|(a, _)| *a == attacker) {
@@ -22946,7 +23199,7 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) -> bool {
                 continue;
             }
             let power = effective_power(state, blocker);
-            if power > 0 {
+            if power > 0 && !assigns_no_combat_damage(state, blocker) {
                 events.push(ProposedEvent::damage(
                     blocker,
                     Target::Object(*attacker),
@@ -26490,6 +26743,8 @@ fn apply_declare_blockers(
     crate::eternal_vintage_v1::note_blockers_declared(state);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_pauper_e8b_v1::note_blockers_declared(state);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p1a_v1::note_blockers_declared(state);
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())
