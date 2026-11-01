@@ -261,7 +261,7 @@ impl WalkerV1<'_> {
                 class,
                 slot: self.next_slot(),
                 object,
-                generation: None,
+                generations: Vec::new(),
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;
