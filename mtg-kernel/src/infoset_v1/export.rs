@@ -70,6 +70,9 @@ pub struct InfosetV1 {
     pub sha256: String,
     /// One handle per canonical arena index.
     pub handles: Vec<HandleV1>,
+    /// Harness diagnostics only, never in the payload: the native object
+    /// behind each `C:` handle, in handle order.
+    pub(crate) tracked_natives: Vec<ObjectId>,
 }
 
 fn refuse(code: RefusalCodeV1, detail: impl Into<String>) -> ExportErrorV1 {
@@ -1070,6 +1073,7 @@ pub(crate) fn export_v1(
         bytes,
         sha256,
         handles,
+        tracked_natives: tracked,
     })
 }
 

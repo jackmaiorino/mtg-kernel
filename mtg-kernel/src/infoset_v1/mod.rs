@@ -22,6 +22,8 @@ pub(crate) mod projection;
 pub(crate) mod rewrite;
 
 #[cfg(test)]
+mod harness;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use export::{export_v1, ExportInputV1, ExportOptionsV1, InfosetV1, MutantV1};
