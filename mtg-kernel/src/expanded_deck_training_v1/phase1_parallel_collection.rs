@@ -954,6 +954,129 @@ mod tests {
         eprintln!("{after}");
     }
 
+    /// RT1's default `collection_workers: 1` dispatches the serial `Collect`
+    /// command, which plays on the calling thread. With the exact GPU service
+    /// installed, that command must send its forwards to the service (it
+    /// once ran every forward on the CPU), and publish the same trajectories
+    /// as `CollectParallel` with two workers.
+    #[cfg(feature = "gpu-exact-v1")]
+    #[test]
+    #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL) and native engine compute"]
+    fn serial_collect_command_uses_the_gpu_service() {
+        let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+            .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+            .parse()
+            .unwrap();
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root = std::env::temp_dir().join(format!(
+            "expanded-collect-gpu-serial-{}",
+            std::process::id()
+        ));
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episodes: Vec<_> = (0..3u64)
+            .map(|index| ExpandedEpisodeV1 {
+                id: format!("gpu-serial-{index}"),
+                seed: 2_026_110_101 + index,
+                starting_player: (index % 2) as u8,
+                learner_seat: (index % 2) as u8,
+                opponent: None,
+                opponent_search: None,
+                opponent_kind: None,
+                registered: [deck.clone(), deck.clone()],
+                selected: [deck.clone(), deck.clone()],
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
+                opening: None,
+                mulligan_modes: None,
+            })
+            .collect();
+        let run = |label: &str, workers: usize| {
+            let output_directory = root.join(label);
+            let command = if workers == 1 {
+                ExpandedTrainingCommandV1::Collect {
+                    source: source.clone(),
+                    episodes: episodes.clone(),
+                    max_non_natural_episode_fraction: 0.0,
+                    collection_sampler: CollectionSamplerV1::Legacy,
+                    training_math: TrainingMathV1::PlatformLibm,
+                    ex1: None,
+                    output_directory,
+                }
+            } else {
+                ExpandedTrainingCommandV1::CollectParallel {
+                    source: source.clone(),
+                    episodes: episodes.clone(),
+                    workers,
+                    max_non_natural_episode_fraction: 0.0,
+                    collection_sampler: CollectionSamplerV1::Legacy,
+                    training_math: TrainingMathV1::PlatformLibm,
+                    ex1: None,
+                    output_directory,
+                }
+            };
+            let result = execute_v1(command).unwrap();
+            let pins: Vec<PinnedFileV1> =
+                serde_json::from_value(result["trajectories"].clone()).unwrap();
+            pins.iter()
+                .map(|pin| read_pinned_bytes(pin).unwrap())
+                .collect::<Vec<_>>()
+        };
+        // CPU reference, when no earlier test in this process installed the
+        // (process-wide) service.
+        let cpu = crate::gpu_exact_v1::inference_receipt_v1()
+            .is_none()
+            .then(|| run("cpu", 1));
+        if crate::gpu_exact_v1::inference_receipt_v1().is_none() {
+            crate::gpu_exact_v1::install_inference_service_v1(ordinal, 200).unwrap();
+        }
+        let requests = || {
+            crate::gpu_exact_v1::inference_receipt_v1().unwrap()["requests"]
+                .as_u64()
+                .unwrap()
+        };
+        let before = requests();
+        let serial = run("serial", 1);
+        let served = requests() - before;
+        assert!(
+            served > 100,
+            "serial Collect sent only {served} forwards to the GPU service"
+        );
+        if let Some(cpu) = cpu {
+            assert_eq!(serial, cpu, "serial Collect on the GPU against the CPU");
+        }
+        assert_eq!(run("parallel", 2), serial);
+        let _ = fs::remove_dir_all(&root);
+    }
+
     /// Line (b) collection sampler end to end through the real commands:
     /// serial Collect and CollectParallel publish byte-identical trajectories.
     /// Learner rows carry the unclamped identity at every width; opponent
