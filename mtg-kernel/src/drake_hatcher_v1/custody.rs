@@ -1754,7 +1754,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         }
     }
     if rows.len() > unchecked {
-        locate(Arc::make_mut(&mut rows), unchecked);
+        locate(Arc::<Vec<RowV1>>::make_mut(&mut rows), unchecked);
     }
     if rows.len() as u64 != state.engine.drake_ledger_v1.issued {
         return Err("Drake original journal was erased/replayed".into());
