@@ -481,10 +481,7 @@ pub(crate) fn export_v1(
             if projection.tracked(r.object) || pinned_untracked.contains(&r.object) {
                 return Err(refuse(
                     RefusalCodeV1::R2,
-                    format!(
-                        "a live reference to an unobserved epoch of object {}",
-                        r.object.0
-                    ),
+                    "a live reference to an unobserved epoch",
                 ));
             }
             continue;
@@ -519,19 +516,11 @@ pub(crate) fn export_v1(
         if pinned_untracked.contains(&r.object) {
             continue;
         }
-        let obj = state.objects.get(r.object);
-        let hidden = matches!(obj.zone, Zone::Hand | Zone::Library);
-        if hidden || in_slot.contains_key(&r.object) {
-            return Err(refuse(
-                RefusalCodeV1::R1,
-                format!("a live reference names hidden object {}", r.object.0),
-            ));
-        }
-        // An untracked object outside hidden zones: a nonexistent token or
-        // copy. A live reference to it has no handle.
+        // A live physical reference to an object V does not track: the
+        // refusal reads only V's tracking, never the object's true zone.
         return Err(refuse(
-            RefusalCodeV1::R2,
-            format!("a live reference names untracked object {}", r.object.0),
+            RefusalCodeV1::R1,
+            "a live reference names an untracked object",
         ));
     }
 
