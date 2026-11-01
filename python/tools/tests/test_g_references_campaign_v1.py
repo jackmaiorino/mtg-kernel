@@ -483,6 +483,35 @@ class DriverTests(unittest.TestCase):
         events = [json.loads(line) for line in self.campaign.events.read_text().splitlines()]
         self.assertEqual([e["kind"] for e in events].count("volume-walk"), 2)  # each walk measured
 
+    def test_a_dispatch_request_carries_its_admission_walk(self):
+        """#463: the walk a block was admitted on goes in its request (the dispatcher checks the same numbers
+        without walking), and each walk is published for the dispatchers' emergency samples."""
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.scratch_campaign(projected=1000)
+        (self.root / "volume").mkdir()
+        (self.root / "volume" / "kept").write_bytes(b"x" * 300)
+        state = {"run": "G4", "status": "running", "blocks": {}}
+        requests = []
+
+        def dispatched(path, host):
+            requests.append(json.loads(Path(path).read_text(encoding="utf-8")))
+            return {"state": "refused"}
+        with self.disk(free=10**6, total=10**6),                 patch.object(driver, "block_spec", return_value={}),                 patch.object(driver.g, "block_config", return_value={}),                 patch.object(driver.g, "require_runtime_rules"),                 patch.object(driver, "request_for", return_value={"storage": self.campaign.raw["storage"]}),                 patch.object(driver.Campaign, "wall_stop", return_value=None),                 patch.object(driver.base, "dispatch_block", side_effect=dispatched):
+            self.assertEqual(driver.run_block(self.campaign, "G4", 1, state), "stopped")
+        admission = requests[0]["admission"]
+        shared = self.campaign.state / driver.SHARED_WALK
+        self.assertEqual((admission["logical_bytes"], admission["finished_since"], admission["shared_walk"]),
+                         (300, 0, str(shared)))
+        self.assertEqual(driver.native_dispatch.admitted_bytes(admission, self.campaign.raw["storage"]), 300)
+        self.assertEqual(driver.native_dispatch.shared_walk(shared)[0], 300)
+        driver.volume(self.campaign)["finished"] = 2  # blocks finished since the walk count at their projection
+        self.assertEqual(driver.native_dispatch.admitted_bytes(driver.admitted(self.campaign),
+                                                               self.campaign.raw["storage"]), 300 + 2 * 1000)
+        driver.VOLUMES.clear()
+        self.assertIsNone(driver.admitted(self.campaign))  # nothing walked: the dispatcher walks
+        with self.disk(free=10**6, total=10**6):
+            self.assertEqual(driver.admitted(self.campaign, walk=True)["logical_bytes"], 300)  # the choice check
+
     def test_a_long_volume_walk_records_driver_work_while_it_runs(self):
         self.scratch_campaign()
         touched = []

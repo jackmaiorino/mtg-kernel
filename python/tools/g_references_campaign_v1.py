@@ -108,6 +108,7 @@ VOLUME_REWALK_SECONDS = 60  # a refusal resting on blocks finished since an olde
 WALK_HEARTBEAT_SECONDS = 30
 WALK_HEARTBEAT_LIMIT_SECONDS = 1800  # a walk still running past this records no more work: a hung walk goes idle
 VOLUMES: dict = {}  # the shared walks (volume), per accounting roots, under SCRATCH_LOCK
+SHARED_WALK = "volume-walk.json"  # each walk, published for the dispatchers (native_expanded_dispatch_v1)
 
 
 def read_pinned(item: dict) -> dict:
@@ -534,9 +535,11 @@ def records_hold(campaign: Campaign, in_flight: int = 0) -> str | None:
 
 
 def volume(campaign: Campaign) -> dict:
-    """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since."""
+    """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since,
+    and the file where each walk is published for the dispatchers (the first campaign's state folder)."""
     key = tuple(campaign.raw["storage"]["accounting_roots"])
-    return VOLUMES.setdefault(key, {"logical": None, "walked": 0.0, "finished": 0})
+    return VOLUMES.setdefault(key, {"logical": None, "walked": 0.0, "finished": 0,
+                                    "shared": str(campaign.state / SHARED_WALK)})
 
 
 def walk_volume(campaign: Campaign) -> None:
@@ -545,7 +548,7 @@ def walk_volume(campaign: Campaign) -> None:
     Pod), so it runs in a helper thread while this thread records driver work every WALK_HEARTBEAT_SECONDS,
     for at most WALK_HEARTBEAT_LIMIT_SECONDS, so a hung walk still goes idle. Each walk is an event, so its
     time is measured. The caller holds SCRATCH_LOCK (release, which counts finished blocks, waits for it)."""
-    result, started = {}, time.monotonic()
+    result, started, started_unix = {}, time.monotonic(), time.time()
 
     def walk():
         try:
@@ -562,8 +565,36 @@ def walk_volume(campaign: Campaign) -> None:
         raise result["error"]
     record = volume(campaign)
     record.update(logical=result["logical"], walked=time.time(), finished=0)
+    seconds = round(time.monotonic() - started, 1)
+    try:  # the dispatchers' emergency samples adopt it rather than walk again (mtg-kernel#463)
+        Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
+        native_dispatch.publish_walk(record["shared"], result["logical"], started_unix, seconds, "driver")
+    except OSError:
+        pass  # only a shortcut: a dispatcher without it walks
     touch(campaign)
-    campaign.event(kind="volume-walk", seconds=round(time.monotonic() - started, 1), logical=result["logical"])
+    campaign.event(kind="volume-walk", seconds=seconds, logical=result["logical"])
+
+
+def admission_record(campaign: Campaign) -> dict | None:
+    """The admission walk a dispatch request carries (native_expanded_dispatch_v1.admitted_bytes): the last
+    walk's logical bytes and time, the blocks finished since it, and the shared walk file. The caller holds
+    SCRATCH_LOCK."""
+    record = volume(campaign)
+    if record["logical"] is None:
+        return None
+    return {"schema": native_dispatch.ADMISSION_SCHEMA, "logical_bytes": record["logical"],
+            "walked_unix": record["walked"], "finished_since": record["finished"], "shared_walk": record["shared"]}
+
+
+def admitted(campaign: Campaign, walk: bool = False) -> dict | None:
+    """admission_record under SCRATCH_LOCK; with ``walk``, after walking when the last walk is stale (a check
+    that precedes admission, such as the qualification's choice check, then serves the admissions after it)."""
+    if not campaign.raw["storage"].get("accounting_roots"):
+        return None
+    with SCRATCH_LOCK:
+        if walk:
+            volume_logical(campaign)
+        return admission_record(campaign)
 
 
 def volume_logical(campaign: Campaign) -> tuple[int, int]:
@@ -753,8 +784,11 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             config_path = campaign.state / "configs" / f"{run}-{label(block)}-a{attempt}.json"
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
-            request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json",
-                                     request_for(campaign, run, pin(config_path), root, cold, estimate))
+            request = request_for(campaign, run, pin(config_path), root, cold, estimate)
+            admission = admitted(campaign)  # the walk this block was admitted on: its dispatcher need not walk
+            if admission is not None:
+                request["admission"] = admission
+            request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json", request)
         except BaseException:
             release(campaign, run, block, native)  # admitted, never dispatched
             raise

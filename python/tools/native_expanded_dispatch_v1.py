@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 from public_training_dispatch_v2 import checked, pin, read, write, DISK_RESERVE_BYTES
@@ -245,9 +246,8 @@ def scratch_roots(storage):
     return [path.resolve() for path in raw]
 
 
-def accounting_bytes(storage):
-    """The accounting roots (checked: absolute, link-free, disjoint, apart from any scratch root) and the
-    logical bytes of every file under them."""
+def accounting_roots(storage):
+    """The accounting roots, checked: absolute, link-free, disjoint, apart from any scratch root."""
     raw_roots = [Path(path) for path in storage["accounting_roots"]]
     require(all(path.is_absolute() for path in raw_roots), "absolute accounting roots required")
     for raw in raw_roots:
@@ -262,6 +262,12 @@ def accounting_bytes(storage):
     scratch = scratch_roots(storage)
     require(all(not a.is_relative_to(b) and not b.is_relative_to(a) for a in scratch for b in roots),
             "scratch root overlaps an accounting root")
+    return roots
+
+
+def accounting_bytes(storage):
+    """The checked accounting roots (accounting_roots) and the logical bytes of every file under them."""
+    roots = accounting_roots(storage)
     logical = 0
     for root in roots:
         if root.exists():
@@ -288,11 +294,51 @@ def accounting_bytes(storage):
     return roots, logical
 
 
-def validate_storage(storage, extra=None):
+# A campaign driver that walked the accounting trees to admit a block passes that walk in the request
+# ("admission"), so its dispatcher checks the same numbers without walking again (mtg-kernel#463: on a network
+# volume each dispatcher's own walks took about 40 min, eight at once, before any native work). The driver's walk
+# serves its admissions for 600 s and the dispatch follows within seconds; an older walk is not used, and the
+# dispatcher walks as before.
+ADMISSION_SCHEMA = "native-expanded-storage-admission/v1"
+ADMISSION_WALK_SECONDS = 900
+CLOCK_SKEW_SECONDS = 60
+
+
+def admitted_bytes(admission, storage, now=None):
+    """The retained-bytes bound from the driver's admission walk: its logical bytes plus, for each block finished
+    since it, that block's projected retained bytes (the bound the driver admitted on). None without an
+    admission or when the walk is too old (the caller then walks)."""
+    if admission is None:
+        return None
+    require(isinstance(admission, dict) and admission.get("schema") == ADMISSION_SCHEMA,
+            "unsupported storage admission")
+    logical, finished, walked = (admission.get(key) for key in ("logical_bytes", "finished_since", "walked_unix"))
+    require(type(logical) is int and logical >= 0 and type(finished) is int and finished >= 0
+            and isinstance(walked, (int, float)) and not isinstance(walked, bool) and math.isfinite(walked),
+            "invalid storage admission")
+    shared = admission.get("shared_walk")
+    require(shared is None or isinstance(shared, str) and Path(shared).is_absolute(), "invalid shared walk path")
+    age = (time.time() if now is None else now) - walked
+    if not -CLOCK_SKEW_SECONDS <= age <= ADMISSION_WALK_SECONDS:
+        return None
+    return logical + finished * storage["projected_additional_bytes"]
+
+
+# This process's last storage validation: its logical bytes and the Unix time its data stands for (a walk's
+# start, or the admission walk's time). A dispatch seeds its emergency samples from it (seed_emergency).
+LAST_STORAGE = {"logical": None, "unix": None}
+
+
+def validate_storage(storage, extra=None, admission=None):
     cap = storage["max_logical_bytes"]
     require(type(cap) is int and 0 < cap <= CAP, "storage cap exceeds 192 GiB")
     require(storage["reserve_bytes"] >= DISK_RESERVE_BYTES, "reserve below 60 GiB")
-    roots, logical = accounting_bytes(storage)
+    bound = admitted_bytes(admission, storage)
+    if bound is None:
+        walked = time.time()
+        roots, logical = accounting_bytes(storage)
+    else:
+        walked, roots, logical = admission["walked_unix"], accounting_roots(storage), bound
     for root in roots:
         anchor = root
         while not anchor.exists():
@@ -309,31 +355,170 @@ def validate_storage(storage, extra=None):
         require(sum(storage["projected_volume_bytes"].values()) >= projected,
                 "volume projection omits planned writes")
     require(logical + projected <= cap, "retained plus projected storage exceeds allowance")
-    return {"logical_bytes": logical, "cap_bytes": cap}
+    LAST_STORAGE.update(logical=logical, unix=walked)
+    return {"logical_bytes": logical, "cap_bytes": cap, "source": "walk" if bound is None else "admission"}
 
 
 EMERGENCY_WALK_SECONDS = 600
-EMERGENCY_WALK = {"at": 0.0, "logical": None}  # this attempt's last walk of the accounting trees
+MONITOR_POLL_SECONDS = 30  # a running attempt's sample interval (telemetry, memory, storage)
+SHARED_WALK_SCHEMA = "native-expanded-volume-walk/v1"
+SHARED_RETRY_SECONDS = 60  # another process holds the shared walk: look for its result this much later
+SHARED_LOCK_STALE_SECONDS = 3600  # a walk lock this old is a crashed walker's
+EMERGENCY_LOCK = threading.Lock()
 
 
-def running_storage(storage):
+def _fresh_emergency():
+    return {"at": 0.0, "logical": None, "unix": None, "thread": None, "error": None, "closed": False}
+
+
+# This attempt's last walk of the accounting trees: when it ended (monotonic), its bytes, the Unix time its data
+# stands for, the background walk in flight, a walk's error (raised at the next sample), and whether the attempt
+# has left its native part (then no new walk starts).
+EMERGENCY_WALK = _fresh_emergency()
+
+
+def reset_emergency():
+    """Forget this process's walks (tests; each dispatch is its own process)."""
+    with EMERGENCY_LOCK:
+        EMERGENCY_WALK.clear()
+        EMERGENCY_WALK.update(_fresh_emergency())
+        LAST_STORAGE.update(logical=None, unix=None)
+
+
+def seed_emergency():
+    """Start this attempt's emergency samples from its validation (a walk, or the driver's admission walk), aged
+    by that data's time, so no sample walks in place."""
+    with EMERGENCY_LOCK:
+        if EMERGENCY_WALK["logical"] is None and LAST_STORAGE["logical"] is not None:
+            age = max(0.0, time.time() - LAST_STORAGE["unix"])
+            EMERGENCY_WALK.update(logical=LAST_STORAGE["logical"], unix=LAST_STORAGE["unix"],
+                                  at=time.monotonic() - age)
+
+
+def close_emergency():
+    """The native part ended: no new background walk starts (one in flight finishes; samples use the last)."""
+    with EMERGENCY_LOCK:
+        EMERGENCY_WALK["closed"] = True
+
+
+def publish_walk(path, logical, walked_unix, seconds, walker):
+    """Write a shared walk record atomically (a temporary file renamed over the record)."""
+    path = Path(path)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    temporary.write_text(json.dumps({"schema": SHARED_WALK_SCHEMA, "logical_bytes": logical,
+                                     "walked_unix": walked_unix, "seconds": seconds, "walker": walker}),
+                         encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def shared_walk(path, newer_than=None):
+    """(bytes, walk start) of a shared walk record that started within EMERGENCY_WALK_SECONDS and after
+    ``newer_than``, else None."""
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    logical, walked = value.get("logical_bytes"), value.get("walked_unix")
+    if value.get("schema") != SHARED_WALK_SCHEMA or type(logical) is not int or logical < 0 \
+            or not isinstance(walked, (int, float)) or isinstance(walked, bool) or not math.isfinite(walked):
+        return None
+    age = time.time() - walked
+    if not -CLOCK_SKEW_SECONDS <= age <= EMERGENCY_WALK_SECONDS or (newer_than is not None and walked <= newer_than):
+        return None
+    return logical, walked
+
+
+def claim_walk(path):
+    """The shared walk's lock file, created exclusively, or None while another live walker holds it."""
+    lock = Path(str(path) + ".lock")
+    for _ in range(2):
+        try:
+            descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                stale = time.time() - lock.stat().st_mtime > SHARED_LOCK_STALE_SECONDS
+            except FileNotFoundError:
+                continue  # released meanwhile: try again
+            if not stale:
+                return None
+            lock.unlink(missing_ok=True)
+            continue
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(str(os.getpid()))
+        return lock
+    return None
+
+
+def emergency_refresh(storage, shared, wait_for_lock=False):
+    """One refresh of the emergency sample: a fresh shared walk (any process's) when there is one, else a walk
+    here (under the shared lock, then published). With the lock held elsewhere it looks again after
+    SHARED_RETRY_SECONDS, or with ``wait_for_lock`` walks anyway. Errors are kept for the next sample."""
+    try:
+        with EMERGENCY_LOCK:
+            ours = EMERGENCY_WALK["unix"]
+        found = shared_walk(shared, ours) if shared else None
+        if found is None:
+            lock = claim_walk(shared) if shared else None
+            if shared and lock is None and not wait_for_lock:
+                with EMERGENCY_LOCK:
+                    EMERGENCY_WALK["at"] = time.monotonic() - EMERGENCY_WALK_SECONDS + SHARED_RETRY_SECONDS
+                return
+            try:
+                started, clock = time.time(), time.monotonic()
+                found = (accounting_bytes(storage)[1], started)
+                if lock is not None:
+                    publish_walk(shared, found[0], started, round(time.monotonic() - clock, 1), "dispatch")
+            finally:
+                if lock is not None:
+                    lock.unlink(missing_ok=True)
+        with EMERGENCY_LOCK:
+            EMERGENCY_WALK.update(logical=found[0], unix=found[1], at=time.monotonic())
+    except BaseException as error:
+        with EMERGENCY_LOCK:
+            EMERGENCY_WALK.update(error=error, at=time.monotonic())
+
+
+def running_storage(storage, shared=None, pending_bytes=0):
     """The storage check of a running attempt. With the opt-in ``storage.emergency`` (G(i) amendment 2) it ends
     the attempt only on a physical shortage: the accounting trees past the provisioned volume less its margin,
     or a scratch volume's free space below its margin. The cap and projections then gate new dispatches only.
-    Without it, the cap check as before."""
+    Without it, the cap check as before.
+
+    A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes, from a
+    walk at most every EMERGENCY_WALK_SECONDS. A due walk runs in a background thread, so a sample never waits
+    for one (inside the monitor loop a walk of minutes hid a native child's end from the lease guard,
+    mtg-kernel#463); with a ``shared`` record path the attempts of one host share one walker. Only a process
+    with no sample yet walks in place. ``pending_bytes`` (written since the last walk) count too."""
     spec = storage.get("emergency")
     if spec is None:
         return validate_storage(storage, 0)
     volume, margin = spec["volume_bytes"], spec["margin_fraction"]
     require(type(volume) is int and volume > 0 and isinstance(margin, (int, float)) and 0 <= margin < 1,
             "invalid storage emergency spec")
-    # A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes,
-    # walked at most every EMERGENCY_WALK_SECONDS by this attempt (a walk there takes minutes, and eight
-    # attempts sampling every 30 s kept the volume under continuous scans).
-    if time.monotonic() - EMERGENCY_WALK["at"] > EMERGENCY_WALK_SECONDS or EMERGENCY_WALK["logical"] is None:
-        _, EMERGENCY_WALK["logical"] = accounting_bytes(storage)
-        EMERGENCY_WALK["at"] = time.monotonic()
-    logical = EMERGENCY_WALK["logical"]
+    with EMERGENCY_LOCK:
+        thread = EMERGENCY_WALK["thread"]
+        busy = thread is not None and thread.is_alive()
+        first = EMERGENCY_WALK["logical"] is None
+        start = not first and not busy and not EMERGENCY_WALK["closed"] \
+            and time.monotonic() - EMERGENCY_WALK["at"] > EMERGENCY_WALK_SECONDS
+        if start:
+            thread = threading.Thread(target=emergency_refresh, args=(storage, shared), name="emergency-walk",
+                                      daemon=True)
+            EMERGENCY_WALK["thread"] = thread
+    if busy and first:
+        thread.join()  # nothing to sample until that walk ends
+    elif first:
+        emergency_refresh(storage, shared, wait_for_lock=True)  # nothing to sample yet: walk in place
+    elif start:
+        thread.start()
+    with EMERGENCY_LOCK:
+        error, EMERGENCY_WALK["error"] = EMERGENCY_WALK["error"], None
+        logical = EMERGENCY_WALK["logical"]
+    if error is not None:
+        raise error
+    logical += pending_bytes
     require(logical <= volume * (1 - margin), "storage emergency: the volume's use passed its provisioned size "
                                               "less the margin")
     for root in scratch_roots(storage):
@@ -533,7 +718,7 @@ def validate_request(request, qualification):
                     and indices == sorted(indices)
                     and all(type(i) is int and 0 <= i < len(config["episodes"]) for i in indices),
                     "invalid bounded evaluation sample")
-    validate_storage(request["storage"])
+    validate_storage(request["storage"], admission=request.get("admission"))
     return config, runtime
 
 
@@ -980,10 +1165,12 @@ def selected_slots(ref):
     return allocation["slots"] if allocation.get("schema") == PACK else [allocation["placement"]]
 
 
-def require_choice(path, request, verify_outputs=False):
+def require_choice(path, request, verify_outputs=False, validated=None):
+    """The selected allocation of a throughput choice. ``validated``: the (config, runtime) its caller already
+    validated from this request (its storage check walks the accounting trees, so it runs once)."""
     choice = read(checked(path))
     require(choice["schema"] == CHOICE, "unsupported throughput choice")
-    config, runtime = validate_request(request, False)
+    config, runtime = validate_request(request, False) if validated is None else validated
     family = workload(config, request["kind"], family=request.get("schedule_family"))
     require(set(choice["inventory"]) == {"desktop", "computehost", "runpod"},
             "inspect all three placement options")
@@ -1159,7 +1346,11 @@ def execute(request_path, qualification):
     token = os.environ.get("MTG_HOST_RESERVATION_TOKEN")
     require(token and reservations.status(token).get("token_fate") == "holds",
             "canonical host reservation is not held")
-    selected = None if qualification else require_choice(request["choice"], request)
+    selected = None if qualification else require_choice(request["choice"], request, validated=(config, runtime))
+    # The wall-time limit bounds the attempt's own work: its admission checks above are not counted.
+    wall_started = time.monotonic()
+    seed_emergency()
+    shared = (request.get("admission") or {}).get("shared_walk")
     root, cold = Path(request["root"]), Path(request["cold_root"])
     require(not root.exists() and not cold.exists(), "fresh dispatch and recovery roots required")
     root.mkdir(parents=True); cold.mkdir(parents=True)
@@ -1173,6 +1364,7 @@ def execute(request_path, qualification):
     barrier = start_barrier(request, qualification)
     barrier_seconds = 0.0 if barrier is None else await_release(barrier, request_path)
     started += barrier_seconds  # waiting for the other packed trials is not this trial's time
+    wall_started += barrier_seconds
     failure = None
     with (root/"stdout.jsonl").open("x") as stdout, (root/"stderr.log").open("x") as stderr, \
             (root/"telemetry.jsonl").open("x") as telemetry:
@@ -1191,13 +1383,13 @@ def execute(request_path, qualification):
             if not WINDOWS:
                 require_mapped_libraries(child, runtime)
             while child.poll() is None:
-                remaining = request["wall_seconds"] - (time.monotonic() - started)
+                remaining = request["wall_seconds"] - (time.monotonic() - wall_started)
                 require(remaining > 0, "native wall-time limit exceeded")
                 try:
-                    child.wait(timeout=min(30, remaining))
+                    child.wait(timeout=min(MONITOR_POLL_SECONDS, remaining))
                 except subprocess.TimeoutExpired:
                     sample = process_sample(child)
-                    sample.update(running_storage(request["storage"]))
+                    sample.update(running_storage(request["storage"], shared))
                     telemetry.write(json.dumps(sample) + "\n"); telemetry.flush()
                     require(sample["rss_bytes"] <= request["placement"]["memory_bytes"],
                             "native memory limit exceeded")
@@ -1208,6 +1400,7 @@ def execute(request_path, qualification):
                 child.kill()
             child.wait()
         finally:
+            close_emergency()  # the native part is over: its end is recorded now, no walk starts
             child_seconds = time.monotonic() - child_started
             # A qualification's receipt binds its start, which a pack's evidence compares.
             write(root/"execution.json", {"exit_code": child.returncode, "error": failure,
@@ -1241,13 +1434,13 @@ def execute(request_path, qualification):
         validated_files[str(exposure_path.resolve())] = exposure_pin["sha256"]
     fingerprint_seconds = time.monotonic() - fingerprint_started
     storage_started = time.monotonic()
-    running_storage(request["storage"])
+    running_storage(request["storage"], shared)
     storage_validation_seconds = time.monotonic() - storage_started
     # Existing checked, durable, two-shard archive includes full readback. Raw
     # outputs remain. Both locations count against the same campaign allowance.
     archive = archive_native(Path(placed["output_directory"]), cold, validated_files)
     storage_started = time.monotonic()
-    running_storage(request["storage"])
+    running_storage(request["storage"], shared, pending_bytes=archive["compressed_bytes"])
     storage_validation_seconds += time.monotonic() - storage_started
     games = len(placed["iterations"][0]["episodes"]) if request["kind"] == "training" and qualification else (
         sum(len(i["episodes"]) for i in placed["iterations"]) if request["kind"] == "training" else len(placed["episodes"]))
@@ -1306,9 +1499,9 @@ def main():
               "selected": selected, "outputs_verified": True, "launcher": pin(__file__)})
         print(json.dumps(selected))
     else:
-        _, runtime = validate_request(request, qualification)
+        config, runtime = validate_request(request, qualification)
         if not qualification:
-            require_choice(request["choice"], request)
+            require_choice(request["choice"], request, validated=(config, runtime))
         import host_reservation_v1 as reservations
         result = reservations.dispatch(
             lane=request["lane"], work_id=Path(request["root"]).name,

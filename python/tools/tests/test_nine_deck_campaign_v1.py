@@ -281,7 +281,12 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(activity_after_beat(executor=2), clock["wall"])  # preparation before the native start
         progress.activity = 0
         (root / "started.json").write_text(json.dumps({"pid": 2 ** 22 + 7}))  # a native child no longer readable
-        self.assertEqual(activity_after_beat(executor=2), 0)  # in the native part only native CPU counts
+        with patch.object(driver, "process_gone", return_value=False):
+            self.assertEqual(activity_after_beat(executor=2), 0)  # in the native part only native CPU counts
+        with patch.object(driver, "process_gone", return_value=True):  # the native child exited (#463)
+            self.assertEqual(activity_after_beat(), 0)  # the supervised baseline
+            self.assertEqual(activity_after_beat(executor=2), clock["wall"])  # the dispatcher recording its end
+        progress.activity = 0
         (root / "execution.json").write_text("{}")
         self.assertEqual(activity_after_beat(), 0)  # the supervised baseline again
         self.assertEqual(activity_after_beat(worker=4), clock["wall"])  # fingerprints and archive
@@ -296,9 +301,11 @@ class DriverTests(unittest.TestCase):
         root = self.root / "attempt-identity"; root.mkdir()
         (root / "started.json").write_text(json.dumps({"pid": os.getpid(), "started_unix": 1000.0}))
         with patch.object(driver, "process_start_unix", return_value=1000.0 + 60):  # the PID was reused
-            self.assertEqual(driver.native_ticks(root), -1)
+            self.assertIsNone(driver.native_ticks(root))  # the native process is gone: its part ended (#463)
         with patch.object(driver, "process_start_unix", return_value=None):
             self.assertEqual(driver.native_ticks(root), -1)
+        with patch.object(driver, "process_gone", return_value=True):  # exited: no /proc entry
+            self.assertIsNone(driver.native_ticks(root))
         (root / "started.json").write_text(json.dumps({"pid": os.getpid()}))  # no start time recorded
         self.assertEqual(driver.native_ticks(root), -1)
         self.assertFalse(driver.supervisor_owned(os.getpid(), None))

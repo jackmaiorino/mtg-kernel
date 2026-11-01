@@ -79,6 +79,17 @@ whole-campaign ceiling, never a separate allowance per host. Per-volume projecte
 bytes must leave60GiB free. Actual usage and owned-process CPU/memory are checked
 while native work runs. Symlinks and junctions in accounting trees are refused.
 
+A campaign driver that walked the accounting trees to admit a block may pass that
+walk as `admission` (`native-expanded-storage-admission/v1`: `logical_bytes`,
+`walked_unix`, `finished_since`, optional absolute `shared_walk`). While it is at
+most 900 s old the dispatcher checks the cap, reserve and projections on
+`logical_bytes` plus `finished_since` times `projected_additional_bytes`, without
+walking; an older one means a walk as before. With `storage.emergency`, a due
+emergency walk runs in a background thread (the monitor loop never waits for it),
+and with `shared_walk` the attempts of one host adopt one another's fresh walk
+and take turns under a lock file. The wall-time limit starts after the admission
+checks (mtg-kernel#463).
+
 Build a choice JSON:
 
 ```json

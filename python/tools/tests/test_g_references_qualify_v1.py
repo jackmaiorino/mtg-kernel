@@ -264,6 +264,32 @@ class QualifyTests(unittest.TestCase):
         for path in bounded:  # each pinned plan still has the bytes its pack recorded
             self.assertEqual(Path(json.loads(path.read_text())["root"]).name.split("-")[2], path.stem.split("-")[3])
 
+    def test_the_choice_check_and_the_wave_share_one_volume_walk(self):
+        """#463: each check-choice process walked the network volume itself (22 min on lease 1232); the
+        qualification walks once (or reuses the driver's fresh walk) and passes it, and that walk then serves the
+        wave's admissions."""
+        driver.VOLUMES.clear()
+        self.addCleanup(driver.VOLUMES.clear)
+        (self.root / "kept").write_bytes(b"x" * 500)
+        inventory = save(self.root / "inventory.json", json.dumps({"inventory": {}}).encode())
+        config = save(self.root / "config.json", b"{}")
+        value = {"root": str(self.root / "q"), "inventory": inventory, "families": {"empty-pool": {"config": config}}}
+        evidence = {"empty-pool": {"reports": {"w1": {"path": "r"}}, "pack": {"path": "p"}}}
+        checks, walks = [], []
+        real = driver.native_dispatch.accounting_bytes
+
+        def check_choice(args):
+            request = json.loads(Path(args[-1]).read_text(encoding="utf-8"))
+            checks.append(request)
+            Path(request["choice_verification_output"]).write_text("{}")
+            return {}
+        with patch.object(qualify, "nested", side_effect=check_choice),                 patch.object(qualify.dispatch, "workload", return_value="family"),                 patch.object(driver.Campaign, "choice", return_value=({"path": "c"}, {"path": "v"})),                 patch.object(driver.native_dispatch, "accounting_bytes", lambda s: walks.append(1) or real(s)):
+            qualify.make_choice(self.campaign, value, evidence)
+            self.assertEqual(driver.volume_logical(self.campaign)[0], checks[0]["admission"]["logical_bytes"])
+        self.assertEqual(len(walks), 1)  # the admissions after it reuse the same walk
+        self.assertGreaterEqual(checks[0]["admission"]["logical_bytes"], 500)
+        self.assertIsNotNone(driver.native_dispatch.admitted_bytes(checks[0]["admission"], checks[0]["storage"]))
+
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):
             qualify.run(self.path, self.root / "plan.json")

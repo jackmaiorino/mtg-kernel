@@ -220,18 +220,32 @@ def supervisor_owned(pid: int, token) -> bool:
         return False
 
 
+def process_gone(pid: int) -> bool:
+    """Whether ``pid`` has exited, where /proc can say so (Linux): no /proc entry. Elsewhere False."""
+    return Path("/proc/self/stat").exists() and not Path(f"/proc/{pid}").exists()
+
+
 def native_ticks(root: Path) -> int | None:
-    """None outside a block's native part, else its native CPU clock ticks (-1 once unreadable, or once the
-    PID names another process: its start differs from started.json's)."""
+    """None outside a block's native part, else its native CPU clock ticks (-1 while unreadable). The native part
+    ends with execution.json or with the recorded process itself: once it has exited (no /proc entry, a zombie,
+    or its PID names another process, whose start differs from started.json's). The dispatcher's work after it
+    (recording the end, fingerprints, archive) is then the attempt's activity: a dispatcher still busy after its
+    native child had exited was taken for a stalled native run, and the guard released the Pod
+    (mtg-kernel#463)."""
     if not (root / "started.json").exists() or (root / "execution.json").exists():
         return None
     try:
         started = json.loads((root / "started.json").read_text(encoding="utf-8"))
-        pid, start = started["pid"], process_start_unix(started["pid"])
-        if start is None or abs(start - float(started["started_unix"])) > START_TOLERANCE_SECONDS:
+        pid = started["pid"]
+        if process_gone(pid):
+            return None
+        start = process_start_unix(pid)
+        if start is None:
             return -1
+        if abs(start - float(started["started_unix"])) > START_TOLERANCE_SECONDS:
+            return None
         fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-        return -1 if fields[0] in ("Z", "X") else int(fields[11]) + int(fields[12])
+        return None if fields[0] in ("Z", "X") else int(fields[11]) + int(fields[12])
     except (OSError, ValueError, KeyError, IndexError):
         return -1
 
