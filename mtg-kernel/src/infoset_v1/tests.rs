@@ -8,6 +8,15 @@ use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::runtime_deck_by_id;
 use crate::state::SplitMix64;
 
+/// Writes `value` to `W1_DUMP_DIR/<name>.json` when that variable is set
+/// (diagnostics for failing harness cases).
+pub(crate) fn dump(name: &str, value: &impl serde::Serialize) {
+    if let Ok(dir) = std::env::var("W1_DUMP_DIR") {
+        let path = std::path::Path::new(&dir).join(format!("{name}.json"));
+        let _ = std::fs::write(path, serde_json::to_vec(value).unwrap_or_default());
+    }
+}
+
 /// The path of the first difference between two values.
 pub(crate) fn first_diff(a: &serde_json::Value, b: &serde_json::Value, path: String) -> String {
     use serde_json::Value;
@@ -425,6 +434,12 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
         resolve_waiting(&mut truth, below, 40);
         resolve_waiting(&mut canon, below, 40);
         let (t, c) = (public_summary(&truth), public_summary(&canon));
+        if t != c {
+            let case = record["case"].as_str().unwrap_or("case").to_string();
+            dump(&format!("ac3l-{case}-true"), &state);
+            dump(&format!("ac3l-{case}-export"), &x.state);
+            dump(&format!("ac3l-{case}-handles"), &x.handles);
+        }
         assert!(
             t == c,
             "{}: continuations differ at {}; stack {:?}; responses {:?} / {:?}",

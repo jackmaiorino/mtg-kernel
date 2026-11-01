@@ -375,6 +375,9 @@ pub(crate) fn ac3_check(
     let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
         (live.current_response(), imported.current_response())
     else {
+        super::tests::dump("ac3-halt-true", live.game_state());
+        super::tests::dump("ac3-halt-export", &export.state);
+        super::tests::dump("ac3-halt-handles", &export.handles);
         return Err(format!(
             "the imported root is not a decision: {:?}",
             imported.current_response()
