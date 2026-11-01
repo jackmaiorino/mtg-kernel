@@ -355,6 +355,11 @@ fn err(value: impl std::fmt::Display) -> String {
 fn value(value: &impl Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(err)
 }
+/// `value` as `publish` writes it and `read_json` reads it back: through the
+/// JSON bytes, so f32 fields keep their shortest form.
+fn published_value(value: &impl Serialize) -> Result<Value, String> {
+    serde_json::from_slice(&serde_json::to_vec(value).map_err(err)?).map_err(err)
+}
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -1659,8 +1664,12 @@ pub fn run_native_expanded_training_v1(
             }
             let collect_command =
                 collection_command(config, index, &current, &episodes, attempt.join("collect"));
+            // Compare as published: through the JSON bytes. An f32 field
+            // (max_non_natural_episode_fraction 0.2) serializes as "0.2" but
+            // becomes 0.20000000298023224 in a direct `to_value`, so a direct
+            // comparison refused every interrupted attempt of such a config.
             check(
-                read_json(&saved_command, SMALL_CAP)? == value(&collect_command)?,
+                read_json(&saved_command, SMALL_CAP)? == published_value(&collect_command)?,
                 "interrupted attempt collection command differs",
             )?;
             let path = attempt.join("collect/collection.json");
@@ -2128,6 +2137,39 @@ mod tests {
         assert!(parallel.validate_v1().is_err());
         parallel.collection_workers = 1025;
         assert!(parallel.validate_v1().is_err());
+    }
+
+    /// An interrupted attempt's saved collection command matches the one a
+    /// resume rebuilds, also for an f32 field without an exact decimal form
+    /// (max_non_natural_episode_fraction 0.2, as D1 runs use). A direct
+    /// `to_value` widens it to 0.20000000298023224 and once refused every
+    /// such resume.
+    #[test]
+    fn saved_collection_command_matches_on_resume_with_f32_fields() {
+        let mut config = schedule();
+        config.max_non_natural_episode_fraction = 0.2;
+        config.collection_workers = 4;
+        let episodes = resolve_episodes(&config, 0, &config.initial_source, &[]).unwrap();
+        let attempt =
+            std::env::temp_dir().join(format!("rt1-saved-command-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&attempt);
+        fs::create_dir_all(&attempt).unwrap();
+        let command = collection_command(
+            &config,
+            0,
+            &config.initial_source,
+            &episodes,
+            attempt.join("collect"),
+        );
+        publish(&attempt, "collect-command.json", &command).unwrap();
+        let saved = read_json(&attempt.join("collect-command.json"), SMALL_CAP).unwrap();
+        assert_ne!(
+            saved,
+            value(&command).unwrap(),
+            "the direct form widens the f32"
+        );
+        assert_eq!(saved, published_value(&command).unwrap());
+        let _ = fs::remove_dir_all(&attempt);
     }
 
     #[test]
