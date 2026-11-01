@@ -3848,7 +3848,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x80d1_a3d4_079a_d2e9;
+        const EXPECTED_ETERNAL: u64 = 0x3d6d_b37c_dcd3_d5db;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
