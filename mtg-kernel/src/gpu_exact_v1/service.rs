@@ -10,11 +10,11 @@
 //! batching changes only timing, never a bit. Sampling and its randomness
 //! stay in the collector.
 
-use super::net8::{
-    forward_batch_v1, DEVICE_ERROR_PREFIX_V1, DeviceBuffersV1, ExactOutputV1, Net8DeviceModelV1, Net8HostModelV1,
-    PackedBatchV1,
-};
 use super::device::{ExactOptionsV1, KernelsV1};
+use super::net8::{
+    forward_batch_v1, DeviceBuffersV1, ExactOutputV1, Net8DeviceModelV1, Net8HostModelV1,
+    PackedBatchV1, DEVICE_ERROR_PREFIX_V1,
+};
 use super::ExactDeviceV1;
 use crate::inference_cache_v1::ForwardPathV1;
 use crate::native_policy_value_net_v1::{NativeEncodedDecisionViewV1, NativePolicyValueNetV1};
@@ -329,11 +329,14 @@ fn serve_v1(
             tick,
             &mut stats,
         );
-        if let Some(Err(error)) = result
-            .iter()
-            .find(|reply| reply.as_ref().is_err_and(|e| e.starts_with(DEVICE_ERROR_PREFIX_V1)))
-        {
-            poisoned = Some(format!("GPU inference service stopped after a device error: {error}"));
+        if let Some(Err(error)) = result.iter().find(|reply| {
+            reply
+                .as_ref()
+                .is_err_and(|e| e.starts_with(DEVICE_ERROR_PREFIX_V1))
+        }) {
+            poisoned = Some(format!(
+                "GPU inference service stopped after a device error: {error}"
+            ));
             stats.poisoned = poisoned.clone();
         }
         stats.batch_sizes[size_bucket_v1(pending.len())] += 1;

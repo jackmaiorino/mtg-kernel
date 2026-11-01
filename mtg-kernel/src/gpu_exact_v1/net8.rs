@@ -7,9 +7,7 @@ use super::device::KernelsV1;
 use super::ExactDeviceV1;
 use crate::inference_cache_v1::ForwardPathV1;
 use crate::native_policy_value_net_v1::{NativeEncodedDecisionViewV1, NativePolicyValueNetV1};
-use cudarc::driver::{
-    CudaSlice, DevicePtr, DevicePtrMut, DeviceRepr, LaunchConfig, PushKernelArg,
-};
+use cudarc::driver::{CudaSlice, DevicePtr, DevicePtrMut, DeviceRepr, LaunchConfig, PushKernelArg};
 
 /// `MtgReq` in `net8_forward.cu`.
 pub(super) const R_FIELDS: usize = 19;
@@ -351,8 +349,10 @@ impl<T: Copy + Default> PinnedV1<T> {
             .bind_to_thread()
             .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}bind: {e:?}"))?;
         // SAFETY: a fresh allocation of `len` elements, initialized below.
-        let ptr = unsafe { cudarc::driver::result::malloc_host(len * std::mem::size_of::<T>(), flags) }
-            .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}pinned alloc: {e:?}"))? as *mut T;
+        let ptr =
+            unsafe { cudarc::driver::result::malloc_host(len * std::mem::size_of::<T>(), flags) }
+                .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}pinned alloc: {e:?}"))?
+                as *mut T;
         // SAFETY: `ptr` holds `len` elements; every one is written here.
         unsafe { std::slice::from_raw_parts_mut(ptr, len).fill(T::default()) };
         Ok(Self { ptr, len })
@@ -381,7 +381,11 @@ fn ensure_pinned<T: Copy + Default>(
     let len = len.max(1);
     if slot.as_ref().is_none_or(|s| s.len < len) {
         *slot = None;
-        *slot = Some(PinnedV1::new(device, len.next_power_of_two(), write_combined)?);
+        *slot = Some(PinnedV1::new(
+            device,
+            len.next_power_of_two(),
+            write_combined,
+        )?);
     }
     Ok(())
 }
@@ -427,7 +431,11 @@ pub(crate) fn forward_batch_v1(
     if models.iter().any(|m| m.dims != dims) {
         return Err("a batch's models must share input dims".into());
     }
-    if batch.replies.iter().any(|&(slot, _, _)| slot >= models.len()) {
+    if batch
+        .replies
+        .iter()
+        .any(|&(slot, _, _)| slot >= models.len())
+    {
         return Err("request names a model slot that is not resident".into());
     }
     match kernels {
@@ -458,7 +466,10 @@ fn forward_v2(
     }
     // Models with equal dims have equal layouts (`gpu_exact_parameters_v1`
     // derives the layout from the dims), so one layout serves all; checked.
-    if models.iter().any(|m| m.layout_host != models[0].layout_host) {
+    if models
+        .iter()
+        .any(|m| m.layout_host != models[0].layout_host)
+    {
         return Err("a v2 launch's models must share one parameter layout".into());
     }
     let layout = &models[0].layout;
@@ -525,17 +536,24 @@ fn forward_v2(
         // SAFETY: every descriptor's offsets lie inside the packed buffer and
         // the scratch and outputs sized by `push_v1`; every slot it names is
         // in the table (checked above).
-        unsafe { launch.launch(config) }.map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}forward launch: {e:?}"))?;
+        unsafe { launch.launch(config) }
+            .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}forward launch: {e:?}"))?;
     }
     // The parameter reads are scheduled; the records order later writes after them.
     drop(records);
-    let read = buffers.download.as_mut().expect("ensured").slice_mut(outputs);
+    let read = buffers
+        .download
+        .as_mut()
+        .expect("ensured")
+        .slice_mut(outputs);
     {
         let (pointer, _record) = out.device_ptr(stream);
         // SAFETY: `read` is pinned and holds `outputs` elements; the stream is
         // synchronized before it is read.
-        unsafe { cudarc::driver::result::memcpy_dtoh_async(&mut *read, pointer, stream.cu_stream()) }
-            .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}download: {e:?}"))?;
+        unsafe {
+            cudarc::driver::result::memcpy_dtoh_async(&mut *read, pointer, stream.cu_stream())
+        }
+        .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}download: {e:?}"))?;
     }
     stream
         .synchronize()
@@ -625,7 +643,8 @@ fn forward_v1(
         };
         // SAFETY: every descriptor's offsets lie inside the uploaded buffers
         // and the scratch, logits and values sized by `push_v1`.
-        unsafe { launch.launch(config) }.map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}forward launch: {e:?}"))?;
+        unsafe { launch.launch(config) }
+            .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}forward launch: {e:?}"))?;
         start = end;
     }
     let mut host_logits = vec![0f32; batch.logits_len];

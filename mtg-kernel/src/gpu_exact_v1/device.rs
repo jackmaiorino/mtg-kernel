@@ -253,7 +253,10 @@ impl ExactDeviceV1 {
     /// context fails every operation (feature gpu-exact-fault-injection-v1).
     #[cfg(any(test, feature = "gpu-exact-fault-injection-v1"))]
     pub(crate) fn inject_fault_v1(&self) {
-        eprintln!("gpu-exact: injecting a device fault on {}", self.identity.name);
+        eprintln!(
+            "gpu-exact: injecting a device fault on {}",
+            self.identity.name
+        );
         let mut launch = self.stream.launch_builder(&self.fault_trap);
         let config = LaunchConfig {
             grid_dim: (1, 1, 1),

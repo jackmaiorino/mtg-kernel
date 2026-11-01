@@ -3,10 +3,10 @@
 //!     --lib gpu_exact_v1 -- --ignored --test-threads 1
 //! Host-only tests run everywhere.
 
+use super::device::{KernelsV1, TileShapeV1};
 use super::net8::{
     forward_batch_v1, DeviceBuffersV1, Net8DeviceModelV1, Net8HostModelV1, PackedBatchV1,
 };
-use super::device::{KernelsV1, TileShapeV1};
 use super::service::{BatchPolicyV1, InferenceServiceV1};
 use super::ExactDeviceV1;
 use crate::inference_cache_v1::ForwardPathV1;
