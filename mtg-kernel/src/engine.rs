@@ -14438,13 +14438,26 @@ pub(crate) fn validate_pending_cast(
         let mut unchosen = pending.clone();
         unchosen.sacrifice_chosen.clear();
         let candidates = cast_single_object_cost_candidates(&unchosen, cost, state);
+        // Foil's picks depend on the earlier pick (an Island card first).
+        let ordered_pick_illegal = |index: usize, object: &ObjectId| {
+            cost == CastSingleObjectCostV1::DiscardIslandAndAnother
+                && !island_discard_cost_candidates(
+                    pending.controller,
+                    pending.spell,
+                    state,
+                    &pending.sacrifice_chosen[..index],
+                )
+                .contains(object)
+        };
         if pending.sacrifice_chosen.len() > usize::from(cost.count())
             || pending
                 .sacrifice_chosen
                 .iter()
                 .enumerate()
                 .any(|(index, object)| {
-                    !candidates.contains(object)
+                    (cost != CastSingleObjectCostV1::DiscardIslandAndAnother
+                        && !candidates.contains(object))
+                        || ordered_pick_illegal(index, object)
                         || pending.sacrifice_chosen[..index].contains(object)
                 })
         {
@@ -15178,6 +15191,13 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         if pending.sacrifice_chosen.len() < usize::from(cost.count()) {
             let candidates = cast_single_object_cost_candidates(&pending, cost, state);
             let remaining = cost.count() - pending.sacrifice_chosen.len() as u8;
+            // Foil's two picks are offered one at a time (the second depends
+            // on the first), so each step needs one candidate.
+            let remaining = if cost == CastSingleObjectCostV1::DiscardIslandAndAnother {
+                1
+            } else {
+                remaining
+            };
             if candidates.len() < usize::from(remaining) {
                 let cast_method = finalized_cast_method(&pending, staged_method, def);
                 let pending = state.engine.pending_cast.take().unwrap();
@@ -23167,7 +23187,7 @@ fn is_still_in_combat(state: &GameState, id: ObjectId) -> bool {
 
 /// Goblin Vandal: "this creature assigns no combat damage this turn"
 /// (eternal wave P1a).
-fn assigns_no_combat_damage(state: &GameState, creature: ObjectId) -> bool {
+pub(crate) fn assigns_no_combat_damage(state: &GameState, creature: ObjectId) -> bool {
     cfg!(feature = "eternal-fixtures")
         && crate::eternal_premodern_p1a_v1::statics::assigns_no_combat_damage(state, creature)
 }

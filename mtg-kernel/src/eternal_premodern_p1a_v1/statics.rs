@@ -406,8 +406,19 @@ pub(crate) fn split_card(name: &str) -> bool {
 }
 
 /// The split card spell `item`'s half: `true` for the second.
-fn second_half(item: &StackItem) -> bool {
-    item.v4.cast_method == Some(CastMethodV4::Omen)
+/// While the spell is being cast, the half its caster chose (601.2b);
+/// `None` before the choice, when the card still has both halves'
+/// characteristics.
+fn second_half(state: &GameState, item: &StackItem) -> Option<bool> {
+    if let Some(pending) = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|pending| pending.spell == item.source)
+    {
+        return pending.mode_chosen.map(|mode| mode == 1);
+    }
+    Some(item.v4.cast_method == Some(CastMethodV4::Omen))
 }
 
 /// The mana value of a split card spell on the stack: only its half's.
@@ -416,7 +427,7 @@ pub(crate) fn split_spell_mana_value(state: &GameState, item: &StackItem) -> Opt
     if !split_card(def.name) || item.kind != StackItemKind::Spell {
         return None;
     }
-    let cost = if second_half(item) {
+    let cost = if second_half(state, item)? {
         def.adventure.as_ref()?.cost
     } else {
         def.cost
@@ -434,11 +445,23 @@ fn split_spell_colors(state: &GameState, id: ObjectId) -> Option<u8> {
     if !split_card(def.name) {
         return None;
     }
-    let item = state
-        .stack
-        .iter()
-        .find(|item| item.kind == StackItemKind::Spell && item.source == id)?;
-    let cost = if second_half(item) {
+    let pending_half = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|pending| pending.spell == id)
+        .map(|pending| pending.mode_chosen.map(|mode| mode == 1));
+    let second = match pending_half {
+        Some(half) => half?,
+        None => {
+            let item = state
+                .stack
+                .iter()
+                .find(|item| item.kind == StackItemKind::Spell && item.source == id)?;
+            second_half(state, item)?
+        }
+    };
+    let cost = if second {
         def.adventure.as_ref()?.cost
     } else {
         def.cost

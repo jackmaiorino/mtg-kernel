@@ -481,17 +481,6 @@ fn finish_cast(state: &mut GameState) {
     panic!("the cast did not finish");
 }
 
-/// Chooses spell mode (form) `mode` for the cast in progress.
-fn choose_mode(state: &mut GameState, mode: u8) {
-    match next(state) {
-        Decision::ChooseSpellMode { legal_modes, .. } => {
-            assert!(legal_modes.contains(&mode), "{mode} not in {legal_modes:?}");
-            act(state, Action::ChooseSpellMode(mode));
-        }
-        other => panic!("expected a spell mode, got {other:?}"),
-    }
-}
-
 /// Passes priority until `player` holds it with something on the stack.
 fn pass_to(state: &mut GameState, player: PlayerId) {
     for _ in 0..16 {
@@ -826,7 +815,7 @@ fn a_split_card_half_on_the_stack_has_its_own_color_and_mana_value() {
     assert_eq!(engine::object_mana_value(&state, ice), 4);
     pool(&mut state, P0, &[ManaColor::U], 1);
     act(&mut state, Action::CastSpell(ice));
-    choose_mode(&mut state, 1);
+    // Only Ice is affordable, so its half is chosen without asking.
     choose_target(&mut state, Target::Object(elves));
     finish_cast(&mut state);
     assert_eq!(zone(&state, ice), Zone::Stack);
@@ -1463,7 +1452,7 @@ fn goblin_piledriver_grows_per_attacking_goblin_and_resists_blue() {
     let ice = put(&mut state, P0, "Fire // Ice", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 1);
     act(&mut state, Action::CastSpell(ice));
-    choose_mode(&mut state, 1);
+    // Only Ice is affordable, so its half is chosen without asking.
     match next(&mut state) {
         Decision::ChooseTargets { legal_targets, .. } => {
             assert!(!legal_targets.contains(&Target::Object(piledriver)));
