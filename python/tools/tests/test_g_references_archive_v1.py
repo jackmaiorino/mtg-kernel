@@ -73,7 +73,7 @@ class ArchiveTests(unittest.TestCase):
         checkpoints = [row["final_checkpoint"]["path"] for row in baselines["baselines"]]
         return pod(archive.POD_PACK, {"root": str(self.root), "campaign": str(self.root / "campaign"),
                                       "checkpoints": checkpoints, **archive.PACK_RULES, "out": str(self.out),
-                                      "limit_seconds": limit})
+                                      "limit_seconds": limit, "workers": 4, "small_bytes": 64})  # both read paths
 
     def prune_args(self, **changes):
         return {"root": str(self.root), "expected_root": str(self.root), "keep_root": str(self.root.parent / "q2"),

@@ -118,8 +118,16 @@ out.mkdir(parents=True, exist_ok=True)
 included, listed, records = [], [], []
 def fail(error):  # a folder that cannot be listed stops the archive (and so the prune)
     raise error
+def stop_now(message):  # ends the whole process, prefetch readers included (a stalled read must not hold it)
+    import sys
+    sys.stderr.write(message + "\\n")
+    sys.stderr.flush()
+    os._exit(3)
+def left():
+    return ARGS["limit_seconds"] - (time.monotonic() - started)
 def in_time():
-    need(time.monotonic() - started < ARGS["limit_seconds"], "the pack outlasted its bound")
+    if left() <= 0:
+        stop_now("the pack outlasted its bound")
 last = [0.0]
 def progress(phase):
     if time.monotonic() - last[0] >= 10:
@@ -151,7 +159,7 @@ for folder, dirs, files in os.walk(root, onerror=fail):
             listed.append({"path": posix, "bytes": size, "kind": "shard" if shard else "checkpoint"
                            if parts[:2] == ("campaign", "checkpoints") else "native"})
         else:
-            records.append((path, posix, size))
+            records.append((path, posix, size, path.stat().st_mtime_ns))
 # 2. The archive: each record read once, hashed as it is written; small files read ahead by a pool.
 class Hashing:
     def __init__(self, stream):
@@ -163,8 +171,15 @@ class Hashing:
         self.count += len(data)
         return data
 def whole(path):
+    chunks = []
     with open(path, "rb") as stream:
-        return stream.read()
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            in_time()
+            chunks.append(chunk)
+    return b"".join(chunks)
+def unchanged(path, size, mtime_ns):
+    seen = path.stat()
+    need(seen.st_size == size and seen.st_mtime_ns == mtime_ns, "a file changed while it was archived: " + str(path))
 small = ARGS["small_bytes"]
 with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar, \\
         concurrent.futures.ThreadPoolExecutor(ARGS["workers"]) as pool:
@@ -173,31 +188,32 @@ with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar, \\
     def refill():
         global position
         while len(ahead) < 4 * ARGS["workers"] and position < len(records):
-            path, posix, size = records[position]
-            ahead.append((path, posix, size, pool.submit(whole, path) if size < small else None))
+            path, posix, size, mtime_ns = records[position]
+            ahead.append((path, posix, size, mtime_ns, pool.submit(whole, path) if size < small else None))
             position += 1
     refill()
     while ahead:
         in_time()
         progress("archive")
-        path, posix, size, future = ahead.popleft()
+        path, posix, size, mtime_ns, future = ahead.popleft()
         refill()
         info = tarfile.TarInfo(posix)
-        info.mtime, info.mode = int(path.stat().st_mtime), 0o644
+        info.size, info.mtime, info.mode = size, mtime_ns // 10**9, 0o644
         if future is not None:
-            data = future.result()
+            try:
+                data = future.result(timeout=max(1.0, left()))
+            except concurrent.futures.TimeoutError:
+                stop_now("the pack outlasted its bound")
             need(len(data) == size, "a file changed while it was archived: " + str(path))
-            info.size = size
             tar.addfile(info, io.BytesIO(data))
             sha256 = hashlib.sha256(data).hexdigest()
         else:
-            info.size = size
             with open(path, "rb") as stream:
                 reader = Hashing(stream)
                 tar.addfile(info, reader)
-            need(reader.count == size and path.stat().st_size == size,
-                 "a file changed while it was archived: " + str(path))
+            need(reader.count == size, "a file changed while it was archived: " + str(path))
             sha256 = reader.value.hexdigest()
+        unchanged(path, size, mtime_ns)  # after its bytes went into the archive: an append or rewrite stops the pack
         included.append({"path": posix, "bytes": size, "sha256": sha256})
 kept = {item["path"] for item in included}
 need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in keep),
@@ -222,23 +238,26 @@ import os, pathlib, shlex, subprocess, time
 out = pathlib.Path(ARGS["out"])
 out.mkdir(parents=True, exist_ok=True)
 name = ARGS["name"]
-started = out / (name + ".started.json")
-need(not started.exists(), "the " + name + " step was already started on this Pod")
-started.write_text(json.dumps({"state": "launching", "epoch": time.time()}))
+try:  # one claim per step and Pod, created exclusively: a retried start never launches a second copy
+    claim = os.open(out / (name + ".started.json"), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+except FileExistsError:
+    raise SystemExit("the " + name + " step was already started on this Pod")
+with os.fdopen(claim, "w") as stream:
+    stream.write(json.dumps({"state": "launching", "epoch": time.time()}))
 script = out / (name + ".py")
 script.write_text(ARGS["code"])
 q = shlex.quote
-command = ("python3 -B %s > %s 2> %s; echo $? > %s && mv %s %s" %
-           (q(str(script)), q(str(out / (name + ".stdout"))), q(str(out / (name + ".stderr"))),
-            q(str(out / (name + ".exit.partial"))), q(str(out / (name + ".exit.partial"))),
-            q(str(out / (name + ".exit")))))
-child = subprocess.Popen(["sh", "-c", command], start_new_session=True, stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-ticks = int(open("/proc/%d/stat" % child.pid).read().rsplit(")", 1)[1].split()[19])
-partial = out / (name + ".started.json.partial")
-partial.write_text(json.dumps({"state": "started", "pid": child.pid, "ticks": ticks, "epoch": time.time()}))
-os.replace(partial, started)
-print(json.dumps({"started": True, "pid": child.pid}))
+identity = q(str(out / (name + ".identity")))
+# The wrapper shell records its own PID and start ticks before the step runs, so the step is traceable even if this
+# starter dies right after the launch.
+command = ("echo $$ $(cut -d' ' -f22 /proc/$$/stat) > %s.partial && mv %s.partial %s; "
+           "python3 -B %s > %s 2> %s; echo $? > %s && mv %s %s" %
+           (identity, identity, identity, q(str(script)), q(str(out / (name + ".stdout"))),
+            q(str(out / (name + ".stderr"))), q(str(out / (name + ".exit.partial"))),
+            q(str(out / (name + ".exit.partial"))), q(str(out / (name + ".exit")))))
+subprocess.Popen(["sh", "-c", command], start_new_session=True, stdin=subprocess.DEVNULL,
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print(json.dumps({"started": True}))
 '''
 
 POD_DETACH_POLL = '''#pod:archive-detach-poll
@@ -266,11 +285,15 @@ elif exited.exists():
     else:
         value = {"state": "failed", "exit": code, "error": tail(out / (name + ".stderr"))}
 else:
-    record = json.loads(started.read_text())
-    if record.get("state") == "launching":
-        stale = time.time() - record["epoch"] > 60
+    identity = out / (name + ".identity")
+    if not identity.exists():  # claimed, wrapper not yet up
+        try:
+            claimed = json.loads(started.read_text())["epoch"]
+        except (OSError, ValueError, KeyError):
+            claimed = started.stat().st_mtime
+        stale = time.time() - claimed > 60
         value = {"state": "failed", "error": "the step never started"} if stale else {"state": "running"}
-    elif alive(record["pid"], record["ticks"]):
+    elif alive(*[int(field) for field in identity.read_text().split()[:2]]):
         value = {"state": "running"}
     else:
         value = {"state": "failed", "error": "the step ended without an exit record: " + tail(out / (name + ".stderr"))}
@@ -435,11 +458,17 @@ class ArchiveCycle(gcloud.Cycle):
         code = cloud.PRELUDE % json.dumps({**args, "schema": SCHEMA}) + program
         poll = {"out": POD_OUT, "name": kind, "progress": progress}
         launched, errors = False, 0
+
+        def left():
+            return deadline - time.monotonic()
         while True:
-            try:
-                state = self.pod.run(POD_DETACH_POLL, poll, timeout=60, read_only=True)
+            require(left() > 0, f"the {kind} step outlasted its bound")
+            try:  # one attempt per call, each inside what remains of the step's bound
+                state = self.pod.run(POD_DETACH_POLL, poll, timeout=max(1, min(60, left())))
                 if state["state"] == "absent" and not launched:
-                    self.pod.run(POD_DETACH_START, {"out": POD_OUT, "name": kind, "code": code, "args": args}, timeout=60)
+                    require(left() > 0, f"the {kind} step outlasted its bound")
+                    self.pod.run(POD_DETACH_START, {"out": POD_OUT, "name": kind, "code": code, "args": args},
+                                 timeout=max(1, min(60, left())))
                     launched = True
                     continue
                 launched = True
@@ -453,8 +482,7 @@ class ArchiveCycle(gcloud.Cycle):
                 errors += 1
                 self.result.setdefault("poll_errors", {})[kind] = errors
                 self.result["last_poll_error"] = str(error)[-300:]
-            require(time.monotonic() < deadline, f"the {kind} step outlasted its bound")
-            self.sleep(POLL_SECONDS)
+            self.sleep(max(0, min(POLL_SECONDS, left())))
 
     def prune(self, verified_pod_copies):
         return self.step("prune", POD_PRUNE, {"root": str(self.old), "expected_root": str(self.old),
