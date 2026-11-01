@@ -359,7 +359,7 @@ fn validate_operation(
                     }
                     if selected.len() == usize::from(*max_targets) {
                         // The closed Inspiration purposes above cannot be an Artisan search.
-                        complete_resumable_target_selection(&mut expected, false)?;
+                        complete_resumable_target_selection(&mut expected, false, false)?;
                     }
                 }
                 InspirationInputKindV1::Finish => {
@@ -367,7 +367,7 @@ fn validate_operation(
                     {
                         return Err("Inspiration finish skipped a mandatory available card".into());
                     }
-                    complete_resumable_target_selection(&mut expected, false)?;
+                    complete_resumable_target_selection(&mut expected, false, false)?;
                 }
                 InspirationInputKindV1::Drive => unreachable!(),
             }

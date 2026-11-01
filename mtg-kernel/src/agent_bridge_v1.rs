@@ -1655,6 +1655,12 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
             T::DuressDiscard { .. } => ("discard", "selection"),
             T::LinkedExileNonlandFromRevealedHand { .. } => ("exile", "selection"),
             T::UndercityThroneCreature { .. } => ("undercity_throne", "selection"),
+            // Purposes added for non-Pauper catalogs. The adapter refuses
+            // the decision on a projection error instead of guessing.
+            _ => {
+                support["projection_error"] = json!("effect purpose outside the Pauper contract");
+                ("other", "selection")
+            }
         },
         C::ChooseBoolean { purpose, .. } => match purpose {
             B::ShuffleLibrary { .. } => ("shuffle", "boolean"),
@@ -1665,6 +1671,10 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
             B::SearchLibraryToBattlefieldTapped { .. } => ("search", "boolean"),
             B::PayExileFromGraveyardThen { .. } => ("exile_payment", "boolean"),
             B::LookAtTopMayRevealThen { .. } => ("reveal", "boolean"),
+            _ => {
+                support["projection_error"] = json!("effect purpose outside the Pauper contract");
+                ("other", "boolean")
+            }
         },
         C::ChooseOption { purpose, .. } => match purpose {
             O::Generic => ("effect_option", "option"),
@@ -1673,6 +1683,10 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
             O::SurveilTopCard { .. } => ("surveil", "option"),
             O::ChooseColor { .. } => ("color", "option"),
             O::UndercityRoute { .. } => ("undercity_route", "option"),
+            _ => {
+                support["projection_error"] = json!("effect purpose outside the Pauper contract");
+                ("other", "option")
+            }
         },
     };
     support["effect_instance"] = json!(format!(
@@ -2077,9 +2091,12 @@ fn neutral_semantic_v1(
         | ActionSemanticV1::ChooseLegendPermanent { .. }
         | ActionSemanticV1::ChooseLondonBottom { .. }
         | ActionSemanticV1::ChooseLondonMulligan { .. }
-        | ActionSemanticV1::ChooseTriggerOrderNext { .. }
         | ActionSemanticV1::FinishDivineTargetsV44 { .. }
         | ActionSemanticV1::TurnFaceUp { .. } => {
+            Err("engine_contract_failure:semantic outside the Pauper neutral contract".to_string())
+        }
+        #[cfg(feature = "limited-fdn-fixtures")]
+        ActionSemanticV1::ChooseTriggerOrderNext { .. } => {
             Err("engine_contract_failure:semantic outside the Pauper neutral contract".to_string())
         }
     }
