@@ -29,8 +29,7 @@ class DriverTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        driver.VOLUME.clear()  # the shared volume walk starts empty in every test
-        driver.VOLUME.update(walked=0.0, finished=0)
+        driver.VOLUMES.clear()  # the shared volume walks start empty in every test
         self.root = Path(self.temp.name)
         self.play = {run: {"path": f"C:/in/{run}/play-import.json", "sha256": str(index) * 64}
                      for index, run in enumerate(g.RUNS, 1)}
@@ -476,11 +475,33 @@ class DriverTests(unittest.TestCase):
             self.assertIsNone(driver.admit(self.campaign, b))
             self.assertEqual((len(walks), len(touched)), (1, 1))  # one walk for both, a driver step
             driver.release(self.campaign, "G1", 1, a)  # finished since the walk: still projected
-            self.assertEqual(driver.VOLUME["finished"], 1)
+            self.assertEqual(driver.volume(self.campaign)["finished"], 1)
             self.assertRegex(driver.admit(self.campaign, c), "^retained: 0 B at the last walk plus 900000000 B")
-            driver.VOLUME["walked"] -= driver.VOLUME_WALK_SECONDS + 1  # the walk is old: walked again
-            self.assertIsNone(driver.admit(self.campaign, c))
-            self.assertEqual((len(walks), driver.VOLUME["finished"]), (2, 0))
+            driver.volume(self.campaign)["walked"] -= driver.VOLUME_REWALK_SECONDS + 1
+            self.assertIsNone(driver.admit(self.campaign, c))  # the refusal rested on a finished block: walked again
+            self.assertEqual((len(walks), driver.volume(self.campaign)["finished"]), (2, 0))
+        events = [json.loads(line) for line in self.campaign.events.read_text().splitlines()]
+        self.assertEqual([e["kind"] for e in events].count("volume-walk"), 2)  # each walk measured
+
+    def test_a_long_volume_walk_records_driver_work_while_it_runs(self):
+        self.scratch_campaign()
+        touched = []
+
+        def slow(storage):
+            time.sleep(0.35)
+            return [], 7
+        with patch.object(driver.native_dispatch, "accounting_bytes", slow), \
+                patch.object(driver, "touch", lambda campaign: touched.append(time.monotonic())), \
+                patch.object(driver, "WALK_HEARTBEAT_SECONDS", 0.05):
+            self.assertEqual(driver.volume_logical(self.campaign), (7, 0))
+        self.assertGreaterEqual(len(touched), 3)  # heartbeats during the walk, then its end
+        touched.clear()
+        driver.VOLUMES.clear()
+        with patch.object(driver.native_dispatch, "accounting_bytes", slow), \
+                patch.object(driver, "touch", lambda campaign: touched.append(time.monotonic())), \
+                patch.object(driver, "WALK_HEARTBEAT_SECONDS", 0.05), patch.object(driver, "WALK_HEARTBEAT_LIMIT_SECONDS", 0):
+            driver.volume_logical(self.campaign)
+        self.assertEqual(len(touched), 1)  # past the limit a hung walk records nothing until it ends
 
     def test_an_unverified_prune_latches_every_dispatch(self):
         self.addCleanup(driver.SCRATCH_INFLIGHT.clear)

@@ -266,11 +266,22 @@ def accounting_bytes(storage):
     for root in roots:
         if root.exists():
             require(not root.is_symlink() and not root.is_junction(), "accounting root is a link")
-            for path in root.rglob("*"):
-                require(not path.is_symlink() and not path.is_junction(), "accounting tree contains a link")
-                if path.is_file():
+            # One directory read per folder, the entry types from it, one lstat per file: on a network volume
+            # each round trip counts (a path walk made three per entry).
+            pending = [root]
+            while pending:
+                try:
+                    with os.scandir(pending.pop()) as entries:
+                        listed = list(entries)
+                except FileNotFoundError:  # a folder removed mid-walk
+                    continue
+                for entry in listed:
+                    require(not entry.is_symlink() and not entry.is_junction(), "accounting tree contains a link")
                     try:
-                        logical += path.stat().st_size
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            logical += entry.stat(follow_symlinks=False).st_size
                     except FileNotFoundError:
                         # Jobs sharing this root delete their own outputs; a file gone mid-walk is freed space.
                         pass
@@ -301,6 +312,10 @@ def validate_storage(storage, extra=None):
     return {"logical_bytes": logical, "cap_bytes": cap}
 
 
+EMERGENCY_WALK_SECONDS = 600
+EMERGENCY_WALK = {"at": 0.0, "logical": None}  # this attempt's last walk of the accounting trees
+
+
 def running_storage(storage):
     """The storage check of a running attempt. With the opt-in ``storage.emergency`` (G(i) amendment 2) it ends
     the attempt only on a physical shortage: the accounting trees past the provisioned volume less its margin,
@@ -312,8 +327,13 @@ def running_storage(storage):
     volume, margin = spec["volume_bytes"], spec["margin_fraction"]
     require(type(volume) is int and volume > 0 and isinstance(margin, (int, float)) and 0 <= margin < 1,
             "invalid storage emergency spec")
-    # A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes.
-    _, logical = accounting_bytes(storage)
+    # A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes,
+    # walked at most every EMERGENCY_WALK_SECONDS by this attempt (a walk there takes minutes, and eight
+    # attempts sampling every 30 s kept the volume under continuous scans).
+    if time.monotonic() - EMERGENCY_WALK["at"] > EMERGENCY_WALK_SECONDS or EMERGENCY_WALK["logical"] is None:
+        _, EMERGENCY_WALK["logical"] = accounting_bytes(storage)
+        EMERGENCY_WALK["at"] = time.monotonic()
+    logical = EMERGENCY_WALK["logical"]
     require(logical <= volume * (1 - margin), "storage emergency: the volume's use passed its provisioned size "
                                               "less the margin")
     for root in scratch_roots(storage):
