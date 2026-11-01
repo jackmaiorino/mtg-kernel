@@ -96,9 +96,11 @@ completed for 3,600 s. Without it, the attempt walks in the background at most
 every 600 s, during its native part. The attempt's own outputs (its native tree
 under an accounting root, its archive) are added unless the walk started after
 they were written. A `runpod` attempt rechecks its lease just before the spawn.
-A SIGTERM, SIGHUP or SIGINT to the dispatcher writes `interruption.json` (the
+The first SIGTERM, SIGHUP or SIGINT to the dispatcher is latched (the handler
+neither polls nor raises); at its next checkpoint (within about 1 s while the
+native child runs) the dispatcher writes `interruption.json` atomically (the
 signal, and whether the native child was still running or had exited, with its
-code) before the attempt ends; a SIGKILL or a lost host writes none
+code) and ends the attempt. A SIGKILL or a lost host writes none
 (mtg-kernel#463).
 
 Build a choice JSON:

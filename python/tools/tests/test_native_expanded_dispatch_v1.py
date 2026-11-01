@@ -882,12 +882,15 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         original = subprocess.TimeoutExpired
 
         def stop_then_wait(timeout):
-            os.kill(os.getpid(), signals.SIGTERM)  # the handler raises at once, inside the monitor loop
-            time.sleep(1)
+            os.kill(os.getpid(), signals.SIGTERM)  # the handler only latches; the loop acts at its checkpoint
+            os.kill(os.getpid(), signals.SIGHUP)  # a second signal changes nothing
+            time.sleep(timeout)
             raise original("native", timeout)
         execution = self.run_native(request, child_seconds=5.0, child_wait=stop_then_wait)
         record = dispatch.read(Path(request["root"]) / "interruption.json")
-        self.assertEqual((record["signal"], record["child_running"]), ("SIGTERM", True))
+        self.assertEqual((record["signal"], record["child_running"], record["child_exit_code"]),
+                         ("SIGTERM", True, None))
+        self.assertFalse((Path(request["root"]) / "interruption.json.partial").exists())
         self.assertIn("stopped from outside by SIGTERM", execution["error"])
         self.assertEqual(signals.getsignal(signals.SIGTERM), before)  # restored
 

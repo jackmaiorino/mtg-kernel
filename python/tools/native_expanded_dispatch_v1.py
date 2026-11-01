@@ -1346,29 +1346,47 @@ class ExternalStop(BaseException):
 
 
 INTERRUPTION_SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT")
+# The first stop signal this dispatch received (number, Unix time), latched by the handler. The handler only
+# latches: it neither polls the child nor raises, so it cannot interrupt the child's reaping, a write or the
+# cleanup, and later signals change nothing. The dispatch acts on it at its own checkpoints (check_stop).
+STOP = {"signal": None, "at": None}
+STOP_WAIT_SECONDS = 1.0  # the monitor loop's longest wait between checkpoints
 
 
-def record_interruption(root, child, signum):
-    """Write ``interruption.json`` once: the signal, and whether the native child was still running when it
-    arrived (a running child stopped from outside) or had already exited (with its exit code). An attempt with no
-    such record has no positive evidence of an external stop (a SIGKILL or a lost Pod writes none)."""
+def record_interruption(root, child, signum, at=None):
+    """Write ``interruption.json`` once, atomically: the signal, and whether the native child was still running
+    when the dispatch acted on it (a running child stopped from outside) or had already exited (with its exit
+    code). Called from the dispatch's own code, never inside the signal handler. An attempt with no such record has
+    no positive evidence of an external stop (a SIGKILL or a lost Pod writes none)."""
     path = Path(root) / "interruption.json"
     if path.exists():
         return
     code = None if child is None else child.poll()
-    write(path, {"schema": "native-expanded-interruption/v1", "signal": signal.Signals(signum).name,
-                 "at_unix": time.time(), "child_started": child is not None,
-                 "child_running": child is not None and code is None, "child_exit_code": code})
+    temporary = path.with_name(path.name + ".partial")
+    temporary.write_text(json.dumps({"schema": "native-expanded-interruption/v1",
+                                     "signal": signal.Signals(signum).name,
+                                     "at_unix": time.time() if at is None else at, "recorded_unix": time.time(),
+                                     "child_started": child is not None,
+                                     "child_running": child is not None and code is None,
+                                     "child_exit_code": code}, indent=2), encoding="utf-8")
+    os.replace(temporary, path)
 
 
-def install_stop_record(root, current_child):
-    """Record, then raise, a stop from outside (record_interruption) for the signals in INTERRUPTION_SIGNALS;
-    returns the previous handlers for restore_handlers. ``current_child``: the native child so far, or None."""
+def check_stop(root, child):
+    """At a checkpoint: if a stop signal was latched, record it (record_interruption) and end the attempt."""
+    if STOP["signal"] is not None:
+        record_interruption(root, child, STOP["signal"], STOP["at"])
+        raise ExternalStop(f"stopped from outside by {signal.Signals(STOP['signal']).name}")
+
+
+def install_stop_record():
+    """Latch the first of INTERRUPTION_SIGNALS (STOP); returns the previous handlers for restore_handlers."""
+    STOP.update(signal=None, at=None)
     previous = {}
 
     def stopped(signum, frame):
-        record_interruption(root, current_child(), signum)
-        raise ExternalStop(f"stopped from outside by {signal.Signals(signum).name}")
+        if STOP["signal"] is None:
+            STOP.update(signal=signum, at=time.time())
     for name in INTERRUPTION_SIGNALS:
         number = getattr(signal, name, None)
         if number is not None:
@@ -1415,23 +1433,23 @@ def execute(request_path, qualification):
     command = [str(checked(runtime["binary"])), str((root/"config.json").resolve())]
     if qualification and request["kind"] == "training":
         command.extend(["--max-new-iterations", "1"])
-    native_child = {"child": None}
-    handlers = install_stop_record(root, lambda: native_child["child"])
+    handlers = install_stop_record()
     try:
         return run_attempt(request_path, request, qualification, config, runtime, selected, shared, root, cold,
-                           placed, command, started, token, native_child, archive_native, reservations)
+                           placed, command, started, token, archive_native, reservations)
     finally:
         restore_handlers(handlers)
 
 
 def run_attempt(request_path, request, qualification, config, runtime, selected, shared, root, cold, placed,
-                command, started, token, native_child, archive_native, reservations):
+                command, started, token, archive_native, reservations):
     """The attempt after its admission checks: the barrier, the native child, its records and archive."""
     barrier = start_barrier(request, qualification)
     barrier_seconds = 0.0 if barrier is None else await_release(barrier, request_path)
     started += barrier_seconds  # waiting for the other packed trials is not this trial's time
     if request["placement"]["host"] == "runpod":
         require_host(request)  # the lease still has the work's time and allows new work, after the checks above
+    check_stop(root, None)
     failure = None
     with (root/"stdout.jsonl").open("x") as stdout, (root/"stderr.log").open("x") as stderr, \
             (root/"telemetry.jsonl").open("x") as telemetry:
@@ -1441,7 +1459,6 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
         child_started = time.monotonic()
         child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
                                  env=native_child_environment(request), **options)
-        native_child["child"] = child
         # Before the reservation's lock, which packed trials take one after another.
         started_unix = time.time()
         reservations.record_descendant(token, child.pid)
@@ -1450,17 +1467,22 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
         try:
             if not WINDOWS:
                 require_mapped_libraries(child, runtime)
+            sample_at = time.monotonic() + MONITOR_POLL_SECONDS
             while child.poll() is None:
+                check_stop(root, child)
                 remaining = request["wall_seconds"] - (time.monotonic() - started)
                 require(remaining > 0, "native wall-time limit exceeded")
                 try:
-                    child.wait(timeout=min(MONITOR_POLL_SECONDS, remaining))
+                    child.wait(timeout=max(0.01, min(STOP_WAIT_SECONDS, remaining, sample_at - time.monotonic())))
                 except subprocess.TimeoutExpired:
-                    sample = process_sample(child)
-                    sample.update(running_storage(request["storage"], shared))
-                    telemetry.write(json.dumps(sample) + "\n"); telemetry.flush()
-                    require(sample["rss_bytes"] <= request["placement"]["memory_bytes"],
-                            "native memory limit exceeded")
+                    if time.monotonic() >= sample_at:
+                        sample_at = time.monotonic() + MONITOR_POLL_SECONDS
+                        sample = process_sample(child)
+                        sample.update(running_storage(request["storage"], shared))
+                        telemetry.write(json.dumps(sample) + "\n"); telemetry.flush()
+                        require(sample["rss_bytes"] <= request["placement"]["memory_bytes"],
+                                "native memory limit exceeded")
+            check_stop(root, child)  # a stop as the child ended: recorded with its exit code
             require(child.returncode == 0, "native process failed")
         except BaseException as error:
             failure = str(error)
@@ -1486,6 +1508,7 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
                 last = json.loads(line)
     require(last is not None, "missing native result")
     write(root/"native-result.json", last)
+    check_stop(root, child)
     fingerprint_started = time.monotonic()
     validated_files = {}
     fingerprint_timing = {}
@@ -1508,6 +1531,7 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
     storage_validation_seconds = time.monotonic() - storage_started
     # Existing checked, durable, two-shard archive includes full readback. Raw
     # outputs remain. Both locations count against the same campaign allowance.
+    check_stop(root, child)
     archive = archive_native(Path(placed["output_directory"]), cold, validated_files)
     storage_started = time.monotonic()
     running_storage(request["storage"], shared, pending=[native, (archive["compressed_bytes"], time.time())])
@@ -1535,6 +1559,7 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
     else:
         report["run"] = pin(Path(placed["output_directory"])/"run.json")
         report["exposure_inputs"] = exposure_pin
+    check_stop(root, child)
     write(root/"report.json", report)
     print(json.dumps({"complete": True, "report": pin(root/"report.json")}))
 
