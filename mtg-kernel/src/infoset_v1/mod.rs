@@ -13,6 +13,9 @@
 //!
 //! Refusals (R1 to R8b) are viewer-derived: no payload, the policy answers.
 //! Faults (I1 to I4) are engine invariants: the game halts as F1.
+// The ported bridge (#462) calls the producer at every searched decision;
+// until it lands only s4a-serve's import and the harnesses do.
+#![allow(dead_code, unused_imports)]
 
 pub(crate) mod export;
 pub(crate) mod ledger;

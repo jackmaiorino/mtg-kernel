@@ -264,7 +264,7 @@ impl WalkerV1<'_> {
         let keys: Vec<String> = map.keys().cloned().collect();
         for k in keys {
             let v = map.get_mut(&k).expect("present");
-            if parse_tag(v).is_some() || v.is_number() && is_generation_key(&k) {
+            if parse_tag(v).is_some() || (v.is_number() && is_generation_key(&k)) {
                 continue;
             }
             if is_timestamp_key(&k) && !TIMESTAMP_PAIRS_V1.contains(&k.as_str()) {

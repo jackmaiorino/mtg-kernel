@@ -334,6 +334,10 @@ impl WalkV1<'_> {
 
     /// Recomputes tracking after one stream item. `observed` lists objects V
     /// identified in the item (their new generation is V-observed).
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also the object id"
+    )]
     fn settle(&mut self, observed: &[ObjectId]) {
         let item = self.item;
         let next_event = self.next_event;

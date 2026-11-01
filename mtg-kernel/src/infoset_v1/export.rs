@@ -3,7 +3,7 @@
 use super::ledger::{AllocationErrorV1, NameKeyV1, NamesV1};
 use super::pins::{allocate_pins, allocate_pins_independent_v4, PinCapacityV1, PinV1};
 use super::projection::{is_public, project_v1, ProjectionV1, SpanV1};
-use super::rewrite::{has_tag, tagged_value, ClassV1, RefV1, WalkerV1};
+use super::rewrite::{has_tag, tagged_value, ClassV1, RefV1, ResolvedV1, WalkerV1};
 use super::{ExportErrorV1, FaultCodeV1, HandleV1, RefusalCodeV1, INFOSET_SCHEMA_V1};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{
@@ -881,7 +881,7 @@ pub(crate) fn export_v1(
     let mut timestamps: BTreeSet<u64> = BTreeSet::new();
     let pinned_set: BTreeSet<ObjectId> = pinned_untracked.iter().copied().collect();
     {
-        let mut resolve = |r: RefV1| -> Result<Option<(u32, Option<u32>)>, ExportErrorV1> {
+        let mut resolve = |r: RefV1| -> Result<ResolvedV1, ExportErrorV1> {
             let o = r.object;
             let raw_history = is(MutantV1::L4) && r.class != ClassV1::Live;
             if let Some(&id) = new_id.get(&o) {
@@ -965,7 +965,7 @@ pub(crate) fn export_v1(
         let mut value = arena[id.0 as usize].clone();
         let current = state.objects.get(*id).zone_change_count;
         {
-            let mut resolve = |r: RefV1| -> Result<Option<(u32, Option<u32>)>, ExportErrorV1> {
+            let mut resolve = |r: RefV1| -> Result<ResolvedV1, ExportErrorV1> {
                 let Some(&nid) = new_id.get(&r.object) else {
                     return Err(refuse(
                         RefusalCodeV1::R1,
@@ -1169,7 +1169,7 @@ fn collect_refs(
     record: &mut dyn FnMut(RefV1, &'static str),
 ) -> Result<(), ExportErrorV1> {
     let mut copy = tagged.clone();
-    let mut resolve = |r: RefV1| -> Result<Option<(u32, Option<u32>)>, ExportErrorV1> {
+    let mut resolve = |r: RefV1| -> Result<ResolvedV1, ExportErrorV1> {
         let region = match r.class {
             ClassV1::Live => "live",
             ClassV1::Event(_) => "event",
@@ -1217,7 +1217,7 @@ const REBUILT_V1: &[&str] = &["objects", "library_knowledge", "hand_knowledge"];
 
 fn rewrite_state(
     tagged: &mut Value,
-    resolve: &mut dyn FnMut(RefV1) -> Result<Option<(u32, Option<u32>)>, ExportErrorV1>,
+    resolve: &mut dyn FnMut(RefV1) -> Result<ResolvedV1, ExportErrorV1>,
     ts: &mut dyn FnMut(u64) -> Option<u64>,
 ) -> Result<(), ExportErrorV1> {
     let map = tagged
@@ -1288,7 +1288,7 @@ fn rewrite_state(
 }
 
 fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<(), ExportErrorV1> {
-    let mut resolve = |_r: RefV1| -> Result<Option<(u32, Option<u32>)>, ExportErrorV1> { Ok(None) };
+    let mut resolve = |_r: RefV1| -> Result<ResolvedV1, ExportErrorV1> { Ok(None) };
     let mut missing = None;
     let mut ts = |t: u64| -> Option<u64> {
         let r = rank.get(&t).copied();
