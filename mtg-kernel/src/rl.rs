@@ -12961,6 +12961,8 @@ fn stack_public_conqueror_v49_fake_v50(
         .collect()
 }
 
+/// The ordinary projection of one completed stack item (engine tests).
+#[cfg(test)]
 pub(crate) fn stack_item_public_v2(
     state: &GameState,
     acting_player: PlayerId,
@@ -12972,10 +12974,14 @@ pub(crate) fn stack_item_public_v2(
     stack_item_public_v2_from_frozen(state, acting_player, stack_index, item)
 }
 
+/// A pending targeted trigger's announcement: its prospective stack
+/// instance, public item, target minimum, maximum and selected count.
+pub(crate) type SpellbenchTriggerAnnouncementV2 = (String, StackItemPublicV2, u8, u8, usize);
+
 pub(crate) fn spellbench_pending_trigger_public_v2(
     state: &GameState,
     actor: PlayerId,
-) -> Result<Option<(String, StackItemPublicV2, u8, u8, usize)>> {
+) -> Result<Option<SpellbenchTriggerAnnouncementV2>> {
     let Some(item) = crate::engine::spellbench_pending_trigger_announcement(state, actor)
         .map_err(RlContractError)?
     else {
