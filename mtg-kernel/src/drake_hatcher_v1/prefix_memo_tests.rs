@@ -446,7 +446,9 @@ fn prefixes_expire_with_their_histories_when_added_worlds_hold_older_prefixes() 
         .event_history
         .iter()
         .rev()
-        .find_map(|e| custody::journal(e).filter(|r| matches!(r.value, JournalV1::Enclosing { .. })))
+        .find_map(|e| {
+            custody::journal(e).filter(|r| matches!(r.value, JournalV1::Enclosing { .. }))
+        })
         .unwrap();
     let mut record = row.clone();
     if let JournalV1::Enclosing { original, .. } = &mut record.value {
@@ -464,6 +466,12 @@ fn prefixes_expire_with_their_histories_when_added_worlds_hold_older_prefixes() 
     assert!(!extended.ptr_eq(&shorter));
     drop(earlier);
     drop(longer);
-    assert!(shorter.upgrade().is_none(), "the shorter prefix outlived its histories");
-    assert!(extended.upgrade().is_none(), "the longer prefix outlived its histories");
+    assert!(
+        shorter.upgrade().is_none(),
+        "the shorter prefix outlived its histories"
+    );
+    assert!(
+        extended.upgrade().is_none(),
+        "the longer prefix outlived its histories"
+    );
 }
