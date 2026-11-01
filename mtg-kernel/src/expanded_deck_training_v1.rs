@@ -1639,6 +1639,13 @@ fn initialize_from_source_bytes_v1(
             .checkpoint
             .as_ref()
             .ok_or("a FlatV8 source requires its V8 checkpoint")?;
+        // A cached load of these exact descriptor and checkpoint bytes, after
+        // this branch's reads (`loaded_source_cache_v1`).
+        if let Some((policy, state)) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_v1(source, bytes, inputs)?
+        {
+            return Ok((policy, state, None));
+        }
         ensure(
             checkpoint_feature_contract_v1(pin)?
                 == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
@@ -1668,6 +1675,7 @@ fn initialize_from_source_bytes_v1(
             )?;
         }
         let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+        loaded_source_cache_v1::remember_flat_checkpoint_v1(source, bytes, &policy, &state, &saved);
         return Ok((policy, state, None));
     }
     if flat_v7_transfer_requested_v1(source)? {
@@ -1685,6 +1693,13 @@ fn initialize_from_source_bytes_v1(
             },
             ..source.clone()
         };
+        // Only a load through the FlatV7 checkpoint below is cached, so a hit
+        // makes that path's reads (`loaded_source_cache_v1`).
+        if let Some((policy, state)) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_v1(source, bytes, inputs)?
+        {
+            return Ok((policy, state, None));
+        }
         let v7_checkpoint = match &source.checkpoint {
             Some(pin)
                 if checkpoint_feature_contract_v1(pin)?
@@ -1722,6 +1737,7 @@ fn initialize_from_source_bytes_v1(
             )?;
         }
         let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+        loaded_source_cache_v1::remember_flat_checkpoint_v1(source, bytes, &policy, &state, &saved);
         return Ok((policy, state, None));
     }
     if let Some((policy, state)) = loaded_source_cache_v1::lookup_v1(source, bytes, inputs)? {

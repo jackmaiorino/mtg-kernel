@@ -109,6 +109,7 @@ pub(crate) use line_b_auxiliary_v1::{
 mod no_state_digest_tests;
 pub(crate) mod retention_v1;
 pub(crate) mod screen_fit_v1;
+mod state_digest_memo_v1;
 pub(crate) mod v8_inclusion_v1;
 mod weighted_v3;
 pub(crate) mod widening_v1;
@@ -6473,7 +6474,43 @@ fn finish_train_state_hash_v1(hasher: Sha256) -> [u8; 32] {
     output
 }
 
+/// The owned snapshot's digest, through the process memo
+/// (`state_digest_memo_v1`), which hashes only a stream it does not hold.
 fn hash_owned_train_snapshot_v1(snapshot: &NativePolicyValueTrainSnapshotV1) -> [u8; 32] {
+    state_digest_memo_v1::digest_v1(snapshot, || {
+        compute_owned_train_snapshot_sha256_v1(snapshot)
+    })
+}
+
+impl state_digest_memo_v1::DigestStreamV1 for NativePolicyValueTrainSnapshotV1 {
+    fn adam_step_v1(&self) -> u64 {
+        self.adam_step
+    }
+
+    fn scorer_bias_anchor_bits_v1(&self) -> u32 {
+        self.scorer_bias_anchor_bits
+    }
+
+    /// Exactly what [`compute_owned_train_snapshot_sha256_v1`] hashes.
+    fn visit_stream_v1(&self, visitor: &mut dyn FnMut(state_digest_memo_v1::StreamItemV1<'_>)) {
+        use state_digest_memo_v1::StreamItemV1;
+        for tensors in [&self.parameters, &self.first_moments, &self.second_moments] {
+            visitor(StreamItemV1::Section {
+                count: tensors.len(),
+            });
+            for tensor in tensors {
+                visitor(StreamItemV1::Tensor {
+                    name: tensor.name,
+                    shape: &tensor.shape,
+                    values: &tensor.values,
+                });
+            }
+        }
+    }
+}
+
+/// The owned snapshot's digest, computed: the hash itself, unchanged.
+fn compute_owned_train_snapshot_sha256_v1(snapshot: &NativePolicyValueTrainSnapshotV1) -> [u8; 32] {
     let mut hasher =
         begin_train_state_hash_v1(snapshot.adam_step, snapshot.scorer_bias_anchor_bits);
     for (section, tensors) in [
@@ -6517,8 +6554,65 @@ fn hash_live_train_state_v1(state: &NativePolicyValueTrainStateV1) -> [u8; 32] {
 }
 
 /// [`hash_live_train_state_v1`] at the dims `D`: the same byte stream as the
-/// owned snapshot's hash.
+/// owned snapshot's hash, through the process memo (`state_digest_memo_v1`),
+/// which hashes only a stream it does not hold.
 fn hash_live_train_state_dims_v1<D: NetDimsV1>(
+    state: &NativePolicyValueTrainStateDimsV1<D>,
+) -> [u8; 32] {
+    state_digest_memo_v1::digest_v1(state, || compute_live_train_state_sha256_dims_v1(state))
+}
+
+impl<D: NetDimsV1> state_digest_memo_v1::DigestStreamV1 for NativePolicyValueTrainStateDimsV1<D> {
+    fn adam_step_v1(&self) -> u64 {
+        self.adam_step
+    }
+
+    fn scorer_bias_anchor_bits_v1(&self) -> u32 {
+        self.scorer_bias_anchor_bits
+    }
+
+    /// Exactly what [`compute_live_train_state_sha256_dims_v1`] hashes: the
+    /// parameter section's count is the first moments' tensor count, each
+    /// moment section's count is its own tensor count, and each moment
+    /// section takes the parameters' names and shapes. A moment tensor missing for a
+    /// visited parameter (which that hash would index out of bounds) yields
+    /// a section count no held stream has, so that hash runs and fails as
+    /// before.
+    fn visit_stream_v1(&self, visitor: &mut dyn FnMut(state_digest_memo_v1::StreamItemV1<'_>)) {
+        use state_digest_memo_v1::StreamItemV1;
+        let tensor_count = self.first_moments.len();
+        visitor(StreamItemV1::Section {
+            count: tensor_count,
+        });
+        self.model.visit_parameters_v1(|name, shape, values| {
+            visitor(StreamItemV1::Tensor {
+                name,
+                shape,
+                values,
+            });
+        });
+        for moments in [&self.first_moments, &self.second_moments] {
+            visitor(StreamItemV1::Section {
+                count: moments.len(),
+            });
+            let mut ordinal = 0usize;
+            self.model.visit_parameters_v1(|name, shape, _| {
+                match moments.get(ordinal) {
+                    Some(values) => visitor(StreamItemV1::Tensor {
+                        name,
+                        shape,
+                        values,
+                    }),
+                    None => visitor(StreamItemV1::Section { count: usize::MAX }),
+                }
+                ordinal += 1;
+            });
+        }
+    }
+}
+
+/// The live state's digest, computed: the hash itself, unchanged.
+fn compute_live_train_state_sha256_dims_v1<D: NetDimsV1>(
     state: &NativePolicyValueTrainStateDimsV1<D>,
 ) -> [u8; 32] {
     let mut hasher = begin_train_state_hash_v1(state.adam_step, state.scorer_bias_anchor_bits);

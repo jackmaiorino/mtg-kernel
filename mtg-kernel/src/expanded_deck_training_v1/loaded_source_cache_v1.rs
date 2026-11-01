@@ -59,6 +59,10 @@ enum KindV1 {
     /// checkpoint is the conversion's base checkpoint. `check`: the
     /// per-forward check setting it loaded under.
     Converted { run_start: bool, check: bool },
+    /// A FlatV7 or FlatV8 source whose checkpoint has that identity, over a
+    /// fresh-initialization import (`initialize_from_source_bytes_v1`'s
+    /// flat branches): served only by [`lookup_flat_checkpoint_v1`].
+    FlatCheckpoint(ExpandedFreshInitializationSourceV1),
 }
 
 struct LoadedSourceV1 {
@@ -97,6 +101,7 @@ fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> Option<R> {
 thread_local! {
     static MATCHES_FOR_TEST_V1: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static BYPASS_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FLAT_MATCHES_FOR_TEST_V1: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Test-only: lookups on this thread that found an entry.
@@ -152,6 +157,7 @@ pub(super) fn lookup_v1(
                         !(run_start && inputs.is_some())
                             && check == no_state_digest_v1::check_enabled_v1()
                     }
+                    KindV1::FlatCheckpoint(_) => false,
                 }
         })?;
         let entry = entries.remove(index)?;
@@ -176,7 +182,65 @@ pub(super) fn lookup_v1(
         KindV1::Converted { .. } => {
             no_state_digest_v1::reverify_converted_v1(source, descriptor_bytes)?;
         }
+        KindV1::FlatCheckpoint(_) => return Ok(None),
     }
+    serve_v1(&entry, inputs)
+}
+
+/// The cached result for a FlatV7 or FlatV8 source whose checkpoint has that
+/// identity, after the full flat loader's file checks and input binding, or
+/// `None` when the source must load in full.
+///
+/// The full loader reads the checkpoint (for its feature-contract probe),
+/// loads the import alone (the initialization manifest and the parameter
+/// payload), reads the checkpoint again and restores it. A hit makes the same
+/// reads through the same readers, in that order, so a changed or missing
+/// file fails exactly as it would fail the full load; only the probe, the
+/// parse and the restore are skipped, which are pure functions of those
+/// verified bytes and passed when the entry was created.
+pub(super) fn lookup_flat_checkpoint_v1(
+    source: &ExpandedModelSourceV1,
+    descriptor_bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+) -> Result<Option<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1)>, String> {
+    #[cfg(test)]
+    if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
+        return Ok(None);
+    }
+    let Some(pin) = &source.checkpoint else {
+        return Ok(None);
+    };
+    let entry = with_entries_v1(|entries| {
+        let index = entries.iter().position(|entry| {
+            entry.source == *source
+                && entry.descriptor_bytes == descriptor_bytes
+                && matches!(entry.kind, KindV1::FlatCheckpoint(_))
+        })?;
+        let entry = entries.remove(index)?;
+        entries.push_back(Arc::clone(&entry));
+        Some(entry)
+    })
+    .flatten();
+    let Some(entry) = entry else {
+        return Ok(None);
+    };
+    let KindV1::FlatCheckpoint(descriptor) = &entry.kind else {
+        return Ok(None);
+    };
+    #[cfg(test)]
+    FLAT_MATCHES_FOR_TEST_V1.with(|matches| matches.set(matches.get() + 1));
+    read_pinned_bytes(pin)?;
+    fresh_initialization_source::reverify_input_files_v1(descriptor)?;
+    read_pinned_bytes(pin)?;
+    serve_v1(&entry, inputs)
+}
+
+/// A hit's input binding, then exact duplicates of the entry's policy and
+/// state.
+fn serve_v1(
+    entry: &LoadedSourceV1,
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+) -> Result<Option<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1)>, String> {
     match (&entry.inputs, inputs) {
         (Some(recorded), Some(expected)) => expected.validate_v1(
             &recorded.trajectories,
@@ -277,6 +341,49 @@ pub(super) fn remember_converted_v1(
         policy: template,
         state: state.clone(),
         inputs,
+    }));
+}
+
+/// Keep a full flat load's result (`initialize_from_source_bytes_v1`'s FlatV7
+/// or FlatV8 branch with a checkpoint of that identity): `saved` is the
+/// checkpoint it restored. Only an import that is a fresh-initialization
+/// descriptor, and a checkpoint that names no further file, are kept. Never
+/// inlined: its policy template stays out of the loader's frame.
+#[inline(never)]
+pub(super) fn remember_flat_checkpoint_v1(
+    source: &ExpandedModelSourceV1,
+    descriptor_bytes: &[u8],
+    policy: &FrozenPlayPolicyV1,
+    state: &NativePolicyValueTrainStateV1,
+    saved: &ExpandedCheckpointV1,
+) {
+    #[cfg(test)]
+    if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
+        return;
+    }
+    if source.checkpoint.is_none()
+        || saved.archive_distillation.is_some()
+        || policy.input_contract_v1().is_some()
+    {
+        return;
+    }
+    let Ok(descriptor) = fresh_initialization_source::parse_source_v1(descriptor_bytes) else {
+        return;
+    };
+    let Ok(template) = policy.duplicate_loaded_v1() else {
+        return;
+    };
+    insert_v1(Arc::new(LoadedSourceV1 {
+        source: source.clone(),
+        descriptor_bytes: descriptor_bytes.to_vec(),
+        kind: KindV1::FlatCheckpoint(descriptor),
+        policy: template,
+        state: state.clone(),
+        inputs: Some(RecordedInputsV1 {
+            trajectories: saved.trajectories.clone(),
+            learning_rate_bits: saved.learning_rate_bits,
+            value_coefficient_bits: saved.value_coefficient_bits,
+        }),
     }));
 }
 
