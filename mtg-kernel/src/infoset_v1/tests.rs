@@ -477,11 +477,20 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
         let mut resolved = false;
         for step in 0..60 {
             let (t, c) = (public_summary(&truth), public_summary(&canon));
+            let events = |s: &FastActorSessionV1| {
+                let h = &s.game_state().engine.event_history;
+                serde_json::to_string(&h[state.engine.event_history.len().min(h.len())..])
+                    .unwrap_or_default()
+            };
             assert!(
                 t == c,
-                "{}: continuations differ after {step} steps at {}",
+                "{}: continuations differ after {step} steps at {}; new events {} / {}; responses {:?} / {:?}",
                 record["case"],
-                first_diff(&t, &c, String::new())
+                first_diff(&t, &c, String::new()),
+                events(&truth),
+                events(&canon),
+                truth.current_response(),
+                canon.current_response()
             );
             if !waiting(&truth, pin_native) {
                 assert!(

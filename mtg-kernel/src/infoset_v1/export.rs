@@ -907,7 +907,15 @@ pub(crate) fn export_v1(
                         if !event_kind_ok(e) && !seen {
                             return Err(refuse(
                                 RefusalCodeV1::R2,
-                                format!("event {e} of an unprojected kind names a hidden object"),
+                                format!(
+                                    "a {} event names a hidden object",
+                                    serde_json::to_value(&state.engine.event_history[e])
+                                        .ok()
+                                        .and_then(|v| v
+                                            .as_object()
+                                            .and_then(|m| m.keys().next().cloned()))
+                                        .unwrap_or_default()
+                                ),
                             ));
                         }
                     }

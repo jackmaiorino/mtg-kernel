@@ -390,8 +390,17 @@ pub(crate) fn ac3_check(
         ));
     }
     // V's observation and menu, with viewer-local ids, are identical.
-    if view(live) != view(&imported) {
-        return Err("the imported view or menu differs from the live one".into());
+    if let (Some(a), Some(b)) = (view(live), view(&imported)) {
+        if a != b {
+            let (a, b): (serde_json::Value, serde_json::Value) = (
+                serde_json::from_slice(&a).unwrap_or_default(),
+                serde_json::from_slice(&b).unwrap_or_default(),
+            );
+            return Err(format!(
+                "the imported view differs at {}",
+                super::tests::first_diff(&a, &b, String::new())
+            ));
+        }
     }
     if menu(live).len() != menu(&imported).len() {
         return Err("menu length".into());
