@@ -1095,7 +1095,7 @@ mod tests {
                 assert_eq!(after_restore.executions, warm.executions);
                 assert!(after_restore.hits > warm.hits);
                 assert_eq!(restored_state, state);
-    
+
                 let ordinary = state.engine.event_history.iter().position(|event| {
                         matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == paid_spell)
                 }).unwrap();
@@ -1190,7 +1190,7 @@ mod tests {
                     assert_eq!(custody::replay_key_frame_stats_for_test(), (1, 0));
                     custody::validate(borrowed).unwrap();
                     assert_eq!(custody::replay_key_frame_stats_for_test(), (1, 1));
-    
+
                     // Equal restored worlds have distinct live allocations. They
                     // must build their own exact typed-history keys.
                     custody::validate(&foreign).unwrap();
@@ -1202,7 +1202,7 @@ mod tests {
                     assert_eq!(custody::replay_key_frame_stats_for_test(), (3, 2));
                     custody::validate(borrowed).unwrap();
                     assert_eq!(custody::replay_key_frame_stats_for_test(), (3, 3));
-    
+
                     let mut changed = borrowed.clone();
                     last_replay_output(&mut changed).players[actor.index()].life += 1;
                     let changed_bytes = serde_json::to_vec(&changed).unwrap();
@@ -1212,7 +1212,7 @@ mod tests {
                     );
                     assert!(custody::replay_key_frame_stats_for_test().0 > 3);
                     assert_eq!(serde_json::to_vec(&changed).unwrap(), changed_bytes);
-    
+
                     let mut private = borrowed.clone();
                     crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
                         last_replay_output(&mut private),
@@ -1237,7 +1237,7 @@ mod tests {
                     (before.0 + 1, before.1)
                 );
                 assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
-    
+
                 // Unwinding an inner scope restores its predecessor; unwinding the
                 // outer scope removes all keys before a later validation call.
                 let stopped = std::panic::catch_unwind(|| {
@@ -1279,7 +1279,7 @@ mod tests {
                 let after_changed = custody::replay_memo_stats_for_test();
                 assert!(after_changed.executions > warm.executions);
                 assert_eq!(after_changed.ineligible, warm.ineligible);
-    
+
                 let mut private = state.clone();
                 crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
                     last_replay_output(&mut private),
@@ -1325,7 +1325,8 @@ mod tests {
                 let oracle = custody::original_replay_keys_for_test(history);
                 assert!(!oracle.is_empty());
                 custody::clear_replay_prefix_for_test();
-                let (cold, retained, bytes, reused) = custody::replay_prefix_probe_for_test(history);
+                let (cold, retained, bytes, reused) =
+                    custody::replay_prefix_probe_for_test(history);
                 assert_eq!(cold, oracle);
                 assert_eq!(reused, 0);
                 assert!(retained > 0 && retained <= custody::REPLAY_PREFIX_EVENTS);
@@ -1336,7 +1337,7 @@ mod tests {
                 assert_eq!(warm, oracle);
                 assert_eq!(reused, retained);
                 custody::validate(&restored).unwrap();
-    
+
                 let position = history.iter().position(|event| {
                     matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == ordinary)
                 }).unwrap();
@@ -1360,7 +1361,7 @@ mod tests {
                 let before = changed.clone();
                 assert!(custody::validate(&changed).is_err());
                 assert_eq!(changed, before);
-    
+
                 // Truncation is a pure key-input probe, not a fabricated native
                 // history claimed to pass custody validation.
                 custody::replay_prefix_probe_for_test(history);
@@ -1370,7 +1371,7 @@ mod tests {
                 assert_eq!(rows, position.min(retained));
                 assert_eq!(reused, rows);
                 assert_eq!(state, original);
-    
+
                 // Complete the already genuinely paid activation through the native
                 // driver. Its real appended history must retain every original key.
                 custody::replay_prefix_probe_for_test(history);
@@ -1447,7 +1448,7 @@ mod tests {
                     custody::replay_prefix_probe_for_test(&state.engine.event_history).0,
                     keys
                 );
-    
+
                 // Repeated actual typed ordinary events isolate the count budget;
                 // this input is a key-computation primitive, not native play.
                 let ordinary = state.engine.event_history.iter().find(|event| {

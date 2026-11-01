@@ -184,7 +184,9 @@ fn altered(state: &GameState) -> Vec<(String, GameState)> {
         change(&mut copy);
         out.push((name, copy));
     };
-    add("ledger".into(), &|s: &mut GameState| s.engine.drake_ledger_v1.issued += 1);
+    add("ledger".into(), &|s: &mut GameState| {
+        s.engine.drake_ledger_v1.issued += 1
+    });
     add("escaped reference".into(), &|s: &mut GameState| {
         s.engine
             .event_history
@@ -212,28 +214,33 @@ fn altered(state: &GameState) -> Vec<(String, GameState)> {
         let name = kind_name(&row.value);
         for reindex in [false, true] {
             let row = (*row).clone();
-            add(format!("{name} again, reindexed {reindex}"), &move |s: &mut GameState| {
-                let mut row = row.clone();
-                if reindex {
-                    row.index = s.engine.event_history.len() as u64;
-                }
-                s.engine.event_history.push(CommittedEvent::DrakeJournalV1 {
-                    record: Box::new(row),
-                });
-                s.engine.drake_ledger_v1.issued += 1;
-            });
+            add(
+                format!("{name} again, reindexed {reindex}"),
+                &move |s: &mut GameState| {
+                    let mut row = row.clone();
+                    if reindex {
+                        row.index = s.engine.event_history.len() as u64;
+                    }
+                    s.engine.event_history.push(CommittedEvent::DrakeJournalV1 {
+                        record: Box::new(row),
+                    });
+                    s.engine.drake_ledger_v1.issued += 1;
+                },
+            );
         }
         if let JournalV1::Collected { pending, .. } = &row.value {
             let pending = (**pending).clone();
-            add("collected capture held again".into(), &move |s: &mut GameState| {
-                s.engine.pending_triggers.push(pending.clone())
-            });
+            add(
+                "collected capture held again".into(),
+                &move |s: &mut GameState| s.engine.pending_triggers.push(pending.clone()),
+            );
         }
         if let JournalV1::Published { item, .. } | JournalV1::Paid { item, .. } = &row.value {
             let item = (**item).clone();
-            add(format!("{name} item on the stack"), &move |s: &mut GameState| {
-                s.stack.push(item.clone())
-            });
+            add(
+                format!("{name} item on the stack"),
+                &move |s: &mut GameState| s.stack.push(item.clone()),
+            );
         }
     }
     add("stack popped".into(), &|s: &mut GameState| {

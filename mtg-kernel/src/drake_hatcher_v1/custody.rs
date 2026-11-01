@@ -1598,7 +1598,9 @@ fn prefix_memo_applies() -> bool {
 /// The checked prefix of `history`, extended by any longer prefix another
 /// copy accepted that `history` also starts with, and whether it was so
 /// extended.
-fn checked_prefix(history: &crate::event_history_v1::EventHistoryV1) -> Option<(Arc<CheckedPrefixV1>, bool)> {
+fn checked_prefix(
+    history: &crate::event_history_v1::EventHistoryV1,
+) -> Option<(Arc<CheckedPrefixV1>, bool)> {
     if !prefix_memo_applies() {
         return None;
     }
@@ -1772,7 +1774,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         crate::event_history_v1::EventKindV1::DrakeHistoryRefV1,
     )
     .iter()
-        .any(|e| matches!(e, CommittedEvent::DrakeHistoryRefV1 { .. }))
+    .any(|e| matches!(e, CommittedEvent::DrakeHistoryRefV1 { .. }))
     {
         return Err("Drake nested original reference escaped into actual history".into());
     }
@@ -1830,7 +1832,8 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
                 .iter()
                 .filter(|i| i.v4.stack_item_id == item.v4.stack_item_id)
                 .collect::<Vec<_>>();
-            let live_once = matches!((lives.as_slice(), removals), ([live], 0) if *live == item.as_ref());
+            let live_once =
+                matches!((lives.as_slice(), removals), ([live], 0) if *live == item.as_ref());
             let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
             if (disposed && (!lives.is_empty() || removals != 0))
                 || removals > 1
