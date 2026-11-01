@@ -128,6 +128,11 @@ def left():
 def in_time():
     if left() <= 0:
         stop_now("the pack outlasted its bound")
+def watchdog():  # the bound holds even while a read blocks: this thread ends the process at the deadline
+    time.sleep(max(0.0, left()))
+    stop_now("the pack outlasted its bound")
+import threading
+threading.Thread(target=watchdog, name="pack-watchdog", daemon=True).start()
 last = [0.0]
 def progress(phase):
     if time.monotonic() - last[0] >= 10:
@@ -181,8 +186,9 @@ def unchanged(path, size, mtime_ns):
     seen = path.stat()
     need(seen.st_size == size and seen.st_mtime_ns == mtime_ns, "a file changed while it was archived: " + str(path))
 small = ARGS["small_bytes"]
-with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar, \\
-        concurrent.futures.ThreadPoolExecutor(ARGS["workers"]) as pool:
+pool = concurrent.futures.ThreadPoolExecutor(ARGS["workers"])
+try:  # any failure ends the process at once: an executor shutdown would wait for a stalled reader
+  with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar:
     ahead = collections.deque()
     position = 0
     def refill():
@@ -215,6 +221,9 @@ with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar, \\
             sha256 = reader.value.hexdigest()
         unchanged(path, size, mtime_ns)  # after its bytes went into the archive: an append or rewrite stops the pack
         included.append({"path": posix, "bytes": size, "sha256": sha256})
+except BaseException as error:
+    stop_now(f"{type(error).__name__}: {error}")
+pool.shutdown(wait=False)
 kept = {item["path"] for item in included}
 need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in keep),
      "a final checkpoint is missing from the archive")
