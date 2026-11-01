@@ -194,7 +194,7 @@ jobs:
       # under the local merge protocol; this step still fails closed on any
       # merged change that breaks the CUDA feature's compilation or lints.
       - name: Run CUDA backend feature Clippy (compile gate, no device)
-        run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1 -- -D warnings
+        run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1,gpu-exact-v1 -- -D warnings
 
       - name: Save compiled quality output
         if: success()
@@ -414,7 +414,9 @@ jobs:
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'
         run: |
-          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1 --lib experimental_burn_net8_packed_v1::
+          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1,gpu-exact-v1 --lib experimental_burn_net8_packed_v1::
+          # The exact GPU path's host tests; its device tests are ignored here.
+          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1,gpu-exact-v1 --lib gpu_exact_v1::
 
       - name: Save compiled test output
         if: success() && runner.environment == 'github-hosted'

@@ -83,6 +83,8 @@ const FRESH_CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-fresh-checkpoint
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
+#[cfg(test)]
+mod engine_ceiling_probe_v1;
 mod phase1_parallel_collection;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub mod public_features;

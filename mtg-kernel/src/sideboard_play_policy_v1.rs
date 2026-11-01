@@ -237,6 +237,10 @@ pub struct FrozenPlayPolicyV1 {
     inference_key: Vec<u8>,
     /// Passive call probe for viewer captures; never shared by forks.
     inference_probe: Option<crate::inference_cache_v1::ProbeV1>,
+    /// This net's host copy for the exact GPU inference service, made on
+    /// first use by a collector thread with a client (`gpu_exact_v1`).
+    #[cfg(feature = "gpu-exact-v1")]
+    gpu_exact: crate::gpu_exact_v1::service::PolicySlotV1,
     /// The no-state-digest input contract (`no_state_digest_v1`), or None
     /// for the original inputs. Forks keep it.
     input_contract: Option<InputContractV1>,
@@ -571,6 +575,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -622,6 +628,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -714,6 +722,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -782,6 +792,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -850,6 +862,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -930,6 +944,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -1115,6 +1131,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -1191,6 +1209,8 @@ impl FrozenPlayPolicyV1 {
             inference_cache: self.inference_cache.clone(),
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -1273,6 +1293,8 @@ impl FrozenPlayPolicyV1 {
         self.inference_cache = None;
         self.inference_probe = None;
         self.row_cache = Default::default();
+        #[cfg(feature = "gpu-exact-v1")]
+        self.gpu_exact.clear();
         Ok(self)
     }
 
@@ -1520,6 +1542,8 @@ impl FrozenPlayPolicyV1 {
         self.inference_cache = None;
         self.inference_probe = None;
         self.row_cache = Default::default();
+        #[cfg(feature = "gpu-exact-v1")]
+        self.gpu_exact.clear();
         self.input_contract = Some(InputContractV1 {
             digest: contract_digest,
             columns,
@@ -1653,6 +1677,8 @@ impl FrozenPlayPolicyV1 {
         self.inference_cache = None;
         self.inference_probe = None;
         self.row_cache = Default::default();
+        #[cfg(feature = "gpu-exact-v1")]
+        self.gpu_exact.clear();
         // Replacement validates the whole model before committing. Copy the
         // installed table so sideboard inputs cannot retain ancestral rows.
         self.model.visit_parameters_v1(|name, _, values| {
@@ -2378,17 +2404,44 @@ impl FrozenPlayPolicyV1 {
             drop(span);
             (ForwardPathV1::Flat, encoded_decision_view_v1(&self.tensor))
         };
-        let scores = cached_forward_v1(
-            &self.model,
-            &mut self.forward_scratch,
-            self.row_cache.get_or_insert_with(Default::default),
-            self.inference_cache.as_ref(),
-            &mut self.inference_key,
-            self.inference_probe.as_mut(),
-            path,
-            mode,
-            view,
-        )?;
+        // The exact GPU service gives the CPU forward's bits, so a collector
+        // thread with a client may take it; caches and probes keep the CPU
+        // path so their counters stay meaningful.
+        #[cfg(feature = "gpu-exact-v1")]
+        let gpu = (mode == ForwardActivationModeV1::LibmTanh
+            && self.inference_cache.is_none()
+            && self.inference_probe.is_none())
+        .then(|| {
+            crate::gpu_exact_v1::service::collector_forward_v1(
+                &mut self.gpu_exact,
+                &self.model,
+                path,
+                view,
+            )
+        })
+        .flatten();
+        #[cfg(not(feature = "gpu-exact-v1"))]
+        let gpu: Option<Result<FrozenPlayDecisionScoresV1, String>> = None;
+        let scores = match gpu {
+            #[cfg(feature = "gpu-exact-v1")]
+            Some(output) => output.map(|o| FrozenPlayDecisionScoresV1 {
+                logits: o.logits,
+                value: o.value,
+            })?,
+            #[cfg(not(feature = "gpu-exact-v1"))]
+            Some(scores) => scores?,
+            None => cached_forward_v1(
+                &self.model,
+                &mut self.forward_scratch,
+                self.row_cache.get_or_insert_with(Default::default),
+                self.inference_cache.as_ref(),
+                &mut self.inference_key,
+                self.inference_probe.as_mut(),
+                path,
+                mode,
+                view,
+            )?,
+        };
         if let Some(unconverted) = &self.no_digest_check {
             let reference = uncached_forward_v1(
                 unconverted,
