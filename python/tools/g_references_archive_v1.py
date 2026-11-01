@@ -53,13 +53,19 @@ PACK_RULES = {"payload_folders": list(PAYLOAD_FOLDERS), "payload_shard": PAYLOAD
               "shard_folders": list(SHARD_FOLDERS), "keep_shards": list(KEEP_SHARDS)}
 POD_OUT = "/root/superseded-archive"  # the container disk: the archive never adds to the volume
 FILES = ("records.tar.gz", "manifest.json", "prune-listing.json", "baselines.json")
-# Per-step bounds (a walk of the old root took 11 min alone on 11-01).
-STEP_SECONDS = {"baselines": 600, "pack": 3000, "copy": 3000, "prune": 900, "check": 1800}
+# Per-step bounds. Measured on lease 20261101-2012: one walk of the old root 11 min (11-01 morning); the first pack
+# read each file twice, one at a time, at about 7 MB/s, and had 3.5 GB of archive after 31 min (about 6.8 GB of
+# files read) without finishing. The pack now reads each file once, small files through a prefetch pool; its bound
+# keeps the single-stream rate as the worst case for about 15 GB of records with margin.
+STEP_SECONDS = {"baselines": 900, "pack": 5400, "copy": 3600, "prune": 1800, "check": 1800}
 STARTUP_MARGIN_SECONDS = 120  # each step ends this far inside the resident guard's startup-idle bound
+POLL_SECONDS = 30  # a detached Pod step's status poll
+PREFETCH_WORKERS = 8  # small files read ahead in parallel (the network volume is latency bound per file)
+PREFETCH_SMALL_BYTES = 64 * 1024**2  # files below this are read whole by the pool; larger ones are streamed
 # The archive lease's bounds, which the launcher uses (lease_launch.py archive): the hard stop, and the resident
-# guard's startup-idle bound (no progress.json on this lease) at the deadline less the recovery window. A Pod ready
-# and staged, then a walk and a pack, end 30 to 46 min after creation; the copy and the prune must still fit.
-LEASE_HOURS = 2.5
+# guard's startup-idle bound (no progress.json on this lease) at the deadline less the recovery window. Pod ready and
+# staged (about 10 min), then the baselines, pack, copy and prune at their bounds, must fit.
+LEASE_HOURS = 4.0
 LEASE_RECOVERY_SECONDS = 600
 LEASE_STARTUP_IDLE_SECONDS = int(LEASE_HOURS * 3600) - LEASE_RECOVERY_SECONDS
 RESERVE_BYTES = 60 * 1024**3  # ARTIFACT-LAW: the destination volume keeps 60 GiB free
@@ -101,7 +107,7 @@ print(json.dumps({"baselines": rows, "sha256": digest(out / "baselines.json")}))
 '''
 
 POD_PACK = '''#pod:archive-pack
-import hashlib, os, pathlib, re, tarfile, time
+import collections, concurrent.futures, hashlib, io, os, pathlib, re, tarfile, time
 started = time.monotonic()
 root, campaign, out = pathlib.Path(ARGS["root"]), pathlib.Path(ARGS["campaign"]), pathlib.Path(ARGS["out"])
 need(not root.is_symlink() and str(root.resolve()) == str(root), "the superseded root is not canonical")
@@ -109,55 +115,90 @@ need(campaign.parent == root and campaign.is_dir() and not campaign.is_symlink()
      "the campaign is not under the superseded root")
 keep = set(ARGS["checkpoints"])
 out.mkdir(parents=True, exist_ok=True)
-included, listed = [], []
+included, listed, records = [], [], []
 def fail(error):  # a folder that cannot be listed stops the archive (and so the prune)
     raise error
 def in_time():
     need(time.monotonic() - started < ARGS["limit_seconds"], "the pack outlasted its bound")
-class Timed:
-    # a file read that checks the pack's bound at every chunk (hashing and the tar member alike)
+last = [0.0]
+def progress(phase):
+    if time.monotonic() - last[0] >= 10:
+        last[0] = time.monotonic()
+        partial = out / "pack-progress.json.partial"
+        partial.write_text(json.dumps({"phase": phase, "seconds": round(time.monotonic() - started, 1),
+                                       "listed": len(listed), "records": len(records), "included": len(included),
+                                       "included_bytes": sum(item["bytes"] for item in included)}))
+        os.replace(partial, out / "pack-progress.json")
+# 1. The walk: every file is a record (archived) or regenerable bulk (listed).
+for folder, dirs, files in os.walk(root, onerror=fail):
+    in_time()
+    progress("walk")
+    for name in dirs:
+        need(not pathlib.Path(folder, name).is_symlink(), "a linked folder in the superseded root")
+    dirs.sort()
+    for name in sorted(files):
+        path = pathlib.Path(folder, name)
+        need(not path.is_symlink(), "a link in the superseded root: " + str(path))
+        size = path.stat().st_size
+        relative = path.relative_to(root)
+        parts, posix = relative.parts, relative.as_posix()
+        shard = re.fullmatch(ARGS["payload_shard"], name) is not None \\
+            and any(part in ARGS["shard_folders"] for part in parts[:-1]) \\
+            and not any(posix.startswith(prefix) for prefix in ARGS["keep_shards"])
+        payload = (any(part in ARGS["payload_folders"] for part in parts[:-1]) or shard
+                   or parts[:2] == ("campaign", "checkpoints") and str(path) not in keep)
+        if payload:
+            listed.append({"path": posix, "bytes": size, "kind": "shard" if shard else "checkpoint"
+                           if parts[:2] == ("campaign", "checkpoints") else "native"})
+        else:
+            records.append((path, posix, size))
+# 2. The archive: each record read once, hashed as it is written; small files read ahead by a pool.
+class Hashing:
     def __init__(self, stream):
-        self.stream = stream
+        self.stream, self.value, self.count = stream, hashlib.sha256(), 0
     def read(self, size=-1):
         in_time()
-        return self.stream.read(size if size and size > 0 else 1 << 20)
-def timed_digest(path):
-    value = hashlib.sha256()
+        data = self.stream.read(size if size and size > 0 else 1 << 20)
+        self.value.update(data)
+        self.count += len(data)
+        return data
+def whole(path):
     with open(path, "rb") as stream:
-        reader = Timed(stream)
-        for chunk in iter(lambda: reader.read(1 << 20), b""):
-            value.update(chunk)
-    return value.hexdigest()
-with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar:
-    for folder, dirs, files in os.walk(root, onerror=fail):
+        return stream.read()
+small = ARGS["small_bytes"]
+with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar, \\
+        concurrent.futures.ThreadPoolExecutor(ARGS["workers"]) as pool:
+    ahead = collections.deque()
+    position = 0
+    def refill():
+        global position
+        while len(ahead) < 4 * ARGS["workers"] and position < len(records):
+            path, posix, size = records[position]
+            ahead.append((path, posix, size, pool.submit(whole, path) if size < small else None))
+            position += 1
+    refill()
+    while ahead:
         in_time()
-        for name in dirs:
-            need(not pathlib.Path(folder, name).is_symlink(), "a linked folder in the superseded root")
-        dirs.sort()
-        for name in sorted(files):
-            in_time()
-            path = pathlib.Path(folder, name)
-            need(not path.is_symlink(), "a link in the superseded root: " + str(path))
-            size = path.stat().st_size
-            relative = path.relative_to(root)
-            parts, posix = relative.parts, relative.as_posix()
-            shard = re.fullmatch(ARGS["payload_shard"], name) is not None \\
-                and any(part in ARGS["shard_folders"] for part in parts[:-1]) \\
-                and not any(posix.startswith(prefix) for prefix in ARGS["keep_shards"])
-            payload = (any(part in ARGS["payload_folders"] for part in parts[:-1]) or shard
-                       or parts[:2] == ("campaign", "checkpoints") and str(path) not in keep)
-            entry = {"path": posix, "bytes": size}
-            if payload:
-                listed.append({**entry, "kind": "shard" if shard else "checkpoint"
-                               if parts[:2] == ("campaign", "checkpoints") else "native"})
-                continue
-            sha256 = timed_digest(path)
-            info = tarfile.TarInfo(posix)
-            info.size, info.mtime, info.mode = size, int(path.stat().st_mtime), 0o644
+        progress("archive")
+        path, posix, size, future = ahead.popleft()
+        refill()
+        info = tarfile.TarInfo(posix)
+        info.mtime, info.mode = int(path.stat().st_mtime), 0o644
+        if future is not None:
+            data = future.result()
+            need(len(data) == size, "a file changed while it was archived: " + str(path))
+            info.size = size
+            tar.addfile(info, io.BytesIO(data))
+            sha256 = hashlib.sha256(data).hexdigest()
+        else:
+            info.size = size
             with open(path, "rb") as stream:
-                tar.addfile(info, Timed(stream))
-            need(path.stat().st_size == size, "a file changed while it was archived: " + str(path))
-            included.append({**entry, "sha256": sha256})
+                reader = Hashing(stream)
+                tar.addfile(info, reader)
+            need(reader.count == size and path.stat().st_size == size,
+                 "a file changed while it was archived: " + str(path))
+            sha256 = reader.value.hexdigest()
+        included.append({"path": posix, "bytes": size, "sha256": sha256})
 kept = {item["path"] for item in included}
 need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in keep),
      "a final checkpoint is missing from the archive")
@@ -165,12 +206,76 @@ need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in kee
                                                "files": included}, indent=1), encoding="utf-8")
 (out / "prune-listing.json").write_text(json.dumps({"schema": ARGS["schema"] + "/prune-listing", "root": str(root),
                                                     "files": listed}, indent=1), encoding="utf-8")
-print(json.dumps({"files": {name: timed_digest(out / name) for name in ("records.tar.gz", "manifest.json",
-                                                                          "prune-listing.json")},
+print(json.dumps({"files": {name: digest(out / name) for name in ("records.tar.gz", "manifest.json",
+                                                                    "prune-listing.json")},
                   "archive_bytes": (out / "records.tar.gz").stat().st_size,
                   "included": len(included), "included_bytes": sum(item["bytes"] for item in included),
                   "listed": len(listed), "listed_bytes": sum(item["bytes"] for item in listed),
                   "seconds": round(time.monotonic() - started, 1)}))
+'''
+
+# A long Pod step runs detached from the controller's SSH session: started in its own session with its output,
+# exit code and progress in files under POD_OUT, then polled by short SSH calls. A controller network interruption
+# (lease 20261101-2012) no longer ends the step; the step's own bound still does.
+POD_DETACH_START = '''#pod:archive-detach-start
+import os, pathlib, shlex, subprocess, time
+out = pathlib.Path(ARGS["out"])
+out.mkdir(parents=True, exist_ok=True)
+name = ARGS["name"]
+started = out / (name + ".started.json")
+need(not started.exists(), "the " + name + " step was already started on this Pod")
+started.write_text(json.dumps({"state": "launching", "epoch": time.time()}))
+script = out / (name + ".py")
+script.write_text(ARGS["code"])
+q = shlex.quote
+command = ("python3 -B %s > %s 2> %s; echo $? > %s && mv %s %s" %
+           (q(str(script)), q(str(out / (name + ".stdout"))), q(str(out / (name + ".stderr"))),
+            q(str(out / (name + ".exit.partial"))), q(str(out / (name + ".exit.partial"))),
+            q(str(out / (name + ".exit")))))
+child = subprocess.Popen(["sh", "-c", command], start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+ticks = int(open("/proc/%d/stat" % child.pid).read().rsplit(")", 1)[1].split()[19])
+partial = out / (name + ".started.json.partial")
+partial.write_text(json.dumps({"state": "started", "pid": child.pid, "ticks": ticks, "epoch": time.time()}))
+os.replace(partial, started)
+print(json.dumps({"started": True, "pid": child.pid}))
+'''
+
+POD_DETACH_POLL = '''#pod:archive-detach-poll
+import pathlib, time
+out, name = pathlib.Path(ARGS["out"]), ARGS["name"]
+started, exited = out / (name + ".started.json"), out / (name + ".exit")
+def tail(path):
+    try:
+        return path.read_text(errors="replace")[-1500:]
+    except OSError:
+        return ""
+progress = None
+if ARGS.get("progress"):
+    try:
+        progress = json.loads((out / ARGS["progress"]).read_text())
+    except (OSError, ValueError):
+        progress = None
+if not started.exists():
+    value = {"state": "absent"}
+elif exited.exists():
+    code = int(exited.read_text().strip() or "1")
+    if code == 0:
+        lines = [line for line in (out / (name + ".stdout")).read_text().splitlines() if line.strip()]
+        value = {"state": "done", "result": json.loads(lines[-1])}
+    else:
+        value = {"state": "failed", "exit": code, "error": tail(out / (name + ".stderr"))}
+else:
+    record = json.loads(started.read_text())
+    if record.get("state") == "launching":
+        stale = time.time() - record["epoch"] > 60
+        value = {"state": "failed", "error": "the step never started"} if stale else {"state": "running"}
+    elif alive(record["pid"], record["ticks"]):
+        value = {"state": "running"}
+    else:
+        value = {"state": "failed", "error": "the step ended without an exit record: " + tail(out / (name + ".stderr"))}
+value["progress"] = progress
+print(json.dumps(value))
 '''
 
 POD_REMAINING = '''#pod:archive-remaining
@@ -320,12 +425,36 @@ class ArchiveCycle(gcloud.Cycle):
         require(end < self.lease["created_epoch"] + self.lease["startup_idle_seconds"] - STARTUP_MARGIN_SECONDS,
                 f"the {kind} step could outlast the resident guard's startup-idle bound")
 
-    def step(self, kind, program, args):
+    def step(self, kind, program, args, progress=None):
+        """Run a Pod step detached (POD_DETACH_START) and poll it (POD_DETACH_POLL) until it ends or its bound
+        passes. A poll or start the network interrupts is retried at the next poll; the step keeps running on the
+        Pod meanwhile, and a start already made is never repeated."""
         self.in_bounds(kind)
         started = time.monotonic()
-        result = self.pod.run(program, {**args, "schema": SCHEMA}, timeout=STEP_SECONDS[kind])
-        self.result.setdefault("step_seconds", {})[kind] = round(time.monotonic() - started, 1)
-        return result
+        deadline = started + STEP_SECONDS[kind]
+        code = cloud.PRELUDE % json.dumps({**args, "schema": SCHEMA}) + program
+        poll = {"out": POD_OUT, "name": kind, "progress": progress}
+        launched, errors = False, 0
+        while True:
+            try:
+                state = self.pod.run(POD_DETACH_POLL, poll, timeout=60, read_only=True)
+                if state["state"] == "absent" and not launched:
+                    self.pod.run(POD_DETACH_START, {"out": POD_OUT, "name": kind, "code": code, "args": args}, timeout=60)
+                    launched = True
+                    continue
+                launched = True
+                if state.get("progress"):
+                    write(self.control / f"archive-{kind}-progress.json", state["progress"], replace=True)
+                if state["state"] == "done":
+                    self.result.setdefault("step_seconds", {})[kind] = round(time.monotonic() - started, 1)
+                    return state["result"]
+                require(state["state"] in ("running", "absent"), f"the {kind} step failed: {state.get('error')}")
+            except cloud.PodUnavailable as error:  # the network or the Pod's SSH: look again at the next poll
+                errors += 1
+                self.result.setdefault("poll_errors", {})[kind] = errors
+                self.result["last_poll_error"] = str(error)[-300:]
+            require(time.monotonic() < deadline, f"the {kind} step outlasted its bound")
+            self.sleep(POLL_SECONDS)
 
     def prune(self, verified_pod_copies):
         return self.step("prune", POD_PRUNE, {"root": str(self.old), "expected_root": str(self.old),
@@ -344,7 +473,9 @@ class ArchiveCycle(gcloud.Cycle):
         checkpoints = [row["final_checkpoint"]["path"] for row in baselines["baselines"]]
         packed = self.step("pack", POD_PACK, {"root": str(self.old), "campaign": str(campaign),
                                               "checkpoints": checkpoints, **PACK_RULES, "out": POD_OUT,
-                                              "limit_seconds": STEP_SECONDS["pack"] - 60})
+                                              "limit_seconds": STEP_SECONDS["pack"] - 120, "workers": PREFETCH_WORKERS,
+                                              "small_bytes": PREFETCH_SMALL_BYTES},
+                           progress="pack-progress.json")
         write(self.control / "archive-packed.json", packed)
         require(packed["archive_bytes"] <= self.budget,
                 f"the archive ({packed['archive_bytes']} B) exceeds its byte budget ({self.budget} B)")
@@ -357,14 +488,7 @@ class ArchiveCycle(gcloud.Cycle):
                 "the destination would fall below its 60 GiB reserve")
         reported = {**packed["files"], "baselines.json": baselines["sha256"]}
         self.dest.mkdir(parents=True)
-        self.in_bounds("copy")
-        started = time.monotonic()
-        deadline = started + STEP_SECONDS["copy"]  # one bound for the whole copy, shared by its downloads
-        for name in FILES:
-            left = deadline - time.monotonic()
-            require(left > 0, "the copy outlasted its bound")
-            self.pod.get(f"{POD_OUT}/{name}", self.dest / name, timeout=left)
-        self.result.setdefault("step_seconds", {})["copy"] = round(time.monotonic() - started, 1)
+        self.copy(reported)
         flush_durable(self.dest, FILES)  # on disk before anything depends on these copies
         verified = verify_copy(self.dest, reported)
         write(self.dest / "VERIFIED.json", {"schema": SCHEMA + "/verified", "epoch": time.time(),
@@ -373,6 +497,27 @@ class ArchiveCycle(gcloud.Cycle):
         pruned = self.prune(reported)
         require(pruned["pruned"] is True, "the superseded root is still present")
         self.finish(verified, pruned)
+
+    def copy(self, reported):
+        """Copy each file from the Pod, one bound for the whole copy. A file whose download the network interrupts,
+        or whose bytes differ from the Pod's reported hash, is fetched again; a file already copied and matching is
+        not."""
+        self.in_bounds("copy")
+        started = time.monotonic()
+        deadline = started + STEP_SECONDS["copy"]
+        for name in FILES:
+            target = self.dest / name
+            while not (target.exists() and sha256_file(target) == reported[name]):
+                left = deadline - time.monotonic()
+                require(left > 0, "the copy outlasted its bound")
+                try:
+                    self.pod.get(f"{POD_OUT}/{name}", target, timeout=left)
+                except Exception as error:  # noqa: BLE001 - scp or the network: try again inside the bound
+                    errors = self.result.setdefault("copy_errors", 0) + 1
+                    self.result.update(copy_errors=errors, last_copy_error=str(error)[-300:])
+                    require(time.monotonic() < deadline, "the copy outlasted its bound")
+                    self.sleep(POLL_SECONDS)
+        self.result.setdefault("step_seconds", {})["copy"] = round(time.monotonic() - started, 1)
 
     def prune_verified(self):
         """Resume after a lease that verified its copy but did not prune: re-verify the E: copy against VERIFIED.json

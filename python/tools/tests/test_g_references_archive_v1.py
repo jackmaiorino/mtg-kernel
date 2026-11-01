@@ -174,33 +174,50 @@ class ArchiveTests(unittest.TestCase):
         cycle.control.mkdir()
         cycle.old, cycle.base = cloud.WORKSPACE / "g-references-v1", cloud.WORKSPACE / "g-references-v1-q2"
         cycle.manifest = {"tooling": {"root": "/workspace/g-references-v1-q2/tooling/abc"}}
-        now = time.time()
-        cycle.lease = {"deadline_epoch": now + 7200, "recovery_seconds": 600,
-                       "created_epoch": created if created is not None else now - 300, "startup_idle_seconds": 5400}
+        cycle.sleep = lambda seconds: None
+        created = time.time() - 300 if created is None else created
+        cycle.lease = {"created_epoch": created, "deadline_epoch": created + archive.LEASE_HOURS * 3600,
+                       "recovery_seconds": archive.LEASE_RECOVERY_SECONDS,
+                       "startup_idle_seconds": archive.LEASE_STARTUP_IDLE_SECONDS}
         source, test = self.out, self
         baselines, packed = (None, None) if resume else (self.baselines(), self.pack(self.baselines()))
         if failure == "missing baseline":
             baselines["baselines"][3]["identity"] = None
 
+        labels = {"baselines": "#pod:archive-baselines", "pack": "#pod:archive-pack",
+                  "check": "#pod:archive-remaining", "prune": "#pod:archive-prune"}
+
         class Pod:
-            prune_for_real = False
+            """The detached protocol of a Pod step: a poll finds nothing, the start runs the step here, the next
+            poll returns its result."""
+            prune_for_real, done, gets = False, {}, 0
 
             def run(self, program, args, timeout=30, read_only=False):
-                calls.append(program.split("\n", 1)[0])
-                if program is archive.POD_BASELINES:
-                    return baselines
-                if program is archive.POD_PACK:
-                    return packed
-                if program is archive.POD_REMAINING:
-                    return pod(archive.POD_REMAINING, {**args, "root": str(test.root)})
-                if self.prune_for_real:
-                    return pod(archive.POD_PRUNE, test.prune_args(verified=args["verified"]))
-                return {"pruned": True, "was_present": True}
+                if program is archive.POD_DETACH_POLL:
+                    name = args["name"]
+                    return {"state": "done", "result": self.done[name]} if name in self.done else {"state": "absent"}
+                assert program is archive.POD_DETACH_START, program
+                name, step = args["name"], args["args"]
+                calls.append(labels[name])
+                if name == "baselines":
+                    result = baselines
+                elif name == "pack":
+                    result = packed
+                elif name == "check":
+                    result = pod(archive.POD_REMAINING, {**step, "root": str(test.root)})
+                elif self.prune_for_real:
+                    result = pod(archive.POD_PRUNE, test.prune_args(verified=step["verified"]))
+                else:
+                    result = {"pruned": True, "was_present": True}
+                self.done[name] = result
+                return {"started": True}
 
             def get(self, remote, local, timeout=600):
                 calls.append("get")
+                self.gets += 1
                 data = (source / Path(remote).name).read_bytes()
-                if failure == "copy differs" and Path(remote).name == "records.tar.gz":
+                if Path(remote).name == "records.tar.gz" and (
+                        failure == "copy differs" or failure == "first copy differs" and self.gets == 1):
                     data += b"x"
                 Path(local).write_bytes(data)
         cycle.pod = Pod()
@@ -214,9 +231,13 @@ class ArchiveTests(unittest.TestCase):
         self.assertTrue(cycle.result["pruned"] and cycle.result["complete"])
         self.assertTrue((cycle.dest / "VERIFIED.json").exists() and (cycle.dest / "PRUNE.json").exists())
         self.assertGreater(read(cycle.dest / "VERIFIED.json")["archive_bytes"], 0)
+        retried, calls = self.cycle(failure="first copy differs")
+        retried.watch()  # a download that arrives different is fetched again
+        self.assertEqual(calls.count("get"), 5)
+        self.assertTrue(retried.result["pruned"])
         for failure in ("missing baseline", "copy differs"):
             cycle, calls = self.cycle(failure=failure)
-            with self.assertRaises(ValueError):
+            with unittest.mock.patch.dict(archive.STEP_SECONDS, {"copy": 1}), self.assertRaises(ValueError):
                 cycle.watch()
             self.assertNotIn("#pod:archive-prune", calls)  # any failed check stops before the prune
         cycle, calls = self.cycle(failure=None)
@@ -224,7 +245,9 @@ class ArchiveTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cycle.watch()
         self.assertEqual(calls, ["#pod:archive-baselines", "#pod:archive-pack"])
-        late, calls = self.cycle(failure=None, created=time.time() - 5400 + 900)  # 15 min of startup idle left
+        # The pack could not end inside the startup-idle bound (its bound plus the margin, less a minute).
+        bound = archive.LEASE_STARTUP_IDLE_SECONDS - archive.STARTUP_MARGIN_SECONDS - archive.STEP_SECONDS["pack"]
+        late, calls = self.cycle(failure=None, created=time.time() - bound - 60)
         with self.assertRaisesRegex(ValueError, "startup-idle"):
             late.watch()
         self.assertEqual(calls, ["#pod:archive-baselines"])  # the pack could not end inside the bound
@@ -279,18 +302,68 @@ class ArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "verification record"):
             again.watch()
 
-    def test_a_realistic_pack_end_leaves_the_copy_and_the_prune_in_bounds(self):
-        """Fable #472 round 2: with the launcher's bounds, a pack ending 45 min after the Pod's creation still leaves
-        the copy and then the prune inside the deadline and the startup-idle bound."""
+    def test_a_pack_at_its_bound_leaves_the_copy_and_the_prune_in_bounds(self):
+        """With the launcher's bounds, a pack that ends at its own bound (after 10 min of Pod start and staging and
+        the baselines at theirs) still leaves the copy, then the prune, inside the deadline and the startup-idle
+        bound."""
         cycle, _ = self.cycle(failure=None)
         now = time.time()
-        created = now - 2700
+        created = now - 600 - archive.STEP_SECONDS["baselines"] - archive.STEP_SECONDS["pack"]
         cycle.lease = {"created_epoch": created, "deadline_epoch": created + archive.LEASE_HOURS * 3600,
                        "recovery_seconds": archive.LEASE_RECOVERY_SECONDS,
                        "startup_idle_seconds": archive.LEASE_STARTUP_IDLE_SECONDS}
         cycle.in_bounds("copy")
         with unittest.mock.patch.object(archive.time, "time", return_value=now + archive.STEP_SECONDS["copy"]):
             cycle.in_bounds("prune")  # after the longest copy
+
+
+    def test_a_dropped_poll_is_retried_and_the_step_is_not_started_twice(self):
+        cycle, _ = self.cycle(failure=None)
+        starts, polls = [], []
+
+        class Flaky:
+            def run(self, program, args, timeout=30, read_only=False):
+                if program is archive.POD_DETACH_START:
+                    starts.append(args["name"])
+                    raise cloud.PodUnavailable("the start's answer was lost")  # but the step did start
+                polls.append(1)
+                if len(polls) == 2:
+                    raise cloud.PodUnavailable("server not responding")
+                if not starts:
+                    return {"state": "absent"}
+                return {"state": "done", "result": {"ok": True}} if len(polls) > 3 else {"state": "running",
+                                                                                        "progress": {"phase": "walk"}}
+        cycle.pod = Flaky()
+        self.assertEqual(cycle.step("check", archive.POD_REMAINING, {"root": "/r", "known": []},
+                                    progress="x.json"), {"ok": True})
+        self.assertEqual(starts, ["check"])  # started once
+        self.assertEqual(cycle.result["poll_errors"]["check"], 2)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the detached step runs under sh on the Pod")
+    def test_the_detached_programs_on_linux(self):
+        out = Path(self.temp.name) / "detach"
+        code = cloud.PRELUDE % json.dumps({"value": 7}) + "import time\ntime.sleep(1)\nprint(json.dumps({'v': ARGS['value']}))\n"
+        self.assertEqual(pod(archive.POD_DETACH_POLL, {"out": str(out), "name": "job"})["state"], "absent")
+        self.assertTrue(pod(archive.POD_DETACH_START, {"out": str(out), "name": "job", "code": code})["started"])
+        with self.assertRaises(RuntimeError):  # never started twice
+            pod(archive.POD_DETACH_START, {"out": str(out), "name": "job", "code": code})
+        self.assertEqual(pod(archive.POD_DETACH_POLL, {"out": str(out), "name": "job"})["state"], "running")
+        deadline = time.monotonic() + 30
+        while True:
+            state = pod(archive.POD_DETACH_POLL, {"out": str(out), "name": "job"})
+            if state["state"] != "running" or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        self.assertEqual(state, {"state": "done", "result": {"v": 7}, "progress": None})
+        failing = cloud.PRELUDE % json.dumps({}) + "need(False, 'it broke')\n"
+        pod(archive.POD_DETACH_START, {"out": str(out), "name": "bad", "code": failing})
+        deadline = time.monotonic() + 30
+        while pod(archive.POD_DETACH_POLL, {"out": str(out), "name": "bad"})["state"] == "running" \
+                and time.monotonic() < deadline:
+            time.sleep(0.2)
+        state = pod(archive.POD_DETACH_POLL, {"out": str(out), "name": "bad"})
+        self.assertEqual(state["state"], "failed")
+        self.assertIn("it broke", state["error"])
 
 
 if __name__ == "__main__":
