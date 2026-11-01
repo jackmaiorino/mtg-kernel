@@ -1,4 +1,5 @@
 import json
+import struct
 import sys
 import tempfile
 import unittest
@@ -33,14 +34,18 @@ def v1_document():
     }
 
 
+def data_start(container):
+    doc_len, table_len = struct.unpack_from('<QQ', container, 16)
+    return -(-(32 + doc_len + table_len) // 256) * 256
+
+
 class CheckpointContainerTests(unittest.TestCase):
     def test_round_trip_and_readers(self):
         doc = v1_document()
         v1 = json.dumps(doc, separators=(',', ':')).encode()
         container = cc.encode(doc)
         self.assertTrue(cc.is_container(container))
-        _, _, data_start = cc._parts(container)
-        self.assertEqual(data_start % 256, 0)
+        self.assertEqual(data_start(container) % 256, 0)
         with tempfile.TemporaryDirectory() as tmp:
             c_path = Path(tmp) / 'checkpoint.ckpt'
             j_path = Path(tmp) / 'checkpoint.json'
@@ -58,9 +63,8 @@ class CheckpointContainerTests(unittest.TestCase):
 
     def test_tampering_is_refused(self):
         container = bytearray(cc.encode(v1_document()))
-        _, _, data_start = cc._parts(bytes(container))
         padded = bytearray(container)
-        padded[data_start - 1] = 1
+        padded[data_start(bytes(container)) - 1] = 1
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'c'
             path.write_bytes(bytes(padded))
@@ -72,6 +76,19 @@ class CheckpointContainerTests(unittest.TestCase):
         bad[8] = 2
         with self.assertRaises(ValueError):
             cc.decode(bytes(bad))
+        # Top-level members out of the struct's order are not canonical.
+        doc = v1_document()
+        reordered = {'card_db_hash': doc['card_db_hash'], **{k: v for k, v in doc.items() if k != 'card_db_hash'}}
+        with self.assertRaises(ValueError):
+            cc.decode(cc.encode(reordered))
+        # A container cut at its data start (every tensor missing) is refused by the metadata readers too.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'cut'
+            path.write_bytes(bytes(container[:data_start(bytes(container))]))
+            with self.assertRaises(ValueError):
+                cc.read_document(path)
+            with self.assertRaises(ValueError):
+                cc.has_moments(path)
 
 
 if __name__ == '__main__':

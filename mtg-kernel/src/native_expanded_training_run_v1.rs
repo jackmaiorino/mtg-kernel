@@ -391,6 +391,17 @@ impl NativeExpandedTrainingRunV1 {
         )?;
         self.update_backend.validate_v1()?;
         self.loss_selection.validate_v1()?;
+        // The E-supported, SQ1, TP1 Stage B and EX1 updates always write v1
+        // checkpoints (outside the v2 writer's scope gate), so a v2 run must
+        // not select them.
+        check(
+            self.record_format.is_v1()
+                || (self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()),
+            "record_format v2 is not available with e_supported, soft_q, search_targets or ex1 updates",
+        )?;
         if !self.training_math.is_platform_libm() {
             check(
                 self.update_backend.is_cpu()

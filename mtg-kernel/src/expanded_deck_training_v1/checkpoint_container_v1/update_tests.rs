@@ -92,18 +92,23 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         opening: None,
         mulligan_modes: None,
     };
-    let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
-        source: source.clone(),
-        episodes: vec![episode],
-        max_non_natural_episode_fraction: 0.0,
-        collection_sampler: CollectionSamplerV1::Legacy,
-        training_math: TrainingMathV1::PlatformLibm,
-        ex1: None,
-        output_directory: root.join("collect"),
-    })
-    .unwrap();
-    let trajectories: Vec<PinnedFileV1> =
-        serde_json::from_value(collection["trajectories"].clone()).unwrap();
+    let collect = |source: &ExpandedModelSourceV1, label: &str| -> Vec<PinnedFileV1> {
+        let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: source.clone(),
+            episodes: vec![ExpandedEpisodeV1 {
+                opponent: Some(source.clone()),
+                ..episode.clone()
+            }],
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
+            output_directory: root.join(label),
+        })
+        .unwrap();
+        serde_json::from_value(collection["trajectories"].clone()).unwrap()
+    };
+    let trajectories = collect(&source, "collect");
 
     let v1 = update(
         &source,
@@ -129,43 +134,7 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
     assert_eq!(convert_v1_bytes(&bytes_v1).unwrap(), bytes_v2);
     assert_eq!(pin_v2.sha256, hex(&Sha256::digest(&bytes_v2)));
 
-    // The next update from either checkpoint (a v1 run reading a v2 source and
-    // the reverse) reaches the same state.
-    let from = |pin: &PinnedFileV1| ExpandedModelSourceV1 {
-        checkpoint: Some(pin.clone()),
-        ..source.clone()
-    };
-    let next_v1 = update(
-        &from(&pin_v1),
-        &trajectories,
-        CheckpointRecordFormatV1::V1,
-        root.join("next-v1"),
-    )
-    .unwrap();
-    let next_v2 = update(
-        &from(&pin_v2),
-        &trajectories,
-        CheckpointRecordFormatV1::V2,
-        root.join("next-v2"),
-    )
-    .unwrap();
-    let cross = update(
-        &from(&pin_v2),
-        &trajectories,
-        CheckpointRecordFormatV1::V1,
-        root.join("cross"),
-    )
-    .unwrap();
-    assert_eq!(next_v1["after_state_sha256"], next_v2["after_state_sha256"]);
-    assert_eq!(next_v1["after_state_sha256"], cross["after_state_sha256"]);
-    let next_pin_v1: PinnedFileV1 = serde_json::from_value(next_v1["checkpoint"].clone()).unwrap();
-    let next_pin_v2: PinnedFileV1 = serde_json::from_value(next_v2["checkpoint"].clone()).unwrap();
-    assert_eq!(
-        export_v1(&fs::read(&next_pin_v2.path).unwrap()).unwrap(),
-        fs::read(&next_pin_v1.path).unwrap()
-    );
-
-    // Every generic reader accepts the container with the v1 answer.
+    // Every reader interface gives the v1 answer for the container.
     let typed: ExpandedCheckpointV1 = read_pinned(&pin_v2).unwrap();
     assert_eq!(serde_json::to_vec(&typed).unwrap(), bytes_v1);
     assert_eq!(
@@ -179,9 +148,18 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
     let probe: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&pin_v2).unwrap();
     assert!(probe.e_supported.is_none() && probe.ex1.is_none());
     assert!(!no_state_digest_v1::names_another_file_v1(&bytes_v2).unwrap());
+    // A truncated container is refused by the metadata view as by a load.
+    let header_end = bytes_v2.len() - 4;
+    assert!(checkpoint_container_v1::metadata_view_v1(&bytes_v2[..header_end]).is_err());
 
-    // The converter and exporter (design section 5) reproduce both files.
-    let converted = convert_checkpoint_v1_to_v2(&pin_v1, &root.join("converted.ckpt")).unwrap();
+    // The converter (restoring both through the loader) and the exporter
+    // reproduce both files.
+    let from = |pin: &PinnedFileV1| ExpandedModelSourceV1 {
+        checkpoint: Some(pin.clone()),
+        ..source.clone()
+    };
+    let converted =
+        convert_checkpoint_v1_to_v2(&from(&pin_v1), &root.join("converted.ckpt")).unwrap();
     let converted: PinnedFileV1 = serde_json::from_value(converted["output"].clone()).unwrap();
     assert_eq!(fs::read(&converted.path).unwrap(), bytes_v2);
     assert_eq!(converted.sha256, pin_v2.sha256);
@@ -194,9 +172,47 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
             .contains("not a checkpoint container")
     );
     assert!(
-        convert_checkpoint_v1_to_v2(&pin_v2, &root.join("twice.ckpt"))
+        convert_checkpoint_v1_to_v2(&from(&pin_v2), &root.join("twice.ckpt"))
             .unwrap_err()
             .contains("already a checkpoint container")
+    );
+
+    // The next update from either checkpoint, on trajectories collected from
+    // that same checkpoint, reaches the same state, in either format and
+    // across formats.
+    let next_from_v1 = from(&pin_v1);
+    let next_from_v2 = from(&pin_v2);
+    let trajectories_v1 = collect(&next_from_v1, "collect-from-v1");
+    let trajectories_v2 = collect(&next_from_v2, "collect-from-v2");
+    let next_v1 = update(
+        &next_from_v1,
+        &trajectories_v1,
+        CheckpointRecordFormatV1::V1,
+        root.join("next-v1"),
+    )
+    .unwrap();
+    let next_v2 = update(
+        &next_from_v2,
+        &trajectories_v2,
+        CheckpointRecordFormatV1::V2,
+        root.join("next-v2"),
+    )
+    .unwrap();
+    let cross = update(
+        &next_from_v2,
+        &trajectories_v2,
+        CheckpointRecordFormatV1::V1,
+        root.join("cross"),
+    )
+    .unwrap();
+    assert_eq!(next_v1["after_state_sha256"], next_v2["after_state_sha256"]);
+    assert_eq!(next_v1["after_state_sha256"], cross["after_state_sha256"]);
+    let next_pin_v2: PinnedFileV1 = serde_json::from_value(next_v2["checkpoint"].clone()).unwrap();
+    let cross_pin: PinnedFileV1 = serde_json::from_value(cross["checkpoint"].clone()).unwrap();
+    // Same inputs, different format: the container exports the v1 bytes.
+    assert_eq!(
+        export_v1(&fs::read(&next_pin_v2.path).unwrap()).unwrap(),
+        fs::read(&cross_pin.path).unwrap()
     );
     let _ = fs::remove_dir_all(&root);
 }

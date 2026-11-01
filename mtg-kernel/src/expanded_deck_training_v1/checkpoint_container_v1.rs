@@ -320,49 +320,55 @@ fn header_v1(bytes: &[u8]) -> Result<HeaderV1, String> {
     })
 }
 
-/// The container's JSON document (the checkpoint with its three tensor
-/// sections empty), for probes that read only metadata fields. Checks the
-/// header only; a load goes through [`decode_v1`].
-pub(crate) fn document_v1(bytes: &[u8]) -> Result<&[u8], String> {
-    let header = header_v1(bytes)?;
-    Ok(&bytes[header.document])
+/// A container whose structure has been checked: everything except the
+/// tensor values themselves, which are data.
+struct CheckedV1 {
+    document: std::ops::Range<usize>,
+    saved: ExpandedCheckpointV1,
+    sections: Vec<(SectionEntryV1, std::ops::Range<usize>)>,
 }
 
-/// `bytes` themselves for a v1 JSON checkpoint, or the container's JSON
-/// document: the view a metadata probe parses.
-pub(crate) fn metadata_view_v1(bytes: &[u8]) -> Result<&[u8], String> {
-    if is_container_v1(bytes) {
-        document_v1(bytes)
-    } else {
-        Ok(bytes)
-    }
+fn all_zero_v1(bytes: &[u8]) -> bool {
+    bytes.iter().all(|&b| b == 0)
 }
 
-/// Decodes a container into the checkpoint it encodes. Refuses anything that
-/// is not the canonical encoding of what it decodes to: bad magic, version or
-/// lengths, a document that is not a checkpoint with empty tensor sections, a
-/// section table out of order, misaligned, overlapping or not covering the
-/// file, nonzero padding, or any byte that re-encoding does not reproduce.
-pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
+/// Checks a container's structure without reading tensor values: header,
+/// canonical document (a checkpoint with empty tensor lists) and table,
+/// sections in order, aligned, contiguous and inside the file, every padding
+/// byte zero, and the file ending after the last tensor. Together with the
+/// values this is exactly the canonical encoding [`encode_v1`] writes.
+fn check_structure_v1(bytes: &[u8]) -> Result<CheckedV1, String> {
     let header = header_v1(bytes)?;
-    let mut saved: ExpandedCheckpointV1 =
-        serde_json::from_slice(&bytes[header.document.clone()]).map_err(|e| e.to_string())?;
+    let document = &bytes[header.document.clone()];
+    let saved: ExpandedCheckpointV1 =
+        serde_json::from_slice(document).map_err(|e| e.to_string())?;
     if !(saved.parameters.is_empty()
         && saved.first_moments.is_empty()
         && saved.second_moments.is_empty())
     {
         return Err("checkpoint container document carries tensor values".into());
     }
-    let table: SectionTableV1 =
-        serde_json::from_slice(&bytes[header.table.clone()]).map_err(|e| e.to_string())?;
+    if serde_json::to_vec(&saved).map_err(|e| e.to_string())? != document {
+        return Err("checkpoint container is not in canonical form".into());
+    }
+    let table_bytes = &bytes[header.table.clone()];
+    let table: SectionTableV1 = serde_json::from_slice(table_bytes).map_err(|e| e.to_string())?;
     if table.state_format != STATE_FORMAT_V1 {
         return Err("checkpoint container state format differs".into());
     }
+    if serde_json::to_vec(&table).map_err(|e| e.to_string())? != table_bytes {
+        return Err("checkpoint container is not in canonical form".into());
+    }
+    if !all_zero_v1(&bytes[header.table.end..header.data_start]) {
+        return Err("checkpoint container is not in canonical form".into());
+    }
     let data = &bytes[header.data_start..];
     let mut expected_offset = 0usize;
+    let mut data_end = 0usize;
     let mut next_section = 0usize;
     let mut next_ordinal = 0usize;
-    for entry in &table.sections {
+    let mut sections = Vec::with_capacity(table.sections.len());
+    for entry in table.sections {
         while SECTION_NAMES_V1.get(next_section) != Some(&entry.section.as_str()) {
             next_section += 1;
             next_ordinal = 0;
@@ -383,28 +389,73 @@ pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
         let end = expected_offset
             .checked_add(byte_length)
             .ok_or("checkpoint container size overflows")?;
-        let raw = data
-            .get(expected_offset..end)
-            .ok_or("checkpoint container is truncated")?;
-        let values = raw
+        if end > data.len() || !all_zero_v1(&data[data_end..expected_offset]) {
+            return Err("checkpoint container section layout differs".into());
+        }
+        sections.push((entry, expected_offset..end));
+        next_ordinal += 1;
+        data_end = end;
+        expected_offset = align_up_v1(end)?;
+    }
+    if data_end != data.len() {
+        return Err("checkpoint container length differs from its sections".into());
+    }
+    let shift = header.data_start;
+    Ok(CheckedV1 {
+        document: header.document,
+        saved,
+        sections: sections
+            .into_iter()
+            .map(|(entry, range)| (entry, range.start + shift..range.end + shift))
+            .collect(),
+    })
+}
+
+/// The container's JSON document (the checkpoint with its three tensor
+/// lists empty), for probes that read only metadata fields. The whole
+/// structure is checked first, so a malformed or truncated container is
+/// refused here as it is by a full load.
+pub(crate) fn document_v1(bytes: &[u8]) -> Result<&[u8], String> {
+    let checked = check_structure_v1(bytes)?;
+    Ok(&bytes[checked.document])
+}
+
+/// `bytes` themselves for a v1 JSON checkpoint, or the container's JSON
+/// document: the view a metadata probe parses.
+pub(crate) fn metadata_view_v1(bytes: &[u8]) -> Result<&[u8], String> {
+    if is_container_v1(bytes) {
+        document_v1(bytes)
+    } else {
+        Ok(bytes)
+    }
+}
+
+/// Decodes a container into the checkpoint it encodes. Refuses anything that
+/// is not the canonical encoding of what it decodes to (see
+/// [`check_structure_v1`]); as a second guard the decoded checkpoint is
+/// re-encoded and compared byte for byte.
+pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
+    let CheckedV1 {
+        mut saved,
+        sections,
+        ..
+    } = check_structure_v1(bytes)?;
+    for (entry, range) in sections {
+        let values = bytes[range]
             .chunks_exact(4)
             .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("four bytes")))
             .collect();
         let tensor = ParameterBitsV1 {
-            name: entry.name.clone(),
-            shape: entry.shape.clone(),
+            name: entry.name,
+            shape: entry.shape,
             values,
         };
-        match next_section {
-            0 => saved.parameters.push(tensor),
-            1 => saved.first_moments.push(tensor),
+        match entry.section.as_str() {
+            "parameters" => saved.parameters.push(tensor),
+            "first_moments" => saved.first_moments.push(tensor),
             _ => saved.second_moments.push(tensor),
         }
-        next_ordinal += 1;
-        expected_offset = align_up_v1(end)?;
     }
-    // Canonical form: one encoding per state. This also checks every padding
-    // byte and that the file ends after the last tensor.
     if encode_v1(&saved)? != bytes {
         return Err("checkpoint container is not in canonical form".into());
     }

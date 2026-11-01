@@ -5552,19 +5552,51 @@ fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, Str
     Ok(bytes)
 }
 
-/// Converts a pinned v1 JSON checkpoint into a checkpoint container at
-/// `output` (design section 5). Admits only a canonical v1 checkpoint, and
-/// refuses unless the container decodes to the same checkpoint and exports
-/// exactly the v1 bytes. `output` must not exist; its directory must.
-pub fn convert_checkpoint_v1_to_v2(v1: &PinnedFileV1, output: &Path) -> Result<Value, String> {
+/// Converts the v1 JSON checkpoint of `source` (its `checkpoint` pin) into a
+/// checkpoint container at `output` (design section 5): admits only a
+/// canonical v1 checkpoint; restores it through the continuation loader,
+/// which checks its dimensions and recomputes its state digest; publishes the
+/// container; loads the published container through the same loader; and
+/// refuses unless the two restored states are equal item for item, with the
+/// same digest and math, and the container exports exactly the v1 bytes.
+/// `output` must not exist; its directory must.
+pub fn convert_checkpoint_v1_to_v2(
+    source: &ExpandedModelSourceV1,
+    output: &Path,
+) -> Result<Value, String> {
+    let v1 = source
+        .checkpoint
+        .as_ref()
+        .ok_or("conversion requires a source with a checkpoint")?;
     let bytes = read_pinned_bytes(v1)?;
     let container = checkpoint_container_v1::convert_v1_bytes(&bytes)?;
-    let saved = checkpoint_container_v1::decode_v1(&container)?;
+    let (_, before) = initialize_any_math_v1(source)?;
     let written = publish_checkpoint_file_v1(output, &container)?;
+    let converted = ExpandedModelSourceV1 {
+        checkpoint: Some(written.clone()),
+        ..source.clone()
+    };
+    let (_, after) = initialize_any_math_v1(&converted)?;
+    let before_snapshot = before.snapshot_v1().map_err(err)?;
+    let after_snapshot = after.snapshot_v1().map_err(err)?;
+    let bits = |rows: &[NativeNamedParameterV1]| -> Vec<ParameterBitsV1> {
+        rows.iter().map(ParameterBitsV1::from_native).collect()
+    };
+    let state_sha256 = hex(&before_snapshot.state_sha256_v1().map_err(err)?);
+    ensure(
+        before_snapshot.adam_step == after_snapshot.adam_step
+            && before_snapshot.scorer_bias_anchor_bits == after_snapshot.scorer_bias_anchor_bits
+            && bits(&before_snapshot.parameters) == bits(&after_snapshot.parameters)
+            && bits(&before_snapshot.first_moments) == bits(&after_snapshot.first_moments)
+            && bits(&before_snapshot.second_moments) == bits(&after_snapshot.second_moments)
+            && hex(&after_snapshot.state_sha256_v1().map_err(err)?) == state_sha256
+            && before.training_math_v1() == after.training_math_v1(),
+        "converted checkpoint restores a different state",
+    )?;
     Ok(
         json!({"schema":"mtg-kernel-checkpoint-container-conversion/v1",
-        "direction":"v1-to-v2","input":v1,"output":written,
-        "state_sha256":saved.state_sha256,"git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD")}),
+        "direction":"v1-to-v2","source":source,"input":v1,"output":written,
+        "state_sha256":state_sha256,"git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD")}),
     )
 }
 
