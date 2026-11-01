@@ -47,6 +47,9 @@ cuda-flat-training-capacity-v1 = ["dep:cudarc"]
 # bit-identical to the CPU forward. cudarc loads the driver and NVRTC at run
 # time, so building needs no CUDA toolkit.
 gpu-exact-v1 = ["dep:cudarc"]
+# Test and qualification builds only: MTG_KERNEL_GPU_EXACT_FAULT=inference:N or
+# learner:U makes that launch trap (a real device fault) to prove the run fails closed.
+gpu-exact-fault-injection-v1 = ["gpu-exact-v1"]
 # Experimental production-parameter forward backend. This is deliberately
 # opt-in and is not a matched-training or evidence identity.
 experimental-burn-net8-packed-cuda-v1 = ["dep:burn", "dep:burn-cuda", "dep:cudarc"]

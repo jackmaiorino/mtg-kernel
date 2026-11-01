@@ -14,6 +14,7 @@ const PROGRAM_V1: &str = "mtg-kernel-gpu-exact-v1";
 const TANH_SOURCE: &str = include_str!("tanh.cuh");
 const NET8_SOURCE: &str = include_str!("net8_forward.cu");
 const NET8_BACKWARD_SOURCE: &str = include_str!("net8_backward.cu");
+const NET8_V2_SOURCE: &str = include_str!("net8_forward_v2.cu");
 
 /// What a result depends on beyond its inputs: the program and options, the
 /// NVRTC that compiled it and the device that runs it.
@@ -32,25 +33,97 @@ pub(crate) struct DeviceIdentityV1 {
     pub(crate) tanh_proof_key: String,
 }
 
+/// Which forward kernel a device runs. Both give the CPU's bits; v1 stays
+/// for one release as the A/B baseline (design `gpu_exact_kernels_s3b_v1.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KernelsV1 {
+    V1,
+    V2,
+}
+
+/// Process-wide execution options, set before any device opens. Neither
+/// changes a result bit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ExactOptionsV1 {
+    pub(crate) kernels: KernelsV1,
+    /// The host thread sleeps on GPU completion instead of spinning
+    /// (`CU_CTX_SCHED_BLOCKING_SYNC`).
+    pub(crate) blocking_wait: bool,
+}
+
+impl Default for ExactOptionsV1 {
+    fn default() -> Self {
+        Self {
+            kernels: KernelsV1::V2,
+            blocking_wait: false,
+        }
+    }
+}
+
+static OPTIONS: std::sync::OnceLock<ExactOptionsV1> = std::sync::OnceLock::new();
+
+/// Sets the process's options once; devices opened later use them.
+pub(crate) fn configure_v1(options: ExactOptionsV1) -> Result<(), String> {
+    OPTIONS
+        .set(options)
+        .map_err(|_| "GPU exact options are already set".to_owned())
+}
+
+pub(crate) fn options_v1() -> ExactOptionsV1 {
+    OPTIONS.get().copied().unwrap_or_default()
+}
+
+/// The v2 tile shape (`MTG_V2_KT`, `MTG_V2_ROWS`): it decides which thread
+/// computes an output, never that output's order. Tests compile a second
+/// shape to prove that.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TileShapeV1 {
+    pub(crate) k_tile: u32,
+    pub(crate) rows: u32,
+}
+
+impl TileShapeV1 {
+    pub(crate) const DEFAULT: Self = Self {
+        k_tile: 64,
+        rows: 32,
+    };
+
+    /// Two weight tiles of `k_tile x 64` and two input tiles of `rows x k_tile`.
+    fn shared_bytes(self) -> u32 {
+        4 * (2 * self.k_tile * 64 + 2 * self.rows * self.k_tile)
+    }
+}
+
 pub(crate) struct ExactDeviceV1 {
     pub(crate) identity: DeviceIdentityV1,
     pub(crate) stream: Arc<CudaStream>,
     pub(crate) net8_forward: CudaFunction,
+    pub(crate) net8_forward_v2: CudaFunction,
+    /// Dynamic shared memory of one `mtg_net8_forward_v2` block.
+    pub(crate) v2_shared_bytes: u32,
+    pub(crate) options: ExactOptionsV1,
     pub(crate) net8_reverse: CudaFunction,
     pub(crate) net8_param_grad: CudaFunction,
     pub(crate) net8_embedding_grad: CudaFunction,
     tanh_proof: CudaFunction,
-    /// Kept alive for the functions above.
-    _ctx: Arc<CudaContext>,
+    #[cfg_attr(
+        not(any(test, feature = "gpu-exact-fault-injection-v1")),
+        allow(dead_code)
+    )]
+    fault_trap: CudaFunction,
+    /// Kept alive for the functions above; also allocates pinned host memory.
+    pub(crate) ctx: Arc<CudaContext>,
 }
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn source_and_options() -> (String, Vec<String>) {
-    let source =
-        format!("#define MTG_HIDDEN 64\n{TANH_SOURCE}\n{NET8_SOURCE}\n{NET8_BACKWARD_SOURCE}");
+fn source_and_options(tile: TileShapeV1) -> (String, Vec<String>) {
+    let source = format!(
+        "#define MTG_HIDDEN 64\n#define MTG_V2_KT {}\n#define MTG_V2_ROWS {}\n{TANH_SOURCE}\n{NET8_SOURCE}\n{NET8_BACKWARD_SOURCE}\n{NET8_V2_SOURCE}",
+        tile.k_tile, tile.rows
+    );
     // --fmad=false: no contraction of a separate multiply and add, so every
     // `a * b + c` the source does not spell as an FMA stays two roundings.
     let options = vec![
@@ -108,13 +181,23 @@ impl ExactDeviceV1 {
     /// program, NVRTC and compute capability) and proves the activation
     /// equal to the host `tanhf` (once per device and host libm).
     pub(crate) fn open_v1(ordinal: usize) -> Result<Self, String> {
+        Self::open_with_tile_v1(ordinal, TileShapeV1::DEFAULT)
+    }
+
+    /// [`Self::open_v1`] with the v2 kernel compiled for `tile`.
+    pub(crate) fn open_with_tile_v1(ordinal: usize, tile: TileShapeV1) -> Result<Self, String> {
+        let execution = options_v1();
         let ctx = CudaContext::new(ordinal).map_err(|e| format!("CUDA device {ordinal}: {e:?}"))?;
+        if execution.blocking_wait {
+            ctx.set_blocking_synchronize()
+                .map_err(|e| format!("blocking wait: {e:?}"))?;
+        }
         let stream = ctx.default_stream();
         let name = ctx.name().map_err(|e| format!("device name: {e:?}"))?;
         let compute_capability = ctx
             .compute_capability()
             .map_err(|e| format!("compute capability: {e:?}"))?;
-        let (source, options) = source_and_options();
+        let (source, options) = source_and_options(tile);
         let mut h = Sha256::new();
         h.update(PROGRAM_V1.as_bytes());
         h.update(source.as_bytes());
@@ -142,13 +225,17 @@ impl ExactDeviceV1 {
         };
         let device = Self {
             net8_forward: load("mtg_net8_forward")?,
+            net8_forward_v2: load("mtg_net8_forward_v2")?,
+            v2_shared_bytes: tile.shared_bytes(),
+            options: execution,
             net8_reverse: load("mtg_net8_reverse")?,
             net8_param_grad: load("mtg_net8_param_grad")?,
             net8_embedding_grad: load("mtg_net8_embedding_grad")?,
             tanh_proof: load("mtg_tanh_proof")?,
+            fault_trap: load("mtg_fault_trap")?,
             identity,
             stream,
-            _ctx: ctx,
+            ctx,
         };
         let mut device = device;
         device.identity.host_tanhf_identity =
@@ -158,9 +245,25 @@ impl ExactDeviceV1 {
         Ok(device)
     }
 
+    /// Launches a kernel that traps: a real device fault, after which the
+    /// context fails every operation (feature gpu-exact-fault-injection-v1).
+    #[cfg(any(test, feature = "gpu-exact-fault-injection-v1"))]
+    pub(crate) fn inject_fault_v1(&self) {
+        eprintln!("gpu-exact: injecting a device fault on {}", self.identity.name);
+        let mut launch = self.stream.launch_builder(&self.fault_trap);
+        let config = LaunchConfig {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        // SAFETY: the kernel takes no arguments; it traps by design.
+        let _ = unsafe { launch.launch(config) };
+        let _ = self.stream.synchronize();
+    }
+
     /// Free and total device memory in bytes.
     pub(crate) fn memory_v1(&self) -> Result<(usize, usize), String> {
-        self._ctx
+        self.ctx
             .mem_get_info()
             .map_err(|e| format!("memory query: {e:?}"))
     }

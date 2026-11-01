@@ -2,22 +2,25 @@
 //! resident models; collector threads hold clients and block on replies.
 //!
 //! A client validates and packs its own request (in parallel with the other
-//! collectors), sends it, and waits. The service gathers requests until every
-//! live client is waiting, the batch is full, or the latency window since the
-//! oldest request closes, then runs one launch per model and replies. Replies
-//! are exact (`net8_forward.cu`), so batching changes only timing, never a
-//! bit. Sampling and its randomness stay in the collector.
+//! collectors), sends it, and waits. The service takes every queued request
+//! (those that arrived while the last batch ran), then waits for more until
+//! every live client is waiting, the batch is full, or the latency window
+//! (default zero) since the oldest request closes; then it launches and
+//! replies. Replies are exact (`net8_forward.cu`, `net8_forward_v2.cu`), so
+//! batching changes only timing, never a bit. Sampling and its randomness
+//! stay in the collector.
 
 use super::net8::{
     forward_batch_v1, DeviceBuffersV1, ExactOutputV1, Net8DeviceModelV1, Net8HostModelV1,
     PackedBatchV1,
 };
+use super::device::{ExactOptionsV1, KernelsV1};
 use super::ExactDeviceV1;
 use crate::inference_cache_v1::ForwardPathV1;
 use crate::native_policy_value_net_v1::{NativeEncodedDecisionViewV1, NativePolicyValueNetV1};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -34,7 +37,7 @@ impl Default for BatchPolicyV1 {
     fn default() -> Self {
         Self {
             max_requests: 256,
-            max_latency: Duration::from_micros(200),
+            max_latency: Duration::ZERO,
             max_models: 10,
         }
     }
@@ -48,6 +51,12 @@ pub(crate) struct ServiceStatsV1 {
     pub(crate) launches: u64,
     pub(crate) model_uploads: u64,
     pub(crate) busy_micros: u64,
+    /// Batches by size: 1, 2, 3-4, 5-8, 9-16, 17-32, 33-64, 65 or more.
+    pub(crate) batch_sizes: [u64; 8],
+}
+
+fn size_bucket_v1(size: usize) -> usize {
+    (usize::BITS - size.saturating_sub(1).leading_zeros()).min(7) as usize
 }
 
 type Reply = Result<ExactOutputV1, String>;
@@ -65,6 +74,9 @@ enum Message {
     /// would end the thread.
     #[cfg(test)]
     PanicOnNextRequest,
+    /// Test only: a real device fault before the next batch.
+    #[cfg(test)]
+    FaultBeforeNextBatch,
 }
 
 struct Shared {
@@ -77,6 +89,8 @@ struct Shared {
 /// thread.
 pub(crate) struct InferenceServiceV1 {
     pub(crate) identity: super::DeviceIdentityV1,
+    pub(crate) options: ExactOptionsV1,
+    pub(crate) policy: BatchPolicyV1,
     sender: Option<Sender<Message>>,
     shared: Arc<Shared>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -102,7 +116,7 @@ impl InferenceServiceV1 {
             .name(format!("gpu-exact-inference-{ordinal}"))
             .spawn(move || match ExactDeviceV1::open_v1(ordinal) {
                 Ok(device) => {
-                    let _ = ready_sender.send(Ok(device.identity.clone()));
+                    let _ = ready_sender.send(Ok((device.identity.clone(), device.options)));
                     serve_v1(device, policy, receiver, thread_shared);
                 }
                 Err(error) => {
@@ -110,11 +124,13 @@ impl InferenceServiceV1 {
                 }
             })
             .map_err(|e| format!("spawn inference service: {e}"))?;
-        let identity = ready_receiver
+        let (identity, options) = ready_receiver
             .recv()
             .map_err(|_| "inference service exited during startup".to_owned())??;
         Ok(Self {
             identity,
+            options,
+            policy,
             sender: Some(sender),
             shared,
             thread: Some(thread),
@@ -126,6 +142,15 @@ impl InferenceServiceV1 {
             self.sender.clone().expect("service running"),
             Arc::clone(&self.shared),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fault_before_next_batch_for_test_v1(&self) {
+        let _ = self
+            .sender
+            .as_ref()
+            .expect("service running")
+            .send(Message::FaultBeforeNextBatch);
     }
 
     #[cfg(test)]
@@ -222,8 +247,11 @@ fn serve_v1(
     let mut stats = ServiceStatsV1::default();
     let mut tick = 0u64;
     let mut pending: Vec<Request> = Vec::new();
+    let mut poisoned: Option<String> = None;
     #[cfg(test)]
     let mut armed = false;
+    #[cfg(test)]
+    let mut fault_next = false;
     // Blocks for the first message; returns when every sender is gone.
     while let Ok(first) = receiver.recv() {
         // Mutable only for the test-only fault arm.
@@ -241,15 +269,28 @@ fn serve_v1(
             }
             #[cfg(test)]
             Message::PanicOnNextRequest => armed = true,
+            #[cfg(test)]
+            Message::FaultBeforeNextBatch => fault_next = true,
         };
         take(first, &mut pending);
         if pending.is_empty() {
             continue;
         }
+        // Everything already queued joins the batch (requests that arrived
+        // while the previous batch ran); then, with a latency window, wait for
+        // more until it closes. The default window is zero (eager batching).
         let deadline = Instant::now() + policy.max_latency;
         while pending.len() < policy.max_requests
             && pending.len() < shared.clients.load(Ordering::SeqCst)
         {
+            match receiver.try_recv() {
+                Ok(message) => {
+                    take(message, &mut pending);
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => {}
+            }
             let now = Instant::now();
             if now >= deadline {
                 break;
@@ -261,6 +302,21 @@ fn serve_v1(
         }
         let started = Instant::now();
         tick += 1;
+        // After a device error the context may be poisoned: fail closed, no retry.
+        if let Some(error) = &poisoned {
+            for request in pending.drain(..) {
+                let _ = request.reply.send(Err(error.clone()));
+            }
+            continue;
+        }
+        #[cfg(feature = "gpu-exact-fault-injection-v1")]
+        if super::fault_trigger_v1("inference") == Some(stats.batches + 1) {
+            device.inject_fault_v1();
+        }
+        #[cfg(test)]
+        if std::mem::take(&mut fault_next) {
+            device.inject_fault_v1();
+        }
         let result = run_batch_v1(
             &device,
             &policy,
@@ -271,6 +327,10 @@ fn serve_v1(
             tick,
             &mut stats,
         );
+        if let Some(Err(error)) = result.iter().find(|reply| reply.is_err()) {
+            poisoned = Some(format!("GPU inference service stopped after a device error: {error}"));
+        }
+        stats.batch_sizes[size_bucket_v1(pending.len())] += 1;
         for (request, reply) in pending.drain(..).zip(result) {
             // The CPU forward refuses a non-finite output the same way.
             let reply = reply.and_then(|output| {
@@ -290,9 +350,10 @@ fn serve_v1(
 }
 
 /// Every pending request's reply, in order. Requests run in groups of at
-/// most `max_models` distinct models (first-use order), so any mix of models
-/// is served; a group's device error fails only that group's requests.
-/// Grouping changes launches, never a reply's bits.
+/// most `max_models` distinct models (first-use order, at most one v2 launch
+/// each), so any mix of models is served. A group's device error fails that
+/// group's requests, and the caller then stops serving. Grouping changes
+/// launches, never a reply's bits.
 #[allow(clippy::too_many_arguments)]
 fn run_batch_v1(
     device: &ExactDeviceV1,
@@ -311,7 +372,7 @@ fn run_batch_v1(
         }
     }
     let mut replies: Vec<Option<Reply>> = (0..pending.len()).map(|_| None).collect();
-    for group in digests.chunks(policy.max_models.max(1)) {
+    for group in digests.chunks(policy.max_models.clamp(1, super::net8::V2_MAX_MODELS)) {
         let members: Vec<usize> = (0..pending.len())
             .filter(|&i| group.contains(&pending[i].model.digest))
             .collect();
@@ -385,8 +446,11 @@ fn run_group_v1(
     }
     let models: Vec<&Net8DeviceModelV1> = group.iter().map(|d| &resident[d].model).collect();
     stats.requests += members.len() as u64;
-    stats.launches += models.len() as u64;
-    forward_batch_v1(device, &models, batch, buffers)
+    stats.launches += match device.options.kernels {
+        KernelsV1::V1 => models.len() as u64,
+        KernelsV1::V2 => 1,
+    };
+    forward_batch_v1(device, device.options.kernels, &models, batch, buffers)
 }
 
 /// The process's service, installed once by a run that declares the GPU
@@ -418,6 +482,9 @@ pub(crate) fn service_receipt_v1(service: &InferenceServiceV1) -> serde_json::Va
             "nvrtc_version": [id.nvrtc_version.0, id.nvrtc_version.1],
             "program_sha256": id.program_sha256,
             "host_tanhf_identity": id.host_tanhf_identity, "tanh_proof_key": id.tanh_proof_key},
+        "kernels": format!("{:?}", service.options.kernels).to_lowercase(),
+        "wait": if service.options.blocking_wait { "block" } else { "spin" },
+        "max_latency_us": service.policy.max_latency.as_micros() as u64,
     });
     match service.stats_v1() {
         Ok(stats) => {
@@ -425,6 +492,10 @@ pub(crate) fn service_receipt_v1(service: &InferenceServiceV1) -> serde_json::Va
             receipt["requests"] = stats.requests.into();
             receipt["launches"] = stats.launches.into();
             receipt["model_uploads"] = stats.model_uploads.into();
+            receipt["batch_sizes"] = serde_json::json!({
+                "1": stats.batch_sizes[0], "2": stats.batch_sizes[1], "3-4": stats.batch_sizes[2],
+                "5-8": stats.batch_sizes[3], "9-16": stats.batch_sizes[4], "17-32": stats.batch_sizes[5],
+                "33-64": stats.batch_sizes[6], "65+": stats.batch_sizes[7]});
             receipt["busy_seconds"] = (stats.busy_micros as f64 / 1e6).into();
             receipt["mean_batch"] = if stats.batches == 0 {
                 0.0

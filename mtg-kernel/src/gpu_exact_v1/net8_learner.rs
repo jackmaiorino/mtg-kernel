@@ -349,9 +349,17 @@ pub(crate) fn net8_gradients_v1(
     let model = Net8DeviceModelV1 {
         params: stream.clone_htod(&forward).map_err(e("upload"))?,
         layout: stream.clone_htod(&forward_layout).map_err(e("upload"))?,
+        layout_host: forward_layout.clone(),
         dims,
     };
-    let outputs = forward_batch_v1(device, &[&model], &batch, &mut buffers.forward)?;
+    // Phase A reads the v1 path's separate input buffers.
+    let outputs = forward_batch_v1(
+        device,
+        super::device::KernelsV1::V1,
+        &[&model],
+        &batch,
+        &mut buffers.forward,
+    )?;
     for (index, (output, substep)) in outputs.iter().zip(substeps).enumerate() {
         let same = output.value.to_bits() == substep.value.to_bits()
             && output.logits.len() == substep.logits.len()

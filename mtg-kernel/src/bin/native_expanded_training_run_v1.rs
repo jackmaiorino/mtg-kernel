@@ -32,7 +32,8 @@ fn run() -> Result<(), String> {
     }
     let usage = concat!(
         "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
-        "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL]"
+        "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL] ",
+        "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block]"
     );
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(args.next().ok_or(usage)?);
@@ -40,6 +41,8 @@ fn run() -> Result<(), String> {
     let mut gpu_inference: Option<usize> = None;
     let mut gpu_latency_us: Option<u64> = None;
     let mut gpu_learner: Option<usize> = None;
+    let mut gpu_kernels: Option<String> = None;
+    let mut gpu_wait: Option<String> = None;
     let number = |value: Option<std::ffi::OsString>, what: &str| -> Result<u64, String> {
         value
             .ok_or(format!("missing {what}"))?
@@ -47,6 +50,12 @@ fn run() -> Result<(), String> {
             .ok_or(format!("invalid {what}"))?
             .parse::<u64>()
             .map_err(|e| format!("{what}: {e}"))
+    };
+    let text = |value: Option<std::ffi::OsString>, what: &str| -> Result<String, String> {
+        value
+            .ok_or(format!("missing {what}"))?
+            .into_string()
+            .map_err(|_| format!("invalid {what}"))
     };
     while let Some(flag) = args.next() {
         match flag.to_str() {
@@ -62,13 +71,29 @@ fn run() -> Result<(), String> {
             Some("--gpu-exact-latency-us") if gpu_latency_us.is_none() => {
                 gpu_latency_us = Some(number(args.next(), "latency")?);
             }
+            Some("--gpu-exact-kernels") if gpu_kernels.is_none() => {
+                gpu_kernels = Some(text(args.next(), "kernel version")?);
+            }
+            Some("--gpu-exact-wait") if gpu_wait.is_none() => {
+                gpu_wait = Some(text(args.next(), "wait mode")?);
+            }
             _ => return Err(format!("unknown option; {usage}")),
         }
     }
     if gpu_latency_us.is_some() && gpu_inference.is_none() {
         return Err("--gpu-exact-latency-us needs --gpu-exact-inference".into());
     }
-    let gpu_latency_us = gpu_latency_us.unwrap_or(200);
+    if (gpu_kernels.is_some() || gpu_wait.is_some())
+        && gpu_inference.is_none()
+        && gpu_learner.is_none()
+    {
+        return Err(
+            "--gpu-exact-kernels and --gpu-exact-wait need --gpu-exact-inference or --gpu-exact-learner"
+                .into(),
+        );
+    }
+    // Zero: eager batching (every queued request, no extra wait).
+    let gpu_latency_us = gpu_latency_us.unwrap_or(0);
     if !path.is_absolute() {
         return Err("absolute config path required".into());
     }
@@ -82,6 +107,14 @@ fn run() -> Result<(), String> {
     }
     let config: NativeExpandedTrainingRunV1 =
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    // The kernel version and wait mode change timing only, like the backends.
+    if gpu_kernels.is_some() || gpu_wait.is_some() {
+        #[cfg(feature = "gpu-exact-v1")]
+        mtg_kernel::gpu_exact_v1::configure_v1(
+            gpu_kernels.as_deref().unwrap_or("v2"),
+            gpu_wait.as_deref().unwrap_or("spin"),
+        )?;
+    }
     // Exact GPU inference changes timing only: replies equal the CPU
     // forward's bits, so it is an execution option outside the run identity.
     // Its receipt goes to stderr and to the output's gpu-exact-receipts/.

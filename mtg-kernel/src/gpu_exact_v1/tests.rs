@@ -6,6 +6,7 @@
 use super::net8::{
     forward_batch_v1, DeviceBuffersV1, Net8DeviceModelV1, Net8HostModelV1, PackedBatchV1,
 };
+use super::device::{KernelsV1, TileShapeV1};
 use super::service::{BatchPolicyV1, InferenceServiceV1};
 use super::ExactDeviceV1;
 use crate::inference_cache_v1::ForwardPathV1;
@@ -74,13 +75,18 @@ struct RandomDecision {
 }
 
 fn random_decision(seed: u64) -> RandomDecision {
+    random_decision_sized(seed, [40, 60, 24, 30])
+}
+
+/// A decision with up to `limits` = [objects, edges, actions, refs] rows.
+fn random_decision_sized(seed: u64, limits: [u64; 4]) -> RandomDecision {
     let schema = NativeEncodedDecisionSchemaV1::contract_v1();
     let mut rng = SplitMix64::seed(seed);
     let below = |n: u64, rng: &mut SplitMix64| (rng.next_u64() % n) as i64;
-    let objects = 1 + below(40, &mut rng) as usize;
-    let edges = below(60, &mut rng) as usize;
-    let actions = 1 + below(24, &mut rng) as usize;
-    let refs = below(30, &mut rng) as usize;
+    let objects = 1 + below(limits[0], &mut rng) as usize;
+    let edges = below(limits[1], &mut rng) as usize;
+    let actions = 1 + below(limits[2], &mut rng) as usize;
+    let refs = below(limits[3], &mut rng) as usize;
     let floats = |n: usize, rng: &mut SplitMix64| (0..n).map(|_| unit(rng)).collect::<Vec<f32>>();
     RandomDecision {
         state: floats(schema.state_dim, &mut rng),
@@ -169,35 +175,56 @@ fn gpu_tanh_equals_host_tanhf_on_all_inputs() {
 #[test]
 #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
 fn gpu_forward_equals_cpu_forward_bit_for_bit() {
-    let device = ExactDeviceV1::open_v1(ordinal()).expect("device");
-    let mut buffers = DeviceBuffersV1::default();
-    let mut batch = PackedBatchV1::default();
-    for net_seed in 0..4u64 {
-        let net = random_net(100 + net_seed);
-        let host = Net8HostModelV1::from_net_v1(&net).expect("host model");
-        let model = Net8DeviceModelV1::upload_v1(&device, &host).expect("upload");
-        let decisions: Vec<RandomDecision> = (0..500)
-            .map(|i| random_decision(net_seed * 10_000 + i))
-            .collect();
-        batch.clear();
-        for decision in &decisions {
-            batch
-                .push_v1(0, &net, ForwardPathV1::Flat, decision.view())
-                .expect("pack");
-        }
-        let outputs = forward_batch_v1(&device, &[&model], &batch, &mut buffers).expect("forward");
-        for (index, (decision, gpu)) in decisions.iter().zip(&outputs).enumerate() {
-            let cpu = net.forward_v1(decision.view()).expect("cpu forward");
-            assert_eq!(
-                bits(&gpu.logits),
-                bits(&cpu.logits),
-                "net {net_seed} decision {index} logits"
-            );
-            assert_eq!(
-                gpu.value.to_bits(),
-                cpu.value.to_bits(),
-                "net {net_seed} decision {index} value"
-            );
+    // v1; v2 with the default tile; v2 with another tile shape, which moves
+    // every output to another thread and every chain across other tile
+    // boundaries without changing its order.
+    let alternate = TileShapeV1 {
+        k_tile: 32,
+        rows: 16,
+    };
+    let variants = [
+        (KernelsV1::V1, TileShapeV1::DEFAULT),
+        (KernelsV1::V2, TileShapeV1::DEFAULT),
+        (KernelsV1::V2, alternate),
+    ];
+    for (kernels, tile) in variants {
+        let device = ExactDeviceV1::open_with_tile_v1(ordinal(), tile).expect("device");
+        let mut buffers = DeviceBuffersV1::default();
+        let mut batch = PackedBatchV1::default();
+        for net_seed in 0..4u64 {
+            let net = random_net(100 + net_seed);
+            let host = Net8HostModelV1::from_net_v1(&net).expect("host model");
+            let model = Net8DeviceModelV1::upload_v1(&device, &host).expect("upload");
+            // Typical decisions, then large ones: row chunks past the tile's
+            // rows and index-adds with more destinations than shared memory
+            // holds.
+            let decisions: Vec<RandomDecision> = (0..500)
+                .map(|i| random_decision(net_seed * 10_000 + i))
+                .chain((0..12).map(|i| {
+                    random_decision_sized(net_seed * 10_000 + 5_000 + i, [260, 400, 230, 300])
+                }))
+                .collect();
+            batch.clear();
+            for decision in &decisions {
+                batch
+                    .push_v1(0, &net, ForwardPathV1::Flat, decision.view())
+                    .expect("pack");
+            }
+            let outputs = forward_batch_v1(&device, kernels, &[&model], &batch, &mut buffers)
+                .expect("forward");
+            for (index, (decision, gpu)) in decisions.iter().zip(&outputs).enumerate() {
+                let cpu = net.forward_v1(decision.view()).expect("cpu forward");
+                assert_eq!(
+                    bits(&gpu.logits),
+                    bits(&cpu.logits),
+                    "{kernels:?} {tile:?} net {net_seed} decision {index} logits"
+                );
+                assert_eq!(
+                    gpu.value.to_bits(),
+                    cpu.value.to_bits(),
+                    "{kernels:?} {tile:?} net {net_seed} decision {index} value"
+                );
+            }
         }
     }
 }
@@ -208,7 +235,8 @@ fn gpu_forward_equals_cpu_forward_bit_for_bit() {
 #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
 fn gpu_replies_do_not_depend_on_batch_composition() {
     let device = ExactDeviceV1::open_v1(ordinal()).expect("device");
-    let nets = [random_net(7), random_net(8), random_net(9)];
+    // Ten models, all served by one v2 launch per batch.
+    let nets: Vec<NativePolicyValueNetV1> = (7..17).map(random_net).collect();
     let hosts: Vec<Net8HostModelV1> = nets
         .iter()
         .map(|n| Net8HostModelV1::from_net_v1(n).expect("host"))
@@ -230,7 +258,7 @@ fn gpu_replies_do_not_depend_on_batch_composition() {
             .push_v1(slot, &nets[slot], ForwardPathV1::Flat, decision.view())
             .expect("pack");
         alone.push(
-            forward_batch_v1(&device, &model_refs, &batch, &mut buffers)
+            forward_batch_v1(&device, KernelsV1::V2, &model_refs, &batch, &mut buffers)
                 .expect("forward")
                 .remove(0),
         );
@@ -249,7 +277,8 @@ fn gpu_replies_do_not_depend_on_batch_composition() {
                     .expect("pack");
             }
             let outputs =
-                forward_batch_v1(&device, &model_refs, &batch, &mut buffers).expect("forward");
+                forward_batch_v1(&device, KernelsV1::V2, &model_refs, &batch, &mut buffers)
+                    .expect("forward");
             for (&i, output) in picks.iter().zip(&outputs) {
                 assert_eq!(
                     bits(&output.logits),
@@ -335,27 +364,30 @@ fn gpu_forward_timing_receipt() {
     }
     let cpu_us = started.elapsed().as_secs_f64() * 1e6 / pool.len() as f64;
     println!("{{\"probe\":\"net8_cpu_forward\",\"us_per_decision\":{cpu_us:.1}}}");
-    for &size in &[1usize, 10, 20, 64, 256, 512] {
-        let mut samples = Vec::new();
-        for trial in 0..60 {
-            let t = std::time::Instant::now();
-            batch.clear();
-            for decision in pool.iter().cycle().skip(trial * 7).take(size) {
-                batch
-                    .push_v1(0, &net, ForwardPathV1::Flat, decision.view())
-                    .expect("pack");
+    for kernels in [KernelsV1::V1, KernelsV1::V2] {
+        for &size in &[1usize, 2, 4, 10, 20, 64, 256, 512] {
+            let mut samples = Vec::new();
+            for trial in 0..60 {
+                let t = std::time::Instant::now();
+                batch.clear();
+                for decision in pool.iter().cycle().skip(trial * 7).take(size) {
+                    batch
+                        .push_v1(0, &net, ForwardPathV1::Flat, decision.view())
+                        .expect("pack");
+                }
+                forward_batch_v1(&device, kernels, &[&model], &batch, &mut buffers)
+                    .expect("forward");
+                if trial >= 10 {
+                    samples.push(t.elapsed().as_secs_f64() * 1e6);
+                }
             }
-            forward_batch_v1(&device, &[&model], &batch, &mut buffers).expect("forward");
-            if trial >= 10 {
-                samples.push(t.elapsed().as_secs_f64() * 1e6);
-            }
+            samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let p50 = samples[samples.len() / 2];
+            println!(
+                "{{\"probe\":\"net8_gpu_forward\",\"kernels\":\"{kernels:?}\",\"batch\":{size},\"p50_us\":{p50:.1},\"us_per_decision\":{:.2}}}",
+                p50 / size as f64
+            );
         }
-        samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let p50 = samples[samples.len() / 2];
-        println!(
-            "{{\"probe\":\"net8_gpu_forward\",\"batch\":{size},\"p50_us\":{p50:.1},\"us_per_decision\":{:.2}}}",
-            p50 / size as f64
-        );
     }
 }
 
@@ -442,6 +474,41 @@ fn a_service_fault_fails_the_waiting_client() {
     assert!(receipt["device"]["program_sha256"].is_string(), "{receipt}");
     assert!(receipt["stats_error"].is_string(), "{receipt}");
     // Its thread panicked by design; dropping would only join it.
+    std::mem::forget(service);
+}
+
+/// After a real device fault the service fails the batch and every later
+/// request, without retrying on the poisoned context. The fault leaves this
+/// process's CUDA context unusable, so the test runs only when asked for
+/// alone: `MTG_KERNEL_GPU_EXACT_FAULT_TEST=1 ... -- --exact --ignored
+/// gpu_exact_v1::tests::a_device_fault_poisons_the_service`.
+#[test]
+#[ignore = "needs a CUDA device and its own process (MTG_KERNEL_GPU_EXACT_FAULT_TEST=1)"]
+fn a_device_fault_poisons_the_service() {
+    if std::env::var_os("MTG_KERNEL_GPU_EXACT_FAULT_TEST").is_none() {
+        eprintln!("skipped: set MTG_KERNEL_GPU_EXACT_FAULT_TEST=1 and run this test alone");
+        return;
+    }
+    let net = random_net(43);
+    let host = Arc::new(Net8HostModelV1::from_net_v1(&net).expect("host"));
+    let service =
+        InferenceServiceV1::start_v1(ordinal(), BatchPolicyV1::default()).expect("service");
+    let mut client = service.client_v1();
+    let decision = random_decision(2);
+    let before = client
+        .forward_v1(&host, &net, ForwardPathV1::Flat, decision.view())
+        .expect("a healthy service answers");
+    let cpu = net.forward_v1(decision.view()).expect("cpu forward");
+    assert_eq!(bits(&before.logits), bits(&cpu.logits));
+    service.fault_before_next_batch_for_test_v1();
+    for attempt in 0..3 {
+        let reply = client.forward_v1(&host, &net, ForwardPathV1::Flat, decision.view());
+        let error = reply.expect_err("a faulted device must not answer");
+        eprintln!("attempt {attempt}: {error}");
+        if attempt > 0 {
+            assert!(error.contains("stopped after a device error"), "{error}");
+        }
+    }
     std::mem::forget(service);
 }
 

@@ -17,6 +17,36 @@ mod tests;
 
 pub(crate) use device::{DeviceIdentityV1, ExactDeviceV1};
 
+/// The fault-injection trigger for `kind` (`inference` or `learner`):
+/// `MTG_KERNEL_GPU_EXACT_FAULT=inference:N` faults the Nth inference batch,
+/// `learner:U` the Uth learner update (1-based).
+#[cfg(feature = "gpu-exact-fault-injection-v1")]
+pub(crate) fn fault_trigger_v1(kind: &str) -> Option<u64> {
+    let value = std::env::var("MTG_KERNEL_GPU_EXACT_FAULT").ok()?;
+    let (which, at) = value.split_once(':')?;
+    (which == kind).then(|| at.parse().ok()).flatten()
+}
+
+/// Sets the process's forward kernels (`"v1"` or `"v2"`, the default) and how
+/// a host thread waits for the GPU (`"spin"`, the default, or `"block"`).
+/// Call before installing a service or learner. Neither changes a result bit.
+pub fn configure_v1(kernels: &str, wait: &str) -> Result<(), String> {
+    let kernels = match kernels {
+        "v1" => device::KernelsV1::V1,
+        "v2" => device::KernelsV1::V2,
+        other => return Err(format!("unknown GPU exact kernels {other:?} (v1 or v2)")),
+    };
+    let blocking_wait = match wait {
+        "spin" => false,
+        "block" => true,
+        other => return Err(format!("unknown GPU wait mode {other:?} (spin or block)")),
+    };
+    device::configure_v1(device::ExactOptionsV1 {
+        kernels,
+        blocking_wait,
+    })
+}
+
 /// Starts the exact inference service on device `ordinal` and installs it
 /// for this process's collector threads (`service::enter_collector_v1`).
 /// Replies equal the CPU forward's bits, so this changes timing only.
@@ -76,6 +106,10 @@ pub(crate) fn learner_gradients_v1(
     let learner = LEARNER.get().ok_or("no GPU learner installed")?;
     let mut learner = learner.lock().unwrap_or_else(|p| p.into_inner());
     let started = std::time::Instant::now();
+    #[cfg(feature = "gpu-exact-fault-injection-v1")]
+    if fault_trigger_v1("learner") == Some(learner.updates + learner.cpu_fallbacks + 1) {
+        learner.device.inject_fault_v1();
+    }
     let InstalledLearnerV1 {
         device, buffers, ..
     } = &mut *learner;
@@ -108,6 +142,7 @@ pub fn learner_receipt_v1() -> Option<serde_json::Value> {
                 "nvrtc_version": [id.nvrtc_version.0, id.nvrtc_version.1],
                 "program_sha256": id.program_sha256,
                 "host_tanhf_identity": id.host_tanhf_identity, "tanh_proof_key": id.tanh_proof_key},
+            "wait": if learner.device.options.blocking_wait { "block" } else { "spin" },
             "updates": learner.updates, "substeps": learner.substeps,
             "cpu_fallbacks": learner.cpu_fallbacks,
             "busy_seconds": learner.busy_seconds,

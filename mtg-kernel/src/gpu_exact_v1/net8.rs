@@ -1,10 +1,15 @@
 //! Net-8's exact forward on a device: resident models, request packing, and
-//! one fused launch per model per batch (`net8_forward.cu`).
+//! the batch launch. v1 (`net8_forward.cu`) is one fused launch per model per
+//! batch; v2 (`net8_forward_v2.cu`) is one tiled launch for every model, with
+//! one pinned upload and one pinned download.
 
+use super::device::KernelsV1;
 use super::ExactDeviceV1;
 use crate::inference_cache_v1::ForwardPathV1;
 use crate::native_policy_value_net_v1::{NativeEncodedDecisionViewV1, NativePolicyValueNetV1};
-use cudarc::driver::{CudaSlice, DeviceRepr, LaunchConfig, PushKernelArg};
+use cudarc::driver::{
+    CudaSlice, DevicePtr, DevicePtrMut, DeviceRepr, LaunchConfig, PushKernelArg,
+};
 
 /// `MtgReq` in `net8_forward.cu`.
 pub(super) const R_FIELDS: usize = 19;
@@ -26,6 +31,20 @@ pub(super) struct DimsV1 {
 
 // SAFETY: plain `repr(C)` integers, the layout of the CUDA struct.
 unsafe impl DeviceRepr for DimsV1 {}
+
+/// `MTG_V2_MAX_MODELS` in `net8_forward_v2.cu`: the model slots one v2 launch
+/// serves (`BatchPolicyV1::max_models` must not exceed it).
+pub(crate) const V2_MAX_MODELS: usize = 10;
+
+/// `MtgModelsV2`: each slot's parameter base pointer, passed by value.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ModelsV2 {
+    params: [u64; V2_MAX_MODELS],
+}
+
+// SAFETY: `repr(C)` device pointers, the layout of the CUDA struct.
+unsafe impl DeviceRepr for ModelsV2 {}
 
 /// A model's host-side parameters for upload, identified by its digest.
 pub(crate) struct Net8HostModelV1 {
@@ -73,6 +92,8 @@ impl DimsV1 {
 pub(crate) struct Net8DeviceModelV1 {
     pub(super) params: CudaSlice<f32>,
     pub(super) layout: CudaSlice<i64>,
+    /// The host copy of `layout`, so a v2 launch can check its models share one.
+    pub(super) layout_host: Vec<i64>,
     pub(super) dims: DimsV1,
 }
 
@@ -90,6 +111,7 @@ impl Net8DeviceModelV1 {
                 .stream
                 .clone_htod(&host.layout)
                 .map_err(|e| format!("upload: {e:?}"))?,
+            layout_host: host.layout.clone(),
             dims: host.dims,
         })
     }
@@ -291,6 +313,72 @@ pub(crate) struct DeviceBuffersV1 {
     pub(super) scratch: Option<CudaSlice<f32>>,
     logits: Option<CudaSlice<f32>>,
     values: Option<CudaSlice<f32>>,
+    /// v2: the descriptors, floats and ints in one buffer.
+    packed: Option<CudaSlice<u32>>,
+    /// v2: the logits, then the values.
+    out: Option<CudaSlice<f32>>,
+    upload: Option<PinnedV1<u32>>,
+    download: Option<PinnedV1<f32>>,
+}
+
+/// Page-locked host memory. Uploads use write-combined memory (fast for the
+/// device to read, slow for the host to read); downloads use cached memory.
+/// Every batch synchronizes its stream before returning, so a buffer is never
+/// rewritten while a copy of it is in flight.
+pub(super) struct PinnedV1<T> {
+    ptr: *mut T,
+    len: usize,
+}
+
+// SAFETY: an owned allocation, used by one thread at a time (the buffers'
+// owner holds `&mut`).
+unsafe impl<T> Send for PinnedV1<T> {}
+
+impl<T: Copy + Default> PinnedV1<T> {
+    fn new(device: &ExactDeviceV1, len: usize, write_combined: bool) -> Result<Self, String> {
+        let flags = if write_combined {
+            cudarc::driver::sys::CU_MEMHOSTALLOC_WRITECOMBINED
+        } else {
+            0
+        };
+        device
+            .ctx
+            .bind_to_thread()
+            .map_err(|e| format!("bind: {e:?}"))?;
+        // SAFETY: a fresh allocation of `len` elements, initialized below.
+        let ptr = unsafe { cudarc::driver::result::malloc_host(len * std::mem::size_of::<T>(), flags) }
+            .map_err(|e| format!("pinned alloc: {e:?}"))? as *mut T;
+        // SAFETY: `ptr` holds `len` elements; every one is written here.
+        unsafe { std::slice::from_raw_parts_mut(ptr, len).fill(T::default()) };
+        Ok(Self { ptr, len })
+    }
+
+    fn slice_mut(&mut self, len: usize) -> &mut [T] {
+        assert!(len <= self.len);
+        // SAFETY: in bounds, and `&mut self` excludes other access.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, len) }
+    }
+}
+
+impl<T> Drop for PinnedV1<T> {
+    fn drop(&mut self) {
+        // SAFETY: allocated by `malloc_host`; no copy is in flight (above).
+        let _ = unsafe { cudarc::driver::result::free_host(self.ptr as *mut std::ffi::c_void) };
+    }
+}
+
+fn ensure_pinned<T: Copy + Default>(
+    device: &ExactDeviceV1,
+    slot: &mut Option<PinnedV1<T>>,
+    len: usize,
+    write_combined: bool,
+) -> Result<(), String> {
+    let len = len.max(1);
+    if slot.as_ref().is_none_or(|s| s.len < len) {
+        *slot = None;
+        *slot = Some(PinnedV1::new(device, len.next_power_of_two(), write_combined)?);
+    }
+    Ok(())
 }
 
 pub(super) fn ensure<T: DeviceRepr + cudarc::driver::ValidAsZeroBits>(
@@ -317,10 +405,11 @@ pub(crate) struct ExactOutputV1 {
     pub(crate) value: f32,
 }
 
-/// Runs every packed request: one launch per model slot present, each block
-/// one request. Replies come back in packing order.
+/// Runs every packed request on `kernels`, each block one request. Replies
+/// come back in packing order and do not depend on the kernel version.
 pub(crate) fn forward_batch_v1(
     device: &ExactDeviceV1,
+    kernels: KernelsV1,
     models: &[&Net8DeviceModelV1],
     batch: &PackedBatchV1,
     buffers: &mut DeviceBuffersV1,
@@ -333,6 +422,139 @@ pub(crate) fn forward_batch_v1(
     if models.iter().any(|m| m.dims != dims) {
         return Err("a batch's models must share input dims".into());
     }
+    if batch.replies.iter().any(|&(slot, _, _)| slot >= models.len()) {
+        return Err("request names a model slot that is not resident".into());
+    }
+    match kernels {
+        KernelsV1::V1 => forward_v1(device, models, batch, buffers),
+        KernelsV1::V2 => forward_v2(device, models, batch, buffers),
+    }
+}
+
+/// v2: one tiled launch for every model (at most `V2_MAX_MODELS`; the
+/// slots' parameter pointers are a kernel parameter). The upload is one
+/// buffer of 32-bit words: the descriptors, the floats' bits and the ints. The
+/// download is the logits followed by the values. The stream is synchronized
+/// before returning, so the next call may rewrite every buffer and a caller
+/// may drop a model once this returns.
+fn forward_v2(
+    device: &ExactDeviceV1,
+    models: &[&Net8DeviceModelV1],
+    batch: &PackedBatchV1,
+    buffers: &mut DeviceBuffersV1,
+) -> Result<Vec<ExactOutputV1>, String> {
+    let count = batch.len();
+    let stream = &device.stream;
+    if models.len() > V2_MAX_MODELS {
+        return Err(format!(
+            "one v2 launch serves at most {V2_MAX_MODELS} models, not {}",
+            models.len()
+        ));
+    }
+    // Models with equal dims have equal layouts (`gpu_exact_parameters_v1`
+    // derives the layout from the dims), so one layout serves all; checked.
+    if models.iter().any(|m| m.layout_host != models[0].layout_host) {
+        return Err("a v2 launch's models must share one parameter layout".into());
+    }
+    let layout = &models[0].layout;
+    let mut table = ModelsV2 {
+        params: [0; V2_MAX_MODELS],
+    };
+    let mut records = Vec::with_capacity(models.len());
+    for (slot, model) in models.iter().enumerate() {
+        let (pointer, record) = model.params.device_ptr(stream);
+        table.params[slot] = pointer;
+        records.push(record);
+    }
+    let requests_at = 0;
+    let floats_at = requests_at + batch.requests.len();
+    let ints_at = floats_at + batch.floats.len();
+    let words = ints_at + batch.ints.len();
+    let outputs = batch.logits_len + count;
+    ensure(device, &mut buffers.packed, words)?;
+    ensure(device, &mut buffers.out, outputs)?;
+    ensure(device, &mut buffers.scratch, batch.scratch_len)?;
+    ensure_pinned(device, &mut buffers.upload, words, true)?;
+    ensure_pinned(device, &mut buffers.download, outputs, false)?;
+    let host = buffers.upload.as_mut().expect("ensured").slice_mut(words);
+    for (word, &value) in host[requests_at..floats_at].iter_mut().zip(&batch.requests) {
+        *word = value as u32;
+    }
+    for (word, &value) in host[floats_at..ints_at].iter_mut().zip(&batch.floats) {
+        *word = value.to_bits();
+    }
+    for (word, &value) in host[ints_at..].iter_mut().zip(&batch.ints) {
+        *word = value as u32;
+    }
+    let packed = buffers.packed.as_mut().expect("ensured");
+    {
+        let (pointer, _record) = packed.device_ptr_mut(stream);
+        // SAFETY: `host` is pinned and outlives the copy (the stream is
+        // synchronized below); the device buffer holds at least `words`.
+        unsafe { cudarc::driver::result::memcpy_htod_async(pointer, &*host, stream.cu_stream()) }
+            .map_err(|e| format!("upload: {e:?}"))?;
+    }
+    let scratch = buffers.scratch.as_mut().expect("ensured");
+    let out = buffers.out.as_mut().expect("ensured");
+    {
+        let descriptors = packed.slice(requests_at..floats_at);
+        let floats = packed.slice(floats_at..ints_at);
+        let ints = packed.slice(ints_at..words);
+        let (mut logits, mut values) = out.split_at_mut(batch.logits_len);
+        let mut launch = stream.launch_builder(&device.net8_forward_v2);
+        launch
+            .arg(&descriptors)
+            .arg(&floats)
+            .arg(&ints)
+            .arg(&table)
+            .arg(layout)
+            .arg(&models[0].dims)
+            .arg(&mut *scratch)
+            .arg(&mut logits)
+            .arg(&mut values);
+        let config = LaunchConfig {
+            grid_dim: (count as u32, 1, 1),
+            block_dim: (THREADS_PER_BLOCK, 1, 1),
+            shared_mem_bytes: device.v2_shared_bytes,
+        };
+        // SAFETY: every descriptor's offsets lie inside the packed buffer and
+        // the scratch and outputs sized by `push_v1`; every slot it names is
+        // in the table (checked above).
+        unsafe { launch.launch(config) }.map_err(|e| format!("forward launch: {e:?}"))?;
+    }
+    // The parameter reads are scheduled; the records order later writes after them.
+    drop(records);
+    let read = buffers.download.as_mut().expect("ensured").slice_mut(outputs);
+    {
+        let (pointer, _record) = out.device_ptr(stream);
+        // SAFETY: `read` is pinned and holds `outputs` elements; the stream is
+        // synchronized before it is read.
+        unsafe { cudarc::driver::result::memcpy_dtoh_async(&mut *read, pointer, stream.cu_stream()) }
+            .map_err(|e| format!("download: {e:?}"))?;
+    }
+    stream
+        .synchronize()
+        .map_err(|e| format!("synchronize: {e:?}"))?;
+    let values = &read[batch.logits_len..];
+    Ok(batch
+        .replies
+        .iter()
+        .zip(values)
+        .map(|(&(_, at, actions), &value)| ExactOutputV1 {
+            logits: read[at..at + actions].to_vec(),
+            value,
+        })
+        .collect())
+}
+
+/// v1: one launch per model slot present.
+fn forward_v1(
+    device: &ExactDeviceV1,
+    models: &[&Net8DeviceModelV1],
+    batch: &PackedBatchV1,
+    buffers: &mut DeviceBuffersV1,
+) -> Result<Vec<ExactOutputV1>, String> {
+    let count = batch.len();
     ensure(device, &mut buffers.requests, batch.requests.len())?;
     ensure(device, &mut buffers.floats, batch.floats.len())?;
     ensure(device, &mut buffers.ints, batch.ints.len())?;
