@@ -474,19 +474,12 @@ fn skycloud_expanse_filters_one_mana_into_white_and_blue() {
     let expanse = put(&mut state, P0, "Skycloud Expanse", Zone::Battlefield);
     next(&mut state);
     assert!(
-        engine::step(
-            &mut state.clone(),
-            Action::ActivateManaAbilityChoice(expanse, ManaColor::W)
-        )
-        .is_err(),
+        engine::step(&mut state.clone(), Action::ActivateManaAbility(expanse)).is_err(),
         "no free mana ability"
     );
     pool(&mut state, P0, &[], 1);
     next(&mut state);
-    act(
-        &mut state,
-        Action::ActivateManaAbilityChoice(expanse, ManaColor::W),
-    );
+    act(&mut state, Action::ActivateManaAbility(expanse));
     assert!(state.objects.get(expanse).tapped);
     assert_eq!(mana(&state, P0, ManaColor::W), 1);
     assert_eq!(mana(&state, P0, ManaColor::U), 1);
@@ -1121,16 +1114,19 @@ fn parallax_wave_fades_exiles_and_returns_its_cards() {
 fn parallax_wave_sacrifices_itself_when_it_cannot_fade() {
     let mut state = islands();
     let wave = put(&mut state, P0, "Parallax Wave", Zone::Hand);
-    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let elves: Vec<ObjectId> = (0..5)
+        .map(|_| put(&mut state, P1, "Llanowar Elves", Zone::Battlefield))
+        .collect();
     pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);
     cast(&mut state, wave, &[]);
     settled(&mut state);
-    for _ in 0..5 {
-        activate(&mut state, wave, 0, &[Target::Object(elves)]);
+    for &elf in &elves {
+        activate(&mut state, wave, 0, &[Target::Object(elf)]);
         settled(&mut state);
     }
     assert_eq!(p1b::fade_counters(&state, wave), 0);
-    assert!(!activatable(&mut state, wave, 0));
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    assert!(!activatable(&mut state, wave, 0), "no fade counter left");
     to_next_turn(&mut state, |_, _| None);
     assert_eq!(zone(&state, wave), Zone::Graveyard);
 }
