@@ -638,11 +638,12 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             dispatch.running_storage(storage)
             self.assertEqual(len(walks), 2)
 
-    def admission(self, logical=1000, finished=0, age=5.0, shared=None, seconds=10.0):
+    def admission(self, logical=1000, finished=0, age=5.0, shared=None, seconds=10.0, in_flight=0):
         """The driver's admission walk: completed ``age`` seconds ago after ``seconds`` of walking."""
         completed = time.time() - age
         return {"schema": dispatch.ADMISSION_SCHEMA, "logical_bytes": logical, "finished_since": finished,
-                "walked_unix": completed - seconds, "completed_unix": completed, "shared_walk": shared}
+                "walked_unix": completed - seconds, "completed_unix": completed, "shared_walk": shared,
+                "in_flight": in_flight}
 
     def test_an_admission_walk_spares_the_dispatcher_its_own(self):
         """#463: the driver's admission walk passes in the request; the cap, reserve and projections are still
@@ -673,6 +674,7 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             backwards = self.admission()
             backwards["completed_unix"] = backwards["walked_unix"] - 1
             for bad in ({"schema": "other"}, self.admission(logical=-1), self.admission(finished=1.5),
+                    self.admission(in_flight=-1),
                         self.admission() | {"walked_unix": True}, backwards, self.admission(shared="relative/walk.json")):
                 with self.assertRaises(ValueError):
                     dispatch.validate_storage(storage, admission=bad)
@@ -684,9 +686,11 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         storage = self.request(2)["storage"]
         storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
         with patch.object(dispatch.shutil, "disk_usage", return_value=type("Disk", (), {"free": 100*1024**3})()):
-            dispatch.validate_storage(storage, admission=self.admission(logical=4242, age=120, seconds=30))
+            checked = dispatch.validate_storage(storage, admission=self.admission(logical=2242, age=120, seconds=30,
+                                                                                 in_flight=2))
+        self.assertEqual(checked["logical_bytes"], 2242)  # the cap check is the driver's bound
         dispatch.seed_emergency()
-        self.assertEqual(dispatch.EMERGENCY_WALK["logical"], 4242)
+        self.assertEqual(dispatch.EMERGENCY_WALK["logical"], 2242 + 2 * 1000)  # with the siblings in flight
         self.assertAlmostEqual(time.monotonic() - dispatch.EMERGENCY_WALK["at"], 150, delta=5)
         with patch.object(dispatch, "accounting_bytes", side_effect=AssertionError("no walk")):
             self.assertEqual(dispatch.running_storage(storage)["logical_bytes"], 4242)
@@ -769,7 +773,7 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         self.assertEqual(dispatch.own_output_bytes(storage, other.name), 0)
         self.assertEqual(dispatch.own_output_bytes({k: v for k, v in storage.items() if k != "emergency"}, inside), 0)
 
-    def run_native(self, request, child_seconds, validate_seconds=0.0, **patches):
+    def run_native(self, request, child_seconds, validate_seconds=0.0, child_wait=None, **patches):
         """execute() on a stand-in native child that runs ``child_seconds``; samples every 0.05 s. Returns
         execution.json, or None when no native child was spawned."""
         request_ref = self.save(request)
@@ -786,6 +790,8 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
                 return self.returncode
 
             def wait(self, timeout=None):
+                if child_wait is not None and timeout is not None and self.poll() is None:
+                    return child_wait(timeout)
                 left = self.end - time.monotonic()
                 if timeout is not None and left > timeout:
                     time.sleep(timeout)
@@ -849,6 +855,41 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         self.assertIsNone(campaign.native_ticks(Path(request["root"])))  # outside the native part: activity counts
         release.set()
         dispatch.EMERGENCY_WALK["thread"].join(10)
+
+    def test_an_interruption_record_tells_a_running_child_from_an_exited_one(self):
+        """Positive per-attempt evidence of a stop from outside (AMENDMENT-3 draft): the signal, and whether the
+        native child was still running or had exited, with its code."""
+        running = unittest.mock.MagicMock()
+        running.poll.return_value = None
+        exited = unittest.mock.MagicMock()
+        exited.poll.return_value = 3
+        import signal as signals
+        for name, child, expected in (("running", running, (True, True, None)), ("exited", exited, (True, False, 3)),
+                                      ("before", None, (False, False, None))):
+            root = self.root / name
+            root.mkdir()
+            dispatch.record_interruption(root, child, signals.SIGTERM)
+            dispatch.record_interruption(root, exited, signals.SIGTERM)  # written once
+            record = dispatch.read(root / "interruption.json")
+            self.assertEqual((record["signal"], record["child_started"], record["child_running"],
+                              record["child_exit_code"]), ("SIGTERM",) + expected)
+
+    @unittest.skipUnless(LINUX, "delivers a POSIX signal to this process")
+    def test_a_stop_from_outside_is_recorded_while_the_child_runs(self):
+        import signal as signals
+        request = self.request(1)
+        before = signals.getsignal(signals.SIGTERM)
+        original = subprocess.TimeoutExpired
+
+        def stop_then_wait(timeout):
+            os.kill(os.getpid(), signals.SIGTERM)  # the handler raises at once, inside the monitor loop
+            time.sleep(1)
+            raise original("native", timeout)
+        execution = self.run_native(request, child_seconds=5.0, child_wait=stop_then_wait)
+        record = dispatch.read(Path(request["root"]) / "interruption.json")
+        self.assertEqual((record["signal"], record["child_running"]), ("SIGTERM", True))
+        self.assertIn("stopped from outside by SIGTERM", execution["error"])
+        self.assertEqual(signals.getsignal(signals.SIGTERM), before)  # restored
 
     def test_a_runpod_attempt_rechecks_its_lease_just_before_the_spawn(self):
         """Astra #464 round 1: a slow admission check must not start native work the lease no longer allows; the

@@ -81,19 +81,24 @@ while native work runs. Symlinks and junctions in accounting trees are refused.
 
 A campaign driver that walked the accounting trees to admit a block may pass that
 walk as `admission` (`native-expanded-storage-admission/v1`: `logical_bytes`,
-`walked_unix` and `completed_unix` of the walk, `finished_since`, optional absolute
-`shared_walk`). While the walk completed at most 900 s ago the dispatcher checks
-the cap, reserve and projections on `logical_bytes` plus `finished_since` times
+`walked_unix` and `completed_unix` of the walk, `finished_since`, `in_flight`
+(other blocks in flight), optional absolute `shared_walk`). While the walk
+completed at most 900 s ago the dispatcher checks the cap, reserve and
+projections on `logical_bytes` plus `finished_since` times
 `projected_additional_bytes`, without walking; an older one means a walk as
-before. With `storage.emergency`, no sample waits for a walk (the monitor loop
-records a native child's end at once). With `shared_walk`, the record the
+before. With `storage.emergency`, the first emergency sample is that bound plus
+`in_flight` times `projected_additional_bytes`, and no sample waits for a walk
+(the monitor loop records a native child's end at once). With `shared_walk`, the record the
 driver's one background walker publishes, each sample reads the newest walk, plus
 each block in flight at its start at `projected_additional_bytes`; the attempt
 walks for itself (in the background, during its native part) only when no walk
 completed for 3,600 s. Without it, the attempt walks in the background at most
 every 600 s, during its native part. The attempt's own outputs (its native tree
 under an accounting root, its archive) are added unless the walk started after
-they were written. A `runpod` attempt rechecks its lease just before the spawn
+they were written. A `runpod` attempt rechecks its lease just before the spawn.
+A SIGTERM, SIGHUP or SIGINT to the dispatcher writes `interruption.json` (the
+signal, and whether the native child was still running or had exited, with its
+code) before the attempt ends; a SIGKILL or a lost host writes none
 (mtg-kernel#463).
 
 Build a choice JSON:

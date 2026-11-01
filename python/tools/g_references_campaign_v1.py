@@ -576,16 +576,16 @@ def walk_volume(campaign: Campaign) -> None:
     campaign.event(kind="volume-walk", seconds=seconds, logical=result["logical"])
 
 
-def admission_record(campaign: Campaign) -> dict | None:
+def admission_record(campaign: Campaign, native: Path | None = None) -> dict | None:
     """The admission walk a dispatch request carries (native_expanded_dispatch_v1.admitted_bytes): the last
-    walk's logical bytes and time, the blocks finished since it, and the shared walk file. The caller holds
-    SCRATCH_LOCK."""
+    walk's logical bytes and times, the blocks finished since it, the other blocks in flight (besides ``native``)
+    and the shared walk file. The caller holds SCRATCH_LOCK."""
     record = volume(campaign)
     if record["logical"] is None:
         return None
     return {"schema": native_dispatch.ADMISSION_SCHEMA, "logical_bytes": record["logical"],
             "walked_unix": record["started"], "completed_unix": record["walked"], "finished_since": record["finished"],
-            "shared_walk": record["shared"]}
+            "shared_walk": record["shared"], "in_flight": len(SCRATCH_INFLIGHT - {str(native)})}
 
 
 WALKERS: dict = {}  # accounting roots -> (thread, stop event): this process's one background walker per volume
@@ -647,7 +647,7 @@ def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
                        walker="background")
 
 
-def admitted(campaign: Campaign, walk: bool = False) -> dict | None:
+def admitted(campaign: Campaign, walk: bool = False, native: Path | None = None) -> dict | None:
     """admission_record under SCRATCH_LOCK; with ``walk``, after walking when the last walk is stale (a check
     that precedes admission, such as the qualification's choice check, then serves the admissions after it)."""
     if not campaign.raw["storage"].get("accounting_roots"):
@@ -655,7 +655,7 @@ def admitted(campaign: Campaign, walk: bool = False) -> dict | None:
     with SCRATCH_LOCK:
         if walk:
             volume_logical(campaign)
-        return admission_record(campaign)
+        return admission_record(campaign, native)
 
 
 def volume_logical(campaign: Campaign) -> tuple[int, int]:
@@ -847,7 +847,7 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
             request = request_for(campaign, run, pin(config_path), root, cold, estimate)
-            admission = admitted(campaign)  # the walk this block was admitted on: its dispatcher need not walk
+            admission = admitted(campaign, native=native)  # the walk this block was admitted on
             if admission is not None:
                 request["admission"] = admission
             request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json", request)

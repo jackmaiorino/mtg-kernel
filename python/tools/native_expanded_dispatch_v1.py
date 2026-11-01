@@ -22,6 +22,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -323,6 +324,8 @@ def admitted_bytes(admission, storage, now=None):
             "invalid storage admission")
     shared = admission.get("shared_walk")
     require(shared is None or isinstance(shared, str) and Path(shared).is_absolute(), "invalid shared walk path")
+    in_flight = admission.get("in_flight", 0)
+    require(type(in_flight) is int and in_flight >= 0, "invalid storage admission")
     age = (time.time() if now is None else now) - completed
     if not -CLOCK_SKEW_SECONDS <= age <= ADMISSION_WALK_SECONDS:
         return None
@@ -360,7 +363,10 @@ def validate_storage(storage, extra=None, admission=None):
         require(sum(storage["projected_volume_bytes"].values()) >= projected,
                 "volume projection omits planned writes")
     require(logical + projected <= cap, "retained plus projected storage exceeds allowance")
-    LAST_STORAGE.update(logical=logical, unix=walked)
+    # The emergency seed also counts the other blocks in flight at admission, each at its projected retained
+    # bytes: their outputs may postdate the walk (the driver's own admission bound).
+    siblings = 0 if bound is None else admission.get("in_flight", 0) * storage["projected_additional_bytes"]
+    LAST_STORAGE.update(logical=logical + siblings, unix=walked)
     return {"logical_bytes": logical, "cap_bytes": cap, "source": "walk" if bound is None else "admission"}
 
 
@@ -1335,6 +1341,49 @@ def require_mapped_libraries(child, runtime, timeout=30.0):
     return mapped
 
 
+class ExternalStop(BaseException):
+    """This dispatcher was stopped from outside (a signal), not by its block."""
+
+
+INTERRUPTION_SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT")
+
+
+def record_interruption(root, child, signum):
+    """Write ``interruption.json`` once: the signal, and whether the native child was still running when it
+    arrived (a running child stopped from outside) or had already exited (with its exit code). An attempt with no
+    such record has no positive evidence of an external stop (a SIGKILL or a lost Pod writes none)."""
+    path = Path(root) / "interruption.json"
+    if path.exists():
+        return
+    code = None if child is None else child.poll()
+    write(path, {"schema": "native-expanded-interruption/v1", "signal": signal.Signals(signum).name,
+                 "at_unix": time.time(), "child_started": child is not None,
+                 "child_running": child is not None and code is None, "child_exit_code": code})
+
+
+def install_stop_record(root, current_child):
+    """Record, then raise, a stop from outside (record_interruption) for the signals in INTERRUPTION_SIGNALS;
+    returns the previous handlers for restore_handlers. ``current_child``: the native child so far, or None."""
+    previous = {}
+
+    def stopped(signum, frame):
+        record_interruption(root, current_child(), signum)
+        raise ExternalStop(f"stopped from outside by {signal.Signals(signum).name}")
+    for name in INTERRUPTION_SIGNALS:
+        number = getattr(signal, name, None)
+        if number is not None:
+            try:
+                previous[number] = signal.signal(number, stopped)
+            except (ValueError, OSError):  # not the main thread, or not settable here
+                pass
+    return previous
+
+
+def restore_handlers(previous):
+    for number, handler in previous.items():
+        signal.signal(number, handler)
+
+
 def busy_pattern(binary=None):
     """Image names that make the host busy. Linux image names carry no .exe, so
     there the pinned binary's own file name joins the pattern."""
@@ -1366,6 +1415,18 @@ def execute(request_path, qualification):
     command = [str(checked(runtime["binary"])), str((root/"config.json").resolve())]
     if qualification and request["kind"] == "training":
         command.extend(["--max-new-iterations", "1"])
+    native_child = {"child": None}
+    handlers = install_stop_record(root, lambda: native_child["child"])
+    try:
+        return run_attempt(request_path, request, qualification, config, runtime, selected, shared, root, cold,
+                           placed, command, started, token, native_child, archive_native, reservations)
+    finally:
+        restore_handlers(handlers)
+
+
+def run_attempt(request_path, request, qualification, config, runtime, selected, shared, root, cold, placed,
+                command, started, token, native_child, archive_native, reservations):
+    """The attempt after its admission checks: the barrier, the native child, its records and archive."""
     barrier = start_barrier(request, qualification)
     barrier_seconds = 0.0 if barrier is None else await_release(barrier, request_path)
     started += barrier_seconds  # waiting for the other packed trials is not this trial's time
@@ -1380,6 +1441,7 @@ def execute(request_path, qualification):
         child_started = time.monotonic()
         child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
                                  env=native_child_environment(request), **options)
+        native_child["child"] = child
         # Before the reservation's lock, which packed trials take one after another.
         started_unix = time.time()
         reservations.record_descendant(token, child.pid)

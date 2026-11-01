@@ -501,8 +501,8 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(driver.run_block(self.campaign, "G4", 1, state), "stopped")
         admission = requests[0]["admission"]
         shared = self.campaign.state / driver.SHARED_WALK
-        self.assertEqual((admission["logical_bytes"], admission["finished_since"], admission["shared_walk"]),
-                         (300, 0, str(shared)))
+        self.assertEqual((admission["logical_bytes"], admission["finished_since"], admission["shared_walk"],
+                          admission["in_flight"]), (300, 0, str(shared), 0))  # no other block in flight
         self.assertEqual(driver.native_dispatch.admitted_bytes(admission, self.campaign.raw["storage"]), 300)
         self.assertEqual(driver.native_dispatch.shared_walk(shared)[0], 300)
         driver.volume(self.campaign)["finished"] = 2  # blocks finished since the walk count at their projection
