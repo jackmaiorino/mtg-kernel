@@ -446,8 +446,33 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
             "{}: the imported root decision differs: {rt:?} vs {rc:?}",
             record["case"]
         );
-        resolve_waiting(&mut truth, below, 40);
-        resolve_waiting(&mut canon, below, 40);
+        // Lockstep: both pass (or take index 0) until the waiting item
+        // resolves; the public summaries must agree after every step.
+        for step in 0..40 {
+            let (t, c) = (public_summary(&truth), public_summary(&canon));
+            assert!(
+                t == c,
+                "{}: continuations differ after {step} steps at {}",
+                record["case"],
+                first_diff(&t, &c, String::new())
+            );
+            if truth.game_state().stack.len() < below {
+                break;
+            }
+            let (Some(rt), Some(rc)) = (root(&truth), root(&canon)) else {
+                break;
+            };
+            assert_eq!(
+                (rt.0, rt.1),
+                (rc.0, rc.1),
+                "{}: decisions differ after {step} steps: {} vs {}",
+                record["case"],
+                rt.2,
+                rc.2
+            );
+            resolve_waiting(&mut truth, 0, 1);
+            resolve_waiting(&mut canon, 0, 1);
+        }
         let (t, c) = (public_summary(&truth), public_summary(&canon));
         if t != c {
             let case = record["case"].as_str().unwrap_or("case").to_string();
