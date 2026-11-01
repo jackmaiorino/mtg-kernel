@@ -538,7 +538,7 @@ def volume(campaign: Campaign) -> dict:
     """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since,
     and the file where each walk is published for the dispatchers (the first campaign's state folder)."""
     key = tuple(campaign.raw["storage"]["accounting_roots"])
-    return VOLUMES.setdefault(key, {"logical": None, "walked": 0.0, "finished": 0,
+    return VOLUMES.setdefault(key, {"logical": None, "started": 0.0, "walked": 0.0, "finished": 0,
                                     "shared": str(campaign.state / SHARED_WALK)})
 
 
@@ -564,13 +564,13 @@ def walk_volume(campaign: Campaign) -> None:
     if "error" in result:
         raise result["error"]
     record = volume(campaign)
-    record.update(logical=result["logical"], walked=time.time(), finished=0)
+    record.update(logical=result["logical"], started=started_unix, walked=time.time(), finished=0)
     seconds = round(time.monotonic() - started, 1)
-    try:  # the dispatchers' emergency samples adopt it rather than walk again (mtg-kernel#463)
+    try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
         Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
-        native_dispatch.publish_walk(record["shared"], result["logical"], started_unix, seconds, "driver")
+        native_dispatch.publish_walk(record["shared"], result["logical"], started_unix, record["walked"], "driver")
     except OSError:
-        pass  # only a shortcut: a dispatcher without it walks
+        pass  # only a shortcut: the background walker publishes too
     touch(campaign)
     campaign.event(kind="volume-walk", seconds=seconds, logical=result["logical"])
 
@@ -583,7 +583,67 @@ def admission_record(campaign: Campaign) -> dict | None:
     if record["logical"] is None:
         return None
     return {"schema": native_dispatch.ADMISSION_SCHEMA, "logical_bytes": record["logical"],
-            "walked_unix": record["walked"], "finished_since": record["finished"], "shared_walk": record["shared"]}
+            "walked_unix": record["started"], "completed_unix": record["walked"], "finished_since": record["finished"],
+            "shared_walk": record["shared"]}
+
+
+WALKERS: dict = {}  # accounting roots -> (thread, stop event): this process's one background walker per volume
+WALKER_POLL_SECONDS = 30
+
+
+def start_walker(campaign: Campaign) -> None:
+    """Start this process's background walker of the campaign's accounting trees, once per volume, for the
+    dispatchers' emergency samples (AMENDMENT-2 item 6; mtg-kernel#463: eight attempts each walking the network
+    volume took 40 min a walk). While blocks are in flight it walks when the published walk completed over
+    EMERGENCY_WALK_SECONDS ago and publishes each walk; the dispatchers read it and walk only if it goes stale.
+    It records no driver work: its walk is not the lease's progress, so a stalled driver still goes idle."""
+    storage = campaign.raw["storage"]
+    if not storage.get("emergency") or not storage.get("accounting_roots"):
+        return
+    key = tuple(storage["accounting_roots"])
+    with SCRATCH_LOCK:
+        if key in WALKERS and WALKERS[key][0].is_alive():
+            return
+        stop = threading.Event()
+        thread = threading.Thread(target=walker, args=(campaign, volume(campaign)["shared"], stop),
+                                  name="volume-walker", daemon=True)
+        WALKERS[key] = (thread, stop)
+    thread.start()
+
+
+def stop_walkers() -> None:
+    """Stop and forget the background walkers (tests; a driver's ends with its process)."""
+    with SCRATCH_LOCK:
+        walkers = list(WALKERS.values())
+        WALKERS.clear()
+    for thread, stop in walkers:
+        stop.set()
+        thread.join(60)
+
+
+def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
+    storage = campaign.raw["storage"]
+    while not stop.wait(WALKER_POLL_SECONDS):
+        with SCRATCH_LOCK:
+            busy = bool(SCRATCH_INFLIGHT)
+        found = native_dispatch.shared_walk(shared)
+        if not busy or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
+            continue
+        started = time.time()
+        try:
+            logical = native_dispatch.accounting_bytes(storage)[1]
+            Path(shared).parent.mkdir(parents=True, exist_ok=True)
+            native_dispatch.publish_walk(shared, logical, started, time.time(), "driver-background")
+        except Exception as error:  # the dispatchers walk for themselves once the record is stale
+            if stop.is_set():
+                return
+            campaign.event(kind="volume-walk-error", error=f"{type(error).__name__}: {error}")
+            stop.wait(native_dispatch.EMERGENCY_WALK_SECONDS)
+            continue
+        if stop.is_set():
+            return
+        campaign.event(kind="volume-walk", seconds=round(time.time() - started, 1), logical=logical,
+                       walker="background")
 
 
 def admitted(campaign: Campaign, walk: bool = False) -> dict | None:
@@ -778,6 +838,7 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             waiting = True
             continue
         waiting = False
+        start_walker(campaign)  # the dispatchers' emergency samples read its walks
         try:
             config = g.block_config(block_spec(campaign, run, block, state, native))
             g.require_runtime_rules(config)  # amendment 1: refuse a block with any episode outside the profile

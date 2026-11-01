@@ -81,14 +81,18 @@ while native work runs. Symlinks and junctions in accounting trees are refused.
 
 A campaign driver that walked the accounting trees to admit a block may pass that
 walk as `admission` (`native-expanded-storage-admission/v1`: `logical_bytes`,
-`walked_unix`, `finished_since`, optional absolute `shared_walk`). While it is at
-most 900 s old the dispatcher checks the cap, reserve and projections on
-`logical_bytes` plus `finished_since` times `projected_additional_bytes`, without
-walking; an older one means a walk as before. With `storage.emergency`, a due
-emergency walk runs in a background thread (the monitor loop never waits for it),
-and with `shared_walk` the attempts of one host adopt one another's fresh walk
-and take turns under a lock file. The wall-time limit starts after the admission
-checks (mtg-kernel#463).
+`walked_unix` and `completed_unix` of the walk, `finished_since`, optional absolute
+`shared_walk`). While the walk completed at most 900 s ago the dispatcher checks
+the cap, reserve and projections on `logical_bytes` plus `finished_since` times
+`projected_additional_bytes`, without walking; an older one means a walk as
+before. With `storage.emergency`, no sample waits for a walk (the monitor loop
+records a native child's end at once). With `shared_walk`, the record the
+driver's one background walker publishes, each sample reads the newest walk and
+the attempt walks for itself (in the background) only once that record started
+over 1,800 s ago; without it, the attempt walks in the background at most every
+600 s. An attempt's own output under an accounting root is added after its native
+part. A `runpod` attempt rechecks its lease just before the spawn
+(mtg-kernel#463).
 
 Build a choice JSON:
 

@@ -512,6 +512,36 @@ class DriverTests(unittest.TestCase):
         with self.disk(free=10**6, total=10**6):
             self.assertEqual(driver.admitted(self.campaign, walk=True)["logical_bytes"], 300)  # the choice check
 
+    def test_one_background_walker_publishes_while_blocks_are_in_flight(self):
+        """#463: one walker per volume in the driver serves every dispatcher's emergency samples."""
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.addCleanup(driver.stop_walkers)
+        self.scratch_campaign()
+        raw = json.loads(self.path.read_text())
+        raw["storage"]["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        self.write(raw)
+        (self.root / "volume").mkdir()
+        (self.root / "volume" / "kept").write_bytes(b"x" * 300)
+        shared = self.campaign.state / driver.SHARED_WALK
+        touched = []
+        with patch.object(driver, "WALKER_POLL_SECONDS", 0.05),                 patch.object(driver, "touch", lambda campaign: touched.append(1)):
+            driver.start_walker(self.campaign)
+            driver.start_walker(self.campaign)
+            self.assertEqual(len(driver.WALKERS), 1)
+            time.sleep(0.3)
+            self.assertIsNone(driver.native_dispatch.shared_walk(shared))  # nothing in flight: no walk
+            driver.SCRATCH_INFLIGHT.add(str(self.root / "container" / "a"))
+            deadline = time.monotonic() + 10
+            while driver.native_dispatch.shared_walk(shared) is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            found = driver.native_dispatch.shared_walk(shared)
+            self.assertEqual(found[0], 300)
+            time.sleep(0.3)
+            self.assertEqual(driver.native_dispatch.shared_walk(shared), found)  # fresh: not walked again
+        self.assertEqual(touched, [])  # its walks are not the lease's progress
+        driver.stop_walkers()
+        self.assertEqual(driver.WALKERS, {})
+
     def test_a_long_volume_walk_records_driver_work_while_it_runs(self):
         self.scratch_campaign()
         touched = []

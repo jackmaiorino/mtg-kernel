@@ -270,6 +270,10 @@ class QualifyTests(unittest.TestCase):
         wave's admissions."""
         driver.VOLUMES.clear()
         self.addCleanup(driver.VOLUMES.clear)
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["storage"]["projected_additional_bytes"] = 1000
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        self.campaign = driver.Campaign(self.path)
         (self.root / "kept").write_bytes(b"x" * 500)
         inventory = save(self.root / "inventory.json", json.dumps({"inventory": {}}).encode())
         config = save(self.root / "config.json", b"{}")
