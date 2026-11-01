@@ -151,9 +151,9 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
     # QUALIFICATION-RESTART.md (lead ruling 2026-11-01): a superseded campaign root on the same volume stays an
     # accounting root of this campaign (admission cap, walks, emergency check) until it is archived and pruned.
     superseded = spec.get("superseded_campaign_roots", [])
-    require(isinstance(superseded, list) and len(set(superseded)) == len(superseded)
+    require(isinstance(superseded, list)
             and all(isinstance(old, str) and re.fullmatch("[a-z0-9][a-z0-9-]{0,62}", old) and old != base.name
-                    for old in superseded),
+                    for old in superseded) and len(set(superseded)) == len(superseded),
             "superseded campaign roots are distinct short names other than this campaign's")
     storage["accounting_roots"] += [str(cloud.WORKSPACE / old / "campaign") for old in superseded]
     # AMENDMENT-2.md: the trajectories are block scratch, admitted against the container disk (spec "scratch":

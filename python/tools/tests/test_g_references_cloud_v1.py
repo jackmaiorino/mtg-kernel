@@ -87,7 +87,7 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(campaign["storage"]["accounting_roots"],
                          [f"/workspace/{ROOT}-q2/campaign", f"/workspace/{ROOT}/campaign"])
         self.assertTrue(campaign["roots"]["checkpoints"].startswith(f"/workspace/{ROOT}-q2/campaign/"))
-        for bad in ([ROOT + "-q2"], [ROOT, ROOT], ["Bad Name"], ROOT):
+        for bad in ([ROOT + "-q2"], [ROOT, ROOT], ["Bad Name"], ROOT, [{}], [[]]):
             with self.assertRaisesRegex(ValueError, "superseded campaign roots"):
                 gcloud.package(self.fixture.spec(campaign_root=ROOT + "-q2", superseded_campaign_roots=bad),
                                Path(self.temp.name) / f"bad-{time.monotonic_ns()}")
