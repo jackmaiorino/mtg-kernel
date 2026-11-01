@@ -83,7 +83,7 @@ A grid-wide exact GEMM over rows batched across decisions (M = tokens x decision
 What this says:
 
 - **M's forward already meets the assumed rates.** S's narrow layers (d 96) do not yet; PR D tunes for them (a 32-wide tile, more rows per block).
-- **A parameter gradient cannot meet them in one chain.** A layer has only as many independent chains as parameters, each as long as the batch's rows. A new net's CPU reference should therefore define its gradient as a blocked sum (fixed chunks, partials in chunk order), which is exact on both sides and parallel. That is a W7 reference decision; net-8's legacy order cannot change.
+- **A parameter gradient cannot meet them in one chain.** A layer has only as many independent chains as parameters, each as long as the batch's rows. **Ruled by the lead (2026-10-31):** new W7 architectures declare a blocked reduction order in their CPU reference: chunks of 512 rows, each reduced in order, then the partials added in chunk order. That order is exact on both sides and parallel. Net-8 and V8 keep their single-chain reference.
 - **The 1,024-wide shapes** behave like a power-of-two pitch problem (the same 64 x 64 kernel varies 3x between runs at 16,384 x 1,024 x 1,024). PR D pads leading dimensions and re-measures.
 - **Attention** is about 7% of S's multiply-adds at 39 tokens. That is not its time share: its reductions have small K, its softmax needs an exp with a tanh-style proof, and softmax and normalization are memory-bound. Those kernels are designed with the W7 CPU reference.
 
