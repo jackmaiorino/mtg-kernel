@@ -1749,8 +1749,9 @@ fn gpu_exact_learner_preserves_every_bit() {
 /// The segment-level fault and CPU resume run with the RT1 binary in the S3b
 /// qualification. Run alone, in its own process (the fault is sticky):
 /// `MTG_KERNEL_GPU_EXACT_FAULT=learner:2 MTG_KERNEL_GPU_EXACT_TEST_ORDINAL=N
-/// cargo test --release --features gpu-exact-fault-injection-v1 --lib
-/// gpu_exact_learner_fault_fails_the_update_closed -- --exact --ignored`.
+/// cargo test --release --features gpu-exact-fault-injection-v1 --lib --
+/// --exact --ignored
+/// native_policy_train_step_v1::gae_v1::tests::gpu_exact_learner_fault_fails_the_update_closed`.
 #[cfg(feature = "gpu-exact-fault-injection-v1")]
 #[test]
 #[ignore = "needs a CUDA device and its own process (MTG_KERNEL_GPU_EXACT_FAULT=learner:2)"]

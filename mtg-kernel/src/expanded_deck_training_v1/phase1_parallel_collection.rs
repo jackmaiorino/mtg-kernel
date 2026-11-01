@@ -958,7 +958,8 @@ mod tests {
     /// command, which plays on the calling thread. With the exact GPU service
     /// installed, that command must send its forwards to the service (it
     /// once ran every forward on the CPU), and publish the same trajectories
-    /// as `CollectParallel` with two workers.
+    /// as `CollectParallel` with two workers. The request count is the
+    /// process's, so run device tests one at a time (`--test-threads 1`).
     #[cfg(feature = "gpu-exact-v1")]
     #[test]
     #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL) and native engine compute"]
