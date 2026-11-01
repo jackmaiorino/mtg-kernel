@@ -118,6 +118,20 @@ pub(crate) fn compare_worlds(
     viewer: PlayerId,
     mutants: &[MutantV1],
 ) -> PairReportV1 {
+    compare_worlds_with(w, w2, actions, viewer, mutants, false)
+}
+
+/// As [`compare_worlds`]; with `index_fallback`, W' takes W's candidate
+/// index when no candidate matches semantically (F-prov: the worlds differ
+/// only in native ids, which the semantic form carries).
+pub(crate) fn compare_worlds_with(
+    w: FastActorSessionV1,
+    w2: FastActorSessionV1,
+    actions: &[Vec<u8>],
+    viewer: PlayerId,
+    mutants: &[MutantV1],
+    index_fallback: bool,
+) -> PairReportV1 {
     let mut report = PairReportV1::default();
     let (mut s, mut t) = (w, w2);
     for chosen in actions {
@@ -149,7 +163,13 @@ pub(crate) fn compare_worlds(
             }
         }
         let a = menu(&s).iter().position(|x| x == chosen);
-        let b = menu(&t).iter().position(|x| x == chosen);
+        let b = menu(&t).iter().position(|x| x == chosen).or(
+            if index_fallback && d.legal_action_count == e.legal_action_count {
+                a
+            } else {
+                None
+            },
+        );
         let (Some(a), Some(b)) = (a, b) else {
             report.truncated = true;
             break;
@@ -218,6 +238,37 @@ pub(crate) fn f_deal(
         &game.actions,
         viewer,
         mutants,
+    ))
+}
+
+/// F-prov: swap the deal slots (library positions at the deal) of two
+/// same-name opponent cards V never sees before both are hidden. Only their
+/// provenance (native ids) differs.
+pub(crate) fn f_prov(
+    game: &GameV1,
+    viewer: PlayerId,
+    mutants: &[MutantV1],
+) -> Option<PairReportV1> {
+    let opp = viewer.opponent();
+    let start = game.start.game_state();
+    let library = &start.players[opp.index()].library;
+    let (i, j) = (0..library.len()).find_map(|i| {
+        (i + 1..library.len())
+            .find(|&j| {
+                start.objects.get(library[i]).card_def == start.objects.get(library[j]).card_def
+            })
+            .map(|j| (i, j))
+    })?;
+    let mut st = start.clone();
+    st.players[opp.index()].library.swap(i, j);
+    let w2 = FastActorSessionV1::import_infoset_v1(&game.start, st, 0);
+    Some(compare_worlds_with(
+        game.start.clone(),
+        w2,
+        &game.actions,
+        viewer,
+        mutants,
+        true,
     ))
 }
 
@@ -299,6 +350,7 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
     let mutants = [MutantV1::L1, MutantV1::L2, MutantV1::L3, MutantV1::L7];
     let mut totals: BTreeMap<String, u64> = BTreeMap::new();
     let mut compared = 0;
+    let mut truncated = 0;
     for (decks, seed) in [
         (["CawGates", "Faeries"], 11u64),
         (["Wildfire", "Burn"], 12),
@@ -308,6 +360,7 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
         for viewer in [PlayerId::P0, PlayerId::P1] {
             let mut reports = Vec::new();
             reports.extend(f_deal(&game, viewer, &mutants));
+            reports.extend(f_prov(&game, viewer, &mutants));
             for at in [20, 60, 120] {
                 reports.extend(f_slot(&game, viewer, at, &mutants));
             }
@@ -317,13 +370,16 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
                     "the correct producer differs across worlds: {r:?}"
                 );
                 compared += r.compared;
+                truncated += u64::from(r.truncated);
                 for (m, n) in r.witnesses {
                     *totals.entry(m).or_default() += n;
                 }
             }
         }
     }
-    eprintln!("AC1 engine-game families: compared {compared}, witnesses {totals:?}");
+    eprintln!(
+        "AC1 engine-game families: compared {compared}, truncated pairs {truncated}, witnesses {totals:?}"
+    );
     assert!(compared > 0);
 }
 
