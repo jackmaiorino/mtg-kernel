@@ -214,20 +214,20 @@ fn the_v2_writer_refuses_kinds_outside_its_whitelist() {
     v4.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V4.into();
     v4.loss_identity = "terminal_reinforce_value/v3".into();
     admit_writer_v1(&v4).unwrap();
-    let refused = |edit: &dyn Fn(&mut ExpandedCheckpointV1)| {
+    let refused = |edit: fn(&mut ExpandedCheckpointV1)| {
         let mut c = v4.clone();
         edit(&mut c);
         admit_writer_v1(&c).is_err()
     };
-    assert!(refused(&|c| c.ex1 = Some(json!({}))));
-    assert!(refused(&|c| c.e_supported = Some(json!({}))));
-    assert!(refused(&|c| c.soft_q = Some(json!({}))));
-    assert!(refused(&|c| c.search_targets = Some(json!({}))));
-    assert!(refused(
-        &|c| c.loss_identity = "gae_uniform_kl_recovery/v1".into()
-    ));
-    assert!(refused(&|c| c.schema = CHECKPOINT_SCHEMA.into()));
-    assert!(refused(&|c| c.training_math = TrainingMathV1::PortableV1));
+    assert!(refused(|c| c.ex1 = Some(json!({}))));
+    assert!(refused(|c| c.e_supported = Some(json!({}))));
+    assert!(refused(|c| c.soft_q = Some(json!({}))));
+    assert!(refused(|c| c.search_targets = Some(json!({}))));
+    assert!(refused(|c| {
+        c.loss_identity = "gae_uniform_kl_recovery/v1".into()
+    }));
+    assert!(refused(|c| c.schema = CHECKPOINT_SCHEMA.into()));
+    assert!(refused(|c| c.training_math = TrainingMathV1::PortableV1));
 }
 
 #[test]
