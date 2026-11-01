@@ -568,7 +568,8 @@ def walk_volume(campaign: Campaign) -> None:
     seconds = round(time.monotonic() - started, 1)
     try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
         Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
-        native_dispatch.publish_walk(record["shared"], result["logical"], started_unix, record["walked"], "driver")
+        native_dispatch.publish_walk(record["shared"], result["logical"], started_unix, record["walked"], "driver",
+                                     len(SCRATCH_INFLIGHT))  # the caller holds SCRATCH_LOCK
     except OSError:
         pass  # only a shortcut: the background walker publishes too
     touch(campaign)
@@ -601,14 +602,14 @@ def start_walker(campaign: Campaign) -> None:
     if not storage.get("emergency") or not storage.get("accounting_roots"):
         return
     key = tuple(storage["accounting_roots"])
-    with SCRATCH_LOCK:
+    with SCRATCH_LOCK:  # registered and started under the lock: two admissions start one walker
         if key in WALKERS and WALKERS[key][0].is_alive():
             return
         stop = threading.Event()
         thread = threading.Thread(target=walker, args=(campaign, volume(campaign)["shared"], stop),
                                   name="volume-walker", daemon=True)
         WALKERS[key] = (thread, stop)
-    thread.start()
+        thread.start()
 
 
 def stop_walkers() -> None:
@@ -625,15 +626,15 @@ def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
     storage = campaign.raw["storage"]
     while not stop.wait(WALKER_POLL_SECONDS):
         with SCRATCH_LOCK:
-            busy = bool(SCRATCH_INFLIGHT)
+            in_flight = len(SCRATCH_INFLIGHT)
         found = native_dispatch.shared_walk(shared)
-        if not busy or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
+        if not in_flight or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
             continue
         started = time.time()
         try:
             logical = native_dispatch.accounting_bytes(storage)[1]
             Path(shared).parent.mkdir(parents=True, exist_ok=True)
-            native_dispatch.publish_walk(shared, logical, started, time.time(), "driver-background")
+            native_dispatch.publish_walk(shared, logical, started, time.time(), "driver-background", in_flight)
         except Exception as error:  # the dispatchers walk for themselves once the record is stale
             if stop.is_set():
                 return

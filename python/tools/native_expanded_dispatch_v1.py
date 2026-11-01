@@ -365,10 +365,11 @@ def validate_storage(storage, extra=None, admission=None):
 
 
 EMERGENCY_WALK_SECONDS = 600
-# A published walk (the campaign driver's one background walker, shared_walk) serves the emergency samples while
-# it started at most this long ago: a walk of the network volume takes about 11 min, then the walker waits
-# EMERGENCY_WALK_SECONDS. Past it (the walker stopped), an attempt walks for itself, in the background.
-EMERGENCY_FRESH_SECONDS = 1800
+# The campaign driver's one background walker publishes each walk (shared_walk); the samples read the newest. It
+# walks again EMERGENCY_WALK_SECONDS after a walk completes, and a walk of the network volume takes about 11 min
+# alone (its heartbeat bound is 30 min), so a published walk completes at most about 40 min after the last. Only
+# when no walk completed for EMERGENCY_FALLBACK_SECONDS (the walker stopped) does an attempt walk for itself.
+EMERGENCY_FALLBACK_SECONDS = 3600
 MONITOR_POLL_SECONDS = 30  # a running attempt's sample interval (telemetry, memory, storage)
 SHARED_WALK_SCHEMA = "native-expanded-volume-walk/v1"
 EMERGENCY_LOCK = threading.Lock()
@@ -403,24 +404,28 @@ def seed_emergency():
 
 
 def close_emergency():
-    """The native part ended: with a published walk to read, this attempt starts no walk of its own."""
+    """The native part ended: this attempt starts no walk of its own (one in flight finishes). Its CPU after the
+    native part is the lease's activity, so a walk must not stand in for a stalled finish."""
     with EMERGENCY_LOCK:
         EMERGENCY_WALK["closed"] = True
 
 
-def publish_walk(path, logical, walked_unix, completed_unix, walker):
-    """Write a shared walk record atomically (a temporary file renamed over the record)."""
+def publish_walk(path, logical, walked_unix, completed_unix, walker, in_flight=0):
+    """Write a shared walk record atomically (a temporary file renamed over the record). ``in_flight``: blocks in
+    flight when the walk started, whose retained outputs may postdate it."""
     path = Path(path)
     temporary = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     temporary.write_text(json.dumps({"schema": SHARED_WALK_SCHEMA, "logical_bytes": logical,
                                      "walked_unix": walked_unix, "completed_unix": completed_unix,
-                                     "seconds": round(completed_unix - walked_unix, 1), "walker": walker}),
+                                     "seconds": round(completed_unix - walked_unix, 1), "walker": walker,
+                                     "in_flight": in_flight}),
                          encoding="utf-8")
     os.replace(temporary, path)
 
 
 def shared_walk(path):
-    """(bytes, walk start, walk end) of a well-formed shared walk record, else None."""
+    """(bytes, walk start, walk end, blocks in flight at its start) of a well-formed shared walk record, else
+    None."""
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -428,23 +433,28 @@ def shared_walk(path):
     if not isinstance(value, dict) or value.get("schema") != SHARED_WALK_SCHEMA:
         return None
     logical, walked, completed = (value.get(key) for key in ("logical_bytes", "walked_unix", "completed_unix"))
+    in_flight = value.get("in_flight", 0)
     if type(logical) is not int or logical < 0 or not finite_time(walked) or not finite_time(completed) \
-            or walked > completed or completed - time.time() > CLOCK_SKEW_SECONDS:
+            or walked > completed or completed - time.time() > CLOCK_SKEW_SECONDS \
+            or type(in_flight) is not int or in_flight < 0:
         return None
-    return logical, walked, completed
+    return logical, walked, completed, in_flight
 
 
-def adopt_shared(shared):
-    """Take a published walk newer than this attempt's sample (a small file read, each sample); whether a
-    fresh one (started within EMERGENCY_FRESH_SECONDS) exists."""
+def adopt_shared(shared, storage):
+    """Take a published walk newer than this attempt's sample (a small file read, each sample), with each block in
+    flight at its start counted at its projected retained bytes (the admission bound: siblings' outputs may
+    postdate the walk); whether the publisher is live (its last walk completed within
+    EMERGENCY_FALLBACK_SECONDS)."""
     found = shared_walk(shared) if shared else None
     if found is None:
         return False
-    logical, walked, _ = found
+    logical, walked, completed, in_flight = found
     with EMERGENCY_LOCK:
         if EMERGENCY_WALK["unix"] is None or walked > EMERGENCY_WALK["unix"]:
-            EMERGENCY_WALK.update(logical=logical, unix=walked, at=time.monotonic())
-    return time.time() - walked <= EMERGENCY_FRESH_SECONDS
+            EMERGENCY_WALK.update(logical=logical + in_flight * storage["projected_additional_bytes"], unix=walked,
+                                  at=time.monotonic())
+    return time.time() - completed <= EMERGENCY_FALLBACK_SECONDS
 
 
 def emergency_refresh(storage):
@@ -461,7 +471,7 @@ def emergency_refresh(storage):
             EMERGENCY_WALK.update(error=error, at=time.monotonic())
 
 
-def running_storage(storage, shared=None, pending_bytes=0):
+def running_storage(storage, shared=None, pending=()):
     """The storage check of a running attempt. With the opt-in ``storage.emergency`` (G(i) amendment 2) it ends
     the attempt only on a physical shortage: the accounting trees past the provisioned volume less its margin,
     or a scratch volume's free space below its margin. The cap and projections then gate new dispatches only.
@@ -470,26 +480,26 @@ def running_storage(storage, shared=None, pending_bytes=0):
     A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes of a
     walk. A sample never waits for a walk (inside the monitor loop a walk of minutes hid a native child's end from
     the lease guard, mtg-kernel#463). With a ``shared`` record (the campaign driver's one background walker) the
-    sample takes its newest walk and the attempt walks only if that record is older than EMERGENCY_FRESH_SECONDS
-    (in the background, and not after its native part); without one, the attempt walks in the background at most
-    every EMERGENCY_WALK_SECONDS as before. Only a process with no sample yet walks in place. ``pending_bytes``
-    (written since the walk: this attempt's own outputs) count too."""
+    sample takes its newest walk, and the attempt walks only when no walk completed for EMERGENCY_FALLBACK_SECONDS
+    and its own sample is that old; without one, it walks at most every EMERGENCY_WALK_SECONDS as before. Its own
+    walks run in a background thread and start only in the native part; only a process with no sample yet walks
+    in place. ``pending``: (bytes, Unix time they were all written by) of this attempt's own outputs, each added
+    unless the sample's walk started after that time (a walk overlapping their writing may count some twice)."""
     spec = storage.get("emergency")
     if spec is None:
         return validate_storage(storage, 0)
     volume, margin = spec["volume_bytes"], spec["margin_fraction"]
     require(type(volume) is int and volume > 0 and isinstance(margin, (int, float)) and 0 <= margin < 1,
             "invalid storage emergency spec")
-    fresh = adopt_shared(shared)
+    live = adopt_shared(shared, storage)
     with EMERGENCY_LOCK:
         thread = EMERGENCY_WALK["thread"]
         busy = thread is not None and thread.is_alive()
         first = EMERGENCY_WALK["logical"] is None
-        if first:
+        if first or EMERGENCY_WALK["closed"]:
             own = False
-        elif shared:  # the driver's walker serves; walk only if its record went stale, and not after native work
-            own = not fresh and not EMERGENCY_WALK["closed"] \
-                and time.time() - EMERGENCY_WALK["unix"] > EMERGENCY_FRESH_SECONDS
+        elif shared:  # the driver's walker serves; walk only once it has stopped publishing
+            own = not live and time.time() - EMERGENCY_WALK["unix"] > EMERGENCY_FALLBACK_SECONDS
         else:
             own = time.monotonic() - EMERGENCY_WALK["at"] > EMERGENCY_WALK_SECONDS
         start = own and not busy
@@ -502,10 +512,10 @@ def running_storage(storage, shared=None, pending_bytes=0):
         thread.start()
     with EMERGENCY_LOCK:
         error, EMERGENCY_WALK["error"] = EMERGENCY_WALK["error"], None
-        logical = EMERGENCY_WALK["logical"]
+        logical, walked = EMERGENCY_WALK["logical"], EMERGENCY_WALK["unix"]
     if error is not None:
         raise error
-    logical += pending_bytes
+    logical += sum(size for size, written in pending if walked is None or walked < written)
     require(logical <= volume * (1 - margin), "storage emergency: the volume's use passed its provisioned size "
                                               "less the margin")
     for root in scratch_roots(storage):
@@ -1397,6 +1407,7 @@ def execute(request_path, qualification):
             child.wait()
         finally:
             close_emergency()  # the native part is over: its end is recorded now
+            native_ended = time.time()
             child_seconds = time.monotonic() - child_started
             # A qualification's receipt binds its start, which a pack's evidence compares.
             write(root/"execution.json", {"exit_code": child.returncode, "error": failure,
@@ -1430,14 +1441,14 @@ def execute(request_path, qualification):
         validated_files[str(exposure_path.resolve())] = exposure_pin["sha256"]
     fingerprint_seconds = time.monotonic() - fingerprint_started
     storage_started = time.monotonic()
-    native_bytes = own_output_bytes(request["storage"], placed["output_directory"])
-    running_storage(request["storage"], shared, pending_bytes=native_bytes)
+    native = (own_output_bytes(request["storage"], placed["output_directory"]), native_ended)
+    running_storage(request["storage"], shared, pending=[native])
     storage_validation_seconds = time.monotonic() - storage_started
     # Existing checked, durable, two-shard archive includes full readback. Raw
     # outputs remain. Both locations count against the same campaign allowance.
     archive = archive_native(Path(placed["output_directory"]), cold, validated_files)
     storage_started = time.monotonic()
-    running_storage(request["storage"], shared, pending_bytes=native_bytes + archive["compressed_bytes"])
+    running_storage(request["storage"], shared, pending=[native, (archive["compressed_bytes"], time.time())])
     storage_validation_seconds += time.monotonic() - storage_started
     games = len(placed["iterations"][0]["episodes"]) if request["kind"] == "training" and qualification else (
         sum(len(i["episodes"]) for i in placed["iterations"]) if request["kind"] == "training" else len(placed["episodes"]))

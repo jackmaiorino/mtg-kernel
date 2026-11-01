@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 import struct
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -525,9 +526,13 @@ class DriverTests(unittest.TestCase):
         shared = self.campaign.state / driver.SHARED_WALK
         touched = []
         with patch.object(driver, "WALKER_POLL_SECONDS", 0.05),                 patch.object(driver, "touch", lambda campaign: touched.append(1)):
-            driver.start_walker(self.campaign)
-            driver.start_walker(self.campaign)
+            starters = [threading.Thread(target=driver.start_walker, args=(self.campaign,)) for _ in range(8)]
+            for starter in starters:  # eight admissions at once start one walker
+                starter.start()
+            for starter in starters:
+                starter.join()
             self.assertEqual(len(driver.WALKERS), 1)
+            self.assertEqual(sum(thread.name == "volume-walker" for thread in threading.enumerate()), 1)
             time.sleep(0.3)
             self.assertIsNone(driver.native_dispatch.shared_walk(shared))  # nothing in flight: no walk
             driver.SCRATCH_INFLIGHT.add(str(self.root / "container" / "a"))
@@ -535,7 +540,7 @@ class DriverTests(unittest.TestCase):
             while driver.native_dispatch.shared_walk(shared) is None and time.monotonic() < deadline:
                 time.sleep(0.05)
             found = driver.native_dispatch.shared_walk(shared)
-            self.assertEqual(found[0], 300)
+            self.assertEqual((found[0], found[3]), (300, 1))  # its bytes and the blocks in flight at its start
             time.sleep(0.3)
             self.assertEqual(driver.native_dispatch.shared_walk(shared), found)  # fresh: not walked again
         self.assertEqual(touched, [])  # its walks are not the lease's progress

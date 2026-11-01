@@ -87,11 +87,13 @@ the cap, reserve and projections on `logical_bytes` plus `finished_since` times
 `projected_additional_bytes`, without walking; an older one means a walk as
 before. With `storage.emergency`, no sample waits for a walk (the monitor loop
 records a native child's end at once). With `shared_walk`, the record the
-driver's one background walker publishes, each sample reads the newest walk and
-the attempt walks for itself (in the background) only once that record started
-over 1,800 s ago; without it, the attempt walks in the background at most every
-600 s. An attempt's own output under an accounting root is added after its native
-part. A `runpod` attempt rechecks its lease just before the spawn
+driver's one background walker publishes, each sample reads the newest walk, plus
+each block in flight at its start at `projected_additional_bytes`; the attempt
+walks for itself (in the background, during its native part) only when no walk
+completed for 3,600 s. Without it, the attempt walks in the background at most
+every 600 s, during its native part. The attempt's own outputs (its native tree
+under an accounting root, its archive) are added unless the walk started after
+they were written. A `runpod` attempt rechecks its lease just before the spawn
 (mtg-kernel#463).
 
 Build a choice JSON:

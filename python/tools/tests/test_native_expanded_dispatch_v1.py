@@ -690,27 +690,38 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         self.assertAlmostEqual(time.monotonic() - dispatch.EMERGENCY_WALK["at"], 150, delta=5)
         with patch.object(dispatch, "accounting_bytes", side_effect=AssertionError("no walk")):
             self.assertEqual(dispatch.running_storage(storage)["logical_bytes"], 4242)
-            self.assertEqual(dispatch.running_storage(storage, pending_bytes=8)["logical_bytes"], 4250)
+            # Own outputs count unless the sample's walk started after they were written.
+            self.assertEqual(dispatch.running_storage(storage, pending=[(8, time.time())])["logical_bytes"], 4250)
+            self.assertEqual(dispatch.running_storage(storage, pending=[(8, time.time() - 1000)])["logical_bytes"],
+                             4242)
 
     def test_a_published_walk_serves_the_samples(self):
         """Eight attempts walking at once took 40 min a walk: with the driver's published walk (its one background
-        walker), a sample reads it and the attempt walks only once it is stale, never after its native part."""
-        storage = self.request(2)["storage"]
+        walker), a sample reads it and the attempt walks only once the walker has stopped, never after its native
+        part."""
+        storage = self.request(2)["storage"]  # projected_additional_bytes 1000
         storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
         shared = self.root / "state" / "volume-walk.json"
         shared.parent.mkdir()
         walks = []
-        dispatch.EMERGENCY_WALK.update(logical=1, unix=time.time() - 3600, at=time.monotonic() - 3600)
+        now = time.time()
+        dispatch.EMERGENCY_WALK.update(logical=1, unix=now - 5000, at=time.monotonic() - 5000)
         with patch.object(dispatch, "accounting_bytes", lambda s: walks.append(1) or ([], 777)):
-            dispatch.publish_walk(shared, 555, time.time() - 700, time.time() - 30, "driver-background")
+            dispatch.publish_walk(shared, 555, now - 700, now - 30, "driver-background")
             self.assertEqual(dispatch.running_storage(storage, str(shared))["logical_bytes"], 555)
-            self.assertEqual(dispatch.running_storage(storage, str(shared), pending_bytes=5)["logical_bytes"], 560)
-            self.assertEqual(walks, [])  # its 700 s age is fresh for a published walk: no walk here
-            dispatch.publish_walk(shared, 444, time.time() - 900, time.time() - 200, "driver")  # older than ours
+            self.assertEqual(dispatch.running_storage(storage, str(shared), pending=[(5, time.time())])
+                             ["logical_bytes"], 560)
+            dispatch.publish_walk(shared, 444, now - 900, now - 200, "driver")  # older than the sample: kept
             self.assertEqual(dispatch.running_storage(storage, str(shared))["logical_bytes"], 555)
-            stale = time.time() - dispatch.EMERGENCY_FRESH_SECONDS - 60
-            dispatch.publish_walk(shared, 444, stale, stale + 600, "driver")  # the walker stopped
-            dispatch.EMERGENCY_WALK.update(unix=stale)
+            # A healthy walker between walks: a 665 s walk completed 1,900 s ago, the next not yet published.
+            dispatch.publish_walk(shared, 600, now - 2565, now - 1900, "driver-background", in_flight=3)
+            dispatch.EMERGENCY_WALK.update(unix=now - 2600)
+            self.assertEqual(dispatch.running_storage(storage, str(shared))["logical_bytes"], 600 + 3 * 1000)
+            self.assertIsNone(dispatch.EMERGENCY_WALK["thread"])  # no walk of its own while the walker is live
+            self.assertEqual(walks, [])
+            stopped = now - dispatch.EMERGENCY_FALLBACK_SECONDS - 60  # the walker stopped publishing
+            dispatch.publish_walk(shared, 444, stopped - 600, stopped, "driver")
+            dispatch.EMERGENCY_WALK.update(unix=stopped - 10)
             dispatch.close_emergency()
             dispatch.running_storage(storage, str(shared))
             self.assertIsNone(dispatch.EMERGENCY_WALK["thread"])  # after the native part: no walk of its own
@@ -719,9 +730,11 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             dispatch.EMERGENCY_WALK["thread"].join(10)
             self.assertEqual((walks, dispatch.running_storage(storage, str(shared))["logical_bytes"]), ([1], 777))
             dispatch.running_storage(storage, str(shared))
-            self.assertEqual(walks, [1])  # its own walk is fresh again
+            self.assertEqual(walks, [1])  # its own walk is recent
         for record in ("{not json", json.dumps({"schema": dispatch.SHARED_WALK_SCHEMA, "logical_bytes": 1,
-                                                "walked_unix": 10.0, "completed_unix": 5.0})):
+                                                "walked_unix": 10.0, "completed_unix": 5.0}),
+                       json.dumps({"schema": dispatch.SHARED_WALK_SCHEMA, "logical_bytes": 1, "walked_unix": 1.0,
+                                   "completed_unix": 5.0, "in_flight": -1})):
             shared.write_text(record)
             self.assertIsNone(dispatch.shared_walk(shared))
 
