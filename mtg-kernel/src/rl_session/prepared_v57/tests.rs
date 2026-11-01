@@ -793,7 +793,7 @@ fn genuine_paid_prepared_validation_key_scope_keeps_full_input_foreign_history_c
                 .rev()
                 .find_map(|event| match event {
                     crate::event::CommittedEvent::DrakeJournalV1 { record } => {
-                        if let custody::JournalV1::Enclosing { output, .. } = &mut record.value {
+                        if let custody::JournalV1::Enclosing { output, .. } = &mut std::sync::Arc::make_mut(record).value {
                             Some(output)
                         } else {
                             None

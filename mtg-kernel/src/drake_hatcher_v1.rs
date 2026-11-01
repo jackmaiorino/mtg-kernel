@@ -550,7 +550,7 @@ mod tests {
                                 }
                             })
                             .unwrap();
-                        if let J::Captured { amount, .. } = &mut row.value {
+                        if let J::Captured { amount, .. } = &mut std::sync::Arc::make_mut(row).value {
                             *amount = 1;
                         }
                     }
@@ -567,7 +567,7 @@ mod tests {
                                 }
                             })
                             .unwrap();
-                        if let J::Captured { source, .. } = &mut row.value {
+                        if let J::Captured { source, .. } = &mut std::sync::Arc::make_mut(row).value {
                             source.controller = actor.opponent();
                         }
                     }
@@ -584,7 +584,7 @@ mod tests {
                                 }
                             })
                             .unwrap();
-                        if let J::Captured { source, .. } = &mut row.value {
+                        if let J::Captured { source, .. } = &mut std::sync::Arc::make_mut(row).value {
                             source.zone_change_count += 1;
                         }
                     }
@@ -645,7 +645,7 @@ mod tests {
                                 }
                             })
                             .unwrap();
-                        if let J::Debit { count, .. } = &mut row.value {
+                        if let J::Debit { count, .. } = &mut std::sync::Arc::make_mut(row).value {
                             *count = 2;
                         }
                     }
@@ -663,7 +663,7 @@ mod tests {
                                 }
                             })
                             .unwrap();
-                        if let J::Paid { original, .. } = &mut row.value {
+                        if let J::Paid { original, .. } = &mut std::sync::Arc::make_mut(row).value {
                             std::sync::Arc::make_mut(original)
                                 .objects
                                 .get_mut(drake)
@@ -821,7 +821,7 @@ mod tests {
                             _ => None,
                         })
                         .unwrap();
-                    let J::Captured { amount, .. } = &mut captured.value else {
+                    let J::Captured { amount, .. } = &mut std::sync::Arc::make_mut(captured).value else {
                         unreachable!()
                     };
                     *amount += 1;
@@ -858,7 +858,7 @@ mod tests {
                             }
                         })
                         .unwrap();
-                    let J::Enclosing { output, .. } = &mut row.value else {
+                    let J::Enclosing { output, .. } = &mut std::sync::Arc::make_mut(row).value else {
                         unreachable!()
                     };
                     let nested = &mut std::sync::Arc::make_mut(output)
@@ -1162,7 +1162,7 @@ mod tests {
             .rev()
             .find_map(|event| {
                 if let event::CommittedEvent::DrakeJournalV1 { record } = event {
-                    if let custody::JournalV1::Enclosing { output, .. } = &mut record.value {
+                    if let custody::JournalV1::Enclosing { output, .. } = &mut std::sync::Arc::make_mut(record).value {
                         return Some(std::sync::Arc::make_mut(output));
                     }
                 }
@@ -1419,7 +1419,7 @@ mod tests {
                 else {
                     unreachable!()
                 };
-                let custody::JournalV1::Enclosing { output, .. } = &mut record.value else {
+                let custody::JournalV1::Enclosing { output, .. } = &mut std::sync::Arc::make_mut(record).value else {
                     unreachable!()
                 };
                 crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(

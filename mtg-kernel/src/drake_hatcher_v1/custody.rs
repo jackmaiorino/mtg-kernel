@@ -618,7 +618,7 @@ fn emit(state: &mut GameState, value: JournalV1) -> Result<u64, String> {
         .engine
         .event_history
         .push(CommittedEvent::DrakeJournalV1 {
-            record: Box::new(RecordV1 { index, value }),
+            record: Arc::new(RecordV1 { index, value }),
         });
     state.engine.drake_ledger_v1.issued = next;
     Ok(index)
@@ -1397,7 +1397,7 @@ pub(crate) fn enclose(
         .engine
         .event_history
         .push(CommittedEvent::DrakeJournalV1 {
-            record: Box::new(record),
+            record: Arc::new(record),
         });
     output.engine.drake_ledger_v1.issued = count;
     Ok(())

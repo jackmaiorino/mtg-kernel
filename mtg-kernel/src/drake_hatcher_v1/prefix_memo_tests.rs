@@ -220,7 +220,7 @@ fn altered(state: &GameState) -> Vec<(String, GameState)> {
                         row.index = s.engine.event_history.len() as u64;
                     }
                     s.engine.event_history.push(CommittedEvent::DrakeJournalV1 {
-                        record: Box::new(row),
+                        record: std::sync::Arc::new(row),
                     });
                     s.engine.drake_ledger_v1.issued += 1;
                 },
@@ -261,7 +261,7 @@ fn altered(state: &GameState) -> Vec<(String, GameState)> {
     if let Some(at) = history.iter().position(|e| custody::journal(e).is_some()) {
         add("first row changed".into(), &move |s: &mut GameState| {
             if let CommittedEvent::DrakeJournalV1 { record } = &mut s.engine.event_history[at] {
-                record.index += 1;
+                std::sync::Arc::make_mut(record).index += 1;
             }
         });
     }
