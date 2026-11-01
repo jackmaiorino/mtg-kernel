@@ -360,6 +360,20 @@ fn value(value: &impl Serialize) -> Result<Value, String> {
 fn published_value(value: &impl Serialize) -> Result<Value, String> {
     serde_json::from_slice(&serde_json::to_vec(value).map_err(err)?).map_err(err)
 }
+/// An interrupted attempt's saved collection command must be the one this
+/// resume rebuilds. Compared as published, through the JSON bytes: an f32
+/// field (max_non_natural_episode_fraction 0.2) is written as "0.2" but
+/// becomes 0.20000000298023224 in a direct `to_value`, so a direct comparison
+/// refused every interrupted attempt of such a config.
+fn check_saved_collect_command(
+    saved: &Path,
+    command: &ExpandedTrainingCommandV1,
+) -> Result<(), String> {
+    check(
+        read_json(saved, SMALL_CAP)? == published_value(command)?,
+        "interrupted attempt collection command differs",
+    )
+}
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -1664,14 +1678,7 @@ pub fn run_native_expanded_training_v1(
             }
             let collect_command =
                 collection_command(config, index, &current, &episodes, attempt.join("collect"));
-            // Compare as published: through the JSON bytes. An f32 field
-            // (max_non_natural_episode_fraction 0.2) serializes as "0.2" but
-            // becomes 0.20000000298023224 in a direct `to_value`, so a direct
-            // comparison refused every interrupted attempt of such a config.
-            check(
-                read_json(&saved_command, SMALL_CAP)? == published_value(&collect_command)?,
-                "interrupted attempt collection command differs",
-            )?;
+            check_saved_collect_command(&saved_command, &collect_command)?;
             let path = attempt.join("collect/collection.json");
             if path.exists() {
                 let candidate = pin(&path)?;
@@ -2162,13 +2169,24 @@ mod tests {
             attempt.join("collect"),
         );
         publish(&attempt, "collect-command.json", &command).unwrap();
-        let saved = read_json(&attempt.join("collect-command.json"), SMALL_CAP).unwrap();
+        let saved = attempt.join("collect-command.json");
         assert_ne!(
-            saved,
+            read_json(&saved, SMALL_CAP).unwrap(),
             value(&command).unwrap(),
             "the direct form widens the f32"
         );
-        assert_eq!(saved, published_value(&command).unwrap());
+        // The resume's own check accepts it, and still refuses a changed command.
+        check_saved_collect_command(&saved, &command).unwrap();
+        let mut other = config.clone();
+        other.max_non_natural_episode_fraction = 0.25;
+        let changed = collection_command(
+            &other,
+            0,
+            &config.initial_source,
+            &episodes,
+            attempt.join("collect"),
+        );
+        assert!(check_saved_collect_command(&saved, &changed).is_err());
         let _ = fs::remove_dir_all(&attempt);
     }
 
