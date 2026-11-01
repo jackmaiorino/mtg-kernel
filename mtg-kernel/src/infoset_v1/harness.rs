@@ -90,6 +90,25 @@ pub(crate) fn swap_objects(state: &mut GameState, a: ObjectId, b: ObjectId) {
     ob.v4 = ObjectStateV4::from_card_def(da);
 }
 
+/// Exchanges the slots (positions and zones) of two hidden objects of one
+/// owner; definitions and incarnations travel with the objects.
+pub(crate) fn move_objects(state: &mut GameState, a: ObjectId, b: ObjectId) {
+    let owner = state.objects.get(a).owner;
+    let p = &mut state.players[owner.index()];
+    for v in [&mut p.hand, &mut p.library] {
+        for x in v.iter_mut() {
+            if *x == a {
+                *x = b;
+            } else if *x == b {
+                *x = a;
+            }
+        }
+    }
+    let (za, zb) = (state.objects.get(a).zone, state.objects.get(b).zone);
+    state.objects.get_mut(a).zone = zb;
+    state.objects.get_mut(b).zone = za;
+}
+
 /// One family pair's comparison.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub(crate) struct PairReportV1 {
@@ -303,7 +322,9 @@ pub(crate) fn f_slot(
         .iter()
         .find(|id| state.objects.get(**id).card_def != state.objects.get(a).card_def)?;
     let mut st = state.clone();
-    swap_objects(&mut st, a, b);
+    // Whole objects change places: each keeps its definition and incarnation
+    // and takes the other's slot (and zone).
+    move_objects(&mut st, a, b);
     let w2 = FastActorSessionV1::import_infoset_v1(&s, st, 0);
     // Rebuild W the same way so both sessions share construction.
     let w = FastActorSessionV1::import_infoset_v1(&s, s.game_state().clone(), 0);
