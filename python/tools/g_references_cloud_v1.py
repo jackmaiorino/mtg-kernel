@@ -335,6 +335,7 @@ def dispatchers():
     for entry in pathlib.Path("/proc").iterdir():
         if not entry.name.isdigit() or int(entry.name) == os.getpid():
             continue
+        before = identity(int(entry.name))  # bound before and after the argv read: a reused PID never matches
         try:
             argv = (entry / "cmdline").read_bytes().split(b"\\0")
         except OSError:
@@ -344,7 +345,7 @@ def dispatchers():
                 or scripts[0] + 1 >= len(argv) or argv[scripts[0] + 1] not in (b"_dispatch", b"_qualify"):
             continue
         seen = identity(int(entry.name))
-        if seen is not None and seen[0] not in ("Z", "X"):
+        if before is not None and seen is not None and seen[1] == before[1] and seen[0] not in ("Z", "X"):
             found.append((int(entry.name), seen[1]))
     return found
 signalled = []
