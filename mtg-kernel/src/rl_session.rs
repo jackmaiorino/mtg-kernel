@@ -5375,6 +5375,11 @@ impl FastActorSessionV1 {
     pub(crate) fn deck_ids_v1(&self) -> &SessionDeckIdsV1 {
         &self.deck_ids
     }
+
+    /// The session's (physical decision, policy step) limits.
+    pub(crate) fn limits_v1(&self) -> (u64, u64) {
+        (self.max_physical_decisions, self.max_policy_steps)
+    }
 }
 
 #[derive(Clone)]

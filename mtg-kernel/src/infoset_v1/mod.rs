@@ -15,6 +15,7 @@
 //! Faults (I1 to I4) are engine invariants: the game halts as F1.
 
 pub(crate) mod export;
+pub(crate) mod payload;
 pub(crate) mod ledger;
 pub(crate) mod pins;
 pub(crate) mod projection;
@@ -24,6 +25,7 @@ pub(crate) mod rewrite;
 mod tests;
 
 pub(crate) use export::{export_v1, ExportInputV1, ExportOptionsV1, InfosetV1, MutantV1};
+pub(crate) use payload::PayloadV1;
 
 use serde::Serialize;
 
