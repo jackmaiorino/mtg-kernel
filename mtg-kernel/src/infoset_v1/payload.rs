@@ -22,18 +22,23 @@ pub struct PayloadV1 {
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
     pub handles: Vec<String>,
+    /// The live session surface's public context (combat priority).
+    pub surface: crate::policy_surface_v5::SurfaceContextV1,
     pub state: serde_json::Value,
 }
 
 impl PayloadV1 {
+    /// None while the live surface names objects (a combat scan or reshape
+    /// in progress): such a decision is refused (R2) by the caller.
     pub(crate) fn new(
         export: &InfosetV1,
         live: &FastActorSessionV1,
         viewer: PlayerId,
         own_decision_index: u64,
-    ) -> Self {
+    ) -> Option<Self> {
         let (max_physical_decisions, max_policy_steps) = live.limits_v1();
-        Self {
+        let surface = live.surface_context_v1()?;
+        Some(Self {
             schema: INFOSET_SCHEMA_V1.into(),
             sha256: export.sha256.clone(),
             deck_ids: live.deck_ids_v1().clone(),
@@ -42,8 +47,9 @@ impl PayloadV1 {
             max_physical_decisions,
             max_policy_steps,
             handles: export.handles.iter().map(super::HandleV1::label).collect(),
+            surface,
             state: serde_json::to_value(&export.state).expect("state serializes"),
-        }
+        })
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -84,10 +90,11 @@ impl PayloadV1 {
             self.deck_ids.clone(),
         )
         .map_err(|e| format!("template session: {}", e.message))?;
-        Ok(FastActorSessionV1::import_infoset_v1(
+        Ok(FastActorSessionV1::import_infoset_with_surface_v1(
             &template,
             state,
             self.own_decision_index,
+            Some(self.surface),
         ))
     }
 }

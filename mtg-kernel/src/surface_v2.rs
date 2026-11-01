@@ -712,6 +712,26 @@ pub enum PriorityModeV1 {
 }
 
 impl HarnessSurfaceV2 {
+    /// The id-free combat-priority context the W1 export carries
+    /// (`infoset_v1`); None while a blocker reshape (which names objects)
+    /// is active.
+    pub(crate) fn infoset_context_v1(&self) -> Option<([bool; 2], Option<u64>, usize)> {
+        if self.blockers.is_some() {
+            return None;
+        }
+        Some((
+            self.combat_priority_spent,
+            self.combat_priority_round_seen,
+            self.combat_priority_stack_len_seen,
+        ))
+    }
+
+    pub(crate) fn set_infoset_context_v1(&mut self, context: ([bool; 2], Option<u64>, usize)) {
+        self.combat_priority_spent = context.0;
+        self.combat_priority_round_seen = context.1;
+        self.combat_priority_stack_len_seen = context.2;
+    }
+
     pub fn new() -> HarnessSurfaceV2 {
         Self::new_with_suppression_audit_mode(SuppressionAuditMode::Full)
     }

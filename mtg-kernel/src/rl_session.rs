@@ -5346,6 +5346,31 @@ impl FastActorSessionV1 {
         state: crate::state::GameState,
         own_decision_index: u64,
     ) -> FastActorSessionV1 {
+        Self::import_infoset_with_surface_v1(
+            template,
+            state,
+            own_decision_index,
+            template.surface.infoset_context_v1(),
+        )
+    }
+
+    /// The session surface's carried context (see `SurfaceContextV1`).
+    pub(crate) fn surface_context_v1(&self) -> Option<crate::policy_surface_v5::SurfaceContextV1> {
+        self.surface.infoset_context_v1()
+    }
+
+    /// As `import_infoset_v1`, with the surface context given explicitly
+    /// (from a payload).
+    pub(crate) fn import_infoset_with_surface_v1(
+        template: &FastActorSessionV1,
+        state: crate::state::GameState,
+        own_decision_index: u64,
+        context: Option<crate::policy_surface_v5::SurfaceContextV1>,
+    ) -> FastActorSessionV1 {
+        let mut surface = PolicySurfaceV5::new_for_session();
+        if let Some(context) = context {
+            surface.set_infoset_context_v1(context);
+        }
         let mut session = FastActorSessionV1 {
             deck_ids: template.deck_ids.clone(),
             deck_hashes: template.deck_hashes,
@@ -5353,7 +5378,7 @@ impl FastActorSessionV1 {
             max_physical_decisions: template.max_physical_decisions,
             max_policy_steps: template.max_policy_steps,
             state,
-            surface: PolicySurfaceV5::new_for_session(),
+            surface,
             environment_revision: 0,
             policy_step_count: own_decision_index,
             physical_decision_count: own_decision_index,

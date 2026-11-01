@@ -381,6 +381,10 @@ pub(crate) fn ac3_check(
     export: &InfosetV1,
     seed: u64,
 ) -> Result<(), String> {
+    if live.surface_context_v1().is_none() {
+        // The surface names objects mid-scan: the payload refuses (R2).
+        return Ok(());
+    }
     let imported = FastActorSessionV1::import_infoset_v1(live, export.state.clone(), 0);
     let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
         (live.current_response(), imported.current_response())

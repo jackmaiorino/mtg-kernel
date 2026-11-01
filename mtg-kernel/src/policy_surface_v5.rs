@@ -384,7 +384,42 @@ pub struct PolicySurfaceV5 {
     hunter_order_v45: Option<hunter_order_v45::TriggerOrderV45>,
 }
 
+/// The session surface's public, id-free context, carried by the W1
+/// information-set payload so an imported session flows like the live one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceContextV1 {
+    pub combat_priority_spent: [bool; 2],
+    pub combat_priority_round_seen: Option<u64>,
+    pub combat_priority_stack_len_seen: usize,
+    pub hunter_order_enabled_v45: bool,
+}
+
 impl PolicySurfaceV5 {
+    /// None while the surface holds object-naming progress (a combat scan,
+    /// a blocker reshape, a Hunter trigger order).
+    pub(crate) fn infoset_context_v1(&self) -> Option<SurfaceContextV1> {
+        if self.scan.is_some() || self.hunter_order_v45.is_some() {
+            return None;
+        }
+        let (spent, round, stack_len) = self.inner.infoset_context_v1()?;
+        Some(SurfaceContextV1 {
+            combat_priority_spent: spent,
+            combat_priority_round_seen: round,
+            combat_priority_stack_len_seen: stack_len,
+            hunter_order_enabled_v45: self.hunter_order_enabled_v45,
+        })
+    }
+
+    pub(crate) fn set_infoset_context_v1(&mut self, context: SurfaceContextV1) {
+        self.inner.set_infoset_context_v1((
+            context.combat_priority_spent,
+            context.combat_priority_round_seen,
+            context.combat_priority_stack_len_seen,
+        ));
+        self.hunter_order_enabled_v45 = context.hunter_order_enabled_v45;
+    }
+
     pub fn new() -> Self {
         Self::new_with_suppression_audit_mode(SuppressionAuditMode::Full)
     }

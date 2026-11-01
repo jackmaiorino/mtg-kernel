@@ -165,40 +165,50 @@ pub(super) fn run(
                     )
                     .map_err(|e| e.to_string())?;
                 }
-                Ok(x) => {
-                    checked += 1;
-                    let payload = PayloadV1::new(&x, &s, seat, own_index[seat.index()]);
-                    let bytes = payload.to_bytes();
-                    let imported = PayloadV1::from_bytes(&bytes)?.import()?;
-                    let direct = FastActorSessionV1::import_infoset_v1(
-                        &s,
-                        x.state.clone(),
-                        own_index[seat.index()],
-                    );
-                    for &seed in &seeds {
-                        let root_id = format!(
-                            "ac2/{game_seed}/{}/{}/s{seed}",
-                            seat.0,
-                            own_index[seat.index()]
-                        );
-                        let row = check_root(
-                            policy,
-                            &direct,
-                            &imported,
-                            &payload,
-                            &root_id,
-                            budget,
-                            k,
-                            &mut pool_k,
-                            &mut pool_1,
-                        )?;
-                        if row["equal"] != json!(true) {
-                            failures += 1;
-                        }
-                        writeln!(out, "{row}").map_err(|e| e.to_string())?;
+                Ok(x) => match PayloadV1::new(&x, &s, seat, own_index[seat.index()]) {
+                    None => {
+                        writeln!(
+                            out,
+                            "{}",
+                            json!({"kind": "refusal", "seat": seat.0,
+                            "code": "R2", "detail": "surface names objects"})
+                        )
+                        .map_err(|e| e.to_string())?;
                     }
-                    out.flush().map_err(|e| e.to_string())?;
-                }
+                    Some(payload) => {
+                        checked += 1;
+                        let bytes = payload.to_bytes();
+                        let imported = PayloadV1::from_bytes(&bytes)?.import()?;
+                        let direct = FastActorSessionV1::import_infoset_v1(
+                            &s,
+                            x.state.clone(),
+                            own_index[seat.index()],
+                        );
+                        for &seed in &seeds {
+                            let root_id = format!(
+                                "ac2/{game_seed}/{}/{}/s{seed}",
+                                seat.0,
+                                own_index[seat.index()]
+                            );
+                            let row = check_root(
+                                policy,
+                                &direct,
+                                &imported,
+                                &payload,
+                                &root_id,
+                                budget,
+                                k,
+                                &mut pool_k,
+                                &mut pool_1,
+                            )?;
+                            if row["equal"] != json!(true) {
+                                failures += 1;
+                            }
+                            writeln!(out, "{row}").map_err(|e| e.to_string())?;
+                        }
+                        out.flush().map_err(|e| e.to_string())?;
+                    }
+                },
             }
         }
         let a = if d.legal_action_count < 2 {
