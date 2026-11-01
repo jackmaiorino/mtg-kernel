@@ -1,10 +1,11 @@
 """The superseded-root archive lease's steps, run locally on a fixture tree (no Pod, no provider)."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import unittest
@@ -12,6 +13,7 @@ import unittest
 import g_references_archive_v1 as archive
 import g_references_qualify_v1 as qualify
 import nine_deck_cloud_v1 as cloud
+from common import read
 
 TOOLS = Path(archive.__file__).resolve().parent
 
@@ -36,14 +38,15 @@ class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name) / "workspace" / "old"
+        self.root = (Path(self.temp.name) / "workspace" / "old").resolve()
         self.out = Path(self.temp.name) / "container" / "out"
         campaign = self.root / "campaign"
         self.finals = {}
         for run, block in archive.BASELINES:
+            cold = campaign / "cold" / run / f"b{block:03d}-a1"
             checkpoint = {"state_sha256": f"{run}{block}" * 8, "adam_step": 162 * block, "parameters": [block],
-                          "trajectories": [save(campaign / "cold" / run / f"b{block}" / "native-0.zip", b"traj")]}
-            save(campaign / "cold" / run / f"b{block}" / "archive.json", b"{}")  # shard hashes and timings: kept
+                          "trajectories": [save(cold / "native-0.zip", b"traj")]}
+            save(cold / "archive.json", b"{}")  # shard hashes and timings: kept
             item = save(campaign / "checkpoints" / run / f"b{block:03d}.json", json.dumps(checkpoint).encode())
             self.finals[(run, block)] = item
         for run in {run for run, _ in archive.BASELINES}:
@@ -55,7 +58,8 @@ class ArchiveTests(unittest.TestCase):
         save(campaign / "hot" / "G2" / "b001-a1" / "native" / "big.bin", b"n" * 1000)  # a native tree: pruned
         save(campaign / "retained" / "G2" / "b01" / "episode.json", b"e" * 50)
         save(campaign / "qualification" / "empty-pool" / "trials-cold" / "w1" / "native-1.zip", b"c" * 10)
-        save(self.root / "tooling" / "abc" / "tool.py", b"print()")  # staged tooling: regenerable
+        save(self.root / "inputs" / "objects" / "abc" / "campaign.json", b"{}")  # staged and hash-cited: kept
+        save(self.root / "tooling" / "abc" / "tool.py", b"print()")
         save(self.root / "control" / "lease-a" / "execute.log", b"log")
         save(self.root / "control" / "lease-a" / "results.tar.gz", b"packed")
         save(self.root / "control" / "lease-a" / "native-0.zip", b"z")  # not in a cold folder: kept
@@ -64,10 +68,15 @@ class ArchiveTests(unittest.TestCase):
         return pod(archive.POD_BASELINES, {"tools": str(TOOLS), "campaign": str(self.root / "campaign"),
                                            "pairs": archive.BASELINES, "out": str(self.out)})
 
-    def pack(self, baselines):
+    def pack(self, baselines, limit=600):
         checkpoints = [row["final_checkpoint"]["path"] for row in baselines["baselines"]]
         return pod(archive.POD_PACK, {"root": str(self.root), "campaign": str(self.root / "campaign"),
-                                      "checkpoints": checkpoints, **archive.PACK_RULES, "out": str(self.out)})
+                                      "checkpoints": checkpoints, **archive.PACK_RULES, "out": str(self.out),
+                                      "limit_seconds": limit})
+
+    def prune_args(self, **changes):
+        return {"root": str(self.root), "expected_root": str(self.root), "keep_root": str(self.root.parent / "q2"),
+                "workspace": str(self.root.parent), "out": str(self.out)} | changes
 
     def test_baselines_use_the_qualification_identity(self):
         result = self.baselines()
@@ -79,29 +88,40 @@ class ArchiveTests(unittest.TestCase):
         missing = [row for row in self.baselines()["baselines"] if row["identity"] is None]
         self.assertEqual([(row["run"], row["block"]) for row in missing], [("G5", 1)])
 
-    def test_pack_keeps_records_and_final_checkpoints_and_lists_the_rest(self):
+    def test_pack_keeps_records_and_lists_regenerable_bulk(self):
         packed = self.pack(self.baselines())
         manifest = json.loads((self.out / "manifest.json").read_text())
         listing = json.loads((self.out / "prune-listing.json").read_text())
         kept = {item["path"] for item in manifest["files"]}  # relative to the root, POSIX on every host
-        pruned = {item["path"] for item in listing["files"]}
+        pruned = {item["path"]: item["kind"] for item in listing["files"]}
         for name in ("campaign/state/G1.json", "campaign/hot/G2/b001-a1/dispatch/report.json",
                      "campaign/retained/G2/b01/episode.json", "campaign/checkpoints/G1/b002.json",
-                     "campaign/cold/G1/b1/archive.json", "control/lease-a/execute.log",
+                     "campaign/cold/G2/b001-a1/archive.json", "campaign/cold/G1/b001-a1/native-0.zip",
+                     "inputs/objects/abc/campaign.json", "tooling/abc/tool.py", "control/lease-a/execute.log",
                      "control/lease-a/results.tar.gz", "control/lease-a/native-0.zip"):
             self.assertIn(name, kept)
-        for name in ("campaign/checkpoints/G1/ancestry.json", "campaign/hot/G2/b001-a1/native/big.bin",
-                     "campaign/cold/G1/b1/native-0.zip", "campaign/qualification/empty-pool/trials-cold/w1/native-1.zip",
-                     "tooling/abc/tool.py"):
-            self.assertIn(name, pruned)
-        self.assertEqual(len(kept & pruned), 0)
+        self.assertEqual(pruned, {"campaign/checkpoints/G1/ancestry.json": "checkpoint",
+                                  "campaign/hot/G2/b001-a1/native/big.bin": "native",
+                                  "campaign/cold/G1/b002-a1/native-0.zip": "shard",
+                                  **{f"campaign/cold/{run}/b001-a1/native-0.zip": "shard"
+                                     for run in ("G2", "G3", "G4", "G5", "G6", "G7", "G8")},
+                                  "campaign/qualification/empty-pool/trials-cold/w1/native-1.zip": "shard"})
         every = {path.relative_to(self.root).as_posix() for path in self.root.rglob("*") if path.is_file()}
-        self.assertEqual(kept | pruned, every)  # every file is archived or listed
+        self.assertEqual(kept | set(pruned), every)  # every file is archived or listed
+        self.assertEqual(kept & set(pruned), set())
         self.assertEqual((packed["included"], packed["listed"]), (len(kept), len(pruned)))
+        self.assertGreater(packed["archive_bytes"], 0)
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "a folder that cannot be listed: POSIX permissions")
-    def test_a_folder_that_cannot_be_listed_stops_the_archive(self):
-        import os
+    def test_the_pack_stops_on_its_time_bound(self):
+        with self.assertRaises(RuntimeError):
+            self.pack(self.baselines(), limit=0)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "links and permissions: POSIX")
+    def test_links_or_an_unlistable_folder_stop_the_archive(self):
+        os.symlink(self.root / "campaign" / "state", self.root / "campaign" / "linked")
+        with self.assertRaises(RuntimeError):
+            self.pack(self.baselines())
+        os.unlink(self.root / "campaign" / "linked")
         locked = self.root / "campaign" / "exposure"
         save(locked / "rows.jsonl", b"{}")
         os.chmod(locked, 0)
@@ -110,7 +130,6 @@ class ArchiveTests(unittest.TestCase):
             self.skipTest("running as root: permissions do not lock the folder")
         with self.assertRaises(RuntimeError):
             self.pack(self.baselines())
-        self.assertFalse((self.out / "manifest.json").exists())  # no manifest, so nothing can be verified or pruned
 
     def test_verify_then_prune_and_any_difference_stops_the_prune(self):
         baselines = self.baselines()
@@ -129,63 +148,107 @@ class ArchiveTests(unittest.TestCase):
         manifest = json.loads((tampered / "manifest.json").read_text())
         manifest["files"][0]["sha256"] = "0" * 64
         (tampered / "manifest.json").write_text(json.dumps(manifest))
-        with self.assertRaises(ValueError):  # the manifest no longer hashes as the Pod reported
+        with self.assertRaises(ValueError):  # the manifest no longer hashes as reported
             archive.verify_copy(tampered, reported)
         with self.assertRaises(ValueError):  # a member differs from the manifest
             archive.verify_copy(tampered, {**reported, "manifest.json": archive.sha256_file(tampered / "manifest.json")})
-        prune = {"root": str(self.root), "expected_root": str(self.root), "keep_root": str(self.root.parent / "q2"),
-                 "out": str(self.out)}
         with self.assertRaises(RuntimeError):  # a Pod copy that differs from the verified one: nothing pruned
-            pod(archive.POD_PRUNE, {**prune, "verified": {**reported, "records.tar.gz": "0" * 64}})
-        self.assertTrue(self.root.exists())
+            pod(archive.POD_PRUNE, self.prune_args(verified={**reported, "records.tar.gz": "0" * 64}))
         with self.assertRaises(RuntimeError):  # never the campaign being kept
-            pod(archive.POD_PRUNE, {**prune, "keep_root": str(self.root), "verified": reported})
+            pod(archive.POD_PRUNE, self.prune_args(keep_root=str(self.root), verified=reported))
+        with self.assertRaises(RuntimeError):  # never outside the workspace
+            pod(archive.POD_PRUNE, self.prune_args(workspace=str(self.root.parent.parent), verified=reported))
         self.assertTrue(self.root.exists())
-        self.assertEqual(pod(archive.POD_PRUNE, {**prune, "verified": reported}), {"pruned": True})
+        self.assertEqual(pod(archive.POD_PRUNE, self.prune_args(verified=reported)),
+                         {"pruned": True, "was_present": True})
         self.assertFalse(self.root.exists())
 
+    def cycle(self, failure, dest=None, resume=False, created=None):
+        calls = []
+        temp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temp, True)
+        cycle = archive.ArchiveCycle.__new__(archive.ArchiveCycle)
+        cycle.control, cycle.result = temp / "control", {}
+        cycle.dest, cycle.budget, cycle.resume = dest or temp / "dest", 10**9, resume
+        cycle.control.mkdir()
+        cycle.old, cycle.base = cloud.WORKSPACE / "g-references-v1", cloud.WORKSPACE / "g-references-v1-q2"
+        cycle.manifest = {"tooling": {"root": "/workspace/g-references-v1-q2/tooling/abc"}}
+        now = time.time()
+        cycle.lease = {"deadline_epoch": now + 7200, "recovery_seconds": 600,
+                       "created_epoch": created if created is not None else now - 300, "startup_idle_seconds": 5400}
+        source, test = self.out, self
+        baselines, packed = (None, None) if resume else (self.baselines(), self.pack(self.baselines()))
+        if failure == "missing baseline":
+            baselines["baselines"][3]["identity"] = None
+
+        class Pod:
+            prune_for_real = False
+
+            def run(self, program, args, timeout=30, read_only=False):
+                calls.append(program.split("\n", 1)[0])
+                if program is archive.POD_BASELINES:
+                    return baselines
+                if program is archive.POD_PACK:
+                    return packed
+                if self.prune_for_real:
+                    return pod(archive.POD_PRUNE, test.prune_args(verified=args["verified"]))
+                return {"pruned": True, "was_present": True}
+
+            def get(self, remote, local, timeout=600):
+                calls.append("get")
+                data = (source / Path(remote).name).read_bytes()
+                if failure == "copy differs" and Path(remote).name == "records.tar.gz":
+                    data += b"x"
+                Path(local).write_bytes(data)
+        cycle.pod = Pod()
+        return cycle, calls
+
     def test_the_lease_runs_baselines_copy_verify_then_prune_and_stops_on_a_failed_check(self):
-        for failure in (None, "missing baseline", "copy differs"):
-            calls = []
-            temp = Path(tempfile.mkdtemp())
-            self.addCleanup(__import__("shutil").rmtree, temp, True)
-            cycle = archive.ArchiveCycle.__new__(archive.ArchiveCycle)
-            cycle.control, cycle.result, cycle.dest = temp / "control", {}, temp / "dest"
-            cycle.control.mkdir()
-            cycle.old, cycle.base = cloud.WORKSPACE / "g-references-v1", cloud.WORKSPACE / "g-references-v1-q2"
-            cycle.manifest = {"tooling": {"root": "/workspace/g-references-v1-q2/tooling/abc"}}
-            cycle.lease = {"deadline_epoch": time.time() + 7200, "recovery_seconds": 600}
-            source = self.out
-            baselines, packed = self.baselines(), self.pack(self.baselines())
-            if failure == "missing baseline":
-                baselines["baselines"][3]["identity"] = None
-
-            class Pod:
-                def run(self, program, args, timeout=30, read_only=False):
-                    calls.append(program.split("\n", 1)[0])
-                    if program is archive.POD_BASELINES:
-                        return baselines
-                    if program is archive.POD_PACK:
-                        return packed
-                    return {"pruned": True}
-
-                def get(self, remote, local, timeout=600):
-                    calls.append("get")
-                    data = (source / Path(remote).name).read_bytes()
-                    if failure == "copy differs" and Path(remote).name == "records.tar.gz":
-                        data += b"x"
-                    Path(local).write_bytes(data)
-            cycle.pod = Pod()
-            if failure is None:
+        cycle, calls = self.cycle(failure=None)
+        cycle.watch()
+        self.assertEqual(calls, ["#pod:archive-baselines", "#pod:archive-pack", "get", "get", "get", "get",
+                                 "#pod:archive-prune"])
+        self.assertTrue(cycle.result["pruned"] and cycle.result["complete"])
+        self.assertTrue((cycle.dest / "VERIFIED.json").exists() and (cycle.dest / "PRUNE.json").exists())
+        self.assertGreater(read(cycle.dest / "VERIFIED.json")["archive_bytes"], 0)
+        for failure in ("missing baseline", "copy differs"):
+            cycle, calls = self.cycle(failure=failure)
+            with self.assertRaises(ValueError):
                 cycle.watch()
-                self.assertEqual(calls, ["#pod:archive-baselines", "#pod:archive-pack", "get", "get", "get", "get",
-                                         "#pod:archive-prune"])
-                self.assertTrue(cycle.result["pruned"] and cycle.result["complete"])
-                self.assertTrue((cycle.dest / "VERIFIED.json").exists() and (cycle.dest / "PRUNE.json").exists())
-            else:
-                with self.assertRaises(ValueError):
-                    cycle.watch()
-                self.assertNotIn("#pod:archive-prune", calls)  # any failed check stops before the prune
+            self.assertNotIn("#pod:archive-prune", calls)  # any failed check stops before the prune
+        cycle, calls = self.cycle(failure=None)
+        cycle.budget = 1  # over the byte budget: no copy, no prune
+        with self.assertRaises(ValueError):
+            cycle.watch()
+        self.assertEqual(calls, ["#pod:archive-baselines", "#pod:archive-pack"])
+        late, calls = self.cycle(failure=None, created=time.time() - 5400 + 900)  # 15 min of startup idle left
+        with self.assertRaisesRegex(ValueError, "startup-idle"):
+            late.watch()
+        self.assertEqual(calls, ["#pod:archive-baselines"])  # the pack could not end inside the bound
+
+    def test_a_resumed_prune_reverifies_the_copy_and_tolerates_a_partial_root(self):
+        cycle, _ = self.cycle(failure=None)
+        cycle.watch()  # a full lease (its prune stubbed), to get a verified destination
+        (cycle.dest / "PRUNE.json").unlink()  # as if the prune had not finished
+        shutil.rmtree(self.root / "campaign" / "hot")  # a partly removed root
+        resumed, calls = self.cycle(failure=None, dest=cycle.dest, resume=True)
+        resumed.pod.prune_for_real = True
+        resumed.watch()
+        self.assertEqual(calls, ["#pod:archive-prune"])  # no baselines, pack or copy: the E: copy re-verified
+        self.assertFalse(self.root.exists())
+        prune = read(resumed.dest / "PRUNE.json")
+        self.assertEqual(prune["pod"], {"pruned": True, "was_present": True})
+        self.assertIn("not on a regeneration receipt", prune["ruling"])
+        self.assertEqual(set(prune["recipes"]), {"native", "shard", "checkpoint"})
+        self.assertIn("campaign/cold/G2/b001-a1/archive.json", prune["cold_archive_records"])
+        self.assertEqual(pod(archive.POD_PRUNE, self.prune_args(verified={})),  # absent: the end state
+                         {"pruned": True, "was_present": False})
+        (resumed.dest / "records.tar.gz").write_bytes(b"changed")
+        (resumed.dest / "PRUNE.json").unlink()
+        again, calls = self.cycle(failure=None, dest=resumed.dest, resume=True)
+        with self.assertRaises(ValueError):  # the E: copy no longer matches VERIFIED.json: no prune
+            again.watch()
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

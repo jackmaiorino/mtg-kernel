@@ -6,19 +6,25 @@ failed check stops before the prune:
 
 1. **Baselines.** The nine determinism baselines (``BASELINES``: G1 blocks 1 and 2, G2 to G8 block 1) are computed on
    ``IDENTITY_KEYS`` with the qualification tool's own ``checkpoint_identity``, and recorded.
-2. **Copy.** Every file of the old root is packed (gzip) on the container disk with a manifest (path relative to
-   the root, bytes, SHA256), except regenerable bulk, which a listing names (path, bytes): native trees, cold
-   trajectory shards (``native-<k>.zip``; each cold folder's ``archive.json`` is kept), checkpoints other than the
-   nine final ones, and the staged tooling, runtime and inputs. Those are regenerable by deterministic replay or
-   from the packages, so they are pruned, not copied. The old leases' control files, packed recoveries included, are
-   kept. A folder that cannot be listed stops the archive.
-3. **Verify.** The controller copies the archive, manifest, listing and baselines to the destination on E: and
-   verifies every file's SHA256 and every archive member against the manifest.
+2. **Copy.** Every file of the old root is packed (tar, gzip level 1) on the container disk with a manifest (path
+   relative to the root, bytes, SHA256), except regenerable bulk, which a listing names (path, bytes): native trees,
+   cold trajectory shards (``native-<k>.zip``) and checkpoints other than the nine final ones. Kept: each cold
+   folder's ``archive.json``, G1 block 1's cold shards (a byte-level reference, lead ruling), the old leases'
+   control files, and the staged tooling, runtime and inputs (``inputs/objects/<sha>/campaign.json`` is
+   hash-cited). The root must be canonical, and a link or a folder that cannot be listed stops the archive.
+3. **Verify.** The controller checks the destination's 60 GiB reserve and the archive's byte budget, copies the
+   archive, manifest, listing and baselines to E:, flushes them to disk, and verifies every file's SHA256 and every
+   archive member against the manifest.
 4. **Prune.** Only then, and only if the Pod's copies still hash as verified, the old root is removed and its
-   absence confirmed. The listing is the PRUNE manifest.
+   absence confirmed. ``PRUNE.json`` is the PRUNE manifest: the listing, the regeneration recipe of each kind of
+   pruned file, the cold ``archive.json`` hashes and the ruling.
+
+``--prune-verified`` resumes a lease that verified its copy but did not prune: on a new Pod it re-verifies the E:
+copy against ``VERIFIED.json`` and the manifest, then prunes, a partly removed root included.
 
 The lease is the G controller's (``g_references_cloud_v1.Cycle``) with the staged package's tooling, no campaign
-driver and no recovery; its guards, hard stop and release are unchanged.
+driver and no recovery; its guards, hard stop and release are unchanged. No progress.json is written, so each Pod
+step must end inside the resident guard's startup-idle bound as well as the lease's deadline.
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import tarfile
 import time
 from pathlib import Path, PurePosixPath
@@ -37,17 +44,30 @@ from nine_deck_cloud_v1 import pin, read, require, write
 SCHEMA = "g-references-v1/superseded-archive"
 BASELINES = [("G1", 1), ("G1", 2)] + [(run, 1) for run in ("G2", "G3", "G4", "G5", "G6", "G7", "G8")]
 # Regenerable bulk, pruned without a copy: native trees (a "native" folder anywhere), cold trajectory shards
-# (native-<k>.zip; each cold folder's archive.json, with the shard hashes and timings, is kept), checkpoints other
-# than the named final ones, and the old root's staged tooling, runtime and inputs (in the packages).
+# (native-<k>.zip inside a cold folder) and checkpoints other than the named final ones.
 PAYLOAD_FOLDERS = ("native",)
 PAYLOAD_SHARD = r"native-[0-9]+\.zip"
 SHARD_FOLDERS = ("cold", "trials-cold")  # a shard is payload only inside a cold folder
-STAGED_FOLDERS = ("tooling", "runtime", "inputs")
+KEEP_SHARDS = ("campaign/cold/G1/b001-",)  # G1 block 1's shards stay as a byte-level reference (lead ruling)
 PACK_RULES = {"payload_folders": list(PAYLOAD_FOLDERS), "payload_shard": PAYLOAD_SHARD,
-              "shard_folders": list(SHARD_FOLDERS), "staged_folders": list(STAGED_FOLDERS)}
+              "shard_folders": list(SHARD_FOLDERS), "keep_shards": list(KEEP_SHARDS)}
 POD_OUT = "/root/superseded-archive"  # the container disk: the archive never adds to the volume
 FILES = ("records.tar.gz", "manifest.json", "prune-listing.json", "baselines.json")
-STEP_SECONDS = 3000  # a Pod step's bound (a walk of the old root took 11 min alone)
+# Per-step bounds (a walk of the old root took 11 min alone on 11-01).
+STEP_SECONDS = {"baselines": 600, "pack": 3000, "copy": 3000, "prune": 900}
+STARTUP_MARGIN_SECONDS = 120  # each step ends this far inside the resident guard's startup-idle bound
+RESERVE_BYTES = 60 * 1024**3  # ARTIFACT-LAW: the destination volume keeps 60 GiB free
+RULING = ("lead ruling 2026-11-01 (collab LANES/g-references-20261028/RUN-MANIFEST.json lead_rulings; "
+          "QUALIFICATION-RESTART.md): the superseded root is archived and pruned on its own lease; its trajectory "
+          "shards are pruned on that ruling, not on a regeneration receipt (none exists yet for this trainer on the "
+          "Pod); G1 block 1's shards are kept as a byte-level reference")
+RECIPES = {
+    "native": "deterministic replay of the block from its frozen block-start checkpoint and seeds by the G driver "
+              "(DESIGN section 4); the restart's root q2 replays blocks 1 and 2",
+    "shard": "the native tree of the same replay, archived by native_expanded_dispatch_v1's archive step; each "
+             "folder's archive.json, kept, names every shard's SHA256",
+    "checkpoint": "deterministic replay as for native trees; the nine final checkpoints are kept",
+}
 
 POD_BASELINES = '''#pod:archive-baselines
 import pathlib, sys
@@ -75,39 +95,51 @@ print(json.dumps({"baselines": rows, "sha256": digest(out / "baselines.json")}))
 '''
 
 POD_PACK = '''#pod:archive-pack
-import hashlib, io, os, pathlib, re, tarfile
+import hashlib, os, pathlib, re, tarfile, time
+started = time.monotonic()
 root, campaign, out = pathlib.Path(ARGS["root"]), pathlib.Path(ARGS["campaign"]), pathlib.Path(ARGS["out"])
-need(campaign.parent == root and campaign.is_dir(), "the campaign is not under the superseded root")
+need(not root.is_symlink() and str(root.resolve()) == str(root), "the superseded root is not canonical")
+need(campaign.parent == root and campaign.is_dir() and not campaign.is_symlink(),
+     "the campaign is not under the superseded root")
 keep = set(ARGS["checkpoints"])
 out.mkdir(parents=True, exist_ok=True)
 included, listed = [], []
 def fail(error):  # a folder that cannot be listed stops the archive (and so the prune)
     raise error
-with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=6) as tar:
+def in_time():
+    need(time.monotonic() - started < ARGS["limit_seconds"], "the pack outlasted its bound")
+with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar:
     for folder, dirs, files in os.walk(root, onerror=fail):
+        in_time()
+        for name in dirs:
+            need(not pathlib.Path(folder, name).is_symlink(), "a linked folder in the superseded root")
         dirs.sort()
         for name in sorted(files):
             path = pathlib.Path(folder, name)
             need(not path.is_symlink(), "a link in the superseded root: " + str(path))
             size = path.stat().st_size
             relative = path.relative_to(root)
-            parts = relative.parts
-            payload = (any(part in ARGS["payload_folders"] for part in parts[:-1])
-                       or re.fullmatch(ARGS["payload_shard"], name) is not None
-                       and any(part in ARGS["shard_folders"] for part in parts[:-1])
-                       or parts[:2] == ("campaign", "checkpoints") and str(path) not in keep
-                       or len(parts) > 1 and parts[0] in ARGS["staged_folders"])
-            entry = {"path": relative.as_posix(), "bytes": size}
+            parts, posix = relative.parts, relative.as_posix()
+            shard = re.fullmatch(ARGS["payload_shard"], name) is not None \\
+                and any(part in ARGS["shard_folders"] for part in parts[:-1]) \\
+                and not any(posix.startswith(prefix) for prefix in ARGS["keep_shards"])
+            payload = (any(part in ARGS["payload_folders"] for part in parts[:-1]) or shard
+                       or parts[:2] == ("campaign", "checkpoints") and str(path) not in keep)
+            entry = {"path": posix, "bytes": size}
             if payload:
-                listed.append(entry)
+                listed.append({**entry, "kind": "shard" if shard else "checkpoint"
+                               if parts[:2] == ("campaign", "checkpoints") else "native"})
                 continue
-            value, data = hashlib.sha256(), path.read_bytes()
-            value.update(data)
-            need(len(data) == size, "a file changed while it was archived: " + str(path))
+            value = hashlib.sha256()
+            with open(path, "rb") as stream:
+                for chunk in iter(lambda: stream.read(1 << 20), b""):
+                    value.update(chunk)
+            info = tarfile.TarInfo(posix)
+            info.size, info.mtime, info.mode = size, int(path.stat().st_mtime), 0o644
+            with open(path, "rb") as stream:
+                tar.addfile(info, stream)
+            need(path.stat().st_size == size, "a file changed while it was archived: " + str(path))
             included.append({**entry, "sha256": value.hexdigest()})
-            info = tarfile.TarInfo(relative.as_posix())
-            info.size, info.mtime, info.mode = len(data), int(path.stat().st_mtime), 0o644
-            tar.addfile(info, io.BytesIO(data))
 kept = {item["path"] for item in included}
 need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in keep),
      "a final checkpoint is missing from the archive")
@@ -117,18 +149,25 @@ need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in kee
                                                     "files": listed}, indent=1), encoding="utf-8")
 print(json.dumps({"files": {name: digest(out / name) for name in ("records.tar.gz", "manifest.json",
                                                                     "prune-listing.json")},
+                  "archive_bytes": (out / "records.tar.gz").stat().st_size,
                   "included": len(included), "included_bytes": sum(item["bytes"] for item in included),
-                  "listed": len(listed), "listed_bytes": sum(item["bytes"] for item in listed)}))
+                  "listed": len(listed), "listed_bytes": sum(item["bytes"] for item in listed),
+                  "seconds": round(time.monotonic() - started, 1)}))
 '''
 
 POD_PRUNE = '''#pod:archive-prune
 import pathlib, shutil
 root, out = pathlib.Path(ARGS["root"]), pathlib.Path(ARGS["out"])
-need(str(root) == ARGS["expected_root"] and root != pathlib.Path(ARGS["keep_root"]), "not the superseded root")
-for name, expected in ARGS["verified"].items():
+need(str(root) == ARGS["expected_root"] and root != pathlib.Path(ARGS["keep_root"]) and
+     root.parent == pathlib.Path(ARGS["workspace"]), "not the superseded root")
+need(not root.is_symlink(), "the superseded root is a link")
+for name, expected in ARGS["verified"].items():  # this lease's own Pod copies (none on a resumed prune)
     need(digest(out / name) == expected, "the Pod copy of " + name + " differs from the verified one")
-shutil.rmtree(root)
-print(json.dumps({"pruned": not root.exists()}))
+present = root.exists()
+if present:
+    need(str(root.resolve()) == str(root), "the superseded root is not canonical")
+    shutil.rmtree(root)
+print(json.dumps({"pruned": not root.exists(), "was_present": present}))
 '''
 
 
@@ -141,8 +180,8 @@ def sha256_file(path) -> str:
 
 
 def flush_durable(folder: Path, names) -> None:
-    """Flush each copied file, then its folder where the platform allows, to stable storage: a verified copy must
-    survive a crash of this host before the Pod's copy is pruned."""
+    """Flush each copied file, then its folder and the folder's parents where the platform allows, to stable
+    storage: a verified copy must survive a crash of this host before the Pod's copy is pruned."""
     for name in names:
         with open(Path(folder) / name, "rb+") as stream:
             os.fsync(stream.fileno())
@@ -156,10 +195,10 @@ def flush_durable(folder: Path, names) -> None:
 
 
 def verify_copy(dest: Path, reported: dict) -> dict:
-    """Every copied file hashes as the Pod reported, and every archive member matches the manifest (name, bytes,
-    SHA256) with nothing missing or extra. Raises on any difference."""
+    """Every copied file hashes as reported, and every archive member matches the manifest (name, bytes, SHA256)
+    with nothing missing or extra. Raises on any difference."""
     for name, expected in reported.items():
-        require(sha256_file(dest / name) == expected, f"{name} differs from the Pod's copy")
+        require(sha256_file(dest / name) == expected, f"{name} differs from the reported copy")
     manifest = read(dest / "manifest.json")
     expected = {item["path"]: item for item in manifest["files"]}  # paths relative to the root, POSIX
     seen = set()
@@ -167,72 +206,132 @@ def verify_copy(dest: Path, reported: dict) -> dict:
         for member in tar:
             require(member.isfile() and member.name in expected and member.name not in seen,
                     f"unexpected archive member {member.name}")
-            data = tar.extractfile(member).read()
+            value, size = hashlib.sha256(), 0
+            stream = tar.extractfile(member)
+            for chunk in iter(lambda: stream.read(1 << 20), b""):
+                value.update(chunk)
+                size += len(chunk)
             item = expected[member.name]
-            require(len(data) == item["bytes"] and hashlib.sha256(data).hexdigest() == item["sha256"],
+            require(size == item["bytes"] and value.hexdigest() == item["sha256"],
                     f"archive member {member.name} differs from the manifest")
             seen.add(member.name)
     require(seen == set(expected), "archive members missing: " + ", ".join(sorted(set(expected) - seen)[:5]))
-    return {"members": len(seen), "bytes": sum(item["bytes"] for item in expected.values())}
+    return {"members": len(seen), "bytes": sum(item["bytes"] for item in expected.values()),
+            "archive_bytes": (dest / "records.tar.gz").stat().st_size}
+
+
+def prune_manifest(dest: Path, old: PurePosixPath, verified: dict, pruned: dict) -> dict:
+    """PRUNE.json (ARTIFACT-LAW clause 3): the listing, what each kind of pruned file is regenerated from, the kept
+    cold archive.json hashes that name the pruned shards, and the ruling."""
+    listing = read(dest / "prune-listing.json")
+    manifest = read(dest / "manifest.json")
+    kinds = {}
+    for item in listing["files"]:
+        kind = kinds.setdefault(item["kind"], {"files": 0, "bytes": 0})
+        kind["files"] += 1
+        kind["bytes"] += item["bytes"]
+    return {"schema": SCHEMA + "/prune", "epoch": time.time(), "root": str(old),
+            "listing": pin(dest / "prune-listing.json"), "files": len(listing["files"]),
+            "bytes": sum(item["bytes"] for item in listing["files"]), "kinds": kinds, "recipes": RECIPES,
+            "cold_archive_records": {item["path"]: item["sha256"] for item in manifest["files"]
+                                     if PurePosixPath(item["path"]).name == "archive.json"},
+            "archived": verified, "pod": pruned, "ruling": RULING}
 
 
 class ArchiveCycle(gcloud.Cycle):
     """The G controller's lease with the archive steps in place of the campaign driver."""
 
-    def __init__(self, *args, superseded: str, dest: Path, **kwargs):
+    def __init__(self, *args, superseded: str, dest: Path, budget_bytes: int, resume: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self.old = cloud.WORKSPACE / superseded
         require(self.old != self.base and self.old.parent == cloud.WORKSPACE, "the superseded root is another root")
-        self.dest = Path(dest)
-        self.result.update(superseded_root=str(self.old), archive_dest=str(self.dest))
+        self.dest, self.budget, self.resume = Path(dest), budget_bytes, resume
+        self.result.update(superseded_root=str(self.old), archive_dest=str(self.dest), resumed_prune=resume)
 
     def launch(self):
         require(time.time() - self.lease["created_epoch"] < self.lease["startup_idle_seconds"] - 60,
                 "startup outlasted the guards' startup idle bound")
 
     def watch(self):
-        self.archive()
+        self.prune_verified() if self.resume else self.archive()
         self.ended = self.result["complete"] = True
 
     def recover(self):
         self.result["recovery"] = "not applicable: the archive lease has no campaign driver"
 
-    def step(self, program, args):
-        require(time.time() + STEP_SECONDS < self.lease["deadline_epoch"] - self.lease["recovery_seconds"],
-                "too little lease time left for an archive step")
-        return self.pod.run(program, {**args, "schema": SCHEMA}, timeout=STEP_SECONDS)
+    def in_bounds(self, kind):
+        """A step of ``kind`` ends inside the lease's deadline and the resident guard's startup-idle bound (this
+        lease writes no progress.json)."""
+        end = time.time() + STEP_SECONDS[kind]
+        require(end < self.lease["deadline_epoch"] - self.lease["recovery_seconds"],
+                f"too little lease time left for the {kind} step")
+        require(end < self.lease["created_epoch"] + self.lease["startup_idle_seconds"] - STARTUP_MARGIN_SECONDS,
+                f"the {kind} step could outlast the resident guard's startup-idle bound")
+
+    def step(self, kind, program, args):
+        self.in_bounds(kind)
+        started = time.monotonic()
+        result = self.pod.run(program, {**args, "schema": SCHEMA}, timeout=STEP_SECONDS[kind])
+        self.result.setdefault("step_seconds", {})[kind] = round(time.monotonic() - started, 1)
+        return result
+
+    def prune(self, verified_pod_copies):
+        return self.step("prune", POD_PRUNE, {"root": str(self.old), "expected_root": str(self.old),
+                                              "keep_root": str(self.base), "workspace": str(cloud.WORKSPACE),
+                                              "out": POD_OUT, "verified": verified_pod_copies})
 
     def archive(self):
         require(not self.dest.exists(), "fresh archive destination required")
         campaign = self.old / "campaign"
         tools = str(PurePosixPath(self.manifest["tooling"]["root"]) / "python/tools")
-        baselines = self.step(POD_BASELINES, {"tools": tools, "campaign": str(campaign), "pairs": BASELINES,
-                                              "out": POD_OUT})
+        baselines = self.step("baselines", POD_BASELINES, {"tools": tools, "campaign": str(campaign),
+                                                           "pairs": BASELINES, "out": POD_OUT})
         write(self.control / "archive-baselines.json", baselines)
         missing = [f"{row['run']} block {row['block']}" for row in baselines["baselines"] if row["identity"] is None]
         require(not missing, "determinism baselines missing: " + ", ".join(missing))
         checkpoints = [row["final_checkpoint"]["path"] for row in baselines["baselines"]]
-        packed = self.step(POD_PACK, {"root": str(self.old), "campaign": str(campaign), "checkpoints": checkpoints,
-                                      **PACK_RULES, "out": POD_OUT})
+        packed = self.step("pack", POD_PACK, {"root": str(self.old), "campaign": str(campaign),
+                                              "checkpoints": checkpoints, **PACK_RULES, "out": POD_OUT,
+                                              "limit_seconds": STEP_SECONDS["pack"] - 60})
         write(self.control / "archive-packed.json", packed)
+        require(packed["archive_bytes"] <= self.budget,
+                f"the archive ({packed['archive_bytes']} B) exceeds its byte budget ({self.budget} B)")
+        anchor = self.dest.parent
+        while not anchor.exists():
+            anchor = anchor.parent
+        free = shutil.disk_usage(anchor).free
+        require(free - packed["archive_bytes"] - packed["included_bytes"] >= RESERVE_BYTES,
+                "the destination would fall below its 60 GiB reserve")
         reported = {**packed["files"], "baselines.json": baselines["sha256"]}
         self.dest.mkdir(parents=True)
+        self.in_bounds("copy")
+        started = time.monotonic()
         for name in FILES:
-            self.pod.get(f"{POD_OUT}/{name}", self.dest / name, timeout=STEP_SECONDS)
+            self.pod.get(f"{POD_OUT}/{name}", self.dest / name, timeout=STEP_SECONDS["copy"])
+        self.result.setdefault("step_seconds", {})["copy"] = round(time.monotonic() - started, 1)
         flush_durable(self.dest, FILES)  # on disk before anything depends on these copies
         verified = verify_copy(self.dest, reported)
         write(self.dest / "VERIFIED.json", {"schema": SCHEMA + "/verified", "epoch": time.time(),
                                             "files": {name: pin(self.dest / name) for name in FILES}, **verified})
         flush_durable(self.dest, ["VERIFIED.json"])
-        pruned = self.step(POD_PRUNE, {"root": str(self.old), "expected_root": str(self.old), "keep_root": str(self.base),
-                                       "out": POD_OUT, "verified": reported})
+        pruned = self.prune(reported)
         require(pruned["pruned"] is True, "the superseded root is still present")
-        listing = read(self.dest / "prune-listing.json")
-        write(self.dest / "PRUNE.json", {"schema": SCHEMA + "/prune", "epoch": time.time(), "root": str(self.old),
-                                         "listing": pin(self.dest / "prune-listing.json"),
-                                         "files": len(listing["files"]),
-                                         "bytes": sum(item["bytes"] for item in listing["files"]),
-                                         "archived": verified})
+        self.finish(verified, pruned)
+
+    def prune_verified(self):
+        """Resume after a lease that verified its copy but did not prune: re-verify the E: copy against VERIFIED.json
+        and the manifest, then prune on a new Pod (a partly removed root included)."""
+        require((self.dest / "VERIFIED.json").exists() and not (self.dest / "PRUNE.json").exists(),
+                "a resumed prune needs a verified, unpruned archive destination")
+        record = read(self.dest / "VERIFIED.json")
+        verified = verify_copy(self.dest, {name: item["sha256"] for name, item in record["files"].items()})
+        pruned = self.prune({})
+        require(pruned["pruned"] is True, "the superseded root is still present")
+        self.finish(verified, pruned)
+
+    def finish(self, verified, pruned):
+        write(self.dest / "PRUNE.json", prune_manifest(self.dest, self.old, verified, pruned))
+        flush_durable(self.dest, ["PRUNE.json"])
         self.result["archived"] = verified
         self.result["pruned"] = True
 
@@ -248,13 +347,20 @@ def main(argv=None):
     parser.add_argument("--volume-created-epoch", type=float, required=True)
     parser.add_argument("--superseded", required=True, help="the superseded campaign root's name")
     parser.add_argument("--dest", type=Path, required=True)
+    parser.add_argument("--budget-bytes", type=int, required=True, help="the compressed archive's byte budget")
+    parser.add_argument("--prune-verified", action="store_true",
+                        help="resume: re-verify an existing verified destination, then prune")
     parser.add_argument("--ssh-key", type=Path)
     parser.add_argument("--execute", action="store_true", help="allocate the Pod (paid compute)")
     args = parser.parse_args(argv)
     summary = gcloud.ledger(args.leases, args.volume_gb, args.volume_created_epoch)
     gcloud.verified_package(args.package)
     gcloud.require_within_caps(summary, read(args.control / "lease" / "lease.json"), args.volume_gb)
-    require(not args.dest.exists(), "fresh archive destination required")
+    if args.prune_verified:
+        require((args.dest / "VERIFIED.json").exists() and not (args.dest / "PRUNE.json").exists(),
+                "a resumed prune needs a verified, unpruned archive destination")
+    else:
+        require(not args.dest.exists(), "fresh archive destination required")
     planned = cloud.plan(args.package, args.control, args.external_guard)
     if args.op == "plan" or not args.execute:
         print(json.dumps(planned | {"ledger": summary}))
@@ -268,8 +374,8 @@ def main(argv=None):
     key = cloud.api_key()
     os.environ["RUNPOD_API_KEY"] = key
     result = ArchiveCycle(args.package, args.control, args.ssh_key, args.external_guard, key, False, None, None, None,
-                          cloud.subprocess.run, cloud.spawn_detached, time.sleep,
-                          superseded=args.superseded, dest=args.dest).run()
+                          cloud.subprocess.run, cloud.spawn_detached, time.sleep, superseded=args.superseded,
+                          dest=args.dest, budget_bytes=args.budget_bytes, resume=args.prune_verified).run()
     print(json.dumps(result))
     return 0 if result["complete"] and result.get("pruned") and result["release_confirmed"] else 1
 
