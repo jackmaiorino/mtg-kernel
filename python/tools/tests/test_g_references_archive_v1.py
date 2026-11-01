@@ -231,7 +231,13 @@ class ArchiveTests(unittest.TestCase):
         cycle.watch()  # a full lease (its prune stubbed), to get a verified destination
         (cycle.dest / "PRUNE.json").unlink()  # as if the prune had not finished
         shutil.rmtree(self.root / "campaign" / "hot")  # a partly removed root
+        other, calls = self.cycle(failure=None, dest=cycle.dest, resume=True)
+        other.old = cloud.WORKSPACE / "another-root"  # a verified archive of one root never prunes another
+        with self.assertRaisesRegex(ValueError, "not of"):
+            other.watch()
+        self.assertEqual(calls, [])
         resumed, calls = self.cycle(failure=None, dest=cycle.dest, resume=True)
+        resumed.old = type(cloud.WORKSPACE)(str(self.root))  # the root this archive records
         resumed.pod.prune_for_real = True
         resumed.watch()
         self.assertEqual(calls, ["#pod:archive-prune"])  # no baselines, pack or copy: the E: copy re-verified

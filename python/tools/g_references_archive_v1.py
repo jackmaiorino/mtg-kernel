@@ -108,6 +108,20 @@ def fail(error):  # a folder that cannot be listed stops the archive (and so the
     raise error
 def in_time():
     need(time.monotonic() - started < ARGS["limit_seconds"], "the pack outlasted its bound")
+class Timed:
+    # a file read that checks the pack's bound at every chunk (hashing and the tar member alike)
+    def __init__(self, stream):
+        self.stream = stream
+    def read(self, size=-1):
+        in_time()
+        return self.stream.read(size if size and size > 0 else 1 << 20)
+def timed_digest(path):
+    value = hashlib.sha256()
+    with open(path, "rb") as stream:
+        reader = Timed(stream)
+        for chunk in iter(lambda: reader.read(1 << 20), b""):
+            value.update(chunk)
+    return value.hexdigest()
 with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar:
     for folder, dirs, files in os.walk(root, onerror=fail):
         in_time()
@@ -130,16 +144,13 @@ with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar:
                 listed.append({**entry, "kind": "shard" if shard else "checkpoint"
                                if parts[:2] == ("campaign", "checkpoints") else "native"})
                 continue
-            value = hashlib.sha256()
-            with open(path, "rb") as stream:
-                for chunk in iter(lambda: stream.read(1 << 20), b""):
-                    value.update(chunk)
+            sha256 = timed_digest(path)
             info = tarfile.TarInfo(posix)
             info.size, info.mtime, info.mode = size, int(path.stat().st_mtime), 0o644
             with open(path, "rb") as stream:
-                tar.addfile(info, stream)
+                tar.addfile(info, Timed(stream))
             need(path.stat().st_size == size, "a file changed while it was archived: " + str(path))
-            included.append({**entry, "sha256": value.hexdigest()})
+            included.append({**entry, "sha256": sha256})
 kept = {item["path"] for item in included}
 need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in keep),
      "a final checkpoint is missing from the archive")
@@ -147,8 +158,8 @@ need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in kee
                                                "files": included}, indent=1), encoding="utf-8")
 (out / "prune-listing.json").write_text(json.dumps({"schema": ARGS["schema"] + "/prune-listing", "root": str(root),
                                                     "files": listed}, indent=1), encoding="utf-8")
-print(json.dumps({"files": {name: digest(out / name) for name in ("records.tar.gz", "manifest.json",
-                                                                    "prune-listing.json")},
+print(json.dumps({"files": {name: timed_digest(out / name) for name in ("records.tar.gz", "manifest.json",
+                                                                          "prune-listing.json")},
                   "archive_bytes": (out / "records.tar.gz").stat().st_size,
                   "included": len(included), "included_bytes": sum(item["bytes"] for item in included),
                   "listed": len(listed), "listed_bytes": sum(item["bytes"] for item in listed),
@@ -306,8 +317,11 @@ class ArchiveCycle(gcloud.Cycle):
         self.dest.mkdir(parents=True)
         self.in_bounds("copy")
         started = time.monotonic()
+        deadline = started + STEP_SECONDS["copy"]  # one bound for the whole copy, shared by its downloads
         for name in FILES:
-            self.pod.get(f"{POD_OUT}/{name}", self.dest / name, timeout=STEP_SECONDS["copy"])
+            left = deadline - time.monotonic()
+            require(left > 0, "the copy outlasted its bound")
+            self.pod.get(f"{POD_OUT}/{name}", self.dest / name, timeout=left)
         self.result.setdefault("step_seconds", {})["copy"] = round(time.monotonic() - started, 1)
         flush_durable(self.dest, FILES)  # on disk before anything depends on these copies
         verified = verify_copy(self.dest, reported)
@@ -325,6 +339,8 @@ class ArchiveCycle(gcloud.Cycle):
                 "a resumed prune needs a verified, unpruned archive destination")
         record = read(self.dest / "VERIFIED.json")
         verified = verify_copy(self.dest, {name: item["sha256"] for name, item in record["files"].items()})
+        roots = {read(self.dest / name)["root"] for name in ("manifest.json", "prune-listing.json")}
+        require(roots == {str(self.old)}, f"the verified archive is of {sorted(roots)}, not of {self.old}")
         pruned = self.prune({})
         require(pruned["pruned"] is True, "the superseded root is still present")
         self.finish(verified, pruned)
