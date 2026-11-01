@@ -1752,7 +1752,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
             if u64::try_from(position).ok() != Some(record.index) {
                 return Err("Drake record index differs from actual history position".to_string());
             }
-            Arc::make_mut(&mut rows).push(RowV1::of(&**record));
+            Arc::make_mut(&mut rows).push(RowV1::of(record));
         }
     }
     if rows.len() > unchecked {
