@@ -103,6 +103,8 @@ DRAIN_IDLE_SECONDS = 180  # a drain stops without a move in this long: polled ea
 # guard's 300 s work-idle bound with margin for the stop's own writes
 DRAIN = {"moved": -1, "at": DRIVER_STARTED}
 SESSION = f"{os.getpid()}-{DRIVER_STARTED:.0f}"  # this driver session, on its attempts
+VOLUME_WALK_SECONDS = 120  # how long one walk of the accounting trees serves admission
+VOLUME = {"walked": 0.0, "finished": 0}  # the shared walk (volume_logical), under SCRATCH_LOCK
 
 
 def read_pinned(item: dict) -> dict:
@@ -528,6 +530,20 @@ def records_hold(campaign: Campaign, in_flight: int = 0) -> str | None:
     return None
 
 
+def volume_logical(campaign: Campaign) -> tuple[int, int]:
+    """(the accounting trees' logical bytes at the last walk, blocks finished since it). One walk serves every
+    admission of this process for VOLUME_WALK_SECONDS: on a network volume a walk takes tens of seconds and
+    admissions hold one lock, so a walk per admission stalled a lease's whole wave (2026-11-01 00:45Z). A
+    block finished since the walk adds at most projected_additional_bytes, which admission counts, so the
+    cap check stays a bound. The caller holds SCRATCH_LOCK (release, which counts finished blocks, too)."""
+    key = tuple(campaign.raw["storage"]["accounting_roots"])
+    if VOLUME.get("key") != key or time.time() - VOLUME["walked"] > VOLUME_WALK_SECONDS:
+        _, logical = native_dispatch.accounting_bytes(campaign.raw["storage"])
+        VOLUME.update(key=key, logical=logical, walked=time.time(), finished=0)
+        touch(campaign)  # a finished driver step: the walk is the admission's work
+    return VOLUME["logical"], VOLUME["finished"]
+
+
 def admit(campaign: Campaign, native: Path) -> str | None:
     """Register ``native`` as an admitted block's scratch tree (None), or say why the block waits
     (AMENDMENT-2.md item 2): every in-flight tree, each at no less than the measured peak times the factor,
@@ -544,10 +560,11 @@ def admit(campaign: Campaign, native: Path) -> str | None:
         if reason:
             return reason
         storage = campaign.raw["storage"]
-        try:
-            native_dispatch.validate_storage(storage, (len(others) + 1) * storage["projected_additional_bytes"])
-        except ValueError as error:
-            return f"retained: {error}"
+        logical, finished = volume_logical(campaign)
+        projected = (finished + len(others) + 1) * storage["projected_additional_bytes"]
+        if logical + projected > storage["max_logical_bytes"]:
+            return (f"retained: {logical} B at the last walk plus {projected} B projected exceeds the "
+                    f"{storage['max_logical_bytes']} B allowance")
         spec = campaign.raw.get("scratch")
         if spec:
             peak = math.ceil(max(spec["block_peak_bytes"], largest_pruned(campaign)) * spec["factor"])
@@ -574,6 +591,8 @@ def release(campaign: Campaign, run: str, block: int, native: Path) -> None:
             write_json(campaign.state / SCRATCH_LATCH, {"at": now(), "run": run, "block": block, "reason": reason})
             campaign.event(run=run, block=block, kind="scratch-latch", native=str(native))
             return
+        if str(native) in SCRATCH_INFLIGHT:
+            VOLUME["finished"] = VOLUME.get("finished", 0) + 1  # its retained bytes may postdate the last walk
         SCRATCH_INFLIGHT.discard(str(native))
 
 

@@ -29,6 +29,8 @@ class DriverTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        driver.VOLUME.clear()  # the shared volume walk starts empty in every test
+        driver.VOLUME.update(walked=0.0, finished=0)
         self.root = Path(self.temp.name)
         self.play = {run: {"path": f"C:/in/{run}/play-import.json", "sha256": str(index) * 64}
                      for index, run in enumerate(g.RUNS, 1)}
@@ -454,7 +456,31 @@ class DriverTests(unittest.TestCase):
         with self.disk(free=10**6, total=10**6):
             self.assertIsNone(driver.admit(self.campaign, self.root / "container" / "a"))
             self.assertIsNone(driver.admit(self.campaign, self.root / "container" / "b"))
-            self.assertRegex(driver.admit(self.campaign, self.root / "container" / "c"), "^retained: retained plus")
+            self.assertRegex(driver.admit(self.campaign, self.root / "container" / "c"),
+                             "^retained: 1000 B at the last walk plus 1200000000 B projected")
+
+    def test_one_volume_walk_serves_admissions_and_counts_blocks_finished_since(self):
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.scratch_campaign(cap=8 * 10**8, projected=3 * 10**8)  # two blocks fit, three do not
+        (self.root / "volume").mkdir()
+        walks, touched = [], []
+        real = driver.native_dispatch.accounting_bytes
+
+        def counting(storage):
+            walks.append(1)
+            return real(storage)
+        with self.disk(free=10**6, total=10**6), patch.object(driver.native_dispatch, "accounting_bytes", counting), \
+                patch.object(driver, "touch", lambda campaign: touched.append(1)):
+            a, b, c = (self.root / "container" / name for name in "abc")
+            self.assertIsNone(driver.admit(self.campaign, a))
+            self.assertIsNone(driver.admit(self.campaign, b))
+            self.assertEqual((len(walks), len(touched)), (1, 1))  # one walk for both, a driver step
+            driver.release(self.campaign, "G1", 1, a)  # finished since the walk: still projected
+            self.assertEqual(driver.VOLUME["finished"], 1)
+            self.assertRegex(driver.admit(self.campaign, c), "^retained: 0 B at the last walk plus 900000000 B")
+            driver.VOLUME["walked"] -= driver.VOLUME_WALK_SECONDS + 1  # the walk is old: walked again
+            self.assertIsNone(driver.admit(self.campaign, c))
+            self.assertEqual((len(walks), driver.VOLUME["finished"]), (2, 0))
 
     def test_an_unverified_prune_latches_every_dispatch(self):
         self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
