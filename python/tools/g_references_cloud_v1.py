@@ -355,22 +355,26 @@ def dispatchers():
             continue
         seen = identity(int(entry.name))
         if before is not None and seen is not None and seen[1] == before[1] and seen[0] not in ("Z", "X"):
-            found.append((int(entry.name), seen[1]))
+            request = argv[scripts[0] + 2].decode(errors="replace") if scripts[0] + 2 < len(argv) else None
+            found.append((int(entry.name), seen[1], request))
     return found
+# Per dispatcher: its request (which names the attempt) and the Pod-clock time just before its signal, the evidence
+# AMENDMENT-3 3(b) compares with the attempt's interruption.json (also written on the Pod clock).
 signalled = []
-for pid, ticks in dispatchers():
+for pid, ticks, request in dispatchers():
     if running(pid, ticks):  # the same process, not a reused PID
+        at = time.time()
         try:
             os.kill(pid, signal.SIGTERM)
-            signalled.append((pid, ticks))
+            signalled.append({"pid": pid, "start_ticks": ticks, "request": request, "signalled_unix": at})
         except OSError:
             pass
 deadline = time.monotonic() + ARGS["seconds"]
-while time.monotonic() < deadline and any(running(pid, ticks) for pid, ticks in signalled):
+while time.monotonic() < deadline and any(running(item["pid"], item["start_ticks"]) for item in signalled):
     time.sleep(0.5)
-print(json.dumps({"signalled": [pid for pid, _ in signalled],
-                  "still_running": [pid for pid, ticks in signalled if running(pid, ticks)], "epoch": time.time(),
-                  "stop_request_written": written, "stop_request_epoch": stop_epoch}))
+print(json.dumps({"signalled": signalled,
+                  "still_running": [item["pid"] for item in signalled if running(item["pid"], item["start_ticks"])],
+                  "epoch": time.time(), "stop_request_written": written, "stop_request_epoch": stop_epoch}))
 '''
 POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
 try:

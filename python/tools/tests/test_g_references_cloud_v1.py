@@ -405,14 +405,17 @@ class LeaseTests(unittest.TestCase):
             def run(self, program, args, timeout=30, read_only=False):
                 order.append(program)
                 if program is gcloud.POD_STOP_DISPATCHERS:
-                    return {"signalled": [11, 12], "still_running": [], "epoch": 1.0}
+                    return {"signalled": [{"pid": 11, "start_ticks": 1, "request": "/w/a.json", "signalled_unix": 1.0},
+                                          {"pid": 12, "start_ticks": 2, "request": "/w/b.json", "signalled_unix": 1.0}],
+                            "still_running": [], "epoch": 1.0}
                 return {"stopped": True}
         cycle.pod = Pod()
         cycle.stop_worker()
         self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])  # signal, then the supervisor
         self.assertEqual(cycle.result["dispatchers_signalled"], 2)
         self.assertTrue(cycle.ended)
-        self.assertEqual(read(cycle.control / "dispatchers-stopped.json")["signalled"], [11, 12])
+        self.assertEqual([item["request"] for item in read(cycle.control / "dispatchers-stopped.json")["signalled"]],
+                         ["/w/a.json", "/w/b.json"])
         started = read(cycle.control / "release-path-started.json")  # the window's start, before any signal
         self.assertEqual(started["cause"], "controller release")
         cycle.ended, order[:] = False, []
@@ -455,7 +458,9 @@ class LeaseTests(unittest.TestCase):
                 done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
                 result = json.loads(done.stdout.decode().splitlines()[-1])
                 fake.wait(10)
-                self.assertEqual((result["signalled"], result["still_running"]), ([fake.pid], []))
+                self.assertEqual(([item["pid"] for item in result["signalled"]], result["still_running"]), ([fake.pid], []))
+                self.assertEqual(result["signalled"][0]["request"], str(marker))  # the argument after the action
+                self.assertLessEqual(result["signalled"][0]["signalled_unix"], time.time())
                 self.assertEqual(marker.read_text(), "stopped")  # the dispatcher saw SIGTERM, not SIGKILL
                 self.assertIsNone(other.poll())  # nothing else signalled
                 self.assertIsNone(wrapper.poll())  # nor the supervisor that would SIGKILL its job
