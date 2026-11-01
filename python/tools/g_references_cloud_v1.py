@@ -312,6 +312,119 @@ print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 
 
 RELEASE_RESERVE_SECONDS = 120  # before the release boundary, kept for the release after recovery
+# The release path's wait for signalled dispatchers to record and exit. A dispatcher acts on the signal at its
+# next checkpoint: within about 1 s in the native part, but after its native part the next checkpoint follows the
+# whole fingerprint or archive step. Measured on lease 1604 (G1 block 1, one lineage alone): fingerprints 64.0 s,
+# archive 81.2 s. With eight lineages sharing the volume, twice the longer step, rounded up.
+DISPATCHER_GRACE_SECONDS = 180
+# AMENDMENT-3 (release path): before the worker's supervisor is stopped (it SIGKILLs its whole job, so no
+# dispatcher could record anything), new work is refused (the guard's stop-request.json, which every dispatch and
+# admission reads) and each attempt's dispatcher gets SIGTERM directly. A dispatcher latches it, records
+# interruption.json at its next checkpoint, ends its native child and writes execution.json (mtg-kernel #464).
+POD_STOP_DISPATCHERS = '''#pod:stop-dispatchers
+import os, pathlib, signal, time
+signal.signal(signal.SIGHUP, signal.SIG_IGN)  # a dropped SSH session must not end the stop step half done
+request = pathlib.Path(ARGS["guard"], "stop-request.json")
+written = not request.exists()
+if written:
+    partial = request.with_name("stop-request.controller.partial")
+    partial.write_text(json.dumps({"epoch": time.time(), "reason": "controller release path"}))
+    os.replace(partial, request)
+try:
+    stop_epoch = json.loads(request.read_text()).get("epoch")
+except (OSError, ValueError, AttributeError):
+    stop_epoch = None
+def identity(pid):
+    # (state, start ticks) from /proc/<pid>/stat, or None once it is gone
+    try:
+        fields = pathlib.Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()
+        return fields[0], int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None
+def running(pid, ticks):
+    seen = identity(pid)
+    return seen is not None and seen[1] == ticks and seen[0] not in ("Z", "X")
+def dispatchers():
+    # A dispatcher runs the launcher script itself: the first script on its command line is
+    # native_expanded_dispatch_v1.py, followed by its _dispatch or _qualify action. A reservation supervisor names
+    # that command after its own script (host_reservation_v1.py ... -- python3 ... native_expanded_dispatch_v1.py
+    # _dispatch) and is left alone: on SIGTERM it SIGKILLs its whole job, before the dispatcher could record.
+    found = []
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        before = identity(int(entry.name))  # bound before and after the argv read: a reused PID never matches
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\\0")
+        except OSError:
+            continue
+        scripts = [index for index, arg in enumerate(argv) if arg.endswith(b".py")]
+        if not scripts or not argv[scripts[0]].endswith(b"native_expanded_dispatch_v1.py") \\
+                or scripts[0] + 1 >= len(argv) or argv[scripts[0] + 1] not in (b"_dispatch", b"_qualify"):
+            continue
+        seen = identity(int(entry.name))
+        if before is not None and seen is not None and seen[1] == before[1] and seen[0] not in ("Z", "X"):
+            request = argv[scripts[0] + 2].decode(errors="replace") if scripts[0] + 2 < len(argv) else None
+            found.append((int(entry.name), seen[1], request))
+    return found
+# Per dispatcher: its request (which names the attempt), the release marker written in its dispatch root before the
+# signal (the dispatcher notes whether it existed when it latched its first stop: AMENDMENT-3 3(b)), and the
+# Pod-clock time of the signal.
+def mark(pid, ticks, request):
+    # the dispatcher's own marker, on this Pod's local disk (native_expanded_dispatch_v1.own_marker)
+    try:
+        folder = pathlib.Path(ARGS["marker_dir"])
+        folder.mkdir(parents=True, exist_ok=True)
+        marker = folder / ("%d-%d" % (pid, ticks))
+        partial = marker.with_name(marker.name + ".partial")
+        partial.write_text(json.dumps({"epoch": time.time(), "request": request}))
+        os.replace(partial, marker)
+        return str(marker)
+    except OSError:
+        return None
+signalled = []
+for pid, ticks, request in dispatchers():
+    if running(pid, ticks):  # the same process, not a reused PID
+        marker = mark(pid, ticks, request)
+        if not running(pid, ticks):  # gone while the marker was written: its PID may name another process now
+            continue
+        at = time.time()
+        try:
+            os.kill(pid, signal.SIGTERM)
+            signalled.append({"pid": pid, "start_ticks": ticks, "request": request, "marker": marker,
+                              "signalled_unix": at})
+        except OSError:
+            pass
+deadline = time.monotonic() + ARGS["seconds"]
+while time.monotonic() < deadline and any(running(item["pid"], item["start_ticks"]) for item in signalled):
+    time.sleep(0.5)
+result = {"lease": ARGS["lease"], "pod_id": ARGS["pod_id"], "signalled": signalled,
+          "still_running": [item["pid"] for item in signalled if running(item["pid"], item["start_ticks"])],
+          "epoch": time.time(), "stop_request_written": written, "stop_request_epoch": stop_epoch}
+try:  # also in the Pod control folder, which recovery packs: the evidence survives a lost controller copy
+    control = pathlib.Path(ARGS["control"])
+    control.mkdir(parents=True, exist_ok=True)
+    partial = control / "dispatchers-stopped.json.partial"
+    partial.write_text(json.dumps(result))
+    os.replace(partial, control / "dispatchers-stopped.json")
+except OSError:
+    pass
+print(json.dumps(result))
+'''
+# The release marker folder must be writable on the Pod before any dispatch: without it no attempt can carry
+# AMENDMENT-3's evidence. Probed at launch; a production lease refuses to start without it.
+POD_MARKER_PROBE = '''#pod:marker-probe
+import os, pathlib
+try:
+    folder = pathlib.Path(ARGS["marker_dir"])
+    folder.mkdir(parents=True, exist_ok=True)
+    probe = folder / ("probe-%d" % os.getpid())
+    probe.write_text("probe")
+    probe.unlink()
+    print(json.dumps({"ok": True, "folder": str(folder)}))
+except OSError as error:
+    print(json.dumps({"ok": False, "folder": ARGS["marker_dir"], "error": str(error)[-300:]}))
+'''
 POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
 try:
     value = json.load(open(path))
@@ -390,9 +503,13 @@ class Cycle(cloud.Cycle):
                "MTG_HOST_LOCK_ROOT": cloud.LOCK_ROOT, "HOST_SLOTS_ROOT": cloud.LOCK_ROOT, "PYTHONDONTWRITEBYTECODE": "1"}
         if getattr(self, "binding", None):
             env[host_slots_v1.CPU_BINDING_ENV] = ",".join(map(str, self.binding))
+        probe = self.pod.run(POD_MARKER_PROBE, {"marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR}, timeout=60)
+        require(probe.get("ok") is True or self.manifest["mode"] != "production",
+                "the release marker folder is not writable on the Pod (AMENDMENT-3): " + json.dumps(probe))
         self.worker = self.pod.run(cloud.POD_LAUNCH, {"control": self.remote_control, "argv": driver_command(self.manifest),
                                                       "cwd": self.manifest["tooling"]["root"], "env": env}, timeout=360)
-        write(self.control / "worker-started.json", {**self.worker, "pod_id": self.created["id"]})
+        write(self.control / "worker-started.json", {**self.worker, "pod_id": self.created["id"],
+                                                     "release_marker_probe": probe})
 
     def conclude(self, snapshot):
         """Complete when every lineage completed through the stop block or ended for good (a failed lineage
@@ -418,6 +535,28 @@ class Cycle(cloud.Cycle):
         require(exhausted and all(status[run] == "complete" or run in exhausted or run in failed for run in status),
                 "campaign ended without completing or a lease stop: " + json.dumps(status))
         self.result["lease_stopped"] = True
+
+    def stop_worker(self):
+        """AMENDMENT-3's release path: refuse new work and SIGTERM every attempt's dispatcher, wait up to
+        DISPATCHER_GRACE_SECONDS for them to record the stop and exit, then stop the worker as before. A Pod
+        that cannot be reached skips the signal (its attempts get no record and count)."""
+        try:
+            if self.worker is not None and not self.ended:
+                # AMENDMENT-3 3(b): the release window starts no later than this record, written before any signal.
+                write(self.control / "release-path-started.json",
+                      {"epoch": time.time(), "cause": self.result.get("error") or "controller release",
+                       "error_type": self.result.get("error_type")}, replace=True)
+                stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS,
+                                                              "marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR,
+                                                              "control": self.remote_control,
+                                                              "lease": self.lease["name"], "pod_id": self.created["id"]},
+                                       timeout=DISPATCHER_GRACE_SECONDS + 30)
+                write(self.control / "dispatchers-stopped.json", stopped, replace=True)
+                self.result["dispatchers_signalled"] = len(stopped["signalled"])
+        except Exception as error:  # noqa: BLE001 - the worker stop below always runs
+            self.result["dispatchers_stop_error"] = f"{type(error).__name__}: {error}"[-400:]
+        finally:
+            super().stop_worker()
 
     def quiesce_records(self, timeout: float = 150.0):
         """Stop the record copy-back before recovery reads the volume, so nothing it lists is deleted under it.

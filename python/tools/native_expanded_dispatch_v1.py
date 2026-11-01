@@ -1354,11 +1354,26 @@ INTERRUPTION_SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT")
 # The first stop signal this dispatch received (number, Unix time), latched by the handler. The handler only
 # latches: it neither polls the child nor raises, so it cannot interrupt the child's reaping, a write or the
 # cleanup, and later signals change nothing. The dispatch acts on it at its own checkpoints (check_stop).
-STOP = {"signal": None, "at": None, "child": None}  # child: the native child once spawned (not used by the handler)
+STOP = {"signal": None, "at": None, "child": None,  # child: the native child once spawned (not used by the handler)
+        "release_marker": None}
+# Before it signals a dispatcher, the lease's release path writes a marker named by that dispatcher's PID and start
+# ticks in this Pod-local folder (the container's own disk, never the network volume). The handler looks for its
+# own marker (one local stat) before it latches the first stop: that ties the first stop to the release path without
+# comparing clocks (G(i) AMENDMENT-3 3(b)). Off Linux there is no marker and no such evidence.
+RELEASE_MARKER_DIR = "/run/g-release-markers"
+
+
+def own_marker():
+    """This process's release-marker path (RELEASE_MARKER_DIR/<pid>-<start ticks>), or None off Linux."""
+    try:
+        ticks = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+    return os.path.join(RELEASE_MARKER_DIR, f"{os.getpid()}-{ticks}")
 STOP_WAIT_SECONDS = 1.0  # the monitor loop's longest wait between checkpoints
 
 
-def record_interruption(root, child, signum, at=None):
+def record_interruption(root, child, signum, at=None, release_marker=None):
     """Write ``interruption.json`` once, atomically: the signal, and whether the native child was still running
     when the dispatch acted on it (a running child stopped from outside) or had already exited (with its exit
     code). Called from the dispatch's own code, never inside the signal handler. An attempt with no such record has
@@ -1373,25 +1388,40 @@ def record_interruption(root, child, signum, at=None):
                                      "at_unix": time.time() if at is None else at, "recorded_unix": time.time(),
                                      "child_started": child is not None,
                                      "child_running": child is not None and code is None,
-                                     "child_exit_code": code}, indent=2), encoding="utf-8")
+                                     "child_exit_code": code,
+                                     "release_marker_seen": release_marker}, indent=2), encoding="utf-8")
     os.replace(temporary, path)
 
 
 def check_stop(root, child):
     """At a checkpoint: if a stop signal was latched, record it (record_interruption) and end the attempt."""
     if STOP["signal"] is not None:
-        record_interruption(root, child, STOP["signal"], STOP["at"])
+        record_interruption(root, child, STOP["signal"], STOP["at"], STOP["release_marker"])
         raise ExternalStop(f"stopped from outside by {signal.Signals(STOP['signal']).name}")
 
 
+def reset_stop():
+    """Forget any latched stop (each dispatch starts clear; tests)."""
+    STOP.update(signal=None, at=None, child=None, release_marker=None)
+    STOP.pop("first", None)
+
+
 def install_stop_record():
-    """Latch the first of INTERRUPTION_SIGNALS (STOP); returns the previous handlers for restore_handlers."""
-    STOP.update(signal=None, at=None, child=None)
+    """Latch the first of INTERRUPTION_SIGNALS (STOP), noting whether the release path's marker for this process
+    (own_marker) existed at that moment; returns the previous handlers for restore_handlers."""
+    reset_stop()
+    marker = own_marker()
     previous = {}
 
     def stopped(signum, frame):
-        if STOP["signal"] is None:
-            STOP.update(signal=signum, at=time.time())
+        if "first" in STOP:
+            return
+        seen = None if marker is None else os.path.exists(marker)  # a local stat, before the latch
+        at = time.time()
+        # One C-level call, which no handler can interrupt: the first latch to complete wins, and a nested handler
+        # that latched meanwhile keeps its own, earlier observation.
+        first = STOP.setdefault("first", (signum, at, seen))
+        STOP.update(signal=first[0], at=first[1], release_marker=first[2])
     for name in INTERRUPTION_SIGNALS:
         number = getattr(signal, name, None)
         if number is not None:
@@ -1445,7 +1475,7 @@ def execute(request_path, qualification):
     except BaseException:
         if STOP["signal"] is not None:  # a stop latched while another error ended the attempt: its evidence
             try:  # evidence only: the original error is the one raised
-                record_interruption(root, STOP["child"], STOP["signal"], STOP["at"])
+                record_interruption(root, STOP["child"], STOP["signal"], STOP["at"], STOP["release_marker"])
             except Exception:
                 pass
         raise
@@ -1502,7 +1532,7 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
             failure = str(error)
             if STOP["signal"] is not None:  # a stop latched while another error ended the loop: its evidence
                 try:  # before the kill below; evidence only, so a failed write never skips the cleanup
-                    record_interruption(root, child, STOP["signal"], STOP["at"])
+                    record_interruption(root, child, STOP["signal"], STOP["at"], STOP["release_marker"])
                 except Exception:
                     pass
             if child.poll() is None:

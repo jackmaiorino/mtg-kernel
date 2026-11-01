@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -406,6 +407,137 @@ class LeaseTests(unittest.TestCase):
         cycle.recover()  # 200 s less the 120 s release reserve: too little to quiesce and recover
         self.assertTrue(cycle.result["recovery"].startswith("skipped: too little time"))
         self.assertEqual(set(ran), {gcloud.POD_GUARD_RELEASE})  # nothing quiesced, packed or copied
+
+    def test_the_release_path_signals_dispatchers_before_stopping_the_worker(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.control, cycle.result, cycle.guard, cycle.ended = Path(tempfile.mkdtemp()), {}, "/run/phase1/g", False
+        self.addCleanup(shutil.rmtree, cycle.control, True)
+        cycle.worker, order = {"pid": 7, "start_ticks": 9}, []
+        cycle.lease, cycle.created, cycle.remote_control = {"name": "g-test"}, {"id": "pod1"}, "/w/control/g-test"
+
+        class Pod:
+            def run(self, program, args, timeout=30, read_only=False):
+                order.append(program)
+                if program is gcloud.POD_STOP_DISPATCHERS:
+                    return {"signalled": [{"pid": 11, "start_ticks": 1, "request": "/w/a.json", "signalled_unix": 1.0},
+                                          {"pid": 12, "start_ticks": 2, "request": "/w/b.json", "signalled_unix": 1.0}],
+                            "still_running": [], "epoch": 1.0}
+                return {"stopped": True}
+        cycle.pod = Pod()
+        cycle.stop_worker()
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])  # signal, then the supervisor
+        self.assertEqual(cycle.result["dispatchers_signalled"], 2)
+        self.assertTrue(cycle.ended)
+        self.assertEqual([item["request"] for item in read(cycle.control / "dispatchers-stopped.json")["signalled"]],
+                         ["/w/a.json", "/w/b.json"])
+        started = read(cycle.control / "release-path-started.json")  # the window's start, before any signal
+        self.assertEqual(started["cause"], "controller release")
+        cycle.ended, order[:] = False, []
+        cycle.stop_worker()  # a second release path: the records are replaced, the worker still stopped
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])
+
+        class Unreachable:
+            def run(self, program, args, timeout=30, read_only=False):
+                order.append(program)
+                if program is gcloud.POD_STOP_DISPATCHERS:
+                    raise gcloud.cloud.PodUnavailable("gone")
+                return {"stopped": True}
+        cycle.pod, cycle.ended, order[:] = Unreachable(), False, []
+        cycle.stop_worker()  # an unreachable Pod still gets the worker stop
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])
+        self.assertIn("PodUnavailable", cycle.result["dispatchers_stop_error"])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc: the Pod is Linux")
+    def test_the_pod_program_refuses_new_work_and_signals_each_dispatcher(self):
+        """Note: the program signals every real dispatcher on this host too; run it where none runs."""
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "recorded"
+            body = ("import pathlib, signal, sys, time\n"
+                    "def stop(signum, frame):\n"
+                    "    pathlib.Path(sys.argv[3]).write_text('stopped')\n"
+                    "    sys.exit(0)\n"
+                    "signal.signal(signal.SIGTERM, stop)\n"
+                    "print('ready', flush=True)\n"
+                    "time.sleep(60)\n")
+            request = Path(temp) / "request.json"
+            request.write_text(json.dumps({"root": str(Path(temp) / "dispatch")}))
+            (Path(temp) / "dispatch").mkdir()
+            body = body.replace("sys.argv[3]", "sys.argv[4]")
+            fake = subprocess.Popen([sys.executable, "-c", body, "native_expanded_dispatch_v1.py", "_dispatch",
+                                     str(request), str(marker)], stdout=subprocess.PIPE)
+            other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "unrelated"])
+            # A reservation supervisor names the dispatcher's command after its own script: never signalled.
+            wrapper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "host_reservation_v1.py",
+                                        "supervise", "--nested", "--", "python3", "-B",
+                                        "native_expanded_dispatch_v1.py", "_dispatch", "request.json"])
+            try:
+                self.assertEqual(fake.stdout.readline().strip(), b"ready")
+                markers = Path(temp) / "markers"
+                code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10, "marker_dir": str(markers),
+                                                   "control": str(Path(temp) / "pod-control"),
+                                                   "lease": "g-test", "pod_id": "pod1"}) + \
+                    gcloud.POD_STOP_DISPATCHERS
+                done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+                result = json.loads(done.stdout.decode().splitlines()[-1])
+                fake.wait(10)
+                self.assertEqual(([item["pid"] for item in result["signalled"]], result["still_running"]), ([fake.pid], []))
+                self.assertEqual(result["signalled"][0]["request"], str(request))  # the argument after the action
+                self.assertEqual(json.loads((Path(temp) / "pod-control" / "dispatchers-stopped.json").read_text()),
+                                 result)  # the copy recovery packs
+                self.assertEqual((result["lease"], result["pod_id"]), ("g-test", "pod1"))  # each copy names itself
+                entry = result["signalled"][0]
+                written = markers / f"{entry['pid']}-{entry['start_ticks']}"  # its own marker, before the signal
+                self.assertEqual(entry["marker"], str(written))
+                self.assertEqual(json.loads(written.read_text())["request"], str(request))
+                self.assertLessEqual(result["signalled"][0]["signalled_unix"], time.time())
+                self.assertEqual(marker.read_text(), "stopped")  # the dispatcher saw SIGTERM, not SIGKILL
+                self.assertIsNone(other.poll())  # nothing else signalled
+                self.assertIsNone(wrapper.poll())  # nor the supervisor that would SIGKILL its job
+                self.assertTrue((Path(temp) / "stop-request.json").exists())  # new work refused first
+                self.assertTrue(result["stop_request_written"])
+                self.assertEqual(result["stop_request_epoch"],
+                                 json.loads((Path(temp) / "stop-request.json").read_text())["epoch"])
+            finally:
+                for process in (fake, other, wrapper):
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
+
+    def test_launch_probes_the_release_marker_folder_and_production_refuses_without_it(self):
+        for mode, ok in (("qualification", False), ("production", True), ("production", False)):
+            cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+            cycle.control = Path(tempfile.mkdtemp())
+            self.addCleanup(shutil.rmtree, cycle.control, True)
+            cycle.lease = {"created_epoch": time.time(), "startup_idle_seconds": 1800}
+            cycle.created, cycle.guard, cycle.remote_control = {"id": "pod"}, "/run/phase1/g", "/w/control/g"
+            cycle.manifest = {"mode": mode, "tooling": {"root": "/w/tooling/abc"}, "pod_root": "/w",
+                              "campaign": {"path": "/w/campaign.json"}, "runs": list(g.RUNS),
+                              "qualification_spec": {"path": "/w/q.json"}}
+            ran = []
+
+            class Pod:
+                def run(self, program, args, timeout=30, read_only=False):
+                    ran.append(program)
+                    if program is gcloud.POD_MARKER_PROBE:
+                        return {"ok": ok, "folder": args["marker_dir"]}
+                    return {"pid": 5, "start_ticks": 6, "epoch": 1.0}
+            cycle.pod = Pod()
+            if mode == "production" and not ok:
+                with self.assertRaisesRegex(ValueError, "release marker folder"):
+                    cycle.launch()
+                self.assertEqual(ran, [gcloud.POD_MARKER_PROBE])  # no driver started
+            else:
+                cycle.launch()
+                self.assertEqual(ran, [gcloud.POD_MARKER_PROBE, gcloud.cloud.POD_LAUNCH])
+                self.assertEqual(read(cycle.control / "worker-started.json")["release_marker_probe"]["ok"], ok)
+
+    def test_the_marker_probe_program(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp) / "markers"
+            code = cloud.PRELUDE % json.dumps({"marker_dir": str(folder)}) + gcloud.POD_MARKER_PROBE
+            done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertTrue(json.loads(done.stdout.decode().splitlines()[-1])["ok"])
+            self.assertEqual(list(folder.iterdir()), [])  # the probe is removed
 
     def test_the_pod_guard_read_tells_unreadable_from_unlatched(self):
         with tempfile.TemporaryDirectory() as temp:
