@@ -431,3 +431,27 @@ text from Scryfall at implementation time.
 
 Out of scope here: cards outside the snapshot (a later Oracle-template generator can cover
 vanilla and templated cards), Commander-only mechanics, and model work.
+
+## Premodern
+
+Premodern (#384, tracked in #460) uses the cards printed from Fourth Edition through Scourge,
+minus its ban list. It joins the same `eternal-fixtures` build and registry with its own
+snapshot, `data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json`: 24 archetypes
+with 90% of mtgtop8's last-two-months field (2,283 decks), the most recent list of each.
+MTGGoldfish does not track Premodern. `python/tools/premodern_meta_snapshot_v1.py`
+recaptures it; mtgtop8 rounds shares to whole percents and omits archetypes under 1%.
+
+Baseline on main (2026-11-01): 76 of the 305 distinct cards are Full and no deck is
+playable. 174 mainboard cards would cover all 24 lists. The first target is 70% of the
+field from 88 cards in two waves, with the same contract, catalog games and census
+reporting as E1 to E9:
+
+| Wave | Content | New cards | Result |
+| --- | --- | ---: | --- |
+| P0 | Snapshot, capture tool, the catalog reads both snapshots | 0 | Premodern 0% |
+| P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
+| P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow; playable after P1a merges | 35 | Premodern 40% to 70% |
+
+Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
+(mana burn and damage on the stack do not exist). The snapshot names only legal cards,
+so the catalog needs no format legality check.
