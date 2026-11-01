@@ -241,3 +241,89 @@ fn lembas_waiting_source_is_pinned_on_the_canonical_epoch_path() {
         );
     }
 }
+
+/// The recorded decks of a fixture state, matched by full card multisets.
+fn fixture_lists(state: &crate::state::GameState) -> Vec<Vec<u16>> {
+    use crate::runtime_decks::RUNTIME_DECKS;
+    [PlayerId::P0, PlayerId::P1]
+        .iter()
+        .map(|owner| {
+            let mut cards: Vec<u16> = state
+                .objects
+                .iter()
+                .filter(|(_, o)| {
+                    o.owner == *owner && !o.v4.is_token && o.spell_copy_origin.is_none()
+                })
+                .map(|(_, o)| o.card_def)
+                .collect();
+            cards.sort_unstable();
+            RUNTIME_DECKS
+                .iter()
+                .map(|d| {
+                    let mut ids = d.card_ids.to_vec();
+                    ids.sort_unstable();
+                    ids
+                })
+                .find(|ids| *ids == cards)
+                .expect("a registered deck")
+        })
+        .collect()
+}
+
+/// Ruling 41's Wildfire join (mutant L13): Lembas A waits as a pinned Food
+/// source in its owner's library; an unidentified draw and a public discard
+/// of a Lembas follow. Whether the discarded Lembas is A or another copy B,
+/// R1b refuses in both worlds (name-level, public events only); v6's
+/// identity test (L13) refuses only when it is A.
+#[test]
+fn wildfire_join_refuses_in_both_worlds_and_l13_differs() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let record: serde_json::Value = serde_json::from_str(include_str!(
+        "../regret_census_v1/stage4a/world/fixtures/lembas_root_o2_v0_f2_s0.json"
+    ))
+    .unwrap();
+    let base: crate::state::GameState = serde_json::from_value(record["state"].clone()).unwrap();
+    let viewer = PlayerId(record["actor"].as_u64().unwrap() as u8);
+    let lists = fixture_lists(&base);
+    let lembas = crate::card_def::card_id_by_name("Lembas").unwrap();
+    let pinned = super::export::contract_pins(&base);
+    let a = *pinned
+        .iter()
+        .find(|id| base.objects.get(**id).card_def == lembas)
+        .expect("a pinned Lembas");
+    let owner = base.objects.get(a).owner;
+    let Some(b) = base.players[owner.index()]
+        .library
+        .iter()
+        .copied()
+        .find(|id| *id != a && base.objects.get(*id).card_def == lembas)
+    else {
+        eprintln!("fixture has no second hidden Lembas; join fixture vacuous here");
+        return;
+    };
+    let run = |which: crate::ids::ObjectId, mutant: Option<MutantV1>| {
+        let mut st = base.clone();
+        propose_and_commit(&mut st, ProposedEvent::zone_change(which, Zone::Hand));
+        propose_and_commit(&mut st, ProposedEvent::zone_change(which, Zone::Graveyard));
+        export_v1(
+            &ExportInputV1 {
+                state: &st,
+                journal: st.observation_journal.notes(),
+                viewer,
+                decklists: [&lists[0], &lists[1]],
+            },
+            ExportOptionsV1 { mutant },
+        )
+        .map(|x| x.bytes)
+        .map_err(|e| e.code_name().to_string())
+    };
+    assert_eq!(run(a, None), Err("R1b".to_string()));
+    assert_eq!(run(b, None), Err("R1b".to_string()));
+    let (la, lb) = (run(a, Some(MutantV1::L13)), run(b, Some(MutantV1::L13)));
+    assert_ne!(
+        la.is_ok(),
+        lb.is_ok(),
+        "L13 differs in presence: {la:?} vs {lb:?}"
+    );
+}
