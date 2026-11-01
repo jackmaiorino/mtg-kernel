@@ -196,7 +196,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Shuko" => &SHUKO,
         "Simian Spirit Guide" => &SIMIAN_SPIRIT_GUIDE,
         "Tolaria" => &TOLARIA,
-        _ => &[],
+        _ => super::build_eternal_p1b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -249,7 +249,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::Land",
             "crate::eternal_legacy_e9a_v1::sundering_eruption",
         ),
-        _ => return None,
+        _ => return super::build_eternal_p1b_v1::special_for(name),
     })
 }
 
@@ -268,7 +268,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Undermountain Adventurer" => &["Keywords::VIGILANCE"],
         "Goblin Haste Token" => &["Keywords::HASTE"],
         "Black Insect Token" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_p1b_v1::keywords_for(name),
     }
 }
 
@@ -346,7 +346,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
 pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
     match name {
         "Horizon Canopy" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::G, ManaColor::W], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfPayLife(1), amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
-        _ => "&[]",
+        _ => super::build_eternal_p1b_v1::additional_mana_abilities_for(name),
     }
 }
 
@@ -355,14 +355,14 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
 pub(super) fn conditional_tap_yield_for(name: &str) -> &'static str {
     match name {
         "Undermountain Adventurer" => "Some(DynamicValueDef::SixIfDungeonCompletedElseTwoV1)",
-        _ => "None",
+        _ => super::build_eternal_p1b_v1::conditional_tap_yield_for(name),
     }
 }
 
 pub(super) fn conditional_tap_yield_program_for(name: &str) -> Option<&'static str> {
     match name {
         "Undermountain Adventurer" => Some("mana_ability_add_undermountain_adventurer"),
-        _ => None,
+        _ => super::build_eternal_p1b_v1::conditional_tap_yield_program_for(name),
     }
 }
 
@@ -463,6 +463,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Super Shredder" => "another_permanent_leaves_battlefield:plus_one_counter",
         "Tolaria" => "activated:upkeep_only:target_creature_loses_banding",
         "Undermountain Adventurer" => "etb:take_initiative;mana:gg_or_six_if_completed_dungeon",
-        _ => "none",
+        _ => super::build_eternal_p1b_v1::trigger_recipe_for(name),
     }
 }

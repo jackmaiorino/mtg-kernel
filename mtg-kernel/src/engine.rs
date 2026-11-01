@@ -5492,6 +5492,24 @@ pub(crate) fn evaluate_dynamic_value(
         DynamicValueDef::UrzasLandsIfMetalcraftV1 => {
             return crate::eternal_e5a_v1::statics::urzas_workshop_yield(state, controller)
         }
+        DynamicValueDef::GraveyardCardsNamedV1(id) => {
+            // Accumulated Knowledge: "cards named Accumulated Knowledge in
+            // all graveyards" (Premodern wave P1b).
+            let name = card_def::CARD_DEFS.get(usize::from(id)).map(|def| def.name);
+            let count = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|player| state.players[player.index()].graveyard.iter())
+                .filter(|&&card| {
+                    let live = state.objects.get(card);
+                    !live.v4.is_token
+                        && card_def::CARD_DEFS
+                            .get(usize::from(live.card_def))
+                            .map(|def| def.name)
+                            == name
+                })
+                .count();
+            return i32::try_from(count).unwrap_or(i32::MAX);
+        }
         DynamicValueDef::SixIfDungeonCompletedElseTwoV1 => {
             return if state.players[controller.index()]
                 .dungeon
@@ -8496,6 +8514,13 @@ fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> O
     {
         return None;
     }
+    // Sickening Dreams: "discard X cards" (Premodern wave P1b).
+    if let Some(count) = crate::eternal_premodern_p1b_v1::statics::additional_discard_count(
+        def,
+        pending.selected_x_v59(),
+    ) {
+        return count;
+    }
     let _ = pending;
     def.additional_cost.and_then(discard_count_in)
 }
@@ -8681,11 +8706,15 @@ fn spell_cost_generic_modifiers_v1(
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     let (increase, reduction): (u32, u32) = (0, 0);
     // Sphere of Resistance, Thorn of Amethyst and Lodestone Golem (eternal
-    // waves E7a and E7b).
+    // waves E7a and E7b), Aura of Silence (Premodern wave P1b).
     let increase = if cfg!(feature = "eternal-fixtures") {
-        increase.saturating_add(crate::eternal_vintage_e7b_v1::statics::spell_tax(
-            state, types,
-        ))
+        increase
+            .saturating_add(crate::eternal_vintage_e7b_v1::statics::spell_tax(
+                state, types,
+            ))
+            .saturating_add(crate::eternal_premodern_p1b_v1::statics::spell_tax(
+                state, types, caster,
+            ))
     } else {
         increase
     };
@@ -9578,6 +9607,15 @@ fn maximum_payable_x(
     // Splice onto Arcane: at most the splice cards in hand.
     let cap =
         crate::eternal_pauper_e8b_v1::splice_cap(def, pending.spell, pending.controller, state)
+            .or_else(|| {
+                // Sickening Dreams: at most the cards in its caster's hand.
+                crate::eternal_premodern_p1b_v1::statics::discard_x_cap(
+                    def,
+                    pending.spell,
+                    pending.controller,
+                    state,
+                )
+            })
             .unwrap_or(u8::MAX);
     let payable = |x| {
         pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
@@ -10961,7 +10999,13 @@ fn activate_mana_ability_for_with_checkpoint(
         } else if let ManaAbilityAmountDef::FixedColorsV1(colors) = rich.amount {
             let tap_and_sacrifice = cfg!(feature = "eternal-fixtures")
                 && rich.cost == ManaAbilityCostDef::TapAndSacrificeSelf;
+            // A paid filter ability ("{1}, {T}: Add {W}{U}.", Skycloud
+            // Expanse) adds its whole bundle after `mana_plan` pays.
+            let paid_tap_bundle = cfg!(feature = "eternal-fixtures")
+                && additional.is_some()
+                && rich.cost == ManaAbilityCostDef::TapSelf;
             if (!tap_and_sacrifice
+                && !paid_tap_bundle
                 && (additional.is_some() || rich.cost != ManaAbilityCostDef::TapSelf))
                 || rich.controller_damage != 0
                 || rich.max_activations_per_turn.is_some()
@@ -20449,6 +20493,13 @@ fn advance_step(state: &mut GameState) {
     if state.step == Step::EndCombat {
         state.engine.combat.reset_preserving_rules();
     }
+    // Solitary Confinement: "Skip your draw step." (Premodern wave P1b)
+    #[cfg(feature = "eternal-fixtures")]
+    if next == Step::Draw
+        && crate::eternal_premodern_p1b_v1::statics::skips_draw_step(state, state.active_player)
+    {
+        next = Step::Main1;
+    }
 
     state.step = next;
     state.players[0].mana_pool = [0; 6];
@@ -21969,6 +22020,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id).has(kw) {
         return true;
     }
+    // Sterling Grove's shroud (Premodern wave P1b).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id).has(kw) {
+        return true;
+    }
     if printed_active
         && obj.zone == Zone::Battlefield
         && static_graveyard_threshold_keyword_for(def.name).is_some_and(|(minimum, keyword)| {
@@ -22249,10 +22305,13 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
         }
         found = found | crate::standard_statics_v1::conditional_self_keywords(state, id);
     }
-    // Anger's haste from its owner's graveyard (eternal wave E9a).
+    // Anger's haste from its owner's graveyard (eternal wave E9a), Sterling
+    // Grove's shroud (Premodern wave P1b).
     #[cfg(feature = "eternal-fixtures")]
     {
-        found = found | crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id);
+        found = found
+            | crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id)
+            | crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id);
     }
     if printed_active && obj.zone == Zone::Battlefield {
         if let Some((minimum, keyword)) = static_graveyard_threshold_keyword_for(def.name) {
@@ -27200,12 +27259,15 @@ fn materialize_begin_cast_with_quote_v1(
         optional_additional_cost_chosen: vec![],
         optional_additional_cost_selection_finished: false,
         // Replicate's payment count is announced like X (601.2b).
-        x_value: if without_mana_cost
-            || citadel_cast
-            || (def.cost.x_count == 0
-                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
-                && crate::eternal_cards_v1::replicate_cost(def.name).is_none()
-                && crate::eternal_pauper_e8b_v1::splice_cost(def).is_none())
+        // Sickening Dreams' "discard X cards" announces X even when the spell
+        // is cast without paying its mana cost.
+        x_value: if !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+            && (without_mana_cost
+                || citadel_cast
+                || (def.cost.x_count == 0
+                    && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
+                    && crate::eternal_cards_v1::replicate_cost(def.name).is_none()
+                    && crate::eternal_pauper_e8b_v1::splice_cost(def).is_none()))
         {
             Some(0)
         } else {
@@ -28174,13 +28236,22 @@ fn push_paid_activation(
             pending.ability_index as usize,
         );
     }
-    // Wishclaw Talisman's wish counter (eternal wave E8a).
+    // Wishclaw Talisman's wish counter (eternal wave E8a); Attunement's
+    // return, Parallax Wave's fade counter and the Decrees' cycling triggers
+    // (Premodern wave P1b).
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_legacy_e8a_v1::statics::activation_paid(
-        state,
-        pending.source,
-        pending.ability_index,
-    );
+    {
+        crate::eternal_legacy_e8a_v1::statics::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+        );
+        crate::eternal_premodern_p1b_v1::statics::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+        );
+    }
     let ability = &frozen.ability;
     let granted_by = frozen.granted_by;
     let source = state.objects.get(pending.source);

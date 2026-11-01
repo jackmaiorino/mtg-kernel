@@ -434,6 +434,8 @@ pub enum Subtype {
     Nomad,
     Scarecrow,
     Peasant,
+    /// Appended for the eternal catalog's Premodern wave P1b (Psychatog).
+    Atog,
 }
 
 impl Subtype {
@@ -798,6 +800,8 @@ impl Subtype {
         Subtype::Scarecrow,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Peasant,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Atog,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1032,6 +1036,7 @@ impl Subtype {
             201 => Subtype::Nomad,
             202 => Subtype::Scarecrow,
             203 => Subtype::Peasant,
+            204 => Subtype::Atog,
             _ => return None,
         })
     }
@@ -1245,6 +1250,7 @@ impl Subtype {
             Subtype::Nomad => true,
             Subtype::Scarecrow => true,
             Subtype::Peasant => true,
+            Subtype::Atog => true,
         }
     }
 
@@ -1343,6 +1349,7 @@ impl Subtype {
                     | Subtype::Nomad
                     | Subtype::Scarecrow
                     | Subtype::Peasant
+                    | Subtype::Atog
             )
         {
             return true;
@@ -2482,6 +2489,9 @@ pub enum DynamicValueDef {
     /// Undermountain Adventurer: 2, or 6 once the evaluating controller has
     /// completed a dungeon. Appended for the eternal catalog.
     SixIfDungeonCompletedElseTwoV1,
+    /// The cards in all graveyards named as the definition with this id
+    /// (Accumulated Knowledge). Appended for the eternal catalog.
+    GraveyardCardsNamedV1(u16),
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's

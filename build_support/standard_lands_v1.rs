@@ -243,6 +243,15 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         "Restless Vinestalk" => {
             fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 5, toughness: 5, artifact: false, colors: &[ManaColor::G, ManaColor::U], subtypes: &[Subtype::Plant], keywords: Keywords::TRAMPLE })".to_string();
         }
+        // Eternal catalog (Premodern wave P1b): Mishra's Factory "becomes a
+        // 2/2 Assembly-Worker artifact creature until end of turn", Treetop
+        // Village "a 3/3 green Ape creature with trample".
+        "Mishra's Factory" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 2, toughness: 2, artifact: true, colors: &[], subtypes: &[Subtype::AssemblyWorker], keywords: Keywords::NONE })".to_string();
+        }
+        "Treetop Village" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 3, toughness: 3, artifact: false, colors: &[ManaColor::G], subtypes: &[Subtype::Ape], keywords: Keywords::TRAMPLE })".to_string();
+        }
         "Soulstone Sanctuary" => {
             fields.animation = "Some(AnimationDef { until_end_of_turn: false, power: 3, toughness: 3, artifact: false, colors: &[], subtypes: Subtype::CREATURE_TYPES, keywords: Keywords::VIGILANCE })".to_string();
         }

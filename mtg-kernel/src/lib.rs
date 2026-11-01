@@ -292,6 +292,9 @@ pub mod eternal_pauper_e6b_v1;
 /// Pauper Ruby Storm, Golgari Gardens, Familiars and Jeskai Ephemerate card
 /// programs of the eternal catalog (wave E8b).
 pub mod eternal_pauper_e8b_v1;
+/// Premodern Enchantress, Replenish, Oath, Landstill, Psychatog and Grow
+/// card programs of the eternal catalog (wave P1b).
+pub mod eternal_premodern_p1b_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;

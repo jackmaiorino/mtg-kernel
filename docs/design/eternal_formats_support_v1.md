@@ -452,6 +452,34 @@ reporting as E1 to E9:
 | P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
 | P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow; playable after P1a merges | 35 | Premodern 40% to 70% |
 
+P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
+and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
+(a type override) with base power and toughness equal to its mana value, a layer 7b setting
+with its timestamp. Parallax Wave's fade counters, Legacy's Allure's treasure counters and
+Decree of Silence's depletion counters live in module state; fading is an upkeep trigger,
+Parallax Wave's exiles are recorded by its battlefield incarnation and its leaves trigger
+returns the cards still in exile, so an exile that resolves after the trigger is permanent.
+Costs paid as an ability is put on the stack (Wishclaw Talisman's hook) return Attunement
+to its owner's hand and remove Parallax Wave's fade counter; the same hook queues the
+Decrees' "When you cycle" triggers above the cycling ability. Decree of Justice's trigger
+offers each X its controller can pay (at most 20) and pays it through the automatic mana
+planner. "Whenever you cast an enchantment spell", Standstill's "when a player casts a
+spell", Decree of Silence's counter and City of Brass's "becomes tapped" are hook-queued
+triggers. Fact or Fiction's piles and Intuition's pick are resolution choices made by the
+opponent (`E3ChoiceKindV1::P1bV1`); the caster takes a Fact or Fiction pile by pointing at
+one of its cards, or at none to take an empty pile. Replenish chooses each Aura's host among
+the permanents already on the battlefield, then returns everything together; an Aura with no
+legal host stays. Sickening Dreams' "discard X cards" announces X like replicate (at most the
+cards in hand). Solitary Confinement skips its controller's draw step and gives them shroud
+and damage prevention; Sterling Grove grants shroud; Tsabo's Web keeps lands with nonmana
+activated abilities tapped; Aura of Silence taxes its opponents' artifact and enchantment
+spells. Mishra's Factory and Treetop Village reuse the Standard manland animation, Serra's
+Sanctum Tolarian Academy's yield, and Skycloud Expanse is a paid additional mana ability
+adding a fixed bundle. Known gaps: the module-state counters are invisible to effects that
+read or move counters generally (no such card is in the catalog); Replenish leaves in the
+graveyard an Aura whose enchant rule neither `AttachmentDef` nor the Standard Aura entry
+models (Animate Dead's "enchant creature card in a graveyard").
+
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
 so the catalog needs no format legality check.

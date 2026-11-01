@@ -764,6 +764,9 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         }
         S::UpToOnePlayerV1 => ObjF::PlayerOrPermanent,
         S::UpToOnePermanentCardDiedThisTurnV1 => ObjF::AnyCard,
+        S::CreaturePowerAtMostTreasureCountersV1 | S::AssemblyWorkerCreatureV1 => {
+            ObjF::Typed(CardTypeF::Creature)
+        }
     }
 }
 
@@ -821,6 +824,8 @@ pub(super) fn standard_target_origin(
         | S::DividedFourDamageCreaturesOrPlaneswalkersV1
         | S::DividedXDamageUpToTwoV1
         | S::UpToOnePlayerV1
+        | S::CreaturePowerAtMostTreasureCountersV1
+        | S::AssemblyWorkerCreatureV1
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1
         | S::UpToTwoAnyTargets
@@ -882,6 +887,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::UpToOnePermanentCardDiedThisTurnV1 => {
             out.target(TargetAtom::UpTo);
             // Exact current-turn departure needs a successor.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::CreaturePowerAtMostTreasureCountersV1 | S::AssemblyWorkerCreatureV1 => {
+            object(out, creature(), relation, zone);
+            // Vocabulary gap: a counter-bounded power and a subtype class
+            // have no facet.
             out.atoms.push(Atom::Opaque);
         }
         S::CreatureCardPutIntoGraveyardThisTurnV1 => {

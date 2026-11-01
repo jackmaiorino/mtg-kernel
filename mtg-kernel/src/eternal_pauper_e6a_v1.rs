@@ -1322,6 +1322,10 @@ pub(crate) fn prevents_damage(state: &GameState, damage: &DamageProposed) -> boo
     if crate::eternal_legacy_e9a_v1::statics::prevents_damage(state, damage) {
         return true;
     }
+    // Solitary Confinement (Premodern wave P1b).
+    if crate::eternal_premodern_p1b_v1::statics::prevents_damage(state, damage) {
+        return true;
+    }
     let Some(e6a) = read_state(state) else {
         return false;
     };

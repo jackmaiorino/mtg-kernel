@@ -6495,7 +6495,7 @@ fn triggers_from_events(
     new_triggers
 }
 
-fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'static [CardType] {
+pub(crate) fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'static [CardType] {
     let object = state.objects.get(spell);
     let definition = &crate::card_def::CARD_DEFS[object.card_def as usize];
     if object

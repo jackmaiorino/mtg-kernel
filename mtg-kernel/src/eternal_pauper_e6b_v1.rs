@@ -789,6 +789,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         || crate::eternal_vintage_e7b_v1::delayed_effect_matches(name, effect)
         || crate::eternal_legacy_e8a_v1::delayed_effect_matches(name, effect)
         || crate::eternal_legacy_e9a_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_premodern_p1b_v1::delayed_effect_matches(name, effect)
     {
         return true;
     }
