@@ -956,7 +956,27 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         let backward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
         // Without the exploration regularizer the sequential backward has an
         // exact parallel form; it runs on the update's forward workers.
+        // An installed exact GPU learner gives the same gradients and gauge.
+        #[cfg(feature = "gpu-exact-v1")]
+        let gpu = match backward_execution {
+            BackwardExecutionV1::Sequential if beta == 0.0 => {
+                gpu_exact_backward_v1::gpu_exact_backward_dims_v1::<D>(
+                    &parameters,
+                    &group_tapes,
+                    groups,
+                    group_count,
+                    value_coefficient,
+                    input_config,
+                    math,
+                    self.no_state_digest_columns.is_some(),
+                )
+            }
+            _ => None,
+        };
+        #[cfg(not(feature = "gpu-exact-v1"))]
+        let gpu = None;
         let parallel = match backward_execution {
+            _ if gpu.is_some() => gpu,
             BackwardExecutionV1::Sequential if beta == 0.0 => {
                 exact_parallel_backward_v1::exact_parallel_backward_dims_v1::<D>(
                     &parameters,

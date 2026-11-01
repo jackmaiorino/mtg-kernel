@@ -32,13 +32,14 @@ fn run() -> Result<(), String> {
     }
     let usage = concat!(
         "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
-        "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]]"
+        "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL]"
     );
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(args.next().ok_or(usage)?);
     let mut limit = None;
     let mut gpu_inference: Option<usize> = None;
     let mut gpu_latency_us: Option<u64> = None;
+    let mut gpu_learner: Option<usize> = None;
     let number = |value: Option<std::ffi::OsString>, what: &str| -> Result<u64, String> {
         value
             .ok_or(format!("missing {what}"))?
@@ -54,6 +55,9 @@ fn run() -> Result<(), String> {
             }
             Some("--gpu-exact-inference") if gpu_inference.is_none() => {
                 gpu_inference = Some(number(args.next(), "GPU ordinal")? as usize);
+            }
+            Some("--gpu-exact-learner") if gpu_learner.is_none() => {
+                gpu_learner = Some(number(args.next(), "GPU ordinal")? as usize);
             }
             Some("--gpu-exact-latency-us") if gpu_latency_us.is_none() => {
                 gpu_latency_us = Some(number(args.next(), "latency")?);
@@ -89,9 +93,18 @@ fn run() -> Result<(), String> {
             "--gpu-exact-inference {ordinal} ({gpu_latency_us} us) needs a build with gpu-exact-v1"
         ));
     }
+    // The exact GPU learner likewise gives the CPU backward's gradients.
+    if let Some(ordinal) = gpu_learner {
+        #[cfg(feature = "gpu-exact-v1")]
+        mtg_kernel::gpu_exact_v1::install_learner_v1(ordinal)?;
+        #[cfg(not(feature = "gpu-exact-v1"))]
+        return Err(format!(
+            "--gpu-exact-learner {ordinal} needs a build with gpu-exact-v1"
+        ));
+    }
     let result = run_native_expanded_training_v1(&config, limit);
     #[cfg(feature = "gpu-exact-v1")]
-    if gpu_inference.is_some() {
+    if gpu_inference.is_some() || gpu_learner.is_some() {
         // Written for failed invocations too: which backend ran is provenance.
         match mtg_kernel::gpu_exact_v1::invocation_receipt_v1(
             &config.output_directory,
