@@ -21,21 +21,54 @@ pub(crate) fn seat(p: PlayerSeatV1) -> PlayerId {
     }
 }
 
-/// V's view at the current decision: the V4 observation and menu.
+/// Viewer-local ids: every `arena_id` becomes its order of first
+/// appearance in the value, and hashes over native ids are dropped, so two
+/// worlds that differ only in provenance give equal views (the producer's
+/// projection keeps native ids inside the environment the same way).
+fn localize(value: &mut serde_json::Value, ids: &mut BTreeMap<u64, u64>) {
+    match value {
+        serde_json::Value::Object(m) => {
+            m.retain(|k, _| !k.contains("hash"));
+            for (k, v) in m.iter_mut() {
+                if k == "arena_id" {
+                    if let Some(n) = v.as_u64() {
+                        let next = ids.len() as u64;
+                        *v = serde_json::Value::from(*ids.entry(n).or_insert(next));
+                        continue;
+                    }
+                }
+                localize(v, ids);
+            }
+        }
+        serde_json::Value::Array(xs) => xs.iter_mut().for_each(|x| localize(x, ids)),
+        _ => {}
+    }
+}
+
+/// V's view at the current decision: the V4 observation and menu, with
+/// viewer-local ids.
 pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
     let FastActorResponseV1::Decision(d) = s.current_response() else {
         return None;
     };
     let (obs, menu) = s.actor_visible_decision_v4(d).ok()?;
-    Some(serde_json::to_vec(&(obs, menu)).expect("view serializes"))
+    let mut v = serde_json::to_value(&(obs, menu)).expect("view serializes");
+    localize(&mut v, &mut BTreeMap::new());
+    Some(serde_json::to_vec(&v).expect("view serializes"))
 }
 
-/// The semantic form of each candidate at the current decision.
+/// The semantic form of each candidate at the current decision, with
+/// decision-local ids.
 fn menu(s: &FastActorSessionV1) -> Vec<Vec<u8>> {
+    let mut ids = BTreeMap::new();
     s.diagnostic_current_action_semantics()
         .unwrap_or_default()
         .iter()
-        .map(|x| serde_json::to_vec(x).expect("semantics serialize"))
+        .map(|x| {
+            let mut v = serde_json::to_value(x).expect("semantics serialize");
+            localize(&mut v, &mut ids);
+            serde_json::to_vec(&v).expect("semantics serialize")
+        })
         .collect()
 }
 
