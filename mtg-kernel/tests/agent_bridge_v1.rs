@@ -561,44 +561,26 @@ fn drive_sweep_game(deck: &str, seed: u64, game_id: &str) -> (String, Value, usi
     }
 }
 
-/// Reproduces a kernel defect (Elves halts of the pauper-kernel launch
-/// benchmark): policy surface v5's attacker scan offers `include: false` for
-/// a goaded creature the engine requires to attack, so once it is declined
-/// no answer to the scan's last substep is legal, and the session refuses
-/// the answer the bridge validated. The halted reason names the session
-/// error code and carries the kernel's message, byte-identical across runs
-/// (the arena hashes its ledger). If a kernel fix lets this game finish,
-/// pin the reason on another post-validation rejection.
+/// On the 92ec2393 line this Elves sweep game reproduced a kernel defect
+/// (policy surface v5's attacker scan offered `include: false` for a goaded
+/// creature the engine requires to attack, so the session refused the step
+/// the bridge validated and the game halted at step 100). Main fixed the
+/// goad inclusion mask, so the same game now ends naturally and replays
+/// byte for byte. The halted reason for a refused validated step stays
+/// pinned by the unit test
+/// `session_rejection_reason_names_the_code_as_the_kernel_spells_it`.
 #[test]
-fn agent_bridge_names_the_session_error_when_a_validated_step_is_refused() {
+fn agent_bridge_goad_scan_game_now_finishes_on_main() {
     let (line, answered, choice) = drive_sweep_game("Elves", 11, "g-goad-scan");
     let terminal = parse_line(&line);
-    assert_eq!(terminal["outcome"], "halted", "{terminal}");
-    assert_eq!(terminal["classification"], "halted");
-    assert_eq!(terminal["winner"], Value::Null);
-    assert_eq!(
-        terminal["reason"],
-        "engine_contract_failure:session_step_rejected_after_validation:\
-         stale_environment_binding:selected action no longer matches the active policy environment"
+    assert_eq!(terminal["classification"], "natural", "{terminal}");
+    assert!(
+        terminal["step_count"].as_u64().unwrap() > 100,
+        "the game passes the step the defect halted at: {terminal}"
     );
-    // The refused answer closes an attacker inclusion scan at step 99.
-    assert_eq!(answered["step"], 99);
-    assert_eq!(
-        answered["candidates"][choice]["semantic"]["kind"],
-        "choose_attacker_inclusion"
-    );
-    let group = &answered["group"];
-    assert_eq!(
-        group["substep_index"].as_u64().unwrap() + 1,
-        group["substep_count"].as_u64().unwrap()
-    );
-    assert_eq!(terminal["step_count"], 100);
-    assert_eq!(
-        terminal["decision_count"],
-        group["group_id"].as_u64().unwrap() + 1
-    );
+    assert!(answered["candidates"][choice].is_object());
     let (again, _, _) = drive_sweep_game("Elves", 11, "g-goad-scan");
-    assert_eq!(again, line, "the halted terminal is deterministic");
+    assert_eq!(again, line, "the terminal is deterministic");
 }
 
 #[test]
