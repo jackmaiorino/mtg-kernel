@@ -160,3 +160,84 @@ fn unidentified_put_back_of_a_revealed_card_is_never_named() {
         }
     }
 }
+
+/// W-pin-1 shape on recorded S1 roots (Wildfire, Lembas shuffled into its
+/// owner's library while its Food ability waits): the pin is placed as a
+/// `U:` occupant with Lembas's definition on the canonical epoch path, and
+/// the waiting contract maps to epoch 1 (design 6.5 case B or C).
+#[test]
+fn lembas_waiting_source_is_pinned_on_the_canonical_epoch_path() {
+    use crate::runtime_decks::RUNTIME_DECKS;
+    for fixture in [
+        include_str!("../regret_census_v1/stage4a/world/fixtures/lembas_root_o2_v0_f2_s0.json"),
+        include_str!("../regret_census_v1/stage4a/world/fixtures/lembas_root_o2_v0_f3_s0.json"),
+        include_str!("../regret_census_v1/stage4a/world/fixtures/lembas_root_o2_v0_f5_s1.json"),
+    ] {
+        let record: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        let state: crate::state::GameState =
+            serde_json::from_value(record["state"].clone()).unwrap();
+        let viewer = PlayerId(record["actor"].as_u64().unwrap() as u8);
+        // The recorded games' decks, matched by their full card multisets.
+        let lists: Vec<Vec<u16>> = [PlayerId::P0, PlayerId::P1]
+            .iter()
+            .map(|owner| {
+                let mut cards: Vec<u16> = state
+                    .objects
+                    .iter()
+                    .filter(|(_, o)| {
+                        o.owner == *owner && !o.v4.is_token && o.spell_copy_origin.is_none()
+                    })
+                    .map(|(_, o)| o.card_def)
+                    .collect();
+                cards.sort_unstable();
+                RUNTIME_DECKS
+                    .iter()
+                    .map(|d| {
+                        let mut ids = d.card_ids.to_vec();
+                        ids.sort_unstable();
+                        ids
+                    })
+                    .find(|ids| *ids == cards)
+                    .expect("a registered deck")
+            })
+            .collect();
+        let export = export_v1(
+            &ExportInputV1 {
+                state: &state,
+                journal: &[],
+                viewer,
+                decklists: [&lists[0], &lists[1]],
+            },
+            ExportOptionsV1::default(),
+        );
+        let x = match export {
+            Ok(x) => x,
+            Err(e) => panic!("{}: {e:?}", record["case"]),
+        };
+        let lembas = crate::card_def::card_id_by_name("Lembas").unwrap();
+        let pinned: Vec<(usize, &crate::state::GameObject)> = x
+            .state
+            .objects
+            .iter()
+            .filter(|(id, _)| matches!(x.handles[id.0 as usize], HandleV1::U { pinned: true, .. }))
+            .map(|(id, o)| (id.0 as usize, o))
+            .collect();
+        assert_eq!(pinned.len(), 1, "{}", record["case"]);
+        let (pin_id, pin) = pinned[0];
+        assert_eq!(pin.card_def, lembas);
+        let item = x
+            .state
+            .stack
+            .iter()
+            .find(|i| i.source.0 as usize == pin_id)
+            .expect("the waiting ability names the pinned occupant");
+        let contract = item.v4.ability_source_contract.expect("contract");
+        assert_eq!(contract.zone_change_count, 1, "the contract epoch is p0");
+        assert!(
+            [3, 4].contains(&pin.zone_change_count),
+            "{}: pinned generation {} is phi(e_last) + h",
+            record["case"],
+            pin.zone_change_count
+        );
+    }
+}
