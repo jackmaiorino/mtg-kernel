@@ -54,7 +54,7 @@ PACK_RULES = {"payload_folders": list(PAYLOAD_FOLDERS), "payload_shard": PAYLOAD
 POD_OUT = "/root/superseded-archive"  # the container disk: the archive never adds to the volume
 FILES = ("records.tar.gz", "manifest.json", "prune-listing.json", "baselines.json")
 # Per-step bounds (a walk of the old root took 11 min alone on 11-01).
-STEP_SECONDS = {"baselines": 600, "pack": 3000, "copy": 3000, "prune": 900, "check": 900}
+STEP_SECONDS = {"baselines": 600, "pack": 3000, "copy": 3000, "prune": 900, "check": 1800}
 STARTUP_MARGIN_SECONDS = 120  # each step ends this far inside the resident guard's startup-idle bound
 # The archive lease's bounds, which the launcher uses (lease_launch.py archive): the hard stop, and the resident
 # guard's startup-idle bound (no progress.json on this lease) at the deadline less the recovery window. A Pod ready
@@ -276,6 +276,20 @@ def prune_manifest(dest: Path, old: PurePosixPath, verified: dict, pruned: dict)
             "archived": verified, "pod": pruned, "ruling": RULING}
 
 
+def reverify(dest: Path, old) -> dict:
+    """A resumed prune's E: checks: a verified, unpruned destination whose VERIFIED.json is this archive's record,
+    every file and member still as verified, and an archive of ``old`` itself."""
+    require((dest / "VERIFIED.json").exists() and not (dest / "PRUNE.json").exists(),
+            "a resumed prune needs a verified, unpruned archive destination")
+    record = read(dest / "VERIFIED.json")
+    require(record.get("schema") == SCHEMA + "/verified" and set(record.get("files", {})) == set(FILES),
+            "VERIFIED.json is not this archive's verification record")
+    verified = verify_copy(dest, {name: item["sha256"] for name, item in record["files"].items()})
+    roots = {read(dest / name)["root"] for name in ("manifest.json", "prune-listing.json")}
+    require(roots == {str(old)}, f"the verified archive is of {sorted(roots)}, not of {old}")
+    return verified
+
+
 class ArchiveCycle(gcloud.Cycle):
     """The G controller's lease with the archive steps in place of the campaign driver."""
 
@@ -363,14 +377,7 @@ class ArchiveCycle(gcloud.Cycle):
     def prune_verified(self):
         """Resume after a lease that verified its copy but did not prune: re-verify the E: copy against VERIFIED.json
         and the manifest, then prune on a new Pod (a partly removed root included)."""
-        require((self.dest / "VERIFIED.json").exists() and not (self.dest / "PRUNE.json").exists(),
-                "a resumed prune needs a verified, unpruned archive destination")
-        record = read(self.dest / "VERIFIED.json")
-        require(record.get("schema") == SCHEMA + "/verified" and set(record.get("files", {})) == set(FILES),
-                "VERIFIED.json is not this archive's verification record")
-        verified = verify_copy(self.dest, {name: item["sha256"] for name, item in record["files"].items()})
-        roots = {read(self.dest / name)["root"] for name in ("manifest.json", "prune-listing.json")}
-        require(roots == {str(self.old)}, f"the verified archive is of {sorted(roots)}, not of {self.old}")
+        verified = reverify(self.dest, self.old)  # again here: the copy must still match when the Pod is up
         known = [item["path"] for name in ("manifest.json", "prune-listing.json")
                  for item in read(self.dest / name)["files"]]
         remaining = self.step("check", POD_REMAINING, {"root": str(self.old), "known": known})
@@ -408,9 +415,8 @@ def main(argv=None):
     summary = gcloud.ledger(args.leases, args.volume_gb, args.volume_created_epoch)
     gcloud.verified_package(args.package)
     gcloud.require_within_caps(summary, read(args.control / "lease" / "lease.json"), args.volume_gb)
-    if args.prune_verified:
-        require((args.dest / "VERIFIED.json").exists() and not (args.dest / "PRUNE.json").exists(),
-                "a resumed prune needs a verified, unpruned archive destination")
+    if args.prune_verified:  # refuse a bad destination before any Pod exists
+        reverify(args.dest, cloud.WORKSPACE / args.superseded)
     else:
         require(not args.dest.exists(), "fresh archive destination required")
     planned = cloud.plan(args.package, args.control, args.external_guard)
