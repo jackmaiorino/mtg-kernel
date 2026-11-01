@@ -316,13 +316,21 @@ if not request.exists():
     partial = request.with_name("stop-request.controller.partial")
     partial.write_text(json.dumps({"epoch": time.time(), "reason": "controller release path"}))
     os.replace(partial, request)
-def running(pid):
+def identity(pid):
+    # (state, start ticks) from /proc/<pid>/stat, or None once it is gone
     try:
-        state = pathlib.Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()[0]
-    except (OSError, IndexError):
-        return False
-    return state not in ("Z", "X")
+        fields = pathlib.Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()
+        return fields[0], int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None
+def running(pid, ticks):
+    seen = identity(pid)
+    return seen is not None and seen[1] == ticks and seen[0] not in ("Z", "X")
 def dispatchers():
+    # A dispatcher runs the launcher script itself: the first script on its command line is
+    # native_expanded_dispatch_v1.py, followed by its _dispatch or _qualify action. A reservation supervisor names
+    # that command after its own script (host_reservation_v1.py ... -- python3 ... native_expanded_dispatch_v1.py
+    # _dispatch) and is left alone: on SIGTERM it SIGKILLs its whole job, before the dispatcher could record.
     found = []
     for entry in pathlib.Path("/proc").iterdir():
         if not entry.name.isdigit() or int(entry.name) == os.getpid():
@@ -331,22 +339,27 @@ def dispatchers():
             argv = (entry / "cmdline").read_bytes().split(b"\\0")
         except OSError:
             continue
-        if any(a.endswith(b"native_expanded_dispatch_v1.py") for a in argv) and \\
-                any(a in (b"_dispatch", b"_qualify") for a in argv):
-            found.append(int(entry.name))
+        scripts = [index for index, arg in enumerate(argv) if arg.endswith(b".py")]
+        if not scripts or not argv[scripts[0]].endswith(b"native_expanded_dispatch_v1.py") \\
+                or scripts[0] + 1 >= len(argv) or argv[scripts[0] + 1] not in (b"_dispatch", b"_qualify"):
+            continue
+        seen = identity(int(entry.name))
+        if seen is not None and seen[0] not in ("Z", "X"):
+            found.append((int(entry.name), seen[1]))
     return found
 signalled = []
-for pid in dispatchers():
-    try:
-        os.kill(pid, signal.SIGTERM)
-        signalled.append(pid)
-    except OSError:
-        pass
+for pid, ticks in dispatchers():
+    if running(pid, ticks):  # the same process, not a reused PID
+        try:
+            os.kill(pid, signal.SIGTERM)
+            signalled.append((pid, ticks))
+        except OSError:
+            pass
 deadline = time.monotonic() + ARGS["seconds"]
-while time.monotonic() < deadline and any(running(pid) for pid in signalled):
+while time.monotonic() < deadline and any(running(pid, ticks) for pid, ticks in signalled):
     time.sleep(0.5)
-print(json.dumps({"signalled": signalled, "still_running": [pid for pid in signalled if running(pid)],
-                  "epoch": time.time()}))
+print(json.dumps({"signalled": [pid for pid, _ in signalled],
+                  "still_running": [pid for pid, ticks in signalled if running(pid, ticks)], "epoch": time.time()}))
 '''
 POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
 try:

@@ -438,6 +438,10 @@ class LeaseTests(unittest.TestCase):
             fake = subprocess.Popen([sys.executable, "-c", body, "native_expanded_dispatch_v1.py", "_dispatch",
                                      str(marker)], stdout=subprocess.PIPE)
             other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "unrelated"])
+            # A reservation supervisor names the dispatcher's command after its own script: never signalled.
+            wrapper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "host_reservation_v1.py",
+                                        "supervise", "--nested", "--", "python3", "-B",
+                                        "native_expanded_dispatch_v1.py", "_dispatch", "request.json"])
             try:
                 self.assertEqual(fake.stdout.readline().strip(), b"ready")
                 code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10}) + gcloud.POD_STOP_DISPATCHERS
@@ -447,9 +451,10 @@ class LeaseTests(unittest.TestCase):
                 self.assertEqual((result["signalled"], result["still_running"]), ([fake.pid], []))
                 self.assertEqual(marker.read_text(), "stopped")  # the dispatcher saw SIGTERM, not SIGKILL
                 self.assertIsNone(other.poll())  # nothing else signalled
+                self.assertIsNone(wrapper.poll())  # nor the supervisor that would SIGKILL its job
                 self.assertTrue((Path(temp) / "stop-request.json").exists())  # new work refused first
             finally:
-                for process in (fake, other):
+                for process in (fake, other, wrapper):
                     if process.poll() is None:
                         process.kill()
                     process.wait()
