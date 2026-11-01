@@ -493,9 +493,9 @@ impl WalkV1<'_> {
                 let copy = self.state.objects.get(id).spell_copy_origin.is_some();
                 let o = &mut self.objs[id.0 as usize];
                 if copy {
+                    // A spell copy is created on the stack at generation 0.
                     o.exists = true;
                     o.zone = Some(Zone::Stack);
-                    o.moves += 1;
                     self.settle(&[id]);
                     return;
                 }
@@ -514,11 +514,11 @@ impl WalkV1<'_> {
                 self.settle(&[id]);
             }
             CommittedEvent::CreateToken { object, .. } => {
+                // A token is created on the battlefield at generation 0.
                 let id = *object;
                 let o = &mut self.objs[id.0 as usize];
                 o.exists = true;
                 o.zone = Some(Zone::Battlefield);
-                o.moves += 1;
                 self.settle(&[id]);
             }
             _ => self.settle(&[]),

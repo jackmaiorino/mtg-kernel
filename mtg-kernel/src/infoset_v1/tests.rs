@@ -98,6 +98,12 @@ fn export_is_deterministic_and_round_trips_through_import() {
                 (Err(x), Err(y)) => assert_eq!(x, y),
                 _ => panic!("presence differs between two exports of one state"),
             }
+            if let Err(e) = &a {
+                let seen = tally.by_code.get(e.code_name()).copied().unwrap_or(0);
+                if seen < 3 {
+                    eprintln!("refusal {}: {e:?}", e.code_name());
+                }
+            }
             tally.record(&a.as_ref().map(|_| ()).map_err(Clone::clone));
         });
     }
