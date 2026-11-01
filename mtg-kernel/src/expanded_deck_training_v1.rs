@@ -3581,6 +3581,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             Some(teacher),
             None,
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -3605,6 +3606,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             Some(teacher),
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
             source,
