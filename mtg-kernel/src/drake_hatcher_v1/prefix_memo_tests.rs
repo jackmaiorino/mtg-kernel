@@ -85,12 +85,10 @@ const SLOW: [DealV1; 4] = [
         split: "eval",
         pair: 458,
         decks: ["FDN_top_04752_WG", "FDN_top_03718_UR"],
-        winner: EVAL_458_WINNER,
-        decisions: EVAL_458_DECISIONS,
+        winner: PlayerId::P0,
+        decisions: 1322,
     },
 ];
-const EVAL_458_WINNER: PlayerId = PlayerId::P1;
-const EVAL_458_DECISIONS: u64 = 0;
 
 /// Plays `deal`, showing `observe` the state before each step, and checks
 /// it ends as recorded.
@@ -279,7 +277,7 @@ fn altered_states_along_recorded_drake_pair_29_get_the_reference_verdicts() {
     let ((), compared, differences) = custody::comparing_with_v0_for_test(|| {
         play(&PAIR_29, &mut |state| {
             decision += 1;
-            if rows(state) == 0 || decision % 25 != 0 {
+            if rows(state) == 0 || !decision.is_multiple_of(25) {
                 return;
             }
             let base = state.clone();
@@ -331,7 +329,7 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
                     return;
                 }
                 let first = *first.get_or_insert(decision);
-                if (decision - first) % ((PAIR_29.decisions - first) / 4) == 0 {
+                if (decision - first).is_multiple_of((PAIR_29.decisions - first) / 4) {
                     marks.push(WorkV1 {
                         rows,
                         checks: custody::local_row_checks_for_test() - start,
