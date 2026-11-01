@@ -54,6 +54,10 @@ pub(crate) fn tree_root_v1(root_id: &str, k: u64) -> String {
 
 /// Section 2's spending rule, with a_units reserved first: the budget of the
 /// next search, or None for a policy answer (allowance-limited).
+#[allow(
+    dead_code,
+    reason = "the entrant bot calls it once the bridge port lands"
+)]
 pub(crate) fn spend_v1(
     budget: u64,
     a_units: u64,

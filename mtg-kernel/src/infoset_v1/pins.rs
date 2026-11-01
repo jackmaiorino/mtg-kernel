@@ -31,11 +31,11 @@ pub(crate) struct PinCapacityV1 {
 
 fn usable(pin: &PinV1, zone: Zone, t: &TransferV1) -> bool {
     t.item >= pin.since
-        && match (pin.last_zone, zone, t.dir) {
-            (Zone::Library, Zone::Hand, TransferDirV1::Draw) => true,
-            (Zone::Hand, Zone::Library, TransferDirV1::PutBack) => true,
-            _ => false,
-        }
+        && matches!(
+            (pin.last_zone, zone, t.dir),
+            (Zone::Library, Zone::Hand, TransferDirV1::Draw)
+                | (Zone::Hand, Zone::Library, TransferDirV1::PutBack)
+        )
 }
 
 /// C1: every moved pin is matched to a distinct usable transfer (Hall's

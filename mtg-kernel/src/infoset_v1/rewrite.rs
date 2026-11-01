@@ -70,19 +70,16 @@ const TIMESTAMP_PAIRS_V1: &[&str] = &["added_subtype_v1"];
 
 fn generation_partner(id_key: &str, map: &Map<String, Value>) -> Option<String> {
     let stem = id_key.strip_suffix("_id").unwrap_or(id_key);
-    for candidate in [
+    [
         format!("{id_key}_zone_change_count"),
         format!("{id_key}_zone_change_generation"),
         format!("{id_key}_generation"),
         format!("{stem}_zone_change_count"),
         format!("{stem}_zone_change_generation"),
         format!("{stem}_generation"),
-    ] {
-        if map.contains_key(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|candidate| map.contains_key(candidate))
 }
 
 /// Walks `value`, calling `resolve` on every object reference; resolved

@@ -384,7 +384,7 @@ pub(crate) fn export_v1(
         let hand = &state.players[opp.index()].hand;
         if hand
             .first()
-            .is_some_and(|id| state.objects.get(*id).card_def % 2 == 0)
+            .is_some_and(|id| state.objects.get(*id).card_def.is_multiple_of(2))
         {
             return Err(refuse(RefusalCodeV1::L7, "synthetic"));
         }
