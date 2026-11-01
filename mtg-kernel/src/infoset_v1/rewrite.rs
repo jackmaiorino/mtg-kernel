@@ -24,17 +24,20 @@ pub(crate) enum ClassV1 {
 }
 
 /// One object reference found in the state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RefV1 {
     pub class: ClassV1,
     /// Reference slot within its event or record (traversal order).
     pub slot: u32,
     pub object: ObjectId,
-    pub generation: Option<u32>,
+    /// Every epoch of the object the record stores beside it (a cast
+    /// receipt stores its origin and stack epochs), in field order.
+    pub generations: Vec<u32>,
 }
 
-/// What a reference becomes. `None` leaves it unchanged (collect pass).
-pub(crate) type ResolvedV1 = Option<(u32, Option<u32>)>;
+/// What a reference becomes: the new id and the new epochs, in the order
+/// given. `None` leaves it unchanged (collect pass).
+pub(crate) type ResolvedV1 = Option<(u32, Vec<u32>)>;
 
 pub(crate) fn tagged_value<T: serde::Serialize>(value: &T) -> Value {
     let _tagging = ObjectIdTaggingV1::begin();
@@ -92,6 +95,9 @@ pub(crate) struct WalkerV1<'a> {
     /// Whether generation fields must pair with a tagged object (off for
     /// passes over an already rewritten state).
     pub check_pairs: bool,
+    /// Inside an arena object: generation fields in a map that names no
+    /// object are epochs of this object itself (`spell_cast_origin`).
+    pub self_object: Option<ObjectId>,
 }
 
 fn r2(detail: String) -> ExportErrorV1 {
@@ -129,7 +135,7 @@ impl WalkerV1<'_> {
                             class,
                             slot: self.next_slot(),
                             object,
-                            generation: None,
+                            generations: Vec::new(),
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -147,7 +153,7 @@ impl WalkerV1<'_> {
                     class,
                     slot: self.next_slot(),
                     object,
-                    generation: None,
+                    generations: Vec::new(),
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -183,24 +189,34 @@ impl WalkerV1<'_> {
             })
             .map(|(k, _)| k.clone())
             .collect();
-        let mut pairs: Vec<(String, Option<String>)> = Vec::new();
+        // (id key or None for the containing object, the object, its
+        // generation keys).
+        let mut pairs: Vec<(Option<String>, ObjectId, Vec<String>)> = Vec::new();
         let mut claimed: Vec<String> = Vec::new();
         for k in &id_keys {
             let g = generation_partner(k, map).filter(|g| gen_keys.contains(g));
             if let Some(g) = &g {
                 claimed.push(g.clone());
             }
-            pairs.push((k.clone(), g));
+            let object = parse_tag(&map[k]).expect("filtered");
+            pairs.push((Some(k.clone()), object, g.into_iter().collect()));
         }
         let unclaimed: Vec<String> = gen_keys
             .iter()
             .filter(|g| !claimed.contains(g))
             .cloned()
             .collect();
-        let unpaired: Vec<usize> = (0..pairs.len()).filter(|&i| pairs[i].1.is_none()).collect();
         if !unclaimed.is_empty() && self.check_pairs {
-            if unclaimed.len() == 1 && unpaired.len() == 1 {
-                pairs[unpaired[0]].1 = Some(unclaimed[0].clone());
+            let unpaired: Vec<usize> = (0..pairs.len())
+                .filter(|&i| pairs[i].2.is_empty())
+                .collect();
+            if pairs.len() == 1 {
+                // One object: every epoch field in the record is its own.
+                pairs[0].2.extend(unclaimed);
+            } else if unclaimed.len() == 1 && unpaired.len() == 1 {
+                pairs[unpaired[0]].2 = unclaimed;
+            } else if let (true, Some(own)) = (pairs.is_empty(), self.self_object) {
+                pairs.push((None, own, unclaimed));
             } else {
                 return Err(r2(format!(
                     "generation field `{}` under `{parent}` pairs with no object",
@@ -208,26 +224,27 @@ impl WalkerV1<'_> {
                 )));
             }
         }
-        for (k, g) in pairs {
-            let object = parse_tag(&map[&k]).expect("filtered");
-            let generation = match &g {
-                Some(g) => Some(
+        for (k, object, gens) in pairs {
+            let generations = gens
+                .iter()
+                .map(|g| {
                     map[g]
                         .as_u64()
                         .and_then(|x| u32::try_from(x).ok())
-                        .ok_or_else(|| r2(format!("generation `{g}` is not a u32")))?,
-                ),
-                None => None,
-            };
+                        .ok_or_else(|| r2(format!("generation `{g}` is not a u32")))
+                })
+                .collect::<Result<Vec<u32>, _>>()?;
             let r = RefV1 {
                 class,
                 slot: self.next_slot(),
                 object,
-                generation,
+                generations,
             };
-            if let Some((id, new_gen)) = (self.resolve)(r)? {
-                map.insert(k.clone(), Value::from(id));
-                if let (Some(g), Some(new_gen)) = (g, new_gen) {
+            if let Some((id, new_gens)) = (self.resolve)(r)? {
+                if let Some(k) = k {
+                    map.insert(k, Value::from(id));
+                }
+                for (g, new_gen) in gens.into_iter().zip(new_gens) {
                     map.insert(g, Value::from(new_gen));
                 }
             }

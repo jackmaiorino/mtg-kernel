@@ -260,11 +260,30 @@ pub(crate) fn project_v1(
     for note in &journal[cursor..] {
         w.note(note);
     }
+    // A spell being cast sits on the stack before its SpellCast commits:
+    // the announcement is public, so the walk moves it as observed.
+    if let Some(pending) = &state.engine.pending_cast {
+        let id = pending.spell;
+        let true_zone = state.objects.get(id).zone;
+        if w.objs[id.0 as usize].zone != Some(true_zone) && is_public(true_zone) {
+            let owner = w.owner(id);
+            let from = w.objs[id.0 as usize].zone.unwrap_or(Zone::Hand);
+            w.moved(id, true_zone);
+            w.hand_move(id, owner, from, true_zone, true);
+            w.settle(&[id]);
+        }
+    }
     // Every object's native generation must equal the moves V's walk counted
     // (hidden moves included): otherwise the walk missed a zone change and
     // its epochs cannot be trusted.
+    // Only tracked objects' epochs are exported from the walk; a hidden
+    // object's count may miss event-less moves (an aborted cast) without
+    // affecting any exported value.
     for (id, object) in state.objects.iter() {
         let o = &w.objs[id.0 as usize];
+        if !o.tracked {
+            continue;
+        }
         if o.exists && o.moves != object.zone_change_count {
             w.inconsistencies.push(format!(
                 "object {} moved {} times in the walk, generation {}",
@@ -376,9 +395,19 @@ impl WalkV1<'_> {
                         }
                     }
                 }
+                // A span that begins with a move V observed includes the
+                // epoch the card left (its origin epoch is one below the
+                // epoch it entered, and V saw the move).
+                let entered_by_observed_move =
+                    observed.contains(&id) && prev_zones.iter().any(|(x, _)| *x == id);
                 let o = &mut self.objs[i];
+                let start_gen = if entered_by_observed_move {
+                    o.moves.saturating_sub(1)
+                } else {
+                    o.moves
+                };
                 o.spans.push(SpanV1 {
-                    start_gen: o.moves,
+                    start_gen,
                     start_item: item,
                     start_event: next_event,
                     end: None,

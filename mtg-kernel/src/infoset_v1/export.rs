@@ -476,36 +476,37 @@ pub(crate) fn export_v1(
         if *region != "live" {
             continue;
         }
-        let Some(g) = r.generation else { continue };
-        let Some(span) = projection.span_of(r.object, g) else {
-            if projection.tracked(r.object) || pinned_untracked.contains(&r.object) {
-                return Err(refuse(
-                    RefusalCodeV1::R2,
-                    "a live reference to an unobserved epoch",
-                ));
-            }
-            continue;
-        };
-        if let Some(end) = span.end {
-            let owner = state.objects.get(r.object).owner;
-            let def = state.objects.get(r.object).card_def;
-            let joined = if is(MutantV1::L13) {
-                // v6: refuse only if the referenced copy itself is back.
-                projection.tracked(r.object)
-            } else {
-                projection
-                    .arrivals
-                    .iter()
-                    .any(|a| a.item > end.item && a.owner == owner && a.card_def == def)
+        for &g in &r.generations {
+            let Some(span) = projection.span_of(r.object, g) else {
+                if projection.tracked(r.object) || pinned_untracked.contains(&r.object) {
+                    return Err(refuse(
+                        RefusalCodeV1::R2,
+                        "a live reference to an unobserved epoch",
+                    ));
+                }
+                continue;
             };
-            if joined {
-                return Err(refuse(
-                    RefusalCodeV1::R1b,
-                    format!(
-                        "a live reference may join a later {} of its owner",
-                        card_name(def)
-                    ),
-                ));
+            if let Some(end) = span.end {
+                let owner = state.objects.get(r.object).owner;
+                let def = state.objects.get(r.object).card_def;
+                let joined = if is(MutantV1::L13) {
+                    // v6: refuse only if the referenced copy itself is back.
+                    projection.tracked(r.object)
+                } else {
+                    projection
+                        .arrivals
+                        .iter()
+                        .any(|a| a.item > end.item && a.owner == owner && a.card_def == def)
+                };
+                if joined {
+                    return Err(refuse(
+                        RefusalCodeV1::R1b,
+                        format!(
+                            "a live reference may join a later {} of its owner",
+                            card_name(def)
+                        ),
+                    ));
+                }
             }
         }
     }
@@ -792,20 +793,23 @@ pub(crate) fn export_v1(
         if is(MutantV1::L5) {
             return true;
         }
-        match (r.class, r.generation) {
-            (_, Some(g)) => g >= span.start_gen,
-            (ClassV1::Event(e), None) => e >= span.start_event,
-            (ClassV1::Record(_), None) => false,
-            (ClassV1::Live, None) => true,
+        if !r.generations.is_empty() {
+            return r.generations.iter().all(|&g| g >= span.start_gen);
+        }
+        match r.class {
+            ClassV1::Event(e) => e >= span.start_event,
+            ClassV1::Record(_) => false,
+            ClassV1::Live => true,
         }
     };
     let mut p0: HashMap<ObjectId, u32> = HashMap::new();
     for (r, region) in &refs {
-        let Some(g) = r.generation else { continue };
         let counts = (*region == "live") || (new_id.contains_key(&r.object) && linkable(r));
         if counts {
-            let e = p0.entry(r.object).or_insert(g);
-            *e = (*e).min(g);
+            for &g in &r.generations {
+                let e = p0.entry(r.object).or_insert(g);
+                *e = (*e).min(g);
+            }
         }
     }
     let base = |id: ObjectId| -> u32 {
@@ -876,22 +880,23 @@ pub(crate) fn export_v1(
             if let Some(&id) = new_id.get(&o) {
                 let pin = pinned_set.contains(&o);
                 if r.class == ClassV1::Live || linkable(&r) || (raw_history && !pin) {
-                    let g = match r.generation {
-                        Some(g) => Some(phi(o, g).ok_or_else(|| {
-                            refuse(RefusalCodeV1::R2, format!("epoch below p0 for {}", o.0))
-                        })?),
-                        None => None,
-                    };
+                    let g = r
+                        .generations
+                        .iter()
+                        .map(|&g| {
+                            phi(o, g).ok_or_else(|| refuse(RefusalCodeV1::R2, "epoch below p0"))
+                        })
+                        .collect::<Result<Vec<u32>, _>>()?;
                     return Ok(Some((id, g)));
                 }
             }
             if let (true, Some(&i)) = (raw_history, in_slot.get(&o)) {
-                return Ok(Some((slot_id[i], r.generation.map(|_| 1))));
+                return Ok(Some((slot_id[i], vec![1; r.generations.len()])));
             }
             match r.class {
                 ClassV1::Live => Err(refuse(
                     RefusalCodeV1::R1,
-                    format!("a live reference names object {} with no handle", o.0),
+                    "a live reference names an object with no handle",
                 )),
                 ClassV1::Event(e) | ClassV1::Record(e) => {
                     if let ClassV1::Event(e) = r.class {
@@ -933,7 +938,7 @@ pub(crate) fn export_v1(
                         j: r.slot,
                         named,
                     });
-                    Ok(Some((id, r.generation.map(|_| 0))))
+                    Ok(Some((id, vec![0; r.generations.len()])))
                 }
             }
         };
@@ -958,21 +963,16 @@ pub(crate) fn export_v1(
                 let Some(&nid) = new_id.get(&r.object) else {
                     return Err(refuse(
                         RefusalCodeV1::R1,
-                        format!(
-                            "object {} references object {} with no handle",
-                            id.0, r.object.0
-                        ),
+                        "a tracked object references an object with no handle",
                     ));
                 };
-                let g = match r.generation {
-                    Some(g) => Some(phi(r.object, g).ok_or_else(|| {
-                        refuse(
-                            RefusalCodeV1::R2,
-                            format!("epoch below p0 for {}", r.object.0),
-                        )
-                    })?),
-                    None => None,
-                };
+                let g = r
+                    .generations
+                    .iter()
+                    .map(|&g| {
+                        phi(r.object, g).ok_or_else(|| refuse(RefusalCodeV1::R2, "epoch below p0"))
+                    })
+                    .collect::<Result<Vec<u32>, _>>()?;
                 Ok(Some((nid, g)))
             };
             let mut ts = |t: u64| -> Option<u64> {
@@ -990,6 +990,7 @@ pub(crate) fn export_v1(
                 timestamp: &mut ts,
                 slot: 0,
                 check_pairs: true,
+                self_object: Some(*id),
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1176,9 +1177,11 @@ fn collect_refs(
             timestamp: &mut ts,
             slot: 0,
             check_pairs: true,
+            self_object: None,
         };
-        for item in items {
+        for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
+            walker.self_object = Some(ObjectId(i as u32));
             if let Some(m) = item.as_object_mut() {
                 m.remove("zone_change_count");
                 for (k, f) in m.iter_mut() {
@@ -1217,6 +1220,7 @@ fn rewrite_state(
         timestamp: ts,
         slot: 0,
         check_pairs: true,
+        self_object: None,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1291,6 +1295,7 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         timestamp: &mut ts,
         slot: 0,
         check_pairs: false,
+        self_object: None,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {
