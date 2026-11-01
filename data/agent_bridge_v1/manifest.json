@@ -35,7 +35,7 @@
       "name": "burn_mirror_capped",
       "description": "capped Burn mirror driven by candidate 0 with retry and reuse probes",
       "file": "burn_mirror_capped.transcript.jsonl",
-      "sha256": "56e573e5dd3e302ab227be329617c0209b12f5739251158c548080af6dd77a04",
+      "sha256": "80736e7be785a0f5fdcc5c5c14e962b8c7c4fc2dfed21715ba2c2eaf02d08a84",
       "line_count": 56
     }
   ]
