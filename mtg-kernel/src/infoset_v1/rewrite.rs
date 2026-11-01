@@ -224,6 +224,12 @@ impl WalkerV1<'_> {
                 )));
             }
         }
+        // A record naming exactly one object owns the epochs of nested
+        // records that name none (a source contract's `spell_cast_origin`).
+        let single = match pairs.as_slice() {
+            [(Some(_), object, _)] => Some(*object),
+            _ => None,
+        };
         for (k, object, gens) in pairs {
             let generations = gens
                 .iter()
@@ -298,7 +304,13 @@ impl WalkerV1<'_> {
                 }
                 continue;
             }
-            self.walk(v, class, &k)?;
+            let inherited = self.self_object;
+            if single.is_some() {
+                self.self_object = single;
+            }
+            let walked = self.walk(v, class, &k);
+            self.self_object = inherited;
+            walked?;
         }
         Ok(())
     }
