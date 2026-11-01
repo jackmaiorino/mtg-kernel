@@ -1292,6 +1292,8 @@ fn cost_kind_str_v1(cost_kind: CostKind) -> &'static str {
         CostKind::RemoveCounters => "remove_counters",
         CostKind::PutCounters => "put_counters",
         CostKind::ChooseCreatureOrRevealCreature => "choose_creature_or_reveal_creature",
+        CostKind::ExileCraftMaterial => "exile_craft_material",
+        CostKind::ExileFromHandV1 => "exile_from_hand",
     }
 }
 
@@ -1802,6 +1804,11 @@ fn neutral_target_ref_v1(
         TargetRefV1::Object { object } => {
             Ok(json!({"object": neutral_object_ref_v1(object, observer)?}))
         }
+        // Exact stack-item targets belong to non-Pauper target specs.
+        TargetRefV1::StackItem { .. } => Err(
+            "engine_contract_failure:stack-item target outside the Pauper neutral contract"
+                .to_string(),
+        ),
     }
 }
 
