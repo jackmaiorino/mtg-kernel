@@ -1537,7 +1537,7 @@ impl RelationsV1 {
 /// time. Only an acceleration: the verdicts are the same without it.
 struct CheckedPrefixV1 {
     covered: usize,
-    rows: Vec<RowV1>,
+    rows: Arc<Vec<RowV1>>,
     next: Mutex<Option<LongerPrefixV1>>,
 }
 /// The longer prefix that a validation of another copy of the same events
@@ -1715,14 +1715,15 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
     let history = &state.engine.event_history;
     let memo = checked_prefix(history);
     let checked = memo.as_ref().map_or(0, |(memo, _)| memo.covered);
+    // Shared with the memo until a new row is added.
     let mut rows = memo
         .as_ref()
-        .map_or_else(Vec::new, |(memo, _)| memo.rows.clone());
+        .map_or_else(Arc::default, |(memo, _)| Arc::clone(&memo.rows));
     let unchecked = rows.len();
     // Kind-guarded scans: a history with no event of the kind gives no rows
     // either way, and otherwise every event past the checked prefix
     // (positions included) is read.
-    fn unchecked(
+    fn events_after(
         history: &crate::event_history_v1::EventHistoryV1,
         checked: usize,
         kind: crate::event_history_v1::EventKindV1,
@@ -1733,7 +1734,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
             &[]
         }
     }
-    for (offset, event) in unchecked(
+    for (offset, event) in events_after(
         history,
         checked,
         crate::event_history_v1::EventKindV1::DrakeJournalV1,
@@ -1749,10 +1750,12 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
             if u64::try_from(position).ok() != Some(record.index) {
                 return Err("Drake record index differs from actual history position".to_string());
             }
-            rows.push(RowV1::of(record));
+            Arc::make_mut(&mut rows).push(RowV1::of(&**record));
         }
     }
-    locate(&mut rows, unchecked);
+    if rows.len() > unchecked {
+        locate(Arc::make_mut(&mut rows), unchecked);
+    }
     if rows.len() as u64 != state.engine.drake_ledger_v1.issued {
         return Err("Drake original journal was erased/replayed".into());
     }
@@ -1763,7 +1766,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         world(state)?;
         remember_world_checked_in_frame(state);
     }
-    if unchecked(
+    if events_after(
         history,
         checked,
         crate::event_history_v1::EventKindV1::DrakeHistoryRefV1,
