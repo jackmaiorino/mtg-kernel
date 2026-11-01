@@ -1356,10 +1356,20 @@ INTERRUPTION_SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT")
 # cleanup, and later signals change nothing. The dispatch acts on it at its own checkpoints (check_stop).
 STOP = {"signal": None, "at": None, "child": None,  # child: the native child once spawned (not used by the handler)
         "release_marker": None}
-# The lease's release path writes this file in the attempt's dispatch root before it signals the dispatcher; the
-# handler notes whether it existed when the first signal was latched (one stat, no other I/O). It ties the first stop
-# to the release path without comparing clocks (G(i) AMENDMENT-3 3(b)).
-RELEASE_MARKER = "release-stop.json"
+# Before it signals a dispatcher, the lease's release path writes a marker named by that dispatcher's PID and start
+# ticks in this Pod-local folder (the container's own disk, never the network volume). The handler looks for its
+# own marker (one local stat) before it latches the first stop: that ties the first stop to the release path without
+# comparing clocks (G(i) AMENDMENT-3 3(b)). Off Linux there is no marker and no such evidence.
+RELEASE_MARKER_DIR = "/run/g-release-markers"
+
+
+def own_marker():
+    """This process's release-marker path (RELEASE_MARKER_DIR/<pid>-<start ticks>), or None off Linux."""
+    try:
+        ticks = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+    return os.path.join(RELEASE_MARKER_DIR, f"{os.getpid()}-{ticks}")
 STOP_WAIT_SECONDS = 1.0  # the monitor loop's longest wait between checkpoints
 
 
@@ -1390,17 +1400,19 @@ def check_stop(root, child):
         raise ExternalStop(f"stopped from outside by {signal.Signals(STOP['signal']).name}")
 
 
-def install_stop_record(root=None):
-    """Latch the first of INTERRUPTION_SIGNALS (STOP), noting whether the release path's marker (RELEASE_MARKER in
-    ``root``) existed at that moment; returns the previous handlers for restore_handlers."""
+def install_stop_record():
+    """Latch the first of INTERRUPTION_SIGNALS (STOP), noting whether the release path's marker for this process
+    (own_marker) existed at that moment; returns the previous handlers for restore_handlers."""
     STOP.update(signal=None, at=None, child=None, release_marker=None)
-    marker = None if root is None else os.path.join(str(root), RELEASE_MARKER)
+    marker = own_marker()
     previous = {}
 
     def stopped(signum, frame):
-        if STOP["signal"] is None:
-            STOP.update(signal=signum, at=time.time(),
-                        release_marker=None if marker is None else os.path.exists(marker))
+        if STOP["signal"] is not None:
+            return
+        seen = None if marker is None else os.path.exists(marker)  # a local stat, before the latch
+        if STOP["signal"] is None:  # a nested handler that latched meanwhile keeps its own, earlier observation
+            STOP.update(signal=signum, at=time.time(), release_marker=seen)
     for name in INTERRUPTION_SIGNALS:
         number = getattr(signal, name, None)
         if number is not None:
@@ -1447,7 +1459,7 @@ def execute(request_path, qualification):
     command = [str(checked(runtime["binary"])), str((root/"config.json").resolve())]
     if qualification and request["kind"] == "training":
         command.extend(["--max-new-iterations", "1"])
-    handlers = install_stop_record(root)
+    handlers = install_stop_record()
     try:
         return run_attempt(request_path, request, qualification, config, runtime, selected, shared, root, cold,
                            placed, command, started, token, archive_native, reservations)

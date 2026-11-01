@@ -877,27 +877,34 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             self.assertEqual((record["signal"], record["child_started"], record["child_running"],
                               record["child_exit_code"]), ("SIGTERM",) + expected)
 
-    def test_the_first_stop_notes_whether_the_release_marker_existed(self):
-        """AMENDMENT-3 3(b): the handler notes, with one stat, whether the release path's marker was in the dispatch
-        root when the first stop was latched; a later signal changes nothing."""
+    @unittest.skipUnless(LINUX, "the marker is named by this process's /proc start ticks")
+    def test_the_first_stop_notes_whether_its_release_marker_existed(self):
+        """AMENDMENT-3 3(b): before it latches the first stop, the handler looks (one local stat) for the marker the
+        release path writes for this process; the first latch keeps its observation, later signals change nothing."""
         import signal as signals
-        for present in (False, True):
-            root = self.root / f"marker-{present}"
-            root.mkdir()
-            if present:
-                (root / dispatch.RELEASE_MARKER).write_text("{}")
-            handlers = dispatch.install_stop_record(root)
-            try:
-                handler = signals.getsignal(signals.SIGTERM)
-                handler(signals.SIGTERM, None)
-                (root / dispatch.RELEASE_MARKER).write_text("{}")  # written after the first stop: not seen
-                handler(signals.SIGTERM, None)
-            finally:
-                dispatch.restore_handlers(handlers)
-            self.assertEqual(dispatch.STOP["release_marker"], present)
-            with self.assertRaises(dispatch.ExternalStop):
-                dispatch.check_stop(root, None)
-            self.assertEqual(dispatch.read(root / "interruption.json")["release_marker_seen"], present)
+        folder = self.root / "markers"
+        folder.mkdir()
+        with patch.object(dispatch, "RELEASE_MARKER_DIR", str(folder)):
+            marker = Path(dispatch.own_marker())
+            self.assertEqual(marker.parent, folder)
+            for present in (False, True):
+                root = self.root / f"marker-{present}"
+                root.mkdir()
+                marker.unlink(missing_ok=True)
+                if present:
+                    marker.write_text("{}")
+                handlers = dispatch.install_stop_record()
+                try:
+                    handler = signals.getsignal(signals.SIGTERM)
+                    handler(signals.SIGTERM, None)
+                    marker.write_text("{}")  # written after the first stop: not seen
+                    handler(signals.SIGTERM, None)
+                finally:
+                    dispatch.restore_handlers(handlers)
+                self.assertEqual(dispatch.STOP["release_marker"], present)
+                with self.assertRaises(dispatch.ExternalStop):
+                    dispatch.check_stop(root, None)
+                self.assertEqual(dispatch.read(root / "interruption.json")["release_marker_seen"], present)
         dispatch.STOP.update(signal=None, at=None, child=None, release_marker=None)
 
     @unittest.skipUnless(LINUX, "delivers a POSIX signal to this process")

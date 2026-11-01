@@ -458,15 +458,17 @@ class LeaseTests(unittest.TestCase):
                                         "native_expanded_dispatch_v1.py", "_dispatch", "request.json"])
             try:
                 self.assertEqual(fake.stdout.readline().strip(), b"ready")
-                code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10, "marker": dispatch.RELEASE_MARKER}) + \
+                markers = Path(temp) / "markers"
+                code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10, "marker_dir": str(markers)}) + \
                     gcloud.POD_STOP_DISPATCHERS
                 done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
                 result = json.loads(done.stdout.decode().splitlines()[-1])
                 fake.wait(10)
                 self.assertEqual(([item["pid"] for item in result["signalled"]], result["still_running"]), ([fake.pid], []))
                 self.assertEqual(result["signalled"][0]["request"], str(request))  # the argument after the action
-                written = Path(temp) / "dispatch" / dispatch.RELEASE_MARKER  # in its dispatch root, before the signal
-                self.assertEqual(result["signalled"][0]["marker"], str(written))
+                entry = result["signalled"][0]
+                written = markers / f"{entry['pid']}-{entry['start_ticks']}"  # its own marker, before the signal
+                self.assertEqual(entry["marker"], str(written))
                 self.assertEqual(json.loads(written.read_text())["request"], str(request))
                 self.assertLessEqual(result["signalled"][0]["signalled_unix"], time.time())
                 self.assertEqual(marker.read_text(), "stopped")  # the dispatcher saw SIGTERM, not SIGKILL

@@ -361,20 +361,24 @@ def dispatchers():
 # Per dispatcher: its request (which names the attempt), the release marker written in its dispatch root before the
 # signal (the dispatcher notes whether it existed when it latched its first stop: AMENDMENT-3 3(b)), and the
 # Pod-clock time of the signal.
-def mark(request):
+def mark(pid, ticks, request):
+    # the dispatcher's own marker, on this Pod's local disk (native_expanded_dispatch_v1.own_marker)
     try:
-        root = pathlib.Path(json.loads(pathlib.Path(request).read_text())["root"])
-        marker = root / ARGS["marker"]
+        folder = pathlib.Path(ARGS["marker_dir"])
+        folder.mkdir(parents=True, exist_ok=True)
+        marker = folder / ("%d-%d" % (pid, ticks))
         partial = marker.with_name(marker.name + ".partial")
         partial.write_text(json.dumps({"epoch": time.time(), "request": request}))
         os.replace(partial, marker)
         return str(marker)
-    except (OSError, ValueError, KeyError, TypeError):
+    except OSError:
         return None
 signalled = []
 for pid, ticks, request in dispatchers():
     if running(pid, ticks):  # the same process, not a reused PID
-        marker = mark(request) if request else None
+        marker = mark(pid, ticks, request)
+        if not running(pid, ticks):  # gone while the marker was written: its PID may name another process now
+            continue
         at = time.time()
         try:
             os.kill(pid, signal.SIGTERM)
@@ -507,7 +511,7 @@ class Cycle(cloud.Cycle):
                       {"epoch": time.time(), "cause": self.result.get("error") or "controller release",
                        "error_type": self.result.get("error_type")}, replace=True)
                 stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS,
-                                                              "marker": cloud.native_dispatch.RELEASE_MARKER},
+                                                              "marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR},
                                        timeout=DISPATCHER_GRACE_SECONDS + 30)
                 write(self.control / "dispatchers-stopped.json", stopped, replace=True)
                 self.result["dispatchers_signalled"] = len(stopped["signalled"])
