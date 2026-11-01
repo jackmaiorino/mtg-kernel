@@ -375,7 +375,10 @@ pub(crate) fn ac3_check(
     let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
         (live.current_response(), imported.current_response())
     else {
-        return Err("the imported root is not a decision".into());
+        return Err(format!(
+            "the imported root is not a decision: {:?}",
+            imported.current_response()
+        ));
     };
     if d.legal_action_count != e.legal_action_count || d.acting_player != e.acting_player {
         return Err(format!(

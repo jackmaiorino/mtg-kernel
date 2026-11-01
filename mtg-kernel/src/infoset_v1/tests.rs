@@ -8,6 +8,32 @@ use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::runtime_deck_by_id;
 use crate::state::SplitMix64;
 
+/// The path of the first difference between two values.
+pub(crate) fn first_diff(a: &serde_json::Value, b: &serde_json::Value, path: String) -> String {
+    use serde_json::Value;
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            for k in x.keys().chain(y.keys()) {
+                match (x.get(k), y.get(k)) {
+                    (Some(p), Some(q)) if p == q => {}
+                    (Some(p), Some(q)) => return first_diff(p, q, format!("{path}.{k}")),
+                    (p, q) => return format!("{path}.{k}: {p:?} vs {q:?}"),
+                }
+            }
+            path
+        }
+        (Value::Array(x), Value::Array(y)) => {
+            for (i, (p, q)) in x.iter().zip(y).enumerate() {
+                if p != q {
+                    return first_diff(p, q, format!("{path}[{i}]"));
+                }
+            }
+            format!("{path}: lengths {} vs {}", x.len(), y.len())
+        }
+        _ => format!("{path}: {a} vs {b}"),
+    }
+}
+
 pub(crate) fn decklists(s: &FastActorSessionV1) -> [Vec<u16>; 2] {
     let ids = s.deck_ids_v1();
     [0, 1].map(|i| {
@@ -89,10 +115,14 @@ fn export_is_deterministic_and_imports_byte_for_byte() {
                     let again: crate::state::GameState =
                         serde_json::from_slice(&serde_json::to_vec(imported.game_state()).unwrap())
                             .unwrap();
-                    assert_eq!(
-                        serde_json::to_vec(&again).unwrap(),
-                        serde_json::to_vec(&a.state).unwrap(),
-                        "the imported state serializes to the exported bytes"
+                    let (x, y) = (
+                        serde_json::to_value(&again).unwrap(),
+                        serde_json::to_value(&a.state).unwrap(),
+                    );
+                    assert!(
+                        x == y,
+                        "the imported state serializes to the exported bytes; first difference at {}",
+                        first_diff(&x, &y, String::new())
                     );
                 }
                 (Err(x), Err(y)) => assert_eq!(x, y),
@@ -394,11 +424,19 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
         let mut canon = FastActorSessionV1::import_infoset_v1(&live, x.state.clone(), 0);
         resolve_waiting(&mut truth, below, 40);
         resolve_waiting(&mut canon, below, 40);
-        assert_eq!(
-            public_summary(&truth),
-            public_summary(&canon),
-            "{}: continuations differ",
-            record["case"]
+        let (t, c) = (public_summary(&truth), public_summary(&canon));
+        assert!(
+            t == c,
+            "{}: continuations differ at {}; stack {:?}; responses {:?} / {:?}",
+            record["case"],
+            first_diff(&t, &c, String::new()),
+            state
+                .stack
+                .iter()
+                .map(|i| (i.controller, state.objects.get(i.source).card_def))
+                .collect::<Vec<_>>(),
+            truth.current_response(),
+            canon.current_response()
         );
     }
 }
