@@ -291,7 +291,10 @@ elif exited.exists():
     code = int(exited.read_text().strip() or "1")
     if code == 0:
         lines = [line for line in (out / (name + ".stdout")).read_text().splitlines() if line.strip()]
-        value = {"state": "done", "result": json.loads(lines[-1])}
+        try:
+            value = {"state": "done", "result": json.loads(lines[-1])}
+        except (IndexError, ValueError):  # a clean exit without its JSON result is a failure, never a pass
+            value = {"state": "failed", "exit": 0, "error": "no result line: " + tail(out / (name + ".stdout"))}
     else:
         value = {"state": "failed", "exit": code, "error": tail(out / (name + ".stderr"))}
 else:
@@ -461,7 +464,9 @@ class ArchiveCycle(gcloud.Cycle):
     def step(self, kind, program, args, progress=None):
         """Run a Pod step detached (POD_DETACH_START) and poll it (POD_DETACH_POLL) until it ends or its bound
         passes. A poll or start the network interrupts is retried at the next poll; the step keeps running on the
-        Pod meanwhile, and a start already made is never repeated."""
+        Pod meanwhile, and a start already made is never repeated. Only the pack has its own Pod-side watchdog;
+        the baselines, check and prune are bounded by this deadline, and a step still running then ends with the
+        lease's release."""
         self.in_bounds(kind)
         started = time.monotonic()
         deadline = started + STEP_SECONDS[kind]
