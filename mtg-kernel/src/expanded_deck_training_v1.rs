@@ -109,6 +109,7 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
 }
+pub(crate) mod checkpoint_container_v1;
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
 mod line_b_root_selection_v1;
@@ -118,6 +119,7 @@ mod loaded_source_cache_v1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
+pub use checkpoint_container_v1::CheckpointRecordFormatV1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
@@ -1848,7 +1850,7 @@ fn checkpoint_feature_contract_v1(pin: &PinnedFileV1) -> Result<String, String> 
     struct IdentityProbeV1 {
         feature_contract_digest: String,
     }
-    let probe: IdentityProbeV1 = read_pinned(pin)?;
+    let probe: IdentityProbeV1 = read_checkpoint_metadata_v1(pin)?;
     Ok(probe.feature_contract_digest)
 }
 
@@ -1888,7 +1890,7 @@ fn read_ordinary_checkpoint_v1(
     origin: &PlayPolicyOriginV1,
 ) -> Result<ExpandedCheckpointV1, String> {
     let saved = if origin.is_fresh_v1() {
-        read_pinned(pin)?
+        read_checkpoint_v1(pin)?
     } else {
         read_legacy_checkpoint_v1(pin)?
     };
@@ -1902,7 +1904,7 @@ fn read_ordinary_checkpoint_v1(
 }
 
 fn read_legacy_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
-    let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
+    let saved = read_checkpoint_v1(pin)?;
     // The ordinary checkpoint reader previously rejected this unknown field,
     // including an explicit null. Preserve that strict wire boundary.
     ensure(
@@ -3355,6 +3357,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// platform's libm, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
         training_math: TrainingMathV1,
+        /// The checkpoint record format (`checkpoint_container_v1`); omitted
+        /// for v1, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_v1")]
+        record_format: CheckpointRecordFormatV1,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -3393,6 +3399,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// platform's libm, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
         training_math: TrainingMathV1,
+        /// The checkpoint record format (`checkpoint_container_v1`); omitted
+        /// for v1, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_v1")]
+        record_format: CheckpointRecordFormatV1,
         output_directory: PathBuf,
     },
     /// Separate E policy supervision, full Adam and unchanged sampler.
@@ -3571,6 +3581,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             Some(teacher),
             None,
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -3595,6 +3606,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             Some(teacher),
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
             source,
@@ -3621,6 +3633,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             Some(targets),
             None,
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -3647,6 +3660,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             Some(ex1),
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -3913,6 +3927,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             loss_selection,
             line_b,
             training_math,
+            record_format,
             output_directory,
         } => execute_update_v1(
             source,
@@ -3929,6 +3944,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             None,
             training_math,
+            record_format,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -3942,6 +3958,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             max_prepared_tensor_mebibytes,
             line_b,
             training_math,
+            record_format,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
@@ -3961,6 +3978,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 None,
                 None,
                 training_math,
+                record_format,
             )
         }
     }
@@ -4106,6 +4124,7 @@ fn execute_update_v1(
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
     training_math: TrainingMathV1,
+    record_format: CheckpointRecordFormatV1,
 ) -> Result<Value, String> {
     execute_update_inner_v1(
         source,
@@ -4124,6 +4143,7 @@ fn execute_update_v1(
         None,
         None,
         training_math,
+        record_format,
     )
 }
 
@@ -4148,6 +4168,7 @@ fn execute_update_inner_v1(
     search_targets: Option<SearchTargetsOptionsV1>,
     ex1: Option<ex1_update_v1::Ex1UpdateOptionsV1>,
     training_math: TrainingMathV1,
+    record_format: CheckpointRecordFormatV1,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -4220,8 +4241,7 @@ fn execute_update_inner_v1(
         "output directory already exists",
     )?;
     if let Some(pin) = &source.checkpoint {
-        let saved: CheckpointESupportedProbeV1 =
-            serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+        let saved: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(pin)?;
         if let Some(identity) = &saved.e_supported {
             ensure(
                 e_supported
@@ -4273,7 +4293,7 @@ fn execute_update_inner_v1(
                 .checkpoint
                 .as_ref()
                 .ok_or("recovery continuation requires checkpoint")?;
-            let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
+            let saved = read_checkpoint_v1(pin)?;
             ensure(
                 saved.exploration == Some(loss_selection),
                 "recovery continuation selection differs",
@@ -5245,7 +5265,16 @@ fn execute_update_inner_v1(
         training_math,
         input_contract: input_contract.clone(),
     };
-    let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
+    let checkpoint_pin = match record_format {
+        CheckpointRecordFormatV1::V1 => {
+            publish_json(&output_directory, "checkpoint.json", &checkpoint)?
+        }
+        CheckpointRecordFormatV1::V2 => {
+            checkpoint_container_v1::admit_writer_v1(&checkpoint)?;
+            let bytes = checkpoint_container_v1::encode_v1(&checkpoint)?;
+            publish_json_bytes_v1(&output_directory, "checkpoint.json", &bytes)?
+        }
+    };
     // Readback exercises the real same-format continuation loader.
     let resumed_source = ExpandedModelSourceV1 {
         checkpoint: Some(checkpoint_pin.clone()),
@@ -5257,6 +5286,27 @@ fn execute_update_inner_v1(
             && restored.training_math_v1() == training_math,
         "published checkpoint round trip differs",
     )?;
+    if record_format == CheckpointRecordFormatV1::V2 {
+        // Design section 3: the restored state equals the published one item
+        // for item (Adam step, anchor, every tensor's name, shape and bits),
+        // beyond the state digest.
+        let back = restored.snapshot_v1().map_err(err)?;
+        let same = |got: &[NativeNamedParameterV1], saved: &[ParameterBitsV1]| {
+            got.len() == saved.len()
+                && got
+                    .iter()
+                    .zip(saved)
+                    .all(|(g, s)| ParameterBitsV1::from_native(g) == *s)
+        };
+        ensure(
+            back.adam_step == checkpoint.adam_step
+                && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
+                && same(&back.parameters, &checkpoint.parameters)
+                && same(&back.first_moments, &checkpoint.first_moments)
+                && same(&back.second_moments, &checkpoint.second_moments),
+            "published checkpoint container round trip differs",
+        )?;
+    }
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
     if let Some(mut exploration) = exploration_report {
         let gauge = &update.scorer_bias_gauge;
@@ -5412,9 +5462,28 @@ fn read_trajectory_batch_v1(
     Ok(episodes)
 }
 
+/// A pinned JSON document. A checkpoint container is read through its
+/// exported v1 JSON (design 4.1, the JSON-compatibility interface), so every
+/// typed reader of a checkpoint accepts either format with unchanged
+/// semantics; hot paths use [`read_checkpoint_v1`] instead.
 fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, String> {
     let bytes = read_pinned_bytes(pin)?;
-    serde_json::from_slice(&bytes).map_err(err)
+    serde_json::from_slice(&checkpoint_container_v1::json_document_v1(&bytes)?).map_err(err)
+}
+
+/// A pinned checkpoint, from either format, decoded directly (design 4.1,
+/// the direct-decode interface).
+fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
+    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_bytes(pin)?)
+}
+
+/// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
+/// container's small JSON document, never from its tensor sections.
+fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
+    pin: &PinnedFileV1,
+) -> Result<T, String> {
+    let bytes = read_pinned_bytes(pin)?;
+    serde_json::from_slice(checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
@@ -5481,6 +5550,85 @@ fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, Str
         lengths.insert(name.to_owned(), bytes.len());
     }
     Ok(bytes)
+}
+
+/// Converts the v1 JSON checkpoint of `source` (its `checkpoint` pin) into a
+/// checkpoint container at `output` (design section 5): admits only a
+/// canonical v1 checkpoint; restores it through the continuation loader,
+/// which checks its dimensions and recomputes its state digest; publishes the
+/// container; loads the published container through the same loader; and
+/// refuses unless the two restored states are equal item for item, with the
+/// same digest and math, and the container exports exactly the v1 bytes.
+/// `output` must not exist; its directory must.
+pub fn convert_checkpoint_v1_to_v2(
+    source: &ExpandedModelSourceV1,
+    output: &Path,
+) -> Result<Value, String> {
+    let v1 = source
+        .checkpoint
+        .as_ref()
+        .ok_or("conversion requires a source with a checkpoint")?;
+    let bytes = read_pinned_bytes(v1)?;
+    let container = checkpoint_container_v1::convert_v1_bytes(&bytes)?;
+    let (_, before) = initialize_any_math_v1(source)?;
+    let written = publish_checkpoint_file_v1(output, &container)?;
+    let converted = ExpandedModelSourceV1 {
+        checkpoint: Some(written.clone()),
+        ..source.clone()
+    };
+    let (_, after) = initialize_any_math_v1(&converted)?;
+    let before_snapshot = before.snapshot_v1().map_err(err)?;
+    let after_snapshot = after.snapshot_v1().map_err(err)?;
+    let bits = |rows: &[NativeNamedParameterV1]| -> Vec<ParameterBitsV1> {
+        rows.iter().map(ParameterBitsV1::from_native).collect()
+    };
+    let state_sha256 = hex(&before_snapshot.state_sha256_v1().map_err(err)?);
+    ensure(
+        before_snapshot.adam_step == after_snapshot.adam_step
+            && before_snapshot.scorer_bias_anchor_bits == after_snapshot.scorer_bias_anchor_bits
+            && bits(&before_snapshot.parameters) == bits(&after_snapshot.parameters)
+            && bits(&before_snapshot.first_moments) == bits(&after_snapshot.first_moments)
+            && bits(&before_snapshot.second_moments) == bits(&after_snapshot.second_moments)
+            && hex(&after_snapshot.state_sha256_v1().map_err(err)?) == state_sha256
+            && before.training_math_v1() == after.training_math_v1(),
+        "converted checkpoint restores a different state",
+    )?;
+    Ok(
+        json!({"schema":"mtg-kernel-checkpoint-container-conversion/v1",
+        "direction":"v1-to-v2","source":source,"input":v1,"output":written,
+        "state_sha256":state_sha256,"git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD")}),
+    )
+}
+
+/// Exports a pinned checkpoint container as its v1 JSON checkpoint at
+/// `output`: the bytes `publish_json` writes for the same checkpoint.
+pub fn export_checkpoint_v2_to_v1(v2: &PinnedFileV1, output: &Path) -> Result<Value, String> {
+    let bytes = read_pinned_bytes(v2)?;
+    ensure(
+        checkpoint_container_v1::is_container_v1(&bytes),
+        "the input is not a checkpoint container",
+    )?;
+    let saved = checkpoint_container_v1::decode_v1(&bytes)?;
+    let v1 = serde_json::to_vec(&saved).map_err(err)?;
+    let written = publish_checkpoint_file_v1(output, &v1)?;
+    Ok(
+        json!({"schema":"mtg-kernel-checkpoint-container-conversion/v1",
+        "direction":"v2-to-v1","input":v2,"output":written,
+        "state_sha256":saved.state_sha256,"git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD")}),
+    )
+}
+
+fn publish_checkpoint_file_v1(output: &Path, bytes: &[u8]) -> Result<PinnedFileV1, String> {
+    ensure(
+        output.is_absolute() && !output.exists(),
+        "a fresh absolute output path is required",
+    )?;
+    let directory = output.parent().ok_or("output has no directory")?;
+    let name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("output has no file name")?;
+    publish_json_bytes_v1(directory, name, bytes)
 }
 
 /// `publish_json` for a document already serialized to `bytes`.
@@ -9336,6 +9484,7 @@ pub(crate) mod tests {
                 update_backward_execution: backward_execution,
                 loss_selection,
                 training_math,
+                record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
                 output_directory: root.join(format!("update-{iteration}")),
             })?;
             // Engineering timing note only (never a claim): visible in the
@@ -9710,6 +9859,7 @@ pub(crate) mod tests {
                 update_backward_execution: UpdateBackwardExecutionV1::Sequential,
                 loss_selection: ExpandedLossSelectionV1::default(),
                 training_math: math,
+                record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
                 output_directory: root.join(name),
             })
         };
@@ -10138,6 +10288,7 @@ pub(crate) mod tests {
                     loss_selection: gae_loss_selection_v1(),
                     line_b: line_b.clone(),
                     training_math: TrainingMathV1::PlatformLibm,
+                    record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
                     output_directory: root.join(format!("update-{iteration}")),
                 })
                 .unwrap();
@@ -10896,6 +11047,7 @@ pub(crate) mod tests {
                     teacher,
                 }),
                 training_math: TrainingMathV1::PlatformLibm,
+                record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
                 output_directory: root.join(format!("update-{label}")),
             })
         };
@@ -11360,6 +11512,7 @@ pub(crate) mod tests {
             loss_selection: gae_loss_selection_v1(),
             line_b: None,
             training_math: TrainingMathV1::PlatformLibm,
+            record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
             output_directory: root.join("ordinary"),
         })
         .unwrap();

@@ -252,6 +252,14 @@ pub struct NativeExpandedTrainingRunV1 {
     pub value_coefficient: f32,
     #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
     pub update_backend: ExpandedUpdateBackendV1,
+    /// Config-driven; default v1 (JSON checkpoints) keeps every existing
+    /// config, its wire bytes and its run identity byte-identical. v2 writes
+    /// checkpoint containers (`checkpoint_container_v1`, design 4.2).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::expanded_deck_training_v1::CheckpointRecordFormatV1::is_v1"
+    )]
+    pub record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1,
     /// Config-driven; default `TerminalReinforceValueV3` keeps every
     /// existing config, its wire bytes, and its run identity byte-identical.
     /// See `ExpandedLossSelectionV1`.
@@ -383,6 +391,17 @@ impl NativeExpandedTrainingRunV1 {
         )?;
         self.update_backend.validate_v1()?;
         self.loss_selection.validate_v1()?;
+        // The E-supported, SQ1, TP1 Stage B and EX1 updates always write v1
+        // checkpoints (outside the v2 writer's scope gate), so a v2 run must
+        // not select them.
+        check(
+            self.record_format.is_v1()
+                || (self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()),
+            "record_format v2 is not available with e_supported, soft_q, search_targets or ex1 updates",
+        )?;
         if !self.training_math.is_platform_libm() {
             check(
                 self.update_backend.is_cpu()
@@ -1360,6 +1379,7 @@ fn update_command(
             update_backward_execution: config.update_backward_execution,
             loss_selection: config.loss_selection,
             training_math: config.training_math,
+            record_format: config.record_format,
             output_directory,
         }
     } else {
@@ -1375,6 +1395,7 @@ fn update_command(
             preparation_workers: config.preparation_workers,
             max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
             training_math: config.training_math,
+            record_format: config.record_format,
             output_directory,
         }
     }
@@ -2056,6 +2077,7 @@ mod tests {
                     },
                 }],
             }],
+            record_format: Default::default(),
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -2833,6 +2855,7 @@ mod tests {
             initial_source,
             opponents: vec![],
             iterations,
+            record_format: Default::default(),
             learning_rate: 0.0003,
             value_coefficient: 0.5,
             update_backend,

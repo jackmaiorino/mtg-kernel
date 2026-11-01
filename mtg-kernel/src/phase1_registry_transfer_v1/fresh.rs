@@ -179,6 +179,12 @@ pub fn transfer_fresh_expanded_checkpoint_to_current_registry_v1(
         "feature migration is unsupported; exact current V3 identities required",
     )?;
 
+    require(
+        !crate::expanded_deck_training_v1::checkpoint_container_v1::is_container_v1(
+            checkpoint_bytes,
+        ),
+        "registry transfer reads only a v1 JSON checkpoint; export the container first",
+    )?;
     let saved: FreshExpandedCheckpointInputV1 = super::bounded(checkpoint_bytes)?;
     require(
         saved.schema == FRESH_CHECKPOINT_SCHEMA && saved.loss_identity == LOSS,
