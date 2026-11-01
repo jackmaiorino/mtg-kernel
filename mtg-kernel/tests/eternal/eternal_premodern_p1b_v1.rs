@@ -1057,7 +1057,8 @@ fn opalescence_animates_the_other_non_aura_enchantments() {
     let mut state = islands();
     let opalescence = put(&mut state, P0, "Opalescence", Zone::Hand);
     let seal = put(&mut state, P0, "Seal of Cleansing", Zone::Battlefield);
-    let decree = put(&mut state, P1, "Decree of Silence", Zone::Battlefield);
+    // Its controller's own Decree of Silence doesn't counter Opalescence.
+    let decree = put(&mut state, P0, "Decree of Silence", Zone::Battlefield);
     let land = put(&mut state, P0, "Island", Zone::Battlefield);
     let rancor = put(&mut state, P0, "Rancor", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);

@@ -1598,6 +1598,14 @@ pub(super) fn prepare_final_spell_payment_v1(
             _ => 0,
         })
         .sum::<usize>();
+    // Sickening Dreams discards its announced X instead (Premodern wave P1b).
+    let discard_count = match crate::eternal_premodern_p1b_v1::statics::additional_discard_count(
+        definition,
+        pending.selected_x_v59(),
+    ) {
+        Some(count) => usize::from(count.unwrap_or(0)),
+        None => discard_count,
+    };
     if discarded.len() != discard_count
         || discarded.iter().enumerate().any(|(index, object)| {
             discarded[..index].contains(object)
