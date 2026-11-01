@@ -273,9 +273,6 @@ pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_i
 /// Sterling Grove: "Other enchantments you control have shroud." The
 /// keywords this module grants `object`.
 pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords {
-    if read_state(state).is_none() {
-        return Keywords::NONE;
-    }
     let Some(live) = state.objects.try_get(object) else {
         return Keywords::NONE;
     };
@@ -299,15 +296,14 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
 
 /// Solitary Confinement: "You have shroud." Whether `player` has shroud.
 pub(crate) fn player_has_shroud(state: &GameState, player: PlayerId) -> bool {
-    read_state(state).is_some()
-        && active_with_id(
-            state,
-            static_ids().solitary_confinement,
-            SOLITARY_CONFINEMENT,
-            Some(player),
-        )
-        .next()
-        .is_some()
+    active_with_id(
+        state,
+        static_ids().solitary_confinement,
+        SOLITARY_CONFINEMENT,
+        Some(player),
+    )
+    .next()
+    .is_some()
 }
 
 /// Solitary Confinement: "Prevent all damage that would be dealt to you."
@@ -326,10 +322,9 @@ pub(crate) fn skips_draw_step(state: &GameState, player: PlayerId) -> bool {
 /// Tsabo's Web: "Each land with an activated ability that isn't a mana
 /// ability doesn't untap during its controller's untap step."
 pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
-    if read_state(state).is_none()
-        || active_with_id(state, static_ids().tsabos_web, TSABOS_WEB, None)
-            .next()
-            .is_none()
+    if active_with_id(state, static_ids().tsabos_web, TSABOS_WEB, None)
+        .next()
+        .is_none()
     {
         return false;
     }

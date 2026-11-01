@@ -558,17 +558,19 @@ pub fn fact_or_fiction() -> EffectOp {
 }
 
 /// Frantic Search: "Draw two cards, then discard two cards. Untap up to
-/// three lands."
+/// three lands." The lands are chosen before the discard: the two choices
+/// are independent and neither reveals anything the other could use, and
+/// the discard stays the terminal leaf.
 pub fn frantic_search() -> EffectOp {
     EffectOp::Sequence(vec![
         draw(2),
-        EffectOp::DiscardCards {
-            player: PlayerRef::Controller,
-            count: 2,
-        },
         EffectOp::UntapUpToLands {
             chooser: PlayerRef::Controller,
             max_targets: 3,
+        },
+        EffectOp::DiscardCards {
+            player: PlayerRef::Controller,
+            count: 2,
         },
     ])
 }

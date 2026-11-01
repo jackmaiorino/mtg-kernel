@@ -567,7 +567,13 @@ fn dust_bowl_sacrifices_a_land_to_destroy_a_nonbasic_land() {
         }
         other => panic!("expected targets, got {other:?}"),
     }
-    settle_picking(&mut state, 0, Some(fodder));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert!(candidates.contains(&fodder));
+            Action::ChooseCostTarget(fodder)
+        }
+        other => first_answer(other),
+    });
     assert_eq!(zone(&state, fodder), Zone::Graveyard);
     assert_eq!(zone(&state, tower), Zone::Graveyard);
     assert!(state.objects.get(bowl).tapped);
@@ -890,6 +896,7 @@ fn attunement_returns_itself_to_draw_three_and_discard_four() {
     put(&mut state, P0, "Island", Zone::Hand);
     put(&mut state, P0, "Island", Zone::Hand);
     activate(&mut state, attunement, 0, &[]);
+    next(&mut state);
     assert_eq!(zone(&state, attunement), Zone::Hand, "returned as its cost");
     settle_with(&mut state, |_, decision| first_answer(decision));
     // Two, the Attunement and three drawn, then four discarded.
@@ -1091,6 +1098,7 @@ fn parallax_wave_fades_exiles_and_returns_its_cards() {
     settled(&mut state);
     assert_eq!(p1b::fade_counters(&state, wave), 5);
     activate(&mut state, wave, 0, &[Target::Object(elves)]);
+    next(&mut state);
     assert_eq!(p1b::fade_counters(&state, wave), 4, "paid as activated");
     settled(&mut state);
     activate(&mut state, wave, 0, &[Target::Object(tog)]);
