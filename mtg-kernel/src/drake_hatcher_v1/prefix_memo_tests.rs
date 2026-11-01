@@ -423,3 +423,47 @@ fn a_copy_adopts_the_longer_prefix_another_copy_accepted() {
     });
     assert_eq!(differences, Vec::<String>::new());
 }
+
+#[test]
+fn prefixes_expire_with_their_histories_when_added_worlds_hold_older_prefixes() {
+    let mut found = None;
+    play(&PAIR_29, &mut |state| {
+        if found.is_none() && rows(state) > 50 {
+            found = Some(state.clone());
+        }
+    });
+    let earlier = found.unwrap();
+    custody::validate(&earlier).unwrap();
+    let memo = |s: &GameState| {
+        let (_, memo) = s.engine.event_history.prefix_memo_v1().unwrap();
+        std::sync::Arc::downgrade(&memo)
+    };
+    let shorter = memo(&earlier);
+    // An added event whose saved world holds the shorter prefix, as a Panda
+    // input capturing a linked runner's whole original world can.
+    let row = earlier
+        .engine
+        .event_history
+        .iter()
+        .rev()
+        .find_map(|e| custody::journal(e).filter(|r| matches!(r.value, JournalV1::Enclosing { .. })))
+        .unwrap();
+    let mut record = row.clone();
+    if let JournalV1::Enclosing { original, .. } = &mut record.value {
+        *original = std::sync::Arc::new(earlier.clone());
+    }
+    let mut longer = earlier.clone();
+    longer
+        .engine
+        .event_history
+        .push(CommittedEvent::DrakeJournalV1 {
+            record: std::sync::Arc::new(record),
+        });
+    custody::extend_prefix_for_test(&longer.engine.event_history);
+    let extended = memo(&longer);
+    assert!(!extended.ptr_eq(&shorter));
+    drop(earlier);
+    drop(longer);
+    assert!(shorter.upgrade().is_none(), "the shorter prefix outlived its histories");
+    assert!(extended.upgrade().is_none(), "the longer prefix outlived its histories");
+}

@@ -1535,15 +1535,22 @@ impl RelationsV1 {
 /// history that starts with them, checks only the later rows that way; the
 /// checks that read later rows or the rest of the state run in full each
 /// time. Only an acceleration: the verdicts are the same without it.
+///
+/// Ownership runs only from a prefix to older ones: a longer prefix owns the
+/// events it added past the shorter one it extends (whose saved worlds may
+/// hold histories that own older prefixes), and the shorter one holds the
+/// longer one only weakly. A prefix is made after every event it covers, so
+/// none of them can own it, and a chain never outlives its histories.
 struct CheckedPrefixV1 {
     covered: usize,
     rows: Arc<Vec<RowV1>>,
-    next: Mutex<Option<LongerPrefixV1>>,
+    /// The events past the prefix this one extends, when one was extended.
+    added: Vec<CommittedEvent>,
+    /// The latest longer prefix a validation of another copy of these
+    /// events accepted. Copies that diverge overwrite it, which only costs
+    /// the others their own checks.
+    next: Mutex<Weak<CheckedPrefixV1>>,
 }
-/// The longer prefix that a validation of another copy of the same events
-/// accepted, with the events it added. Weak, so a chain of prefixes never
-/// outlives the histories that hold them.
-type LongerPrefixV1 = (Vec<CommittedEvent>, Weak<CheckedPrefixV1>);
 
 #[cfg(all(
     test,
@@ -1611,13 +1618,15 @@ fn checked_prefix(
     }
     let mut extended = false;
     loop {
-        let longer = memo.next.lock().ok().and_then(|next| {
-            let (events, longer) = next.as_ref()?;
-            let end = memo.covered.checked_add(events.len())?;
-            (history.get(memo.covered..end) == Some(events.as_slice()))
-                .then(|| longer.upgrade())
-                .flatten()
-        });
+        let longer = memo
+            .next
+            .lock()
+            .ok()
+            .and_then(|next| next.upgrade())
+            .filter(|longer| {
+                longer.covered == memo.covered + longer.added.len()
+                    && history.get(memo.covered..longer.covered) == Some(longer.added.as_slice())
+            });
         match longer {
             Some(longer) => {
                 memo = longer;
@@ -1685,6 +1694,10 @@ fn compare_with_v0(state: &GameState) -> Result<(), String> {
             COMPARE_V0.with(|on| on.set(true));
         }
     }
+    // Not a fully independent oracle: the reference runs second and shares
+    // the replay memo and key caches, and its nested validations (inside its
+    // enclosing replays) run through `validate`, so the memo path, without
+    // a comparison.
     let checked = validate_checked(state);
     // The reference's own nested validations are not compared again.
     COMPARE_V0.with(|on| on.set(false));
@@ -1789,7 +1802,8 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
     let local = crate::linked_aura_operation_v1::locally_owned(state);
     let verifying = VERIFYING.with(Cell::get);
     // Only rows outside the checked prefix replay, and a validation with a
-    // checked prefix replays them without the memo.
+    // checked prefix replays them without the replay memo: keys are computed
+    // (and the replay memo fed) only when nothing is checked yet.
     let keys = if verifying || checked > 0 || !rows.iter().any(|row| row.enclosing.is_some()) {
         BTreeMap::new()
     } else {
@@ -1871,22 +1885,47 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
                     history.set_prefix_memo_v1(covered, memo);
                 }
             }
-            memo => {
-                let longer = Arc::new(CheckedPrefixV1 {
-                    covered,
-                    rows,
-                    next: Mutex::new(None),
-                });
-                if let Some((memo, _)) = memo.filter(|(memo, _)| memo.covered < covered) {
-                    if let Ok(mut next) = memo.next.lock() {
-                        *next = Some((history[memo.covered..].to_vec(), Arc::downgrade(&longer)));
-                    }
-                }
-                history.set_prefix_memo_v1(covered, longer);
-            }
+            memo => leave_prefix(history, memo.map(|(memo, _)| memo), rows),
         }
     }
     Ok(())
+}
+
+/// Leaves on `history` the prefix of all its events with `rows`, extending
+/// `shorter` (a prefix of fewer of its events) when given.
+fn leave_prefix(
+    history: &crate::event_history_v1::EventHistoryV1,
+    shorter: Option<Arc<CheckedPrefixV1>>,
+    rows: Arc<Vec<RowV1>>,
+) {
+    let covered = history.len();
+    let shorter = shorter.filter(|shorter| shorter.covered < covered);
+    let longer = Arc::new(CheckedPrefixV1 {
+        covered,
+        rows,
+        added: shorter
+            .as_ref()
+            .map_or_else(Vec::new, |shorter| history[shorter.covered..].to_vec()),
+        next: Mutex::new(Weak::new()),
+    });
+    if let Some(shorter) = shorter {
+        if let Ok(mut next) = shorter.next.lock() {
+            *next = Arc::downgrade(&longer);
+        }
+    }
+    history.set_prefix_memo_v1(covered, longer);
+}
+
+/// Extends the checked prefix `history` carries to all its events, as a
+/// validation of it would, without validating them.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn extend_prefix_for_test(history: &crate::event_history_v1::EventHistoryV1) {
+    let (memo, _) = checked_prefix(history).expect("a checked prefix");
+    leave_prefix(history, Some(Arc::clone(&memo)), Arc::clone(&memo.rows));
 }
 
 /// The checks of one row that read only the history before the end of the
@@ -1963,6 +2002,10 @@ fn check_row(
             }
         }
         JournalV1::Published { capture, item } => {
+            // Nothing here bounds `capture` by this row's index. A passing
+            // validation still read only earlier rows: `relate_row` requires
+            // the one collection of `capture` to precede this row, and the
+            // collection's own check requires `capture` to precede it.
             let (original, _) = source(state, *capture)?;
             if **item != trigger_item(original, *capture, item.v4.stack_item_id)
                 || item.v4.stack_item_id == StackItemId::default()
