@@ -147,38 +147,47 @@ pub(crate) fn search_tree_v1(
     })?;
     let wall_seconds = started.elapsed().as_secs_f64();
     let cpu_seconds = super::process_cpu::seconds().unwrap_or(f64::NAN) - cpu0;
-    let d = decision(root).ok_or("the root is terminal")?;
-    let width = d.legal_action_count as usize;
-    let mut cursor = Cursor::new(tree, 0, KeyMode::Legacy, false);
-    let (lookup, hit) = cursor.lookup(root, d)?;
-    let edges = match (&lookup, &hit) {
-        (Lookup::Miss | Lookup::DepthLimit, _) => None,
-        (_, Some(h)) => match h.key.and_then(|key| cursor.tree.nodes.get(&key)) {
-            None => None,
-            Some(node) => {
-                if node.n.len() != width {
-                    return Err("the root node's menu differs from the live menu".into());
-                }
-                let mut counts: Vec<Option<CountsV1>> = vec![None; width];
-                for e in 0..width {
-                    let live = cursor.live(h, e)? as usize;
-                    let slot = counts
-                        .get_mut(live)
-                        .ok_or("an edge maps outside the menu")?;
-                    if slot.is_some() {
-                        return Err("two edges map to one live action".into());
+    // Mapping the root after the search can fail; the tree is then excluded
+    // as a fault, but its spent transitions stay charged.
+    let mapped = (|| -> Result<Option<Vec<CountsV1>>, String> {
+        let d = decision(root).ok_or("the root is terminal")?;
+        let width = d.legal_action_count as usize;
+        let mut cursor = Cursor::new(tree, 0, KeyMode::Legacy, false);
+        let (lookup, hit) = cursor.lookup(root, d)?;
+        Ok(match (&lookup, &hit) {
+            (Lookup::Miss | Lookup::DepthLimit, _) => None,
+            (_, Some(h)) => match h.key.and_then(|key| cursor.tree.nodes.get(&key)) {
+                None => None,
+                Some(node) => {
+                    if node.n.len() != width {
+                        return Err("the root node's menu differs from the live menu".into());
                     }
-                    *slot = Some(CountsV1 {
-                        n: node.n[e],
-                        wins: node.wins[e],
-                        draws: node.draws[e],
-                    });
+                    let mut counts: Vec<Option<CountsV1>> = vec![None; width];
+                    for e in 0..width {
+                        let live = cursor.live(h, e)? as usize;
+                        let slot = counts
+                            .get_mut(live)
+                            .ok_or("an edge maps outside the menu")?;
+                        if slot.is_some() {
+                            return Err("two edges map to one live action".into());
+                        }
+                        *slot = Some(CountsV1 {
+                            n: node.n[e],
+                            wins: node.wins[e],
+                            draws: node.draws[e],
+                        });
+                    }
+                    Some(counts.into_iter().map(|c| c.expect("bijection")).collect())
                 }
-                Some(counts.into_iter().map(|c| c.expect("bijection")).collect())
-            }
-        },
-        _ => None,
-    };
+            },
+            _ => None,
+        })
+    })();
+    let mut faults = sel.faults.clone();
+    let edges = mapped.unwrap_or_else(|e| {
+        faults.push(format!("root mapping: {e}"));
+        None
+    });
     let mut result = TreeResultV1 {
         tree: k,
         units_budget: units,
@@ -187,7 +196,7 @@ pub(crate) fn search_tree_v1(
         transitions: sel.transitions,
         incomplete: sel.incomplete,
         cap_reached: sel.cap_reached,
-        faults: sel.faults.clone(),
+        faults,
         digest: String::new(),
         wall_seconds,
         cpu_seconds,
@@ -435,6 +444,7 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
         let answer = (|| -> Result<Value, String> {
             let req: SearchRequestV1 =
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
+            // The receipt names the payload by the digest import recomputes.
             let root = req.payload.import()?;
             let menu = menu_sha256(&root)?;
             let width = decision(&root)

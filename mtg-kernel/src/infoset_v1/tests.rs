@@ -427,10 +427,36 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
             ExportOptionsV1::default(),
         )
         .unwrap_or_else(|e| panic!("{}: {e:?}", record["case"]));
-        let live = FastActorSessionV1::from_v3_fixture_state(state.clone());
-        let below = state.stack.len();
+        // The pinned Lembas, natively and as its canonical occupant.
+        let pin_native = super::export::contract_pins(&state)
+            .into_iter()
+            .find(|id| matches!(state.objects.get(*id).zone, crate::state::Zone::Library))
+            .expect("a pinned Lembas in the library");
+        let pin_canon = x
+            .handles
+            .iter()
+            .position(|h| matches!(h, HandleV1::U { pinned: true, .. }))
+            .map(|i| crate::ids::ObjectId(i as u32))
+            .expect("the pinned occupant");
+        // The true state edited to the canonical placement (design 6.5):
+        // the pin moves to its canonical library slot.
+        let owner = state.objects.get(pin_native).owner;
+        let slot = x.state.players[owner.index()]
+            .library
+            .iter()
+            .position(|id| *id == pin_canon)
+            .expect("the pin is in the canonical library");
+        let mut edited = state.clone();
+        let lib = &mut edited.players[owner.index()].library;
+        let at = lib.iter().position(|id| *id == pin_native).unwrap();
+        lib.swap(at, slot);
+        let live = FastActorSessionV1::from_v3_fixture_state(edited);
         let mut truth = live.clone();
         let mut canon = FastActorSessionV1::import_infoset_v1(&live, x.state.clone(), 0);
+        let waiting = |s: &FastActorSessionV1, src: crate::ids::ObjectId| {
+            s.game_state().stack.iter().any(|i| i.source == src)
+        };
+        assert!(waiting(&truth, pin_native) && waiting(&canon, pin_canon));
         let root = |s: &FastActorSessionV1| match s.current_response() {
             FastActorResponseV1::Decision(d) => Some((
                 d.acting_player,
@@ -446,9 +472,10 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
             "{}: the imported root decision differs: {rt:?} vs {rc:?}",
             record["case"]
         );
-        // Lockstep: both pass (or take index 0) until the waiting item
+        // Lockstep: both pass (or take index 0) until the Lembas item
         // resolves; the public summaries must agree after every step.
-        for step in 0..40 {
+        let mut resolved = false;
+        for step in 0..60 {
             let (t, c) = (public_summary(&truth), public_summary(&canon));
             assert!(
                 t == c,
@@ -456,7 +483,13 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
                 record["case"],
                 first_diff(&t, &c, String::new())
             );
-            if truth.game_state().stack.len() < below {
+            if !waiting(&truth, pin_native) {
+                assert!(
+                    !waiting(&canon, pin_canon),
+                    "{}: the Lembas item resolved in only one world",
+                    record["case"]
+                );
+                resolved = true;
                 break;
             }
             let (Some(rt), Some(rc)) = (root(&truth), root(&canon)) else {
@@ -473,6 +506,11 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
             resolve_waiting(&mut truth, 0, 1);
             resolve_waiting(&mut canon, 0, 1);
         }
+        assert!(
+            resolved,
+            "{}: the Lembas item did not resolve",
+            record["case"]
+        );
         let (t, c) = (public_summary(&truth), public_summary(&canon));
         if t != c {
             let case = record["case"].as_str().unwrap_or("case").to_string();

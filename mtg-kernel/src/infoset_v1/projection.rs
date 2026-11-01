@@ -276,6 +276,24 @@ pub(crate) fn project_v1(
     // Every object's native generation must equal the moves V's walk counted
     // (hidden moves included): otherwise the walk missed a zone change and
     // its epochs cannot be trusted.
+    // Moves without committed events (an announced cast that was aborted,
+    // a madness cast rolled back to the graveyard) happen in V's sight when
+    // the card is public or in V's own hand: V-tracked objects found there
+    // take their native zone and epoch, and their spans continue.
+    for (id, object) in state.objects.iter() {
+        let viewer_hand = object.owner == viewer && object.zone == Zone::Hand;
+        let o = &mut w.objs[id.0 as usize];
+        if o.tracked
+            && (is_public(object.zone) || viewer_hand)
+            && (o.zone != Some(object.zone) || o.moves != object.zone_change_count)
+            && o.moves <= object.zone_change_count
+        {
+            o.zone = Some(object.zone);
+            o.moves = object.zone_change_count;
+            o.last_obs_gen = o.moves;
+            o.last_obs_zone = o.zone;
+        }
+    }
     // Only tracked objects' epochs are exported from the walk; a hidden
     // object's count may miss event-less moves (an aborted cast) without
     // affecting any exported value.

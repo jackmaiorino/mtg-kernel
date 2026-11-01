@@ -389,20 +389,32 @@ pub(crate) fn ac3_check(
             d.legal_action_count, e.legal_action_count
         ));
     }
+    // V's observation and menu, with viewer-local ids, are identical.
+    if view(live) != view(&imported) {
+        return Err("the imported view or menu differs from the live one".into());
+    }
     if menu(live).len() != menu(&imported).len() {
         return Err("menu length".into());
     }
     let mut s = imported;
     let mut rng = SplitMix64::seed(seed);
-    for _ in 0..3_000 {
-        let FastActorResponseV1::Decision(d) = s.current_response() else {
-            return Ok(());
+    for _ in 0..30_000 {
+        let d = match s.current_response() {
+            FastActorResponseV1::Decision(d) => d,
+            FastActorResponseV1::Terminal(t) => {
+                // A natural end or the session's decision limit; never a
+                // halt (an engine fault).
+                if t.terminal_classification != crate::rl::TerminalClassificationV1::Halted {
+                    return Ok(());
+                }
+                return Err(format!("rollout halted: {}", t.terminal_reason));
+            }
         };
         let a = (rng.next_u64() % u64::from(d.legal_action_count)) as u32;
         s.step(d.episode_id, d.step, a)
             .map_err(|e| format!("rollout fault: {e:?}"))?;
     }
-    Ok(())
+    Err("the rollout did not reach a terminal".into())
 }
 
 #[test]

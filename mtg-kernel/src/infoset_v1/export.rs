@@ -1370,9 +1370,21 @@ fn static_assertions(
     Ok(())
 }
 
+/// SHA-256 of the canonical bytes, from handle labels (the payload's form).
+pub(crate) fn canonical_digest_v1(state: &GameState, labels: &[String]) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(canonical_bytes_from_labels(state, labels))
+    )
+}
+
 /// The payload bytes: schema, handle labels and the canonical state.
 fn canonical_bytes(state: &GameState, handles: &[HandleV1]) -> Vec<u8> {
     let labels: Vec<String> = handles.iter().map(HandleV1::label).collect();
+    canonical_bytes_from_labels(state, &labels)
+}
+
+fn canonical_bytes_from_labels(state: &GameState, labels: &[String]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(INFOSET_SCHEMA_V1.as_bytes());
     bytes.push(b'\n');

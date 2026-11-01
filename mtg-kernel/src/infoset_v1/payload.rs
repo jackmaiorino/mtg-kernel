@@ -58,10 +58,24 @@ impl PayloadV1 {
         Ok(p)
     }
 
-    /// The imported session. Fails closed on any malformed field.
+    /// The imported session. Fails closed on any malformed field, and on a
+    /// digest that does not match the canonical bytes it imports.
     pub(crate) fn import(&self) -> Result<FastActorSessionV1, String> {
+        if self.schema != INFOSET_SCHEMA_V1 {
+            return Err(format!("payload schema {}", self.schema));
+        }
+        if self.viewer > 1 {
+            return Err("payload viewer".into());
+        }
         let state: crate::state::GameState = serde_json::from_value(self.state.clone())
             .map_err(|e| format!("payload state: {e}"))?;
+        if state.objects.len() != self.handles.len() {
+            return Err("payload handles do not cover the arena".into());
+        }
+        let digest = super::export::canonical_digest_v1(&state, &self.handles);
+        if digest != self.sha256 {
+            return Err("payload digest differs from its canonical bytes".into());
+        }
         let template = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
             0,
             0,
