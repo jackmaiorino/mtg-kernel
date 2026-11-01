@@ -148,6 +148,14 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
     native = PurePosixPath(spec["native_root"])
     require(native.is_absolute() and not native.is_relative_to(cloud.WORKSPACE), "native root is on the container disk")
     storage = cloud.checked_storage(spec["storage"], base)
+    # QUALIFICATION-RESTART.md (lead ruling 2026-11-01): a superseded campaign root on the same volume stays an
+    # accounting root of this campaign (admission cap, walks, emergency check) until it is archived and pruned.
+    superseded = spec.get("superseded_campaign_roots", [])
+    require(isinstance(superseded, list) and len(set(superseded)) == len(superseded)
+            and all(isinstance(old, str) and re.fullmatch("[a-z0-9][a-z0-9-]{0,62}", old) and old != base.name
+                    for old in superseded),
+            "superseded campaign roots are distinct short names other than this campaign's")
+    storage["accounting_roots"] += [str(cloud.WORKSPACE / old / "campaign") for old in superseded]
     # AMENDMENT-2.md: the trajectories are block scratch, admitted against the container disk (spec "scratch":
     # the measured per-block peak, its factor and the margin); the cap counts the campaign tree on the volume.
     storage["scratch_roots"] = [str(native)]

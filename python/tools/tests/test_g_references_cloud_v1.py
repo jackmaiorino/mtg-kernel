@@ -79,6 +79,19 @@ class PackageTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.fixture = Fixture(self.temp.name)
 
+    def test_a_superseded_root_stays_an_accounting_root(self):
+        """QUALIFICATION-RESTART.md: the old campaign root on the volume counts until it is archived and pruned."""
+        out = Path(self.temp.name) / "package-q2"
+        gcloud.package(self.fixture.spec(campaign_root=ROOT + "-q2", superseded_campaign_roots=[ROOT]), out)
+        campaign = json.loads((out / "campaign.json").read_text())
+        self.assertEqual(campaign["storage"]["accounting_roots"],
+                         [f"/workspace/{ROOT}-q2/campaign", f"/workspace/{ROOT}/campaign"])
+        self.assertTrue(campaign["roots"]["checkpoints"].startswith(f"/workspace/{ROOT}-q2/campaign/"))
+        for bad in ([ROOT + "-q2"], [ROOT, ROOT], ["Bad Name"], ROOT):
+            with self.assertRaisesRegex(ValueError, "superseded campaign roots"):
+                gcloud.package(self.fixture.spec(campaign_root=ROOT + "-q2", superseded_campaign_roots=bad),
+                               Path(self.temp.name) / f"bad-{time.monotonic_ns()}")
+
     def test_qualification_package(self):
         out = Path(self.temp.name) / "package"
         manifest = gcloud.package(self.fixture.spec(), out)
