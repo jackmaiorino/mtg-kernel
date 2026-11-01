@@ -84,8 +84,10 @@ __device__ __forceinline__ MtgTileV2 mtg_v2_tile(const MtgSeg* segs, int nseg, i
 // shared memory without passing through registers.
 __device__ __forceinline__ void mtg_v2_copy(float* dst, const float* src) {
     const unsigned d = (unsigned)__cvta_generic_to_shared(dst);
-    // No memory clobber: the copy only reads global memory nobody writes during
-    // the kernel, and its shared writes are read only after a wait (which has one).
+    // No memory clobber. Ordering comes from elsewhere: every global value a copy
+    // reads (weights, inputs, activations of earlier stages) was written before a
+    // barrier the copy is issued after, and its shared writes are read only after
+    // the clobbered wait and a barrier.
     asm volatile("cp.async.ca.shared.global [%0], [%1], 4;\n" ::"r"(d), "l"(src));
 }
 // 16-byte copy for 16-byte aligned source and destination, bypassing L1.
@@ -100,7 +102,8 @@ __device__ __forceinline__ void mtg_v2_wait_all_but_one() {
 __device__ __forceinline__ void mtg_v2_wait_all() { asm volatile("cp.async.wait_group 0;\n" ::: "memory"); }
 
 // Starts copying tile `tile` of rows [r0, r0 + rows) into `ws` and `xs`.
-// Elements outside the tile are not written; the compute loop never reads them.
+// Elements outside the tile are not written. The compute loop may read them
+// (accumulators past the chunk), but those results are never stored.
 __device__ __forceinline__ void mtg_v2_issue(const MtgSeg* segs, MtgTileV2 tile, int r0, int rows,
                                              const float* w, float* ws, float* xs) {
     const float* wt = w + (size_t)tile.wrow * MTG_HIDDEN;
@@ -301,7 +304,7 @@ mtg_net8_forward_v2(const int* __restrict__ requests,
                     float* __restrict__ scratch,
                     float* __restrict__ logits,
                     float* __restrict__ values) {
-    extern __shared__ float shared[];
+    extern __shared__ __align__(16) float shared[];
     const int* req = requests + (size_t)blockIdx.x * R_FIELDS;
     const float* p = models.params[req[R_MODEL]];
     const int H = MTG_HIDDEN;

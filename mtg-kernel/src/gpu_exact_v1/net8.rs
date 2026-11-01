@@ -456,6 +456,21 @@ fn forward_v2(
     batch: &PackedBatchV1,
     buffers: &mut DeviceBuffersV1,
 ) -> Result<Vec<ExactOutputV1>, String> {
+    let result = forward_v2_enqueued(device, models, batch, buffers);
+    if result.is_err() {
+        // A copy may already be enqueued from the pinned buffers; let it finish
+        // (or fail) before the caller can reuse or drop them.
+        let _ = device.stream.synchronize();
+    }
+    result
+}
+
+fn forward_v2_enqueued(
+    device: &ExactDeviceV1,
+    models: &[&Net8DeviceModelV1],
+    batch: &PackedBatchV1,
+    buffers: &mut DeviceBuffersV1,
+) -> Result<Vec<ExactOutputV1>, String> {
     let count = batch.len();
     let stream = &device.stream;
     if models.len() > V2_MAX_MODELS {

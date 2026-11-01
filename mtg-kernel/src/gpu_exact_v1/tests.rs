@@ -509,6 +509,10 @@ fn a_device_fault_poisons_the_service() {
             assert!(error.contains("stopped after a device error"), "{error}");
         }
     }
+    let stats = service
+        .stats_v1()
+        .expect("a poisoned service still reports");
+    assert!(stats.poisoned.is_some(), "{stats:?}");
     std::mem::forget(service);
 }
 

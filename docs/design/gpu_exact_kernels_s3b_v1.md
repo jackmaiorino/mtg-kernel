@@ -36,7 +36,7 @@ Four causes:
 
 Every linear output is the CPU's single chain: bias (or the scorer's state prefix) first, then `x[k] * w[k][o]` for ascending k across the concatenated segments, each product rounded before its add (`fmaf` for a new net whose CPU reference defines FMA order). S3b changes only where operands come from:
 
-- The block stages K-tiles of the weights and of the input rows in shared memory; each thread fetches the next tile into registers while the current one is used (double buffering).
+- The block stages K-tiles of the weights and of the input rows in shared memory, copying the next tile with `cp.async` (sm_80 and newer; older devices run v1) while the current one is used (double buffering).
 - Each thread owns a column o and up to `rows / 4` rows of it, one accumulator per row. Each accumulator starts at its init and adds ascending k, tile after tile, segment after segment. No split-K, atomics, tensor cores or cross-thread reductions.
 - The tile shape decides which thread computes an output and where its operands wait, never the order of its operations. The tests compile two shapes and require identical bits.
 

@@ -201,6 +201,15 @@ impl ExactDeviceV1 {
         let compute_capability = ctx
             .compute_capability()
             .map_err(|e| format!("compute capability: {e:?}"))?;
+        // v2 stages tiles with cp.async (sm_80 and newer); older devices run v1.
+        let execution = if compute_capability.0 < 8 {
+            ExactOptionsV1 {
+                kernels: KernelsV1::V1,
+                ..execution
+            }
+        } else {
+            execution
+        };
         let (source, options) = source_and_options(tile);
         let mut h = Sha256::new();
         h.update(PROGRAM_V1.as_bytes());
