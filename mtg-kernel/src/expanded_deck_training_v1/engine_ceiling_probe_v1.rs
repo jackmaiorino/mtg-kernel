@@ -134,7 +134,9 @@ fn engine_ceiling_probe_v1() {
 
 /// The fields of a `Debug` struct line (`Name { a: 1, b: X }`), top level only.
 fn debug_fields(text: &str) -> Vec<(String, String)> {
-    let inner = text.split_once('{').map_or("", |(_, rest)| rest.trim_end().trim_end_matches('}'));
+    let inner = text
+        .split_once('{')
+        .map_or("", |(_, rest)| rest.trim_end().trim_end_matches('}'));
     let mut fields = Vec::new();
     let (mut depth, mut start) = (0i32, 0usize);
     let bytes = inner.as_bytes();
@@ -167,7 +169,10 @@ fn record_differences(
     b: usize,
 ) -> Vec<String> {
     let mut out = Vec::new();
-    let (fa, fb) = (debug_fields(&format!("{:?}", actions[a])), debug_fields(&format!("{:?}", actions[b])));
+    let (fa, fb) = (
+        debug_fields(&format!("{:?}", actions[a])),
+        debug_fields(&format!("{:?}", actions[b])),
+    );
     for ((name, va), (_, vb)) in fa.iter().zip(&fb) {
         if va != vb && name != "ref_start" {
             out.push(format!("action.{name}"));
@@ -182,7 +187,10 @@ fn record_differences(
         out.push("refs.count".into());
     } else {
         for (x, y) in ra.iter().zip(&rb) {
-            let (fx, fy) = (debug_fields(&format!("{x:?}")), debug_fields(&format!("{y:?}")));
+            let (fx, fy) = (
+                debug_fields(&format!("{x:?}")),
+                debug_fields(&format!("{y:?}")),
+            );
             for ((name, vx), (_, vy)) in fx.iter().zip(&fy) {
                 if vx != vy && name != "action_index" {
                     out.push(format!("ref.{name}"));
@@ -209,7 +217,8 @@ fn digest_only_actions_probe_v1() {
     use crate::native_flat_tensorizer_v2::NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2 as HASH;
     use std::collections::BTreeMap;
     let episodes = probe_episodes_v1();
-    let games: usize = std::env::var("MTG_KERNEL_CEILING_GAMES_PER_THREAD").map_or(40, |g| g.parse().unwrap());
+    let games: usize =
+        std::env::var("MTG_KERNEL_CEILING_GAMES_PER_THREAD").map_or(40, |g| g.parse().unwrap());
     let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
     let (mut decisions, mut flagged, mut skipped) = (0u64, 0u64, 0u64);
     let mut tally: BTreeMap<String, u64> = BTreeMap::new();
@@ -233,10 +242,19 @@ fn digest_only_actions_probe_v1() {
                 Err(error) => {
                     // Where the encoder stopped: the error with its digits
                     // folded, the decision kind and the two decks.
-                    let kind: String = error.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).take(240).collect();
-                    let entry = stops.entry(format!("{:?} | {kind}", d.decision_kind)).or_insert((0u64, Vec::new()));
+                    let kind: String = error
+                        .chars()
+                        .map(|c| if c.is_ascii_digit() { '#' } else { c })
+                        .take(240)
+                        .collect();
+                    let entry = stops
+                        .entry(format!("{:?} | {kind}", d.decision_kind))
+                        .or_insert((0u64, Vec::new()));
                     entry.0 += 1;
-                    let decks = format!("{} vs {}", episode.registered[0].label, episode.registered[1].label);
+                    let decks = format!(
+                        "{} vs {}",
+                        episode.registered[0].label, episode.registered[1].label
+                    );
                     if !entry.1.contains(&decks) {
                         entry.1.push(decks);
                     }
@@ -252,17 +270,35 @@ fn digest_only_actions_probe_v1() {
             // Explicit signature per action: its features without the digest
             // tail, then each reference's features, card and object.
             let mut signatures: Vec<Vec<u32>> = (0..d.legal_action_count as usize)
-                .map(|a| t.action_features[a * width..(a + 1) * width - HASH].iter().map(|v| v.to_bits()).collect())
+                .map(|a| {
+                    t.action_features[a * width..(a + 1) * width - HASH]
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect()
+                })
                 .collect();
             for (r, &action) in t.action_ref_action_indices.iter().enumerate() {
                 let sig = &mut signatures[action as usize];
-                sig.extend(t.action_ref_features[r * ref_width..(r + 1) * ref_width].iter().map(|v| v.to_bits()));
+                sig.extend(
+                    t.action_ref_features[r * ref_width..(r + 1) * ref_width]
+                        .iter()
+                        .map(|v| v.to_bits()),
+                );
                 sig.push(t.action_ref_card_ids[r] as u32);
                 let node = t.action_ref_node_indices[r] as usize;
-                sig.extend(t.object_features[node * object_width..(node + 1) * object_width].iter().map(|v| v.to_bits()));
+                sig.extend(
+                    t.object_features[node * object_width..(node + 1) * object_width]
+                        .iter()
+                        .map(|v| v.to_bits()),
+                );
                 sig.push(t.object_card_ids[node] as u32);
             }
-            let digest = |a: usize| t.action_features[(a + 1) * width - HASH..(a + 1) * width].iter().map(|v| v.to_bits()).collect::<Vec<u32>>();
+            let digest = |a: usize| {
+                t.action_features[(a + 1) * width - HASH..(a + 1) * width]
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<u32>>()
+            };
             let (actions, refs) = policy.last_scored_actions_for_test_v1();
             let mut any = false;
             for a in 0..signatures.len() {
@@ -276,7 +312,9 @@ fn digest_only_actions_probe_v1() {
                             record_differences(actions, refs, a, b).join(",")
                         );
                         *tally.entry(key.clone()).or_default() += 1;
-                        examples.entry(key).or_insert_with(|| format!("{:?} vs {:?}", actions[a], actions[b]));
+                        examples
+                            .entry(key)
+                            .or_insert_with(|| format!("{:?} vs {:?}", actions[a], actions[b]));
                     }
                 }
             }
@@ -299,7 +337,10 @@ fn digest_only_actions_probe_v1() {
         );
     }
     for (key, (count, decks)) in &stops {
-        println!("{}", serde_json::json!({"probe": "encode_stop", "key": key, "games": count, "decks": decks}));
+        println!(
+            "{}",
+            serde_json::json!({"probe": "encode_stop", "key": key, "games": count, "decks": decks})
+        );
     }
     #[cfg(feature = "s4a-profile-v1")]
     println!(
@@ -331,11 +372,21 @@ fn probe_episodes_v1() -> Vec<ExpandedEpisodeV1> {
     let mut refused = 0usize;
     for deck in &decks {
         let label = deck["label"].as_str().unwrap().to_owned();
-        let built = ids(&deck["mainboard"]).zip(ids(&deck["sideboard"])).and_then(|(mainboard, sideboard)| {
-            crate::sideboard::RegisteredDeckV1::new_executable_v1(&label, mainboard.clone(), sideboard.clone())
+        let built = ids(&deck["mainboard"])
+            .zip(ids(&deck["sideboard"]))
+            .and_then(|(mainboard, sideboard)| {
+                crate::sideboard::RegisteredDeckV1::new_executable_v1(
+                    &label,
+                    mainboard.clone(),
+                    sideboard.clone(),
+                )
                 .ok()
-                .map(|_| ExpandedDeckListV1 { label: label.clone(), mainboard, sideboard })
-        });
+                .map(|_| ExpandedDeckListV1 {
+                    label: label.clone(),
+                    mainboard,
+                    sideboard,
+                })
+            });
         match built {
             Some(list) => lists.push(list),
             None => refused += 1,

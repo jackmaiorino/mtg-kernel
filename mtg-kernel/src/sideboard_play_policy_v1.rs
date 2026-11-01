@@ -1853,7 +1853,10 @@ impl FrozenPlayPolicyV1 {
     #[cfg(test)]
     pub(crate) fn last_scored_actions_for_test_v1(
         &self,
-    ) -> (&[crate::flat_policy_v2::FlatScorerActionCoreV2], &[FlatScorerActionRefV2]) {
+    ) -> (
+        &[crate::flat_policy_v2::FlatScorerActionCoreV2],
+        &[FlatScorerActionRefV2],
+    ) {
         (&self.owned.actions, &self.owned.action_refs)
     }
 
