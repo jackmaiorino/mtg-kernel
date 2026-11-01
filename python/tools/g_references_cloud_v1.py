@@ -315,6 +315,7 @@ DISPATCHER_GRACE_SECONDS = 180
 # interruption.json at its next checkpoint, ends its native child and writes execution.json (mtg-kernel #464).
 POD_STOP_DISPATCHERS = '''#pod:stop-dispatchers
 import os, pathlib, signal, time
+signal.signal(signal.SIGHUP, signal.SIG_IGN)  # a dropped SSH session must not end the stop step half done
 request = pathlib.Path(ARGS["guard"], "stop-request.json")
 written = not request.exists()
 if written:
@@ -389,7 +390,7 @@ for pid, ticks, request in dispatchers():
 deadline = time.monotonic() + ARGS["seconds"]
 while time.monotonic() < deadline and any(running(item["pid"], item["start_ticks"]) for item in signalled):
     time.sleep(0.5)
-result = {"signalled": signalled,
+result = {"lease": ARGS["lease"], "pod_id": ARGS["pod_id"], "signalled": signalled,
           "still_running": [item["pid"] for item in signalled if running(item["pid"], item["start_ticks"])],
           "epoch": time.time(), "stop_request_written": written, "stop_request_epoch": stop_epoch}
 try:  # also in the Pod control folder, which recovery packs: the evidence survives a lost controller copy
@@ -539,7 +540,8 @@ class Cycle(cloud.Cycle):
                        "error_type": self.result.get("error_type")}, replace=True)
                 stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS,
                                                               "marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR,
-                                                              "control": self.remote_control},
+                                                              "control": self.remote_control,
+                                                              "lease": self.lease["name"], "pod_id": self.created["id"]},
                                        timeout=DISPATCHER_GRACE_SECONDS + 30)
                 write(self.control / "dispatchers-stopped.json", stopped, replace=True)
                 self.result["dispatchers_signalled"] = len(stopped["signalled"])

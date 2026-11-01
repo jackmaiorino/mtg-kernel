@@ -400,6 +400,7 @@ class LeaseTests(unittest.TestCase):
         cycle.control, cycle.result, cycle.guard, cycle.ended = Path(tempfile.mkdtemp()), {}, "/run/phase1/g", False
         self.addCleanup(shutil.rmtree, cycle.control, True)
         cycle.worker, order = {"pid": 7, "start_ticks": 9}, []
+        cycle.lease, cycle.created, cycle.remote_control = {"name": "g-test"}, {"id": "pod1"}, "/w/control/g-test"
 
         class Pod:
             def run(self, program, args, timeout=30, read_only=False):
@@ -460,7 +461,8 @@ class LeaseTests(unittest.TestCase):
                 self.assertEqual(fake.stdout.readline().strip(), b"ready")
                 markers = Path(temp) / "markers"
                 code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10, "marker_dir": str(markers),
-                                                   "control": str(Path(temp) / "pod-control")}) + \
+                                                   "control": str(Path(temp) / "pod-control"),
+                                                   "lease": "g-test", "pod_id": "pod1"}) + \
                     gcloud.POD_STOP_DISPATCHERS
                 done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
                 result = json.loads(done.stdout.decode().splitlines()[-1])
@@ -469,6 +471,7 @@ class LeaseTests(unittest.TestCase):
                 self.assertEqual(result["signalled"][0]["request"], str(request))  # the argument after the action
                 self.assertEqual(json.loads((Path(temp) / "pod-control" / "dispatchers-stopped.json").read_text()),
                                  result)  # the copy recovery packs
+                self.assertEqual((result["lease"], result["pod_id"]), ("g-test", "pod1"))  # each copy names itself
                 entry = result["signalled"][0]
                 written = markers / f"{entry['pid']}-{entry['start_ticks']}"  # its own marker, before the signal
                 self.assertEqual(entry["marker"], str(written))
