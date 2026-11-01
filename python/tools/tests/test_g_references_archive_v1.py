@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 import g_references_archive_v1 as archive
 import g_references_qualify_v1 as qualify
@@ -190,6 +191,8 @@ class ArchiveTests(unittest.TestCase):
                     return baselines
                 if program is archive.POD_PACK:
                     return packed
+                if program is archive.POD_REMAINING:
+                    return pod(archive.POD_REMAINING, {**args, "root": str(test.root)})
                 if self.prune_for_real:
                     return pod(archive.POD_PRUNE, test.prune_args(verified=args["verified"]))
                 return {"pruned": True, "was_present": True}
@@ -240,7 +243,7 @@ class ArchiveTests(unittest.TestCase):
         resumed.old = type(cloud.WORKSPACE)(str(self.root))  # the root this archive records
         resumed.pod.prune_for_real = True
         resumed.watch()
-        self.assertEqual(calls, ["#pod:archive-prune"])  # no baselines, pack or copy: the E: copy re-verified
+        self.assertEqual(calls, ["#pod:archive-remaining", "#pod:archive-prune"])  # no baselines, pack or copy
         self.assertFalse(self.root.exists())
         prune = read(resumed.dest / "PRUNE.json")
         self.assertEqual(prune["pod"], {"pruned": True, "was_present": True})
@@ -255,6 +258,39 @@ class ArchiveTests(unittest.TestCase):
         with self.assertRaises(ValueError):  # the E: copy no longer matches VERIFIED.json: no prune
             again.watch()
         self.assertEqual(calls, [])
+
+
+    def test_a_resumed_prune_refuses_files_the_archive_does_not_account_for(self):
+        cycle, _ = self.cycle(failure=None)
+        cycle.watch()
+        (cycle.dest / "PRUNE.json").unlink()
+        save(self.root / "campaign" / "state" / "new-run.json", b"{}")  # written after the archive
+        resumed, calls = self.cycle(failure=None, dest=cycle.dest, resume=True)
+        resumed.old = type(cloud.WORKSPACE)(str(self.root))
+        resumed.pod.prune_for_real = True
+        with self.assertRaisesRegex(ValueError, "neither the archive nor the listing"):
+            resumed.watch()
+        self.assertEqual(calls, ["#pod:archive-remaining"])  # nothing pruned
+        self.assertTrue(self.root.exists())
+        record = read(cycle.dest / "VERIFIED.json")
+        record["files"].pop("baselines.json")
+        (cycle.dest / "VERIFIED.json").write_text(json.dumps(record))
+        again, calls = self.cycle(failure=None, dest=cycle.dest, resume=True)
+        with self.assertRaisesRegex(ValueError, "verification record"):
+            again.watch()
+
+    def test_a_realistic_pack_end_leaves_the_copy_and_the_prune_in_bounds(self):
+        """Fable #472 round 2: with the launcher's bounds, a pack ending 45 min after the Pod's creation still leaves
+        the copy and then the prune inside the deadline and the startup-idle bound."""
+        cycle, _ = self.cycle(failure=None)
+        now = time.time()
+        created = now - 2700
+        cycle.lease = {"created_epoch": created, "deadline_epoch": created + archive.LEASE_HOURS * 3600,
+                       "recovery_seconds": archive.LEASE_RECOVERY_SECONDS,
+                       "startup_idle_seconds": archive.LEASE_STARTUP_IDLE_SECONDS}
+        cycle.in_bounds("copy")
+        with unittest.mock.patch.object(archive.time, "time", return_value=now + archive.STEP_SECONDS["copy"]):
+            cycle.in_bounds("prune")  # after the longest copy
 
 
 if __name__ == "__main__":

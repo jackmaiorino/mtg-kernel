@@ -54,8 +54,14 @@ PACK_RULES = {"payload_folders": list(PAYLOAD_FOLDERS), "payload_shard": PAYLOAD
 POD_OUT = "/root/superseded-archive"  # the container disk: the archive never adds to the volume
 FILES = ("records.tar.gz", "manifest.json", "prune-listing.json", "baselines.json")
 # Per-step bounds (a walk of the old root took 11 min alone on 11-01).
-STEP_SECONDS = {"baselines": 600, "pack": 3000, "copy": 3000, "prune": 900}
+STEP_SECONDS = {"baselines": 600, "pack": 3000, "copy": 3000, "prune": 900, "check": 900}
 STARTUP_MARGIN_SECONDS = 120  # each step ends this far inside the resident guard's startup-idle bound
+# The archive lease's bounds, which the launcher uses (lease_launch.py archive): the hard stop, and the resident
+# guard's startup-idle bound (no progress.json on this lease) at the deadline less the recovery window. A Pod ready
+# and staged, then a walk and a pack, end 30 to 46 min after creation; the copy and the prune must still fit.
+LEASE_HOURS = 2.5
+LEASE_RECOVERY_SECONDS = 600
+LEASE_STARTUP_IDLE_SECONDS = int(LEASE_HOURS * 3600) - LEASE_RECOVERY_SECONDS
 RESERVE_BYTES = 60 * 1024**3  # ARTIFACT-LAW: the destination volume keeps 60 GiB free
 RULING = ("lead ruling 2026-11-01 (collab LANES/g-references-20261028/RUN-MANIFEST.json lead_rulings; "
           "QUALIFICATION-RESTART.md): the superseded root is archived and pruned on its own lease; its trajectory "
@@ -165,6 +171,26 @@ print(json.dumps({"files": {name: timed_digest(out / name) for name in ("records
                   "included": len(included), "included_bytes": sum(item["bytes"] for item in included),
                   "listed": len(listed), "listed_bytes": sum(item["bytes"] for item in listed),
                   "seconds": round(time.monotonic() - started, 1)}))
+'''
+
+POD_REMAINING = '''#pod:archive-remaining
+import os, pathlib
+# A resumed prune removes only what the verified archive accounts for: every file still present is either archived
+# (the manifest) or listed for the prune.
+root = pathlib.Path(ARGS["root"])
+known, unknown = set(ARGS["known"]), []
+if root.exists():
+    need(not root.is_symlink() and str(root.resolve()) == str(root), "the superseded root is not canonical")
+    def fail(error):
+        raise error
+    for folder, dirs, files in os.walk(root, onerror=fail):
+        for name in dirs:
+            need(not pathlib.Path(folder, name).is_symlink(), "a linked folder in the superseded root")
+        for name in files:
+            relative = pathlib.Path(folder, name).relative_to(root).as_posix()
+            if relative not in known:
+                unknown.append(relative)
+print(json.dumps({"present": root.exists(), "unknown": sorted(unknown)[:50], "unknown_count": len(unknown)}))
 '''
 
 POD_PRUNE = '''#pod:archive-prune
@@ -310,6 +336,7 @@ class ArchiveCycle(gcloud.Cycle):
                 f"the archive ({packed['archive_bytes']} B) exceeds its byte budget ({self.budget} B)")
         anchor = self.dest.parent
         while not anchor.exists():
+            require(anchor != anchor.parent, f"the destination's drive is missing: {self.dest}")
             anchor = anchor.parent
         free = shutil.disk_usage(anchor).free
         require(free - packed["archive_bytes"] - packed["included_bytes"] >= RESERVE_BYTES,
@@ -339,9 +366,17 @@ class ArchiveCycle(gcloud.Cycle):
         require((self.dest / "VERIFIED.json").exists() and not (self.dest / "PRUNE.json").exists(),
                 "a resumed prune needs a verified, unpruned archive destination")
         record = read(self.dest / "VERIFIED.json")
+        require(record.get("schema") == SCHEMA + "/verified" and set(record.get("files", {})) == set(FILES),
+                "VERIFIED.json is not this archive's verification record")
         verified = verify_copy(self.dest, {name: item["sha256"] for name, item in record["files"].items()})
         roots = {read(self.dest / name)["root"] for name in ("manifest.json", "prune-listing.json")}
         require(roots == {str(self.old)}, f"the verified archive is of {sorted(roots)}, not of {self.old}")
+        known = [item["path"] for name in ("manifest.json", "prune-listing.json")
+                 for item in read(self.dest / name)["files"]]
+        remaining = self.step("check", POD_REMAINING, {"root": str(self.old), "known": known})
+        require(remaining["unknown_count"] == 0,
+                f"{remaining['unknown_count']} files under the root are in neither the archive nor the listing, "
+                f"for example {remaining['unknown'][:3]}")
         pruned = self.prune({})
         require(pruned["pruned"] is True, "the superseded root is still present")
         self.finish(verified, pruned)
