@@ -1063,6 +1063,12 @@ fn opalescence_animates_the_other_non_aura_enchantments() {
     pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);
     cast(&mut state, opalescence, &[]);
     settled(&mut state);
+    assert_eq!(zone(&state, opalescence), Zone::Battlefield);
+    assert_eq!(
+        mtg_kernel::eternal_premodern_p1b_v1::read_state(&state).map(|p1b| p1b.opalescences.len()),
+        Some(1),
+        "Opalescence's timestamp is recorded"
+    );
     assert!(is_creature(&state, seal));
     assert_eq!(power_toughness(&state, seal), (2, 2));
     assert!(is_creature(&state, decree));

@@ -101,7 +101,7 @@ pub(crate) fn p1b_state(state: &mut GameState) -> &mut P1bStateV1 {
     &mut state.eternal_v1.get_or_insert_with(Default::default).p1b
 }
 
-pub(crate) fn read_state(state: &GameState) -> Option<&P1bStateV1> {
+pub fn read_state(state: &GameState) -> Option<&P1bStateV1> {
     state.eternal_v1.as_ref().map(|eternal| &eternal.p1b)
 }
 

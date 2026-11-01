@@ -272,10 +272,12 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 
 /// Sickening Dreams: "As an additional cost to cast this spell, discard X
 /// cards." The count is the announced X
-/// (`eternal_premodern_p1b_v1::statics::additional_discard_count`).
+/// (`eternal_premodern_p1b_v1::statics::additional_discard_count`); the
+/// recipe's one card is the shape the cast checks accept, so casting it needs
+/// another card in hand even for X = 0.
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
-        "Sickening Dreams" => "Some(&[CostComponent::DiscardCards(0)])",
+        "Sickening Dreams" => "Some(&[CostComponent::DiscardCards(1)])",
         _ => "None",
     }
 }
