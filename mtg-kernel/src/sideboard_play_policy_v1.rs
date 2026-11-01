@@ -1848,6 +1848,15 @@ impl FrozenPlayPolicyV1 {
             .ok_or_else(|| "native capture requires the V3 scorer".into())
     }
 
+    /// The last scored decision's action records, in tensor row order: what
+    /// the canonical action JSON (the action digest's message) is built from.
+    #[cfg(test)]
+    pub(crate) fn last_scored_actions_for_test_v1(
+        &self,
+    ) -> (&[crate::flat_policy_v2::FlatScorerActionCoreV2], &[FlatScorerActionRefV2]) {
+        (&self.owned.actions, &self.owned.action_refs)
+    }
+
     /// V4 sibling of `last_scored_training_tensor_v3`.
     pub(crate) fn last_scored_training_tensor_v4(
         &self,
