@@ -906,6 +906,30 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
                     dispatch.check_stop(root, None)
                 self.assertEqual(dispatch.read(root / "interruption.json")["release_marker_seen"], present)
         dispatch.STOP.update(signal=None, at=None, child=None, release_marker=None)
+        dispatch.STOP.pop("first", None)
+
+    def test_a_nested_stop_during_the_first_ones_stat_keeps_the_first_completed_latch(self):
+        """Astra #471 round 8: a second signal handled inside the first handler (during its stat) latches first;
+        the outer handler must not overwrite it."""
+        import signal as signals
+        nested = []
+
+        def stat_with_a_nested_signal(path):
+            if not nested:  # the outer handler's stat: a second signal arrives and its handler completes first
+                nested.append(1)
+                signals.getsignal(signals.SIGTERM)(signals.SIGINT, None)
+                return False  # the outer handler's own observation, which must not win
+            return True  # the nested handler's observation, latched first
+        with patch.object(dispatch, "own_marker", return_value="/marker"):
+            handlers = dispatch.install_stop_record()
+        try:
+            with patch.object(dispatch.os.path, "exists", side_effect=stat_with_a_nested_signal):
+                signals.getsignal(signals.SIGTERM)(signals.SIGTERM, None)
+        finally:
+            dispatch.restore_handlers(handlers)
+        self.assertEqual((dispatch.STOP["signal"], dispatch.STOP["release_marker"]), (signals.SIGINT, True))
+        dispatch.STOP.update(signal=None, at=None, child=None, release_marker=None)
+        dispatch.STOP.pop("first", None)
 
     @unittest.skipUnless(LINUX, "delivers a POSIX signal to this process")
     def test_a_stop_from_outside_is_recorded_while_the_child_runs(self):

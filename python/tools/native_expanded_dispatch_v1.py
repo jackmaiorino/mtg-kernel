@@ -1404,15 +1404,19 @@ def install_stop_record():
     """Latch the first of INTERRUPTION_SIGNALS (STOP), noting whether the release path's marker for this process
     (own_marker) existed at that moment; returns the previous handlers for restore_handlers."""
     STOP.update(signal=None, at=None, child=None, release_marker=None)
+    STOP.pop("first", None)
     marker = own_marker()
     previous = {}
 
     def stopped(signum, frame):
-        if STOP["signal"] is not None:
+        if "first" in STOP:
             return
         seen = None if marker is None else os.path.exists(marker)  # a local stat, before the latch
-        if STOP["signal"] is None:  # a nested handler that latched meanwhile keeps its own, earlier observation
-            STOP.update(signal=signum, at=time.time(), release_marker=seen)
+        at = time.time()
+        # One C-level call, which no handler can interrupt: the first latch to complete wins, and a nested handler
+        # that latched meanwhile keeps its own, earlier observation.
+        first = STOP.setdefault("first", (signum, at, seen))
+        STOP.update(signal=first[0], at=first[1], release_marker=first[2])
     for name in INTERRUPTION_SIGNALS:
         number = getattr(signal, name, None)
         if number is not None:
