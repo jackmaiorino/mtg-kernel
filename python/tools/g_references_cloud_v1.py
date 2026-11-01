@@ -304,7 +304,11 @@ print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 
 
 RELEASE_RESERVE_SECONDS = 120  # before the release boundary, kept for the release after recovery
-DISPATCHER_GRACE_SECONDS = 30  # the release path's wait for signalled dispatchers to record and exit
+# The release path's wait for signalled dispatchers to record and exit. A dispatcher acts on the signal at its
+# next checkpoint: within about 1 s in the native part, but after its native part the next checkpoint follows the
+# whole fingerprint or archive step. Measured on lease 1604 (G1 block 1, one lineage alone): fingerprints 64.0 s,
+# archive 81.2 s. With eight lineages sharing the volume, twice the longer step, rounded up.
+DISPATCHER_GRACE_SECONDS = 180
 # AMENDMENT-3 (release path): before the worker's supervisor is stopped (it SIGKILLs its whole job, so no
 # dispatcher could record anything), new work is refused (the guard's stop-request.json, which every dispatch and
 # admission reads) and each attempt's dispatcher gets SIGTERM directly. A dispatcher latches it, records
@@ -312,10 +316,15 @@ DISPATCHER_GRACE_SECONDS = 30  # the release path's wait for signalled dispatche
 POD_STOP_DISPATCHERS = '''#pod:stop-dispatchers
 import os, pathlib, signal, time
 request = pathlib.Path(ARGS["guard"], "stop-request.json")
-if not request.exists():
+written = not request.exists()
+if written:
     partial = request.with_name("stop-request.controller.partial")
     partial.write_text(json.dumps({"epoch": time.time(), "reason": "controller release path"}))
     os.replace(partial, request)
+try:
+    stop_epoch = json.loads(request.read_text()).get("epoch")
+except (OSError, ValueError, AttributeError):
+    stop_epoch = None
 def identity(pid):
     # (state, start ticks) from /proc/<pid>/stat, or None once it is gone
     try:
@@ -360,7 +369,8 @@ deadline = time.monotonic() + ARGS["seconds"]
 while time.monotonic() < deadline and any(running(pid, ticks) for pid, ticks in signalled):
     time.sleep(0.5)
 print(json.dumps({"signalled": [pid for pid, _ in signalled],
-                  "still_running": [pid for pid, ticks in signalled if running(pid, ticks)], "epoch": time.time()}))
+                  "still_running": [pid for pid, ticks in signalled if running(pid, ticks)], "epoch": time.time(),
+                  "stop_request_written": written, "stop_request_epoch": stop_epoch}))
 '''
 POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
 try:
@@ -473,15 +483,20 @@ class Cycle(cloud.Cycle):
         """AMENDMENT-3's release path: refuse new work and SIGTERM every attempt's dispatcher, wait up to
         DISPATCHER_GRACE_SECONDS for them to record the stop and exit, then stop the worker as before. A Pod
         that cannot be reached skips the signal (its attempts get no record and count)."""
-        if self.worker is not None and not self.ended:
-            try:
+        try:
+            if self.worker is not None and not self.ended:
+                # AMENDMENT-3 3(b): the release window starts no later than this record, written before any signal.
+                write(self.control / "release-path-started.json",
+                      {"epoch": time.time(), "cause": self.result.get("error") or "controller release",
+                       "error_type": self.result.get("error_type")}, replace=True)
                 stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS},
                                        timeout=DISPATCHER_GRACE_SECONDS + 30)
-                write(self.control / "dispatchers-stopped.json", stopped)
+                write(self.control / "dispatchers-stopped.json", stopped, replace=True)
                 self.result["dispatchers_signalled"] = len(stopped["signalled"])
-            except cloud.PodUnavailable as error:
-                self.result["dispatchers_stop"] = f"unavailable: {error}"[-400:]
-        super().stop_worker()
+        except Exception as error:  # noqa: BLE001 - the worker stop below always runs
+            self.result["dispatchers_stop_error"] = f"{type(error).__name__}: {error}"[-400:]
+        finally:
+            super().stop_worker()
 
     def quiesce_records(self, timeout: float = 150.0):
         """Stop the record copy-back before recovery reads the volume, so nothing it lists is deleted under it.

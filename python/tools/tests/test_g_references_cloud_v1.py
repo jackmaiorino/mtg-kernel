@@ -412,6 +412,12 @@ class LeaseTests(unittest.TestCase):
         self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])  # signal, then the supervisor
         self.assertEqual(cycle.result["dispatchers_signalled"], 2)
         self.assertTrue(cycle.ended)
+        self.assertEqual(read(cycle.control / "dispatchers-stopped.json")["signalled"], [11, 12])
+        started = read(cycle.control / "release-path-started.json")  # the window's start, before any signal
+        self.assertEqual(started["cause"], "controller release")
+        cycle.ended, order[:] = False, []
+        cycle.stop_worker()  # a second release path: the records are replaced, the worker still stopped
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])
 
         class Unreachable:
             def run(self, program, args, timeout=30, read_only=False):
@@ -422,10 +428,11 @@ class LeaseTests(unittest.TestCase):
         cycle.pod, cycle.ended, order[:] = Unreachable(), False, []
         cycle.stop_worker()  # an unreachable Pod still gets the worker stop
         self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])
-        self.assertTrue(cycle.result["dispatchers_stop"].startswith("unavailable"))
+        self.assertIn("PodUnavailable", cycle.result["dispatchers_stop_error"])
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc: the Pod is Linux")
     def test_the_pod_program_refuses_new_work_and_signals_each_dispatcher(self):
+        """Note: the program signals every real dispatcher on this host too; run it where none runs."""
         with tempfile.TemporaryDirectory() as temp:
             marker = Path(temp) / "recorded"
             body = ("import pathlib, signal, sys, time\n"
@@ -453,6 +460,9 @@ class LeaseTests(unittest.TestCase):
                 self.assertIsNone(other.poll())  # nothing else signalled
                 self.assertIsNone(wrapper.poll())  # nor the supervisor that would SIGKILL its job
                 self.assertTrue((Path(temp) / "stop-request.json").exists())  # new work refused first
+                self.assertTrue(result["stop_request_written"])
+                self.assertEqual(result["stop_request_epoch"],
+                                 json.loads((Path(temp) / "stop-request.json").read_text())["epoch"])
             finally:
                 for process in (fake, other, wrapper):
                     if process.poll() is None:
