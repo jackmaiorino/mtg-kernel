@@ -42,7 +42,8 @@ class ArchiveTests(unittest.TestCase):
         self.finals = {}
         for run, block in archive.BASELINES:
             checkpoint = {"state_sha256": f"{run}{block}" * 8, "adam_step": 162 * block, "parameters": [block],
-                          "trajectories": [save(campaign / "cold" / run / f"b{block}" / "t.json", b"traj")]}
+                          "trajectories": [save(campaign / "cold" / run / f"b{block}" / "native-0.zip", b"traj")]}
+            save(campaign / "cold" / run / f"b{block}" / "archive.json", b"{}")  # shard hashes and timings: kept
             item = save(campaign / "checkpoints" / run / f"b{block:03d}.json", json.dumps(checkpoint).encode())
             self.finals[(run, block)] = item
         for run in {run for run, _ in archive.BASELINES}:
@@ -53,7 +54,7 @@ class ArchiveTests(unittest.TestCase):
         save(campaign / "hot" / "G2" / "b001-a1" / "dispatch" / "report.json", b"{}")
         save(campaign / "hot" / "G2" / "b001-a1" / "native" / "big.bin", b"n" * 1000)  # a native tree: pruned
         save(campaign / "retained" / "G2" / "b01" / "episode.json", b"e" * 50)
-        save(campaign / "qualification" / "empty-pool" / "trials-cold" / "w1" / "a.bin", b"c" * 10)
+        save(campaign / "qualification" / "empty-pool" / "trials-cold" / "w1" / "native-1.zip", b"c" * 10)
         save(self.root / "tooling" / "abc" / "tool.py", b"print()")  # staged tooling: regenerable
         save(self.root / "control" / "lease-a" / "execute.log", b"log")
         save(self.root / "control" / "lease-a" / "results.tar.gz", b"packed")
@@ -65,8 +66,7 @@ class ArchiveTests(unittest.TestCase):
     def pack(self, baselines):
         checkpoints = [row["final_checkpoint"]["path"] for row in baselines["baselines"]]
         return pod(archive.POD_PACK, {"root": str(self.root), "campaign": str(self.root / "campaign"),
-                                      "checkpoints": checkpoints, "excluded": list(archive.EXCLUDED_PARTS),
-                                      "out": str(self.out)})
+                                      "checkpoints": checkpoints, **archive.PACK_RULES, "out": str(self.out)})
 
     def test_baselines_use_the_qualification_identity(self):
         result = self.baselines()
@@ -82,21 +82,34 @@ class ArchiveTests(unittest.TestCase):
         packed = self.pack(self.baselines())
         manifest = json.loads((self.out / "manifest.json").read_text())
         listing = json.loads((self.out / "prune-listing.json").read_text())
-        kept = {str(Path(item["path"]).relative_to(self.root).as_posix()) for item in manifest["files"]}
-        pruned = {str(Path(item["path"]).relative_to(self.root).as_posix()) for item in listing["files"]}
-        self.assertIn("campaign/state/G1.json", kept)
-        self.assertIn("campaign/hot/G2/b001-a1/dispatch/report.json", kept)
-        self.assertIn("campaign/retained/G2/b01/episode.json", kept)
-        self.assertIn("campaign/checkpoints/G1/b002.json", kept)
-        self.assertIn("control/lease-a/execute.log", kept)
+        kept = {item["path"] for item in manifest["files"]}  # relative to the root, POSIX on every host
+        pruned = {item["path"] for item in listing["files"]}
+        for name in ("campaign/state/G1.json", "campaign/hot/G2/b001-a1/dispatch/report.json",
+                     "campaign/retained/G2/b01/episode.json", "campaign/checkpoints/G1/b002.json",
+                     "campaign/cold/G1/b1/archive.json", "control/lease-a/execute.log",
+                     "control/lease-a/results.tar.gz"):
+            self.assertIn(name, kept)
         for name in ("campaign/checkpoints/G1/ancestry.json", "campaign/hot/G2/b001-a1/native/big.bin",
-                     "campaign/cold/G1/b1/t.json", "campaign/qualification/empty-pool/trials-cold/w1/a.bin",
-                     "tooling/abc/tool.py", "control/lease-a/results.tar.gz"):
+                     "campaign/cold/G1/b1/native-0.zip", "campaign/qualification/empty-pool/trials-cold/w1/native-1.zip",
+                     "tooling/abc/tool.py"):
             self.assertIn(name, pruned)
         self.assertEqual(len(kept & pruned), 0)
         every = {path.relative_to(self.root).as_posix() for path in self.root.rglob("*") if path.is_file()}
         self.assertEqual(kept | pruned, every)  # every file is archived or listed
         self.assertEqual((packed["included"], packed["listed"]), (len(kept), len(pruned)))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "a folder that cannot be listed: POSIX permissions")
+    def test_a_folder_that_cannot_be_listed_stops_the_archive(self):
+        import os
+        locked = self.root / "campaign" / "exposure"
+        save(locked / "rows.jsonl", b"{}")
+        os.chmod(locked, 0)
+        self.addCleanup(os.chmod, locked, 0o755)
+        if os.access(locked, os.R_OK):
+            self.skipTest("running as root: permissions do not lock the folder")
+        with self.assertRaises(RuntimeError):
+            self.pack(self.baselines())
+        self.assertFalse((self.out / "manifest.json").exists())  # no manifest, so nothing can be verified or pruned
 
     def test_verify_then_prune_and_any_difference_stops_the_prune(self):
         baselines = self.baselines()

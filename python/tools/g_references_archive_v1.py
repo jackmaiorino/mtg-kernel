@@ -6,10 +6,12 @@ failed check stops before the prune:
 
 1. **Baselines.** The nine determinism baselines (``BASELINES``: G1 blocks 1 and 2, G2 to G8 block 1) are computed on
    ``IDENTITY_KEYS`` with the qualification tool's own ``checkpoint_identity``, and recorded.
-2. **Copy.** The old campaign's records and its nine final checkpoints are packed (gzip) on the container disk with
-   a manifest (path, bytes, SHA256 per file). A listing names every other file (path, bytes): the cold trajectory
-   archives, native trees, other checkpoints and the staged tooling, runtime and inputs. These are regenerable by
-   deterministic replay or from the packages, so they are pruned, not copied.
+2. **Copy.** Every file of the old root is packed (gzip) on the container disk with a manifest (path relative to
+   the root, bytes, SHA256), except regenerable bulk, which a listing names (path, bytes): native trees, cold
+   trajectory shards (``native-<k>.zip``; each cold folder's ``archive.json`` is kept), checkpoints other than the
+   nine final ones, and the staged tooling, runtime and inputs. Those are regenerable by deterministic replay or
+   from the packages, so they are pruned, not copied. The old leases' control files, packed recoveries included, are
+   kept. A folder that cannot be listed stops the archive.
 3. **Verify.** The controller copies the archive, manifest, listing and baselines to the destination on E: and
    verifies every file's SHA256 and every archive member against the manifest.
 4. **Prune.** Only then, and only if the Pod's copies still hash as verified, the old root is removed and its
@@ -34,7 +36,14 @@ from nine_deck_cloud_v1 import pin, read, require, write
 
 SCHEMA = "g-references-v1/superseded-archive"
 BASELINES = [("G1", 1), ("G1", 2)] + [(run, 1) for run in ("G2", "G3", "G4", "G5", "G6", "G7", "G8")]
-EXCLUDED_PARTS = ("cold", "trials-cold", "native")  # trajectory archives and native trees: regenerable
+# Regenerable bulk, pruned without a copy: native trees (a "native" folder anywhere), cold trajectory shards
+# (native-<k>.zip; each cold folder's archive.json, with the shard hashes and timings, is kept), checkpoints other
+# than the named final ones, and the old root's staged tooling, runtime and inputs (in the packages).
+PAYLOAD_FOLDERS = ("native",)
+PAYLOAD_SHARD = r"native-[0-9]+\.zip"
+STAGED_FOLDERS = ("tooling", "runtime", "inputs")
+PACK_RULES = {"payload_folders": list(PAYLOAD_FOLDERS), "payload_shard": PAYLOAD_SHARD,
+              "staged_folders": list(STAGED_FOLDERS)}
 POD_OUT = "/root/superseded-archive"  # the container disk: the archive never adds to the volume
 FILES = ("records.tar.gz", "manifest.json", "prune-listing.json", "baselines.json")
 STEP_SECONDS = 3000  # a Pod step's bound (a walk of the old root took 11 min alone)
@@ -65,36 +74,41 @@ print(json.dumps({"baselines": rows, "sha256": digest(out / "baselines.json")}))
 '''
 
 POD_PACK = '''#pod:archive-pack
-import hashlib, io, os, pathlib, tarfile
+import hashlib, io, os, pathlib, re, tarfile
 root, campaign, out = pathlib.Path(ARGS["root"]), pathlib.Path(ARGS["campaign"]), pathlib.Path(ARGS["out"])
 need(campaign.parent == root and campaign.is_dir(), "the campaign is not under the superseded root")
 keep = set(ARGS["checkpoints"])
 out.mkdir(parents=True, exist_ok=True)
 included, listed = [], []
+def fail(error):  # a folder that cannot be listed stops the archive (and so the prune)
+    raise error
 with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=6) as tar:
-    for folder, dirs, files in os.walk(root):
+    for folder, dirs, files in os.walk(root, onerror=fail):
         dirs.sort()
         for name in sorted(files):
             path = pathlib.Path(folder, name)
             need(not path.is_symlink(), "a link in the superseded root: " + str(path))
             size = path.stat().st_size
             relative = path.relative_to(root)
-            inside, parts = path.is_relative_to(campaign), relative.parts
-            # Records: the campaign tree without trajectory archives, native trees and checkpoints, plus the named
-            # final checkpoints, plus the old leases' Pod control files other than packed archives.
-            record = inside and not any(part in ARGS["excluded"] for part in parts) and parts[1:2] != ("checkpoints",)
-            record = record or inside and str(path) in keep
-            record = record or parts[0] == "control" and not name.endswith(".tar.gz")
-            if not record:
-                listed.append({"path": str(path), "bytes": size})
+            parts = relative.parts
+            payload = (any(part in ARGS["payload_folders"] for part in parts[:-1])
+                       or re.fullmatch(ARGS["payload_shard"], name) is not None
+                       or parts[:2] == ("campaign", "checkpoints") and str(path) not in keep
+                       or len(parts) > 1 and parts[0] in ARGS["staged_folders"])
+            entry = {"path": relative.as_posix(), "bytes": size}
+            if payload:
+                listed.append(entry)
                 continue
             value, data = hashlib.sha256(), path.read_bytes()
             value.update(data)
-            included.append({"path": str(path), "bytes": len(data), "sha256": value.hexdigest()})
+            need(len(data) == size, "a file changed while it was archived: " + str(path))
+            included.append({**entry, "sha256": value.hexdigest()})
             info = tarfile.TarInfo(relative.as_posix())
             info.size, info.mtime, info.mode = len(data), int(path.stat().st_mtime), 0o644
             tar.addfile(info, io.BytesIO(data))
-need(keep <= {item["path"] for item in included}, "a final checkpoint is missing from the archive")
+kept = {item["path"] for item in included}
+need(all(pathlib.Path(path).relative_to(root).as_posix() in kept for path in keep),
+     "a final checkpoint is missing from the archive")
 (out / "manifest.json").write_text(json.dumps({"schema": ARGS["schema"] + "/manifest", "root": str(root),
                                                "files": included}, indent=1), encoding="utf-8")
 (out / "prune-listing.json").write_text(json.dumps({"schema": ARGS["schema"] + "/prune-listing", "root": str(root),
@@ -130,8 +144,7 @@ def verify_copy(dest: Path, reported: dict) -> dict:
     for name, expected in reported.items():
         require(sha256_file(dest / name) == expected, f"{name} differs from the Pod's copy")
     manifest = read(dest / "manifest.json")
-    root = PurePosixPath(manifest["root"])
-    expected = {PurePosixPath(item["path"]).relative_to(root).as_posix(): item for item in manifest["files"]}
+    expected = {item["path"]: item for item in manifest["files"]}  # paths relative to the root, POSIX
     seen = set()
     with tarfile.open(dest / "records.tar.gz", "r:gz") as tar:
         for member in tar:
@@ -183,7 +196,7 @@ class ArchiveCycle(gcloud.Cycle):
         require(not missing, "determinism baselines missing: " + ", ".join(missing))
         checkpoints = [row["final_checkpoint"]["path"] for row in baselines["baselines"]]
         packed = self.step(POD_PACK, {"root": str(self.old), "campaign": str(campaign), "checkpoints": checkpoints,
-                                      "excluded": list(EXCLUDED_PARTS), "out": POD_OUT})
+                                      **PACK_RULES, "out": POD_OUT})
         write(self.control / "archive-packed.json", packed)
         reported = {**packed["files"], "baselines.json": baselines["sha256"]}
         self.dest.mkdir(parents=True)
