@@ -367,11 +367,6 @@ fn run_until(
     panic!("condition never held");
 }
 
-/// Plays on with first answers until `stop` holds.
-fn pass_until(state: &mut GameState, stop: impl Fn(&GameState) -> bool) {
-    run_until(state, stop, |_, _| None);
-}
-
 /// Plays to P0's next turn's first main phase, answering upkeep choices with
 /// `answer`.
 fn to_next_turn(
