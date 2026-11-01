@@ -327,3 +327,78 @@ fn wildfire_join_refuses_in_both_worlds_and_l13_differs() {
         "L13 differs in presence: {la:?} vs {lb:?}"
     );
 }
+
+/// The public outcome a continuation reaches: life, zone sizes and public
+/// zone contents by definition.
+fn public_summary(s: &FastActorSessionV1) -> serde_json::Value {
+    let st = s.game_state();
+    let defs = |ids: &[crate::ids::ObjectId]| {
+        let mut d: Vec<u16> = ids.iter().map(|id| st.objects.get(*id).card_def).collect();
+        d.sort_unstable();
+        d
+    };
+    serde_json::json!([0, 1].map(|p| {
+        let pl = &st.players[p];
+        serde_json::json!({"life": pl.life, "hand": pl.hand.len(), "library": pl.library.len(),
+            "battlefield": defs(&pl.battlefield), "graveyard": defs(&pl.graveyard)})
+    }))
+}
+
+/// Passes priority until the stack is shorter than `below` (the waiting
+/// item resolved) or `limit` decisions pass; other decisions take index 0.
+fn resolve_waiting(s: &mut FastActorSessionV1, below: usize, limit: usize) {
+    for _ in 0..limit {
+        if s.game_state().stack.len() < below {
+            return;
+        }
+        let FastActorResponseV1::Decision(d) = s.current_response() else {
+            return;
+        };
+        let menu = s.diagnostic_current_action_semantics().unwrap_or_default();
+        let pass = menu
+            .iter()
+            .position(|m| matches!(m, crate::rl::ActionSemanticV1::Pass { .. }))
+            .unwrap_or(0);
+        s.step(d.episode_id, d.step, pass as u32).expect("step");
+    }
+}
+
+/// AC3-L (design 6.5): from the recorded Lembas roots, the waiting Food
+/// ability resolves to the same public outcome in the export and in the
+/// true state.
+#[test]
+fn ac3_l_lembas_continuations_match_the_true_state() {
+    for fixture in [
+        include_str!("../regret_census_v1/stage4a/world/fixtures/lembas_root_o2_v0_f2_s0.json"),
+        include_str!("../regret_census_v1/stage4a/world/fixtures/lembas_root_o2_v0_f3_s0.json"),
+        include_str!("../regret_census_v1/stage4a/world/fixtures/lembas_root_o2_v0_f5_s1.json"),
+    ] {
+        let record: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        let state: crate::state::GameState =
+            serde_json::from_value(record["state"].clone()).unwrap();
+        let viewer = PlayerId(record["actor"].as_u64().unwrap() as u8);
+        let lists = fixture_lists(&state);
+        let x = export_v1(
+            &ExportInputV1 {
+                state: &state,
+                journal: &[],
+                viewer,
+                decklists: [&lists[0], &lists[1]],
+            },
+            ExportOptionsV1::default(),
+        )
+        .unwrap_or_else(|e| panic!("{}: {e:?}", record["case"]));
+        let live = FastActorSessionV1::from_v3_fixture_state(state.clone());
+        let below = state.stack.len();
+        let mut truth = live.clone();
+        let mut canon = FastActorSessionV1::import_infoset_v1(&live, x.state.clone(), 0);
+        resolve_waiting(&mut truth, below, 40);
+        resolve_waiting(&mut canon, below, 40);
+        assert_eq!(
+            public_summary(&truth),
+            public_summary(&canon),
+            "{}: continuations differ",
+            record["case"]
+        );
+    }
+}
