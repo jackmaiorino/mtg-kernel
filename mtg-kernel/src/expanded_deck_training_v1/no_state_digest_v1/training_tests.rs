@@ -1532,6 +1532,7 @@ fn run_config(
                 episodes: vec![scheduled(1, ExpandedOpponentAssignmentV1::Initial)],
             },
         ],
+        record_format: Default::default(),
         learning_rate: 0.0003,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -1599,6 +1600,7 @@ fn converted_run_end_to_end_v1() {
         loss_selection: gae(),
         line_b: None,
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: root.join("parent-update"),
     })
     .unwrap();
@@ -1799,6 +1801,7 @@ fn converted_run_end_to_end_v1() {
             teacher: None,
         }),
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: root.join("line-b"),
     })
     .unwrap_err();

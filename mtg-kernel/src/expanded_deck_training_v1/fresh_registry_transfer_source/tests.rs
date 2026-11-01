@@ -303,6 +303,7 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         loss_selection: ExpandedLossSelectionV1::default(),
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: f.root.join("update-0"),
     })
     .unwrap();
@@ -349,6 +350,7 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         loss_selection: ExpandedLossSelectionV1::default(),
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: f.root.join("update-1"),
     })
     .unwrap();
@@ -384,6 +386,7 @@ fn phase1_fresh_registry_trainer_rejects_wrong_scalars_before_publication() {
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         loss_selection: ExpandedLossSelectionV1::default(),
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: output.clone(),
     })
     .unwrap_err();

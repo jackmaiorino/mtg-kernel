@@ -475,6 +475,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         loss_selection: ExpandedLossSelectionV1::default(),
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: PathBuf::from("legacy-output"),
     };
     let value = serde_json::to_value(&command).unwrap();
@@ -501,6 +502,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         preparation_workers: 4,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: PathBuf::from("prepared-output"),
     };
     let value = serde_json::to_value(explicit).unwrap();
