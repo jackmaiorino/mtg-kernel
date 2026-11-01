@@ -162,6 +162,13 @@ compile_error!(
 pub mod eaten_observation_v46;
 pub mod eaten_public_v46;
 
+// Spellbench `spellbench/v1` environment-role bridge (spec authority:
+// SPELLBENCH_PROTOCOL_V1.md; adapter contract: docs/contracts/AGENT_BRIDGE_V1.md).
+// In-process server over RlEpisodeSessionV1 plus the strict NDJSON stdio
+// framing used by src/bin/agent_bridge_v1.rs. Purely additive surface; no
+// kernel_rl_jsonl v5/v6 behavior changes.
+pub(crate) mod agent_bridge_flat_v4;
+pub mod agent_bridge_v1;
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
@@ -342,6 +349,7 @@ pub mod viewer_capture_v1;
 pub mod wildwood_public_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
+pub(crate) mod agent_bridge_flat_v4_encode;
 pub mod fast_sampler;
 pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
@@ -774,6 +782,8 @@ pub mod sideboard;
 mod slumbering_cerberus_v1;
 pub mod snapshot;
 pub mod soul_shackled_zombie_public_v1;
+pub mod spellbench_qualify_v1;
+pub mod spellbench_scorer_v1;
 pub mod standard_legends_v1;
 pub mod state;
 #[cfg(test)]
