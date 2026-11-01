@@ -674,7 +674,8 @@ fn genuine_paid_hatcher_input_frame_keeps_full_rebuild_foreign_menu_and_restore_
                 custody::validate(borrowed).unwrap();
                 let warm = custody::replay_key_frame_stats_for_test();
                 let foreign_current = foreign.inner.current.as_ref().unwrap();
-                let other = normalized_origin_parts_in_frame(&foreign.inner, foreign_current).unwrap();
+                let other =
+                    normalized_origin_parts_in_frame(&foreign.inner, foreign_current).unwrap();
                 assert!(other == framed);
                 let after = custody::replay_key_frame_stats_for_test();
                 assert!(after.0 > warm.0);
