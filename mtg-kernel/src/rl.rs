@@ -13618,12 +13618,6 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
     frozen_stack_source_ref(state, item)
 }
 
-/// `stack_source_ref` without the completed stack-item validator, for an
-/// announcement whose own prefix validator already ran (Spellbench bridge).
-fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
-    frozen_stack_source_ref(state, item)
-}
-
 fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     let (card_def, owner, controller, zone, zone_change_count) = match item.kind {
         StackItemKind::Spell => return card_ref(state, item.source),
@@ -13695,12 +13689,6 @@ fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardSt
 fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
     crate::engine::validated_stack_item_target_spec(item, state)
         .map_err(|error| RlContractError(format!("invalid stack target metadata: {error}")))?;
-    frozen_stack_target_refs(state, item)
-}
-
-/// `stack_target_refs` without the completed stack-item validator; see
-/// `frozen_stack_source_ref`.
-fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
     frozen_stack_target_refs(state, item)
 }
 

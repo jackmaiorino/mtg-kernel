@@ -3540,4 +3540,92 @@ mod tests {
             "engine_contract_failure:flat_v4_lockstep:diverged:game_state"
         );
     }
+
+    /// V4 visibility audit (run explicitly with `--ignored`): plays neutral
+    /// private-support games on the eight board decks with seeded uniform
+    /// choices and, at every decision, redeterminizes the acting seat's
+    /// hidden information with the search sampler. The sampler refuses a
+    /// world whose acting-seat V4 boundary (observation, candidates and
+    /// tensors) changed; the audit also compares the bridge's own
+    /// `x_kernel_flat_v4` encoding of each sampled world with the live one.
+    /// A changed boundary or tensor is a hidden-information leak.
+    #[test]
+    #[ignore = "audit: run with --ignored on a release build"]
+    fn spellbench_v4_visibility_audit() {
+        use crate::rl_session::{V4SearchSampleMode, V4SearchStateErrorV1};
+        let games: u64 = std::env::var("SB_V4_AUDIT_GAMES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(2);
+        let mut sampled = 0_u64;
+        let mut refused: std::collections::BTreeMap<String, u64> = Default::default();
+        let mut leaks = Vec::new();
+        let mut decisions = 0_u64;
+        for deck in [
+            "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "CawGates", "Faeries",
+        ] {
+            for game in 0..games {
+                let mut server = SpellbenchBridgeServerV1::with_options(
+                    SpellbenchEngineIdentityV1::with_source_revision(None),
+                    SpellbenchBridgeOptionsV1 {
+                        x_kernel_flat_v4: true,
+                        private_v2_support: true,
+                    },
+                );
+                let game_id = format!("v4-audit-{deck}-{game}");
+                let mut rng = crate::state::SplitMix64::seed(0x5642_4155_4449_5400 ^ game);
+                let mut decision =
+                    parse_line(&server.handle_line(&flat_v4_reset(&game_id, deck, 1000 + game)));
+                while decision["response_type"] == "decision" {
+                    decisions += 1;
+                    let live_game = server.game.as_mut().unwrap();
+                    let fast = live_game.flat_v4.as_ref().unwrap().fast_session().clone();
+                    let mut scratch = FlatV4EncodeScratchV1::default();
+                    let live = encode_flat_v4_tensor_v1(&fast, &mut scratch).unwrap();
+                    for sample in 0..3_u64 {
+                        let seed = (decisions << 8) ^ sample ^ (game << 40);
+                        match fast.kernel_search_redeterminized_clone_mode_v4(
+                            seed,
+                            V4SearchSampleMode::FutureChanceV3,
+                        ) {
+                            Ok(world) => {
+                                sampled += 1;
+                                let other = encode_flat_v4_tensor_v1(&world, &mut scratch).unwrap();
+                                if other != live {
+                                    leaks.push(format!(
+                                        "{game_id} step {} sample {sample}: x_kernel_flat_v4 differs",
+                                        decision["step"]
+                                    ));
+                                }
+                            }
+                            Err(V4SearchStateErrorV1::SampleBoundaryChanged) => {
+                                leaks.push(format!(
+                                    "{game_id} step {} sample {sample}: V4 boundary changed",
+                                    decision["step"]
+                                ))
+                            }
+                            Err(error) => *refused.entry(format!("{error:?}")).or_default() += 1,
+                        }
+                    }
+                    let count = decision["candidates"].as_array().unwrap().len() as u64;
+                    let choice = rng.next_u64() % count;
+                    decision = parse_line(&server.handle_line(&flat_v4_step(&decision, choice)));
+                }
+                assert_eq!(
+                    decision["response_type"], "terminal",
+                    "{game_id}: {decision}"
+                );
+                eprintln!("v4 audit {game_id}: {}", decision["outcome"]);
+            }
+        }
+        eprintln!(
+            "v4 audit: decisions {decisions}, sampled worlds {sampled}, refusals {refused:?}, leaks {}",
+            leaks.len()
+        );
+        assert!(
+            leaks.is_empty(),
+            "hidden information reached V4: {leaks:#?}"
+        );
+        assert!(sampled * 4 >= decisions, "too few sampled worlds to audit");
+    }
 }
