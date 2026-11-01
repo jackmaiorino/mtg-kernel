@@ -129,6 +129,7 @@ with tarfile.open(out / "records.tar.gz", "w:gz", compresslevel=1) as tar:
             need(not pathlib.Path(folder, name).is_symlink(), "a linked folder in the superseded root")
         dirs.sort()
         for name in sorted(files):
+            in_time()
             path = pathlib.Path(folder, name)
             need(not path.is_symlink(), "a link in the superseded root: " + str(path))
             size = path.stat().st_size
