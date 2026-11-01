@@ -25134,8 +25134,9 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
         _ => None,
     };
     let hand = &state.players[pd.player.index()].hand;
-    // A discard cost is paid in full; an effect discards as many as it can
-    // (the neutral contract poses that smaller selection explicitly).
+    // A discard cost is paid in full. Under the neutral contract an effect
+    // discards as many as it can and poses that smaller selection; the
+    // default path keeps its exact-count action check.
     let is_cost = matches!(
         pd.resume,
         DiscardResume::FinishCast { .. }
@@ -25143,7 +25144,7 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
             | DiscardResume::FinishOptionalCost { .. }
     );
     let eligible = hand.iter().filter(|&&id| Some(id) != exclude).count() as u32;
-    let required = if is_cost {
+    let required = if is_cost || !state.engine.spellbench_neutral_v1.choices {
         pd.count
     } else {
         pd.count.min(eligible)
