@@ -30,7 +30,15 @@ fn localize(value: &mut serde_json::Value, ids: &mut BTreeMap<u64, u64>) {
         serde_json::Value::Object(m) => {
             // Epoch numbers are identity bookkeeping (no tensorizer reads
             // them) and are canonicalized by design (6.5).
-            m.retain(|k, _| !k.contains("hash") && k != "zone_change_count");
+            // Session counters are canonical constants or V's own index
+            // in the export (6.8), and no tensorizer reads them.
+            m.retain(|k, _| {
+                !k.contains("hash")
+                    && !matches!(
+                        k.as_str(),
+                        "zone_change_count" | "physical_decision_id" | "step_index"
+                    )
+            });
             for (k, v) in m.iter_mut() {
                 if k == "arena_id" {
                     if let Some(n) = v.as_u64() {
@@ -399,8 +407,8 @@ pub(crate) fn ac3_check(
                 serde_json::from_slice(&b).unwrap_or_default(),
             );
             return Err(format!(
-                "the imported view differs at {}",
-                super::tests::first_diff(&a, &b, String::new())
+                "the imported view differs at {:?}",
+                super::tests::diffs(&a, &b, String::new(), 8)
             ));
         }
     }

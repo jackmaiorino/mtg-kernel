@@ -17,6 +17,49 @@ pub(crate) fn dump(name: &str, value: &impl serde::Serialize) {
     }
 }
 
+/// Up to `limit` paths at which two values differ.
+pub(crate) fn diffs(
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+    path: String,
+    limit: usize,
+) -> Vec<String> {
+    use serde_json::Value;
+    let mut out = Vec::new();
+    match (a, b) {
+        _ if a == b => {}
+        (Value::Object(x), Value::Object(y)) => {
+            let keys: std::collections::BTreeSet<&String> = x.keys().chain(y.keys()).collect();
+            for k in keys {
+                if out.len() >= limit {
+                    break;
+                }
+                match (x.get(k), y.get(k)) {
+                    (Some(p), Some(q)) => {
+                        out.extend(diffs(p, q, format!("{path}.{k}"), limit - out.len()))
+                    }
+                    (p, q) => out.push(format!("{path}.{k}: {p:?} vs {q:?}")),
+                }
+            }
+        }
+        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
+            for (i, (p, q)) in x.iter().zip(y).enumerate() {
+                if out.len() >= limit {
+                    break;
+                }
+                out.extend(diffs(p, q, format!("{path}[{i}]"), limit - out.len()));
+            }
+        }
+        _ => out.push(
+            format!("{path}: {} vs {}", a, b)
+                .chars()
+                .take(300)
+                .collect(),
+        ),
+    }
+    out
+}
+
 /// The path of the first difference between two values.
 pub(crate) fn first_diff(a: &serde_json::Value, b: &serde_json::Value, path: String) -> String {
     use serde_json::Value;
