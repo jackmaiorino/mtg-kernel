@@ -93,6 +93,19 @@ pub struct P1aStateV1 {
     /// Creatures that assign no combat damage this turn (Goblin Vandal).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub no_combat_damage: Vec<(ObjectLinkV4, TurnV1)>,
+    /// Portent's draws, waiting for the next turn's upkeep.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub portent_draws: Vec<PortentDrawV1>,
+}
+
+/// One resolved Portent: its card, its controller and the turn it
+/// resolved in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortentDrawV1 {
+    pub card: ObjectId,
+    pub controller: PlayerId,
+    pub turn: TurnV1,
 }
 
 impl P1aStateV1 {
@@ -181,6 +194,8 @@ pub enum P1aOpV1 {
     ShuffleTargetV1,
     /// Portent: draw a card at the beginning of the next turn's upkeep.
     PortentDrawV1,
+    /// The delayed trigger itself: its controller draws a card.
+    PortentUpkeepDrawV1,
     /// Price of Progress.
     PriceOfProgressV1,
     /// Skeletal Scrying: "You draw X cards and you lose X life."
@@ -901,7 +916,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         return None;
     }
     Some(match name {
-        GEMPALM_INCINERATOR if *effect == p1a(P1aOpV1::GempalmDamageV1) => TargetSpec::Creature,
+        GEMPALM_INCINERATOR if *effect == gempalm_trigger() => TargetSpec::Creature,
         GOBLIN_VANDAL => vandal_target_spec(),
         _ => TargetSpec::None,
     })
@@ -914,13 +929,12 @@ fn vandal_target_spec() -> TargetSpec {
 
 /// Goblin Vandal's trigger: "you may pay {R}. If you do, destroy target
 /// artifact defending player controls and this creature assigns no combat
-/// damage this turn."
+/// damage this turn." Paying is the first option; an unpayable {R} pays
+/// nothing and does nothing.
 fn vandal_trigger() -> EffectOp {
-    EffectOp::MayPayManaThen {
-        player: PlayerRef::Controller,
-        colored: vec![ManaColor::R],
-        generic: 0,
-        then: Box::new(p1a(P1aOpV1::VandalDestroyV1)),
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![p1a(P1aOpV1::VandalDestroyV1), p1a(P1aOpV1::NoEffectV1)],
     }
 }
 
@@ -944,10 +958,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     if name == SYLVAN_LIBRARY && *effect == sylvan_trigger() {
         return true;
     }
-    if name == PORTENT
-        && *effect
-            == EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::DelayedUpkeepDrawV1))
-    {
+    if name == PORTENT && *effect == portent_upkeep_draw() {
         return true;
     }
     let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P1aV1(op))) = effect else {
@@ -963,6 +974,12 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         SULFURIC_VORTEX => matches!(op, P1aOpV1::VortexDamageV1 { .. }),
         _ => false,
     }
+}
+
+/// Portent's delayed trigger: "Draw a card at the beginning of the next
+/// turn's upkeep."
+fn portent_upkeep_draw() -> EffectOp {
+    p1a(P1aOpV1::PortentUpkeepDrawV1)
 }
 
 /// Sylvan Library: "At the beginning of your draw step, you may draw two
@@ -1046,15 +1063,12 @@ pub(crate) fn execute(op: &P1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         P1aOpV1::PortentDrawV1 => {
-            let source = AbilitySourceContractV4::capture(state, ctx.source);
-            state
-                .eternal_v1
-                .get_or_insert_with(Default::default)
-                .upkeep_draws
-                .push(crate::eternal_cards_v1::DelayedUpkeepDrawV1 {
-                    controller: ctx.controller,
-                    source,
-                });
+            let record = PortentDrawV1 {
+                card: ctx.source,
+                controller: ctx.controller,
+                turn: TurnV1::now(state),
+            };
+            p1a_state(state).portent_draws.push(record);
         }
         P1aOpV1::PriceOfProgressV1 => {
             let damage = [PlayerId::P0, PlayerId::P1]
@@ -1282,6 +1296,9 @@ pub(crate) fn execute(op: &P1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         P1aOpV1::VandalDestroyV1 => {
+            if !crate::engine::pay_effect_mana(ctx.controller, &[ManaColor::R], 0, state) {
+                return;
+            }
             if let Some(artifact) = legal_object_target(ctx, state, 0, vandal_target_spec()) {
                 destroy(ctx, state, artifact);
             }
@@ -1352,6 +1369,14 @@ pub(crate) fn execute(op: &P1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 event::damage_from_exec_ctx_v1(ctx, Target::Player(*player), 2),
             );
         }
+        P1aOpV1::PortentUpkeepDrawV1 => crate::effect::execute(
+            &EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+            ctx,
+            state,
+        ),
         P1aOpV1::NoEffectV1 => {}
         // Choices run in `drive`; the plain executor never reaches them.
         P1aOpV1::FlashOfInsightV1
@@ -2108,6 +2133,29 @@ fn note_upkeep(state: &mut GameState, events: &[CommittedEvent]) {
         let CommittedEvent::UpkeepBegan { player } = *event else {
             continue;
         };
+        // Portent's draws from an earlier turn, from the card's current
+        // incarnation (as wave E9b's Arcane Denial does).
+        let now = TurnV1::now(state);
+        let records = read_state(state).map_or_else(Vec::new, |p1a| p1a.portent_draws.clone());
+        if !records.is_empty() {
+            let (due, waiting): (Vec<_>, Vec<_>) =
+                records.into_iter().partition(|record| record.turn != now);
+            p1a_state(state).portent_draws = waiting;
+            for record in due {
+                if state.objects.try_get(record.card).is_none() {
+                    continue;
+                }
+                let mut source = AbilitySourceContractV4::capture(state, record.card);
+                source.controller = record.controller;
+                queue_trigger(
+                    state,
+                    source,
+                    record.controller,
+                    portent_upkeep_draw(),
+                    None,
+                );
+            }
+        }
         let vortexes = active_permanents(state, SULFURIC_VORTEX, None).collect::<Vec<_>>();
         for vortex in vortexes {
             let source = AbilitySourceContractV4::capture(state, vortex);

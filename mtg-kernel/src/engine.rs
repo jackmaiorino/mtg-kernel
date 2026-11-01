@@ -7168,6 +7168,10 @@ fn validate_cost_component_choices_v1(
         && hand_exiles.is_none()
         && land_discards.is_none()
         && graveyard_types_needed.is_none()
+        && x_graveyard_exile.is_none()
+        && !components
+            .iter()
+            .any(|component| matches!(component, CostComponent::DiscardIslandAndAnotherCardV1))
         && !returns_unblocked_attacker
         && tap_other_subtype.is_none()
         && tap_filter.is_none()
