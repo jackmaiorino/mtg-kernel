@@ -477,4 +477,20 @@ mod tests {
         f.unidentified_departure(&[]);
         assert!(f.is_empty() && !f.tainted());
     }
+
+    // Ruling 44's Fable bounce shape (CawGates versus Faeries): three Hawks
+    // (5) fetched and tracked, Brainstorm returns two unidentified cards,
+    // then the fourth Hawk is bounced into the hand (an arrival: F is
+    // unchanged and the arrival never counts). One untracked Hawk survives.
+    #[test]
+    fn fable_bounce_keeps_one_untracked_survivor() {
+        let mut f = SurvivorTreeV1::default();
+        f.unidentified_departure(&[5, 5, 5]);
+        f.unidentified_departure(&[]);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f.nodes()[0].m, 1);
+        // Pool5: four Hawks minus the bounced (tracked) one, plus fillers.
+        let pool = names(&[1, 1, 2, 5, 5, 5]);
+        assert_eq!(f.allocate(&pool, 4, &by_id), Ok(vec![5]));
+    }
 }
