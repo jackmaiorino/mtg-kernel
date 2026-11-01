@@ -304,6 +304,50 @@ print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 
 
 RELEASE_RESERVE_SECONDS = 120  # before the release boundary, kept for the release after recovery
+DISPATCHER_GRACE_SECONDS = 30  # the release path's wait for signalled dispatchers to record and exit
+# AMENDMENT-3 (release path): before the worker's supervisor is stopped (it SIGKILLs its whole job, so no
+# dispatcher could record anything), new work is refused (the guard's stop-request.json, which every dispatch and
+# admission reads) and each attempt's dispatcher gets SIGTERM directly. A dispatcher latches it, records
+# interruption.json at its next checkpoint, ends its native child and writes execution.json (mtg-kernel #464).
+POD_STOP_DISPATCHERS = '''#pod:stop-dispatchers
+import os, pathlib, signal, time
+request = pathlib.Path(ARGS["guard"], "stop-request.json")
+if not request.exists():
+    partial = request.with_name("stop-request.controller.partial")
+    partial.write_text(json.dumps({"epoch": time.time(), "reason": "controller release path"}))
+    os.replace(partial, request)
+def running(pid):
+    try:
+        state = pathlib.Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return False
+    return state not in ("Z", "X")
+def dispatchers():
+    found = []
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\\0")
+        except OSError:
+            continue
+        if any(a.endswith(b"native_expanded_dispatch_v1.py") for a in argv) and \\
+                any(a in (b"_dispatch", b"_qualify") for a in argv):
+            found.append(int(entry.name))
+    return found
+signalled = []
+for pid in dispatchers():
+    try:
+        os.kill(pid, signal.SIGTERM)
+        signalled.append(pid)
+    except OSError:
+        pass
+deadline = time.monotonic() + ARGS["seconds"]
+while time.monotonic() < deadline and any(running(pid) for pid in signalled):
+    time.sleep(0.5)
+print(json.dumps({"signalled": signalled, "still_running": [pid for pid in signalled if running(pid)],
+                  "epoch": time.time()}))
+'''
 POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
 try:
     value = json.load(open(path))
@@ -410,6 +454,20 @@ class Cycle(cloud.Cycle):
         require(exhausted and all(status[run] == "complete" or run in exhausted or run in failed for run in status),
                 "campaign ended without completing or a lease stop: " + json.dumps(status))
         self.result["lease_stopped"] = True
+
+    def stop_worker(self):
+        """AMENDMENT-3's release path: refuse new work and SIGTERM every attempt's dispatcher, wait up to
+        DISPATCHER_GRACE_SECONDS for them to record the stop and exit, then stop the worker as before. A Pod
+        that cannot be reached skips the signal (its attempts get no record and count)."""
+        if self.worker is not None and not self.ended:
+            try:
+                stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS},
+                                       timeout=DISPATCHER_GRACE_SECONDS + 30)
+                write(self.control / "dispatchers-stopped.json", stopped)
+                self.result["dispatchers_signalled"] = len(stopped["signalled"])
+            except cloud.PodUnavailable as error:
+                self.result["dispatchers_stop"] = f"unavailable: {error}"[-400:]
+        super().stop_worker()
 
     def quiesce_records(self, timeout: float = 150.0):
         """Stop the record copy-back before recovery reads the volume, so nothing it lists is deleted under it.

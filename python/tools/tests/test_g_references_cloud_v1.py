@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -393,6 +394,65 @@ class LeaseTests(unittest.TestCase):
         cycle.recover()  # 200 s less the 120 s release reserve: too little to quiesce and recover
         self.assertTrue(cycle.result["recovery"].startswith("skipped: too little time"))
         self.assertEqual(set(ran), {gcloud.POD_GUARD_RELEASE})  # nothing quiesced, packed or copied
+
+    def test_the_release_path_signals_dispatchers_before_stopping_the_worker(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.control, cycle.result, cycle.guard, cycle.ended = Path(tempfile.mkdtemp()), {}, "/run/phase1/g", False
+        self.addCleanup(shutil.rmtree, cycle.control, True)
+        cycle.worker, order = {"pid": 7, "start_ticks": 9}, []
+
+        class Pod:
+            def run(self, program, args, timeout=30, read_only=False):
+                order.append(program)
+                if program is gcloud.POD_STOP_DISPATCHERS:
+                    return {"signalled": [11, 12], "still_running": [], "epoch": 1.0}
+                return {"stopped": True}
+        cycle.pod = Pod()
+        cycle.stop_worker()
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])  # signal, then the supervisor
+        self.assertEqual(cycle.result["dispatchers_signalled"], 2)
+        self.assertTrue(cycle.ended)
+
+        class Unreachable:
+            def run(self, program, args, timeout=30, read_only=False):
+                order.append(program)
+                if program is gcloud.POD_STOP_DISPATCHERS:
+                    raise gcloud.cloud.PodUnavailable("gone")
+                return {"stopped": True}
+        cycle.pod, cycle.ended, order[:] = Unreachable(), False, []
+        cycle.stop_worker()  # an unreachable Pod still gets the worker stop
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])
+        self.assertTrue(cycle.result["dispatchers_stop"].startswith("unavailable"))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc: the Pod is Linux")
+    def test_the_pod_program_refuses_new_work_and_signals_each_dispatcher(self):
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "recorded"
+            body = ("import pathlib, signal, sys, time\n"
+                    "def stop(signum, frame):\n"
+                    "    pathlib.Path(sys.argv[3]).write_text('stopped')\n"
+                    "    sys.exit(0)\n"
+                    "signal.signal(signal.SIGTERM, stop)\n"
+                    "print('ready', flush=True)\n"
+                    "time.sleep(60)\n")
+            fake = subprocess.Popen([sys.executable, "-c", body, "native_expanded_dispatch_v1.py", "_dispatch",
+                                     str(marker)], stdout=subprocess.PIPE)
+            other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "unrelated"])
+            try:
+                self.assertEqual(fake.stdout.readline().strip(), b"ready")
+                code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10}) + gcloud.POD_STOP_DISPATCHERS
+                done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+                result = json.loads(done.stdout.decode().splitlines()[-1])
+                fake.wait(10)
+                self.assertEqual((result["signalled"], result["still_running"]), ([fake.pid], []))
+                self.assertEqual(marker.read_text(), "stopped")  # the dispatcher saw SIGTERM, not SIGKILL
+                self.assertIsNone(other.poll())  # nothing else signalled
+                self.assertTrue((Path(temp) / "stop-request.json").exists())  # new work refused first
+            finally:
+                for process in (fake, other):
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
 
     def test_the_pod_guard_read_tells_unreadable_from_unlatched(self):
         with tempfile.TemporaryDirectory() as temp:
