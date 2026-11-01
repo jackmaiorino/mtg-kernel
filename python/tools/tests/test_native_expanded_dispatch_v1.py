@@ -930,6 +930,25 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         self.assertEqual((dispatch.STOP["signal"], dispatch.STOP["release_marker"]), (signals.SIGINT, True))
         dispatch.STOP.update(signal=None, at=None, child=None, release_marker=None)
         dispatch.STOP.pop("first", None)
+        # The round-8 interleaving: the nested handler completes during the outer one's clock read.
+        clock = []
+
+        def clock_with_a_nested_signal():
+            clock.append(1)
+            if len(clock) == 1:  # the outer handler's clock read: a second signal's handler completes first
+                signals.getsignal(signals.SIGTERM)(signals.SIGINT, None)
+                return 1.0
+            return 2.0  # the nested handler's clock, latched first
+        with patch.object(dispatch, "own_marker", return_value="/marker"):
+            handlers = dispatch.install_stop_record()
+        try:
+            with patch.object(dispatch.os.path, "exists", return_value=False),                     patch.object(dispatch.time, "time", side_effect=clock_with_a_nested_signal):
+                signals.getsignal(signals.SIGTERM)(signals.SIGTERM, None)
+        finally:
+            dispatch.restore_handlers(handlers)
+        self.assertEqual((dispatch.STOP["signal"], dispatch.STOP["at"]), (signals.SIGINT, 2.0))
+        dispatch.STOP.update(signal=None, at=None, child=None, release_marker=None)
+        dispatch.STOP.pop("first", None)
 
     @unittest.skipUnless(LINUX, "delivers a POSIX signal to this process")
     def test_a_stop_from_outside_is_recorded_while_the_child_runs(self):
