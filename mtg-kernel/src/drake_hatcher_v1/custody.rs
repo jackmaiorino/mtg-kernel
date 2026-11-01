@@ -1536,11 +1536,12 @@ impl RelationsV1 {
 /// checks that read later rows or the rest of the state run in full each
 /// time. Only an acceleration: the verdicts are the same without it.
 ///
-/// Ownership runs only from a prefix to older ones: a longer prefix owns the
-/// events it added past the shorter one it extends (whose saved worlds may
-/// hold histories that own older prefixes), and the shorter one holds the
-/// longer one only weakly. A prefix is made after every event it covers, so
-/// none of them can own it, and a chain never outlives its histories.
+/// A longer prefix owns the events it added past the shorter one it extends,
+/// and the shorter one holds the longer one only weakly. So every prefix a
+/// prefix owns, through saved worlds in its added events, belongs to a history
+/// nested strictly inside its own events, and covers at most that smaller
+/// history: ownership always reaches strictly smaller structures and can
+/// never return to a prefix, so a chain never outlives its histories.
 struct CheckedPrefixV1 {
     covered: usize,
     rows: Arc<Vec<RowV1>>,
