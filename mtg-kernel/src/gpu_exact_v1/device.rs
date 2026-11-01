@@ -187,7 +187,10 @@ impl ExactDeviceV1 {
     /// [`Self::open_v1`] with the v2 kernel compiled for `tile`.
     pub(crate) fn open_with_tile_v1(ordinal: usize, tile: TileShapeV1) -> Result<Self, String> {
         // Above 48 KB a launch needs the opt-in attribute; no shape needs it.
-        if tile.shared_bytes() > 48 * 1024 || tile.rows % 4 != 0 || (tile.k_tile * 64) % 256 != 0 {
+        if tile.shared_bytes() > 48 * 1024
+            || !tile.rows.is_multiple_of(4)
+            || !(tile.k_tile * 64).is_multiple_of(256)
+        {
             return Err(format!("unsupported v2 tile shape {tile:?}"));
         }
         let execution = options_v1();
