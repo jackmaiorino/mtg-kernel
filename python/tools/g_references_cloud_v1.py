@@ -389,9 +389,32 @@ for pid, ticks, request in dispatchers():
 deadline = time.monotonic() + ARGS["seconds"]
 while time.monotonic() < deadline and any(running(item["pid"], item["start_ticks"]) for item in signalled):
     time.sleep(0.5)
-print(json.dumps({"signalled": signalled,
-                  "still_running": [item["pid"] for item in signalled if running(item["pid"], item["start_ticks"])],
-                  "epoch": time.time(), "stop_request_written": written, "stop_request_epoch": stop_epoch}))
+result = {"signalled": signalled,
+          "still_running": [item["pid"] for item in signalled if running(item["pid"], item["start_ticks"])],
+          "epoch": time.time(), "stop_request_written": written, "stop_request_epoch": stop_epoch}
+try:  # also in the Pod control folder, which recovery packs: the evidence survives a lost controller copy
+    control = pathlib.Path(ARGS["control"])
+    control.mkdir(parents=True, exist_ok=True)
+    partial = control / "dispatchers-stopped.json.partial"
+    partial.write_text(json.dumps(result))
+    os.replace(partial, control / "dispatchers-stopped.json")
+except OSError:
+    pass
+print(json.dumps(result))
+'''
+# The release marker folder must be writable on the Pod before any dispatch: without it no attempt can carry
+# AMENDMENT-3's evidence. Probed at launch; a production lease refuses to start without it.
+POD_MARKER_PROBE = '''#pod:marker-probe
+import os, pathlib
+try:
+    folder = pathlib.Path(ARGS["marker_dir"])
+    folder.mkdir(parents=True, exist_ok=True)
+    probe = folder / ("probe-%d" % os.getpid())
+    probe.write_text("probe")
+    probe.unlink()
+    print(json.dumps({"ok": True, "folder": str(folder)}))
+except OSError as error:
+    print(json.dumps({"ok": False, "folder": ARGS["marker_dir"], "error": str(error)[-300:]}))
 '''
 POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
 try:
@@ -471,9 +494,13 @@ class Cycle(cloud.Cycle):
                "MTG_HOST_LOCK_ROOT": cloud.LOCK_ROOT, "HOST_SLOTS_ROOT": cloud.LOCK_ROOT, "PYTHONDONTWRITEBYTECODE": "1"}
         if getattr(self, "binding", None):
             env[host_slots_v1.CPU_BINDING_ENV] = ",".join(map(str, self.binding))
+        probe = self.pod.run(POD_MARKER_PROBE, {"marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR}, timeout=60)
+        require(probe.get("ok") is True or self.manifest["mode"] != "production",
+                "the release marker folder is not writable on the Pod (AMENDMENT-3): " + json.dumps(probe))
         self.worker = self.pod.run(cloud.POD_LAUNCH, {"control": self.remote_control, "argv": driver_command(self.manifest),
                                                       "cwd": self.manifest["tooling"]["root"], "env": env}, timeout=360)
-        write(self.control / "worker-started.json", {**self.worker, "pod_id": self.created["id"]})
+        write(self.control / "worker-started.json", {**self.worker, "pod_id": self.created["id"],
+                                                     "release_marker_probe": probe})
 
     def conclude(self, snapshot):
         """Complete when every lineage completed through the stop block or ended for good (a failed lineage
@@ -511,7 +538,8 @@ class Cycle(cloud.Cycle):
                       {"epoch": time.time(), "cause": self.result.get("error") or "controller release",
                        "error_type": self.result.get("error_type")}, replace=True)
                 stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS,
-                                                              "marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR},
+                                                              "marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR,
+                                                              "control": self.remote_control},
                                        timeout=DISPATCHER_GRACE_SECONDS + 30)
                 write(self.control / "dispatchers-stopped.json", stopped, replace=True)
                 self.result["dispatchers_signalled"] = len(stopped["signalled"])

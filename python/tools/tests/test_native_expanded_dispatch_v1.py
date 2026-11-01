@@ -905,8 +905,7 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
                 with self.assertRaises(dispatch.ExternalStop):
                     dispatch.check_stop(root, None)
                 self.assertEqual(dispatch.read(root / "interruption.json")["release_marker_seen"], present)
-        dispatch.STOP.update(signal=None, at=None, child=None, release_marker=None)
-        dispatch.STOP.pop("first", None)
+        dispatch.reset_stop()
 
     def test_a_nested_stop_during_the_first_ones_stat_keeps_the_first_completed_latch(self):
         """Astra #471 round 8: a second signal handled inside the first handler (during its stat) latches first;
@@ -928,8 +927,7 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         finally:
             dispatch.restore_handlers(handlers)
         self.assertEqual((dispatch.STOP["signal"], dispatch.STOP["release_marker"]), (signals.SIGINT, True))
-        dispatch.STOP.update(signal=None, at=None, child=None, release_marker=None)
-        dispatch.STOP.pop("first", None)
+        dispatch.reset_stop()
         # The round-8 interleaving: the nested handler completes during the outer one's clock read.
         clock = []
 
@@ -947,8 +945,7 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         finally:
             dispatch.restore_handlers(handlers)
         self.assertEqual((dispatch.STOP["signal"], dispatch.STOP["at"]), (signals.SIGINT, 2.0))
-        dispatch.STOP.update(signal=None, at=None, child=None, release_marker=None)
-        dispatch.STOP.pop("first", None)
+        dispatch.reset_stop()
 
     @unittest.skipUnless(LINUX, "delivers a POSIX signal to this process")
     def test_a_stop_from_outside_is_recorded_while_the_child_runs(self):

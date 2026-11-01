@@ -1400,11 +1400,16 @@ def check_stop(root, child):
         raise ExternalStop(f"stopped from outside by {signal.Signals(STOP['signal']).name}")
 
 
+def reset_stop():
+    """Forget any latched stop (each dispatch starts clear; tests)."""
+    STOP.update(signal=None, at=None, child=None, release_marker=None)
+    STOP.pop("first", None)
+
+
 def install_stop_record():
     """Latch the first of INTERRUPTION_SIGNALS (STOP), noting whether the release path's marker for this process
     (own_marker) existed at that moment; returns the previous handlers for restore_handlers."""
-    STOP.update(signal=None, at=None, child=None, release_marker=None)
-    STOP.pop("first", None)
+    reset_stop()
     marker = own_marker()
     previous = {}
 
