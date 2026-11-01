@@ -6,6 +6,12 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 pub mod custody;
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod prefix_memo_tests;
 
 /// Exact source counter family, separate from net/charge and distributed costs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1065,83 +1071,87 @@ mod tests {
 
     #[test]
     fn genuine_paid_enclosing_replay_memo_warm_restore_and_ordinary_segment_tamper_both_seats() {
-        use custody::{journal, JournalV1 as J};
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let (state, paid_spell) = paid_replay_memo_state(actor);
-            let original = state.clone();
-            custody::reset_replay_memo_for_test();
-            custody::validate(&state).unwrap();
-            let cold = custody::replay_memo_stats_for_test();
-            assert!(cold.executions > 0);
-            assert_eq!(cold.hits, 0);
-            assert_eq!(cold.ineligible, 0);
-            custody::validate(&state).unwrap();
-            let warm = custody::replay_memo_stats_for_test();
-            assert_eq!(warm.executions, cold.executions);
-            assert!(warm.hits > cold.hits);
-            assert_eq!(state, original);
-            let restored_state = restored(&state);
-            custody::validate(&restored_state).unwrap();
-            let after_restore = custody::replay_memo_stats_for_test();
-            assert_eq!(after_restore.executions, warm.executions);
-            assert!(after_restore.hits > warm.hits);
-            assert_eq!(restored_state, state);
-
-            let ordinary = state.engine.event_history.iter().position(|event| {
-                    matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == paid_spell)
-            }).unwrap();
-            let (start, end) = state
-                .engine
-                .event_history
-                .iter()
-                .filter_map(journal)
-                .find_map(|row| {
-                    if let J::Enclosing { start, .. } = row.value {
-                        let end = usize::try_from(row.index).unwrap();
-                        let start = usize::try_from(start).unwrap();
-                        (start <= ordinary && ordinary < end).then_some((start, end))
-                    } else {
-                        None
-                    }
-                })
-                .expect("genuine cast event lies inside an actual enclosing segment");
-            let mut bad = state.clone();
-            let event::CommittedEvent::SpellCast { controller, .. } =
-                &mut bad.engine.event_history[ordinary]
-            else {
-                unreachable!()
-            };
-            *controller = actor.opponent();
-            // The saved row and input prefix stay identical. Only its actual
-            // ordinary-event segment changes, which the memo key must bind.
-            assert_eq!(
-                bad.engine.event_history[..start],
-                state.engine.event_history[..start]
-            );
-            assert_eq!(
-                bad.engine.event_history[end],
-                state.engine.event_history[end]
-            );
-            let bytes = serde_json::to_vec(&bad).unwrap();
-            for _ in 0..2 {
-                let before = custody::replay_memo_stats_for_test();
+        // These check the replay memo and key caches of a validation that
+        // checks every row, as every validation did before the prefix memo.
+        custody::without_prefix_memo_for_test(|| {
+            use custody::{journal, JournalV1 as J};
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                let (state, paid_spell) = paid_replay_memo_state(actor);
+                let original = state.clone();
+                custody::reset_replay_memo_for_test();
+                custody::validate(&state).unwrap();
+                let cold = custody::replay_memo_stats_for_test();
+                assert!(cold.executions > 0);
+                assert_eq!(cold.hits, 0);
+                assert_eq!(cold.ineligible, 0);
+                custody::validate(&state).unwrap();
+                let warm = custody::replay_memo_stats_for_test();
+                assert_eq!(warm.executions, cold.executions);
+                assert!(warm.hits > cold.hits);
+                assert_eq!(state, original);
+                let restored_state = restored(&state);
+                custody::validate(&restored_state).unwrap();
+                let after_restore = custody::replay_memo_stats_for_test();
+                assert_eq!(after_restore.executions, warm.executions);
+                assert!(after_restore.hits > warm.hits);
+                assert_eq!(restored_state, state);
+    
+                let ordinary = state.engine.event_history.iter().position(|event| {
+                        matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == paid_spell)
+                }).unwrap();
+                let (start, end) = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(journal)
+                    .find_map(|row| {
+                        if let J::Enclosing { start, .. } = row.value {
+                            let end = usize::try_from(row.index).unwrap();
+                            let start = usize::try_from(start).unwrap();
+                            (start <= ordinary && ordinary < end).then_some((start, end))
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("genuine cast event lies inside an actual enclosing segment");
+                let mut bad = state.clone();
+                let event::CommittedEvent::SpellCast { controller, .. } =
+                    &mut bad.engine.event_history[ordinary]
+                else {
+                    unreachable!()
+                };
+                *controller = actor.opponent();
+                // The saved row and input prefix stay identical. Only its actual
+                // ordinary-event segment changes, which the memo key must bind.
                 assert_eq!(
-                    custody::validate(&bad).unwrap_err(),
-                    "Drake complete enclosing original operation/history replay differs"
+                    bad.engine.event_history[..start],
+                    state.engine.event_history[..start]
                 );
-                let after = custody::replay_memo_stats_for_test();
-                assert!(after.executions > before.executions);
-                assert_eq!(after.ineligible, before.ineligible);
-                assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+                assert_eq!(
+                    bad.engine.event_history[end],
+                    state.engine.event_history[end]
+                );
+                let bytes = serde_json::to_vec(&bad).unwrap();
+                for _ in 0..2 {
+                    let before = custody::replay_memo_stats_for_test();
+                    assert_eq!(
+                        custody::validate(&bad).unwrap_err(),
+                        "Drake complete enclosing original operation/history replay differs"
+                    );
+                    let after = custody::replay_memo_stats_for_test();
+                    assert!(after.executions > before.executions);
+                    assert_eq!(after.ineligible, before.ineligible);
+                    assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+                }
+                let before = custody::replay_memo_stats_for_test();
+                custody::validate(&state).unwrap();
+                assert_eq!(
+                    custody::replay_memo_stats_for_test().executions,
+                    before.executions
+                );
+                assert_eq!(state, original);
             }
-            let before = custody::replay_memo_stats_for_test();
-            custody::validate(&state).unwrap();
-            assert_eq!(
-                custody::replay_memo_stats_for_test().executions,
-                before.executions
-            );
-            assert_eq!(state, original);
-        }
+        });
     }
 
     fn last_replay_output(state: &mut GameState) -> &mut GameState {
@@ -1164,282 +1174,298 @@ mod tests {
     #[test]
     fn genuine_paid_observation_key_frame_keeps_foreign_tamper_restore_and_borrow_boundaries_both_seats(
     ) {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let (state, _) = paid_replay_memo_state(actor);
-            custody::validate(&state).unwrap();
-            custody::validate(&state).unwrap();
-            let bytes = serde_json::to_vec(&state).unwrap();
-            let foreign = restored(&state);
-            assert_eq!(foreign, state);
-            custody::reset_replay_key_frame_stats_for_test();
-            custody::with_observation_replay_keys(&state, |borrowed| {
-                custody::validate(borrowed).unwrap();
-                assert_eq!(custody::replay_key_frame_stats_for_test(), (1, 0));
-                custody::validate(borrowed).unwrap();
-                assert_eq!(custody::replay_key_frame_stats_for_test(), (1, 1));
-
-                // Equal restored worlds have distinct live allocations. They
-                // must build their own exact typed-history keys.
-                custody::validate(&foreign).unwrap();
-                assert_eq!(custody::replay_key_frame_stats_for_test(), (2, 1));
-                custody::with_observation_replay_keys(&foreign, |nested| {
-                    custody::validate(nested).unwrap();
-                    custody::validate(nested).unwrap();
-                });
-                assert_eq!(custody::replay_key_frame_stats_for_test(), (3, 2));
-                custody::validate(borrowed).unwrap();
-                assert_eq!(custody::replay_key_frame_stats_for_test(), (3, 3));
-
-                let mut changed = borrowed.clone();
-                last_replay_output(&mut changed).players[actor.index()].life += 1;
-                let changed_bytes = serde_json::to_vec(&changed).unwrap();
-                assert_eq!(
-                    custody::validate(&changed).unwrap_err(),
-                    "Drake complete enclosing original operation/history replay differs"
-                );
-                assert!(custody::replay_key_frame_stats_for_test().0 > 3);
-                assert_eq!(serde_json::to_vec(&changed).unwrap(), changed_bytes);
-
-                let mut private = borrowed.clone();
-                crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
-                    last_replay_output(&mut private),
-                );
-                assert_eq!(serde_json::to_vec(&private).unwrap(), bytes);
-                assert_ne!(private, *borrowed);
-                let original_private = private.clone();
-                assert_eq!(
-                    custody::validate(&private).unwrap_err(),
-                    "Drake complete enclosing original operation/history replay differs"
-                );
-                assert_eq!(private, original_private);
-                let before = custody::replay_key_frame_stats_for_test();
-                custody::validate(borrowed).unwrap();
-                let after = custody::replay_key_frame_stats_for_test();
-                assert_eq!(after, (before.0, before.1 + 1));
-            });
-            let before = custody::replay_key_frame_stats_for_test();
-            custody::validate(&state).unwrap();
-            assert_eq!(
-                custody::replay_key_frame_stats_for_test(),
-                (before.0 + 1, before.1)
-            );
-            assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
-
-            // Unwinding an inner scope restores its predecessor; unwinding the
-            // outer scope removes all keys before a later validation call.
-            let stopped = std::panic::catch_unwind(|| {
+        // These check the replay memo and key caches of a validation that
+        // checks every row, as every validation did before the prefix memo.
+        custody::without_prefix_memo_for_test(|| {
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                let (state, _) = paid_replay_memo_state(actor);
+                custody::validate(&state).unwrap();
+                custody::validate(&state).unwrap();
+                let bytes = serde_json::to_vec(&state).unwrap();
+                let foreign = restored(&state);
+                assert_eq!(foreign, state);
+                custody::reset_replay_key_frame_stats_for_test();
                 custody::with_observation_replay_keys(&state, |borrowed| {
                     custody::validate(borrowed).unwrap();
-                    panic!("intentional observation-frame unwind");
+                    assert_eq!(custody::replay_key_frame_stats_for_test(), (1, 0));
+                    custody::validate(borrowed).unwrap();
+                    assert_eq!(custody::replay_key_frame_stats_for_test(), (1, 1));
+    
+                    // Equal restored worlds have distinct live allocations. They
+                    // must build their own exact typed-history keys.
+                    custody::validate(&foreign).unwrap();
+                    assert_eq!(custody::replay_key_frame_stats_for_test(), (2, 1));
+                    custody::with_observation_replay_keys(&foreign, |nested| {
+                        custody::validate(nested).unwrap();
+                        custody::validate(nested).unwrap();
+                    });
+                    assert_eq!(custody::replay_key_frame_stats_for_test(), (3, 2));
+                    custody::validate(borrowed).unwrap();
+                    assert_eq!(custody::replay_key_frame_stats_for_test(), (3, 3));
+    
+                    let mut changed = borrowed.clone();
+                    last_replay_output(&mut changed).players[actor.index()].life += 1;
+                    let changed_bytes = serde_json::to_vec(&changed).unwrap();
+                    assert_eq!(
+                        custody::validate(&changed).unwrap_err(),
+                        "Drake complete enclosing original operation/history replay differs"
+                    );
+                    assert!(custody::replay_key_frame_stats_for_test().0 > 3);
+                    assert_eq!(serde_json::to_vec(&changed).unwrap(), changed_bytes);
+    
+                    let mut private = borrowed.clone();
+                    crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
+                        last_replay_output(&mut private),
+                    );
+                    assert_eq!(serde_json::to_vec(&private).unwrap(), bytes);
+                    assert_ne!(private, *borrowed);
+                    let original_private = private.clone();
+                    assert_eq!(
+                        custody::validate(&private).unwrap_err(),
+                        "Drake complete enclosing original operation/history replay differs"
+                    );
+                    assert_eq!(private, original_private);
+                    let before = custody::replay_key_frame_stats_for_test();
+                    custody::validate(borrowed).unwrap();
+                    let after = custody::replay_key_frame_stats_for_test();
+                    assert_eq!(after, (before.0, before.1 + 1));
                 });
-            });
-            assert!(stopped.is_err());
-            let before = custody::replay_key_frame_stats_for_test();
-            custody::validate(&state).unwrap();
-            assert_eq!(
-                custody::replay_key_frame_stats_for_test(),
-                (before.0 + 1, before.1)
-            );
-            assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
-        }
+                let before = custody::replay_key_frame_stats_for_test();
+                custody::validate(&state).unwrap();
+                assert_eq!(
+                    custody::replay_key_frame_stats_for_test(),
+                    (before.0 + 1, before.1)
+                );
+                assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+    
+                // Unwinding an inner scope restores its predecessor; unwinding the
+                // outer scope removes all keys before a later validation call.
+                let stopped = std::panic::catch_unwind(|| {
+                    custody::with_observation_replay_keys(&state, |borrowed| {
+                        custody::validate(borrowed).unwrap();
+                        panic!("intentional observation-frame unwind");
+                    });
+                });
+                assert!(stopped.is_err());
+                let before = custody::replay_key_frame_stats_for_test();
+                custody::validate(&state).unwrap();
+                assert_eq!(
+                    custody::replay_key_frame_stats_for_test(),
+                    (before.0 + 1, before.1)
+                );
+                assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+            }
+        });
     }
 
     #[test]
     fn genuine_paid_enclosing_replay_memo_changed_output_and_private_runtime_fallback_both_seats() {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let (state, _) = paid_replay_memo_state(actor);
-            custody::reset_replay_memo_for_test();
-            custody::validate(&state).unwrap();
-            custody::validate(&state).unwrap();
-            let warm = custody::replay_memo_stats_for_test();
-            assert!(warm.hits > 0);
-            let mut changed = state.clone();
-            last_replay_output(&mut changed).players[actor.index()].life += 1;
-            assert_eq!(
-                custody::validate(&changed).unwrap_err(),
-                "Drake complete enclosing original operation/history replay differs"
-            );
-            let after_changed = custody::replay_memo_stats_for_test();
-            assert!(after_changed.executions > warm.executions);
-            assert_eq!(after_changed.ineligible, warm.ineligible);
-
-            let mut private = state.clone();
-            crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
-                last_replay_output(&mut private),
-            );
-            // Serialized commitments alone cannot distinguish these typed
-            // states. Round-trip eligibility must force the existing replay.
-            assert_eq!(
-                serde_json::to_vec(&private).unwrap(),
-                serde_json::to_vec(&state).unwrap()
-            );
-            assert_ne!(private, state);
-            assert_eq!(restored(&private), state);
-            let before_private = custody::replay_memo_stats_for_test();
-            let before_typed = private.clone();
-            assert_eq!(
-                custody::validate(&private).unwrap_err(),
-                "Drake complete enclosing original operation/history replay differs"
-            );
-            let after_private = custody::replay_memo_stats_for_test();
-            assert!(after_private.executions > before_private.executions);
-            assert!(after_private.ineligible > before_private.ineligible);
-            assert_eq!(private, before_typed);
-            let before_good = custody::replay_memo_stats_for_test();
-            custody::validate(&restored(&private)).unwrap();
-            assert_eq!(
-                custody::replay_memo_stats_for_test().executions,
-                before_good.executions
-            );
-        }
+        // These check the replay memo and key caches of a validation that
+        // checks every row, as every validation did before the prefix memo.
+        custody::without_prefix_memo_for_test(|| {
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                let (state, _) = paid_replay_memo_state(actor);
+                custody::reset_replay_memo_for_test();
+                custody::validate(&state).unwrap();
+                custody::validate(&state).unwrap();
+                let warm = custody::replay_memo_stats_for_test();
+                assert!(warm.hits > 0);
+                let mut changed = state.clone();
+                last_replay_output(&mut changed).players[actor.index()].life += 1;
+                assert_eq!(
+                    custody::validate(&changed).unwrap_err(),
+                    "Drake complete enclosing original operation/history replay differs"
+                );
+                let after_changed = custody::replay_memo_stats_for_test();
+                assert!(after_changed.executions > warm.executions);
+                assert_eq!(after_changed.ineligible, warm.ineligible);
+    
+                let mut private = state.clone();
+                crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
+                    last_replay_output(&mut private),
+                );
+                // Serialized commitments alone cannot distinguish these typed
+                // states. Round-trip eligibility must force the existing replay.
+                assert_eq!(
+                    serde_json::to_vec(&private).unwrap(),
+                    serde_json::to_vec(&state).unwrap()
+                );
+                assert_ne!(private, state);
+                assert_eq!(restored(&private), state);
+                let before_private = custody::replay_memo_stats_for_test();
+                let before_typed = private.clone();
+                assert_eq!(
+                    custody::validate(&private).unwrap_err(),
+                    "Drake complete enclosing original operation/history replay differs"
+                );
+                let after_private = custody::replay_memo_stats_for_test();
+                assert!(after_private.executions > before_private.executions);
+                assert!(after_private.ineligible > before_private.ineligible);
+                assert_eq!(private, before_typed);
+                let before_good = custody::replay_memo_stats_for_test();
+                custody::validate(&restored(&private)).unwrap();
+                assert_eq!(
+                    custody::replay_memo_stats_for_test().executions,
+                    before_good.executions
+                );
+            }
+        });
     }
 
     #[test]
     fn genuine_paid_replay_prefix_keys_match_original_after_restore_append_change_and_truncation_both_seats(
     ) {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let (mut state, ordinary) = paid_replay_memo_state(actor);
-            let original = state.clone();
-            let history = &state.engine.event_history;
-            let oracle = custody::original_replay_keys_for_test(history);
-            assert!(!oracle.is_empty());
-            custody::clear_replay_prefix_for_test();
-            let (cold, retained, bytes, reused) = custody::replay_prefix_probe_for_test(history);
-            assert_eq!(cold, oracle);
-            assert_eq!(reused, 0);
-            assert!(retained > 0 && retained <= custody::REPLAY_PREFIX_EVENTS);
-            assert!(bytes > 0 && bytes <= custody::REPLAY_PREFIX_CANONICAL_BYTES);
-            let restored = restored(&state);
-            let (warm, _, _, reused) =
-                custody::replay_prefix_probe_for_test(&restored.engine.event_history);
-            assert_eq!(warm, oracle);
-            assert_eq!(reused, retained);
-            custody::validate(&restored).unwrap();
-
-            let position = history.iter().position(|event| {
-                matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == ordinary)
-            }).unwrap();
-            let mut changed = original.clone();
-            let event::CommittedEvent::SpellCast { controller, .. } =
-                &mut changed.engine.event_history[position]
-            else {
-                unreachable!()
-            };
-            *controller = actor.opponent();
-            // Prime the original prefix immediately before the changed request.
-            custody::replay_prefix_probe_for_test(history);
-            let (keys, _, _, reused) =
-                custody::replay_prefix_probe_for_test(&changed.engine.event_history);
-            assert_eq!(reused, position.min(retained));
-            assert_eq!(
-                keys,
-                custody::original_replay_keys_for_test(&changed.engine.event_history)
-            );
-            assert_ne!(keys, oracle);
-            let before = changed.clone();
-            assert!(custody::validate(&changed).is_err());
-            assert_eq!(changed, before);
-
-            // Truncation is a pure key-input probe, not a fabricated native
-            // history claimed to pass custody validation.
-            custody::replay_prefix_probe_for_test(history);
-            let shortened = &history[..position];
-            let (keys, rows, _, reused) = custody::replay_prefix_probe_for_test(shortened);
-            assert_eq!(keys, custody::original_replay_keys_for_test(shortened));
-            assert_eq!(rows, position.min(retained));
-            assert_eq!(reused, rows);
-            assert_eq!(state, original);
-
-            // Complete the already genuinely paid activation through the native
-            // driver. Its real appended history must retain every original key.
-            custody::replay_prefix_probe_for_test(history);
-            finish(&mut state);
-            custody::validate(&state).unwrap();
-            let (keys, _, _, _) =
-                custody::replay_prefix_probe_for_test(&state.engine.event_history);
-            assert_eq!(
-                keys,
-                custody::original_replay_keys_for_test(&state.engine.event_history)
-            );
-            assert!(oracle
-                .iter()
-                .all(|(position, key)| keys.get(position) == Some(key)));
-        }
+        // These check the replay memo and key caches of a validation that
+        // checks every row, as every validation did before the prefix memo.
+        custody::without_prefix_memo_for_test(|| {
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                let (mut state, ordinary) = paid_replay_memo_state(actor);
+                let original = state.clone();
+                let history = &state.engine.event_history;
+                let oracle = custody::original_replay_keys_for_test(history);
+                assert!(!oracle.is_empty());
+                custody::clear_replay_prefix_for_test();
+                let (cold, retained, bytes, reused) = custody::replay_prefix_probe_for_test(history);
+                assert_eq!(cold, oracle);
+                assert_eq!(reused, 0);
+                assert!(retained > 0 && retained <= custody::REPLAY_PREFIX_EVENTS);
+                assert!(bytes > 0 && bytes <= custody::REPLAY_PREFIX_CANONICAL_BYTES);
+                let restored = restored(&state);
+                let (warm, _, _, reused) =
+                    custody::replay_prefix_probe_for_test(&restored.engine.event_history);
+                assert_eq!(warm, oracle);
+                assert_eq!(reused, retained);
+                custody::validate(&restored).unwrap();
+    
+                let position = history.iter().position(|event| {
+                    matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == ordinary)
+                }).unwrap();
+                let mut changed = original.clone();
+                let event::CommittedEvent::SpellCast { controller, .. } =
+                    &mut changed.engine.event_history[position]
+                else {
+                    unreachable!()
+                };
+                *controller = actor.opponent();
+                // Prime the original prefix immediately before the changed request.
+                custody::replay_prefix_probe_for_test(history);
+                let (keys, _, _, reused) =
+                    custody::replay_prefix_probe_for_test(&changed.engine.event_history);
+                assert_eq!(reused, position.min(retained));
+                assert_eq!(
+                    keys,
+                    custody::original_replay_keys_for_test(&changed.engine.event_history)
+                );
+                assert_ne!(keys, oracle);
+                let before = changed.clone();
+                assert!(custody::validate(&changed).is_err());
+                assert_eq!(changed, before);
+    
+                // Truncation is a pure key-input probe, not a fabricated native
+                // history claimed to pass custody validation.
+                custody::replay_prefix_probe_for_test(history);
+                let shortened = &history[..position];
+                let (keys, rows, _, reused) = custody::replay_prefix_probe_for_test(shortened);
+                assert_eq!(keys, custody::original_replay_keys_for_test(shortened));
+                assert_eq!(rows, position.min(retained));
+                assert_eq!(reused, rows);
+                assert_eq!(state, original);
+    
+                // Complete the already genuinely paid activation through the native
+                // driver. Its real appended history must retain every original key.
+                custody::replay_prefix_probe_for_test(history);
+                finish(&mut state);
+                custody::validate(&state).unwrap();
+                let (keys, _, _, _) =
+                    custody::replay_prefix_probe_for_test(&state.engine.event_history);
+                assert_eq!(
+                    keys,
+                    custody::original_replay_keys_for_test(&state.engine.event_history)
+                );
+                assert!(oracle
+                    .iter()
+                    .all(|(position, key)| keys.get(position) == Some(key)));
+            }
+        });
     }
 
     #[test]
     fn genuine_paid_replay_prefix_rejects_same_serde_nested_runtime_and_limits_retention_both_seats(
     ) {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let (state, ordinary) = paid_replay_memo_state(actor);
-            custody::clear_replay_prefix_for_test();
-            let (keys, retained, _, _) =
-                custody::replay_prefix_probe_for_test(&state.engine.event_history);
-            let nested = state
-                .engine
-                .event_history
-                .iter()
-                .take(retained)
-                .position(|event| {
-                    matches!(
-                        custody::journal(event).map(|row| &row.value),
-                        Some(custody::JournalV1::Enclosing { .. })
-                    )
-                })
-                .expect("a genuine enclosing row is retained before the budget");
-            let mut private = state.clone();
-            let event::CommittedEvent::DrakeJournalV1 { record } =
-                &mut private.engine.event_history[nested]
-            else {
-                unreachable!()
-            };
-            let custody::JournalV1::Enclosing { output, .. } = &mut record.value else {
-                unreachable!()
-            };
-            crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
-                std::sync::Arc::make_mut(output),
-            );
-            assert_eq!(
-                serde_json::to_vec(&private).unwrap(),
-                serde_json::to_vec(&state).unwrap()
-            );
-            assert_ne!(private, state);
-            let before = private.clone();
-            let (ineligible, rows, _, reused) =
-                custody::replay_prefix_probe_for_test(&private.engine.event_history);
-            assert_eq!(reused, nested);
-            assert_eq!(rows, nested);
-            assert_eq!(
-                ineligible,
-                custody::original_replay_keys_for_test(&private.engine.event_history)
-            );
-            assert!(ineligible.keys().all(|position| *position < nested as u64));
-            assert_ne!(ineligible, keys);
-            assert!(custody::validate(&private).is_err());
-            assert_eq!(private, before);
-            custody::validate(&state).unwrap();
-            assert_eq!(
-                custody::replay_prefix_probe_for_test(&state.engine.event_history).0,
-                keys
-            );
-
-            // Repeated actual typed ordinary events isolate the count budget;
-            // this input is a key-computation primitive, not native play.
-            let ordinary = state.engine.event_history.iter().find(|event| {
-                matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == ordinary)
-            }).unwrap();
-            let primitive = vec![ordinary.clone(); custody::REPLAY_PREFIX_EVENTS + 1];
-            custody::clear_replay_prefix_for_test();
-            let (keys, rows, bytes, _) = custody::replay_prefix_probe_for_test(&primitive);
-            assert_eq!(keys, custody::original_replay_keys_for_test(&primitive));
-            assert_eq!(rows, custody::REPLAY_PREFIX_EVENTS);
-            assert!(bytes <= custody::REPLAY_PREFIX_CANONICAL_BYTES);
-            let (_, rows, _, reused) = custody::replay_prefix_probe_for_test(&primitive);
-            assert_eq!(
-                (rows, reused),
-                (custody::REPLAY_PREFIX_EVENTS, custody::REPLAY_PREFIX_EVENTS)
-            );
-        }
+        // These check the replay memo and key caches of a validation that
+        // checks every row, as every validation did before the prefix memo.
+        custody::without_prefix_memo_for_test(|| {
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                let (state, ordinary) = paid_replay_memo_state(actor);
+                custody::clear_replay_prefix_for_test();
+                let (keys, retained, _, _) =
+                    custody::replay_prefix_probe_for_test(&state.engine.event_history);
+                let nested = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .take(retained)
+                    .position(|event| {
+                        matches!(
+                            custody::journal(event).map(|row| &row.value),
+                            Some(custody::JournalV1::Enclosing { .. })
+                        )
+                    })
+                    .expect("a genuine enclosing row is retained before the budget");
+                let mut private = state.clone();
+                let event::CommittedEvent::DrakeJournalV1 { record } =
+                    &mut private.engine.event_history[nested]
+                else {
+                    unreachable!()
+                };
+                let custody::JournalV1::Enclosing { output, .. } = &mut record.value else {
+                    unreachable!()
+                };
+                crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
+                    std::sync::Arc::make_mut(output),
+                );
+                assert_eq!(
+                    serde_json::to_vec(&private).unwrap(),
+                    serde_json::to_vec(&state).unwrap()
+                );
+                assert_ne!(private, state);
+                let before = private.clone();
+                let (ineligible, rows, _, reused) =
+                    custody::replay_prefix_probe_for_test(&private.engine.event_history);
+                assert_eq!(reused, nested);
+                assert_eq!(rows, nested);
+                assert_eq!(
+                    ineligible,
+                    custody::original_replay_keys_for_test(&private.engine.event_history)
+                );
+                assert!(ineligible.keys().all(|position| *position < nested as u64));
+                assert_ne!(ineligible, keys);
+                assert!(custody::validate(&private).is_err());
+                assert_eq!(private, before);
+                custody::validate(&state).unwrap();
+                assert_eq!(
+                    custody::replay_prefix_probe_for_test(&state.engine.event_history).0,
+                    keys
+                );
+    
+                // Repeated actual typed ordinary events isolate the count budget;
+                // this input is a key-computation primitive, not native play.
+                let ordinary = state.engine.event_history.iter().find(|event| {
+                    matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == ordinary)
+                }).unwrap();
+                let primitive = vec![ordinary.clone(); custody::REPLAY_PREFIX_EVENTS + 1];
+                custody::clear_replay_prefix_for_test();
+                let (keys, rows, bytes, _) = custody::replay_prefix_probe_for_test(&primitive);
+                assert_eq!(keys, custody::original_replay_keys_for_test(&primitive));
+                assert_eq!(rows, custody::REPLAY_PREFIX_EVENTS);
+                assert!(bytes <= custody::REPLAY_PREFIX_CANONICAL_BYTES);
+                let (_, rows, _, reused) = custody::replay_prefix_probe_for_test(&primitive);
+                assert_eq!(
+                    (rows, reused),
+                    (custody::REPLAY_PREFIX_EVENTS, custody::REPLAY_PREFIX_EVENTS)
+                );
+            }
+        });
     }
 
     #[test]
