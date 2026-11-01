@@ -345,6 +345,20 @@ class DriverTests(unittest.TestCase):
         finally:
             child.kill(); child.wait()
 
+    @unittest.skipUnless(LINUX, "reads /proc")
+    def test_an_exited_native_process_ends_the_native_part(self):
+        """#463: once the recorded native process has exited, the attempt is outside its native part (its
+        dispatcher's remaining work is activity), even before execution.json is written."""
+        root = self.root / "exited"; root.mkdir()
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            (root / "started.json").write_text(json.dumps({"pid": child.pid, "started_unix": time.time()}))
+            self.assertGreaterEqual(driver.native_ticks(root), 0)  # running: its CPU ticks
+        finally:
+            child.kill(); child.wait()
+        self.assertTrue(driver.process_gone(child.pid))
+        self.assertIsNone(driver.native_ticks(root))
+
     def test_descendant_ticks(self):
         table = {1: (0, 5), 10: (1, 100), 11: (10, 7), 12: (11, 3), 20: (1, 9), 21: (20, 4)}
         self.assertEqual(driver.descendant_ticks(table, 10), 10)  # 11 and 12, never 10 itself
