@@ -894,6 +894,29 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         self.assertIn("stopped from outside by SIGTERM", execution["error"])
         self.assertEqual(signals.getsignal(signals.SIGTERM), before)  # restored
 
+    def test_a_stop_latched_during_another_failure_is_still_recorded(self):
+        """Astra #464 round 5: a stop latched while the library check (or a sample) fails is recorded, with the
+        child's state before the cleanup kills it; the start barrier's wait and the library check end on it."""
+        request = self.request(1)
+
+        def failing_check(child, runtime, checkpoint=None):
+            dispatch.STOP.update(signal=dispatch.signal.SIGTERM, at=time.time())  # latched meanwhile
+            raise ValueError("pinned runtime libraries were not mapped")
+        with patch.object(dispatch, "WINDOWS", False):
+            execution = self.run_native(request, child_seconds=5.0, require_mapped_libraries=failing_check)
+        record = dispatch.read(Path(request["root"]) / "interruption.json")
+        self.assertEqual((record["signal"], record["child_running"]), ("SIGTERM", True))
+        self.assertIn("not mapped", execution["error"])
+        barrier = {"ready": str(self.root / "ready.json"), "release": str(self.root / "release.json"),
+                   "timeout_seconds": 30, "owner": owner()}
+        dispatch.STOP.update(signal=dispatch.signal.SIGTERM, at=time.time())
+        self.addCleanup(dispatch.STOP.update, signal=None, at=None, child=None)
+        started = time.monotonic()
+        with self.assertRaises(dispatch.ExternalStop):
+            dispatch.await_release(barrier, Path(self.save({})["path"]),
+                                   checkpoint=lambda: dispatch.check_stop(self.root, None))
+        self.assertLess(time.monotonic() - started, 5)
+
     def test_a_runpod_attempt_rechecks_its_lease_just_before_the_spawn(self):
         """Astra #464 round 1: a slow admission check must not start native work the lease no longer allows; the
         wall-time limit still counts from the dispatch's start."""

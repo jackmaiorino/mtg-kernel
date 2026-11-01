@@ -639,17 +639,19 @@ def start_barrier(request, qualification):
     return barrier
 
 
-def await_release(barrier, request_path, poll=0.02, owner_poll=1.0):
+def await_release(barrier, request_path, poll=0.02, owner_poll=1.0, checkpoint=None):
     """Records that this trial waits at its start barrier, then waits for the
     release. The wait fails once the barrier's owner has ended without releasing
     it (looked at every `owner_poll` seconds), so a dead pack tool cannot hold the
-    trial and its reservation; the timeout is only a backstop. Returns the seconds
-    waited."""
+    trial and its reservation; the timeout is only a backstop. ``checkpoint`` runs
+    each poll (a latched stop ends the wait). Returns the seconds waited."""
     import host_reservation_v1 as reservations
     write(Path(barrier["ready"]), {"request": pin(request_path), "pid": os.getpid()})
     waited = looked = time.monotonic()
     release, owner = Path(barrier["release"]), barrier["owner"]
     while not release.exists():  # the pack tool renames a complete file into place
+        if checkpoint is not None:
+            checkpoint()
         require(time.monotonic() - waited <= barrier["timeout_seconds"], "start barrier timed out")
         if time.monotonic() - looked >= owner_poll:
             looked = time.monotonic()
@@ -1319,13 +1321,16 @@ def process_sample(child):
             "cpu_seconds": sum((t.dwHighDateTime << 32) + t.dwLowDateTime for t in times[2:]) / 1e7}
 
 
-def require_mapped_libraries(child, runtime, timeout=30.0):
+def require_mapped_libraries(child, runtime, timeout=30.0, checkpoint=None):
     """One /proc/<pid>/maps observation, once the loader has mapped all four pinned
-    libraries: each mapping must resolve to its pinned file, else the launch fails."""
+    libraries: each mapping must resolve to its pinned file, else the launch fails.
+    ``checkpoint`` runs each poll (a latched stop ends the wait)."""
     pinned = {name: os.path.realpath(item["path"]) for name, item in runtime["libraries"].items()}
     names = {Path(real).name: name for name, real in pinned.items()} | {name: name for name in pinned}
     deadline = time.monotonic() + timeout
     while True:
+        if checkpoint is not None:
+            checkpoint()
         mapped = {}
         for line in (PROC/str(child.pid)/"maps").read_text().splitlines():
             parts = line.split(maxsplit=5)
@@ -1349,7 +1354,7 @@ INTERRUPTION_SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT")
 # The first stop signal this dispatch received (number, Unix time), latched by the handler. The handler only
 # latches: it neither polls the child nor raises, so it cannot interrupt the child's reaping, a write or the
 # cleanup, and later signals change nothing. The dispatch acts on it at its own checkpoints (check_stop).
-STOP = {"signal": None, "at": None}
+STOP = {"signal": None, "at": None, "child": None}  # child: the native child once spawned (not used by the handler)
 STOP_WAIT_SECONDS = 1.0  # the monitor loop's longest wait between checkpoints
 
 
@@ -1381,7 +1386,7 @@ def check_stop(root, child):
 
 def install_stop_record():
     """Latch the first of INTERRUPTION_SIGNALS (STOP); returns the previous handlers for restore_handlers."""
-    STOP.update(signal=None, at=None)
+    STOP.update(signal=None, at=None, child=None)
     previous = {}
 
     def stopped(signum, frame):
@@ -1437,6 +1442,10 @@ def execute(request_path, qualification):
     try:
         return run_attempt(request_path, request, qualification, config, runtime, selected, shared, root, cold,
                            placed, command, started, token, archive_native, reservations)
+    except BaseException:
+        if STOP["signal"] is not None:  # a stop latched while another error ended the attempt: its evidence
+            record_interruption(root, STOP["child"], STOP["signal"], STOP["at"])
+        raise
     finally:
         restore_handlers(handlers)
 
@@ -1445,7 +1454,8 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
                 command, started, token, archive_native, reservations):
     """The attempt after its admission checks: the barrier, the native child, its records and archive."""
     barrier = start_barrier(request, qualification)
-    barrier_seconds = 0.0 if barrier is None else await_release(barrier, request_path)
+    barrier_seconds = 0.0 if barrier is None else await_release(barrier, request_path,
+                                                                 checkpoint=lambda: check_stop(root, None))
     started += barrier_seconds  # waiting for the other packed trials is not this trial's time
     if request["placement"]["host"] == "runpod":
         require_host(request)  # the lease still has the work's time and allows new work, after the checks above
@@ -1459,6 +1469,7 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
         child_started = time.monotonic()
         child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
                                  env=native_child_environment(request), **options)
+        STOP["child"] = child
         # Before the reservation's lock, which packed trials take one after another.
         started_unix = time.time()
         reservations.record_descendant(token, child.pid)
@@ -1466,7 +1477,7 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
                                     "placement": request["placement"], "request": pin(request_path)})
         try:
             if not WINDOWS:
-                require_mapped_libraries(child, runtime)
+                require_mapped_libraries(child, runtime, checkpoint=lambda: check_stop(root, child))
             sample_at = time.monotonic() + MONITOR_POLL_SECONDS
             while child.poll() is None:
                 check_stop(root, child)
@@ -1486,6 +1497,8 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
             require(child.returncode == 0, "native process failed")
         except BaseException as error:
             failure = str(error)
+            if STOP["signal"] is not None:  # a stop latched while another error ended the loop: its evidence
+                record_interruption(root, child, STOP["signal"], STOP["at"])  # before the kill below
             if child.poll() is None:
                 child.kill()
             child.wait()
