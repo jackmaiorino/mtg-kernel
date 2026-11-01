@@ -42,9 +42,17 @@ It starts only when all of these hold:
 - no earlier delaying backfill for that head is overdue, and its window file reads (a file that exists but cannot be read refuses);
 - the request comes from a launcher that applies this rule (its ticket records `backfill_policy: 2`). An older launcher's ticket is judged by the zero-delay rule it applies itself, so it never holds back the requests behind it.
 
-Every backfill records `deadline_mono`, which `status` uses for `overdue`. A delaying one also records `delays_head`, `delay_bound_seconds` (the window so far) and `delay_limit_seconds`. `status` shows the bound and the limit for every backfill (0 and none for one that cannot delay its head). The bound relies on backfills keeping their declared limits; nothing is preempted.
+Every backfill records `deadline_mono`, which `status` uses for `overdue`. A delaying one also records `delays_head`, `delay_bound_seconds` (the window so far) and `delay_limit_seconds`. `status` shows the bound and the limit for every backfill (0 and none for one that cannot delay its head). The bound relies on backfills keeping their declared limits, which their own runners now enforce (below).
 
-The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations; the bounded-delay rule uses only the declared limits. `--max-seconds` is at most 30 days. Past it, `status` lists the claim under `backfill` with `overdue: true`; it is not stopped, suspended or preempted for that. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
+The guarantee covers claims ending. A timed reservation outranks the queue and can block any cores, so no backfill starts while one is held, and none can be proof against one acquired later. A later timed reservation suspends a backfill on its cores exactly as it suspends any other claim; backfill adds no suspension of its own. The no-delay check does not use durations; the bounded-delay rule uses only the declared limits. `--max-seconds` is at most 30 days. A request without `--max-seconds` waits its turn as before.
+
+**Past `--max-seconds`.** Every claim that declares `--max-seconds S` records its deadline (`deadline_mono`, `deadline_at`) and `on_overdue`. Once S has passed since admission, the claim's own runner applies `--on-overdue`:
+
+- `flag` (the default): it only marks the claim `overdue`. Today's callers pass `--max-seconds` as an estimate, so enforcement is opt-in. A flag request carries `backfill_policy` 0: it may still backfill when it cannot delay the head, but never with a bounded delay, because nothing would enforce the bound. So the #427 bounded-delay backfill now applies only to requests that opt into `demote` or `kill`. Changing the default later needs a note to every caller first.
+- `demote` (opt-in): it republishes the claim as background work (`background: true`, `overdue: true`). From then on every ordinary claim and timed hold may take its cores; it suspends while they hold them and resumes afterwards, exactly as CI does. Nothing is killed, and a delaying backfill can hold its head up only until its deadline plus one handoff. A shared claim first narrows to its guarantee. A demoted claim that cannot suspend completely makes a claim waiting for its cores give up after 60 s ("did not vacate", exit 6), the same exit a slow background claim causes today; demotion makes that exit possible on more cores.
+- `kill`: it ends the processes of its own job object, never itself and never another claim (each process is matched to the job by handle before it is ended), then releases the claim. The runner does this outside the admission mutex, with a 30 s limit, so other launchers keep admitting meanwhile. A member that refuses to die is recorded as `kill_failed`. Only a launcher that asks for it explicitly gets it.
+
+Timed work is never a claim, so none of this touches it. A human-facing claim (the play client, which passes `--max-seconds`) keeps the default `flag`. The #427 window is unchanged: no delaying backfill starts while an earlier one for the same head is overdue. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
 
 Deploying: ticket names are chosen under the admission mutex, but older versions choose them before taking it. Replace every deployed copy while no `host_slots_v1.py` process of any version is running, so no older launcher can publish an earlier-named ticket after a backfill is proved.
 
@@ -84,6 +92,7 @@ The optional file `<HOST>.slots/config.json` controls what claims may use:
 
 - `cores` lists the cores untimed work may use, in order of preference. The default is every logical CPU, highest-numbered first, so claims stay off the low-numbered P cores of hybrid Intel parts, which timed work usually declares.
 - `keep_free` is the number of those cores that are never handed out.
+- `ci_floor` (default 0) reserves the last that many cores in the preference order for background (CI) claims. Ordinary, shared and backfilled work never takes them; CI claims try them first and may also use any other free core. It is separate from `keep_free`, which no claim takes. A config without `ci_floor` keeps the digest older launchers compute.
 - `priority` is the default priority for claims.
 
 On the compute host, its owner's use comes first. Set `keep_free` so the owner always has room, and keep `below_normal`. Use `topology` to see which logical CPUs share a physical core and each core's efficiency class (P cores rank higher).
@@ -109,10 +118,83 @@ and avoids an admission deadlock when both generations share a registry.
 - On Linux (WSL runners, tests), containment is a process group. A process that leaves the group escapes affinity bookkeeping and suspension.
 - Cores above 63 (a second Windows processor group) are not supported.
 - During a v1 reclaim the lock is briefly absent, so claims may resume for one poll interval (2 s).
-# Per-request core pools
+## Per-request core pools
 
-`run` and `submit` accept `--core-pool 8-15` to restrict one request to those
-configured logical CPUs. The existing reservation, ordinary/background claims,
-queue order and shared mutex still govern admission. A request waits when its
-pool lacks room even if CPUs outside the pool are free. The host configuration
-is unchanged; omitting this option preserves the existing allocation behavior.
+`run`, `submit` and `adopt` accept `--core-pool 8-15 --pool-reason R` to restrict one request to those configured
+logical CPUs. R is one of `timing`, `isolation`, `determinism`, `play-client` or `hardware`, and is recorded on
+the ticket and claim and shown by `status`. A pool is a hard restriction: the request waits while its pool lacks
+room even if CPUs outside the pool are free, so a pool needs a reason. Until `POOL_REASON_REQUIRED_FROM` (2026-11-17,
+14 days after the deploy) a missing reason is accepted with a warning and recorded as `core_pool_reason:
+"unspecified"`, and the watcher nudges the owning lane; from that date it is refused (exit 2) before any ticket is
+written. Without a reason, drop the pool and the scheduler places the job. The reservation, ordinary and background claims, queue order and the shared mutex still
+govern admission, and the host configuration is unchanged.
+
+## Shared claims: lend what you do not use
+
+```
+python host_slots_v1.py run --shared --cores 8 --min-cores 1 --lane LANE --work-id WORK -- cargo build --release -j 8
+```
+
+A shared claim guarantees `--min-cores` cores (default 1; it queues for those, so the queue and backfill see an
+M-core request) and runs on up to `--cores`. The cores beyond its guarantee are lent:
+
+- Any later claim may take a lent core. The shared claim narrows its job's affinity off that core and only then
+  republishes its cores; the later claim starts its command after that (the same handshake as with background
+  claims, at most one or two polls).
+- While any request is queued, a shared claim gives back every lent core, so it lends only while nobody waits. It
+  also gives back lent cores that timed work declares, and enough of them to keep the occupied cores within the
+  configured cores minus `keep_free`.
+- While nothing is queued, it grows (every 10 s at most) onto cores no claim of any class runs on, within
+  `keep_free` and its own pool. It never takes a background claim's cores.
+- Timed work that overlaps its guaranteed cores suspends it exactly like any claim.
+
+Use it for release builds, clippy, test compiles and other bursty work. Never use it for timing, isolation or
+deterministic studies: their cores must stay exclusive, so they stay ordinary claims (or `timed`). The command's
+`HOST_SLOTS_CORES` names only the guarantee, since the rest can be taken back at any time. Tools size their
+parallelism once at start, so pass the job count (`cargo build -j N`).
+
+Shared claims are off on a host until its `config.json` says `"lending": true` (kept out of the config digest).
+Without it, `--shared` exits 2 before any ticket. Set it only after an inventory shows that every copy of this tool
+that can queue on that host is c543e1b4 (mtg-kernel e2657b8c, #427) or later: older backfill engines, the #407
+one included, do not honor the lending marker below. As a runtime guard, lenders also give back everything and
+stop growing while an older backfill engine shows itself (a queued request with a limit but no
+`backfill_policy`, or a backfill claim without `deadline_mono`). That guard cannot see an older copy before it
+queues, so the config gate is what keeps such copies away.
+
+Records: `shared`, `guaranteed`, `max_cores`, and `cores` (the current affinity). Older launchers read only
+`cores`, so they treat a shared claim's whole current affinity as held and never land on a lent core. While a
+shared claim lends any core it keeps `delay-lending-<claim id>.json` in the slots folder. The file is deliberately
+not a JSON object: every backfill engine at or after c543e1b4 refuses to backfill while a delay file cannot be read,
+so none of them proves a backfill while a lent core could still be given back. The marker is created before any lent
+core is published and removed only once the read-back record lends nothing. This version skips the markers when
+reading, and it (and `status`) removes any whose claim is gone.
+
+## Utilization watcher
+
+```
+python host_slots_v1.py watch [--interval 30] [--once] [--duration S] [-- NOTIFY_CMD...]
+python host_slots_v1.py watch-report [--since ISO] [--until ISO]
+```
+
+`watch` samples per-CPU busy time (Windows `NtQuerySystemInformation`, Linux `/proc/stat`) and the slot records,
+without the admission mutex and without deleting anything, and never changes a claim. It writes to
+`<root>/<HOST>.util/`:
+
+- `util-YYYYMMDD.jsonl`, one line per sample: per-CPU busy fraction and holder kind (timed, held, guaranteed,
+  lent, background, unclaimed; first match wins), the queue with each ticket's cause, and the integrals
+  `capacity_cs`, `idle_cs` by kind, `eligible_idle_cs` (idle capacity queued tickets were allowed to use, taken in
+  queue order without double counting and attributed to their causes; an upper bound, since a request is
+  indivisible) and `coincident_idle_cs`; plus a `claim_end` line with each claim's busy and held core-seconds;
+- `nudges.jsonl`, one line per new flag, and `watch-state.json`, whose current flags `status` shows as `watch`.
+
+Flags: `low_use`, a running ordinary claim whose held cores average under 30% busy for 10 minutes (an 8-core build
+with one busy CPU is 12.5%); `queued_idle`, a ticket queued 60 s while a core is unclaimed beyond `keep_free`, with
+its cause (`pool`, `head_of_line`, `no_max_seconds`, `timed`, `keep_free`, `too_few_free`). With a notify command
+(for example collab `tools/fleet_note.py`), each new flag runs it with `--to LANE --title T --body B --sender
+"host_slots watch"`, at most 6 per hour.
+
+Runners also append `admit`, `start` and `end` events to `events-YYYYMMDD.jsonl` (lane, cores, queued seconds,
+`took_lent`, and `old_rules_room`: whether the rules before shared claims had room on the same snapshot). A failed
+append never blocks a claim, so event counts are lower bounds. `watch-report` sums both logs: observed hours and
+coverage, queued hours, mean utilization, eligible idle core-hours per queued hour and by cause, shared share of
+claimed CPU time, lent transfers, handoff time and censored admissions.

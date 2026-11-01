@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -250,6 +251,9 @@ class SuspensionHandshakeTests(unittest.TestCase):
                         patch.object(slots, "Mutex", TestMutex), \
                         patch.object(slots, "conflicts", side_effect=[False, True, False]), \
                         patch.object(slots, "_set_state_locked", side_effect=publish), \
+                        patch.object(slots, "background_busy", return_value=False), \
+                        patch.object(slots, "_budget_wait", return_value=False), \
+                        patch.object(slots, "_event"), \
                         patch.object(slots.time, "sleep"), \
                         patch.object(slots.signal, "signal"):
                     self.assertEqual(slots._run_claimed(claim, [0], "normal", ["probe"], None, "x"), 0)
@@ -331,7 +335,8 @@ class HostSlotsTests(unittest.TestCase):
         self.addCleanup(env.stop)
         os.environ.pop(slots.TOKEN_ENV, None)
         (root / "TESTHOST.slots").mkdir()
-        slots.write_json(root / "TESTHOST.slots/config.json", {"cores": ",".join(map(str, reversed(CPUS)))})
+        slots.write_json(root / "TESTHOST.slots/config.json", {"cores": ",".join(map(str, reversed(CPUS))),
+                                                                "lending": True})
         self.host, self.tmp_path = root, tmp_path
 
     @needs_two
@@ -341,7 +346,7 @@ class HostSlotsTests(unittest.TestCase):
                          {"cores": ",".join(map(str, reversed(CPUS))), "keep_free": 1})
         probe = script(self.tmp_path, "pool.py", "print(json.dumps({'affinity': h.current_affinity()}))\n")
         arguments = ["run", "--lane", "pool", "--work-id", "bounded", "--cores", "1",
-                     "--core-pool", str(chosen), "--", sys.executable, probe]
+                     "--core-pool", str(chosen), "--pool-reason", "isolation", "--", sys.executable, probe]
         proc = cli(*arguments)
         out, err = proc.communicate(timeout=60)
         self.assertEqual(proc.returncode, 0, err)
@@ -902,8 +907,10 @@ class BackfillAdmissionTests(unittest.TestCase):
         with patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
                 slots.read_json(claim)) or 0):
             slots.run("probe", "plain", 1, ["unused"], claim_id="d" * 32)
+        # Additive only: when it queued and how long (no backfill, shared or pool fields).
         self.assertEqual(set(seen[0]), {"schema", "id", "lane", "work_id", "pid", "creation_time", "background",
-                                        "cores", "priority", "state", "acquired_at"})
+                                        "cores", "priority", "state", "acquired_at", "enqueued_at",
+                                        "queued_seconds"})
 
     def test_run_records_the_bounded_terms_and_the_window(self):
         # review r1: through run(), not only the admission function
@@ -925,7 +932,8 @@ class BackfillAdmissionTests(unittest.TestCase):
         with patch.object(slots, "backfill_admission", side_effect=admission), \
                 patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
                     slots.read_json(claim)) or 0):
-            slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, max_seconds=60.0)
+            slots.run("probe", "bf", 1, ["unused"], claim_id="b" * 32, wait=True, max_seconds=60.0,
+                      on_overdue="demote")   # a bounded delay needs an enforced limit
         claim = seen[0]
         self.assertEqual((claim["head_id"], claim["delays_head"], claim["delay_bound_seconds"],
                           claim["delay_limit_seconds"], claim["deadline_mono"]), (head_id, head_id, 60.0, 360.0, 1060.0))
@@ -1224,6 +1232,1044 @@ class BackfillProcessTests(unittest.TestCase):
                 if waiter.poll() is None:
                     waiter.kill()
                     waiter.wait(timeout=30)
+
+
+# ---------------------------------------------------------------- shared claims, pool reasons, watcher
+
+
+def shared(cid, guaranteed, cores, state="running", **extra):
+    return {"id": cid, "shared": True, "guaranteed": guaranteed, "cores": cores, "state": state,
+            "background": False, **extra}
+
+
+CONFIG4 = {"cores": [0, 1, 2, 3], "keep_free": 1, "priority": "below_normal"}
+
+
+class SharedPolicyTests(unittest.TestCase):
+    """A shared claim holds its guarantee and lends the rest of its current cores."""
+
+    def test_lent_cores_are_free_to_ordinary_and_background_requests(self):
+        claim = shared("s", [7], [7, 6, 5, 4])
+        assert slots.held(claim) == [7] and slots.lent(claim) == [6, 5, 4]
+        assert slots.available(config8(), FREE, [claim], background=False) == [6, 5, 4, 3, 2, 1, 0]
+        assert slots.available(config8(), FREE, [claim]) == [6, 5, 4, 3, 2, 1, 0]
+        # growth sees only cores no claim runs on
+        assert slots.unclaimed(config8(), FREE, [claim]) == [3, 2, 1, 0]
+
+    def test_a_malformed_guarantee_holds_every_core(self):
+        for bad in (None, [], [9], [7, 7], [True], "7"):
+            claim = shared("s", bad, [7, 6])
+            assert slots.held(claim) == [7, 6] and slots.lent(claim) == []
+        assert slots.held({"cores": [3, 2], "guaranteed": [3]}) == [3, 2]  # only a shared record lends
+
+    def test_give_back_covers_timed_work_and_every_other_claim(self):
+        me = shared("s", [7], [7, 6, 5, 4])
+        assert slots.give_back(me, {"held": True, "cores": [6]}, [me]) == [6]
+        assert slots.give_back(me, {"held": True, "cores": None}, [me]) == [4, 5, 6]
+        assert slots.give_back(me, FREE, [me, {"id": "o", "cores": [5]}]) == [5]
+        assert slots.give_back(me, FREE, [me, {"id": "b", "cores": [4], "background": True}]) == [4]
+        # another shared claim's guarantee takes a lent core; its own lent cores never overlap by construction
+        assert slots.give_back(me, FREE, [me, shared("t", [5], [5, 3])]) == [5]
+        assert slots.give_back(me, FREE, [me, shared("t", [3], [3, 2])]) == []
+
+    def test_every_lent_core_goes_back_while_anything_is_queued(self):
+        me = shared("s", [7], [7, 6, 5])
+        assert slots.give_back(me, FREE, [me], config8(), queued=True) == [5, 6]
+        assert slots.give_back(me, FREE, [me], config8(), queued=False) == []
+
+    def test_keep_free_is_never_consumed_through_lending(self):
+        # review v1 #1: four CPUs, keep_free 1, S guarantees 0 and lends 1 and 2, a request restricted to 3
+        lender = shared("s", [0], [0, 1, 2])
+        assert slots.available(CONFIG4, FREE, [lender], core_pool=[3]) == [3]
+        claims = [lender, {"id": "o", "cores": [3], "state": "suspended"}]
+        assert slots.over_budget(CONFIG4, claims) == 1
+        assert slots.budget_pending(CONFIG4, claims, "o")      # the new claim waits
+        assert slots.give_back(lender, FREE, claims, CONFIG4) == [2]  # least preferred lent core first
+        claims[0] = shared("s", [0], [0, 1])
+        assert slots.over_budget(CONFIG4, claims) == 0 and not slots.budget_pending(CONFIG4, claims, "o")
+        # a lender that gave everything back no longer holds anyone up
+        claims[0] = shared("s", [0], [0])
+        claims.append({"id": "x", "cores": [1, 2]})
+        assert slots.over_budget(CONFIG4, claims) == 1 and not slots.budget_pending(CONFIG4, claims, "o")
+
+    def test_suspended_background_claims_count_against_the_budget(self):
+        # review v2 #2: a suspended background claim resumes on its own, so growth leaves it room
+        background = {"id": "b", "cores": [2], "background": True, "state": "suspended"}
+        assert slots.unclaimed(CONFIG4, FREE, [background, shared("s", [0], [0])]) == [1]
+        assert slots.over_budget(CONFIG4, [background, shared("s", [0], [0, 1, 3])]) == 1
+
+    def test_no_backfill_is_proved_while_any_core_is_lent(self):
+        # review v1 #2 and v2 #3: lender handoffs never enter a backfill proof
+        config = {"cores": [4, 3, 2, 1, 0], "keep_free": 0, "priority": "below_normal"}
+        head = ticket("head", 3, None, core_pool=[1, 2, 3, 4])
+        claims = [{"id": "c", "cores": [4, 3]}, shared("s", [0], [0, 1])]
+        assert admits(config, FREE, claims, [head, ticket("b", 1)], "b") is None
+        claims[1] = {"id": "s", "cores": [0]}       # the same host without lending
+        assert admits(config, FREE, claims, [head, ticket("b", 1)], "b") == [2]
+        claims[1] = shared("s", [0], [0], state="suspended")
+        assert admits(config, FREE, claims, [head, ticket("b", 1)], "b") == [2]
+
+    def test_the_head_counts_lent_cores_and_budget_room_as_handoffs(self):
+        config = {"cores": [3, 2, 1, 0], "keep_free": 1, "priority": "below_normal"}
+        lender = shared("s", [0], [0, 1])
+        assert slots._head_start(config, FREE, [lender], ticket("h", 2, None)) == ({3, 2}, {-1})
+        assert slots._head_start(config, FREE, [lender], ticket("h", 3, None)) is None
+        assert slots._head_start(config8(), FREE, [shared("s", [7], [7, 6])], ticket("h", 2, None)) == ({6, 5}, {6})
+
+    def test_a_shared_request_starts_wide_only_when_nothing_else_is_queued(self):
+        base = {"id": "x", "shared": True, "max_cores": 4, "background": False}
+        record = slots._claim_record(base, [7], "below_normal", "a", "e", 0.0, config8(), FREE, [], None, True)
+        assert record["guaranteed"] == [7] and record["cores"] == [4, 5, 6, 7]
+        record = slots._claim_record(base, [7], "below_normal", "a", "e", 0.0, config8(), FREE, [], None, False)
+        assert record["guaranteed"] == [7] and record["cores"] == [7]
+        record = slots._claim_record({"id": "y", "background": False}, [5], "below_normal", "a", "e", 1.25,
+                                     config8(), FREE, [shared("s", [7], [7, 6, 5])], None, True)
+        assert record["took_lent"] == [5] and record["queued_seconds"] == 1.25 and "guaranteed" not in record
+
+    def test_old_rules_room_holds_every_core_and_asks_for_the_shared_maximum(self):
+        claims = [shared("s", [7], [7, 6, 5, 4, 3, 2])]
+        plain = {"background": False}
+        assert slots.old_rules_room(config8(), FREE, claims, plain, 2, None)
+        assert not slots.old_rules_room(config8(), FREE, claims, plain, 3, None)
+        assert not slots.old_rules_room(config8(), FREE, claims, {**plain, "shared": True, "max_cores": 4}, 1, None)
+
+
+
+class SharedStepTests(unittest.TestCase):
+    """The shared runner's give-back and growth step against real records."""
+    setUp = HostSlotsTests.setUp
+
+    class FakeTree:
+        def __init__(self, cores, ok=True):
+            self.cores, self.ok, self.calls = sorted(cores), ok, []
+
+        def set_cores(self, cores):
+            self.calls.append(sorted(cores))
+            if self.ok:
+                self.cores = sorted(cores)
+            return self.ok
+
+    def write(self, name, record):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/{name}.json", {"pid": pid, "creation_time": creation, **record})
+
+    def step(self, tree, grow):
+        claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+        with slots.Mutex():
+            ok = slots._share_step(tree, claim, "5" * 32, {"guaranteed": [7], "max_cores": 4, "pool": None},
+                                   grow=grow)
+        return ok, slots.read_json(claim)
+
+    def test_growth_waits_for_an_empty_queue_and_every_lent_core_goes_back_meanwhile(self):
+        # review v1 #3: a queued head (of any launcher) never finds lent or newly grown cores
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7, 6]))
+            self.write(f"queue-00000000000000000001-{'6' * 32}", {"id": "6" * 32, "cores_wanted": 3})
+            tree = self.FakeTree([7, 6])
+            ok, record = self.step(tree, grow=True)
+            assert ok and tree.cores == [7] and record["cores"] == [7]
+            (self.host / f"TESTHOST.slots/queue-00000000000000000001-{'6' * 32}.json").unlink()
+            ok, record = self.step(tree, grow=True)
+            assert ok and tree.cores == [4, 5, 6, 7] and record["cores"] == [4, 5, 6, 7]
+            ok, record = self.step(tree, grow=False)      # nothing taken, nothing given back
+            assert tree.calls[-1] == [4, 5, 6, 7] and record["cores"] == [4, 5, 6, 7]
+
+    def test_a_failed_narrowing_publishes_nothing_and_reports_failure(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7, 6]))
+            self.write(f"claim-{'7' * 32}", {"id": "7" * 32, "cores": [6], "state": "suspended"})
+            tree = self.FakeTree([7, 6], ok=False)
+            ok, record = self.step(tree, grow=False)
+            assert not ok and record["cores"] == [7, 6]
+
+
+class PlacementOptionTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def assert_usage(self, *args, needle):
+        proc = cli(*args, "--", sys.executable, "-c", "pass")
+        _, err = proc.communicate(timeout=60)
+        assert proc.returncode == slots.EXIT_USAGE, err
+        assert needle in err, err
+        assert not list((self.host / "TESTHOST.slots").glob("queue-*.json"))
+        assert not list((self.host / "TESTHOST.slots").glob("claim-*.json"))
+
+    def test_options_that_could_leave_cores_idle_or_break_exclusivity_are_refused_before_any_ticket(self):
+        base = ("--lane", "p", "--work-id", "w", "--cores", "1")
+        # after the pool-reason transition (see PoolReasonTransitionTests for the window itself)
+        late = patch.dict(os.environ, {"HOST_SLOTS_TODAY": "2026-12-01"})
+        late.start()
+        self.addCleanup(late.stop)
+        self.assert_usage("run", *base, "--core-pool", str(CPUS[0]), needle="--pool-reason")
+        self.assert_usage("submit", "--log", str(self.tmp_path / "s.log"), *base, "--core-pool", str(CPUS[0]),
+                          needle="--pool-reason")
+        self.assert_usage("run", *base, "--pool-reason", "timing", needle="only with --core-pool")
+        self.assert_usage("run", *base, "--min-cores", "1", needle="only with --shared")
+        self.assert_usage("run", *base, "--shared", "--background", needle="ordinary claims")
+        assert not (self.tmp_path / "s.log").exists()
+        with self.assertRaises(ValueError):
+            slots.run("p", "w", 1, ["unused"], core_pool=[CPUS[0]])
+        with self.assertRaises(ValueError):
+            slots.run("p", "w", 1, ["unused"], shared=True, min_cores=2)
+        with self.assertRaises(ValueError):
+            slots.run("p", "w", 1, ["unused"], adopted={"pid": 1, "creation": 1})
+
+    def test_the_reason_is_recorded(self):
+        seen = []
+        with patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                slots.read_json(claim)) or 0):
+            slots.run("p", "w", 1, ["unused"], core_pool=[CPUS[0]], pool_reason="timing")
+        assert seen[0]["core_pool"] == [CPUS[0]] and seen[0]["core_pool_reason"] == "timing"
+        assert seen[0]["cores"] == [CPUS[0]] and "prefer_cores" not in seen[0]
+        events = [json.loads(line) for path in (self.host / "TESTHOST.util").glob("events-*.jsonl")
+                  for line in path.read_text().splitlines()]
+        assert [e["event"] for e in events] == ["admit", "end"] and events[0]["old_rules_room"] is True
+
+
+def affinity_probe(tmp_path):
+    """A script that publishes its pid, then its affinity every 20 ms until its release file exists."""
+    return script(tmp_path, "affinity-probe.py",
+                  "from pathlib import Path\n"
+                  "Path(sys.argv[1] + '.pid').write_text(str(os.getpid()))\n"
+                  "while not Path(sys.argv[2]).exists():\n"
+                  "    h.write_json(Path(sys.argv[1]), {'affinity': h.current_affinity()})\n"
+                  "    time.sleep(0.02)\n")
+
+
+def other_affinity(tmp_path):
+    """A script that records another process's exact affinity at its own start, then holds until released."""
+    return script(tmp_path, "other-affinity.py",
+                  "from pathlib import Path\n"
+                  "pid = int(Path(sys.argv[1]).read_text())\n"
+                  "if os.name == 'nt':\n"
+                  "    import ctypes\n"
+                  "    k = ctypes.WinDLL('kernel32', use_last_error=True)\n"
+                  "    k.OpenProcess.restype = ctypes.c_void_p\n"
+                  "    hp = k.OpenProcess(0x1000, False, pid)\n"
+                  "    a, s = ctypes.c_size_t(0), ctypes.c_size_t(0)\n"
+                  "    k.GetProcessAffinityMask(ctypes.c_void_p(hp), ctypes.byref(a), ctypes.byref(s))\n"
+                  "    seen = [i for i in range(64) if a.value >> i & 1]\n"
+                  "else:\n"
+                  "    seen = sorted(os.sched_getaffinity(pid))\n"
+                  "h.write_json(Path(sys.argv[2]), {'other': seen, 'mine': h.current_affinity()})\n"
+                  "while not Path(sys.argv[3]).exists(): time.sleep(0.02)\n")
+
+
+class SharedProcessTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def affinity(self, path):
+        record = slots.read_json(path)
+        return None if record is None else record["affinity"]
+
+    def shared_claim(self):
+        return next(c for c in slots.status()["claims"] if c["lane"] == "s")
+
+    @needs_two
+    def test_a_shared_claim_lends_narrows_before_the_borrower_starts_and_grows_back(self):
+        os.environ[slots.GROW_ENV] = "0.2"
+        self.addCleanup(os.environ.pop, slots.GROW_ENV, None)
+        seen, release = self.tmp_path / "shared-affinity.json", self.tmp_path / "shared-release"
+        report, borrow_release = self.tmp_path / "borrower.json", self.tmp_path / "borrower-release"
+        build = cli("run", "--shared", "--cores", str(len(CPUS)), "--lane", "s", "--work-id", "build", "--",
+                    sys.executable, affinity_probe(self.tmp_path), str(seen), str(release))
+        borrower = None
+        try:
+            assert wait_for(lambda: self.affinity(seen) == sorted(CPUS)), self.affinity(seen)
+            claim = self.shared_claim()
+            assert claim["guaranteed"] == [max(CPUS)] and claim["cores"] == sorted(CPUS)
+            borrower = cli("run", "--lane", "o", "--work-id", "w", "--cores", str(len(CPUS) - 1), "--",
+                           sys.executable, other_affinity(self.tmp_path), str(seen) + ".pid", str(report),
+                           str(borrow_release))
+            assert wait_for(report.exists, timeout=30)
+            at_start = slots.read_json(report)
+            # the lender's whole process had narrowed to its guarantee before the borrower's command started
+            assert at_start["other"] == [max(CPUS)], at_start
+            assert not set(at_start["other"]) & set(at_start["mine"])
+            assert self.shared_claim()["cores"] == [max(CPUS)]
+            borrow_release.write_text("go")
+            assert borrower.wait(timeout=60) == 0
+            assert wait_for(lambda: self.affinity(seen) == sorted(CPUS), timeout=30), self.affinity(seen)
+        finally:
+            borrow_release.write_text("go")
+            release.write_text("go")
+            if borrower is not None:
+                borrower.wait(timeout=60)
+            assert build.wait(timeout=60) == 0
+
+    @needs_two
+    def test_timed_work_proceeds_once_a_shared_claim_narrows_off_its_cores(self):
+        seen, release = self.tmp_path / "shared-affinity.json", self.tmp_path / "shared-release"
+        report, timed_release = self.tmp_path / "timed.json", self.tmp_path / "timed-release"
+        build = cli("run", "--shared", "--cores", str(len(CPUS)), "--lane", "s", "--work-id", "build", "--",
+                    sys.executable, affinity_probe(self.tmp_path), str(seen), str(release))
+        try:
+            assert wait_for(lambda: self.affinity(seen) == sorted(CPUS))
+            lock(self.host)
+            timed_release.write_text("go")
+            proc = cli("timed", "--cores", str(min(CPUS)), "--", sys.executable, other_affinity(self.tmp_path),
+                       str(seen) + ".pid", str(report), str(timed_release),
+                       env=dict(os.environ, **{slots.TOKEN_ENV: TOKEN}))
+            out, err = proc.communicate(timeout=60)
+            assert proc.returncode == 0, err
+            at_start = slots.read_json(report)
+            assert min(CPUS) not in at_start["other"] and at_start["mine"] == [min(CPUS)], at_start
+            # the held lock without a declaration reserves the whole host again
+            assert wait_for(lambda: self.shared_claim()["state"] == "suspended")
+            (self.host / "TESTHOST.lock").unlink()
+            assert wait_for(lambda: self.shared_claim()["state"] == "running")
+        finally:
+            (self.host / "TESTHOST.lock").unlink(missing_ok=True)
+            release.write_text("go")
+            assert build.wait(timeout=60) == 0
+
+
+def sample(state, i, busy, claims=(), tickets=(), config=None, timed=FREE, interval=30.0, mono=None):
+    """Watcher sample i (every `interval` seconds) with each CPU busy at a steady fraction since time 0."""
+    mono = (i + 1) * interval if mono is None else mono
+    counters = {cpu: (int(b * mono * 1000), int(mono * 1000)) for cpu, b in busy.items()}
+    wall = (datetime(2026, 10, 31, tzinfo=timezone.utc) + timedelta(seconds=mono)).isoformat(timespec="milliseconds")
+    return slots.watch_tick(state, counters, mono, wall, config or config8(), timed, list(claims), list(tickets),
+                            interval=interval)
+
+
+class WatcherTests(unittest.TestCase):
+    """The watcher's sample function on synthetic counters."""
+
+    def tick(self, *args, **kwargs):
+        return sample(*args, **kwargs)
+
+    def test_a_build_with_one_busy_core_of_eight_is_flagged_once_after_ten_minutes(self):
+        # review v1 #7: aggregate busy over the held cores, not every core under the threshold
+        claim = {"id": "b", "lane": "L", "work_id": "build", "cores": list(range(8)), "state": "running"}
+        busy = {cpu: (1.0 if cpu == 7 else 0.0) for cpu in range(8)}
+        state, nudged_at = {}, []
+        for i in range(25):
+            state, lines, nudges = self.tick(state, i, busy, [claim])
+            nudged_at += [i for n in nudges if n["kind"] == "low_use"]
+        assert nudged_at == [20], nudged_at       # first measured at 60 s, its run starts at 30 s, 600 s later
+        assert state["flags"][0]["busy_cores"] == 1.0 and "--shared" in state["flags"][0]["detail"]
+        half = {cpu: 0.5 for cpu in range(8)}
+        state = {}
+        for i in range(25):
+            state, _, nudges = self.tick(state, i, half, [claim])
+            assert not nudges
+
+    def test_shared_and_background_claims_are_judged_by_what_they_hold(self):
+        lender = shared("s", [7], [7, 6, 5], lane="L", work_id="build")
+        background = {"id": "c", "lane": "ci", "work_id": "ci", "cores": [0], "background": True, "state": "running"}
+        busy = {cpu: (1.0 if cpu == 7 else 0.0) for cpu in range(8)}
+        state = {}
+        for i in range(25):
+            state, _, nudges = self.tick(state, i, busy, [lender, background])
+            assert not nudges   # the guarantee is busy; lent and background cores are never flagged
+
+    def test_a_queued_ticket_beside_unclaimed_cores_is_flagged_with_its_cause(self):
+        claims = [{"id": "x", "lane": "o", "work_id": "o", "cores": [0], "state": "running"}]
+        pooled = {**ticket("t" * 32, 2, None, core_pool=[0, 1]), "lane": "bench", "work_id": "b",
+                  "core_pool_reason": "timing"}
+        busy = {cpu: 1.0 for cpu in range(8)}
+        state, flagged = {}, []
+        for i in range(4):
+            state, lines, nudges = self.tick(state, i, busy, claims, [pooled])
+            flagged += [(i, n["cause"]) for n in nudges if n["kind"] == "queued_idle"]
+        assert flagged == [(2, "pool")], flagged
+        assert lines[0]["queue"][0]["cause"] == "pool"
+        assert "reason timing" in state["flags"][0]["detail"]
+
+    def test_queue_causes_follow_the_admission_view(self):
+        config = config8(keep_free=2)
+        claims = [{"cores": [7, 6, 5, 4]}]
+        head = ticket("h", 3, None)
+        assert slots.queue_cause(config, FREE, claims, [head], head) == "keep_free"
+        small, plain = ticket("s", 1), ticket("p", 1, None)
+        assert slots.queue_cause(config, FREE, claims, [head, small, plain], small) == "head_of_line"
+        assert slots.queue_cause(config, FREE, claims, [head, small, plain], plain) == "no_max_seconds"
+        timed = {"held": True, "cores": [3, 2]}
+        assert slots.queue_cause(config8(), timed, claims, [head], head) == "timed"
+        assert slots.queue_cause(config8(), FREE, [{"cores": list(range(7))}], [head], head) == "too_few_free"
+        assert slots.queue_cause(config8(), FREE, [], [head], head) == "starting"
+
+    def test_gaps_and_reboots_measure_nothing_and_restart_low_use_runs(self):
+        claim = {"id": "b", "lane": "L", "work_id": "build", "cores": list(range(8)), "state": "running"}
+        idle = {cpu: 0.0 for cpu in range(8)}
+        state = {}
+        for i in range(10):
+            state, lines, _ = self.tick(state, i, idle, [claim])
+        assert lines[0]["dt"] == 30.0 and "b" in state["low"]
+        state, lines, _ = self.tick(state, 0, idle, [claim], mono=10 * 30.0 + 91)   # more than 3 intervals
+        assert lines[0]["dt"] is None and "capacity_cs" not in lines[0] and state["low"] == {}
+        state, lines, _ = self.tick(state, 0, idle, [claim], mono=5.0)               # monotonic went back
+        assert lines[0]["dt"] is None and state["low"] == {}
+
+    def test_holder_kinds_take_the_first_match(self):
+        config = {"cores": [3, 2, 1, 0], "keep_free": 0, "priority": "below_normal"}
+        claims = [shared("s", [3], [3, 2, 1]), {"cores": [1], "background": True}, {"cores": [0]}]
+        assert slots.holders(config, {"held": True, "cores": [0]}, claims) == {
+            3: "guaranteed", 2: "lent", 1: "lent", 0: "timed"}
+        assert slots.holders(config, FREE, [{"cores": [2]}, {"cores": [2, 1], "background": True}]) == {
+            3: "unclaimed", 2: "held", 1: "background", 0: "unclaimed"}
+
+    def test_capacity_and_eligible_idle_match_admission_and_conserve(self):
+        # review v2 #7: four CPUs, keep_free 1, one timed CPU: available() hands out three
+        config = CONFIG4
+        idle = {cpu: 0.0 for cpu in range(4)}
+        state, _, _ = self.tick({}, 0, idle, config=config, timed={"held": True, "cores": [3]})
+        _, lines, _ = self.tick(state, 1, idle, config=config, timed={"held": True, "cores": [3]})
+        assert lines[0]["capacity_cs"] == 90.0
+        state, _, _ = self.tick({}, 0, idle, config=config, timed={"held": True, "cores": None})
+        _, lines, _ = self.tick(state, 1, idle, config=config, timed={"held": True, "cores": None})
+        assert lines[0]["capacity_cs"] == 0.0 and lines[0]["idle_cs"] == 0.0
+        # two tickets: a pooled one on CPU 0 and an open one; idle is shared out without double counting
+        config = {"cores": [3, 2, 1, 0], "keep_free": 0, "priority": "below_normal"}
+        tickets = [ticket("a", 2, None, core_pool=[0]), ticket("b", 2, None)]
+        claims = [{"id": "x", "cores": [3, 2, 1, 0], "state": "running"}]
+        state, _, _ = self.tick({}, 0, idle, claims, tickets, config=config)
+        _, lines, _ = self.tick(state, 1, idle, claims, tickets, config=config)
+        line = lines[0]
+        assert line["idle_cs"] == 120.0 and line["coincident_idle_cs"] == 120.0
+        assert line["eligible_idle_cs"] == 90.0          # a may use CPU 0 only, b takes two more
+        assert sum(line["eligible_idle_by_cause"].values()) == line["eligible_idle_cs"]
+
+    def test_claim_ends_are_logged_with_their_busy_cores(self):
+        claim = {"id": "b", "lane": "L", "work_id": "build", "cores": [7, 6], "state": "running"}
+        busy = {7: 1.0, 6: 0.5, **{cpu: 0.0 for cpu in range(6)}}
+        state = {}
+        for i in range(3):
+            state, _, _ = self.tick(state, i, busy, [claim])
+        _, lines, _ = self.tick(state, 3, busy, [])
+        end = [line for line in lines if line["event"] == "claim_end"][0]
+        assert end["id"] == "b" and end["mean_busy_cores"] == 1.5 and end["mean_held_cores"] == 2.0
+
+
+class WatcherProcessTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def test_a_bad_config_is_logged_and_never_stops_a_long_watch(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "999"})
+        assert slots.watch(once=True) == slots.EXIT_REFUSED
+        rows = [json.loads(line) for path in (self.host / "TESTHOST.util").glob("util-*.jsonl")
+                for line in path.read_text().splitlines()]
+        assert [row["event"] for row in rows] == ["error"] and "999" in rows[0]["error"]
+        with patch.object(slots.time, "sleep", side_effect=[None, StopIteration]):
+            with self.assertRaises(StopIteration):
+                slots.watch(interval=1.0)
+
+    def test_watch_status_events_and_report(self):
+        proc = cli("run", "--shared", "--cores", "1", "--lane", "r", "--work-id", "w", "--",
+                   sys.executable, "-c", "pass")
+        assert proc.wait(timeout=60) == 0
+        for _ in range(2):
+            proc = cli("watch", "--once")
+            out, err = proc.communicate(timeout=60)
+            assert proc.returncode == 0, err
+        watch = slots.status()["watch"]
+        assert watch is not None and watch["stale"] is False and watch["flags"] == []
+        folder = self.host / "TESTHOST.util"
+        samples = [json.loads(line) for path in folder.glob("util-*.jsonl") for line in path.read_text().splitlines()]
+        assert [s["dt"] is None for s in samples] == [True, False]
+        proc = cli("watch-report")
+        out, err = proc.communicate(timeout=60)
+        assert proc.returncode == 0, err
+        report = json.loads(out)
+        assert report["admits"] == report["starts"] == report["ends"] == 1 and report["censored_admits"] == 0
+        assert report["samples"] == 1 and report["events_are_lower_bounds"] is True
+        assert report["handoff_seconds_max"] is not None and report["handoff_seconds_max"] >= 0
+
+
+def e2657b8c_engine():
+    """The deployed backfill engine before shared claims (mtg-kernel e2657b8c), loaded from git, or None when the
+    checkout lacks that commit (a shallow CI clone)."""
+    try:
+        source = subprocess.run(["git", "-C", str(TOOLS), "show", "e2657b8c:python/tools/host_slots_v1.py"],
+                                capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if source.returncode != 0:
+        return None
+    folder = Path(tempfile.mkdtemp(prefix="hs-e2657b8c-"))
+    (folder / "host_slots_e2657b8c.py").write_bytes(source.stdout)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("host_slots_e2657b8c", folder / "host_slots_e2657b8c.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class LendingMarkerTests(unittest.TestCase):
+    """While anything is lent, a deliberately unreadable delay file stops every backfill engine."""
+    setUp = HostSlotsTests.setUp
+
+    def write(self, name, record):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/{name}.json", {"pid": pid, "creation_time": creation, **record})
+
+    def test_the_marker_is_unreadable_to_older_engines_and_skipped_by_this_one(self):
+        self.write(f"claim-{'5' * 32}", shared("5" * 32, [CPUS[-1]], [CPUS[-1]]))
+        with slots.Mutex():
+            slots._set_lending_marker("5" * 32, True)
+            snap = slots._snapshot()
+        assert slots.read_json(slots._marker_path("5" * 32)) is None and slots._marker_path("5" * 32).exists()
+        assert snap["unreadable"] == set() and not any(n.startswith("delay-") for n in snap["names"])
+        (self.host / f"TESTHOST.slots/claim-{'5' * 32}.json").unlink()
+        with slots.Mutex():
+            slots._snapshot()            # its claim is gone: the marker goes too
+        assert not slots._marker_path("5" * 32).exists()
+
+    def test_an_old_head_and_old_backfiller_never_pass_a_new_lender(self):
+        # review v3 #1: four CPUs, S guarantees 0 and lends 1 and 2, an old three-core head, an old one-core backfill
+        old = e2657b8c_engine()
+        if old is None:
+            self.skipTest("mtg-kernel e2657b8c is not in this checkout")
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "0-3", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=4), patch.object(old, "cpu_total", return_value=4):
+            config = old.load_config()
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [0], [0, 1, 2]))
+            with slots.Mutex():
+                slots._set_lending_marker("5" * 32, True)
+            self.write(f"queue-00000000000000000001-{'6' * 32}", {
+                "schema": slots.SCHEMA, "id": "6" * 32, "lane": "l", "work_id": "head", "cores_wanted": 3,
+                "background": False, "config_sha256": old.config_digest(config)})
+            ran = []
+            with patch.object(old, "_run_claimed", side_effect=lambda *a, **k: ran.append(a[1]) or 0):
+                with self.assertRaises(old.NoRoom):
+                    old.run("l", "small", 1, ["unused"], max_seconds=99999.0)
+                assert ran == []
+                # the same host without the marker: the old engine proves a zero-delay backfill on 3, which the
+                # lender's later give-back would turn into a delay for the head
+                slots._marker_path("5" * 32).unlink()
+                assert old.run("l", "small", 1, ["unused"], max_seconds=99999.0) == 0
+                assert ran == [[3]]
+
+    def test_growth_creates_the_marker_first_and_narrowing_removes_it_last(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        events = []
+        real_marker, real_update = slots._set_lending_marker, slots._update_claim_locked
+
+        def marker(cid, on):
+            events.append(("marker", on))
+            real_marker(cid, on)
+
+        def update(path, **fields):
+            events.append(("publish", fields.get("cores")))
+            return real_update(path, **fields)
+
+        with patch.object(slots, "cpu_total", return_value=8), patch.object(slots, "_set_lending_marker", marker), \
+                patch.object(slots, "_update_claim_locked", update):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7]))
+            tree = SharedStepTests.FakeTree([7])
+            claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+            share = {"guaranteed": [7], "max_cores": 2, "pool": None}
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
+            assert events == [("publish", [7]), ("marker", True), ("publish", [6, 7])] and slots._marker_path("5" * 32).exists()
+            self.write(f"queue-00000000000000000001-{'6' * 32}", {"id": "6" * 32, "cores_wanted": 1})
+            events.clear()
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
+            assert events == [("publish", [7]), ("marker", False)] and not slots._marker_path("5" * 32).exists()
+
+
+class WatcherBoundTests(unittest.TestCase):
+    """0 <= eligible idle <= idle <= capacity, whatever the reserve, timed holds and claims."""
+
+    def test_a_fully_busy_reserved_host_reports_no_idle(self):
+        # review v3 #3
+        state, _, _ = sample({}, 0, {c: 1.0 for c in range(4)}, config=CONFIG4)
+        _, lines, _ = sample(state, 1, {c: 1.0 for c in range(4)}, config=CONFIG4)
+        assert lines[0]["idle_cs"] == 0.0 and lines[0]["capacity_cs"] == 90.0
+
+    def test_the_bounds_hold_over_many_hosts(self):
+        import random
+        rng = random.Random(7)
+        for _ in range(300):
+            n = rng.randint(1, 8)
+            config = {"cores": list(range(n)), "keep_free": rng.randint(0, n - 1), "priority": "below_normal"}
+            timed = rng.choice([FREE, {"held": True, "cores": None},
+                                {"held": True, "cores": rng.sample(range(n), rng.randint(1, n))}])
+            claims = []
+            for i in range(rng.randint(0, 3)):
+                cores = rng.sample(range(n), rng.randint(1, n))
+                claims.append(rng.choice([{"id": str(i), "cores": cores, "state": "running"},
+                                          {"id": str(i), "cores": cores, "background": True, "state": "running"},
+                                          shared(str(i), cores[:1], cores)]))
+            tickets = [ticket(f"t{i}", rng.randint(1, n), None) for i in range(rng.randint(0, 2))]
+            busy = {c: rng.random() for c in range(n)}
+            state, _, _ = sample({}, 0, busy, claims, tickets, config=config, timed=timed)
+            _, lines, _ = sample(state, 1, busy, claims, tickets, config=config, timed=timed)
+            line = lines[0]
+            eps = 1e-6 + 0.002 * n
+            assert -eps <= line["eligible_idle_cs"] <= line["idle_cs"] + eps <= line["capacity_cs"] + 2 * eps, line
+            assert abs(sum(line["eligible_idle_by_cause"].values()) - line["eligible_idle_cs"]) <= eps
+
+
+FLOOR8 = {"cores": [7, 6, 5, 4, 3, 2, 1, 0], "keep_free": 0, "priority": "below_normal", "ci_floor": 2}
+
+
+class CiFloorTests(unittest.TestCase):
+    """The CI floor: the last ci_floor cores in preference order, for background (CI) claims only."""
+
+    def test_only_ci_may_take_the_floor_and_ci_tries_it_first(self):
+        assert slots.ci_floor_cores(FLOOR8) == [1, 0] and slots.ci_floor_cores(config8()) == []
+        assert slots.available(FLOOR8, FREE, [], background=False) == [7, 6, 5, 4, 3, 2]
+        assert slots.available(FLOOR8, FREE, [{"cores": [7, 6, 5, 4, 3, 2]}], background=False) == []
+        assert slots.available(FLOOR8, FREE, []) == [1, 0, 7, 6, 5, 4, 3, 2]
+        # CI may also use other free cores once the floor is taken
+        assert slots.available(FLOOR8, FREE, [{"cores": [1, 0], "background": True}]) == [7, 6, 5, 4, 3, 2]
+        # ordinary work still reclaims CI cores outside the floor, never inside it
+        ci = [{"cores": [1, 0, 7], "background": True}]
+        assert slots.available(FLOOR8, FREE, ci, background=False) == [7, 6, 5, 4, 3, 2]
+
+    def test_backfills_and_shared_growth_never_take_the_floor(self):
+        assert slots.available(FLOOR8, FREE, [], ci=False) == [7, 6, 5, 4, 3, 2]
+        assert slots.unclaimed(FLOOR8, FREE, [{"cores": [7, 6]}]) == [5, 4, 3, 2]
+        claims = [{"id": "c", "cores": [7, 6, 5, 4, 3]}]
+        head = ticket("head", 3, None)
+        assert admits(FLOOR8, FREE, claims, [head, ticket("t", 1)], "t") == [2]
+        assert admits(FLOOR8, FREE, claims, [head, ticket("t", 2)], "t") is None
+
+    def test_an_ordinary_request_larger_than_the_rest_is_refused(self):
+        root = Path(tempfile.mkdtemp(prefix="hs-floor-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        with patch.dict(os.environ, {slots.ROOT_ENV: str(root), slots.HOST_ENV: "T"}),                 patch.object(slots, "cpu_total", return_value=4):
+            (root / "T.slots").mkdir()
+            slots.write_json(root / "T.slots/config.json", {"cores": "3-0", "ci_floor": 1})
+            with self.assertRaisesRegex(ValueError, "hands out 1 to 3 to work other than CI"):
+                slots.run("p", "w", 4, ["unused"])
+            with patch.object(slots, "_run_claimed", return_value=0), patch.object(slots, "_run_adopted",
+                                                                                     return_value=0):
+                assert slots.run("ci", "w", 4, ["unused"], background=True) == 0
+
+    def test_keep_free_stays_separate_from_the_floor(self):
+        config = {**FLOOR8, "keep_free": 1}
+        assert slots.available(config, FREE, [], background=False) == [7, 6, 5, 4, 3]
+        assert slots.available(config, FREE, []) == [1, 0, 7, 6, 5, 4, 3]
+
+    def test_config_digest_is_unchanged_without_a_floor_and_bad_floors_are_refused(self):
+        root = Path(tempfile.mkdtemp(prefix="hs-floor-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        with patch.dict(os.environ, {slots.ROOT_ENV: str(root), slots.HOST_ENV: "T"}), \
+                patch.object(slots, "cpu_total", return_value=4):
+            (root / "T.slots").mkdir()
+            for raw, expect in (({"cores": "3-0"}, {"cores": [3, 2, 1, 0], "keep_free": 0, "priority": "below_normal"}),
+                                ({"cores": "3-0", "ci_floor": 0}, {"cores": [3, 2, 1, 0], "keep_free": 0,
+                                                                   "priority": "below_normal"}),
+                                ({"cores": "3-0", "ci_floor": 2}, {"cores": [3, 2, 1, 0], "keep_free": 0,
+                                                                   "priority": "below_normal", "ci_floor": 2})):
+                slots.write_json(root / "T.slots/config.json", raw)
+                assert slots.load_config() == expect
+            for bad in ({"ci_floor": 4}, {"ci_floor": 2, "keep_free": 2}, {"ci_floor": -1}):
+                slots.write_json(root / "T.slots/config.json", {"cores": "3-0", **bad})
+                with self.assertRaises(ValueError):
+                    slots.load_config()
+
+    def test_the_watcher_names_the_floor(self):
+        assert slots.holders(FLOOR8, FREE, [{"cores": [1], "background": True}])[0] == "ci_floor"
+        assert slots.holders(FLOOR8, FREE, [{"cores": [1], "background": True}])[1] == "background"
+        claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
+        head = ticket("h", 1, None)
+        assert slots.queue_cause(FLOOR8, FREE, claims, [head], head) == "ci_floor"
+        assert slots.old_rules_room(FLOOR8, FREE, claims, {"background": False}, 2, None)
+
+
+class OverdueTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def test_the_overdue_action_needs_a_limit_and_is_recorded(self):
+        with self.assertRaises(ValueError):
+            slots.run("p", "w", 1, ["unused"], on_overdue="kill")
+        with self.assertRaises(ValueError):
+            slots.run("p", "w", 1, ["unused"], max_seconds=5.0, on_overdue="later")
+        proc = cli("run", "--lane", "p", "--work-id", "w", "--cores", "1", "--on-overdue", "flag", "--",
+                   sys.executable, "-c", "pass")
+        _, err = proc.communicate(timeout=60)
+        assert proc.returncode == slots.EXIT_USAGE and "--max-seconds" in err, err
+        seen = []
+        with patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                (slots.read_json(claim), k["overdue"])) or 0):
+            slots.run("p", "w", 1, ["unused"], max_seconds=30.0)
+        record, limit = seen[0]
+        assert record["on_overdue"] == "flag" and record["max_seconds"] == 30.0   # enforcement is opt-in
+        assert limit == {"deadline_mono": record["deadline_mono"], "action": "flag"}
+
+    def test_a_flagging_request_may_not_delay_a_head(self):
+        window = None
+        head = {**ticket("h" * 32, 4, 3600.0), "config_sha256": slots.config_digest(config8())}
+        for action, admitted in (("demote", True), ("flag", False)):
+            claims = [{"id": "c", "cores": [7, 6, 5, 4], "max_seconds": 60.0, "deadline_mono": 1e12},
+                      {"id": "d", "cores": [3, 2, 1]}]
+            small = {**ticket("s", 1, 120.0, backfill_policy=slots.BACKFILL_POLICY), "on_overdue": action}
+            got = slots.backfill_admission(config8(), FREE, claims, [head, small], "s", 1000.0, window)
+            assert (got is not None) == admitted, (action, got)
+
+    def overdue_run(self, action, seconds="1"):
+        count = self.tmp_path / f"count-{action}"
+        ticker = script(self.tmp_path, f"tick-{action}.py", "n = 0\nwhile True:\n    n += 1\n"
+                        "    open(sys.argv[1], 'w').write(str(n))\n    time.sleep(0.02)\n")
+        args = ["run", "--lane", "o", "--work-id", action, "--cores", "1", "--max-seconds", seconds]
+        if action != "flag":           # flag is the default
+            args += ["--on-overdue", action]
+        return cli(*args, "--", sys.executable, ticker, str(count)), count
+
+    def claim(self, work_id):
+        return next((c for c in slots.status()["claims"] if c["work_id"] == work_id), None)
+
+    @needs_two
+    def test_an_overdue_claim_demotes_itself_and_yields_like_ci(self):
+        proc, count = self.overdue_run("demote")
+        foreground = None
+        release, active = self.tmp_path / "release", self.tmp_path / "active"
+        hold = script(self.tmp_path, "hold.py", "from pathlib import Path\nPath(sys.argv[1]).write_text('up')\n"
+                      "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
+        try:
+            assert wait_for(lambda: (self.claim("demote") or {}).get("overdue") is True, timeout=30)
+            claim = self.claim("demote")
+            assert claim["background"] is True and claim["overdue_action"] == "demote"
+            assert wait_for(lambda: counter(count) > 0)
+            foreground = cli("run", "--lane", "b", "--work-id", "b", "--cores", str(len(CPUS)), "--",
+                             sys.executable, hold, str(active), str(release))
+            assert wait_for(active.exists, timeout=30)
+            assert self.claim("demote")["state"] == "suspended"
+            frozen = counter(count)
+            time.sleep(0.3)
+            assert counter(count) == frozen
+            release.write_text("go")
+            assert foreground.wait(timeout=60) == 0
+            assert wait_for(lambda: counter(count) > frozen + 3)
+        finally:
+            release.write_text("go")
+            if foreground is not None:
+                foreground.wait(timeout=60)
+            proc.terminate()
+            proc.wait(timeout=60)
+
+    def test_kill_ends_only_its_own_tree_and_flag_only_marks(self):
+        killed, _ = self.overdue_run("kill")
+        out, err = killed.communicate(timeout=60)
+        assert killed.returncode != 0 and json.loads(out.splitlines()[-1])["exit_code"] != 0, out + err
+        events = [json.loads(line) for path in (self.host / "TESTHOST.util").glob("events-*.jsonl")
+                  for line in path.read_text().splitlines()]
+        assert [e["action"] for e in events if e["event"] == "overdue"] == ["kill"]
+        flagged, count = self.overdue_run("flag")
+        try:
+            assert wait_for(lambda: (self.claim("flag") or {}).get("overdue") is True, timeout=30)
+            claim = self.claim("flag")
+            assert claim["background"] is False and claim["state"] == "running" and flagged.poll() is None
+            before = counter(count)
+            assert wait_for(lambda: counter(count) > before + 3)
+        finally:
+            flagged.terminate()
+            flagged.wait(timeout=60)
+
+
+def engine_at(commit, name):
+    """A deployed backfill engine loaded from git, or None when the checkout lacks that commit."""
+    try:
+        source = subprocess.run(["git", "-C", str(TOOLS), "show", f"{commit}:python/tools/host_slots_v1.py"],
+                                capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if source.returncode != 0:
+        return None
+    folder = Path(tempfile.mkdtemp(prefix=f"hs-{commit}-"))
+    (folder / f"{name}.py").write_bytes(source.stdout)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, folder / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class LendingGateTests(unittest.TestCase):
+    """review v4 (Fable) #1: the #407 engine ignores the lending marker, so lending is gated per host."""
+    setUp = HostSlotsTests.setUp
+
+    def write(self, name, record):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/{name}.json", {"pid": pid, "creation_time": creation, **record})
+
+    def test_the_407_engine_backfills_past_the_marker_so_shared_claims_need_the_host_gate(self):
+        old = engine_at("05fd27807", "host_slots_05fd27807")
+        if old is None:
+            self.skipTest("mtg-kernel 05fd27807 is not in this checkout")
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "0-3"})
+        with patch.object(slots, "cpu_total", return_value=4), patch.object(old, "cpu_total", return_value=4):
+            # Without "lending": true, no shared claim can exist on this host, so S below could never be made.
+            with self.assertRaisesRegex(ValueError, "shared claims are off"):
+                slots.run("l", "build", 3, ["unused"], shared=True)
+            proc = cli("run", "--shared", "--lane", "l", "--work-id", "b", "--cores", "2", "--",
+                       sys.executable, "-c", "pass")
+            _, err = proc.communicate(timeout=60)
+            assert proc.returncode == slots.EXIT_USAGE and "lending" in err, err
+            assert not list((self.host / "TESTHOST.slots").glob("queue-*.json"))
+            # Had it existed: S guarantees 0 and lends 1 and 2 with its marker, an old head wants 3 cores.
+            config = old.load_config()
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [0], [0, 1, 2]))
+            with slots.Mutex():
+                slots._set_lending_marker("5" * 32, True)
+            self.write(f"queue-00000000000000000001-{'6' * 32}", {
+                "schema": slots.SCHEMA, "id": "6" * 32, "lane": "l", "work_id": "head", "cores_wanted": 3,
+                "background": False, "config_sha256": old.config_digest(config)})
+            ran = []
+            with patch.object(old, "_run_claimed", side_effect=lambda *a, **k: ran.append(a[1]) or 0):
+                assert old.run("l", "small", 1, ["unused"], max_seconds=99999.0) == 0
+            assert ran == [[3]]   # the #407 engine proves a backfill the lender's give-back turns into a delay
+
+    def test_lenders_close_while_an_older_engine_shows_itself(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7, 6]))
+            claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+            share = {"guaranteed": [7], "max_cores": 4, "pool": None}
+            # a live #407 backfill (no deadline_mono): give everything back, do not grow, even with no queue
+            self.write(f"claim-{'7' * 32}", {"id": "7" * 32, "cores": [0], "backfill": True, "max_seconds": 60.0,
+                                             "deadline_at": "2026-10-31T00:00:00+00:00", "state": "running"})
+            tree = SharedStepTests.FakeTree([7, 6])
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
+            assert tree.cores == [7] and slots.read_json(claim)["cores"] == [7]
+            (self.host / f"TESTHOST.slots/claim-{'7' * 32}.json").unlink()
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
+            assert tree.cores == [4, 5, 6, 7]
+            # lending switched off in the config: everything goes back again
+            slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0"})
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True)
+            assert tree.cores == [7] and not slots._marker_path("5" * 32).exists()
+        assert slots.legacy_backfill_engine([{"max_seconds": 5.0}], [])
+        assert not slots.legacy_backfill_engine([{"max_seconds": 5.0, "backfill_policy": 2}, {"cores_wanted": 1}], [])
+
+
+class PublishFailureTests(unittest.TestCase):
+    """review v4 (Fable) #3: a publication that did not reach the disk never widens a job or drops a marker."""
+    setUp = HostSlotsTests.setUp
+
+    def write(self, name, record):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/{name}.json", {"pid": pid, "creation_time": creation, **record})
+
+    def test_growth_without_a_confirmed_publish_never_widens(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7]))
+            claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+            tree = SharedStepTests.FakeTree([7])
+            real_read = slots.read_json
+            with slots.Mutex():
+                with patch.object(slots, "read_json", side_effect=lambda path: None if path == claim else real_read(path)):
+                    assert not slots._share_step(tree, claim, "5" * 32, {"guaranteed": [7], "max_cores": 4, "pool": None},
+                                      grow=True)
+            assert tree.cores == [7] and tree.calls == [] and real_read(claim)["cores"] == [7]
+
+    def test_a_narrowing_whose_publish_fails_suspends_and_keeps_the_marker(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            self.write(f"claim-{'5' * 32}", shared("5" * 32, [7], [7, 6, 5]))
+            self.write(f"queue-00000000000000000001-{'6' * 32}", {"id": "6" * 32, "cores_wanted": 1})
+            claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+            with slots.Mutex():
+                slots._set_lending_marker("5" * 32, True)
+            tree = SharedStepTests.FakeTree([7, 6, 5])
+            with slots.Mutex():
+                with patch.object(slots, "write_json", side_effect=OSError("disk full")):
+                    ok = slots._share_step(tree, claim, "5" * 32, {"guaranteed": [7], "max_cores": 3, "pool": None},
+                                           grow=False)
+            assert ok is False                                   # the caller suspends the tree
+            assert slots.read_json(claim)["cores"] == [7, 6, 5]  # the record still lends ...
+            assert slots._marker_path("5" * 32).exists()         # ... so the marker stays
+            with slots.Mutex():                                  # once the publish works, both settle
+                assert slots._share_step(tree, claim, "5" * 32, {"guaranteed": [7], "max_cores": 3, "pool": None},
+                                         grow=False)
+            assert slots.read_json(claim)["cores"] == [7] and not slots._marker_path("5" * 32).exists()
+
+    def test_update_reports_whether_the_fields_reached_the_disk(self):
+        claim = self.host / "TESTHOST.slots" / "claim-x.json"
+        assert slots._update_claim_locked(claim, cores=[1]) is False          # no record
+        slots.write_json(claim, {"cores": [1, 2]})
+        assert slots._update_claim_locked(claim, cores=[1]) is True and slots.read_json(claim)["cores"] == [1]
+        with patch.object(slots, "write_json", side_effect=OSError("denied")):
+            assert slots._update_claim_locked(claim, cores=[2]) is False
+
+
+class SmallFixTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def test_a_shared_command_sees_only_its_guarantee_and_naive_report_times_are_utc(self):
+        out = cli("run", "--shared", "--cores", str(len(CPUS)), "--lane", "s", "--work-id", "env", "--",
+                  sys.executable, "-c", "import os; print(os.environ['HOST_SLOTS_CORES'])")
+        stdout, err = out.communicate(timeout=60)
+        assert out.returncode == 0, err
+        assert stdout.splitlines()[1] == str(max(CPUS))
+        assert slots.watch_report("2026-10-31T00:00:00")["since"] == "2026-10-31T00:00:00"
+
+    def test_status_removes_a_killed_lenders_marker(self):
+        with slots.Mutex():
+            slots._set_lending_marker("9" * 32, True)
+        slots.status()
+        assert not slots._marker_path("9" * 32).exists()
+
+
+class FlagTicketTests(unittest.TestCase):
+    """review v6 (Fable) #6: a flag ticket carries backfill_policy 0, so the #427 engine and this one pick the
+    same first eligible candidate."""
+
+    def test_both_engines_agree_on_the_first_eligible_candidate(self):
+        old = e2657b8c_engine()
+        if old is None:
+            self.skipTest("mtg-kernel e2657b8c is not in this checkout")
+        config = config8()
+        head = {**ticket("h" * 32, 4, 3600.0, backfill_policy=slots.BACKFILL_POLICY),
+                "config_sha256": slots.config_digest(config)}
+        claims = [{"id": "c", "cores": [7, 6, 5, 4]}, {"id": "d", "cores": [3, 2, 1]}]
+        later = ticket("p", 1, 120.0, backfill_policy=slots.BACKFILL_POLICY, on_overdue="demote")
+        for policy, agree in ((0, True), (slots.BACKFILL_POLICY, False)):
+            flag = ticket("f", 1, 120.0, backfill_policy=policy, on_overdue="flag")
+            tickets = [head, flag, later]
+            new = slots.backfill_admission(config, FREE, claims, tickets, "p", 1000.0, None)
+            before = old.backfill_admission(config, FREE, claims, tickets, "p", 1000.0, None)
+            assert (new == before) is agree, (policy, new, before)
+        assert new is not None   # with policy 0 both admit the later request; with 2 the old engine picks f
+
+    def test_run_writes_policy_zero_for_flag_tickets(self):
+        root = Path(tempfile.mkdtemp(prefix="hs-flag-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        published = []
+        real = slots.write_json
+
+        def record(path, value):
+            if Path(path).name.startswith("queue-"):
+                published.append(value)
+            real(path, value)
+
+        with patch.dict(os.environ, {slots.ROOT_ENV: str(root), slots.HOST_ENV: "T"}), \
+                patch.object(slots, "write_json", side_effect=record), \
+                patch.object(slots, "_run_claimed", return_value=0):
+            (root / "T.slots").mkdir()
+            for action in ("flag", "demote"):
+                slots.run("p", action, 1, ["unused"], max_seconds=60.0, on_overdue=action)
+        assert [(t["on_overdue"], t["backfill_policy"]) for t in published] == [("flag", 0), ("demote", 2)]
+
+
+class PoolReasonTransitionTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+
+    def test_a_missing_reason_is_accepted_as_unspecified_until_the_date_and_nudged(self):
+        seen = []
+        with patch.dict(os.environ, {"HOST_SLOTS_TODAY": "2026-11-16"}), \
+                patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(
+                    slots.read_json(claim)) or 0):
+            slots.run("p", "w", 1, ["unused"], core_pool=[CPUS[0]])
+        assert seen[0]["core_pool_reason"] == "unspecified"
+        with patch.dict(os.environ, {"HOST_SLOTS_TODAY": slots.POOL_REASON_REQUIRED_FROM}):
+            with self.assertRaisesRegex(ValueError, "--pool-reason"):
+                slots.run("p", "w", 1, ["unused"], core_pool=[CPUS[0]])
+        claim = {"id": "u" * 32, "lane": "bignet", "work_id": "q", "cores": [0], "state": "running",
+                 "core_pool": [0], "core_pool_reason": "unspecified"}
+        _, _, nudges = sample({}, 0, {0: 1.0}, [claim], config={"cores": [0], "keep_free": 0,
+                                                                "priority": "below_normal"})
+        assert [n["kind"] for n in nudges] == ["pool_unspecified"] and slots.POOL_REASON_REQUIRED_FROM in nudges[0]["detail"]
+
+    def test_the_cli_warns_during_the_window(self):
+        with patch.dict(os.environ, {"HOST_SLOTS_TODAY": "2026-11-01"}):
+            proc = cli("run", "--lane", "p", "--work-id", "w", "--cores", "1", "--core-pool", str(CPUS[0]), "--",
+                       sys.executable, "-c", "pass")
+            out, err = proc.communicate(timeout=60)
+        assert proc.returncode == 0 and "unspecified" in err and slots.POOL_REASON_REQUIRED_FROM in err, err
+
+
+class KillOutsideMutexTests(unittest.TestCase):
+    """review v6 (Fable) #2: a kill never holds the admission mutex, and a member that refuses to die is bounded."""
+
+    def test_the_kill_runs_with_the_mutex_released_and_a_survivor_is_recorded(self):
+        locked = [False]
+        events, updates = [], []
+
+        class TestMutex:
+            def __enter__(inner):
+                assert not locked[0]
+                locked[0] = True
+
+            def __exit__(inner, *_):
+                locked[0] = False
+
+        child = MagicMock()
+        child.wait.side_effect = [subprocess.TimeoutExpired("probe", 0), subprocess.TimeoutExpired("probe", 0), 1]
+        tree = MagicMock()
+        tree.cores = tree.applied = [0]
+        tree.members.return_value = []
+        tree.start.return_value = child
+        tree.set_suspended.return_value = True
+
+        def kill_members(timeout=30.0):
+            assert not locked[0], "kill under the admission mutex"
+            return False          # a member refused to die
+
+        tree.kill_members.side_effect = kill_members
+        with patch.object(slots, "Tree", return_value=tree), patch.object(slots, "Mutex", TestMutex), \
+                patch.object(slots, "conflicts", return_value=False), \
+                patch.object(slots, "background_busy", return_value=False), \
+                patch.object(slots, "_budget_wait", return_value=False), \
+                patch.object(slots, "_set_state_locked"), \
+                patch.object(slots, "_update_claim_locked", side_effect=lambda c, **f: updates.append(f) or True), \
+                patch.object(slots, "_event", side_effect=lambda kind, rec, **extra: events.append((kind, extra))), \
+                patch.object(slots.time, "sleep"), patch.object(slots.signal, "signal"):
+            code = slots._run_claimed(Path("unused.json"), [0], "normal", ["probe"], None, "x",
+                                      overdue={"deadline_mono": 0.0, "action": "kill"})
+        assert code == 1 and tree.kill_members.call_count == 1
+        assert ("overdue", {"action": "kill", "ended": False}) in events
+        assert {"kill_failed": True} in updates
+
+    @unittest.skipUnless(os.name == "nt", "job members are Windows processes")
+    def test_kill_members_gives_up_after_its_timeout(self):
+        tree = slots.Tree.__new__(slots.Tree)
+        tree.job, tree.suspended = None, set()
+        with patch.object(slots.Tree, "members", return_value=[4321]), \
+                patch.object(slots, "_OpenProcess", return_value=0):
+            started = time.monotonic()
+            assert tree.kill_members(timeout=0.3) is False
+        assert time.monotonic() - started < 5
+
+
+class AppliedMaskTests(unittest.TestCase):
+    """review v6 (Fable) #5: after a failed growth restore the OS may hold a wider mask; it is re-applied before
+    the claim may resume."""
+    setUp = HostSlotsTests.setUp
+
+    class ScriptedTree:
+        def __init__(self, cores, script):
+            self.cores = self.applied = sorted(cores)
+            self.script, self.calls = list(script), []
+
+        def set_cores(self, cores):
+            cores = sorted(cores)
+            self.calls.append(cores)
+            accepted, ok = self.script.pop(0) if self.script else (True, True)
+            if accepted:
+                self.applied = cores
+            if ok:
+                self.cores = cores
+            return ok
+
+    def test_a_wider_mask_left_by_a_failed_restore_is_reapplied_before_resuming(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        pid, creation = slots.self_identity()
+        claim = self.host / "TESTHOST.slots" / f"claim-{'5' * 32}.json"
+        slots.write_json(claim, {"pid": pid, "creation_time": creation, **shared("5" * 32, [7], [7])})
+        share = {"guaranteed": [7], "max_cores": 2, "pool": None}
+        # widening: the OS takes the wider mask but a member disagrees; the restore then fails outright
+        tree = self.ScriptedTree([7], [(True, False), (False, False)])
+        with patch.object(slots, "cpu_total", return_value=8):
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=True) is False
+            assert tree.applied == [6, 7] and tree.cores == [7]
+            with slots.Mutex():
+                assert slots._share_step(tree, claim, "5" * 32, share, grow=False) is True
+        assert tree.calls[-1] == [7] and tree.applied == tree.cores == [7]
+        assert slots.read_json(claim)["cores"] == [7] and not slots._marker_path("5" * 32).exists()
+
 
 if __name__ == "__main__":
     unittest.main()
