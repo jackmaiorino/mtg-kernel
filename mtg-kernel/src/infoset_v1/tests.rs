@@ -431,6 +431,21 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
         let below = state.stack.len();
         let mut truth = live.clone();
         let mut canon = FastActorSessionV1::import_infoset_v1(&live, x.state.clone(), 0);
+        let root = |s: &FastActorSessionV1| match s.current_response() {
+            FastActorResponseV1::Decision(d) => Some((
+                d.acting_player,
+                d.legal_action_count,
+                serde_json::to_string(&s.diagnostic_current_action_semantics()).unwrap(),
+            )),
+            FastActorResponseV1::Terminal(_) => None,
+        };
+        let (rt, rc) = (root(&truth), root(&canon));
+        assert_eq!(
+            rt.as_ref().map(|r| (r.0, r.1)),
+            rc.as_ref().map(|r| (r.0, r.1)),
+            "{}: the imported root decision differs: {rt:?} vs {rc:?}",
+            record["case"]
+        );
         resolve_waiting(&mut truth, below, 40);
         resolve_waiting(&mut canon, below, 40);
         let (t, c) = (public_summary(&truth), public_summary(&canon));

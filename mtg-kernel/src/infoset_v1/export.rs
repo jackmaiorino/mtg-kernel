@@ -1141,6 +1141,7 @@ pub(crate) fn export_v1(
     let mut out: GameState = serde_json::from_value(tagged)
         .map_err(|e| refuse(RefusalCodeV1::R2, format!("the export does not load: {e}")))?;
     out.resample_future_randomness_for_search_v3(INFOSET_RNG_SEED_V1);
+    crate::effect::refresh_binding_fingerprints_v1(&mut out);
     static_assertions(&out, &handles, v)?;
     let bytes = canonical_bytes(&out, &handles);
     let sha256 = format!("{:x}", Sha256::digest(&bytes));

@@ -68,6 +68,14 @@ pub(crate) fn is_timestamp_key(key: &str) -> bool {
     key.contains("timestamp")
 }
 
+/// Fingerprints the export recomputes after renumbering
+/// (`effect::refresh_binding_fingerprints_v1`) or that bind no object.
+const FINGERPRINTS_V1: &[&str] = &[
+    "stage_fingerprint",
+    "progress_fingerprint",
+    "filter_fingerprint",
+];
+
 /// Fields whose value is a `(value, timestamp)` pair.
 const TIMESTAMP_PAIRS_V1: &[&str] = &["added_subtype_v1"];
 
@@ -286,6 +294,16 @@ impl WalkerV1<'_> {
             let v = map.get_mut(&k).expect("present");
             if parse_tag(v).is_some() || (v.is_number() && is_generation_key(&k)) {
                 continue;
+            }
+            if k.contains("fingerprint")
+                && !FINGERPRINTS_V1.contains(&k.as_str())
+                && self.check_pairs
+            {
+                // A commitment the export does not recompute could carry
+                // native ids: fail closed.
+                return Err(r2(format!(
+                    "unrecomputed fingerprint `{k}` under `{parent}`"
+                )));
             }
             if is_timestamp_key(&k) && !TIMESTAMP_PAIRS_V1.contains(&k.as_str()) {
                 match v {
