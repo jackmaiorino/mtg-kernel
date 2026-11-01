@@ -192,7 +192,11 @@ pub(crate) fn never_seen(game: &GameV1, viewer: PlayerId) -> Vec<ObjectId> {
 }
 
 /// F-deal: swap the definitions of two opponent cards V never sees.
-pub(crate) fn f_deal(game: &GameV1, viewer: PlayerId, mutants: &[MutantV1]) -> Option<PairReportV1> {
+pub(crate) fn f_deal(
+    game: &GameV1,
+    viewer: PlayerId,
+    mutants: &[MutantV1],
+) -> Option<PairReportV1> {
     let opp = viewer.opponent();
     let hidden = never_seen(game, viewer);
     let start = game.start.game_state();
@@ -208,7 +212,13 @@ pub(crate) fn f_deal(game: &GameV1, viewer: PlayerId, mutants: &[MutantV1]) -> O
     let mut st = start.clone();
     swap_objects(&mut st, a, b);
     let w2 = FastActorSessionV1::import_infoset_v1(&game.start, st, 0);
-    Some(compare_worlds(game.start.clone(), w2, &game.actions, viewer, mutants))
+    Some(compare_worlds(
+        game.start.clone(),
+        w2,
+        &game.actions,
+        viewer,
+        mutants,
+    ))
 }
 
 /// F-slot: at decision `at`, swap two of V's unknown slots of one owner.
@@ -251,7 +261,11 @@ pub(crate) fn f_slot(
 
 /// AC3: the imported state's menu is in bijection with the live menu and a
 /// random rollout from it runs to the end with zero engine faults.
-pub(crate) fn ac3_check(live: &FastActorSessionV1, export: &InfosetV1, seed: u64) -> Result<(), String> {
+pub(crate) fn ac3_check(
+    live: &FastActorSessionV1,
+    export: &InfosetV1,
+    seed: u64,
+) -> Result<(), String> {
     let imported = FastActorSessionV1::import_infoset_v1(live, export.state.clone(), 0);
     let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
         (live.current_response(), imported.current_response())
@@ -298,7 +312,10 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
                 reports.extend(f_slot(&game, viewer, at, &mutants));
             }
             for r in reports {
-                assert_eq!(r.p_differs, 0, "the correct producer differs across worlds: {r:?}");
+                assert_eq!(
+                    r.p_differs, 0,
+                    "the correct producer differs across worlds: {r:?}"
+                );
                 compared += r.compared;
                 for (m, n) in r.witnesses {
                     *totals.entry(m).or_default() += n;

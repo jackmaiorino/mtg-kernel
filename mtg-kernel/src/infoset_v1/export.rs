@@ -7,8 +7,8 @@ use super::rewrite::{has_tag, tagged_value, ClassV1, RefV1, WalkerV1};
 use super::{ExportErrorV1, FaultCodeV1, HandleV1, RefusalCodeV1, INFOSET_SCHEMA_V1};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{
-    Counters, GameObject, GameState, HandKnowledgeEntry, LibraryKnowledgeEntry,
-    ObjectStateV4, ObservationNoteV1, Zone,
+    Counters, GameObject, GameState, HandKnowledgeEntry, LibraryKnowledgeEntry, ObjectStateV4,
+    ObservationNoteV1, Zone,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -199,7 +199,10 @@ fn invariants(
         for &id in p.hand.iter().chain(&p.library) {
             // I2: no duplicate ids among hidden positions.
             if !seen.insert(id) {
-                return Err(fault(FaultCodeV1::I2, format!("object {} appears twice", id.0)));
+                return Err(fault(
+                    FaultCodeV1::I2,
+                    format!("object {} appears twice", id.0),
+                ));
             }
             if projection.tracked(id) {
                 continue;
@@ -219,7 +222,10 @@ fn invariants(
                 || obj.v4.is_token
                 || obj.v4 != ObjectStateV4::from_card_def(obj.card_def)
             {
-                return Err(fault(FaultCodeV1::I1, format!("hidden object {} is not pristine", id.0)));
+                return Err(fault(
+                    FaultCodeV1::I1,
+                    format!("hidden object {} is not pristine", id.0),
+                ));
             }
         }
         // I4: observed multiplicities within the public decklist.
@@ -237,7 +243,11 @@ fn invariants(
         if let Err(d) = subtract(&mut deck, observed) {
             return Err(fault(
                 FaultCodeV1::I4,
-                format!("{} copies of {} observed exceed the decklist", owner.0, card_name(d)),
+                format!(
+                    "{} copies of {} observed exceed the decklist",
+                    owner.0,
+                    card_name(d)
+                ),
             ));
         }
     }
@@ -249,7 +259,10 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
     let v = projection.viewer;
     let opp = v.opponent();
     if !projection.inconsistencies.is_empty() {
-        return Err(refuse(RefusalCodeV1::R5, projection.inconsistencies.join("; ")));
+        return Err(refuse(
+            RefusalCodeV1::R5,
+            projection.inconsistencies.join("; "),
+        ));
     }
     let projected: BTreeSet<(u32, u32)> = projection
         .hand_facts
@@ -263,7 +276,10 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
         .map(|k| (k.object.0, k.zone_change_count))
         .collect();
     if projected != native {
-        return Err(refuse(RefusalCodeV1::R5, "hand physical facts differ from native rows"));
+        return Err(refuse(
+            RefusalCodeV1::R5,
+            "hand physical facts differ from native rows",
+        ));
     }
     for owner in [PlayerId::P0, PlayerId::P1] {
         let projected: BTreeSet<(u32, u32, u32)> = projection.library[owner.index()]
@@ -333,7 +349,9 @@ fn tracked_order(state: &GameState, projection: &ProjectionV1, l3: bool) -> Vec<
         .iter()
         .filter(|(id, _)| projection.tracked(*id) && !seen.contains(id))
         .map(|(id, _)| {
-            let start = projection.current_span(id).map_or(usize::MAX, |s| s.start_item);
+            let start = projection
+                .current_span(id)
+                .map_or(usize::MAX, |s| s.start_item);
             (start, id.0, id)
         })
         .collect();
@@ -364,7 +382,10 @@ pub(crate) fn export_v1(
     if is(MutantV1::L7) {
         // Harness sensitivity: a refusal that reads the opponent's true hand.
         let hand = &state.players[opp.index()].hand;
-        if hand.first().is_some_and(|id| state.objects.get(*id).card_def % 2 == 0) {
+        if hand
+            .first()
+            .is_some_and(|id| state.objects.get(*id).card_def % 2 == 0)
+        {
             return Err(refuse(RefusalCodeV1::L7, "synthetic"));
         }
     }
@@ -373,7 +394,10 @@ pub(crate) fn export_v1(
     match crate::effect::library_choice_search_v2::plan_future_v3(state, opp) {
         Ok(None) => {}
         Ok(Some(_)) | Err(_) => {
-            return Err(refuse(RefusalCodeV1::R3, "opponent library-search plan pending"));
+            return Err(refuse(
+                RefusalCodeV1::R3,
+                "opponent library-search plan pending",
+            ));
         }
     }
 
@@ -457,7 +481,10 @@ pub(crate) fn export_v1(
             if projection.tracked(r.object) || pinned_untracked.contains(&r.object) {
                 return Err(refuse(
                     RefusalCodeV1::R2,
-                    format!("a live reference to an unobserved epoch of object {}", r.object.0),
+                    format!(
+                        "a live reference to an unobserved epoch of object {}",
+                        r.object.0
+                    ),
                 ));
             }
             continue;
@@ -477,7 +504,10 @@ pub(crate) fn export_v1(
             if joined {
                 return Err(refuse(
                     RefusalCodeV1::R1b,
-                    format!("a live reference may join a later {} of its owner", card_name(def)),
+                    format!(
+                        "a live reference may join a later {} of its owner",
+                        card_name(def)
+                    ),
                 ));
             }
         }
@@ -522,7 +552,8 @@ pub(crate) fn export_v1(
                 o.owner == owner
                     && !o.v4.is_token
                     && o.spell_copy_origin.is_none()
-                    && (projection.tracked(*id) || (is(MutantV1::L8) && opp_hand_tracked.contains(id)))
+                    && (projection.tracked(*id)
+                        || (is(MutantV1::L8) && opp_hand_tracked.contains(id)))
             })
             .map(|(_, o)| o.card_def)
             .collect()
@@ -537,10 +568,16 @@ pub(crate) fn export_v1(
     // Pool5: decklist minus public zones, tracked objects, pinned definitions.
     let mut pool5 = multiset(input.decklists[opp.index()].iter().copied());
     subtract(&mut pool5, tracked_defs(opp)).map_err(|d| {
-        fault(FaultCodeV1::I4, format!("{} observed beyond the decklist", card_name(d)))
+        fault(
+            FaultCodeV1::I4,
+            format!("{} observed beyond the decklist", card_name(d)),
+        )
     })?;
     subtract(&mut pool5, pinned_defs(opp)).map_err(|d| {
-        refuse(RefusalCodeV1::R7, format!("pinned {} beyond the decklist", card_name(d)))
+        refuse(
+            RefusalCodeV1::R7,
+            format!("pinned {} beyond the decklist", card_name(d)),
+        )
     })?;
     let survivors = &projection.survivors;
     let allocation = if is(MutantV1::L11) {
@@ -552,7 +589,13 @@ pub(crate) fn export_v1(
             .map(|f| f.card_def)
             .collect::<Vec<_>>())
     } else if is(MutantV1::L12) {
-        allocate_counting_arrivals(&projection, state, &opp_hand_tracked, &pool5, opp_hand_slots)
+        allocate_counting_arrivals(
+            &projection,
+            state,
+            &opp_hand_tracked,
+            &pool5,
+            opp_hand_slots,
+        )
     } else {
         survivors.allocate(&pool5, opp_hand_slots, &name_key)
     };
@@ -589,7 +632,10 @@ pub(crate) fn export_v1(
             .iter()
             .any(|(d, c)| placed.get(d).copied().unwrap_or(0) < *c)
         {
-            return Err(refuse(RefusalCodeV1::R4, "a tracker-rule fact is not implied by F"));
+            return Err(refuse(
+                RefusalCodeV1::R4,
+                "a tracker-rule fact is not implied by F",
+            ));
         }
     }
     let cap = PinCapacityV1 {
@@ -609,7 +655,11 @@ pub(crate) fn export_v1(
             let end = projection.last_span(*id).and_then(|s| s.end);
             let (zone, since) = end.map_or((Zone::Library, 0), |e| (e.zone, e.item));
             PinV1 {
-                last_zone: if zone == Zone::Hand { Zone::Hand } else { Zone::Library },
+                last_zone: if zone == Zone::Hand {
+                    Zone::Hand
+                } else {
+                    Zone::Library
+                },
                 since,
             }
         })
@@ -629,7 +679,10 @@ pub(crate) fn export_v1(
     for ((id, pin), zone) in opp_pins.iter().zip(&pin_inputs).zip(&zones) {
         pin_zone.insert(*id, (*zone, u32::from(*zone != pin.last_zone)));
     }
-    for id in pinned_untracked.iter().filter(|id| state.objects.get(**id).owner == v) {
+    for id in pinned_untracked
+        .iter()
+        .filter(|id| state.objects.get(**id).owner == v)
+    {
         // A V-owned untracked pin is in V's library: top-most own slot.
         pin_zone.insert(*id, (Zone::Library, 0));
     }
@@ -642,19 +695,21 @@ pub(crate) fn export_v1(
         let target = if is(MutantV1::L6) {
             in_slot.get(id).copied()
         } else {
-            (0..slots.len()).find(|&i| {
-                fills[i].is_none() && slots[i].owner == owner && slots[i].zone == zone
-            })
+            (0..slots.len())
+                .find(|&i| fills[i].is_none() && slots[i].owner == owner && slots[i].zone == zone)
         };
         let Some(i) = target else {
-            return Err(refuse(RefusalCodeV1::R7, "no free slot for a pinned object"));
+            return Err(refuse(
+                RefusalCodeV1::R7,
+                "no free slot for a pinned object",
+            ));
         };
         fills[i] = Some(FillV1::Pin { object: *id, h });
     }
     for def in &known_names {
-        let Some(i) = (0..slots.len()).find(|&i| {
-            fills[i].is_none() && slots[i].owner == opp && slots[i].zone == Zone::Hand
-        }) else {
+        let Some(i) = (0..slots.len())
+            .find(|&i| fills[i].is_none() && slots[i].owner == opp && slots[i].zone == Zone::Hand)
+        else {
             return Err(refuse(RefusalCodeV1::R8, "no hand slot for a survivor"));
         };
         fills[i] = Some(FillV1::KnownName(*def));
@@ -663,7 +718,12 @@ pub(crate) fn export_v1(
         let mut pool = multiset(input.decklists[owner.index()].iter().copied());
         subtract(&mut pool, tracked_defs(owner))
             .and_then(|()| subtract(&mut pool, pinned_defs(owner)))
-            .map_err(|d| refuse(RefusalCodeV1::R5, format!("{} beyond the decklist", card_name(d))))?;
+            .map_err(|d| {
+                refuse(
+                    RefusalCodeV1::R5,
+                    format!("{} beyond the decklist", card_name(d)),
+                )
+            })?;
         if owner == opp {
             subtract(&mut pool, known_names.iter().copied())
                 .map_err(|_| refuse(RefusalCodeV1::R8, "survivors beyond the pool"))?;
@@ -695,7 +755,10 @@ pub(crate) fn export_v1(
             fills[i] = Some(FillV1::Refill(def));
         }
     }
-    let fills: Vec<FillV1> = fills.into_iter().map(|f| f.expect("every slot filled")).collect();
+    let fills: Vec<FillV1> = fills
+        .into_iter()
+        .map(|f| f.expect("every slot filled"))
+        .collect();
 
     // Step 7: handles. C first, then U per owner in step-3 order, then H.
     let tracked = tracked_order(state, &projection, is(MutantV1::L3));
@@ -769,7 +832,11 @@ pub(crate) fn export_v1(
             // v4: a reference's epoch is the object's epoch when the
             // reference was made, one observed move after a departure.
             let e_last = projection.objects[id.0 as usize].last_obs_gen;
-            if g < e_last { g + 1 } else { g }
+            if g < e_last {
+                g + 1
+            } else {
+                g
+            }
         } else {
             g
         };
@@ -902,12 +969,18 @@ pub(crate) fn export_v1(
                 let Some(&nid) = new_id.get(&r.object) else {
                     return Err(refuse(
                         RefusalCodeV1::R1,
-                        format!("object {} references object {} with no handle", id.0, r.object.0),
+                        format!(
+                            "object {} references object {} with no handle",
+                            id.0, r.object.0
+                        ),
                     ));
                 };
                 let g = match r.generation {
                     Some(g) => Some(phi(r.object, g).ok_or_else(|| {
-                        refuse(RefusalCodeV1::R2, format!("epoch below p0 for {}", r.object.0))
+                        refuse(
+                            RefusalCodeV1::R2,
+                            format!("epoch below p0 for {}", r.object.0),
+                        )
                     })?),
                     None => None,
                 };
@@ -955,7 +1028,11 @@ pub(crate) fn export_v1(
                     } else {
                         phi(object, e_last).unwrap_or(1) + h
                     };
-                    let zone = if is(MutantV1::L6) { true_obj.zone } else { s.zone };
+                    let zone = if is(MutantV1::L6) {
+                        true_obj.zone
+                    } else {
+                        s.zone
+                    };
                     template(owner, true_obj.card_def, zone, zcc)
                 }
                 FillV1::KnownName(def) | FillV1::Refill(def) => {
@@ -1045,8 +1122,14 @@ pub(crate) fn export_v1(
         }
     }
     hand_knowledge[v.index()][opp.index()].sort_by_key(|k| k.object);
-    map.insert("library_knowledge".into(), serde_json::to_value(&library_knowledge).expect("rows"));
-    map.insert("hand_knowledge".into(), serde_json::to_value(&hand_knowledge).expect("rows"));
+    map.insert(
+        "library_knowledge".into(),
+        serde_json::to_value(&library_knowledge).expect("rows"),
+    );
+    map.insert(
+        "hand_knowledge".into(),
+        serde_json::to_value(&hand_knowledge).expect("rows"),
+    );
 
     // Timestamps: rank 1..N with ties kept; next timestamp N + 1.
     let rank: BTreeMap<u64, u64> = timestamps
@@ -1060,7 +1143,10 @@ pub(crate) fn export_v1(
 
     // Step 11: static assertions, then the canonical state.
     if has_tag(&tagged) {
-        return Err(refuse(RefusalCodeV1::R2, "a native id survived the rewrite"));
+        return Err(refuse(
+            RefusalCodeV1::R2,
+            "a native id survived the rewrite",
+        ));
     }
     let mut out: GameState = serde_json::from_value(tagged)
         .map_err(|e| refuse(RefusalCodeV1::R2, format!("the export does not load: {e}")))?;
@@ -1233,26 +1319,38 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         }
     }
     if let Some(t) = missing {
-        return Err(refuse(RefusalCodeV1::R2, format!("timestamp {t} has no rank")));
+        return Err(refuse(
+            RefusalCodeV1::R2,
+            format!("timestamp {t} has no rank"),
+        ));
     }
     Ok(())
 }
 
 /// 6.8's static assertions on the canonical state.
-fn static_assertions(state: &GameState, handles: &[HandleV1], v: PlayerId) -> Result<(), ExportErrorV1> {
+fn static_assertions(
+    state: &GameState,
+    handles: &[HandleV1],
+    v: PlayerId,
+) -> Result<(), ExportErrorV1> {
     let fail = |d: &str| Err(refuse(RefusalCodeV1::R2, format!("static assertion: {d}")));
     let opp = v.opponent();
     if state.objects.len() != handles.len() {
         return fail("one handle per object");
     }
     if !state.hand_knowledge[opp.index()].iter().all(Vec::is_empty)
-        || !state.library_knowledge[opp.index()].iter().all(Vec::is_empty)
+        || !state.library_knowledge[opp.index()]
+            .iter()
+            .all(Vec::is_empty)
     {
         return fail("opponent-observer rows are empty");
     }
     for k in &state.hand_knowledge[v.index()][opp.index()] {
         match handles.get(k.object.0 as usize) {
-            Some(HandleV1::C { .. }) | Some(HandleV1::U { known_name: true, .. }) => {}
+            Some(HandleV1::C { .. })
+            | Some(HandleV1::U {
+                known_name: true, ..
+            }) => {}
             _ => return fail("a hand row binds a known object or a known_name occupant"),
         }
     }

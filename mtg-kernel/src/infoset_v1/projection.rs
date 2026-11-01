@@ -132,9 +132,7 @@ pub(crate) struct ObjectTrackSummaryV1 {
 
 impl ProjectionV1 {
     pub(crate) fn tracked(&self, id: ObjectId) -> bool {
-        self.objects
-            .get(id.0 as usize)
-            .is_some_and(|o| o.tracked)
+        self.objects.get(id.0 as usize).is_some_and(|o| o.tracked)
     }
     pub(crate) fn current_span(&self, id: ObjectId) -> Option<&SpanV1> {
         let o = self.objects.get(id.0 as usize)?;
@@ -272,7 +270,8 @@ pub(crate) fn project_v1(
             ));
         }
         if o.exists && o.zone != Some(object.zone) {
-            w.inconsistencies.push(format!("object {} zone differs from the walk", id.0));
+            w.inconsistencies
+                .push(format!("object {} zone differs from the walk", id.0));
         }
     }
     let items = w.item;
@@ -410,7 +409,9 @@ impl WalkV1<'_> {
     fn state_hand_untracked(&self, owner: PlayerId) -> usize {
         self.objs
             .iter()
-            .filter(|o| o.exists && o.owner == Some(owner) && o.zone == Some(Zone::Hand) && !o.tracked)
+            .filter(|o| {
+                o.exists && o.owner == Some(owner) && o.zone == Some(Zone::Hand) && !o.tracked
+            })
             .count()
     }
 
@@ -445,7 +446,9 @@ impl WalkV1<'_> {
                 let observed: Vec<ObjectId> = if named || was { vec![id] } else { vec![] };
                 self.settle(&observed);
             }
-            CommittedEvent::ZoneChange { object, from, to, .. } => {
+            CommittedEvent::ZoneChange {
+                object, from, to, ..
+            } => {
                 let id = *object;
                 let was = self.objs[id.0 as usize].tracked;
                 let owner = self.owner(id);
@@ -615,8 +618,7 @@ impl WalkV1<'_> {
                 // It locates a card outside the hand: R8b, applied before the
                 // in-place reveal update below (ruling 44).
                 if !was
-                    && self.objs[id.0 as usize].arrived_from_library_at
-                        == Some(note.history_len)
+                    && self.objs[id.0 as usize].arrived_from_library_at == Some(note.history_len)
                 {
                     self.survivors.taint_name(card_def);
                 }

@@ -102,7 +102,12 @@ fn r2(detail: String) -> ExportErrorV1 {
 }
 
 impl WalkerV1<'_> {
-    pub(crate) fn walk(&mut self, value: &mut Value, class: ClassV1, parent: &str) -> Result<(), ExportErrorV1> {
+    pub(crate) fn walk(
+        &mut self,
+        value: &mut Value,
+        class: ClassV1,
+        parent: &str,
+    ) -> Result<(), ExportErrorV1> {
         match value {
             Value::Object(map) => self.walk_map(map, class, parent),
             Value::Array(items) => {
@@ -162,7 +167,12 @@ impl WalkerV1<'_> {
         s
     }
 
-    fn walk_map(&mut self, map: &mut Map<String, Value>, class: ClassV1, parent: &str) -> Result<(), ExportErrorV1> {
+    fn walk_map(
+        &mut self,
+        map: &mut Map<String, Value>,
+        class: ClassV1,
+        parent: &str,
+    ) -> Result<(), ExportErrorV1> {
         // Object-valued fields and their paired generations.
         let id_keys: Vec<String> = map
             .iter()
@@ -171,7 +181,9 @@ impl WalkerV1<'_> {
             .collect();
         let gen_keys: Vec<String> = map
             .iter()
-            .filter(|(k, v)| is_generation_key(k) && !v.is_null() && !v.is_object() && !v.is_array())
+            .filter(|(k, v)| {
+                is_generation_key(k) && !v.is_null() && !v.is_object() && !v.is_array()
+            })
             .map(|(k, _)| k.clone())
             .collect();
         let mut pairs: Vec<(String, Option<String>)> = Vec::new();
@@ -283,7 +295,9 @@ pub(crate) fn has_tag(value: &Value) -> bool {
     match value {
         Value::String(s) => s.starts_with(OBJECT_ID_TAG_PREFIX_V1),
         Value::Array(xs) => xs.iter().any(has_tag),
-        Value::Object(m) => m.iter().any(|(k, v)| k.starts_with(OBJECT_ID_TAG_PREFIX_V1) || has_tag(v)),
+        Value::Object(m) => m
+            .iter()
+            .any(|(k, v)| k.starts_with(OBJECT_ID_TAG_PREFIX_V1) || has_tag(v)),
         _ => false,
     }
 }

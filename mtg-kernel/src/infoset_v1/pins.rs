@@ -185,8 +185,14 @@ mod tests {
     #[test]
     fn w_pin_2_two_pins_one_draw_stay_in_the_library() {
         let pins = [
-            PinV1 { last_zone: Zone::Library, since: 10 },
-            PinV1 { last_zone: Zone::Library, since: 12 },
+            PinV1 {
+                last_zone: Zone::Library,
+                since: 10,
+            },
+            PinV1 {
+                last_zone: Zone::Library,
+                since: 12,
+            },
         ];
         let transfers = [draw(20)];
         assert_eq!(
@@ -195,7 +201,12 @@ mod tests {
         );
         // Both in the hand would need two draws: infeasible by C1.
         assert!(!feasible(&pins, &[Zone::Hand, Zone::Hand], &transfers, CAP));
-        assert!(feasible(&pins, &[Zone::Hand, Zone::Library], &transfers, CAP));
+        assert!(feasible(
+            &pins,
+            &[Zone::Hand, Zone::Library],
+            &transfers,
+            CAP
+        ));
         // v4's placement puts both in the hand.
         assert_eq!(
             allocate_pins_independent_v4(&pins, &transfers),
@@ -205,12 +216,28 @@ mod tests {
 
     #[test]
     fn capacity_forces_a_pin_out_of_its_last_zone_when_a_transfer_allows() {
-        let pins = [PinV1 { last_zone: Zone::Library, since: 0 }];
-        let none = PinCapacityV1 { library_slots: 0, ..CAP };
-        assert_eq!(allocate_pins(&pins, &[draw(5)], none), Some(vec![Zone::Hand]));
+        let pins = [PinV1 {
+            last_zone: Zone::Library,
+            since: 0,
+        }];
+        let none = PinCapacityV1 {
+            library_slots: 0,
+            ..CAP
+        };
+        assert_eq!(
+            allocate_pins(&pins, &[draw(5)], none),
+            Some(vec![Zone::Hand])
+        );
         assert_eq!(allocate_pins(&pins, &[], none), None, "R7");
         let early = [draw(0)];
-        let late_pin = [PinV1 { last_zone: Zone::Library, since: 1 }];
-        assert_eq!(allocate_pins(&late_pin, &early, none), None, "a draw before the pin cannot carry it");
+        let late_pin = [PinV1 {
+            last_zone: Zone::Library,
+            since: 1,
+        }];
+        assert_eq!(
+            allocate_pins(&late_pin, &early, none),
+            None,
+            "a draw before the pin cannot carry it"
+        );
     }
 }

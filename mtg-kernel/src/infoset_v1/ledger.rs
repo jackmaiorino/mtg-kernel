@@ -391,7 +391,16 @@ mod tests {
         // Fiend reveal of 5, Dispel exiled, Brainstorm cast: physical facts
         // Terror, Ponder, Mystic; draw 3 (no change); two unidentified returns.
         f.unidentified_departure(&[4, 3, 2]);
-        assert_eq!(f.nodes(), vec![NodeV1 { k: names(&[2, 3, 4]), m: 2, parent: None, tainted: false, alive: true }]);
+        assert_eq!(
+            f.nodes(),
+            vec![NodeV1 {
+                k: names(&[2, 3, 4]),
+                m: 2,
+                parent: None,
+                tainted: false,
+                alive: true
+            }]
+        );
         f.unidentified_departure(&[]);
         let nodes = f.nodes();
         assert_eq!(nodes.len(), 1);
@@ -404,13 +413,31 @@ mod tests {
     fn residual_multiplicity_picks_only_copies_that_grow_the_intersection() {
         // K = {A, B}, m = 2 with one A already placed for a child.
         let mut f = SurvivorTreeV1::default();
-        f.nodes.push(NodeV1 { k: names(&[1, 2]), m: 2, parent: None, tainted: false, alive: true });
-        f.nodes.push(NodeV1 { k: names(&[1]), m: 1, parent: Some(0), tainted: false, alive: true });
+        f.nodes.push(NodeV1 {
+            k: names(&[1, 2]),
+            m: 2,
+            parent: None,
+            tainted: false,
+            alive: true,
+        });
+        f.nodes.push(NodeV1 {
+            k: names(&[1]),
+            m: 1,
+            parent: Some(0),
+            tainted: false,
+            alive: true,
+        });
         let pool = names(&[1, 1, 1, 2]);
         assert_eq!(f.allocate(&pool, 4, &by_id), Ok(vec![1, 2]));
         // Without a B left the deficit cannot be filled: R8.
-        assert_eq!(f.allocate(&names(&[1, 1, 1]), 4, &by_id), Err(AllocationErrorV1::Unfillable));
-        assert_eq!(f.allocate(&pool, 1, &by_id), Err(AllocationErrorV1::Unfillable));
+        assert_eq!(
+            f.allocate(&names(&[1, 1, 1]), 4, &by_id),
+            Err(AllocationErrorV1::Unfillable)
+        );
+        assert_eq!(
+            f.allocate(&pool, 1, &by_id),
+            Err(AllocationErrorV1::Unfillable)
+        );
     }
 
     #[test]

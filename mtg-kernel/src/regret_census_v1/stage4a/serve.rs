@@ -155,7 +155,9 @@ pub(crate) fn search_tree_v1(
                 let mut counts: Vec<Option<CountsV1>> = vec![None; width];
                 for e in 0..width {
                     let live = cursor.live(h, e)? as usize;
-                    let slot = counts.get_mut(live).ok_or("an edge maps outside the menu")?;
+                    let slot = counts
+                        .get_mut(live)
+                        .ok_or("an edge maps outside the menu")?;
                     if slot.is_some() {
                         return Err("two edges map to one live action".into());
                     }
@@ -192,7 +194,10 @@ pub(crate) fn tree_result_digest(r: &TreeResultV1) -> String {
     let v = json!({"tree": r.tree, "units_budget": r.units_budget, "menu": r.menu_sha256,
         "edges": r.edges, "transitions": r.transitions, "incomplete": r.incomplete,
         "cap_reached": r.cap_reached, "faults": r.faults});
-    format!("{:x}", Sha256::digest(serde_json::to_vec(&v).expect("json")))
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&v).expect("json"))
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,7 +212,9 @@ pub(crate) enum PickStageV1 {
 /// compared exactly; then the lowest live index.
 pub(crate) fn pick_v2(merged: &[CountsV1]) -> Option<(usize, PickStageV1)> {
     let best_n = merged.iter().map(|c| c.n).max()?;
-    let top: Vec<usize> = (0..merged.len()).filter(|&i| merged[i].n == best_n).collect();
+    let top: Vec<usize> = (0..merged.len())
+        .filter(|&i| merged[i].n == best_n)
+        .collect();
     if top.len() == 1 {
         return Some((top[0], PickStageV1::Visits));
     }
@@ -328,7 +335,14 @@ pub(super) fn run_worker(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
             let req: TreeRequestV1 =
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
             let root = req.payload.import()?;
-            let r = search_tree_v1(policy, &root, &req.payload, &req.root_id, req.tree, req.units)?;
+            let r = search_tree_v1(
+                policy,
+                &root,
+                &req.payload,
+                &req.root_id,
+                req.tree,
+                req.units,
+            )?;
             Ok(json!({"ok": true, "result": r}))
         })()
         .unwrap_or_else(|e| json!({"ok": false, "error": e}));
@@ -347,7 +361,11 @@ struct WorkerV1 {
 fn spawn_worker(source: &str) -> Result<WorkerV1, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut child = std::process::Command::new(exe)
-        .args([format!("source={source}"), format!("mode={WORKER_MODE}"), "out=-".into()])
+        .args([
+            format!("source={source}"),
+            format!("mode={WORKER_MODE}"),
+            "out=-".into(),
+        ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -386,7 +404,9 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
             let root = req.payload.import()?;
             let menu = menu_sha256(&root)?;
-            let width = decision(&root).ok_or("the root is terminal")?.legal_action_count as usize;
+            let width = decision(&root)
+                .ok_or("the root is terminal")?
+                .legal_action_count as usize;
             for (t, w) in workers.iter_mut().enumerate() {
                 let tree_req = json!({"root_id": req.root_id, "tree": t,
                     "units": partition_v1(req.budget, t as u64, k), "payload": req.payload});
@@ -415,8 +435,10 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
                 width,
                 &trees,
             );
-            Ok(json!({"ok": true, "search": merged, "host": host_name(), "k": k,
-                "trees": trees, "wall_seconds": started.elapsed().as_secs_f64()}))
+            Ok(
+                json!({"ok": true, "search": merged, "host": host_name(), "k": k,
+                "trees": trees, "wall_seconds": started.elapsed().as_secs_f64()}),
+            )
         })()
         .unwrap_or_else(|e| json!({"ok": false, "error": e}));
         writeln!(out, "{answer}").map_err(|e| e.to_string())?;
@@ -449,11 +471,23 @@ mod tests {
 
     #[test]
     fn pick_v2_stages() {
-        assert_eq!(pick_v2(&[c(3, 1, 0), c(5, 0, 0)]), Some((1, PickStageV1::Visits)));
+        assert_eq!(
+            pick_v2(&[c(3, 1, 0), c(5, 0, 0)]),
+            Some((1, PickStageV1::Visits))
+        );
         // Equal visits: Q = (wins + draws / 2) / n, exact.
-        assert_eq!(pick_v2(&[c(4, 1, 1), c(4, 1, 2)]), Some((1, PickStageV1::Q)));
-        assert_eq!(pick_v2(&[c(4, 2, 0), c(4, 1, 2)]), Some((0, PickStageV1::Index)));
-        assert_eq!(pick_v2(&[c(0, 0, 0), c(0, 0, 0)]), Some((0, PickStageV1::Index)));
+        assert_eq!(
+            pick_v2(&[c(4, 1, 1), c(4, 1, 2)]),
+            Some((1, PickStageV1::Q))
+        );
+        assert_eq!(
+            pick_v2(&[c(4, 2, 0), c(4, 1, 2)]),
+            Some((0, PickStageV1::Index))
+        );
+        assert_eq!(
+            pick_v2(&[c(0, 0, 0), c(0, 0, 0)]),
+            Some((0, PickStageV1::Index))
+        );
         assert_eq!(pick_v2(&[]), None);
     }
 

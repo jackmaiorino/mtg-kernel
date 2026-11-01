@@ -75,7 +75,10 @@ pub(crate) fn play(
 #[test]
 fn export_is_deterministic_and_round_trips_through_import() {
     let mut tally = RefusalTallyV1::default();
-    for (decks, seed) in [(["CawGates", "Faeries"], 3u64), (["Wildfire", "Wildfire"], 5)] {
+    for (decks, seed) in [
+        (["CawGates", "Faeries"], 3u64),
+        (["Wildfire", "Wildfire"], 5),
+    ] {
         play(decks, seed, 400, |s, v| {
             let a = export_at(s, v, ExportOptionsV1::default());
             let b = export_at(s, v, ExportOptionsV1::default());
@@ -98,6 +101,9 @@ fn export_is_deterministic_and_round_trips_through_import() {
             tally.record(&a.as_ref().map(|_| ()).map_err(Clone::clone));
         });
     }
-    eprintln!("infoset smoke tally: {}", serde_json::to_string(&tally).unwrap());
+    eprintln!(
+        "infoset smoke tally: {}",
+        serde_json::to_string(&tally).unwrap()
+    );
     assert!(tally.exported > 0, "some decisions export");
 }

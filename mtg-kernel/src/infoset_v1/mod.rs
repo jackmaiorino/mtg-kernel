@@ -15,8 +15,8 @@
 //! Faults (I1 to I4) are engine invariants: the game halts as F1.
 
 pub(crate) mod export;
-pub(crate) mod payload;
 pub(crate) mod ledger;
+pub(crate) mod payload;
 pub(crate) mod pins;
 pub(crate) mod projection;
 pub(crate) mod rewrite;
