@@ -1302,7 +1302,10 @@ pub(crate) fn execute(op: &P1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             if let Some(artifact) = legal_object_target(ctx, state, 0, vandal_target_spec()) {
                 destroy(ctx, state, artifact);
             }
-            if let Some(vandal) = live_ability_source(ctx, state) {
+            let vandal = live_ability_source(ctx, state).or_else(|| {
+                (state.objects.get(ctx.source).zone == Zone::Battlefield).then_some(ctx.source)
+            });
+            if let Some(vandal) = vandal {
                 let record = (live_link(state, vandal), TurnV1::now(state));
                 let records = &mut p1a_state(state).no_combat_damage;
                 if !records.contains(&record) {
