@@ -146,12 +146,13 @@ def flush_durable(folder: Path, names) -> None:
     for name in names:
         with open(Path(folder) / name, "rb+") as stream:
             os.fsync(stream.fileno())
-    if hasattr(os, "O_DIRECTORY"):  # POSIX: the folder's entries too (Windows flushes them with the files)
-        handle = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(handle)
-        finally:
-            os.close(handle)
+    if hasattr(os, "O_DIRECTORY"):  # POSIX: the folder's entries, and each parent's (the folder may be new), too
+        for each in (Path(folder).resolve(), *Path(folder).resolve().parents):
+            handle = os.open(each, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(handle)
+            finally:
+                os.close(handle)
 
 
 def verify_copy(dest: Path, reported: dict) -> dict:
