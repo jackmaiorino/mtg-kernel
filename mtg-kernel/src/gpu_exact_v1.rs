@@ -72,6 +72,8 @@ struct InstalledLearnerV1 {
     busy_seconds: f64,
     /// Updates that did not fit the device and ran the CPU backward.
     cpu_fallbacks: u64,
+    /// The error that failed an update, if one did (the run then stops).
+    fatal_error: Option<String>,
 }
 
 static LEARNER: std::sync::OnceLock<std::sync::Mutex<InstalledLearnerV1>> =
@@ -90,6 +92,7 @@ pub fn install_learner_v1(ordinal: usize) -> Result<(), String> {
             substeps: 0,
             busy_seconds: 0.0,
             cpu_fallbacks: 0,
+            fatal_error: None,
         }))
         .map_err(|_| "a GPU learner is already installed".to_owned())
 }
@@ -121,7 +124,10 @@ pub(crate) fn learner_gradients_v1(
                 learner.cpu_fallbacks += 1;
                 return Ok(None);
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                learner.fatal_error = Some(error.clone());
+                return Err(error);
+            }
         };
     learner.updates += 1;
     learner.substeps += substeps.len() as u64;
@@ -145,6 +151,7 @@ pub fn learner_receipt_v1() -> Option<serde_json::Value> {
             "wait": if learner.device.options.blocking_wait { "block" } else { "spin" },
             "updates": learner.updates, "substeps": learner.substeps,
             "cpu_fallbacks": learner.cpu_fallbacks,
+            "fatal_error": learner.fatal_error,
             "busy_seconds": learner.busy_seconds,
         })
     })

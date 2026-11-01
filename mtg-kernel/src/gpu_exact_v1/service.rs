@@ -11,7 +11,7 @@
 //! stay in the collector.
 
 use super::net8::{
-    forward_batch_v1, DeviceBuffersV1, ExactOutputV1, Net8DeviceModelV1, Net8HostModelV1,
+    forward_batch_v1, DEVICE_ERROR_PREFIX_V1, DeviceBuffersV1, ExactOutputV1, Net8DeviceModelV1, Net8HostModelV1,
     PackedBatchV1,
 };
 use super::device::{ExactOptionsV1, KernelsV1};
@@ -44,7 +44,7 @@ impl Default for BatchPolicyV1 {
 }
 
 /// Counters for receipts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ServiceStatsV1 {
     pub(crate) batches: u64,
     pub(crate) requests: u64,
@@ -53,6 +53,8 @@ pub(crate) struct ServiceStatsV1 {
     pub(crate) busy_micros: u64,
     /// Batches by size: 1, 2, 3-4, 5-8, 9-16, 17-32, 33-64, 65 or more.
     pub(crate) batch_sizes: [u64; 8],
+    /// The device error that stopped the service, if one did.
+    pub(crate) poisoned: Option<String>,
 }
 
 fn size_bucket_v1(size: usize) -> usize {
@@ -265,7 +267,7 @@ fn serve_v1(
                 }
             }
             Message::Stats(reply) => {
-                let _ = reply.send(stats);
+                let _ = reply.send(stats.clone());
             }
             #[cfg(test)]
             Message::PanicOnNextRequest => armed = true,
@@ -327,8 +329,12 @@ fn serve_v1(
             tick,
             &mut stats,
         );
-        if let Some(Err(error)) = result.iter().find(|reply| reply.is_err()) {
+        if let Some(Err(error)) = result
+            .iter()
+            .find(|reply| reply.as_ref().is_err_and(|e| e.starts_with(DEVICE_ERROR_PREFIX_V1)))
+        {
             poisoned = Some(format!("GPU inference service stopped after a device error: {error}"));
+            stats.poisoned = poisoned.clone();
         }
         stats.batch_sizes[size_bucket_v1(pending.len())] += 1;
         for (request, reply) in pending.drain(..).zip(result) {
@@ -492,6 +498,7 @@ pub(crate) fn service_receipt_v1(service: &InferenceServiceV1) -> serde_json::Va
             receipt["requests"] = stats.requests.into();
             receipt["launches"] = stats.launches.into();
             receipt["model_uploads"] = stats.model_uploads.into();
+            receipt["poisoned"] = stats.poisoned.clone().into();
             receipt["batch_sizes"] = serde_json::json!({
                 "1": stats.batch_sizes[0], "2": stats.batch_sizes[1], "3-4": stats.batch_sizes[2],
                 "5-8": stats.batch_sizes[3], "9-16": stats.batch_sizes[4], "17-32": stats.batch_sizes[5],

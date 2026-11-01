@@ -32,6 +32,11 @@ pub(super) struct DimsV1 {
 // SAFETY: plain `repr(C)` integers, the layout of the CUDA struct.
 unsafe impl DeviceRepr for DimsV1 {}
 
+/// Prefix of an error from the device itself (allocation, copy, launch or
+/// synchronize). After one the context may be poisoned, so the service stops
+/// serving; other errors (validation, slot bookkeeping) fail only their request.
+pub(crate) const DEVICE_ERROR_PREFIX_V1: &str = "gpu-exact device: ";
+
 /// `MTG_V2_MAX_MODELS` in `net8_forward_v2.cu`: the model slots one v2 launch
 /// serves (`BatchPolicyV1::max_models` must not exceed it).
 pub(crate) const V2_MAX_MODELS: usize = 10;
@@ -106,11 +111,11 @@ impl Net8DeviceModelV1 {
             params: device
                 .stream
                 .clone_htod(&host.values)
-                .map_err(|e| format!("upload: {e:?}"))?,
+                .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}upload: {e:?}"))?,
             layout: device
                 .stream
                 .clone_htod(&host.layout)
-                .map_err(|e| format!("upload: {e:?}"))?,
+                .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}upload: {e:?}"))?,
             layout_host: host.layout.clone(),
             dims: host.dims,
         })
@@ -344,10 +349,10 @@ impl<T: Copy + Default> PinnedV1<T> {
         device
             .ctx
             .bind_to_thread()
-            .map_err(|e| format!("bind: {e:?}"))?;
+            .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}bind: {e:?}"))?;
         // SAFETY: a fresh allocation of `len` elements, initialized below.
         let ptr = unsafe { cudarc::driver::result::malloc_host(len * std::mem::size_of::<T>(), flags) }
-            .map_err(|e| format!("pinned alloc: {e:?}"))? as *mut T;
+            .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}pinned alloc: {e:?}"))? as *mut T;
         // SAFETY: `ptr` holds `len` elements; every one is written here.
         unsafe { std::slice::from_raw_parts_mut(ptr, len).fill(T::default()) };
         Ok(Self { ptr, len })
@@ -392,7 +397,7 @@ pub(super) fn ensure<T: DeviceRepr + cudarc::driver::ValidAsZeroBits>(
             device
                 .stream
                 .alloc_zeros::<T>(len.next_power_of_two())
-                .map_err(|e| format!("alloc: {e:?}"))?,
+                .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}alloc: {e:?}"))?,
         );
     }
     Ok(())
@@ -492,7 +497,7 @@ fn forward_v2(
         // SAFETY: `host` is pinned and outlives the copy (the stream is
         // synchronized below); the device buffer holds at least `words`.
         unsafe { cudarc::driver::result::memcpy_htod_async(pointer, &*host, stream.cu_stream()) }
-            .map_err(|e| format!("upload: {e:?}"))?;
+            .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}upload: {e:?}"))?;
     }
     let scratch = buffers.scratch.as_mut().expect("ensured");
     let out = buffers.out.as_mut().expect("ensured");
@@ -520,7 +525,7 @@ fn forward_v2(
         // SAFETY: every descriptor's offsets lie inside the packed buffer and
         // the scratch and outputs sized by `push_v1`; every slot it names is
         // in the table (checked above).
-        unsafe { launch.launch(config) }.map_err(|e| format!("forward launch: {e:?}"))?;
+        unsafe { launch.launch(config) }.map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}forward launch: {e:?}"))?;
     }
     // The parameter reads are scheduled; the records order later writes after them.
     drop(records);
@@ -530,11 +535,11 @@ fn forward_v2(
         // SAFETY: `read` is pinned and holds `outputs` elements; the stream is
         // synchronized before it is read.
         unsafe { cudarc::driver::result::memcpy_dtoh_async(&mut *read, pointer, stream.cu_stream()) }
-            .map_err(|e| format!("download: {e:?}"))?;
+            .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}download: {e:?}"))?;
     }
     stream
         .synchronize()
-        .map_err(|e| format!("synchronize: {e:?}"))?;
+        .map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}synchronize: {e:?}"))?;
     let values = &read[batch.logits_len..];
     Ok(batch
         .replies
@@ -565,7 +570,7 @@ fn forward_v1(
     let requests = buffers.requests.as_mut().expect("ensured");
     let floats = buffers.floats.as_mut().expect("ensured");
     let ints = buffers.ints.as_mut().expect("ensured");
-    let upload = |e| format!("upload: {e:?}");
+    let upload = |e| format!("{DEVICE_ERROR_PREFIX_V1}upload: {e:?}");
     if !batch.floats.is_empty() {
         stream
             .memcpy_htod(&batch.floats, &mut floats.slice_mut(..batch.floats.len()))
@@ -620,12 +625,12 @@ fn forward_v1(
         };
         // SAFETY: every descriptor's offsets lie inside the uploaded buffers
         // and the scratch, logits and values sized by `push_v1`.
-        unsafe { launch.launch(config) }.map_err(|e| format!("forward launch: {e:?}"))?;
+        unsafe { launch.launch(config) }.map_err(|e| format!("{DEVICE_ERROR_PREFIX_V1}forward launch: {e:?}"))?;
         start = end;
     }
     let mut host_logits = vec![0f32; batch.logits_len];
     let mut host_values = vec![0f32; count];
-    let download = |e| format!("download: {e:?}");
+    let download = |e| format!("{DEVICE_ERROR_PREFIX_V1}download: {e:?}");
     if batch.logits_len > 0 {
         stream
             .memcpy_dtoh(&logits.slice(..batch.logits_len), &mut host_logits)
