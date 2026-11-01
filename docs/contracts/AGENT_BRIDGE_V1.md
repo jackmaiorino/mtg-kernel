@@ -276,3 +276,26 @@ diverged) or `engine_contract_failure:flat_v4_encode:<detail>`
 itself (for example `fail_closed:observation:<error>`) passes through before
 the copy is stepped or checked and keeps its own reason (Section 9). Without
 the flag nothing here runs.
+
+## 12. Private v2 support (opt-in, `--private-v2-support`)
+
+The flag turns on the engine's neutral-choice mode for the game and adds
+`x_kernel_v2_support` (private metadata, the public-history slice) for the
+trusted Spellbench v2 adapter. Neutral mode differs from the default engine
+only where the default would resolve a choice itself:
+
+- Single-option choices (costs, modes, targets, discards, library
+  partitions) are posed instead of resolved. A discard effect larger than
+  the hand poses the smaller selection; a discard cost still needs the full
+  count.
+- A forced X is posed only when the payable range is exactly 0, that is
+  minimum == maximum == 0, as `ChooseEffectNumber { number: 0, minimum: 0,
+  maximum: 0 }`. A forced X with a nonzero minimum resolves itself.
+- A revealed hand/graveyard partition (Winding Way) is posed as a forced
+  subset in the chooser's order, then the graveyard order.
+- A resolving spell stays on the stack during its choices;
+  `resolving_stack_instance` names that stack item.
+- A bottom-only library randomization is refused (the game halts), since the
+  observation journal cannot describe it to the history tracker.
+- Semantic kinds, targets and effect purposes outside the Pauper contract
+  halt the game or set `projection_error`; they are never guessed.

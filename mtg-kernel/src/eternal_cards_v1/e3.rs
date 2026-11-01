@@ -2735,6 +2735,7 @@ fn bottom_in_random_order(
 
 /// Reveals the top `count` cards of `player`'s library to both players.
 fn reveal_top_to_all(state: &mut GameState, player: PlayerId, count: usize) {
+    // spellbench-public-reveal: public reveal to both players.
     for observer in [PlayerId::P0, PlayerId::P1] {
         state.reveal_library_top(observer, player, count);
     }

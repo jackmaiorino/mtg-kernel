@@ -1614,6 +1614,7 @@ fn consultation(state: &mut GameState, player: PlayerId, named: u16) {
         definition(state, card).is_some_and(|def| def.object_name == named_def.object_name)
     });
     let revealed = found.map_or(library.len(), |position| position + 1);
+    // spellbench-public-reveal: public reveal to both players.
     for observer in [PlayerId::P0, PlayerId::P1] {
         state.reveal_library_top(observer, player, revealed);
     }

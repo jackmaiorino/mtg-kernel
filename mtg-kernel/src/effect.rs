@@ -9324,6 +9324,7 @@ fn stage_or_apply_undercity_throne(
     validate_initiative_continuation_root(state, continuation, binding)?;
     let original_library = bind_library_exact(state, binding.player);
     let revealed_prefix = original_library[..original_library.len().min(10)].to_vec();
+    // spellbench-public-reveal: public reveal to both players.
     for observer in [PlayerId::P0, PlayerId::P1] {
         state.reveal_library_top(observer, binding.player, revealed_prefix.len());
     }
@@ -14320,6 +14321,7 @@ fn drive_resumable_inner_with_native_row_v1(
                                     .ok_or("searched card left the library before placement")?;
                                 let card = library.remove(position);
                                 library.insert(0, card);
+                                // spellbench-public-reveal: public reveal to both players.
                                 for observer in [PlayerId::P0, PlayerId::P1] {
                                     state.reveal_library_position(observer, player, 0);
                                 }
@@ -14715,6 +14717,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     // The reveal is public: both observers learn this exact
                     // incarnation's identity now, not just the controller
                     // who already knew it privately from the initial look.
+                    // spellbench-public-reveal: public reveal to both players.
                     state.reveal_library_top(PlayerId::P0, player, 1);
                     state.reveal_library_top(PlayerId::P1, player, 1);
                     let revealed_def = &crate::card_def::CARD_DEFS
@@ -15725,6 +15728,7 @@ fn drive_resumable_inner_with_native_row_v1(
             EffectOp::RevealUntilCardTypeAndMill { player, card_type } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 let original_prefix = bind_library_through_first_type(state, player, card_type);
+                // spellbench-public-reveal: public reveal to both players.
                 for observer in [PlayerId::P0, PlayerId::P1] {
                     state.reveal_library_top(observer, player, original_prefix.len());
                 }
@@ -16702,6 +16706,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
                     continue;
                 };
+                // spellbench-public-reveal: public reveal to both players.
                 state.reveal_library_top(PlayerId::P0, player, 1);
                 state.reveal_library_top(PlayerId::P1, player, 1);
                 let top_def =
@@ -19539,6 +19544,7 @@ fn reveal_until_type_to_hand_random_bottom_v1(
     // the hand move and the checked random transaction together so exhausted
     // randomness cannot leave a partial reveal or a partly moved library.
     let mut projected = state.clone();
+    // spellbench-public-reveal: public reveal to both players.
     for observer in [PlayerId::P0, PlayerId::P1] {
         projected.reveal_library_top(observer, player, prefix.len());
     }
@@ -19822,6 +19828,7 @@ fn reveal_top_and_partition(
     // "Reveal" is public, unlike a private look. Record the exact prefix
     // for both perspectives before any member leaves and shifts the
     // remaining position facts.
+    // spellbench-public-reveal: public reveal to both players.
     for observer in [PlayerId::P0, PlayerId::P1] {
         state.reveal_library_top(observer, player, revealed.len());
     }
@@ -23762,6 +23769,7 @@ fn execute_with_native_row_v1(
                 objects.len() < 2,
                 "a multi-card revealed mill must use the resumable interpreter"
             );
+            // spellbench-public-reveal: public reveal to both players.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 state.reveal_library_top(observer, player, objects.len());
             }

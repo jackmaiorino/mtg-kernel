@@ -736,6 +736,7 @@ pub(crate) fn apply(
             c.phase = 1;
             for (position, b) in c.prefix.iter().enumerate() {
                 if !c.down.contains(b) {
+                    // spellbench-public-reveal: cards revealed to the opponent by the card rules.
                     state.reveal_library_position(c.player.opponent(), c.player, position);
                 }
             }

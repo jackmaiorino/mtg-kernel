@@ -27904,6 +27904,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     }
     if to_zone == Zone::Library {
         // The spell was public on the stack.
+        // spellbench-public-reveal: public reveal to both players.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state.reveal_library_position(observer, owner, 0);
         }
@@ -31112,6 +31113,80 @@ mod tests {
             .spellbench_neutral_v1
             .revealed_partition
             .is_none());
+    }
+
+    /// Winding Way with no card of the chosen type: the neutral contract
+    /// still poses the (empty) forced subset, then the graveyard order of all
+    /// four revealed cards, for both the creature and noncreature options.
+    #[test]
+    fn spellbench_neutral_winding_way_zero_match_for_both_options() {
+        for (option, names) in [
+            (0_u16, ["Island", "Mountain", "Forest", "Swamp"]),
+            (
+                1_u16,
+                [
+                    "Elvish Mystic",
+                    "Quirion Ranger",
+                    "Llanowar Elves",
+                    "Elvish Mystic",
+                ],
+            ),
+        ] {
+            let definitions = names.map(|name| card_id_by_name(name).unwrap());
+            let mut state = GameState::new_from_libraries(
+                &definitions,
+                &definitions,
+                |id| card_def::CARD_DEFS[id as usize].name.to_string(),
+                9,
+            );
+            state.engine.spellbench_neutral_v1.choices = true;
+            state.step = Step::Main1;
+            state.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
+            let original = state.players[0].library.clone();
+            let spell = put_in_hand(&mut state, PlayerId::P0, "Winding Way");
+            let hand_before = state.players[0].hand.len();
+            step(&mut state, Action::CastSpell(spell)).unwrap();
+            let _ = advance_until_decision(&mut state);
+            assert_eq!(
+                resolve_top_of_stack(&mut state),
+                ResolutionProgress::Suspended
+            );
+            effect::choose_resumable_option(&mut state, option).unwrap();
+            assert_eq!(
+                effect::resume_resumable_resolution(&mut state).unwrap(),
+                effect::ResumableProgress::Suspended
+            );
+            assert!(state
+                .engine
+                .spellbench_neutral_v1
+                .revealed_partition
+                .is_some());
+            assert_eq!(state.players[0].library, original);
+            // Nothing matches: the forced subset is empty and finishes at once.
+            effect::finish_resumable_target_selection(&mut state).unwrap();
+            assert_eq!(
+                effect::resume_resumable_resolution(&mut state).unwrap(),
+                effect::ResumableProgress::Suspended
+            );
+            for &card in [original[2], original[0], original[3]].iter() {
+                effect::choose_resumable_target(&mut state, Target::Object(card)).unwrap();
+            }
+            assert!(matches!(
+                effect::resume_resumable_resolution(&mut state).unwrap(),
+                effect::ResumableProgress::Complete(_)
+            ));
+            assert_eq!(state.players[0].hand.len(), hand_before - 1);
+            assert_eq!(
+                state.players[0].graveyard,
+                vec![original[2], original[0], original[3], original[1]]
+            );
+            assert!(state.players[0].library.is_empty());
+            assert!(state
+                .engine
+                .spellbench_neutral_v1
+                .revealed_partition
+                .is_none());
+        }
     }
 
     #[test]

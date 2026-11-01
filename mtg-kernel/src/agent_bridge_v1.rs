@@ -3562,14 +3562,20 @@ mod tests {
         );
     }
 
-    /// V4 visibility audit (run explicitly with `--ignored`): plays neutral
-    /// private-support games on the eight board decks with seeded uniform
-    /// choices and, at every decision, redeterminizes the acting seat's
-    /// hidden information with the search sampler. The sampler refuses a
-    /// world whose acting-seat V4 boundary (observation, candidates and
-    /// tensors) changed; the audit also compares the bridge's own
-    /// `x_kernel_flat_v4` encoding of each sampled world with the live one.
-    /// A changed boundary or tensor is a hidden-information leak.
+    /// V4 visibility audit (run explicitly with `--ignored`). What it tests:
+    /// in neutral private-support games on the eight board decks (seeded
+    /// uniform choices), at every decision the acting seat's V4 boundary
+    /// (observation, candidates and tensors) and the bridge's own
+    /// `x_kernel_flat_v4` encoding are unchanged when the search sampler
+    /// redeterminizes every hidden card the engine's knowledge tables mark as
+    /// unknown to that seat. That is a consistency check against the
+    /// engine's own knowledge tables: it cannot see a fact the tables wrongly
+    /// mark as known. So it also requires every place one player learned
+    /// cards of the other player's library to be a reviewed public-reveal
+    /// site (a `spellbench-public-reveal` marker at the call), which catches
+    /// a private look turned into a reveal. It reports how many sampled
+    /// worlds changed any hidden card and how many changed the opponent's
+    /// hand, so a pass is not satisfied by library reshuffles alone.
     #[test]
     #[ignore = "audit: run with --ignored on a release build"]
     fn spellbench_v4_visibility_audit() {
@@ -3582,6 +3588,9 @@ mod tests {
         // Sampled worlds whose hidden cards differ from the live game, so the
         // equality checks are not vacuous.
         let mut hidden_changed = 0_u64;
+        // Sampled worlds whose opponent hand (as a multiset) differs.
+        let mut opponent_hand_changed = 0_u64;
+        crate::state::take_opponent_library_reveal_sites_v1();
         let mut refused: std::collections::BTreeMap<String, u64> = Default::default();
         let mut leaks = Vec::new();
         let mut decisions = 0_u64;
@@ -3631,6 +3640,23 @@ mod tests {
                                 if hidden(world.game_state()) != hidden(fast.game_state()) {
                                     hidden_changed += 1;
                                 }
+                                let opponent = if decision["acting_seat"] == "p0" {
+                                    1
+                                } else {
+                                    0
+                                };
+                                let hand = |state: &crate::state::GameState| {
+                                    let mut cards = state.players[opponent]
+                                        .hand
+                                        .iter()
+                                        .map(|&id| state.objects.get(id).card_def)
+                                        .collect::<Vec<_>>();
+                                    cards.sort_unstable();
+                                    cards
+                                };
+                                if hand(world.game_state()) != hand(fast.game_state()) {
+                                    opponent_hand_changed += 1;
+                                }
                                 let other = encode_flat_v4_tensor_v1(&world, &mut scratch).unwrap();
                                 if other != live {
                                     leaks.push(format!(
@@ -3659,9 +3685,35 @@ mod tests {
                 eprintln!("v4 audit {game_id}: {}", decision["outcome"]);
             }
         }
+        let sites = crate::state::take_opponent_library_reveal_sites_v1();
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut unreviewed = Vec::new();
+        for (file, line) in &sites {
+            let path = [manifest.join(file), manifest.parent().unwrap().join(file)]
+                .into_iter()
+                .find(|path| path.is_file())
+                .unwrap_or_else(|| panic!("reveal site source {file} not found"));
+            let source = std::fs::read_to_string(&path).unwrap();
+            let lines: Vec<&str> = source.lines().collect();
+            let end = (*line as usize).saturating_sub(1);
+            let marked = lines[end.saturating_sub(6)..end]
+                .iter()
+                .any(|text| text.contains("spellbench-public-reveal"));
+            if !marked {
+                unreviewed.push(format!("{file}:{line}"));
+            }
+        }
         eprintln!(
-            "v4 audit: decisions {decisions}, sampled worlds {sampled}, hidden changed {hidden_changed}, refusals {refused:?}, leaks {}",
+            "v4 audit: decisions {decisions}, sampled worlds {sampled}, hidden changed {hidden_changed}, opponent hand changed {opponent_hand_changed}, refusals {refused:?}, leaks {}, opponent library reveal sites {sites:?}",
             leaks.len()
+        );
+        assert!(
+            unreviewed.is_empty(),
+            "a player learned the other library outside a reviewed public-reveal site: {unreviewed:?}"
+        );
+        assert!(
+            opponent_hand_changed > 0,
+            "no sampled world changed the opponent's hand"
         );
         assert!(
             hidden_changed * 2 >= sampled,
