@@ -3079,7 +3079,7 @@ fn flat_validate_origin_decision_common_scoped_v42(
                         minimum: 0,
                         maximum: 0,
                     } => {
-                        state.engine.spellbench_neutral_choices
+                        state.engine.spellbench_neutral_v1.choices
                             && *option_count == 1
                             && index == 0
                             && actor_matches(*actor, *player)
@@ -6074,7 +6074,7 @@ impl RlEpisodeSessionV1 {
             self.policy_step_count, 0,
             "neutral choices are a reset-only option"
         );
-        self.state.engine.spellbench_neutral_choices = true;
+        self.state.engine.spellbench_neutral_v1.choices = true;
     }
 
     pub fn privileged_environment_hash(&self) -> u64 {
@@ -7718,7 +7718,7 @@ impl FastActorSessionV1 {
             self.policy_step_count, 0,
             "neutral choices are a reset-only option"
         );
-        self.state.engine.spellbench_neutral_choices = true;
+        self.state.engine.spellbench_neutral_v1.choices = true;
     }
 
     /// Audit-only counterpart to

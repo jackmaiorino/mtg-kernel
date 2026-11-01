@@ -1614,7 +1614,11 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
                 ..
             } => {
                 root = canonical_path;
-                let revealed = state.engine.spellbench_revealed_partition.as_deref()
+                let revealed = state
+                    .engine
+                    .spellbench_neutral_v1
+                    .revealed_partition
+                    .as_deref()
                     == Some(canonical_path.as_slice());
                 (
                     if revealed {

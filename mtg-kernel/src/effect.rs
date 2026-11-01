@@ -5315,7 +5315,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         None
     };
     let exact_five = matches!(purpose, EffectTargetSelectionPurpose::SelectObjectsV1 { rule, .. } if rule.action == ObjectSelectionActionV1::TapFiveThenTransformSource);
-    let neutral_choices = state.engine.spellbench_neutral_choices;
+    let neutral_choices = state.engine.spellbench_neutral_v1.choices;
     let continuation = state.engine.pending_effect.as_mut().unwrap();
     let PendingEffectChoice::SelectTargets {
         selected,
@@ -5427,7 +5427,7 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             .map_err(|error| error.to_string())?;
         drop(token);
     }
-    let neutral_choices = state.engine.spellbench_neutral_choices;
+    let neutral_choices = state.engine.spellbench_neutral_v1.choices;
     complete_resumable_target_selection(
         state.engine.pending_effect.as_mut().unwrap(),
         fiend_artisan,
@@ -5837,7 +5837,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                                         .to_string(),
                                 )
                             }
-                            1 if !state.engine.spellbench_neutral_choices => {
+                            1 if !state.engine.spellbench_neutral_v1.choices => {
                                 let chosen = candidates[0];
                                 let expected_remaining_frames = continuation.frames.clone();
                                 let frame = EffectFrame::ExileChosenMatchingGraveyardCard {
@@ -9065,7 +9065,7 @@ fn validate_undercity_throne_frame(
         || path != canonical_path
         || !expected_remaining_frames.is_empty()
         || (candidates.is_empty()
-            || (candidates.len() == 1 && !state.engine.spellbench_neutral_choices))
+            || (candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices))
     {
         return Err("Throne answered frame has noncanonical progress".to_string());
     }
@@ -9349,7 +9349,7 @@ fn stage_or_apply_undercity_throne(
             apply_undercity_throne_result(state, binding, None)?;
             Ok(false)
         }
-        [chosen] if !state.engine.spellbench_neutral_choices => {
+        [chosen] if !state.engine.spellbench_neutral_v1.choices => {
             apply_undercity_throne_result(state, binding, Some(*chosen))?;
             Ok(false)
         }
@@ -11246,7 +11246,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     )?;
                     if *remaining == 0
                         || original_hand.is_empty()
-                        || (original_hand.len() == 1 && !state.engine.spellbench_neutral_choices)
+                        || (original_hand.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
                     {
                         return Err(
                             "hand-to-library policy prompt has no genuine choice".to_string()
@@ -11829,7 +11829,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !selected.is_empty()
                         || (original_graveyard.is_empty()
                             || (original_graveyard.len() == 1
-                                && !state.engine.spellbench_neutral_choices))
+                                && !state.engine.spellbench_neutral_v1.choices))
                     {
                         return Err("graveyard exile prompt has a noncanonical shape".to_string());
                     }
@@ -11870,7 +11870,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !*ordered
                         || !selected.is_empty()
                         || (candidates.is_empty()
-                            || (candidates.len() == 1 && !state.engine.spellbench_neutral_choices))
+                            || (candidates.len() == 1
+                                && !state.engine.spellbench_neutral_v1.choices))
                     {
                         return Err(
                             "filtered graveyard exile prompt has a noncanonical shape".to_string()
@@ -11934,7 +11935,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !selected.is_empty()
                         || original_candidates.is_empty()
                         || (original_candidates.len() == 1
-                            && !state.engine.spellbench_neutral_choices)
+                            && !state.engine.spellbench_neutral_v1.choices)
                     {
                         return Err(
                             "creature-sacrifice prompt has a noncanonical shape".to_string()
@@ -12082,7 +12083,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         .collect::<Vec<_>>();
                     if expected.len()
                         < 2 - usize::from(
-                            kind.optional() || state.engine.spellbench_neutral_choices,
+                            kind.optional() || state.engine.spellbench_neutral_v1.choices,
                         )
                     {
                         return Err(
@@ -12116,7 +12117,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !*ordered
                         || !selected.is_empty()
                         || (candidates.is_empty()
-                            || (candidates.len() == 1 && !state.engine.spellbench_neutral_choices))
+                            || (candidates.len() == 1
+                                && !state.engine.spellbench_neutral_v1.choices))
                         || !pending.frames.is_empty()
                     {
                         return Err("Throne prompt has a noncanonical shape".to_string());
@@ -13716,7 +13718,7 @@ fn drive_resumable_inner_with_native_row_v1(
                         continue;
                     }
                     state.clear_nonowner_hand_knowledge(player);
-                    if current_hand.len() == 1 && !state.engine.spellbench_neutral_choices {
+                    if current_hand.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
                         continuation
                             .frames
                             .push(EffectFrame::PutCardsFromHandOnLibraryTop {
@@ -15659,12 +15661,12 @@ fn drive_resumable_inner_with_native_row_v1(
                     reveal_top_and_partition(state, player, count, card_type, matching_to, rest_to);
                 // The Spellbench neutral contract poses the hand/graveyard
                 // partition as forced choices so both move orders are chosen.
-                if state.engine.spellbench_neutral_choices
+                if state.engine.spellbench_neutral_v1.choices
                     && matching_to == Zone::Hand
                     && rest_to == Zone::Graveyard
                     && !original_prefix.is_empty()
                 {
-                    state.engine.spellbench_revealed_partition = Some(path.clone());
+                    state.engine.spellbench_neutral_v1.revealed_partition = Some(path.clone());
                     stage_library_partition_choice(
                         &mut continuation,
                         state,
@@ -16191,7 +16193,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 let candidates = creature_sacrifice_bindings(state, player, filter)?;
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] if !state.engine.spellbench_neutral_choices => {
+                    [chosen] if !state.engine.spellbench_neutral_v1.choices => {
                         let chosen = *chosen;
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::SacrificeChosenCreature {
@@ -16265,7 +16267,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] if !kind.optional() && !state.engine.spellbench_neutral_choices => {
+                    [chosen] if !kind.optional() && !state.engine.spellbench_neutral_v1.choices => {
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::LinkedExileChosenHandCard {
                             player,
@@ -17516,7 +17518,12 @@ fn library_partition_subset_bounds(
 }
 
 fn library_partition_is_revealed(state: &GameState, canonical_path: &[u16]) -> bool {
-    state.engine.spellbench_revealed_partition.as_deref() == Some(canonical_path)
+    state
+        .engine
+        .spellbench_neutral_v1
+        .revealed_partition
+        .as_deref()
+        == Some(canonical_path)
 }
 
 /// Owned fields common to both partition prompt purposes.
@@ -17707,7 +17714,7 @@ fn validate_library_partition_selected(
     selected: &[EffectObjectBinding],
 ) -> Result<(), String> {
     validate_library_partition_subset(
-        state.engine.spellbench_neutral_choices,
+        state.engine.spellbench_neutral_v1.choices,
         original_prefix,
         selected,
     )?;
@@ -18045,7 +18052,7 @@ fn resume_library_partition_frame(
                 // A revealed partition's rest goes to the graveyard in the
                 // chooser's order, not to the library bottom.
                 commit_zone_change_batch(state, &ordered_rest, Zone::Graveyard, true)?;
-                state.engine.spellbench_revealed_partition = None;
+                state.engine.spellbench_neutral_v1.revealed_partition = None;
             }
         }
     }

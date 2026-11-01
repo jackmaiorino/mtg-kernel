@@ -7229,7 +7229,7 @@ fn core_surface_action_candidates_fake_scoped_v50(
                             )),
                         )?;
                     }
-                } else if state.engine.spellbench_neutral_choices
+                } else if state.engine.spellbench_neutral_v1.choices
                     && *option_count == 1
                     && state.engine.pending_cast.as_ref().is_some_and(|pending| {
                         pending.controller == *player
