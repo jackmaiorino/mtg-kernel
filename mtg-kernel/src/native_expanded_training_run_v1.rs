@@ -355,6 +355,25 @@ fn err(value: impl std::fmt::Display) -> String {
 fn value(value: &impl Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(err)
 }
+/// `value` as `publish` writes it and `read_json` reads it back: through the
+/// JSON bytes, so f32 fields keep their shortest form.
+fn published_value(value: &impl Serialize) -> Result<Value, String> {
+    serde_json::from_slice(&serde_json::to_vec(value).map_err(err)?).map_err(err)
+}
+/// An interrupted attempt's saved collection command must be the one this
+/// resume rebuilds. Compared as published, through the JSON bytes: an f32
+/// field (max_non_natural_episode_fraction 0.2) is written as "0.2" but
+/// becomes 0.20000000298023224 in a direct `to_value`, so a direct comparison
+/// refused every interrupted attempt of such a config.
+fn check_saved_collect_command(
+    saved: &Path,
+    command: &ExpandedTrainingCommandV1,
+) -> Result<(), String> {
+    check(
+        read_json(saved, SMALL_CAP)? == published_value(command)?,
+        "interrupted attempt collection command differs",
+    )
+}
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -1659,10 +1678,7 @@ pub fn run_native_expanded_training_v1(
             }
             let collect_command =
                 collection_command(config, index, &current, &episodes, attempt.join("collect"));
-            check(
-                read_json(&saved_command, SMALL_CAP)? == value(&collect_command)?,
-                "interrupted attempt collection command differs",
-            )?;
+            check_saved_collect_command(&saved_command, &collect_command)?;
             let path = attempt.join("collect/collection.json");
             if path.exists() {
                 let candidate = pin(&path)?;
@@ -2128,6 +2144,50 @@ mod tests {
         assert!(parallel.validate_v1().is_err());
         parallel.collection_workers = 1025;
         assert!(parallel.validate_v1().is_err());
+    }
+
+    /// An interrupted attempt's saved collection command matches the one a
+    /// resume rebuilds, also for an f32 field without an exact decimal form
+    /// (max_non_natural_episode_fraction 0.2, as D1 runs use). A direct
+    /// `to_value` widens it to 0.20000000298023224 and once refused every
+    /// such resume.
+    #[test]
+    fn saved_collection_command_matches_on_resume_with_f32_fields() {
+        let mut config = schedule();
+        config.max_non_natural_episode_fraction = 0.2;
+        config.collection_workers = 4;
+        let episodes = resolve_episodes(&config, 0, &config.initial_source, &[]).unwrap();
+        let attempt =
+            std::env::temp_dir().join(format!("rt1-saved-command-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&attempt);
+        fs::create_dir_all(&attempt).unwrap();
+        let command = collection_command(
+            &config,
+            0,
+            &config.initial_source,
+            &episodes,
+            attempt.join("collect"),
+        );
+        publish(&attempt, "collect-command.json", &command).unwrap();
+        let saved = attempt.join("collect-command.json");
+        assert_ne!(
+            read_json(&saved, SMALL_CAP).unwrap(),
+            value(&command).unwrap(),
+            "the direct form widens the f32"
+        );
+        // The resume's own check accepts it, and still refuses a changed command.
+        check_saved_collect_command(&saved, &command).unwrap();
+        let mut other = config.clone();
+        other.max_non_natural_episode_fraction = 0.25;
+        let changed = collection_command(
+            &other,
+            0,
+            &config.initial_source,
+            &episodes,
+            attempt.join("collect"),
+        );
+        assert!(check_saved_collect_command(&saved, &changed).is_err());
+        let _ = fs::remove_dir_all(&attempt);
     }
 
     #[test]

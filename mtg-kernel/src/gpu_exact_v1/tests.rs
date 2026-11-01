@@ -137,6 +137,41 @@ fn bits(values: &[f32]) -> Vec<u32> {
     values.iter().map(|v| v.to_bits()).collect()
 }
 
+/// Below sm_80 the program leaves out the v2 source, whose `cp.async` such a
+/// device cannot load; v1 and the learner kernels compile for compute_75
+/// without it. With v2 the source is the one the program hash always named.
+#[test]
+#[ignore = "needs NVRTC (the CUDA runtime DLLs), not a device"]
+fn the_program_below_sm_80_has_no_v2_and_compiles_for_compute_75() {
+    let tile = TileShapeV1::DEFAULT;
+    let (with, _) = super::device::source_and_options(tile, true);
+    let (without, options) = super::device::source_and_options(tile, false);
+    assert!(with.contains("mtg_net8_forward_v2") && with.contains("cp.async"));
+    assert!(!without.contains("mtg_net8_forward_v2") && !without.contains("cp.async"));
+    assert!(without.contains("mtg_fault_trap"));
+    let ptx = cudarc::nvrtc::compile_ptx_with_opts(
+        &without,
+        cudarc::nvrtc::CompileOptions {
+            arch: Some("compute_75"),
+            options,
+            ..Default::default()
+        },
+    )
+    .expect("v1 program for compute_75")
+    .to_src();
+    for kernel in [
+        "mtg_net8_forward",
+        "mtg_net8_reverse",
+        "mtg_net8_param_grad",
+        "mtg_net8_embedding_grad",
+        "mtg_tanh_proof",
+        "mtg_fault_trap",
+    ] {
+        assert!(ptx.contains(&format!(".entry {kernel}(")), "{kernel}");
+    }
+    assert!(!ptx.contains("cp.async") && !ptx.contains("mtg_net8_forward_v2"));
+}
+
 #[test]
 fn random_decisions_validate_on_the_cpu_forward() {
     let net = random_net(1);
@@ -513,6 +548,92 @@ fn a_device_fault_poisons_the_service() {
         .stats_v1()
         .expect("a poisoned service still reports");
     assert!(stats.poisoned.is_some(), "{stats:?}");
+    std::mem::forget(service);
+}
+
+/// One request per client, each for its own model, released together.
+fn one_round(
+    nets: &[NativePolicyValueNetV1],
+    hosts: &[Arc<Net8HostModelV1>],
+    clients: &mut [super::service::InferenceClientV1],
+    seed: u64,
+) -> Vec<Result<(), String>> {
+    let barrier = std::sync::Barrier::new(clients.len());
+    std::thread::scope(|s| {
+        let handles: Vec<_> = clients
+            .iter_mut()
+            .enumerate()
+            .map(|(worker, client)| {
+                let (net, host, barrier) = (&nets[worker], &hosts[worker], &barrier);
+                s.spawn(move || {
+                    let decision = random_decision(seed + worker as u64);
+                    barrier.wait();
+                    client
+                        .forward_v1(host, net, ForwardPathV1::Flat, decision.view())
+                        .map(|_| ())
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("client thread"))
+            .collect()
+    })
+}
+
+/// A device fault in a batch of several model groups (`max_models` 1, three
+/// models) fails every request of the batch and starts no later group, so no
+/// device work follows the error. Same isolation as the test above:
+/// `MTG_KERNEL_GPU_EXACT_FAULT_TEST=1 ... -- --exact --ignored
+/// gpu_exact_v1::tests::a_device_fault_stops_a_multi_group_batch`.
+#[test]
+#[ignore = "needs a CUDA device and its own process (MTG_KERNEL_GPU_EXACT_FAULT_TEST=1)"]
+fn a_device_fault_stops_a_multi_group_batch() {
+    if std::env::var_os("MTG_KERNEL_GPU_EXACT_FAULT_TEST").is_none() {
+        eprintln!("skipped: set MTG_KERNEL_GPU_EXACT_FAULT_TEST=1 and run this test alone");
+        return;
+    }
+    let nets: Vec<NativePolicyValueNetV1> = (0..3).map(|i| random_net(500 + i)).collect();
+    let hosts: Vec<Arc<Net8HostModelV1>> = nets
+        .iter()
+        .map(|n| Arc::new(Net8HostModelV1::from_net_v1(n).expect("host")))
+        .collect();
+    // The window waits for every client, so each round is one batch.
+    let service = InferenceServiceV1::start_v1(
+        ordinal(),
+        BatchPolicyV1 {
+            max_latency: Duration::from_millis(500),
+            max_models: 1,
+            ..BatchPolicyV1::default()
+        },
+    )
+    .expect("service");
+    let mut clients: Vec<_> = (0..3).map(|_| service.client_v1()).collect();
+    let healthy = one_round(&nets, &hosts, &mut clients, 700);
+    assert!(healthy.iter().all(Result::is_ok), "{healthy:?}");
+    let before = service.stats_v1().expect("stats");
+    assert_eq!(before.batches, 1, "one batch: {before:?}");
+    assert_eq!(before.groups, 3, "one group per model: {before:?}");
+    service.fault_before_next_batch_for_test_v1();
+    let faulted = one_round(&nets, &hosts, &mut clients, 800);
+    let stats = service
+        .stats_v1()
+        .expect("a poisoned service still reports");
+    eprintln!("{faulted:?}\n{stats:?}");
+    assert_eq!(stats.batches, 2, "one faulted batch: {stats:?}");
+    for reply in &faulted {
+        let error = reply
+            .as_ref()
+            .expect_err("no reply survives a faulted batch");
+        assert!(error.contains("gpu-exact device"), "{error}");
+    }
+    assert_eq!(
+        stats.groups - before.groups,
+        1,
+        "no group after the device error: {stats:?}"
+    );
+    assert!(stats.poisoned.is_some(), "{stats:?}");
+    std::mem::forget(clients);
     std::mem::forget(service);
 }
 
