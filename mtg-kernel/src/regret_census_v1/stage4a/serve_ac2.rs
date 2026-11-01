@@ -105,6 +105,9 @@ pub(super) fn run(
         .filter(|x| !x.trim().is_empty())
         .map(|x| x.trim().parse().map_err(|_| "W1_AC2_SEEDS"))
         .collect::<Result<_, _>>()?;
+    if seeds.is_empty() || wanted == 0 || k == 0 {
+        return Err("W1_AC2_SEEDS, W1_AC2_DECISIONS and W1_AC2_K must be nonempty".into());
+    }
     let lists = [d0, d1].map(|id| {
         runtime_deck_by_id(id)
             .map(|d| d.card_ids.to_vec())
@@ -142,6 +145,17 @@ pub(super) fn run(
                 ExportOptionsV1::default(),
             );
             match export {
+                Err(e @ crate::infoset_v1::ExportErrorV1::Fault { .. }) => {
+                    // F1: the game halts; AC2 fails.
+                    writeln!(
+                        out,
+                        "{}",
+                        json!({"kind": "fault", "seat": seat.0,
+                        "code": e.code_name()})
+                    )
+                    .map_err(|e| e.to_string())?;
+                    return Err(format!("engine fault {} during AC2", e.code_name()));
+                }
                 Err(e) => {
                     writeln!(
                         out,
@@ -203,6 +217,11 @@ pub(super) fn run(
     .map_err(|e| e.to_string())?;
     if failures > 0 {
         return Err(format!("{failures} AC2 rows differ"));
+    }
+    if checked < wanted {
+        return Err(format!(
+            "the game ended after {checked} of {wanted} exported decisions"
+        ));
     }
     Ok(())
 }

@@ -93,9 +93,6 @@ struct ObjectTrackV1 {
     last_obs_gen: u32,
     last_obs_zone: Option<Zone>,
     spans: Vec<SpanV1>,
-    /// Event index of the latest unidentified library-to-hand move, for the
-    /// search-and-reveal outcome (R8b).
-    arrived_from_library_at: Option<usize>,
 }
 
 /// The projection's output.
@@ -178,6 +175,10 @@ struct WalkV1<'a> {
     /// Zones before the current item of the objects it moved.
     prev_zones: Vec<(ObjectId, Option<Zone>)>,
     last_observed: Vec<ObjectId>,
+    /// The owner whose library-to-hand move was the latest event, if it was
+    /// one: a hand reveal right after such moves is a search-and-reveal
+    /// outcome (R8b), recognized from the public event order alone.
+    last_event_library_to_hand: Option<PlayerId>,
 }
 
 /// Projects V's history from the native stream.
@@ -213,6 +214,7 @@ pub(crate) fn project_v1(
         inconsistencies: Vec::new(),
         prev_zones: Vec::new(),
         last_observed: Vec::new(),
+        last_event_library_to_hand: None,
     };
     let events = &state.engine.event_history;
     let mut event_items = Vec::with_capacity(events.len());
@@ -428,6 +430,20 @@ impl WalkV1<'_> {
     }
 
     fn event(&mut self, event: &CommittedEvent, index: usize, positions: &[&ObservationNoteV1]) {
+        let _ = index;
+        self.last_event_library_to_hand = match event {
+            CommittedEvent::Draw {
+                player,
+                object: Some(_),
+            } => Some(*player),
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Library,
+                to: Zone::Hand,
+                ..
+            } => Some(self.owner(*object)),
+            _ => None,
+        };
         match event {
             CommittedEvent::Draw { player, object } => {
                 let Some(id) = *object else {
@@ -440,14 +456,20 @@ impl WalkV1<'_> {
                 self.library_to_hand(id, *player);
                 let named = *player == self.viewer;
                 if !named && !was && from_library {
-                    self.objs[id.0 as usize].arrived_from_library_at = Some(index);
                     self.transfers.push(TransferV1 {
                         item: self.item,
                         owner: *player,
                         dir: TransferDirV1::Draw,
                     });
                 }
-                let observed: Vec<ObjectId> = if named || was { vec![id] } else { vec![] };
+                // Prior tracking identifies the moved card only if V still
+                // tracks it after the move (a known library card drawn); an
+                // unidentified departure never names it.
+                let observed: Vec<ObjectId> = if named || (was && self.is_tracked_now(id)) {
+                    vec![id]
+                } else {
+                    vec![]
+                };
                 self.settle(&observed);
             }
             CommittedEvent::ZoneChange {
@@ -470,7 +492,6 @@ impl WalkV1<'_> {
                     self.hand_move(id, owner, *from, *to, named);
                 }
                 if *from == Zone::Library && *to == Zone::Hand && !named && !was {
-                    self.objs[id.0 as usize].arrived_from_library_at = Some(index);
                     self.transfers.push(TransferV1 {
                         item: self.item,
                         owner,
@@ -485,7 +506,14 @@ impl WalkV1<'_> {
                     });
                 }
                 let _ = positions;
-                let observed: Vec<ObjectId> = if named || was { vec![id] } else { vec![] };
+                // Prior tracking identifies the moved card only if V still
+                // tracks it after the move (a known library card drawn); an
+                // unidentified departure never names it.
+                let observed: Vec<ObjectId> = if named || (was && self.is_tracked_now(id)) {
+                    vec![id]
+                } else {
+                    vec![]
+                };
                 self.settle(&observed);
             }
             CommittedEvent::SpellCast { spell, .. } => {
@@ -617,13 +645,12 @@ impl WalkV1<'_> {
                 let id = *object;
                 let card_def = self.card_def(id);
                 let was = self.objs[id.0 as usize].tracked;
-                // A search-and-reveal outcome: the card was moved from the
-                // library into the hand by the event this reveal anchors to.
-                // It locates a card outside the hand: R8b, applied before the
-                // in-place reveal update below (ruling 44).
-                if !was
-                    && self.objs[id.0 as usize].arrived_from_library_at == Some(note.history_len)
-                {
+                // A search-and-reveal outcome: the reveal follows the owner's
+                // library-to-hand moves (a single search or a batch). It
+                // locates a card outside the hand: R8b, applied before the
+                // in-place reveal update below (ruling 44). Recognized from
+                // the public event order, never from the card's identity.
+                if !was && self.last_event_library_to_hand == Some(*owner) {
                     self.survivors.taint_name(card_def);
                 }
                 self.revealed_in_hand(id, card_def, was);
@@ -638,7 +665,8 @@ impl WalkV1<'_> {
                     .map(|(p, o)| (if p > *position { p - 1 } else { p }, o))
                     .collect();
                 self.removed.push((*owner, captured));
-                self.settle(&[]);
+                // Tracking settles with the move this note belongs to, so an
+                // identified move keeps its span.
             }
             ObservationNoteKindV1::LibraryInsertion { owner, position } => {
                 let lib = std::mem::take(&mut self.library[owner.index()]);
@@ -646,7 +674,6 @@ impl WalkV1<'_> {
                     .into_iter()
                     .map(|(p, o)| (if p >= *position { p + 1 } else { p }, o))
                     .collect();
-                self.settle(&[]);
             }
         }
     }

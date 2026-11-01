@@ -73,7 +73,7 @@ pub(crate) fn play(
 }
 
 #[test]
-fn export_is_deterministic_and_round_trips_through_import() {
+fn export_is_deterministic_and_imports_byte_for_byte() {
     let mut tally = RefusalTallyV1::default();
     for (decks, seed) in [
         (["CawGates", "Faeries"], 3u64),
@@ -92,7 +92,7 @@ fn export_is_deterministic_and_round_trips_through_import() {
                     assert_eq!(
                         serde_json::to_vec(&again).unwrap(),
                         serde_json::to_vec(&a.state).unwrap(),
-                        "export, import, export is byte-equal"
+                        "the imported state serializes to the exported bytes"
                     );
                 }
                 (Err(x), Err(y)) => assert_eq!(x, y),
@@ -112,4 +112,51 @@ fn export_is_deterministic_and_round_trips_through_import() {
         serde_json::to_string(&tally).unwrap()
     );
     assert!(tally.exported > 0, "some decisions export");
+}
+
+/// Astra r1 P1: an unidentified put-back never names the card, even when V
+/// had it revealed: two worlds that return a revealed card and an unknown
+/// one in either order must give the same tombstones and the same export.
+#[test]
+fn unidentified_put_back_of_a_revealed_card_is_never_named() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let live = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+        41,
+        41,
+        2_000,
+        20_000,
+        ["CawGates".to_string(), "Faeries".to_string()],
+    )
+    .expect("reset");
+    let viewer = PlayerId::P0;
+    let opp = viewer.opponent();
+    let base = live.game_state().clone();
+    let hand = base.players[opp.index()].hand.clone();
+    assert!(hand.len() >= 2);
+    let worlds: Vec<crate::state::GameState> = [(hand[0], hand[1]), (hand[1], hand[0])]
+        .into_iter()
+        .map(|(first, second)| {
+            let mut st = base.clone();
+            // V sees hand[0] revealed in both worlds; the opponent then
+            // returns two cards unidentified, in either order.
+            st.reveal_hand_card(viewer, opp, hand[0]).expect("reveal");
+            propose_and_commit(&mut st, ProposedEvent::zone_change(first, Zone::Library));
+            propose_and_commit(&mut st, ProposedEvent::zone_change(second, Zone::Library));
+            st
+        })
+        .collect();
+    let projections: Vec<_> = worlds
+        .iter()
+        .map(|st| super::projection::project_v1(st, st.observation_journal.notes(), viewer))
+        .collect();
+    let n = worlds[0].engine.event_history.len();
+    for e in [n - 2, n - 1] {
+        for p in &projections {
+            assert!(
+                p.event_observed[e].is_empty(),
+                "an unidentified put-back is observed at event {e}"
+            );
+        }
+    }
 }

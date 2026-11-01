@@ -34,6 +34,9 @@ pub(super) const WORKER_MODE: &str = "s4a-serve-worker";
 /// RootSeeds' namespace for every W1 entrant search.
 pub(crate) const SERVE_SEED_MODEL_V1: &str = "w1-entrant-v1";
 const SERVE_STACK_BYTES_V1: usize = 256 << 20;
+/// Prefix of a pool error that leaves a worker pipe out of step: the pool
+/// answers it and exits instead of serving another search.
+const FATAL: &str = "fatal: ";
 
 /// Tree k's share of budget B over K trees.
 pub(crate) fn partition_v1(budget: u64, k: u64, trees: u64) -> u64 {
@@ -331,6 +334,12 @@ pub(super) fn run_worker(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
         if line.trim().is_empty() {
             continue;
         }
+        // Echo the request's identity so the pool can match every reply.
+        let id = serde_json::from_str::<Value>(&line).ok();
+        let (root_id, tree) = match &id {
+            Some(v) => (v["root_id"].clone(), v["tree"].clone()),
+            None => (Value::Null, Value::Null),
+        };
         let answer = (|| -> Result<Value, String> {
             let req: TreeRequestV1 =
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
@@ -343,13 +352,33 @@ pub(super) fn run_worker(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
                 req.tree,
                 req.units,
             )?;
-            Ok(json!({"ok": true, "result": r}))
+            Ok(json!({"ok": true, "root_id": req.root_id, "tree": req.tree, "result": r}))
         })()
-        .unwrap_or_else(|e| json!({"ok": false, "error": e}));
+        .unwrap_or_else(|e| json!({"ok": false, "root_id": root_id, "tree": tree, "error": e}));
         writeln!(out, "{answer}").map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// A tree whose worker reported an error: excluded, charged nothing it did
+/// not report, and recorded with its fault.
+fn failed_tree(tree: u64, units: u64, error: String) -> TreeResultV1 {
+    let mut r = TreeResultV1 {
+        tree,
+        units_budget: units,
+        menu_sha256: String::new(),
+        edges: None,
+        transitions: 0,
+        incomplete: true,
+        cap_reached: false,
+        faults: vec![error],
+        digest: String::new(),
+        wall_seconds: 0.0,
+        cpu_seconds: 0.0,
+    };
+    r.digest = tree_result_digest(&r);
+    r
 }
 
 struct WorkerV1 {
@@ -410,21 +439,34 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
             for (t, w) in workers.iter_mut().enumerate() {
                 let tree_req = json!({"root_id": req.root_id, "tree": t,
                     "units": partition_v1(req.budget, t as u64, k), "payload": req.payload});
-                writeln!(w.stdin, "{tree_req}").map_err(|e| e.to_string())?;
-                w.stdin.flush().map_err(|e| e.to_string())?;
+                writeln!(w.stdin, "{tree_req}").map_err(|e| format!("{FATAL}worker {t}: {e}"))?;
+                w.stdin
+                    .flush()
+                    .map_err(|e| format!("{FATAL}worker {t}: {e}"))?;
             }
+            // Every dispatched request is answered before the next search:
+            // a tree error never leaves a stale reply in a worker's pipe.
             let mut trees = Vec::with_capacity(workers.len());
-            for w in workers.iter_mut() {
+            for (t, w) in workers.iter_mut().enumerate() {
+                let units = partition_v1(req.budget, t as u64, k);
                 let mut reply = String::new();
-                w.stdout.read_line(&mut reply).map_err(|e| e.to_string())?;
-                let v: Value = serde_json::from_str(&reply).map_err(|e| format!("worker: {e}"))?;
-                if v["ok"] != json!(true) {
-                    return Err(format!("worker failed: {}", v["error"]));
+                w.stdout
+                    .read_line(&mut reply)
+                    .map_err(|e| format!("{FATAL}worker {t}: {e}"))?;
+                let v: Value = serde_json::from_str(&reply)
+                    .map_err(|e| format!("{FATAL}worker {t} reply: {e}"))?;
+                if v["root_id"] != json!(req.root_id) || v["tree"] != json!(t) {
+                    return Err(format!("{FATAL}worker {t} answered another request"));
                 }
-                trees.push(
-                    serde_json::from_value::<TreeResultV1>(v["result"].clone())
-                        .map_err(|e| e.to_string())?,
-                );
+                if v["ok"] != json!(true) {
+                    trees.push(failed_tree(t as u64, units, v["error"].to_string()));
+                    continue;
+                }
+                match serde_json::from_value::<TreeResultV1>(v["result"].clone()) {
+                    Ok(r) if r.tree == t as u64 && r.units_budget == units => trees.push(r),
+                    Ok(_) => return Err(format!("{FATAL}worker {t} answered another tree")),
+                    Err(e) => trees.push(failed_tree(t as u64, units, e.to_string())),
+                }
             }
             let merged = merge_v1(
                 &req.root_id,
@@ -443,6 +485,9 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
         .unwrap_or_else(|e| json!({"ok": false, "error": e}));
         writeln!(out, "{answer}").map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
+        if let Some(e) = answer["error"].as_str().filter(|e| e.starts_with(FATAL)) {
+            return Err(e.to_string());
+        }
     }
     for mut w in workers {
         drop(w.stdin);
