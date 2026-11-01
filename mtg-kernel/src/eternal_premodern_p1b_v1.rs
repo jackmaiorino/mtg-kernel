@@ -39,12 +39,10 @@ use crate::effect::{
 use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::event::{self, CommittedEvent, ProposedEvent};
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::StandardOpV1;
-use crate::state::{
-    AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemId, StackItemKind, Target, Zone,
-};
+use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, Target, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 

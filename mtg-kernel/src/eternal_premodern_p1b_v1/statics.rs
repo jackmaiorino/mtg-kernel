@@ -46,13 +46,9 @@ fn active_with_id<'a>(
     name: &'a str,
     controller: Option<PlayerId>,
 ) -> impl Iterator<Item = ObjectId> + 'a {
-    let players: &'static [PlayerId] = match controller {
-        Some(PlayerId::P0) => &[PlayerId::P0],
-        Some(PlayerId::P1) => &[PlayerId::P1],
-        None => &[PlayerId::P0, PlayerId::P1],
-    };
-    players
-        .iter()
+    [PlayerId::P0, PlayerId::P1]
+        .into_iter()
+        .filter(move |&player| controller.is_none_or(|wanted| wanted == player))
         .flat_map(move |player| state.players[player.index()].battlefield.iter().copied())
         .filter(move |&object| {
             id.is_some_and(|id| state.objects.get(object).card_def == id)
@@ -318,7 +314,7 @@ pub(crate) fn player_has_shroud(state: &GameState, player: PlayerId) -> bool {
 pub(crate) fn prevents_damage(state: &GameState, damage: &DamageProposed) -> bool {
     match damage.target {
         Target::Player(player) => player_has_shroud(state, player),
-        Target::Object(_) => false,
+        _ => false,
     }
 }
 
