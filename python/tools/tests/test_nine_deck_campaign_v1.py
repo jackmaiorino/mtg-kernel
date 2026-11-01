@@ -281,7 +281,12 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(activity_after_beat(executor=2), clock["wall"])  # preparation before the native start
         progress.activity = 0
         (root / "started.json").write_text(json.dumps({"pid": 2 ** 22 + 7}))  # a native child no longer readable
-        self.assertEqual(activity_after_beat(executor=2), 0)  # in the native part only native CPU counts
+        with patch.object(driver, "process_gone", return_value=False):
+            self.assertEqual(activity_after_beat(executor=2), 0)  # in the native part only native CPU counts
+        with patch.object(driver, "process_gone", return_value=True):  # the native child exited (#463)
+            self.assertEqual(activity_after_beat(), 0)  # the supervised baseline
+            self.assertEqual(activity_after_beat(executor=2), clock["wall"])  # the dispatcher recording its end
+        progress.activity = 0
         (root / "execution.json").write_text("{}")
         self.assertEqual(activity_after_beat(), 0)  # the supervised baseline again
         self.assertEqual(activity_after_beat(worker=4), clock["wall"])  # fingerprints and archive
@@ -296,9 +301,11 @@ class DriverTests(unittest.TestCase):
         root = self.root / "attempt-identity"; root.mkdir()
         (root / "started.json").write_text(json.dumps({"pid": os.getpid(), "started_unix": 1000.0}))
         with patch.object(driver, "process_start_unix", return_value=1000.0 + 60):  # the PID was reused
-            self.assertEqual(driver.native_ticks(root), -1)
+            self.assertIsNone(driver.native_ticks(root))  # the native process is gone: its part ended (#463)
         with patch.object(driver, "process_start_unix", return_value=None):
             self.assertEqual(driver.native_ticks(root), -1)
+        with patch.object(driver, "process_gone", return_value=True):  # exited: no /proc entry
+            self.assertIsNone(driver.native_ticks(root))
         (root / "started.json").write_text(json.dumps({"pid": os.getpid()}))  # no start time recorded
         self.assertEqual(driver.native_ticks(root), -1)
         self.assertFalse(driver.supervisor_owned(os.getpid(), None))
@@ -337,6 +344,20 @@ class DriverTests(unittest.TestCase):
             self.assertLess(abs(driver.process_start_unix(child.pid) - started), driver.START_TOLERANCE_SECONDS)
         finally:
             child.kill(); child.wait()
+
+    @unittest.skipUnless(LINUX, "reads /proc")
+    def test_an_exited_native_process_ends_the_native_part(self):
+        """#463: once the recorded native process has exited, the attempt is outside its native part (its
+        dispatcher's remaining work is activity), even before execution.json is written."""
+        root = self.root / "exited"; root.mkdir()
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            (root / "started.json").write_text(json.dumps({"pid": child.pid, "started_unix": time.time()}))
+            self.assertGreaterEqual(driver.native_ticks(root), 0)  # running: its CPU ticks
+        finally:
+            child.kill(); child.wait()
+        self.assertTrue(driver.process_gone(child.pid))
+        self.assertIsNone(driver.native_ticks(root))
 
     def test_descendant_ticks(self):
         table = {1: (0, 5), 10: (1, 100), 11: (10, 7), 12: (11, 3), 20: (1, 9), 21: (20, 4)}

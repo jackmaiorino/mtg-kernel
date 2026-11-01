@@ -254,9 +254,14 @@ def make_choice(campaign: driver.Campaign, value: dict, evidence: dict) -> dict:
     name = "-".join(sorted(evidence))
     choice_pin = write_json(out / f"choice-{name}.json", choice)
     verifications = {}
+    # One walk of the accounting trees (or the driver's last, while fresh) serves the choice checks and then the
+    # wave's admissions: each check-choice process walked the volume itself (mtg-kernel#463).
+    admission = driver.admitted(campaign, walk=True)
     for tag in evidence:
         request = driver.request_for(campaign, "G1", value["families"][tag]["config"], out / "check" / tag / "root",
                                      out / "check" / tag / "cold")
+        if admission is not None:
+            request["admission"] = admission
         target = out / f"choice-{name}-verification-{tag}.json"
         target.unlink(missing_ok=True)
         request.update(choice=choice_pin, choice_verification_output=str(target))

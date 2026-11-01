@@ -48,6 +48,8 @@ class AdmissionTestCase(unittest.TestCase):
     """A fixture config, runtime and serial/parallel qualification trials."""
 
     def setUp(self):
+        dispatch.reset_emergency()  # this process's walks: each test starts as a fresh dispatch
+        self.addCleanup(dispatch.reset_emergency)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -625,15 +627,339 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
         walks = []
         real = dispatch.accounting_bytes
-        self.addCleanup(dispatch.EMERGENCY_WALK.update, {"at": 0.0, "logical": None})
-        dispatch.EMERGENCY_WALK.update(at=0.0, logical=None)
         with patch.object(dispatch, "accounting_bytes", lambda s: walks.append(1) or real(s)):
-            dispatch.running_storage(storage)
+            dispatch.running_storage(storage)  # nothing to sample yet: the one walk in place
             dispatch.running_storage(storage)
             self.assertEqual(len(walks), 1)
             dispatch.EMERGENCY_WALK["at"] -= dispatch.EMERGENCY_WALK_SECONDS + 1
+            dispatch.running_storage(storage)  # due: in the background, the sample uses the last walk
+            dispatch.EMERGENCY_WALK["thread"].join(10)
+            self.assertEqual(len(walks), 2)
             dispatch.running_storage(storage)
             self.assertEqual(len(walks), 2)
+
+    def admission(self, logical=1000, finished=0, age=5.0, shared=None, seconds=10.0, in_flight=0):
+        """The driver's admission walk: completed ``age`` seconds ago after ``seconds`` of walking."""
+        completed = time.time() - age
+        return {"schema": dispatch.ADMISSION_SCHEMA, "logical_bytes": logical, "finished_since": finished,
+                "walked_unix": completed - seconds, "completed_unix": completed, "shared_walk": shared,
+                "in_flight": in_flight}
+
+    def test_an_admission_walk_spares_the_dispatcher_its_own(self):
+        """#463: the driver's admission walk passes in the request; the cap, reserve and projections are still
+        checked on its numbers, and a stale or absent one means a walk as before."""
+        storage = self.request(2)["storage"]
+        roomy = type("Disk", (), {"free": 100*1024**3})()
+        walks = []
+        real = dispatch.accounting_bytes
+        with patch.object(dispatch.shutil, "disk_usage", return_value=roomy), \
+                patch.object(dispatch, "accounting_bytes", lambda s: walks.append(1) or real(s)):
+            checked = dispatch.validate_storage(storage, admission=self.admission(logical=5000, finished=2))
+            self.assertEqual((checked["logical_bytes"], checked["source"], walks), (5000 + 2 * 1000, "admission", []))
+            self.assertEqual(dispatch.LAST_STORAGE["logical"], 7000)
+            storage["max_logical_bytes"] = 7000 + 999  # the bound plus this block's projection passes the cap
+            with self.assertRaisesRegex(ValueError, "retained plus projected"):
+                dispatch.validate_storage(storage, admission=self.admission(logical=5000, finished=2))
+            self.assertEqual(walks, [])
+            storage["max_logical_bytes"] = 1024**3
+            # The driver admits on a walk for 600 s after it completed; a long walk is judged by its completion.
+            long_walk = self.admission(age=dispatch.ADMISSION_WALK_SECONDS - 60, seconds=665)
+            self.assertEqual(dispatch.validate_storage(storage, admission=long_walk)["source"], "admission")
+            stale = self.admission(age=dispatch.ADMISSION_WALK_SECONDS + 1)
+            self.assertEqual(dispatch.validate_storage(storage, admission=stale)["source"], "walk")
+            future = self.admission(age=-dispatch.CLOCK_SKEW_SECONDS - 1)
+            self.assertEqual(dispatch.validate_storage(storage, admission=future)["source"], "walk")
+            self.assertEqual(dispatch.validate_storage(storage)["source"], "walk")
+            self.assertEqual(len(walks), 3)
+            backwards = self.admission()
+            backwards["completed_unix"] = backwards["walked_unix"] - 1
+            for bad in ({"schema": "other"}, self.admission(logical=-1), self.admission(finished=1.5),
+                    self.admission(in_flight=-1),
+                        self.admission() | {"walked_unix": True}, backwards, self.admission(shared="relative/walk.json")):
+                with self.assertRaises(ValueError):
+                    dispatch.validate_storage(storage, admission=bad)
+            storage["accounting_roots"] = ["relative"]  # the roots are checked without a walk too
+            with self.assertRaisesRegex(ValueError, "absolute accounting roots"):
+                dispatch.validate_storage(storage, admission=self.admission())
+
+    def test_validation_seeds_the_emergency_samples_aged_by_the_walk_start(self):
+        storage = self.request(2)["storage"]
+        storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        with patch.object(dispatch.shutil, "disk_usage", return_value=type("Disk", (), {"free": 100*1024**3})()):
+            checked = dispatch.validate_storage(storage, admission=self.admission(logical=2242, age=120, seconds=30,
+                                                                                 in_flight=2))
+        self.assertEqual(checked["logical_bytes"], 2242)  # the cap check is the driver's bound
+        dispatch.seed_emergency()
+        self.assertEqual(dispatch.EMERGENCY_WALK["logical"], 2242 + 2 * 1000)  # with the siblings in flight
+        self.assertAlmostEqual(time.monotonic() - dispatch.EMERGENCY_WALK["at"], 150, delta=5)
+        with patch.object(dispatch, "accounting_bytes", side_effect=AssertionError("no walk")):
+            self.assertEqual(dispatch.running_storage(storage)["logical_bytes"], 4242)
+            # Own outputs count unless the sample's walk started after they were written.
+            self.assertEqual(dispatch.running_storage(storage, pending=[(8, time.time())])["logical_bytes"], 4250)
+            self.assertEqual(dispatch.running_storage(storage, pending=[(8, time.time() - 1000)])["logical_bytes"],
+                             4242)
+
+    def test_a_published_walk_serves_the_samples(self):
+        """Eight attempts walking at once took 40 min a walk: with the driver's published walk (its one background
+        walker), a sample reads it and the attempt walks only once the walker has stopped, never after its native
+        part."""
+        storage = self.request(2)["storage"]  # projected_additional_bytes 1000
+        storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        shared = self.root / "state" / "volume-walk.json"
+        shared.parent.mkdir()
+        walks = []
+        now = time.time()
+        dispatch.EMERGENCY_WALK.update(logical=1, unix=now - 5000, at=time.monotonic() - 5000)
+        with patch.object(dispatch, "accounting_bytes", lambda s: walks.append(1) or ([], 777)):
+            dispatch.publish_walk(shared, 555, now - 700, now - 30, "driver-background")
+            self.assertEqual(dispatch.running_storage(storage, str(shared))["logical_bytes"], 555)
+            self.assertEqual(dispatch.running_storage(storage, str(shared), pending=[(5, time.time())])
+                             ["logical_bytes"], 560)
+            dispatch.publish_walk(shared, 444, now - 900, now - 200, "driver")  # older than the sample: kept
+            self.assertEqual(dispatch.running_storage(storage, str(shared))["logical_bytes"], 555)
+            # A healthy walker between walks: a 665 s walk completed 1,900 s ago, the next not yet published.
+            dispatch.publish_walk(shared, 600, now - 2565, now - 1900, "driver-background", in_flight=3)
+            dispatch.EMERGENCY_WALK.update(unix=now - 2600)
+            self.assertEqual(dispatch.running_storage(storage, str(shared))["logical_bytes"], 600 + 3 * 1000)
+            self.assertIsNone(dispatch.EMERGENCY_WALK["thread"])  # no walk of its own while the walker is live
+            self.assertEqual(walks, [])
+            stopped = now - dispatch.EMERGENCY_FALLBACK_SECONDS - 60  # the walker stopped publishing
+            dispatch.publish_walk(shared, 444, stopped - 600, stopped, "driver")
+            dispatch.EMERGENCY_WALK.update(unix=stopped - 10)
+            dispatch.close_emergency()
+            dispatch.running_storage(storage, str(shared))
+            self.assertIsNone(dispatch.EMERGENCY_WALK["thread"])  # after the native part: no walk of its own
+            dispatch.EMERGENCY_WALK["closed"] = False
+            dispatch.running_storage(storage, str(shared))  # in the native part: walks for itself, aside
+            dispatch.EMERGENCY_WALK["thread"].join(10)
+            self.assertEqual((walks, dispatch.running_storage(storage, str(shared))["logical_bytes"]), ([1], 777))
+            dispatch.running_storage(storage, str(shared))
+            self.assertEqual(walks, [1])  # its own walk is recent
+        for record in ("{not json", json.dumps({"schema": dispatch.SHARED_WALK_SCHEMA, "logical_bytes": 1,
+                                                "walked_unix": 10.0, "completed_unix": 5.0}),
+                       json.dumps({"schema": dispatch.SHARED_WALK_SCHEMA, "logical_bytes": 1, "walked_unix": 1.0,
+                                   "completed_unix": 5.0, "in_flight": -1})):
+            shared.write_text(record)
+            self.assertIsNone(dispatch.shared_walk(shared))
+
+    def test_a_background_walk_error_ends_the_attempt_at_the_next_sample(self):
+        storage = self.request(2)["storage"]
+        storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        dispatch.EMERGENCY_WALK.update(logical=1, unix=time.time(),
+                                       at=time.monotonic() - dispatch.EMERGENCY_WALK_SECONDS - 1)
+        walking = threading.Event()
+        self.addCleanup(walking.set)
+
+        def failing(storage):
+            walking.wait(10)
+            raise ValueError("accounting tree contains a link")
+        with patch.object(dispatch, "accounting_bytes", side_effect=failing):
+            self.assertEqual(dispatch.running_storage(storage)["logical_bytes"], 1)  # the walk runs aside
+            walking.set()
+            dispatch.EMERGENCY_WALK["thread"].join(10)
+            with self.assertRaisesRegex(ValueError, "contains a link"):
+                dispatch.running_storage(storage)
+
+    def test_an_attempts_own_output_in_the_accounting_tree_counts_after_its_native_part(self):
+        storage = self.request(2)["storage"]
+        storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        inside = self.root / "trial-x" / "native"
+        inside.mkdir(parents=True)
+        (inside / "episode.json").write_bytes(b"x" * 300)
+        self.assertEqual(dispatch.own_output_bytes(storage, inside), 300)
+        other = tempfile.TemporaryDirectory()  # block scratch: outside the accounting trees
+        self.addCleanup(other.cleanup)
+        (Path(other.name) / "episode.json").write_bytes(b"x" * 300)
+        self.assertEqual(dispatch.own_output_bytes(storage, other.name), 0)
+        self.assertEqual(dispatch.own_output_bytes({k: v for k, v in storage.items() if k != "emergency"}, inside), 0)
+
+    def run_native(self, request, child_seconds, validate_seconds=0.0, child_wait=None, **patches):
+        """execute() on a stand-in native child that runs ``child_seconds``; samples every 0.05 s. Returns
+        execution.json, or None when no native child was spawned."""
+        request_ref = self.save(request)
+
+        class Child:
+            pid, returncode = 4242, None
+
+            def __init__(self):
+                self.end = time.monotonic() + child_seconds
+
+            def poll(self):
+                if time.monotonic() >= self.end:
+                    self.returncode = 0
+                return self.returncode
+
+            def wait(self, timeout=None):
+                if child_wait is not None and timeout is not None and self.poll() is None:
+                    return child_wait(timeout)
+                left = self.end - time.monotonic()
+                if timeout is not None and left > timeout:
+                    time.sleep(timeout)
+                    raise subprocess.TimeoutExpired("native", timeout)
+                time.sleep(max(0.0, left))
+                return self.poll()
+
+            def kill(self):
+                self.end = time.monotonic()
+
+        def validate(request, qualification):
+            time.sleep(validate_seconds)
+            dispatch.validate_storage(request["storage"], admission=request.get("admission"))
+            return self.config, self.runtime
+        sample = {"rss_bytes": 0}
+        with patch.dict(os.environ, {"MTG_HOST_RESERVATION_TOKEN": "test-token"}), \
+                patch.object(dispatch, "validate_request", side_effect=validate), \
+                patch.object(dispatch, "placed_config", side_effect=lambda request, config, qualification: config), \
+                patch.object(dispatch, "set_affinity"), \
+                patch.object(dispatch, "require_mapped_libraries"), \
+                patch.object(dispatch, "process_sample", side_effect=lambda child: dict(sample)), \
+                patch.object(dispatch, "MONITOR_POLL_SECONDS", 0.05), \
+                patch.object(dispatch.shutil, "disk_usage",
+                             return_value=type("Disk", (), {"free": 100*1024**3, "total": 200*1024**3})()), \
+                patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
+                patch("host_reservation_v1.record_descendant"), \
+                patch.object(dispatch.subprocess, "Popen", side_effect=lambda *a, **k: Child()) as spawn:
+            extra = [patch.object(dispatch, name, value) for name, value in patches.items()]
+            for each in extra:
+                each.start()
+            try:
+                with self.assertRaises(Exception):  # the stand-in writes no native result
+                    dispatch.execute(Path(request_ref["path"]), True)
+            finally:
+                for each in reversed(extra):  # this run's patches only
+                    each.stop()
+            self.spawned = spawn.call_count
+        path = Path(request["root"]) / "execution.json"
+        return dispatch.read(path) if path.exists() else None
+
+    def test_a_slow_walk_never_hides_the_native_end(self):
+        """Regression for lease 20261101-1232 (#463): a sample's due walk (minutes on the network volume) ran
+        inside the monitor loop, so execution.json waited for it after the native child had exited and the lease
+        guard, seeing no native work, released the Pod. Now the walk runs aside: the end is recorded within one
+        sample interval, and the attempt has left its native part, so the dispatcher's work after it is activity."""
+        import nine_deck_campaign_v1 as campaign
+        request = self.request(1)
+        request["storage"]["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        # The admission walk is old enough that the first sample's walk is due, and the walk is slow.
+        request["admission"] = self.admission(logical=1000, age=dispatch.EMERGENCY_WALK_SECONDS + 60)
+        release, walking = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def slow_walk(storage):
+            walking.set()
+            release.wait(30)
+            return [], 2000
+        with patch.object(dispatch, "accounting_bytes", side_effect=slow_walk):
+            execution = self.run_native(request, child_seconds=0.3)
+            self.assertTrue(walking.is_set())  # a sample's walk was due and started
+            self.assertTrue(dispatch.EMERGENCY_WALK["thread"].is_alive())  # and still runs
+        self.assertIsNone(execution["error"])
+        self.assertLess(execution["child_seconds"], 0.3 + 2 * 0.05 + 0.5)
+        self.assertIsNone(campaign.native_ticks(Path(request["root"])))  # outside the native part: activity counts
+        release.set()
+        dispatch.EMERGENCY_WALK["thread"].join(10)
+
+    def test_an_interruption_record_tells_a_running_child_from_an_exited_one(self):
+        """Positive per-attempt evidence of a stop from outside (AMENDMENT-3 draft): the signal, and whether the
+        native child was still running or had exited, with its code."""
+        running = unittest.mock.MagicMock()
+        running.poll.return_value = None
+        exited = unittest.mock.MagicMock()
+        exited.poll.return_value = 3
+        import signal as signals
+        for name, child, expected in (("running", running, (True, True, None)), ("exited", exited, (True, False, 3)),
+                                      ("before", None, (False, False, None))):
+            root = self.root / name
+            root.mkdir()
+            dispatch.record_interruption(root, child, signals.SIGTERM)
+            dispatch.record_interruption(root, exited, signals.SIGTERM)  # written once
+            record = dispatch.read(root / "interruption.json")
+            self.assertEqual((record["signal"], record["child_started"], record["child_running"],
+                              record["child_exit_code"]), ("SIGTERM",) + expected)
+
+    @unittest.skipUnless(LINUX, "delivers a POSIX signal to this process")
+    def test_a_stop_from_outside_is_recorded_while_the_child_runs(self):
+        import signal as signals
+        request = self.request(1)
+        before = signals.getsignal(signals.SIGTERM)
+        original = subprocess.TimeoutExpired
+
+        def stop_then_wait(timeout):
+            os.kill(os.getpid(), signals.SIGTERM)  # the handler only latches; the loop acts at its checkpoint
+            os.kill(os.getpid(), signals.SIGHUP)  # a second signal changes nothing
+            time.sleep(timeout)
+            raise original("native", timeout)
+        execution = self.run_native(request, child_seconds=5.0, child_wait=stop_then_wait)
+        record = dispatch.read(Path(request["root"]) / "interruption.json")
+        self.assertEqual((record["signal"], record["child_running"], record["child_exit_code"]),
+                         ("SIGTERM", True, None))
+        self.assertFalse((Path(request["root"]) / "interruption.json.partial").exists())
+        self.assertIn("stopped from outside by SIGTERM", execution["error"])
+        self.assertEqual(signals.getsignal(signals.SIGTERM), before)  # restored
+
+    def test_a_stop_latched_during_another_failure_is_still_recorded(self):
+        """Astra #464 round 5: a stop latched while the library check (or a sample) fails is recorded, with the
+        child's state before the cleanup kills it; the start barrier's wait and the library check end on it."""
+        request = self.request(1)
+
+        def failing_check(child, runtime, checkpoint=None):
+            dispatch.STOP.update(signal=dispatch.signal.SIGTERM, at=time.time())  # latched meanwhile
+            raise ValueError("pinned runtime libraries were not mapped")
+        with patch.object(dispatch, "WINDOWS", False):
+            execution = self.run_native(request, child_seconds=5.0, require_mapped_libraries=failing_check)
+        record = dispatch.read(Path(request["root"]) / "interruption.json")
+        self.assertEqual((record["signal"], record["child_running"]), ("SIGTERM", True))
+        self.assertIn("not mapped", execution["error"])
+
+        def polling_check(child, runtime, checkpoint=None):  # the library check's own poll sees the stop
+            dispatch.STOP.update(signal=dispatch.signal.SIGHUP, at=time.time())
+            checkpoint()
+        request = self.request(1)
+        request["root"] += "-poll"
+        request["cold_root"] += "-poll"
+        with patch.object(dispatch, "WINDOWS", False):
+            execution = self.run_native(request, child_seconds=5.0, require_mapped_libraries=polling_check)
+        record = dispatch.read(Path(request["root"]) / "interruption.json")
+        self.assertEqual((record["signal"], record["child_running"]), ("SIGHUP", True))
+        self.assertIn("stopped from outside by SIGHUP", execution["error"])
+
+        def latch_at_native_end():  # a stop after the native part, then another error ends the attempt
+            dispatch.STOP.update(signal=dispatch.signal.SIGTERM, at=time.time())
+        request = self.request(1)
+        request["root"] += "-after"
+        request["cold_root"] += "-after"
+        execution = self.run_native(request, child_seconds=0.1, close_emergency=latch_at_native_end)
+        self.assertIsNone(execution["error"])  # the native part itself succeeded
+        record = dispatch.read(Path(request["root"]) / "interruption.json")
+        self.assertEqual((record["child_running"], record["child_exit_code"]), (False, 0))
+        barrier = {"ready": str(self.root / "ready.json"), "release": str(self.root / "release.json"),
+                   "timeout_seconds": 30, "owner": owner()}
+        dispatch.STOP.update(signal=dispatch.signal.SIGTERM, at=time.time())
+        self.addCleanup(dispatch.STOP.update, signal=None, at=None, child=None)
+        started = time.monotonic()
+        with self.assertRaises(dispatch.ExternalStop):
+            dispatch.await_release(barrier, Path(self.save({})["path"]),
+                                   checkpoint=lambda: dispatch.check_stop(self.root, None))
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_a_runpod_attempt_rechecks_its_lease_just_before_the_spawn(self):
+        """Astra #464 round 1: a slow admission check must not start native work the lease no longer allows; the
+        wall-time limit still counts from the dispatch's start."""
+        request = self.request(1)
+        request["placement"]["host"] = "runpod"
+        checks = []
+
+        def refuse(request):
+            checks.append(1)
+            raise ValueError("lease guard has stopped new work")
+        self.assertIsNone(self.run_native(request, child_seconds=0.1, require_host=refuse))
+        self.assertEqual((checks, self.spawned), ([1], 0))
+        request = self.request(1)
+        request["root"] += "-slow"
+        request["cold_root"] += "-slow"
+        request["wall_seconds"] = 0.5
+        execution = self.run_native(request, child_seconds=0.3, validate_seconds=0.4)
+        self.assertIn("wall-time limit", execution["error"])
 
     def test_evaluation_serial_payload_has_no_parallel_field(self):
         config = {"mode": "collect_parallel", "workers": 4, "source": {},
