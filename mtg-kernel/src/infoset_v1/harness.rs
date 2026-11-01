@@ -28,7 +28,9 @@ pub(crate) fn seat(p: PlayerSeatV1) -> PlayerId {
 fn localize(value: &mut serde_json::Value, ids: &mut BTreeMap<u64, u64>) {
     match value {
         serde_json::Value::Object(m) => {
-            m.retain(|k, _| !k.contains("hash"));
+            // Epoch numbers are identity bookkeeping (no tensorizer reads
+            // them) and are canonicalized by design (6.5).
+            m.retain(|k, _| !k.contains("hash") && k != "zone_change_count");
             for (k, v) in m.iter_mut() {
                 if k == "arena_id" {
                     if let Some(n) = v.as_u64() {

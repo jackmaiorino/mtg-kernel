@@ -869,6 +869,9 @@ pub(crate) fn export_v1(
                 | crate::event::CommittedEvent::ZoneChange { .. }
                 | crate::event::CommittedEvent::SpellCast { .. }
                 | crate::event::CommittedEvent::CreateToken { .. }
+                // The public cast announcement right before SpellCast; an
+                // unlinked reference in it becomes an unnamed tombstone.
+                | crate::event::CommittedEvent::PublishedCastIdentityV1 { .. }
         )
     };
     let mut timestamps: BTreeSet<u64> = BTreeSet::new();
