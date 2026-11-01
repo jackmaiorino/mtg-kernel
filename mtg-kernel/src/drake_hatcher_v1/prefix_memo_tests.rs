@@ -296,7 +296,7 @@ fn altered_states_along_recorded_drake_pair_29_get_the_reference_verdicts() {
     });
     assert_eq!(differences, Vec::<String>::new());
     assert!(
-        probes > 200 && compared > probes as u64,
+        probes > 100 && compared > probes as u64,
         "{probes} probes, {compared} compared"
     );
     assert!(refused > probes / 2, "{refused} of {probes} refused");

@@ -595,239 +595,247 @@ fn borrowed_common_complete_paid_faebloom_and_restored_binding_parity_both_seats
 
 #[test]
 fn genuine_paid_hatcher_input_frame_keeps_full_rebuild_foreign_menu_and_restore_both_seats() {
-    use crate::drake_hatcher_v1::custody;
-    for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut raw = ready(actor);
-        let hatcher = put(&mut raw, actor, "Drake Hatcher", Zone::Hand);
-        let ordinary = put(&mut raw, actor, "Think Twice", Zone::Hand);
-        let lands: [_; 4] = ["Forest", "Island", "Forest", "Island"]
-            .map(|name| put(&mut raw, actor, name, Zone::Battlefield));
-        let mut session = own(raw);
-        for (spell, sources) in [(hatcher, &lands[..2]), (ordinary, &lands[2..])] {
-            for land in sources {
+    // These check the replay key frames of a validation that checks every
+    // row, as every validation did before the Drake prefix memo.
+    crate::drake_hatcher_v1::custody::without_prefix_memo_for_test(|| {
+        use crate::drake_hatcher_v1::custody;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut raw = ready(actor);
+            let hatcher = put(&mut raw, actor, "Drake Hatcher", Zone::Hand);
+            let ordinary = put(&mut raw, actor, "Think Twice", Zone::Hand);
+            let lands: [_; 4] = ["Forest", "Island", "Forest", "Island"]
+                .map(|name| put(&mut raw, actor, name, Zone::Battlefield));
+            let mut session = own(raw);
+            for (spell, sources) in [(hatcher, &lands[..2]), (ordinary, &lands[2..])] {
+                for land in sources {
+                    act(&mut session, |action| {
+                        matches!(action, ActionSemanticV1::ActivateManaAbility { source, .. }
+                            if source.arena_id == land.0)
+                    });
+                }
                 act(&mut session, |action| {
-                    matches!(action, ActionSemanticV1::ActivateManaAbility { source, .. }
-                        if source.arena_id == land.0)
+                    matches!(action, ActionSemanticV1::CastSpell { source, .. }
+                        if source.arena_id == spell.0)
                 });
+                drain(&mut session);
+                assert_eq!(state(&session).players[actor.index()].mana_pool, [0; 6]);
             }
-            act(&mut session, |action| {
-                matches!(action, ActionSemanticV1::CastSpell { source, .. }
-                    if source.arena_id == spell.0)
+            assert_eq!(state(&session).objects.get(hatcher).zone, Zone::Battlefield);
+            assert_eq!(state(&session).objects.get(ordinary).zone, Zone::Graveyard);
+            assert!(lands
+                .iter()
+                .all(|id| state(&session).objects.get(*id).tapped));
+            assert!(state(&session).engine.event_history.iter().any(|event| {
+                matches!(event, crate::event::CommittedEvent::DrakeJournalV1 { record }
+                    if matches!(&record.value, custody::JournalV1::Enclosing {
+                        operation: crate::linked_aura_operation_v1::OperationV1::Step(
+                            crate::engine::Action::CastSpell(source)), ..
+                    } if *source == ordinary))
+            }));
+            let before = gameplay(&session);
+            let current = session.inner.current.as_ref().unwrap();
+
+            // Both paths execute the entire same input body. With no frame the
+            // reference derives keys independently at each original validation.
+            custody::reset_replay_key_frame_stats_for_test();
+            let unframed = normalized_origin_parts_in_frame(&session.inner, current).unwrap();
+            let unframed_stats = custody::replay_key_frame_stats_for_test();
+            custody::reset_replay_key_frame_stats_for_test();
+            let framed = normalized_origin_parts(&session.inner, current).unwrap();
+            let framed_stats = custody::replay_key_frame_stats_for_test();
+            assert!(framed == unframed);
+            assert!(framed_stats.0 < unframed_stats.0);
+            assert!(framed_stats.1 > 0);
+            assert!(normalized_origin_parts(&session.inner, current).unwrap() == framed);
+            let fresh = custody::replay_key_frame_stats_for_test();
+            assert!(fresh.0 > framed_stats.0 && fresh.1 > framed_stats.1);
+
+            // The original public and fully rebuilt constructors retain their
+            // independent fresh frames, complete facts and private binding checks.
+            assert_borrowed_common_parity(&session);
+            let decision = session.decision_v57().unwrap();
+            let public = crate::prepared_observation_v57::observe_parts_v57(
+                &session.inner.state,
+                &session.inner.surface,
+                (current.actor, &current.origin_decision),
+                session.inner.policy_step_count,
+                current.physical_decision_id,
+                (current.substep_index, current.substep_count),
+            )
+            .unwrap();
+            assert!(public.0 == *decision.observation());
+
+            // A genuinely separate owner retains an equal world and original
+            // surface cursor. Its allocation cannot borrow this world's keys.
+            let foreign = PreparedSessionV57::from_session(session.inner.clone()).unwrap();
+            assert!(state(&foreign) == state(&session));
+            custody::reset_replay_key_frame_stats_for_test();
+            custody::with_observation_replay_keys(state(&session), |borrowed| {
+                custody::validate(borrowed).unwrap();
+                let warm = custody::replay_key_frame_stats_for_test();
+                let foreign_current = foreign.inner.current.as_ref().unwrap();
+                let other = normalized_origin_parts_in_frame(&foreign.inner, foreign_current).unwrap();
+                assert!(other == framed);
+                let after = custody::replay_key_frame_stats_for_test();
+                assert!(after.0 > warm.0);
+                assert_eq!(after.1, warm.1);
             });
-            drain(&mut session);
-            assert_eq!(state(&session).players[actor.index()].mana_pool, [0; 6]);
+            let foreign_decision = foreign.decision_v57().unwrap();
+            assert!(session.step_v57(&foreign_decision, 0).is_err());
+            assert!(session.restore_v57(&foreign.snapshot_v57()).is_err());
+            assert_eq!(gameplay(&session), before);
+
+            let saved = session.snapshot_v57();
+            act(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Pass { .. })
+            });
+            session.restore_v57(&saved).unwrap();
+            assert!(session.step_v57(&decision, 0).is_err());
+            assert_eq!(gameplay(&session), before);
+            custody::reset_replay_key_frame_stats_for_test();
+            let restored = session.decision_v57().unwrap();
+            assert!(custody::replay_key_frame_stats_for_test().0 > 0);
+            assert_eq!(restored.actions(), decision.actions());
+            assert_borrowed_common_parity(&session);
+            assert_eq!(gameplay(&session), before);
         }
-        assert_eq!(state(&session).objects.get(hatcher).zone, Zone::Battlefield);
-        assert_eq!(state(&session).objects.get(ordinary).zone, Zone::Graveyard);
-        assert!(lands
-            .iter()
-            .all(|id| state(&session).objects.get(*id).tapped));
-        assert!(state(&session).engine.event_history.iter().any(|event| {
-            matches!(event, crate::event::CommittedEvent::DrakeJournalV1 { record }
-                if matches!(&record.value, custody::JournalV1::Enclosing {
-                    operation: crate::linked_aura_operation_v1::OperationV1::Step(
-                        crate::engine::Action::CastSpell(source)), ..
-                } if *source == ordinary))
-        }));
-        let before = gameplay(&session);
-        let current = session.inner.current.as_ref().unwrap();
-
-        // Both paths execute the entire same input body. With no frame the
-        // reference derives keys independently at each original validation.
-        custody::reset_replay_key_frame_stats_for_test();
-        let unframed = normalized_origin_parts_in_frame(&session.inner, current).unwrap();
-        let unframed_stats = custody::replay_key_frame_stats_for_test();
-        custody::reset_replay_key_frame_stats_for_test();
-        let framed = normalized_origin_parts(&session.inner, current).unwrap();
-        let framed_stats = custody::replay_key_frame_stats_for_test();
-        assert!(framed == unframed);
-        assert!(framed_stats.0 < unframed_stats.0);
-        assert!(framed_stats.1 > 0);
-        assert!(normalized_origin_parts(&session.inner, current).unwrap() == framed);
-        let fresh = custody::replay_key_frame_stats_for_test();
-        assert!(fresh.0 > framed_stats.0 && fresh.1 > framed_stats.1);
-
-        // The original public and fully rebuilt constructors retain their
-        // independent fresh frames, complete facts and private binding checks.
-        assert_borrowed_common_parity(&session);
-        let decision = session.decision_v57().unwrap();
-        let public = crate::prepared_observation_v57::observe_parts_v57(
-            &session.inner.state,
-            &session.inner.surface,
-            (current.actor, &current.origin_decision),
-            session.inner.policy_step_count,
-            current.physical_decision_id,
-            (current.substep_index, current.substep_count),
-        )
-        .unwrap();
-        assert!(public.0 == *decision.observation());
-
-        // A genuinely separate owner retains an equal world and original
-        // surface cursor. Its allocation cannot borrow this world's keys.
-        let foreign = PreparedSessionV57::from_session(session.inner.clone()).unwrap();
-        assert!(state(&foreign) == state(&session));
-        custody::reset_replay_key_frame_stats_for_test();
-        custody::with_observation_replay_keys(state(&session), |borrowed| {
-            custody::validate(borrowed).unwrap();
-            let warm = custody::replay_key_frame_stats_for_test();
-            let foreign_current = foreign.inner.current.as_ref().unwrap();
-            let other = normalized_origin_parts_in_frame(&foreign.inner, foreign_current).unwrap();
-            assert!(other == framed);
-            let after = custody::replay_key_frame_stats_for_test();
-            assert!(after.0 > warm.0);
-            assert_eq!(after.1, warm.1);
-        });
-        let foreign_decision = foreign.decision_v57().unwrap();
-        assert!(session.step_v57(&foreign_decision, 0).is_err());
-        assert!(session.restore_v57(&foreign.snapshot_v57()).is_err());
-        assert_eq!(gameplay(&session), before);
-
-        let saved = session.snapshot_v57();
-        act(&mut session, |action| {
-            matches!(action, ActionSemanticV1::Pass { .. })
-        });
-        session.restore_v57(&saved).unwrap();
-        assert!(session.step_v57(&decision, 0).is_err());
-        assert_eq!(gameplay(&session), before);
-        custody::reset_replay_key_frame_stats_for_test();
-        let restored = session.decision_v57().unwrap();
-        assert!(custody::replay_key_frame_stats_for_test().0 > 0);
-        assert_eq!(restored.actions(), decision.actions());
-        assert_borrowed_common_parity(&session);
-        assert_eq!(gameplay(&session), before);
-    }
+    });
 }
 
 #[test]
 fn genuine_paid_prepared_validation_key_scope_keeps_full_input_foreign_history_corruption_and_restore_both_seats(
 ) {
-    use crate::drake_hatcher_v1::custody;
-    use crate::prepared_observation_v57::{validate_state, validate_state_unframed_for_test};
-    for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut raw = ready(actor);
-        let hatcher = put(&mut raw, actor, "Drake Hatcher", Zone::Hand);
-        let ordinary = put(&mut raw, actor, "Think Twice", Zone::Hand);
-        let lands: [_; 4] = ["Forest", "Island", "Forest", "Island"]
-            .map(|name| put(&mut raw, actor, name, Zone::Battlefield));
-        let mut session = own(raw);
-        for (spell, sources) in [(hatcher, &lands[..2]), (ordinary, &lands[2..])] {
-            for land in sources {
-                act(&mut session, |action| {
-                    matches!(action, ActionSemanticV1::ActivateManaAbility { source, .. }
-                        if source.arena_id == land.0)
-                });
-            }
-            act(&mut session, |action| {
-                matches!(action, ActionSemanticV1::CastSpell { source, .. }
-                    if source.arena_id == spell.0)
-            });
-            drain(&mut session);
-            assert_eq!(state(&session).players[actor.index()].mana_pool, [0; 6]);
-        }
-        assert_eq!(state(&session).objects.get(hatcher).zone, Zone::Battlefield);
-        assert_eq!(state(&session).objects.get(ordinary).zone, Zone::Graveyard);
-        assert!(lands
-            .iter()
-            .all(|id| state(&session).objects.get(*id).tapped));
-        let before = gameplay(&session);
-        let original = state(&session);
-
-        custody::reset_replay_key_frame_stats_for_test();
-        let unframed = validate_state_unframed_for_test(original);
-        let unframed_stats = custody::replay_key_frame_stats_for_test();
-        custody::reset_replay_key_frame_stats_for_test();
-        assert_eq!(validate_state(original), unframed);
-        assert!(unframed.is_ok());
-        let framed_stats = custody::replay_key_frame_stats_for_test();
-        assert!(framed_stats.0 > 0 && framed_stats.0 < unframed_stats.0 && framed_stats.1 > 0);
-        assert_eq!(gameplay(&session), before);
-
-        custody::with_observation_replay_keys(original, |borrowed| {
-            custody::validate(borrowed).unwrap();
-            let warm = custody::replay_key_frame_stats_for_test();
-            validate_state_unframed_for_test(borrowed).unwrap();
-            let reference = custody::replay_key_frame_stats_for_test();
-            validate_state(borrowed).unwrap();
-            let joined = custody::replay_key_frame_stats_for_test();
-            assert_eq!(joined.0 - reference.0, reference.0 - warm.0);
-            assert_eq!(joined.1 - reference.1, reference.1 - warm.1);
-            assert!(joined.1 > reference.1);
-
-            // Equal restored data has a distinct allocation and keeps the
-            // original foreign-frame fallback, without replacing this frame.
-            let foreign: GameState =
-                serde_json::from_slice(&serde_json::to_vec(borrowed).unwrap()).unwrap();
-            assert_eq!(&foreign, borrowed);
-            let foreign_before = foreign.clone();
-            let warm = custody::replay_key_frame_stats_for_test();
-            assert_eq!(
-                validate_state(&foreign),
-                validate_state_unframed_for_test(&foreign)
-            );
-            let after = custody::replay_key_frame_stats_for_test();
-            assert!(after.0 > warm.0);
-            assert_eq!(after.1, warm.1);
-            assert_eq!(foreign, foreign_before);
-            custody::validate(borrowed).unwrap();
-            assert_eq!(
-                custody::replay_key_frame_stats_for_test(),
-                (after.0, after.1 + 1)
-            );
-        });
-
-        // A saved output edited after genuine paid operations cannot inherit
-        // keys or replay results from the unchanged original history.
-        let mut corrupt = original.clone();
-        let output = corrupt
-            .engine
-            .event_history
-            .iter_mut()
-            .rev()
-            .find_map(|event| match event {
-                crate::event::CommittedEvent::DrakeJournalV1 { record } => {
-                    if let custody::JournalV1::Enclosing { output, .. } = &mut record.value {
-                        Some(output)
-                    } else {
-                        None
-                    }
+    // These check the replay key frames of a validation that checks every
+    // row, as every validation did before the Drake prefix memo.
+    crate::drake_hatcher_v1::custody::without_prefix_memo_for_test(|| {
+        use crate::drake_hatcher_v1::custody;
+        use crate::prepared_observation_v57::{validate_state, validate_state_unframed_for_test};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut raw = ready(actor);
+            let hatcher = put(&mut raw, actor, "Drake Hatcher", Zone::Hand);
+            let ordinary = put(&mut raw, actor, "Think Twice", Zone::Hand);
+            let lands: [_; 4] = ["Forest", "Island", "Forest", "Island"]
+                .map(|name| put(&mut raw, actor, name, Zone::Battlefield));
+            let mut session = own(raw);
+            for (spell, sources) in [(hatcher, &lands[..2]), (ordinary, &lands[2..])] {
+                for land in sources {
+                    act(&mut session, |action| {
+                        matches!(action, ActionSemanticV1::ActivateManaAbility { source, .. }
+                            if source.arena_id == land.0)
+                    });
                 }
-                _ => None,
-            })
-            .expect("genuine paid enclosing output absent");
-        std::sync::Arc::make_mut(output).players[actor.index()].life += 1;
-        let corrupt_before = corrupt.clone();
-        let error = validate_state_unframed_for_test(&corrupt).unwrap_err();
-        assert_eq!(validate_state(&corrupt).unwrap_err(), error);
-        custody::with_observation_replay_keys(original, |borrowed| {
-            custody::validate(borrowed).unwrap();
-            assert_eq!(validate_state(&corrupt).unwrap_err(), error);
-            custody::validate(borrowed).unwrap();
-        });
-        assert_eq!(corrupt, corrupt_before);
-        assert_eq!(gameplay(&session), before);
+                act(&mut session, |action| {
+                    matches!(action, ActionSemanticV1::CastSpell { source, .. }
+                        if source.arena_id == spell.0)
+                });
+                drain(&mut session);
+                assert_eq!(state(&session).players[actor.index()].mana_pool, [0; 6]);
+            }
+            assert_eq!(state(&session).objects.get(hatcher).zone, Zone::Battlefield);
+            assert_eq!(state(&session).objects.get(ordinary).zone, Zone::Graveyard);
+            assert!(lands
+                .iter()
+                .all(|id| state(&session).objects.get(*id).tapped));
+            let before = gameplay(&session);
+            let original = state(&session);
 
-        assert_borrowed_common_parity(&session);
-        let decision = session.decision_v57().unwrap();
-        validate_state(state(&session)).unwrap();
-        let same = session.decision_v57().unwrap();
-        assert_eq!(same.actions(), decision.actions());
-        assert_eq!(same.observation(), decision.observation());
-        assert!(same.binding == decision.binding);
-        let saved = session.snapshot_v57();
-        act(&mut session, |action| {
-            matches!(action, ActionSemanticV1::Pass { .. })
-        });
-        session.restore_v57(&saved).unwrap();
-        assert!(session.step_v57(&decision, 0).is_err());
-        assert_eq!(gameplay(&session), before);
-        assert_eq!(
-            validate_state(state(&session)),
-            validate_state_unframed_for_test(state(&session))
-        );
-        assert_borrowed_common_parity(&session);
-        assert_eq!(
-            session.decision_v57().unwrap().actions(),
-            decision.actions()
-        );
-    }
+            custody::reset_replay_key_frame_stats_for_test();
+            let unframed = validate_state_unframed_for_test(original);
+            let unframed_stats = custody::replay_key_frame_stats_for_test();
+            custody::reset_replay_key_frame_stats_for_test();
+            assert_eq!(validate_state(original), unframed);
+            assert!(unframed.is_ok());
+            let framed_stats = custody::replay_key_frame_stats_for_test();
+            assert!(framed_stats.0 > 0 && framed_stats.0 < unframed_stats.0 && framed_stats.1 > 0);
+            assert_eq!(gameplay(&session), before);
+
+            custody::with_observation_replay_keys(original, |borrowed| {
+                custody::validate(borrowed).unwrap();
+                let warm = custody::replay_key_frame_stats_for_test();
+                validate_state_unframed_for_test(borrowed).unwrap();
+                let reference = custody::replay_key_frame_stats_for_test();
+                validate_state(borrowed).unwrap();
+                let joined = custody::replay_key_frame_stats_for_test();
+                assert_eq!(joined.0 - reference.0, reference.0 - warm.0);
+                assert_eq!(joined.1 - reference.1, reference.1 - warm.1);
+                assert!(joined.1 > reference.1);
+
+                // Equal restored data has a distinct allocation and keeps the
+                // original foreign-frame fallback, without replacing this frame.
+                let foreign: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(borrowed).unwrap()).unwrap();
+                assert_eq!(&foreign, borrowed);
+                let foreign_before = foreign.clone();
+                let warm = custody::replay_key_frame_stats_for_test();
+                assert_eq!(
+                    validate_state(&foreign),
+                    validate_state_unframed_for_test(&foreign)
+                );
+                let after = custody::replay_key_frame_stats_for_test();
+                assert!(after.0 > warm.0);
+                assert_eq!(after.1, warm.1);
+                assert_eq!(foreign, foreign_before);
+                custody::validate(borrowed).unwrap();
+                assert_eq!(
+                    custody::replay_key_frame_stats_for_test(),
+                    (after.0, after.1 + 1)
+                );
+            });
+
+            // A saved output edited after genuine paid operations cannot inherit
+            // keys or replay results from the unchanged original history.
+            let mut corrupt = original.clone();
+            let output = corrupt
+                .engine
+                .event_history
+                .iter_mut()
+                .rev()
+                .find_map(|event| match event {
+                    crate::event::CommittedEvent::DrakeJournalV1 { record } => {
+                        if let custody::JournalV1::Enclosing { output, .. } = &mut record.value {
+                            Some(output)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })
+                .expect("genuine paid enclosing output absent");
+            std::sync::Arc::make_mut(output).players[actor.index()].life += 1;
+            let corrupt_before = corrupt.clone();
+            let error = validate_state_unframed_for_test(&corrupt).unwrap_err();
+            assert_eq!(validate_state(&corrupt).unwrap_err(), error);
+            custody::with_observation_replay_keys(original, |borrowed| {
+                custody::validate(borrowed).unwrap();
+                assert_eq!(validate_state(&corrupt).unwrap_err(), error);
+                custody::validate(borrowed).unwrap();
+            });
+            assert_eq!(corrupt, corrupt_before);
+            assert_eq!(gameplay(&session), before);
+
+            assert_borrowed_common_parity(&session);
+            let decision = session.decision_v57().unwrap();
+            validate_state(state(&session)).unwrap();
+            let same = session.decision_v57().unwrap();
+            assert_eq!(same.actions(), decision.actions());
+            assert_eq!(same.observation(), decision.observation());
+            assert!(same.binding == decision.binding);
+            let saved = session.snapshot_v57();
+            act(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Pass { .. })
+            });
+            session.restore_v57(&saved).unwrap();
+            assert!(session.step_v57(&decision, 0).is_err());
+            assert_eq!(gameplay(&session), before);
+            assert_eq!(
+                validate_state(state(&session)),
+                validate_state_unframed_for_test(state(&session))
+            );
+            assert_borrowed_common_parity(&session);
+            assert_eq!(
+                session.decision_v57().unwrap().actions(),
+                decision.actions()
+            );
+        }
+    });
 }
