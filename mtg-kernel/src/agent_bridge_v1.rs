@@ -3571,9 +3571,11 @@ mod tests {
     /// unknown to that seat. That is a consistency check against the
     /// engine's own knowledge tables: it cannot see a fact the tables wrongly
     /// mark as known. So it also requires every place one player learned
-    /// cards of the other player's library to be a reviewed public-reveal
-    /// site (a `spellbench-public-reveal` marker at the call), which catches
-    /// a private look turned into a reveal. It reports how many sampled
+    /// hidden cards of the other player (library look or reveal, hand
+    /// reveal, or a library reorder revealed to the opponent) to be a
+    /// reviewed site (a `spellbench-public-reveal` or
+    /// `spellbench-reviewed-look` marker at the call), which catches a
+    /// private look turned into a reveal. The sites hit are printed. It reports how many sampled
     /// worlds changed any hidden card and how many changed the opponent's
     /// hand, so a pass is not satisfied by library reshuffles alone.
     #[test]
@@ -3590,7 +3592,7 @@ mod tests {
         let mut hidden_changed = 0_u64;
         // Sampled worlds whose opponent hand (as a multiset) differs.
         let mut opponent_hand_changed = 0_u64;
-        crate::state::take_opponent_library_reveal_sites_v1();
+        crate::state::take_opponent_reveal_sites_v1();
         let mut refused: std::collections::BTreeMap<String, u64> = Default::default();
         let mut leaks = Vec::new();
         let mut decisions = 0_u64;
@@ -3685,10 +3687,10 @@ mod tests {
                 eprintln!("v4 audit {game_id}: {}", decision["outcome"]);
             }
         }
-        let sites = crate::state::take_opponent_library_reveal_sites_v1();
+        let sites = crate::state::take_opponent_reveal_sites_v1();
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut unreviewed = Vec::new();
-        for (file, line) in &sites {
+        for (kind, file, line) in &sites {
             let path = [manifest.join(file), manifest.parent().unwrap().join(file)]
                 .into_iter()
                 .find(|path| path.is_file())
@@ -3696,20 +3698,21 @@ mod tests {
             let source = std::fs::read_to_string(&path).unwrap();
             let lines: Vec<&str> = source.lines().collect();
             let end = (*line as usize).saturating_sub(1);
-            let marked = lines[end.saturating_sub(6)..end]
-                .iter()
-                .any(|text| text.contains("spellbench-public-reveal"));
+            let marked = lines[end.saturating_sub(6)..end].iter().any(|text| {
+                text.contains("spellbench-public-reveal")
+                    || text.contains("spellbench-reviewed-look")
+            });
             if !marked {
-                unreviewed.push(format!("{file}:{line}"));
+                unreviewed.push(format!("{kind} {file}:{line}"));
             }
         }
         eprintln!(
-            "v4 audit: decisions {decisions}, sampled worlds {sampled}, hidden changed {hidden_changed}, opponent hand changed {opponent_hand_changed}, refusals {refused:?}, leaks {}, opponent library reveal sites {sites:?}",
+            "v4 audit: decisions {decisions}, sampled worlds {sampled}, hidden changed {hidden_changed}, opponent hand changed {opponent_hand_changed}, refusals {refused:?}, leaks {}, opponent reveal sites {sites:?}",
             leaks.len()
         );
         assert!(
             unreviewed.is_empty(),
-            "a player learned the other library outside a reviewed public-reveal site: {unreviewed:?}"
+            "a player learned the other player's hidden cards outside a reviewed site: {unreviewed:?}"
         );
         assert!(
             opponent_hand_changed > 0,
