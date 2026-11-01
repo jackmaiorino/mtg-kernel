@@ -3575,6 +3575,9 @@ mod tests {
             .and_then(|value| value.parse().ok())
             .unwrap_or(2);
         let mut sampled = 0_u64;
+        // Sampled worlds whose hidden cards differ from the live game, so the
+        // equality checks are not vacuous.
+        let mut hidden_changed = 0_u64;
         let mut refused: std::collections::BTreeMap<String, u64> = Default::default();
         let mut leaks = Vec::new();
         let mut decisions = 0_u64;
@@ -3607,6 +3610,23 @@ mod tests {
                         ) {
                             Ok(world) => {
                                 sampled += 1;
+                                let hidden = |state: &crate::state::GameState| {
+                                    state
+                                        .players
+                                        .iter()
+                                        .map(|player| {
+                                            player
+                                                .hand
+                                                .iter()
+                                                .chain(&player.library)
+                                                .map(|&id| state.objects.get(id).card_def)
+                                                .collect::<Vec<_>>()
+                                        })
+                                        .collect::<Vec<_>>()
+                                };
+                                if hidden(world.game_state()) != hidden(fast.game_state()) {
+                                    hidden_changed += 1;
+                                }
                                 let other = encode_flat_v4_tensor_v1(&world, &mut scratch).unwrap();
                                 if other != live {
                                     leaks.push(format!(
@@ -3636,8 +3656,12 @@ mod tests {
             }
         }
         eprintln!(
-            "v4 audit: decisions {decisions}, sampled worlds {sampled}, refusals {refused:?}, leaks {}",
+            "v4 audit: decisions {decisions}, sampled worlds {sampled}, hidden changed {hidden_changed}, refusals {refused:?}, leaks {}",
             leaks.len()
+        );
+        assert!(
+            hidden_changed * 2 >= sampled,
+            "sampled worlds rarely changed hidden cards"
         );
         assert!(
             leaks.is_empty(),
