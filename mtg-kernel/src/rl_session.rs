@@ -5335,6 +5335,48 @@ pub struct FastActorSessionV1 {
     terminal: Option<RlSessionTerminalV1>,
 }
 
+impl FastActorSessionV1 {
+    /// The W1 information-set import (`infoset_v1`): a session around an
+    /// exported canonical state. Deck identities, limits and the contract
+    /// mode are public and come from `template`; the episode id and the
+    /// environment revision are constants, and both decision counters are
+    /// the viewer's own decision index (design 6.8).
+    pub(crate) fn import_infoset_v1(
+        template: &FastActorSessionV1,
+        state: crate::state::GameState,
+        own_decision_index: u64,
+    ) -> FastActorSessionV1 {
+        let mut session = FastActorSessionV1 {
+            deck_ids: template.deck_ids.clone(),
+            deck_hashes: template.deck_hashes,
+            episode_id: 0,
+            max_physical_decisions: template.max_physical_decisions,
+            max_policy_steps: template.max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            environment_revision: 0,
+            policy_step_count: own_decision_index,
+            physical_decision_count: own_decision_index,
+            current: None,
+            flat_action_contract_mode: template.flat_action_contract_mode,
+            v3_spell_target_reference_adapter: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
+            flat_action_cache_spare: None,
+            flat_action_cache_spare_v2: None,
+            pauper_london_v1: None,
+            terminal: None,
+        };
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
+    /// The public deck identities of this session, by seat.
+    pub(crate) fn deck_ids_v1(&self) -> &SessionDeckIdsV1 {
+        &self.deck_ids
+    }
+}
+
 #[derive(Clone)]
 pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
 
