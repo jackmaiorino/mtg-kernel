@@ -2077,14 +2077,14 @@ fn note_end_step(state: &mut GameState, events: &[CommittedEvent]) {
             None,
         );
     }
-    let Some(p1a) = read_state(state) else {
+    let Some(records) = read_state(state) else {
         return;
     };
-    if p1a.end_step_returns.is_empty() {
+    if records.end_step_returns.is_empty() {
         return;
     }
     let now = TurnV1::now(state);
-    let (returns, waiting): (Vec<_>, Vec<_>) = p1a
+    let (returns, waiting): (Vec<_>, Vec<_>) = records
         .end_step_returns
         .iter()
         .copied()
