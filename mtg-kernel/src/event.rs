@@ -1746,8 +1746,10 @@ pub enum CommittedEvent {
         completed: Box<crate::ravenous_amulet_v1::CompletedV1>,
     },
     /// Genuine Drake original input, capture, payment and operation custody.
+    /// Shared, so a history copy does not copy each record (it serializes as
+    /// the record itself).
     DrakeJournalV1 {
-        record: Box<crate::drake_hatcher_v1::custody::RecordV1>,
+        record: std::sync::Arc<crate::drake_hatcher_v1::custody::RecordV1>,
     },
     /// Only inside a Drake operation snapshot: exact immutable outer record index.
     /// Never admitted as an actual event or substitute for an absent original.
