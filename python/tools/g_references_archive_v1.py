@@ -107,8 +107,24 @@ print(json.dumps({"baselines": rows, "sha256": digest(out / "baselines.json")}))
 '''
 
 POD_PACK = '''#pod:archive-pack
-import collections, concurrent.futures, hashlib, io, os, pathlib, re, tarfile, time
+import collections, concurrent.futures, hashlib, io, os, pathlib, re, tarfile, threading, time
 started = time.monotonic()
+def stop_now(message):  # ends the whole process, prefetch readers included; the diagnostic never prevents the exit
+    try:
+        os.write(2, (message + "\\n").encode(errors="replace"))
+    except BaseException:
+        pass
+    finally:
+        os._exit(3)
+def left():
+    return ARGS["limit_seconds"] - (time.monotonic() - started)
+def in_time():
+    if left() <= 0:
+        stop_now("the pack outlasted its bound")
+def watchdog():  # the bound holds even while a read or a metadata call blocks: this thread ends the process
+    time.sleep(max(0.0, left()))
+    stop_now("the pack outlasted its bound")
+threading.Thread(target=watchdog, name="pack-watchdog", daemon=True).start()  # armed before any filesystem call
 root, campaign, out = pathlib.Path(ARGS["root"]), pathlib.Path(ARGS["campaign"]), pathlib.Path(ARGS["out"])
 need(not root.is_symlink() and str(root.resolve()) == str(root), "the superseded root is not canonical")
 need(campaign.parent == root and campaign.is_dir() and not campaign.is_symlink(),
@@ -118,21 +134,6 @@ out.mkdir(parents=True, exist_ok=True)
 included, listed, records = [], [], []
 def fail(error):  # a folder that cannot be listed stops the archive (and so the prune)
     raise error
-def stop_now(message):  # ends the whole process, prefetch readers included (a stalled read must not hold it)
-    import sys
-    sys.stderr.write(message + "\\n")
-    sys.stderr.flush()
-    os._exit(3)
-def left():
-    return ARGS["limit_seconds"] - (time.monotonic() - started)
-def in_time():
-    if left() <= 0:
-        stop_now("the pack outlasted its bound")
-def watchdog():  # the bound holds even while a read blocks: this thread ends the process at the deadline
-    time.sleep(max(0.0, left()))
-    stop_now("the pack outlasted its bound")
-import threading
-threading.Thread(target=watchdog, name="pack-watchdog", daemon=True).start()
 last = [0.0]
 def progress(phase):
     if time.monotonic() - last[0] >= 10:
