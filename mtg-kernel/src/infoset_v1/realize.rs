@@ -463,6 +463,22 @@ pub(crate) fn realize(
     const MAX_NODES: usize = 400;
     let owner = viewer.opponent();
     let base = replay(game, &[], &[], d, owner, viewer)?;
+    let context = {
+        let t = truth(base.s.game_state(), viewer, owner);
+        let name = |o: &ObjectId| base.s.game_state().objects.get(*o).name.clone();
+        format!(
+            "choice points {:?}; shuffles at {:?}; misplaced in W {:?}; target {target:?}",
+            base.choices
+                .iter()
+                .map(|c| (c.at, c.chosen, c.others.clone()))
+                .collect::<Vec<_>>(),
+            base.shuffles.iter().map(|x| x.0).collect::<Vec<_>>(),
+            misplaced(&t, target)
+                .iter()
+                .map(|(o, h)| format!("{}#{}{}", name(o), o.0, if *h { "@hand" } else { "@library" }))
+                .collect::<Vec<_>>()
+        )
+    };
     let mut queue: VecDeque<Vec<MoveV1>> = VecDeque::from([Vec::new()]);
     let mut visited: BTreeSet<Vec<MoveV1>> = BTreeSet::new();
     let mut last = String::from("no candidate W*");
@@ -470,7 +486,7 @@ pub(crate) fn realize(
     while let Some(moves) = queue.pop_front() {
         nodes += 1;
         if nodes > MAX_NODES {
-            return Err(format!("search budget spent; last: {last}"));
+            return Err(format!("search budget spent; last: {last}; {context}"));
         }
         let run = match replay(game, &[], &moves, d, owner, viewer) {
             Ok(r) => r,
@@ -574,6 +590,14 @@ pub(crate) fn realize(
             }
         }
         for mv in next {
+            let at = |m: &MoveV1| match *m {
+                MoveV1::Choice { at, .. } => (at, true),
+                MoveV1::Shuffle { at, .. } => (at, false),
+            };
+            // One exchange per choice point; no move twice.
+            if moves.contains(&mv) || (at(&mv).1 && moves.iter().any(|m| at(m) == at(&mv))) {
+                continue;
+            }
             let mut ms = moves.clone();
             ms.push(mv);
             ms.sort();
@@ -582,7 +606,7 @@ pub(crate) fn realize(
             }
         }
     }
-    Err(last)
+    Err(format!("{last}; {context}"))
 }
 
 /// The session of `game` at decision step `d` (W itself, no exchanges).

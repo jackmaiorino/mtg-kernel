@@ -269,7 +269,16 @@ impl ScriptV1 {
     }
 
     fn fail(&self, why: &str) -> ! {
-        let tail: Vec<&String> = self.trace.iter().rev().take(40).collect();
+        // Every scripted answer, then the last few decisions.
+        let n = self.trace.len();
+        let tail: Vec<&String> = self
+            .trace
+            .iter()
+            .enumerate()
+            .filter(|(i, t)| *i + 12 >= n || !t.contains(": default ["))
+            .map(|(_, t)| t)
+            .rev()
+            .collect();
         let pending: Vec<String> = self
             .intents
             .iter()
