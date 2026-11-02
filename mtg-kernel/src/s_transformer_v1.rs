@@ -754,54 +754,102 @@ impl SModelV1 {
                 lt.ln1_stats[2 * t + 1] = rstd;
             }
             self.linear_fwd(block.qkv, l, &lt.ln1, &mut lt.qkv);
+            // Query rows: every token, except in the last block, whose object
+            // rows reach no output (the heads read the state and action
+            // tokens only). Rows are independent, so the live rows' values
+            // are the same either way; the skipped rows stay zero in the tape.
+            let segments: Vec<(usize, usize)> = if layer + 1 == config.layers {
+                vec![(0, 1), (1 + n, a)]
+            } else {
+                vec![(0, l)]
+            };
             for head in 0..h {
-                for i in 0..l {
-                    let q = &lt.qkv[i * 3 * d + head * dh..i * 3 * d + head * dh + dh];
-                    let row = &mut lt.probs[(head * l + i) * l..(head * l + i + 1) * l];
-                    for j in 0..l {
-                        let k = &lt.qkv[j * 3 * d + d + head * dh..j * 3 * d + d + head * dh + dh];
-                        let mut dot = 0.0f32;
-                        for c in 0..dh {
-                            dot += q[c] * k[c];
-                        }
-                        row[j] = dot * scale + tape.bias[(head * l + i) * l + j];
+                // Contiguous K_h^T [dh, l] and V_h [l, dh].
+                for j in 0..l {
+                    for c in 0..dh {
+                        tape.key_t[c * l + j] = lt.qkv[j * 3 * d + d + head * dh + c];
+                        tape.value_h[j * dh + c] = lt.qkv[j * 3 * d + 2 * d + head * dh + c];
                     }
-                    kernels::softmax_row_v1(row);
-                    let out = &mut lt.attn[i * d + head * dh..i * d + head * dh + dh];
-                    out.fill(0.0);
-                    for j in 0..l {
-                        let p = row[j];
-                        let v = &lt.qkv
-                            [j * 3 * d + 2 * d + head * dh..j * 3 * d + 2 * d + head * dh + dh];
-                        for c in 0..dh {
-                            out[c] += p * v[c];
+                }
+                for &(start, count) in &segments {
+                    let probs =
+                        &mut lt.probs[(head * l + start) * l..(head * l + start + count) * l];
+                    // scores[i, j] = sum over c ascending of q[i, c] k[j, c].
+                    gemm_v1(
+                        count,
+                        l,
+                        dh,
+                        &lt.qkv[start * 3 * d + head * dh..],
+                        3 * d,
+                        1,
+                        &tape.key_t,
+                        InitV1::Zero,
+                        probs,
+                    );
+                    for r in 0..count {
+                        let i = start + r;
+                        let row = &mut probs[r * l..(r + 1) * l];
+                        for j in 0..l {
+                            row[j] = row[j] * scale + tape.bias[(head * l + i) * l + j];
                         }
+                        kernels::softmax_row_v1(row);
+                    }
+                    // out[i, c] = sum over j ascending of p[i, j] v[j, c].
+                    gemm_v1(
+                        count,
+                        dh,
+                        l,
+                        probs,
+                        l,
+                        1,
+                        &tape.value_h,
+                        InitV1::Zero,
+                        &mut tape.head_out,
+                    );
+                    for r in 0..count {
+                        let i = start + r;
+                        lt.attn[i * d + head * dh..i * d + head * dh + dh]
+                            .copy_from_slice(&tape.head_out[r * dh..(r + 1) * dh]);
                     }
                 }
             }
-            self.linear_fwd(block.proj, l, &lt.attn, &mut lt.x_mid);
-            for index in 0..l * d {
-                lt.x_mid[index] += lt.x_in[index];
-            }
-            for t in 0..l {
-                let (mean, rstd) = kernels::layer_norm_row_v1(
-                    &lt.x_mid[t * d..(t + 1) * d],
-                    &self.values[block.ln2_g..block.ln2_g + d],
-                    &self.values[block.ln2_b..block.ln2_b + d],
-                    &mut lt.ln2[t * d..(t + 1) * d],
-                );
-                lt.ln2_stats[2 * t] = mean;
-                lt.ln2_stats[2 * t + 1] = rstd;
-            }
-            self.linear_fwd(block.ff0, l, &lt.ln2, &mut lt.ff_pre);
-            kernels::gelu_slice_v1(&lt.ff_pre[..l * ffn], &mut lt.ff_act[..l * ffn]);
             let next = match after.first_mut() {
                 Some(next) => &mut next.x_in,
                 None => &mut tape.x_out,
             };
-            self.linear_fwd(block.ff2, l, &lt.ff_act, next);
-            for index in 0..l * d {
-                next[index] += lt.x_mid[index];
+            for &(start, count) in &segments {
+                let rows = start * d..(start + count) * d;
+                self.linear_fwd(
+                    block.proj,
+                    count,
+                    &lt.attn[rows.clone()],
+                    &mut lt.x_mid[rows.clone()],
+                );
+                for index in rows.clone() {
+                    lt.x_mid[index] += lt.x_in[index];
+                }
+                for t in start..start + count {
+                    let (mean, rstd) = kernels::layer_norm_row_v1(
+                        &lt.x_mid[t * d..(t + 1) * d],
+                        &self.values[block.ln2_g..block.ln2_g + d],
+                        &self.values[block.ln2_b..block.ln2_b + d],
+                        &mut lt.ln2[t * d..(t + 1) * d],
+                    );
+                    lt.ln2_stats[2 * t] = mean;
+                    lt.ln2_stats[2 * t + 1] = rstd;
+                }
+                let wide = start * ffn..(start + count) * ffn;
+                self.linear_fwd(
+                    block.ff0,
+                    count,
+                    &lt.ln2[rows.clone()],
+                    &mut lt.ff_pre[wide.clone()],
+                );
+                kernels::gelu_slice_v1(&lt.ff_pre[wide.clone()], &mut lt.ff_act[wide.clone()]);
+                self.linear_fwd(block.ff2, count, &lt.ff_act[wide], &mut next[rows.clone()]);
+                for index in rows {
+                    next[index] += lt.x_mid[index];
+                }
             }
         }
 
@@ -883,6 +931,9 @@ pub struct STapeV1 {
     ref_out: Vec<f32>,
     edge_out: Vec<f32>,
     bias: Vec<f32>,
+    key_t: Vec<f32>,
+    value_h: Vec<f32>,
+    head_out: Vec<f32>,
     layers: Vec<LayerTapeV1>,
     x_out: Vec<f32>,
     fin: Vec<f32>,
@@ -923,6 +974,10 @@ impl STapeV1 {
         sized_v1(&mut self.ref_out, r * d);
         sized_v1(&mut self.edge_out, e * 2 * h);
         sized_v1(&mut self.bias, h * l * l);
+        let dh = config.head_dim_v1();
+        sized_v1(&mut self.key_t, dh * l);
+        sized_v1(&mut self.value_h, l * dh);
+        sized_v1(&mut self.head_out, l * dh);
         self.layers.resize_with(config.layers, LayerTapeV1::default);
         for lt in &mut self.layers {
             sized_v1(&mut lt.x_in, l * d);

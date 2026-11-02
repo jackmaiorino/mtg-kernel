@@ -2,10 +2,14 @@
 """Float64 PyTorch reference and receipts for native S (mtg-kernel `s_transformer_v1`, W5 E3).
 
 `parity --dir D --receipt R` reads a `s_transformer_v1 parity-dump` directory and recomputes, in float64 with
-autograd, every batch's RT1 GAE loss terms, the per-tensor gradient and one Adam step from a fresh optimizer. It
-compares them with the native float32 results against E3's bars: each loss term relative error at most 1e-4,
-per-tensor gradient relative L2 error at most 1e-3, and per-tensor Adam parameter-change relative L2 error at most
-1e-3.
+autograd, every batch's RT1 GAE loss terms, the per-tensor gradient and one Adam step. It compares them with the
+native float32 results against E3's bars: each loss term relative error at most 1e-4, per-tensor gradient relative
+L2 error at most 1e-3, and per-tensor Adam parameter-change relative L2 error at most 1e-3.
+
+The Adam bar is read on a warmed optimizer state (S's moments after a few native updates, shared by both sides).
+The first step from zero moments is also reported: it moves every parameter by about the learning rate in the
+direction of its gradient's sign, so a gradient element within float32 rounding of zero can step the other way
+than in float64; the receipt reports how much of that step's error sits on near-zero gradient elements.
 
 `compare-logits A B --receipt R` compares two `logits-dump` files (for example Linux and Windows builds on the same
 states): maximum absolute logit and value difference at most 1e-5, and the same argmax except where either side's
@@ -213,15 +217,20 @@ def parity(args) -> int:
     c = float(np.frombuffer(struct.pack("<I", batches["value_coefficient_bits"]), "<f4")[0])
     lr = float(np.frombuffer(struct.pack("<I", batches["learning_rate_bits"]), "<f4")[0])
     tensors = layout["tensors"]
-    per = 3 + 2 * total
+    per = 3 + 3 * total
+    warm_m = np.frombuffer((root / "warm_first.bin").read_bytes(), "<f4").astype(np.float64)
+    warm_v = np.frombuffer((root / "warm_second.bin").read_bytes(), "<f4").astype(np.float64)
+    warm_t = int(batches["warm_adam_step"]) + 1
     if native.size != per * len(batches["batches"]):
         raise SystemExit("native.bin length does not match the batches")
-    worst = {"loss": {}, "gradient": {}, "adam": {}}
+    worst = {"loss": {}, "gradient": {}, "adam": {}, "fresh": {}, "fresh_far": {}}
+    fresh_near_zero = fresh_sign_flips = 0
     rows = []
     b1, b2, eps = 0.9, 0.999, 1e-8
     for index, batch in enumerate(batches["batches"]):
         nat = native[index * per:(index + 1) * per].astype(np.float64)
-        nat_terms, nat_grad, nat_after = nat[:3], nat[3:3 + total], nat[3 + total:]
+        nat_terms, nat_grad = nat[:3], nat[3:3 + total]
+        nat_fresh, nat_warm = nat[3 + total:3 + 2 * total], nat[3 + 2 * total:]
         P = {}
         for t in tensors:
             arr = p0[t["offset"]:t["offset"] + int(np.prod(t["shape"]))].reshape(t["shape"])
@@ -245,7 +254,7 @@ def parity(args) -> int:
         G = len(batch["groups"])
         loss = (policy_sum + c * value_sum) / G
         loss.backward()
-        ref_terms = np.array([float(policy_sum) / G, float(value_sum) / G, float(loss)])
+        ref_terms = np.array([float(policy_sum.detach()) / G, float(value_sum.detach()) / G, float(loss.detach())])
         row = {"batch": index, "decisions": len(flat_ids)}
         for k, name in enumerate(["policy_term", "value_term", "loss"]):
             err = abs(nat_terms[k] - ref_terms[k]) / abs(ref_terms[k])
@@ -261,13 +270,26 @@ def parity(args) -> int:
             g = grad.numpy().reshape(-1)
             gerr = rel_l2(nat_grad[off:off + size], g)
             worst["gradient"][name] = max(worst["gradient"].get(name, 0.0), gerr)
-            # One Adam step from zero moments (step 1), float64.
+            base = p0[off:off + size]
+            # One Adam step from the warmed state (step warm_t), float64: the Adam bar.
+            m = b1 * warm_m[off:off + size] + (1 - b1) * g
+            v = b2 * warm_v[off:off + size] + (1 - b2) * g * g
+            delta_ref = -(lr / (1 - b1 ** warm_t)) * m / (np.sqrt(v) / math.sqrt(1 - b2 ** warm_t) + eps)
+            aerr = rel_l2(nat_warm[off:off + size] - base, delta_ref)
+            worst["adam"][name] = max(worst["adam"].get(name, 0.0), aerr)
+            # One Adam step from zero moments (step 1): a sign-like map of the gradient, reported with how much
+            # of its error sits on elements whose gradient is near zero (|g| at most 1e-4 of the tensor's RMS).
             m = (1 - b1) * g
             v = (1 - b2) * g * g
             delta_ref = -(lr / (1 - b1)) * m / (np.sqrt(v) / math.sqrt(1 - b2) + eps)
-            delta_nat = nat_after[off:off + size] - p0[off:off + size]
-            aerr = rel_l2(delta_nat, delta_ref)
-            worst["adam"][name] = max(worst["adam"].get(name, 0.0), aerr)
+            delta_nat = nat_fresh[off:off + size] - base
+            worst["fresh"][name] = max(worst["fresh"].get(name, 0.0), rel_l2(delta_nat, delta_ref))
+            rms = float(np.sqrt(np.mean(g * g))) if size else 0.0
+            far = np.abs(g) > 1e-4 * rms
+            fresh_near_zero += int(np.count_nonzero(~far & (g != 0)))
+            fresh_sign_flips += int(np.count_nonzero(np.sign(nat_grad[off:off + size]) != np.sign(g)))
+            worst["fresh_far"][name] = max(worst["fresh_far"].get(name, 0.0),
+                                           rel_l2(delta_nat[far], delta_ref[far]) if far.any() else 0.0)
         rows.append(row)
     maxima = {
         "loss_relative": max(worst["loss"].values()),
@@ -275,6 +297,15 @@ def parity(args) -> int:
         "adam_change_relative_l2": max(worst["adam"].values()),
     }
     passed = all(maxima[k] <= BARS[k] for k in BARS)
+    fresh = {
+        "description": "one Adam step from zero moments (step 1); not the bar, see the module doc",
+        "max_relative_l2": max(worst["fresh"].values()),
+        "max_relative_l2_excluding_near_zero_gradients": max(worst["fresh_far"].values()),
+        "worst_tensor": max(worst["fresh"], key=worst["fresh"].get),
+        "near_zero_gradient_elements": fresh_near_zero,
+        "gradient_sign_differences": fresh_sign_flips,
+        "per_tensor_relative_l2": worst["fresh"],
+    }
     receipt = {
         "schema": "s-parity-receipt-v1",
         "passed": passed,
@@ -285,6 +316,8 @@ def parity(args) -> int:
         "worst_adam_tensor": max(worst["adam"], key=worst["adam"].get),
         "per_tensor_gradient_relative_l2": worst["gradient"],
         "per_tensor_adam_change_relative_l2": worst["adam"],
+        "adam_state": f"warmed: S's moments after {batches['warm_adam_step']} native updates, step {warm_t}",
+        "fresh_step": fresh,
         "batches": len(rows),
         "decisions": sum(r["decisions"] for r in rows),
         "seed": batches["seed"],
@@ -294,8 +327,10 @@ def parity(args) -> int:
         "per_batch": rows,
     }
     Path(args.receipt).write_text(json.dumps(receipt, indent=1, sort_keys=True))
-    print(json.dumps({k: receipt[k] for k in ("passed", "maxima", "worst_gradient_tensor", "worst_adam_tensor",
-                                              "batches", "decisions")}, indent=1))
+    summary = {k: receipt[k] for k in ("passed", "maxima", "worst_gradient_tensor", "worst_adam_tensor", "batches",
+                                       "decisions")}
+    summary["fresh_step"] = {k: v for k, v in fresh.items() if k != "per_tensor_relative_l2"}
+    print(json.dumps(summary, indent=1))
     return 0 if passed else 1
 
 

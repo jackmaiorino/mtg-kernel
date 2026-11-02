@@ -1,7 +1,8 @@
 //! E3's receipt tools for native S (the `s_transformer_v1` binary):
 //!
 //! - `parity-dump`: frozen batches, S's initial parameters and, per batch,
-//!   the native loss terms, gradient and one fresh Adam step, for the float64
+//!   the native loss terms, the gradient and one Adam step from a fresh and
+//!   from a warmed optimizer state, for the float64
 //!   PyTorch reference (`python/tools/s_transformer_reference_v1.py parity`).
 //! - `logits-dump`: logits and values of a model (S, or a net-8 V4 endpoint)
 //!   on fixed states, for the Linux-to-Windows parity receipt
@@ -33,6 +34,8 @@ use std::time::Instant;
 const RT1_VALUE_COEFFICIENT_V1: f32 = 0.5;
 const RT1_LEARNING_RATE_V1: f32 = 1.0e-4;
 const DEFAULT_SEED_V1: u64 = 20_261_102;
+/// Updates that warm the parity dump's second optimizer state.
+const WARM_STEPS_V1: usize = 8;
 
 /// Inclusive count ranges of synthetic decisions.
 #[derive(Clone, Copy, Debug)]
@@ -351,6 +354,21 @@ pub fn parity_dump_v1(
     let mut record_count = 0usize;
     let mut work = SWorkV1::default();
     let started = Instant::now();
+    // A warmed optimizer state: S's moments after WARM_STEPS_V1 native updates
+    // from the parity point on separate batches. Each parity batch also takes
+    // one Adam step from it, with its own gradient at the parity point.
+    let mut warm = STrainStateV1::fresh_optimizer_v1(model.clone());
+    for _ in 0..WARM_STEPS_V1 {
+        let batch = synthetic_batch_v1(&mut rng, groups, PARITY_SHAPE_V1);
+        warm.train_step_gae_v1(
+            &groups_of_v1(&batch),
+            RT1_VALUE_COEFFICIENT_V1,
+            RT1_LEARNING_RATE_V1,
+            &mut work,
+        )?;
+    }
+    let warm_first = warm.first_moments_v1().to_vec();
+    let warm_second = warm.second_moments_v1().to_vec();
     for _ in 0..batches {
         let batch = synthetic_batch_v1(&mut rng, groups, PARITY_SHAPE_V1);
         let mut group_rows = Vec::new();
@@ -377,7 +395,19 @@ pub fn parity_dump_v1(
         put_f32s_v1(&mut native, &[loss.policy_term, loss.value_term, loss.loss]);
         put_f32s_v1(&mut native, &grad);
         put_f32s_v1(&mut native, state.model_v1().values_v1());
+        let mut warmed = STrainStateV1::from_parts_v1(
+            model.clone(),
+            warm_first.clone(),
+            warm_second.clone(),
+            WARM_STEPS_V1 as u64,
+        )?;
+        warmed.adam_step_with_gradient_v1(&grad, RT1_LEARNING_RATE_V1)?;
+        put_f32s_v1(&mut native, warmed.model_v1().values_v1());
     }
+    let mut warm_first_bytes = Vec::new();
+    put_f32s_v1(&mut warm_first_bytes, &warm_first);
+    let mut warm_second_bytes = Vec::new();
+    put_f32s_v1(&mut warm_second_bytes, &warm_second);
     let mut params = Vec::new();
     put_f32s_v1(&mut params, model.values_v1());
     let batches_json = json!({
@@ -385,6 +415,7 @@ pub fn parity_dump_v1(
         "seed": seed,
         "value_coefficient_bits": RT1_VALUE_COEFFICIENT_V1.to_bits(),
         "learning_rate_bits": RT1_LEARNING_RATE_V1.to_bits(),
+        "warm_adam_step": WARM_STEPS_V1,
         "batches": batch_rows,
     });
     let files = json!({
@@ -393,6 +424,8 @@ pub fn parity_dump_v1(
         "params.bin": write_v1(&out.join("params.bin"), &params)?,
         "layout.json": write_v1(&out.join("layout.json"), &serde_json::to_vec(&layout_json_v1(&model)).map_err(|e| e.to_string())?)?,
         "native.bin": write_v1(&out.join("native.bin"), &native)?,
+        "warm_first.bin": write_v1(&out.join("warm_first.bin"), &warm_first_bytes)?,
+        "warm_second.bin": write_v1(&out.join("warm_second.bin"), &warm_second_bytes)?,
     });
     Ok(json!({
         "schema": "s-parity-dump-v1",
