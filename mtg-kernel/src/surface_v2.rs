@@ -438,10 +438,6 @@ impl SuppressionCounts {
     }
 }
 
-/// See the module doc. Structurally identical to `HarnessSurfaceV1` (same
-/// four suppression rules, same blockers-reshape bookkeeping) but a
-/// separate type, per the H2 contract.
-#[derive(Clone)]
 /// The surface's id-free scalar state (public: derived from public actions
 /// and public counts), carried by the W1 information-set payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -458,6 +454,10 @@ pub struct HarnessSurfaceScalarsV1 {
     pub mana_count_at_last_stack_change: u64,
 }
 
+/// See the module doc. Structurally identical to `HarnessSurfaceV1` (same
+/// four suppression rules, same blockers-reshape bookkeeping) but a
+/// separate type, per the H2 contract.
+#[derive(Clone)]
 pub struct HarnessSurfaceV2 {
     priority_mode: PriorityModeV1,
     suppression_audit_mode: SuppressionAuditMode,
