@@ -882,6 +882,21 @@ impl Roles {
                     // choice past the depth limit when nothing expanded.
                     if in_tree && depth > MAX_DEPTH && rec.depth_limit.is_none() {
                         rec.depth_limit = Some(snap(depth, meter, c));
+                        rec.anchor_turn = Some(s.game_state().turn);
+                    }
+                    // Accounting only (value-leaf cost split): the first
+                    // focal choice at or after the anchor, in a later turn,
+                    // and two or more turns later.
+                    if let Some(t0) = rec.anchor_turn.filter(|_| !in_tree || depth > MAX_DEPTH) {
+                        let turn = s.game_state().turn;
+                        let at = snap(depth, meter, c);
+                        rec.leaf_h0.get_or_insert(at);
+                        if turn > t0 {
+                            rec.leaf_t0.get_or_insert(at);
+                        }
+                        if turn >= t0.saturating_add(2) {
+                            rec.leaf_t1.get_or_insert(at);
+                        }
                     }
                     // Trace only: where this choice comes from.
                     let mut src = if in_tree {
@@ -979,6 +994,7 @@ impl Roles {
                                 // Boundary: before the expanded choice's
                                 // action is applied.
                                 rec.expansion = Some(snap(depth, meter, c));
+                                rec.anchor_turn = Some(s.game_state().turn);
                                 (e, cn.edges[e].clone())
                             }
                         };
@@ -2019,6 +2035,15 @@ pub(crate) struct SimRecord {
     /// Focal nonforced choices the rollout policy made (after the tree path,
     /// past the depth limit, or on retained tail nodes).
     pub(crate) rollout_choices: u32,
+    /// Engine turn at the end of the tree prefix (the expansion, or the
+    /// first choice past the depth limit). Accounting only.
+    pub(crate) anchor_turn: Option<u32>,
+    /// The first focal nonforced choice at or after the anchor (a value leaf
+    /// at H = 0), in a later engine turn (T0), and two or more turns later
+    /// (T1). Recorded before that choice's policy call. Accounting only.
+    pub(crate) leaf_h0: Option<Snap>,
+    pub(crate) leaf_t0: Option<Snap>,
+    pub(crate) leaf_t1: Option<Snap>,
 }
 
 impl SimRecord {

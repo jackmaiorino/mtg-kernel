@@ -98,7 +98,9 @@ pub(super) fn profile_case(
         #[cfg(feature = "s4a-profile-v1")]
         let _ = crate::search_profile_v1::digest::take_json();
         let started = Instant::now();
-        let (sel, tree) = roles.select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+        let mut records = Vec::new();
+        let (sel, tree) =
+            roles.select_e_diagnosed(&ctx, None, 1, Some(&mut records), None, Some(&mut diag));
         let wall = started.elapsed().as_secs_f64();
         let digest_memo = crate::native_flat_tensorizer_v2::take_digest_memo_counts_v1()
             .map(|(hits, misses)| json!({"hits":hits,"misses":misses}));
@@ -124,7 +126,7 @@ pub(super) fn profile_case(
             "game_actions":actions.len(),"budget":budget,"key_mode":mode.label(),
             "bank_binding_sha256":binding,"selection":sel.json(),
             "keying_seconds":diag.keys.seconds,"primary_sha256":primary_sha256,
-            "wall":wall,"teacher":teacher,"key_memo":diag.key_memo,"inference_cache":diag.inference_cache,"digest_memo":digest_memo,"profile":profile}),
+            "wall":wall,"vl_split":vl_split(&records),"teacher":teacher,"key_memo":diag.key_memo,"inference_cache":diag.inference_cache,"digest_memo":digest_memo,"profile":profile}),
         );
     }
     Ok(rows)
@@ -158,4 +160,34 @@ fn root_teacher(
         }
         Found::Miss => json!({"root_found":false,"supported":false,"played_live":played}),
     })
+}
+
+/// Value-leaf cost split (W5 Stage 2a M4-lite; descriptive, never read by the
+/// search): over accepted simulations, mean transitions and policy calls in
+/// the tree prefix (to the expansion, or to the first choice past the depth
+/// limit) and from the simulation's start to each value-leaf point (H = 0,
+/// T0, T1), with the count of simulations that reached each point before a
+/// natural, nonnatural or truncated ending.
+fn vl_split(records: &[super::arms::SimRecord]) -> Value {
+    use super::arms::{SimRecord, Snap};
+    let accepted: Vec<&SimRecord> = records
+        .iter()
+        .filter(|r| r.outcome != SimRecord::REJECTED)
+        .collect();
+    let n = accepted.len().max(1) as f64;
+    let mean = |f: &dyn Fn(&SimRecord) -> u64| accepted.iter().map(|r| f(*r)).sum::<u64>() as f64 / n;
+    let prefix = |r: &SimRecord| r.expansion.or(r.depth_limit);
+    let point = |get: fn(&SimRecord) -> Option<Snap>| {
+        let reached: Vec<Snap> = accepted.iter().filter_map(|r| get(*r)).collect();
+        let m = reached.len().max(1) as f64;
+        json!({"reached":reached.len(),
+            "mean_transitions":reached.iter().map(|x| x.transitions).sum::<u64>() as f64 / m,
+            "mean_calls":reached.iter().map(|x| x.calls).sum::<u64>() as f64 / m})
+    };
+    json!({"schema":"w5-vl-split/v1","accepted":accepted.len(),
+        "anchored":accepted.iter().filter(|r| prefix(**r).is_some()).count(),
+        "mean_transitions":mean(&|r| r.transitions),"mean_calls":mean(&|r| r.policy_calls),
+        "prefix":{"mean_transitions":mean(&|r| prefix(r).map_or(r.transitions, |x| x.transitions)),
+            "mean_calls":mean(&|r| prefix(r).map_or(r.policy_calls, |x| x.calls))},
+        "h0":point(|r| r.leaf_h0),"t0":point(|r| r.leaf_t0),"t1":point(|r| r.leaf_t1)})
 }
