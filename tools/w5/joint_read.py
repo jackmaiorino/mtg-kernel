@@ -23,11 +23,13 @@ The fit is a verbatim port of spellbench.arena.ratings._fit_score_pairs (Spellbe
 without Spellbench for the statistics; reading a run or snapshot needs Spellbench on PYTHONPATH. Every read checks
 that the point fit reproduces the published leaderboard ratings.
 
-  PYTHONPATH=<spellbench>/python python joint_read.py --directory SNAPSHOT --spec READ.json
-       --precision-gate CONTRASTS.json [--out OUT.json] [--verify-published]
+  PYTHONPATH=<spellbench>/python python joint_read.py --directory SNAPSHOT --spec READ.json [--out OUT.json]
 
-An official read refuses a snapshot without a passing W2 precision-gate result for that directory, or an entrant
-that is not rated there. The replicate count is fixed at 2,000 (tests inject smaller counts through `read`).
+Every load reproduces the published point ratings and 95% intervals, and recomputes W2's precision gate in its
+fixed-count form (widest adjacent-rung half-width at most 60 Elo at the snapshot's own pair count, no saturated
+matchup, no separation) on the snapshot's own matchups. An official read refuses a run directory, a snapshot that
+allows unrated entries or fails the gate, and an entrant that is not rated. The replicate count is fixed at 2,000
+(tests inject smaller counts through `read`).
 
 READ.json (`w5-read-spec/v1`): {"read": "P1", "arm_a": "X8", "arm_b": "C",
   "pairs": [{"pair": 1, "a": "<entrant>", "b": "<entrant>", "under_budget": false}, ...],
@@ -44,6 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ELO = 400 / math.log(10)
+GATE_HALF_WIDTH = 60.0  # W2 PLAN 6.4
 REPLICATES = 2000
 WORTHWHILE = 50.0
 K_OF = {6: 5, 4: 3, 3: 3}
@@ -354,7 +357,22 @@ def read(matchups, anchor: str, ids: dict[str, str], spec: dict, replicates: int
 
 # ---------------------------------------------------------------- reading a Spellbench run or snapshot
 
-def load_directory(directory: Path, verify_published: bool = False) -> tuple[list[Matchup], str, dict, dict]:
+def strongly_connected(names: list[str], edges: set[tuple[str, str]]) -> bool:
+    """W2's separation test: the "scored at least once" graph reaches every node both ways."""
+    def reach(start: str, forward: bool) -> set[str]:
+        seen, todo = {start}, [start]
+        while todo:
+            node = todo.pop()
+            for a, b in edges:
+                nxt = b if forward and a == node else a if not forward and b == node else None
+                if nxt is not None and nxt not in seen:
+                    seen.add(nxt)
+                    todo.append(nxt)
+        return seen
+    return all(len(reach(names[0], forward)) == len(names) for forward in (True, False))
+
+
+def load_directory(directory: Path) -> tuple[list[Matchup], str, dict, dict]:
     """Matchups, anchor id, name-to-id map and a provenance record; needs Spellbench on PYTHONPATH."""
     from dataclasses import replace
 
@@ -411,36 +429,57 @@ def load_directory(directory: Path, verify_published: bool = False) -> tuple[lis
         (directory / store.MANIFEST_NAME).read_bytes()).hexdigest(), "anchor": config.rating_anchor,
         "matchups": len(matchups), "pairs": sum(len(m.values) for m in matchups),
         "point_fit_reproduces_leaderboard": True}
-    if verify_published:
-        seed = leaderboard.rating_bootstrap_seed(config.stats_seed)
-        name_of = {v: k for k, v in ids.items()}
-        rated = [r for r in board["rows"] if r["rated"] and r["bot_id"] != anchor]
-        boot = bootstrap(matchups, anchor, seed, config.bootstrap_replicates,
-                         {r["bot_id"]: (lambda bid: lambda fit: fit[bid])(r["bot_id"]) for r in rated})
-        ok = len(boot["samples"][rated[0]["bot_id"]]) if rated else 0
-        lo_i, hi_i = (ok - 1) // 40, (39 * (ok - 1) + 39) // 40
-        for r in rated:
-            ordered = sorted(boot["samples"][r["bot_id"]])
-            lo, hi = ordered[lo_i] * ELO + 1000, ordered[hi_i] * ELO + 1000
-            if abs(lo - r["ci95_elo_milli"][0] / 1000) > 0.01 or abs(hi - r["ci95_elo_milli"][1] / 1000) > 0.01:
-                raise ReadError(f"{name_of[r['bot_id']]} published interval does not reproduce")
-        provenance["published_intervals_reproduced"] = len(rated)
+    provenance["snapshot"] = manifest.get("schema") == snapshot.SCHEMA and manifest.get("allow_unrated") is False
+    # Spellbench's own bootstrap (seed, replicates): every published interval must reproduce, and W2's precision
+    # gate (fixed-count form) is recomputed on these exact matchups, so the gate is bound to this snapshot.
+    seed = leaderboard.rating_bootstrap_seed(config.stats_seed)
+    name_of = {v: k for k, v in ids.items()}
+    rated = [r for r in board["rows"] if r["rated"] and r["bot_id"] != anchor]
+    rungs = [name for name in config.opponent_panel if name in ids]
+    estimands = {r["bot_id"]: (lambda bid: lambda fit: fit[bid])(r["bot_id"]) for r in rated}
+    for lower, upper in zip(rungs, rungs[1:]):
+        estimands[f"adjacent:{upper}:{lower}"] = (lambda u, lo: lambda fit: fit[u] - fit[lo])(ids[upper], ids[lower])
+    boot = bootstrap(matchups, anchor, seed, config.bootstrap_replicates, estimands)
+    ok = config.bootstrap_replicates - boot["failed"]
+    lo_i, hi_i = (ok - 1) // 40, (39 * (ok - 1) + 39) // 40
+    for r in rated:
+        ordered = sorted(boot["samples"][r["bot_id"]])
+        lo, hi = ordered[lo_i] * ELO + 1000, ordered[hi_i] * ELO + 1000
+        if abs(lo - r["ci95_elo_milli"][0] / 1000) > 0.01 or abs(hi - r["ci95_elo_milli"][1] / 1000) > 0.01:
+            raise ReadError(f"{name_of[r['bot_id']]} published interval does not reproduce")
+    provenance["published_intervals_reproduced"] = len(rated)
+    widths = {}
+    for lower, upper in zip(rungs, rungs[1:]):
+        ordered = sorted(boot["samples"][f"adjacent:{upper}:{lower}"])
+        widths[f"{upper} - {lower}"] = (ordered[hi_i] - ordered[lo_i]) * ELO / 2
+    saturated = [f"{name_of[m.a_id]} vs {name_of[m.b_id]}" for m in matchups if sum(m.values) in (0, 4 * len(m.values))]
+    edges = set()
+    for m in matchups:
+        if sum(m.values) > 0:
+            edges.add((m.a_id, m.b_id))
+        if sum(m.values) < 4 * len(m.values):
+            edges.add((m.b_id, m.a_id))
+    separated = not strongly_connected(sorted({i for m in matchups for i in (m.a_id, m.b_id)}), edges)
+    widest = max(widths.values(), default=None)
+    provenance["precision_gate"] = {
+        "form": "fixed-count (W2 contrasts.py --fixed-count, recomputed here)", "gate_half_width": GATE_HALF_WIDTH,
+        "rung_order": rungs, "adjacent_half_widths": widths, "widest_adjacent_half_width": widest,
+        "saturated_matchups": saturated, "separated": separated,
+        "pass": widest is not None and widest <= GATE_HALF_WIDTH and not saturated and not separated}
     return matchups, anchor, ids, provenance
 
 
-def admit_snapshot(directory: Path, gate_path: Path, spec: dict, provenance: dict) -> dict:
-    """An official read needs a snapshot that passed W2's precision gate, with every entrant of the read rated."""
-    gate = json.loads(Path(gate_path).read_text(encoding="utf-8"))
-    if Path(gate["source"]).resolve() != Path(directory).resolve():
-        raise ReadError("the precision-gate result is for another directory")
-    if gate.get("gate") not in ("pass", "pass-8", "pass-12"):
-        raise ReadError(f"the snapshot did not pass W2's precision gate ({gate.get('gate')})")
+def admit_snapshot(spec: dict, provenance: dict) -> None:
+    """An official read needs a rated snapshot (no unrated entries) that passes W2's precision gate, recomputed on
+    its own matchups, with every entrant of the read rated."""
+    if not provenance["snapshot"]:
+        raise ReadError("an official read needs a rated snapshot (allow_unrated false), not a run directory")
+    if not provenance["precision_gate"]["pass"]:
+        raise ReadError(f"the snapshot does not pass W2's precision gate: {provenance['precision_gate']}")
     for p in spec["pairs"]:
         for side in ("a", "b"):
             if not provenance["rated"].get(p[side]):
                 raise ReadError(f"entrant {p[side]} is not rated on the snapshot")
-    return {"path": str(gate_path), "sha256": hashlib.sha256(Path(gate_path).read_bytes()).hexdigest(),
-            "gate": gate["gate"], "widest_adjacent_half_width": gate.get("widest_adjacent_half_width")}
 
 
 def main(argv=None) -> int:
@@ -448,14 +487,11 @@ def main(argv=None) -> int:
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None)
-    parser.add_argument("--verify-published", action="store_true")
-    parser.add_argument("--precision-gate", type=Path, required=True,
-                        help="W2 contrasts.py's JSON result for this snapshot (gate pass, pass-8 or pass-12)")
     args = parser.parse_args(argv)
     try:
         spec = json.loads(args.spec.read_text(encoding="utf-8"))
-        matchups, anchor, ids, provenance = load_directory(args.directory, args.verify_published)
-        provenance["precision_gate"] = admit_snapshot(args.directory, args.precision_gate, spec, provenance)
+        matchups, anchor, ids, provenance = load_directory(args.directory)
+        admit_snapshot(spec, provenance)
         result = read(matchups, anchor, ids, spec)
     except (ReadError, FitError) as exc:
         print(f"error: {exc}", file=sys.stderr)
