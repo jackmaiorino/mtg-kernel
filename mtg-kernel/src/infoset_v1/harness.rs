@@ -55,6 +55,40 @@ fn localize(value: &mut serde_json::Value, ids: &mut BTreeMap<u64, u64>) {
     }
 }
 
+/// Sorts every `legal_targets` list by content without native ids.
+fn sort_candidate_lists(value: &mut serde_json::Value) {
+    fn strip(v: &serde_json::Value) -> String {
+        let mut v = v.clone();
+        localize(&mut v, &mut BTreeMap::new());
+        fn drop_ids(v: &mut serde_json::Value) {
+            match v {
+                serde_json::Value::Object(m) => {
+                    m.remove("arena_id");
+                    m.values_mut().for_each(drop_ids);
+                }
+                serde_json::Value::Array(xs) => xs.iter_mut().for_each(drop_ids),
+                _ => {}
+            }
+        }
+        drop_ids(&mut v);
+        v.to_string()
+    }
+    match value {
+        serde_json::Value::Object(m) => {
+            for (k, v) in m.iter_mut() {
+                if k == "legal_targets" {
+                    if let serde_json::Value::Array(xs) = v {
+                        xs.sort_by_key(strip);
+                    }
+                }
+                sort_candidate_lists(v);
+            }
+        }
+        serde_json::Value::Array(xs) => xs.iter_mut().for_each(sort_candidate_lists),
+        _ => {}
+    }
+}
+
 /// V's view at the current decision: the V4 observation and menu, with
 /// viewer-local ids.
 pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
@@ -62,9 +96,21 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
         return None;
     };
     let (obs, menu) = s.actor_visible_decision_v4(d).ok()?;
-    let mut v = serde_json::to_value(&(obs, menu)).expect("view serializes");
-    localize(&mut v, &mut BTreeMap::new());
-    Some(serde_json::to_vec(&v).expect("view serializes"))
+    // The engine lists candidates in native-id order, which the wire
+    // re-sorts (the adapter's row order): compare candidate sets by content.
+    let mut obs = serde_json::to_value(&obs).expect("view serializes");
+    sort_candidate_lists(&mut obs);
+    localize(&mut obs, &mut BTreeMap::new());
+    let mut rows: Vec<String> = menu
+        .iter()
+        .map(|m| {
+            let mut v = serde_json::to_value(m).expect("semantics serialize");
+            localize(&mut v, &mut BTreeMap::new());
+            v.to_string()
+        })
+        .collect();
+    rows.sort();
+    Some(serde_json::to_vec(&(obs, rows)).expect("view serializes"))
 }
 
 /// The semantic form of each candidate at the current decision, with
