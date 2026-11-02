@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 import time
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from unittest.mock import patch
 
 import g_references_campaign_v1 as driver
@@ -303,6 +303,78 @@ class CpuBindingTests(unittest.TestCase):
 class LeaseTests(unittest.TestCase):
     def test_recovery_includes_doses_and_qualification(self):
         self.assertIn('"doses", "qualification"', gcloud.POD_RECOVER)
+
+    def test_a_qualification_recovery_brings_the_records_home_without_the_bulk(self):
+        """Lease 20261101-2302's full recovery ran out of the guard's window; a qualification lease's recovery
+        takes the deciding records (the whole qualification folder, this lease's states, exposure and doses)
+        and leaves payload folders and oversized files on the volume, listed."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            campaign, control, guard, locks = (root / name for name in ("campaign", "control", "guard", "locks"))
+            for folder in (control, guard, locks):
+                folder.mkdir()
+            old, now = time.time() - 7200, time.time()
+
+            def put(rel, data=b"{}", mtime=now):
+                path = campaign / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                os.utime(path, (mtime, mtime))
+            put("state/G1.json"); put("state/events.jsonl", mtime=old)            # top-level state: always
+            put("state/old/x.json", mtime=old)                                     # nested and old: no
+            put("exposure/G1-b001-episodes.jsonl"); put("exposure/G1-b000-old.jsonl", mtime=old)
+            put("doses/d.json")
+            put("qualification/stages/item1.json", mtime=old)                      # an earlier lease's stage
+            put("qualification/events.jsonl")
+            put("qualification/scratch/s/state/G1.json")
+            put("qualification/scratch/s/checkpoints/G1/block-002.json")          # payload folders: left
+            put("qualification/scratch/s/native/G1/x.json")
+            put("qualification/empty-pool/trials/w1/cold/a.zip")
+            put("qualification/big.json", b"x" * (gcloud.QUALIFICATION_RECOVERY_FILE_LIMIT + 1))
+            put("checkpoints/G1/block-001.json"); put("retained/G1/b01/r.json")  # campaign bulk: stays
+            (guard / "guard.json").write_text("{}")
+            args = {"control": str(control), "campaign": str(campaign), "guard": str(guard), "locks": str(locks),
+                    "since": now - 60, "skip_dirs": list(gcloud.QUALIFICATION_RECOVERY_SKIP_DIRS),
+                    "file_limit_bytes": gcloud.QUALIFICATION_RECOVERY_FILE_LIMIT}
+            code = cloud.PRELUDE % json.dumps(args) + gcloud.POD_RECOVER_QUALIFICATION
+            done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertEqual(done.returncode, 0, done.stderr.decode())
+            packed = json.loads(done.stdout.decode().splitlines()[-1])
+            with tarfile.open(control / "results.tar.gz") as tar:
+                names = set(tar.getnames())
+                listed = json.loads(tar.extractfile("RECOVERED.json").read())
+        self.assertEqual(set(listed), names - {"RECOVERED.json"})
+        self.assertEqual(packed["files"], len(listed))
+        self.assertEqual({name for name in names if name.startswith("campaign/")}, {
+            "campaign/state/G1.json", "campaign/state/events.jsonl", "campaign/exposure/G1-b001-episodes.jsonl",
+            "campaign/doses/d.json", "campaign/qualification/stages/item1.json",
+            "campaign/qualification/events.jsonl", "campaign/qualification/scratch/s/state/G1.json"})
+        self.assertIn("guard/guard.json", names)
+        self.assertEqual(packed["left_out_over_limit"],
+                         [{"path": "campaign/qualification/big.json",
+                           "bytes": gcloud.QUALIFICATION_RECOVERY_FILE_LIMIT + 1}])
+        self.assertEqual(packed["skipped_dirs"], ["campaign/qualification/empty-pool/trials/w1/cold",
+                                                  "campaign/qualification/scratch/s/checkpoints",
+                                                  "campaign/qualification/scratch/s/native"])
+
+    def test_the_qualification_recovery_is_chosen_by_mode(self):
+        for mode, program in (("qualification", gcloud.POD_RECOVER_QUALIFICATION), ("production", gcloud.POD_RECOVER)):
+            cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+            cycle.manifest, cycle.result, cycle.remote_ready, cycle.recover_all = {"mode": mode, "runs": []}, {}, True, False
+            cycle.worker, cycle.remote_control, cycle.base, cycle.guard = None, "/c", PurePosixPath("/w"), "/g"
+            cycle.release_boundary = lambda now: now + 3600
+            cycle.quiesce_records = lambda timeout: True
+            seen = []
+
+            class Pod:
+                def run(self, code, args, timeout=30, read_only=False):
+                    seen.append((code, args))
+                    raise cloud.PodUnavailable("stop here")
+            cycle.pod = Pod()
+            with self.assertRaises(cloud.PodUnavailable):
+                cycle.recover()
+            self.assertIs(seen[0][0], program)
+            self.assertEqual("skip_dirs" in seen[0][1], mode == "qualification")
 
     def conclude(self, runs):
         cycle = gcloud.Cycle.__new__(gcloud.Cycle)
