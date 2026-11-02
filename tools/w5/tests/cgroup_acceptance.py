@@ -1,19 +1,25 @@
 """E10 acceptance on a real cgroup v2 host (run as root; CI runs it on an Ubuntu runner).
 
-Sequence for test chain `t1` in one box, through the real launcher (`w5box.py run`, qualification mode):
-  instance 0: workers burn, the chain pauses at an "update boundary" (trainer handshake), the launcher freezes the
-  chain and starts the filler in the same box; the filler burns for FILLER_SECONDS while the chain's ledger is
-  sampled; `w5box.py resume` freezes and kills the filler and thaws the chain; more workers burn; exit.
-  instance 1: a restart of the same chain (new cgroup instance), more workers burn; exit.
-Checks: ledger closed total within 1% of the summed per-process CPU (wait4 of every process), ledger unchanged
-across the pause and the filler run while the filler burned CPU in the box, chain processes confined to the box,
-and an OOM kill in chain `t2` recorded as a chain failure. Writes a JSON receipt.
+Through the real launcher (`w5box.py run`, qualification mode), in one box:
+- chain `t1`, instances 0 and 1 (a restart): workers burn, the chain pauses at an "update boundary" (the trainer
+  handshake, namespaced by instance), the launcher freezes it and starts the filler in the same box, the filler
+  burns for FILLER_SECONDS while the chain's cgroup is sampled, `w5box.py resume` freezes and kills the filler and
+  thaws the chain, more workers burn, exit.
+- chain `t2`: an OOM kill is recorded as a chain failure.
+- chain `t3`: the supervisor is SIGKILLed mid-run; after the chain is killed, the next run closes the instance
+  exactly from the surviving cgroup and continues.
+- chain `t4`: as t3, but the chain cgroup is removed (a reboot): the next run records a lower bound and refuses
+  to continue until `--accept-lower-bound` is given.
+Checks: t1's ledger within 1% of the summed per-process CPU (wait4 of every process), the ledger unchanged across
+each pause and filler run while the filler burned CPU in the box, chain processes confined to the box, and the
+t2 to t4 outcomes. Writes a JSON receipt.
 
   sudo python3 cgroup_acceptance.py --receipt OUT.json [--isolation partition-root|none]
 """
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -21,20 +27,25 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+LAUNCHER = HERE.parent / "w5box.py"
 sys.path.insert(0, str(HERE.parent))
 import w5box  # noqa: E402
 
 BURN = HERE / "burn_chain.py"
 SECONDS = 3.0
 WORKERS = 2
-FILLER_SECONDS = 8.0
+FILLER_SECONDS = 6.0
 
 
 def launcher(*args, check=True):
-    proc = subprocess.run([sys.executable, str(HERE.parent / "w5box.py"), *args], capture_output=True, text=True)
+    proc = subprocess.run([sys.executable, str(LAUNCHER), *args], capture_output=True, text=True)
     if check and proc.returncode != 0:
         raise RuntimeError(f"w5box {args[0]} failed {proc.returncode}: {proc.stderr}")
     return proc
+
+
+def start(*args):
+    return subprocess.Popen([sys.executable, str(LAUNCHER), "run", *args])
 
 
 def wait_for(predicate, timeout, what):
@@ -51,109 +62,134 @@ def main() -> int:
     parser.add_argument("--isolation", default="partition-root")
     args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix="w5box-accept-"))
-    topology = w5box.read_topology()
-    layout = w5box.compute_layout(topology, 1, 1, 1)
+    layout = w5box.compute_layout(w5box.read_topology(), 1, 1, 1)
     detected = w5box.host_class()
     cgroup_root = Path(f"/sys/fs/cgroup/w5accept{os.getpid()}")
     out = work / "procs"
+    ref = {"path": str(BURN), "sha256": w5box.sha256_file(BURN)}
+    py = {"path": sys.executable, "sha256": w5box.sha256_file(sys.executable)}
 
     def chain(argv, memory):
-        return {"box_slot": 0, "arm": "test", "argv": argv, "memory_max_bytes": memory, "seed_root": "w5/test",
-                "binary": {"path": sys.executable, "sha256": w5box.sha256_file(sys.executable)},
-                "config": {"path": str(BURN), "sha256": w5box.sha256_file(BURN)}}
+        return {"box_slot": 0, "arm": "test", "argv": [sys.executable, str(BURN), *argv], "seed_root": "w5/test",
+                "memory_max_bytes": memory, "binary": py, "config": ref}
 
+    burn = ["chain", "--out", str(out), "--seconds", str(SECONDS), "--workers", str(WORKERS), "--pause"]
     plan = {"schema": w5box.PLAN_SCHEMA, "host_class": detected, "layout": layout,
             "cgroup_root": str(cgroup_root), "state_root": str(work / "state"), "isolation": args.isolation,
-            "chains": {
-                "t1": chain([sys.executable, str(BURN), "chain", "--out", str(out), "--seconds", str(SECONDS),
-                             "--workers", str(WORKERS), "--pause"], 1 << 30),
-                "t1b": None,
-                "t2": chain([sys.executable, str(BURN), "alloc", "--mib", "256"], 64 << 20)},
+            "chains": {"t1": chain(burn, 1 << 30),
+                       "t2": chain(["alloc", "--mib", "256"], 64 << 20),
+                       "t3": chain(["chain", "--out", str(work / "t3"), "--seconds", "4", "--workers", "1"], 1 << 30),
+                       "t4": chain(["chain", "--out", str(work / "t4"), "--seconds", "4", "--workers", "1"], 1 << 30)},
             "filler": {"argv": [sys.executable, str(BURN), "filler", "--workers", "2"], "memory_max_bytes": 1 << 30,
-                       "seed_root_template": "w5/filler{j}",
-                       "binary": {"path": sys.executable, "sha256": w5box.sha256_file(sys.executable)},
-                       "config": {"path": str(BURN), "sha256": w5box.sha256_file(BURN)}}}
-    del plan["chains"]["t1b"]
+                       "seed_root_template": "w5/filler{j}", "binary": py, "config": ref}}
     plan_path = work / "plan.json"
     plan_path.write_text(json.dumps(plan, indent=2))
     common = ["--plan", str(plan_path)]
-    state = work / "state" / "t1"
-    ledger = w5box.Ledger(state / "ledger.jsonl")
-    chain_cg = w5box.Cgroup(cgroup_root / "box0" / "chain")
-    filler_cg = w5box.Cgroup(cgroup_root / "box0" / "filler")
+    qual = ["--qualification", "e10-acceptance", "--max-wall-seconds", "600"]
+    box = cgroup_root / "box0"
+    chain_cg, filler_cg = w5box.Cgroup(box / "chain"), w5box.Cgroup(box / "filler")
+    ledger = w5box.Ledger(work / "state" / "t1" / "ledger.jsonl")
     receipt = {"host_class": detected, "kernel": os.uname().release, "layout": layout, "isolation": args.isolation}
     try:
-        # instance 0 with a pause, a filler run and a resume
-        sup = subprocess.Popen([sys.executable, str(HERE.parent / "w5box.py"), "run", *common, "--chain", "t1",
-                                "--qualification", "e10-acceptance", "--max-wall-seconds", "600"])
-        wait_for(lambda: any(r["event"] == "pause" for r in ledger.records()), 120, "the pause")
-        paused = [r for r in ledger.records() if r["event"] == "pause"][-1]["usage_usec"]
-        wait_for(filler_cg.exists, 30, "the filler cgroup")
-        samples, start = [], time.monotonic()
-        while time.monotonic() - start < FILLER_SECONDS:
-            samples.append(chain_cg.usage_usec())
-            time.sleep(0.5)
-        filler_before_resume = filler_cg.usage_usec()
-        filler_cpus = w5box.parse_cpu_list(filler_cg.read("cpuset.cpus.effective"))
-        launcher("resume", *common, "--chain", "t1", "--payload", json.dumps({"R_i_usec": 123}))
-        assert sup.wait(timeout=300) == 0, "instance 0 failed"
-        # instance 1: a restart (no pause this time: the workload pauses only when asked)
-        plan["chains"]["t1"]["argv"] = plan["chains"]["t1"]["argv"][:-1]
-        plan_path.write_text(json.dumps(plan, indent=2))
-        assert launcher("run", *common, "--chain", "t1", "--qualification", "e10-acceptance",
-                        "--max-wall-seconds", "600").returncode == 0
-        # an OOM kill is a chain failure
-        oom = launcher("run", *common, "--chain", "t2", "--qualification", "e10-acceptance",
-                       "--max-wall-seconds", "120", check=False)
+        pauses = []
+        for instance in (0, 1):
+            sup = start(*common, "--chain", "t1", *qual)
+            wait_for(lambda: any(r["event"] == "pause" and r["instance"] == instance for r in ledger.records()),
+                     120, f"the pause of instance {instance}")
+            paused = [r for r in ledger.records() if r["event"] == "pause"][-1]["usage_usec"]
+            wait_for(filler_cg.exists, 30, "the filler cgroup")
+            samples, t0 = [], time.monotonic()
+            while time.monotonic() - t0 < FILLER_SECONDS:
+                samples.append(chain_cg.usage_usec())
+                time.sleep(0.5)
+            filler_cpus = w5box.parse_cpu_list(filler_cg.read("cpuset.cpus.effective"))
+            launcher("resume", *common, "--chain", "t1", "--payload", json.dumps({"R_i_usec": 123}))
+            assert sup.wait(timeout=300) == 0, f"t1 instance {instance} failed"
+            resume = [r for r in ledger.records() if r["event"] == "resume"][-1]
+            pauses.append({"instance": instance, "paused_usec": paused, "samples": samples,
+                           "resume_usec": resume["usage_usec"], "unchanged": resume["unchanged_since_pause"],
+                           "filler_usage_usec": resume["filler_usage_usec"], "filler_cpus": filler_cpus})
+        # t2: an OOM kill is a chain failure
+        oom = launcher("run", *common, "--chain", "t2", *qual, check=False)
         oom_close = [r for r in w5box.Ledger(work / "state" / "t2" / "ledger.jsonl").records()
                      if r["event"] == "close"][-1]
+        # t3: supervisor killed, chain killed, exact recovery from the surviving cgroup
+        recov = {}
+        for name, lose_cgroup in (("t3", False), ("t4", True)):
+            led = w5box.Ledger(work / "state" / name / "ledger.jsonl")
+            sup = start(*common, "--chain", name, *qual)
+            wait_for(lambda: chain_cg.exists() and chain_cg.usage_usec() > 1_000_000, 60, f"{name} running")
+            os.kill(sup.pid, signal.SIGKILL)
+            sup.wait()
+            refused_live = launcher("run", *common, "--chain", name, *qual, check=False)
+            killed_at = chain_cg.usage_usec()
+            chain_cg.kill()
+            wait_for(lambda: not chain_cg.populated(), 30, "the killed chain")
+            final_after_kill = chain_cg.usage_usec()
+            if lose_cgroup:
+                chain_cg.rmdir()
+            second = launcher("run", *common, "--chain", name, *qual, check=False)
+            third = None
+            if lose_cgroup:
+                third = launcher("run", *common, "--chain", name, *qual, "--accept-lower-bound",
+                                 "acceptance test", check=False)
+            closes = [r for r in led.records() if r["event"] == "close"]
+            recov[name] = {"refused_while_running": refused_live.returncode == w5box.EXIT_REFUSED,
+                           "usage_at_kill": killed_at, "final_after_kill": final_after_kill,
+                           "second_exit": second.returncode, "second_stderr": second.stderr[-300:],
+                           "third_exit": None if third is None else third.returncode,
+                           "closes": closes, "summary": led.summary()}
 
         records = ledger.records()
         closes = [r for r in records if r["event"] == "close"]
-        resume = [r for r in records if r["event"] == "resume"][-1]
         summary = ledger.summary()
         reports = [json.loads(p.read_text()) for p in sorted(out.glob("proc-*.json"))]
         roots = [r for r in reports if r["role"] == "root"]
         self_sum = sum(r["usec"] for r in reports)
         wait4_sum = sum(c["root_rusage_usec"] for c in closes)
-        ledger_total = summary["closed_total_usec"]
+        total = summary["closed_total_usec"]
+        t3, t4 = recov["t3"], recov["t4"]
         receipt.update({
-            "instances": len(closes), "ledger_total_usec": ledger_total, "per_instance_final_usec":
+            "instances": len(closes), "ledger_total_usec": total, "per_instance_final_usec":
             [c["final_usec"] for c in closes], "wait4_sum_usec": wait4_sum, "self_report_sum_usec": self_sum,
-            "rel_diff_vs_wait4": (ledger_total - wait4_sum) / wait4_sum,
-            "rel_diff_vs_self_reports": (ledger_total - self_sum) / self_sum,
-            "paused_usage_usec": paused, "samples_during_filler": samples, "resume_usage_usec": resume["usage_usec"],
-            "resume_unchanged_since_pause": resume["unchanged_since_pause"],
-            "filler_usage_usec": resume["filler_usage_usec"], "filler_usage_before_resume": filler_before_resume,
-            "filler_cpus": filler_cpus, "box_cpus": layout["boxes"][0]["cpus"],
-            "chain_affinities": [r["affinity"] for r in roots],
-            "oom": {"exit": oom.returncode, "close": oom_close},
-            "ledger_hash_chain_ok": True})
+            "rel_diff_vs_wait4": (total - wait4_sum) / wait4_sum, "rel_diff_vs_self_reports": (total - self_sum) / self_sum,
+            "pauses": pauses, "box_cpus": layout["boxes"][0]["cpus"], "chain_affinities": [r["affinity"] for r in roots],
+            "oom": {"exit": oom.returncode, "close": oom_close}, "recovery": recov})
+        box_cpus = layout["boxes"][0]["cpus"]
         checks = {
-            "two_instances": len(closes) == 2,
+            "two_instances_each_paused": len(closes) == 2 and len(pauses) == 2,
             "ledger_within_1pct_of_wait4": abs(receipt["rel_diff_vs_wait4"]) <= 0.01,
             "ledger_within_1pct_of_self_reports": abs(receipt["rel_diff_vs_self_reports"]) <= 0.01,
-            "unchanged_across_pause_and_filler": all(s == paused for s in samples) and resume["usage_usec"] == paused,
-            "filler_burned_in_box": (resume["filler_usage_usec"] or 0) >= 0.5 * FILLER_SECONDS * 1e6
-            and filler_cpus == layout["boxes"][0]["cpus"],
-            "chain_confined_to_box": all(r["affinity"] == layout["boxes"][0]["cpus"] for r in roots),
+            "unchanged_across_pause_and_filler": all(
+                p["unchanged"] and p["resume_usec"] == p["paused_usec"] and all(s == p["paused_usec"] for s in p["samples"])
+                for p in pauses),
+            "filler_burned_in_box": all((p["filler_usage_usec"] or 0) >= 0.5 * FILLER_SECONDS * 1e6
+                                        and p["filler_cpus"] == box_cpus for p in pauses),
+            "chain_confined_to_box": len(roots) == 2 and all(r["affinity"] == box_cpus for r in roots),
             "oom_is_chain_failure": oom.returncode == w5box.EXIT_OOM and oom_close["oom_kill"] > 0
             and oom_close["chain_failure"] is True,
+            "recovery_exact_from_cgroup": t3["refused_while_running"] and t3["second_exit"] == 0
+            and t3["closes"][0]["recovered"] == "cgroup" and not t3["closes"][0]["lower_bound"]
+            and t3["closes"][0]["final_usec"] == t3["final_after_kill"] and len(t3["closes"]) == 2,
+            "lost_cgroup_needs_acceptance": t4["second_exit"] == w5box.EXIT_REFUSED
+            and t4["closes"][0]["lower_bound"] is True and t4["third_exit"] == 0
+            and t4["summary"]["unresolved_lower_bounds"] == [] and len(t4["closes"]) == 2,
         }
         receipt["checks"] = checks
         receipt["pass"] = all(checks.values())
     finally:
         for leaf in ("chain", "filler"):
-            cg = w5box.Cgroup(cgroup_root / "box0" / leaf)
+            cg = w5box.Cgroup(box / leaf)
             if cg.exists():
                 cg.kill()
                 cg.wait_empty(10)
                 cg.rmdir()
-        for path in (cgroup_root / "box0", cgroup_root):
+        for path in (box, cgroup_root):
             if path.exists():
                 os.rmdir(path)
     args.receipt.write_text(json.dumps(receipt, indent=2) + "\n")
-    print(json.dumps(receipt, indent=2))
+    print(json.dumps({k: receipt.get(k) for k in ("ledger_total_usec", "wait4_sum_usec", "rel_diff_vs_wait4",
+                                                  "rel_diff_vs_self_reports", "checks", "pass")}, indent=2))
     return 0 if receipt.get("pass") else 1
 
 

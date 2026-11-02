@@ -21,16 +21,25 @@ across pauses, filler runs, resumes, restarts and the stage transition.
 - `W5_LEDGER_CGROUP`: the chain cgroup directory; read `usage_usec` from its `cpu.stat`.
 - `W5_LEDGER_BASE_USEC`: the closed total of earlier instances (an integer, constant for the instance).
 - ledger value = `W5_LEDGER_BASE_USEC` + `usage_usec`; `W5_LEDGER_INSTANCE` numbers the instance.
-- `W5_CONTROL_DIR`: the pause handshake. At an update boundary the trainer writes `pause.request`
-  (JSON `{"seq": n, ...}`, written to a temporary name and renamed) and then only polls for `resume.<n>.json`.
-  The launcher freezes the chain cgroup, records the frozen value and starts the filler. `resume` freezes and
-  kills the filler, writes `resume.<n>.json` (with the operator's payload, e.g. R_i) and thaws the chain.
+- `W5_CONTROL_DIR`: the pause handshake, namespaced by instance. A pause happens only at an update boundary
+  the trainer chooses: by its own rule (ledger past 1.10 R-hat) or because `pause.intent` exists (an operator's
+  `w5box.py pause`). The trainer then writes `pause.request` (JSON `{"instance": W5_LEDGER_INSTANCE, "seq": n,
+  ...}`, written to a temporary name and renamed) and only polls for `resume.<instance>.<n>.json`. The launcher
+  freezes the chain cgroup, records the frozen value and starts the filler. `resume` freezes and kills the
+  filler, writes `resume.<instance>.<n>.json` (with the operator's payload, e.g. R_i) and thaws the chain.
 - `W5_BOX_SLOT`, `W5_BOX_CPUS`, `W5_HOST_CLASS`, `W5_CHAIN`, `W5_MANIFEST`: identity for receipts.
 
-**Guard (COMPUTE-POLICY item 5).** `run` refuses before any spawn unless the plan's pins hold (host class, box
-layout positions, binary and config hashes) and a box throughput record binds this plan (`w5-box-throughput/v1`:
-serial and full-node concurrent phases with identical outputs). A qualification run (Stage 0) runs without a
-record only with `--qualification LABEL --max-wall-seconds S`, and its manifest says so.
+**Recovery.** A supervisor that dies leaves its instance open. The next `run` closes it exactly from the
+surviving cgroup (with its OOM counters). If the cgroup is gone (a reboot), the ledger records the larger of the
+last durable live reading and the pause value as a lower bound, and `run` refuses to continue that chain until
+an operator accepts the gap (`--accept-lower-bound REASON`), the chain-failure decision being the lead's.
+
+**Guard (COMPUTE-POLICY item 5).** `run` refuses before any spawn unless the plan's pins hold (host class, the
+complete detected box layout, binary and config hashes, `argv[0]` is the pinned binary and the config is in
+`argv`) and a box throughput record binds this plan's complete launch specification (`w5-box-throughput/v1`:
+serial and full-node concurrent phases with identical outputs). A qualification run (Stage 0) is labelled
+(`--qualification LABEL --max-wall-seconds S`); without a record its wall cap is 6 hours (small correctness and
+scaling checks only).
 
     w5box.py layout [--cores-per-box 2] [--offbox-cores-per-domain 2] [--out LAYOUT.json]
     w5box.py host-class
@@ -62,12 +71,15 @@ MANIFEST_SCHEMA = "w5-chain-manifest/v1"
 CONTROLLERS = ("cpuset", "cpu", "memory", "pids")
 SYS_CPU = Path("/sys/devices/system/cpu")
 POLL_SECONDS = 0.2
-LIVE_EVERY_SECONDS = 30.0
+LIVE_EVERY_SECONDS = 5.0
 SETTLE_SECONDS = 60.0
 FREEZE_SECONDS = 30.0
 QUALIFICATION_MAX_WALL = 8 * 86400
+UNQUALIFIED_MAX_WALL = 6 * 3600
+FILLER_RESTARTS = 3
 EXIT_OOM = 3
 EXIT_REFUSED = 2
+EXIT_CLEANUP = 4
 
 
 class Refusal(Exception):
@@ -97,11 +109,21 @@ def canonical(value) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def write_json_atomic(path: Path, value) -> None:
+def write_json_atomic(path: Path, value, durable: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        if durable:
+            handle.flush()
+            os.fsync(handle.fileno())
     os.replace(tmp, path)
+    if durable and hasattr(os, "O_DIRECTORY"):
+        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 # ---------------------------------------------------------------- cpu lists and topology
@@ -311,11 +333,15 @@ def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     procs = str(cgroup.path / "cgroup.procs")
+    ack_r, ack_w = os.pipe()  # the child acknowledges joining the cgroup before exec
     pid = os.fork()
     if pid == 0:  # child: only async-signal-safe-ish work, then exec
         try:
+            os.close(ack_r)
             with open(procs, "w") as handle:
                 handle.write(str(os.getpid()))
+            os.write(ack_w, b"1")
+            os.close(ack_w)
             os.setsid()
             os.dup2(log_fd, 1)
             os.dup2(log_fd, 2)
@@ -328,6 +354,12 @@ def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: 
             os.write(2, f"w5box: spawn failed: {exc}\n".encode())
         os._exit(127)
     os.close(log_fd)
+    os.close(ack_w)
+    joined = os.read(ack_r, 1)
+    os.close(ack_r)
+    if joined != b"1":  # the child died before joining: nothing ran outside the meter's knowledge
+        os.waitpid(pid, 0)
+        raise RuntimeError(f"spawn into {cgroup.path} failed before the child joined")
     return pid
 
 
@@ -368,8 +400,12 @@ class Ledger:
 
     def summary(self) -> dict:
         """Closed total, the open instance (if any) and the next instance number."""
-        closed, open_instance, instances = 0, None, 0
+        closed, open_instance, instances, unresolved = 0, None, 0, []
         for record in self.records():
+            if record["event"] == "close" and record.get("lower_bound"):
+                unresolved.append(record["instance"])
+            elif record["event"] == "accept-lower-bound":
+                unresolved = [i for i in unresolved if i != record["instance"]]
             if record["event"] == "open":
                 require(open_instance is None, "Ledger opens an instance while another is open")
                 require(record["base_usec"] == closed, "Ledger base differs from the closed total")
@@ -381,7 +417,8 @@ class Ledger:
                 closed += record["final_usec"]
                 require(record["closed_total_usec"] == closed, "Ledger closed total does not add up")
                 open_instance = None
-        return {"closed_total_usec": closed, "open": open_instance, "next_instance": instances}
+        return {"closed_total_usec": closed, "open": open_instance, "next_instance": instances,
+                "unresolved_lower_bounds": unresolved}
 
 
 def ledger_value(ledger: Ledger, chain_cgroup: Cgroup) -> dict:
@@ -413,25 +450,59 @@ def chain_spec(plan: dict, chain: str) -> dict:
     return spec
 
 
-def check_pins(plan: dict, spec: dict, layout: dict, detected_class: str) -> None:
+LAYOUT_KEYS = ("schema", "cores_per_box", "offbox_cores_per_domain", "threads_per_core", "boxes", "offbox_cpus",
+               "positions_sha256")
+
+
+def chain_argv(spec: dict, chain: str, state: Path) -> list[str]:
+    """The chain's argv from its arm-level template (`{chain}`, `{seed_root}`, `{state}`)."""
+    return [a.format(chain=chain, seed_root=spec["seed_root"], state=str(state)) for a in spec["argv"]]
+
+
+def filler_argv(filler: dict, seed_root: str, slot: int, seq: int) -> list[str]:
+    return [a.format(seed_root=seed_root, slot=slot, seq=seq) for a in filler["argv"]]
+
+
+def check_launch(item: dict, argv: list[str], what: str) -> None:
+    """The pinned binary is what runs and the pinned config is what it reads."""
+    for key in ("binary", "config"):
+        require(sha256_file(item[key]["path"]) == item[key]["sha256"], f"{what} {key} hash changed: "
+                f"{item[key]['path']}")
+    require(argv and os.path.realpath(argv[0]) == os.path.realpath(item["binary"]["path"]),
+            f"{what} argv[0] is not the pinned binary")
+    require(any(a == item["config"]["path"] or a.endswith("=" + item["config"]["path"]) for a in argv[1:]),
+            f"{what} argv does not name the pinned config")
+    require(int(item["memory_max_bytes"]) > 0, f"{what} memory limit required")
+
+
+def check_pins(plan: dict, chain: str, spec: dict, layout: dict, detected_class: str) -> None:
     require(detected_class == plan["host_class"],
             f"Host class {detected_class} differs from the plan's {plan['host_class']}")
-    require(layout["positions_sha256"] == plan["layout"]["positions_sha256"],
-            "Box positions differ from the plan's frozen layout")
-    for key in ("binary", "config"):
-        require(sha256_file(spec[key]["path"]) == spec[key]["sha256"], f"{key} hash changed: {spec[key]['path']}")
+    frozen = plan["layout"]
+    require({k: frozen.get(k) for k in LAYOUT_KEYS} == {k: layout[k] for k in LAYOUT_KEYS},
+            "The plan's box layout differs from the layout detected on this host")
+    require(0 <= spec["box_slot"] < len(layout["boxes"]), "Chain box slot is not in the layout")
+    check_launch(spec, chain_argv(spec, chain, Path(plan["state_root"]) / chain), "chain")
     filler = plan["filler"]
     for key in ("argv", "binary", "config", "memory_max_bytes", "seed_root_template"):
         require(key in filler, f"Filler lacks {key}")
-    for key in ("binary", "config"):
-        require(sha256_file(filler[key]["path"]) == filler[key]["sha256"], f"filler {key} hash changed")
-    require(int(spec["memory_max_bytes"]) > 0 and int(filler["memory_max_bytes"]) > 0, "Memory limits required")
+    check_launch(filler, filler_argv(filler, filler["seed_root_template"].format(j=0), 0, 0), "filler")
+
+
+def launch_spec_sha256(plan: dict, spec: dict) -> str:
+    """Everything that defines the measured work in a box (arm-level: the argv template, not a chain's seeds)."""
+    keys = ("argv", "cwd", "binary", "config", "memory_max_bytes", "arm")
+    filler_keys = ("argv", "binary", "config", "memory_max_bytes", "seed_root_template")
+    return sha256_bytes(canonical({"chain": {k: spec.get(k) for k in keys}, "env": plan.get("env", {}),
+                                   "filler": {k: plan["filler"].get(k) for k in filler_keys},
+                                   "isolation": plan["isolation"]}))
 
 
 def throughput_binding(plan: dict, spec: dict) -> dict:
     return {"host_class": plan["host_class"], "positions_sha256": plan["layout"]["positions_sha256"],
             "cores_per_box": plan["layout"]["cores_per_box"], "boxes": len(plan["layout"]["boxes"]),
-            "arm": spec["arm"], "binary_sha256": spec["binary"]["sha256"], "config_sha256": spec["config"]["sha256"]}
+            "arm": spec["arm"], "binary_sha256": spec["binary"]["sha256"], "config_sha256": spec["config"]["sha256"],
+            "launch_spec_sha256": launch_spec_sha256(plan, spec)}
 
 
 def require_throughput(record: dict | None, binding: dict) -> dict:
@@ -461,155 +532,213 @@ def require_throughput(record: dict | None, binding: dict) -> dict:
 
 # ---------------------------------------------------------------- the supervisor
 
+
+def flock(path: Path, what: str):
+    import fcntl
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise Refusal(f"{what} is held by another supervisor")
+    return handle
+
+
 class Supervisor:
     def __init__(self, plan: dict, plan_sha: str, chain: str, qualification: str | None,
-                 max_wall: float | None, layout: dict, detected_class: str, throughput: dict | None):
+                 max_wall: float | None, layout: dict, detected_class: str, throughput: dict | None,
+                 accept_lower_bound: str | None = None):
         self.plan, self.plan_sha, self.chain = plan, plan_sha, chain
         self.spec = chain_spec(plan, chain)
-        self.slot = plan["layout"]["boxes"][self.spec["box_slot"]]
+        self.layout = layout  # the detected layout, checked equal to the plan's
+        self.slot = layout["boxes"][self.spec["box_slot"]]
         self.qualification, self.max_wall = qualification, max_wall
-        self.layout, self.detected_class, self.throughput = layout, detected_class, throughput
-        self.state = Path(plan["state_root"]) / chain
+        self.detected_class, self.throughput = detected_class, throughput
+        self.accept_lower_bound = accept_lower_bound
+        self.state_root = Path(plan["state_root"])
+        self.state = self.state_root / chain
         self.control = self.state / "control"
         self.ledger = Ledger(self.state / "ledger.jsonl")
         self.root = Cgroup(plan["cgroup_root"])
         self.box = Cgroup(self.root.path / f"box{self.slot['slot']}")
         self.chain_cg = Cgroup(self.box.path / "chain")
         self.filler_cg = Cgroup(self.box.path / "filler")
-        self.pid = None
-        self.filler_pid = None
-        self.paused_seq = None
-        self.paused_usec = None
-        self.filler_usec_total = 0
+        self.owner_path = self.state_root / f"box{self.slot['slot']}.owner.json"
+        self.fault_path = self.state_root / "OCCUPANCY-FAULT.json"
+        self.instance = self.base = self.pid = self.filler_pid = None
+        self.paused_seq = self.paused_usec = None
+        self.filler_exits = 0
+        self.fault_seen = False
 
     # --- recovery of an instance whose supervisor died
     def recover(self) -> None:
-        if self.filler_cg.exists():  # a filler left by a supervisor that died while its chain was paused
-            self.filler_cg.kill()
-            self.filler_cg.wait_empty(SETTLE_SECONDS)
-            self.filler_cg.rmdir()
+        owner = json.loads(self.owner_path.read_text()) if self.owner_path.exists() else None
+        if owner is not None and owner["chain"] != self.chain:
+            other = Ledger(self.state_root / owner["chain"] / "ledger.jsonl").summary()
+            require(other["open"] is None, f"Box {self.slot['slot']} holds chain {owner['chain']}'s open instance")
         summary = self.ledger.summary()
         record = summary["open"]
         if record is None:
             require(not self.chain_cg.exists() or not self.chain_cg.populated(),
-                    f"{self.chain_cg.path} is populated but the ledger has no open instance")
-            if self.chain_cg.exists():
-                self.chain_cg.rmdir()
-            return
-        if self.chain_cg.exists() and self.chain_cg.inode() == record["cgroup_inode"]:
-            require(not self.chain_cg.populated(), f"Chain {self.chain} instance is still running")
-            final, how = self.chain_cg.usage_usec(), "cgroup"
+                    f"{self.chain_cg.path} is populated but no ledger has an open instance there")
         else:
-            live = self.state / f"instance-{record['instance']:04d}" / "live.json"
-            final = json.loads(live.read_text())["usage_usec"] if live.exists() else 0
-            how = "last-live-reading (cgroup lost; a lower bound)"
-        self.ledger.append({"event": "close", "instance": record["instance"], "final_usec": final,
-                            "closed_total_usec": summary["closed_total_usec"] + final,
-                            "exit": None, "oom_kill": None, "recovered": how})
+            instance_dir = self.state / f"instance-{record['instance']:04d}"
+            if self.chain_cg.exists() and self.chain_cg.inode() == record["cgroup_inode"]:
+                require(not self.chain_cg.populated(), f"Chain {self.chain} instance is still running")
+                final, lower, how = self.chain_cg.usage_usec(), False, "cgroup"
+                events = self.chain_cg.keyed("memory.events")
+                oom = int(events.get("oom_kill", 0)) + int(events.get("oom_group_kill", 0))
+            else:
+                live = instance_dir / "live.json"
+                readings = [json.loads(live.read_text())["usage_usec"]] if live.exists() else []
+                readings += [r["usage_usec"] for r in self.ledger.records()
+                             if r["event"] in ("pause", "resume") and r["instance"] == record["instance"]]
+                final, lower, how, oom = max(readings, default=0), True, "cgroup lost: last durable reading", None
+            self.ledger.append({"event": "close", "instance": record["instance"], "final_usec": final,
+                                "closed_total_usec": summary["closed_total_usec"] + final, "exit": None,
+                                "oom_kill": oom, "chain_failure": None if oom is None else (bool(oom) or None),
+                                "recovered": how, "lower_bound": lower})
         if self.chain_cg.exists():
             self.chain_cg.rmdir()
+        if self.filler_cg.exists():  # left by a dead supervisor of this box's (now closed) chain
+            self.filler_cg.kill()
+            require(self.filler_cg.wait_empty(SETTLE_SECONDS), "A leftover filler did not die")
+            self.filler_cg.rmdir()
+        if self.owner_path.exists():
+            self.owner_path.unlink()
 
-    def manifest(self, instance: int, base: int) -> dict:
+    def filler_seed_root(self) -> str:
+        return self.plan["filler"]["seed_root_template"].format(j=self.slot["slot"])
+
+    def manifest(self, argv: list[str]) -> dict:
         spec = self.spec
-        return {"schema": MANIFEST_SCHEMA, "chain": self.chain, "arm": spec["arm"], "instance": instance,
-                "base_usec": base, "host_class": self.detected_class, "hostname": platform.node(),
+        return {"schema": MANIFEST_SCHEMA, "chain": self.chain, "arm": spec["arm"], "instance": self.instance,
+                "base_usec": self.base, "host_class": self.detected_class, "hostname": platform.node(),
                 "kernel": platform.release(), "box_slot": self.slot["slot"], "box_cpus": self.slot["cpus"],
                 "box_cores": self.slot["cores"], "layout_positions_sha256": self.layout["positions_sha256"],
                 "cgroup_root": str(self.root.path), "isolation": self.plan["isolation"],
-                "memory_max_bytes": int(spec["memory_max_bytes"]), "argv": spec["argv"],
+                "memory_max_bytes": int(spec["memory_max_bytes"]), "argv": argv, "cwd": spec.get("cwd"),
                 "binary": spec["binary"], "config": spec["config"], "seed_root": spec["seed_root"],
+                "launch_spec_sha256": launch_spec_sha256(self.plan, spec),
                 "filler": {"config_sha256": self.plan["filler"]["config"]["sha256"],
                            "binary_sha256": self.plan["filler"]["binary"]["sha256"],
                            "seed_root": self.filler_seed_root(),
                            "memory_max_bytes": int(self.plan["filler"]["memory_max_bytes"])},
                 "plan_sha256": self.plan_sha, "launcher_sha256": sha256_file(__file__),
                 "qualification": self.qualification, "max_wall_seconds": self.max_wall,
-                "throughput": self.throughput, "started_unix": round(time.time(), 3)}
+                "throughput": self.throughput, "accepted_lower_bound": self.accept_lower_bound,
+                "started_unix": round(time.time(), 3)}
 
-    def filler_seed_root(self) -> str:
-        return self.plan["filler"]["seed_root_template"].format(j=self.slot["slot"])
-
-    def env(self, instance: int, base: int, manifest_path: Path) -> dict:
+    def env(self, manifest_path: Path) -> dict:
         env = dict(os.environ)
         env.update(self.plan.get("env", {}))
-        env.update({"W5_LEDGER_CGROUP": str(self.chain_cg.path), "W5_LEDGER_BASE_USEC": str(base),
-                    "W5_LEDGER_INSTANCE": str(instance), "W5_CONTROL_DIR": str(self.control),
+        env.update({"W5_LEDGER_CGROUP": str(self.chain_cg.path), "W5_LEDGER_BASE_USEC": str(self.base),
+                    "W5_LEDGER_INSTANCE": str(self.instance), "W5_CONTROL_DIR": str(self.control),
                     "W5_BOX_SLOT": str(self.slot["slot"]), "W5_BOX_CPUS": format_cpu_list(self.slot["cpus"]),
                     "W5_HOST_CLASS": self.detected_class, "W5_CHAIN": self.chain,
                     "W5_MANIFEST": str(manifest_path)})
         return env
 
     # --- pause, filler, resume
+    def spawn_filler(self, instance_dir: Path) -> None:
+        filler = self.plan["filler"]
+        seed_root = self.filler_seed_root()
+        argv = filler_argv(filler, seed_root, self.slot["slot"], self.paused_seq)
+        env = dict(os.environ, W5_FILLER_SEED_ROOT=seed_root, W5_BOX_SLOT=str(self.slot["slot"]))
+        self.filler_pid = spawn_into(self.filler_cg, argv, env,
+                                     instance_dir / f"filler-{self.paused_seq}-{self.filler_exits}.log")
+
     def pause(self, request: dict, instance_dir: Path) -> None:
         self.chain_cg.freeze(True)
         self.paused_usec = self.chain_cg.usage_usec()
         self.paused_seq = int(request["seq"])
-        os.replace(self.control / "pause.request", self.control / f"pause.{self.paused_seq}.accepted")
+        os.replace(self.control / "pause.request",
+                   self.control / f"pause.{self.instance}.{self.paused_seq}.accepted")
+        (self.control / "pause.intent").unlink(missing_ok=True)
         self.ledger.append({"event": "pause", "instance": self.instance, "seq": self.paused_seq,
                             "usage_usec": self.paused_usec, "request": request})
-        filler = self.plan["filler"]
-        make_leaf(self.box, "filler", int(filler["memory_max_bytes"]))
-        seed_root = self.filler_seed_root()
-        argv = [a.format(seed_root=seed_root, slot=self.slot["slot"], seq=self.paused_seq) for a in filler["argv"]]
-        env = dict(os.environ, W5_FILLER_SEED_ROOT=seed_root, W5_BOX_SLOT=str(self.slot["slot"]))
-        self.filler_pid = spawn_into(self.filler_cg, argv, env, instance_dir / f"filler-{self.paused_seq}.log")
+        make_leaf(self.box, "filler", int(self.plan["filler"]["memory_max_bytes"]))
+        self.spawn_filler(instance_dir)
+
+    def stop_filler(self) -> int | None:
+        """Freeze, kill and remove the filler; its CPU (never the chain's)."""
+        if not self.filler_cg.exists():
+            return None
+        self.filler_cg.freeze(True)
+        self.filler_cg.kill()
+        require(self.filler_cg.wait_empty(SETTLE_SECONDS), "Filler did not die")
+        if self.filler_pid is not None:
+            os.waitpid(self.filler_pid, 0)
+            self.filler_pid = None
+        usage = self.filler_cg.usage_usec()
+        self.filler_cg.rmdir()
+        return usage
 
     def resume(self, payload: dict) -> None:
         require(self.paused_seq is not None, "Chain is not paused")
-        filler_usec = None
-        if self.filler_cg.exists():
-            self.filler_cg.freeze(True)
-            self.filler_cg.kill()
-            require(self.filler_cg.wait_empty(SETTLE_SECONDS), "Filler did not die")
-            self.reap_filler()
-            filler_usec = self.filler_cg.usage_usec()
-            self.filler_cg.rmdir()
+        filler_usec = self.stop_filler()
         now = self.chain_cg.usage_usec()
-        unchanged = now == self.paused_usec
         self.ledger.append({"event": "resume", "instance": self.instance, "seq": self.paused_seq,
-                            "usage_usec": now, "unchanged_since_pause": unchanged,
+                            "usage_usec": now, "unchanged_since_pause": now == self.paused_usec,
                             "filler_usage_usec": filler_usec, "payload": payload})
-        write_json_atomic(self.control / f"resume.{self.paused_seq}.json",
-                          {"seq": self.paused_seq, "payload": payload, "ledger_usec": self.base + now})
+        write_json_atomic(self.control / f"resume.{self.instance}.{self.paused_seq}.json",
+                          {"instance": self.instance, "seq": self.paused_seq, "payload": payload,
+                           "ledger_usec": self.base + now}, durable=True)
         self.chain_cg.freeze(False)
         self.paused_seq = self.paused_usec = None
 
-    def reap_filler(self) -> None:
-        if self.filler_pid is not None:
-            try:
-                os.waitpid(self.filler_pid, 0)
-            except ChildProcessError:
-                pass
-            self.filler_pid = None
+    def watch_filler(self, instance_dir: Path) -> None:
+        """A filler must occupy the box for the whole pause: restart it, then declare an occupancy fault."""
+        done, status = os.waitpid(self.filler_pid, os.WNOHANG)
+        if done != self.filler_pid:
+            return
+        self.filler_pid = None
+        self.filler_exits += 1
+        code = os.waitstatus_to_exitcode(status)
+        self.ledger.append({"event": "filler-exited", "instance": self.instance, "seq": self.paused_seq,
+                            "exit": code, "exits": self.filler_exits})
+        if self.filler_exits <= FILLER_RESTARTS:
+            self.spawn_filler(instance_dir)
+            return
+        fault = {"box_slot": self.slot["slot"], "chain": self.chain, "instance": self.instance,
+                 "seq": self.paused_seq, "exits": self.filler_exits, "unix": time.time(),
+                 "meaning": "box occupancy is no longer the frozen filler's; neighbours' matched work is suspect"}
+        write_json_atomic(self.fault_path, fault, durable=True)
+        self.ledger.append({"event": "occupancy-fault", "instance": self.instance, "fault": fault})
 
     # --- the run
     def run(self) -> int:
         self.state.mkdir(parents=True, exist_ok=True)
-        self.control.mkdir(parents=True, exist_ok=True)
-        import fcntl
-        lock = open(self.state / "supervisor.lock", "w")
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            raise Refusal(f"Another supervisor holds chain {self.chain}")
-        for stale in self.control.glob("*.request"):
-            stale.unlink()
+        locks = [flock(self.state / "supervisor.lock", f"Chain {self.chain}"),
+                 flock(self.state_root / f"box{self.slot['slot']}.lock", f"Box {self.slot['slot']}")]
         prepare_root(self.root, self.layout, self.plan["isolation"])
         prepare_box(self.root, self.slot)
         self.recover()
         summary = self.ledger.summary()
+        if summary["unresolved_lower_bounds"]:
+            require(bool(self.accept_lower_bound), f"Chain {self.chain} has lower-bound instances "
+                    f"{summary['unresolved_lower_bounds']}; continuing needs --accept-lower-bound REASON")
+            for instance in summary["unresolved_lower_bounds"]:
+                self.ledger.append({"event": "accept-lower-bound", "instance": instance,
+                                    "reason": self.accept_lower_bound})
+        if self.control.exists():  # earlier instances' handshakes never reach this one
+            for stale in self.control.iterdir():
+                stale.unlink()
+        self.control.mkdir(parents=True, exist_ok=True)
         self.instance, self.base = summary["next_instance"], summary["closed_total_usec"]
         instance_dir = self.state / f"instance-{self.instance:04d}"
+        argv = chain_argv(self.spec, self.chain, self.state)
         make_leaf(self.box, "chain", int(self.spec["memory_max_bytes"]))
-        manifest = self.manifest(self.instance, self.base)
         manifest_path = instance_dir / "manifest.json"
-        write_json_atomic(manifest_path, manifest)
+        write_json_atomic(manifest_path, self.manifest(argv), durable=True)
+        write_json_atomic(self.owner_path, {"chain": self.chain, "instance": self.instance}, durable=True)
         self.ledger.append({"event": "open", "instance": self.instance, "base_usec": self.base,
                             "cgroup": str(self.chain_cg.path), "cgroup_inode": self.chain_cg.inode(),
                             "manifest_sha256": sha256_file(manifest_path)})
         started = time.monotonic()
-        self.pid = spawn_into(self.chain_cg, self.spec["argv"], self.env(self.instance, self.base, manifest_path),
-                              instance_dir / "chain.log", self.spec.get("cwd"))
+        self.pid = spawn_into(self.chain_cg, argv, self.env(manifest_path), instance_dir / "chain.log",
+                              self.spec.get("cwd"))
         stop = {"flag": False}
         signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("flag", True))
         status, ru, last_live, reason = None, None, 0.0, None
@@ -618,52 +747,62 @@ class Supervisor:
             if done == self.pid:
                 status, ru = wstatus, ru_now
                 break
-            if self.paused_seq is None and (self.control / "pause.request").exists():
-                self.pause(json.loads((self.control / "pause.request").read_text()), instance_dir)
+            request_path = self.control / "pause.request"
+            if self.paused_seq is None and request_path.exists():
+                request = json.loads(request_path.read_text())
+                if request.get("instance") == self.instance and isinstance(request.get("seq"), int):
+                    self.pause(request, instance_dir)
+                else:
+                    os.replace(request_path, self.control / f"pause.rejected.{time.time_ns()}")
+                    self.ledger.append({"event": "pause-rejected", "instance": self.instance, "request": request})
             elif self.paused_seq is not None and (self.control / "resume.request").exists():
                 payload = json.loads((self.control / "resume.request").read_text())
                 (self.control / "resume.request").unlink()
                 self.resume(payload)
             if (self.control / "kill.request").exists() or stop["flag"]:
-                reason = reason or ("kill-request" if not stop["flag"] else "sigterm")
+                reason = reason or ("sigterm" if stop["flag"] else "kill-request")
                 (self.control / "kill.request").unlink(missing_ok=True)
                 self.chain_cg.kill()
             if self.max_wall is not None and time.monotonic() - started > self.max_wall and reason is None:
                 reason = "qualification-wall-cap"
                 self.chain_cg.kill()
             if self.filler_pid is not None:
-                fdone, _ = os.waitpid(self.filler_pid, os.WNOHANG)
-                if fdone == self.filler_pid:
-                    self.filler_pid = None
-                    self.ledger.append({"event": "filler-exited", "instance": self.instance, "seq": self.paused_seq})
+                self.watch_filler(instance_dir)
+            if not self.fault_seen and self.fault_path.exists():
+                self.fault_seen = True
+                self.ledger.append({"event": "occupancy-fault-seen", "instance": self.instance,
+                                    "fault": json.loads(self.fault_path.read_text())})
             if time.monotonic() - last_live >= LIVE_EVERY_SECONDS:
                 last_live = time.monotonic()
                 write_json_atomic(instance_dir / "live.json", {"usage_usec": self.chain_cg.usage_usec(),
-                                                               "base_usec": self.base, "unix": time.time()})
+                                                               "base_usec": self.base, "unix": time.time()},
+                                  durable=True)
             time.sleep(POLL_SECONDS)
-        if self.paused_seq is not None and self.filler_cg.exists():  # the chain died while paused
-            self.filler_cg.kill()
-            self.filler_cg.wait_empty(SETTLE_SECONDS)
-            self.reap_filler()
-            self.filler_cg.rmdir()
+        if self.paused_seq is not None:  # the chain died while paused (a kill)
+            self.stop_filler()
             self.chain_cg.freeze(False)
         if not self.chain_cg.wait_empty(SETTLE_SECONDS):  # orphans outlived the chain's root process
             reason = reason or "orphans-killed"
             self.chain_cg.kill()
-            self.chain_cg.wait_empty(SETTLE_SECONDS)
+            if not self.chain_cg.wait_empty(SETTLE_SECONDS):
+                self.ledger.append({"event": "cleanup-timeout", "instance": self.instance,
+                                    "usage_usec": self.chain_cg.usage_usec()})
+                return EXIT_CLEANUP  # the instance stays open: recovery closes it once the cgroup is empty
         final = self.chain_cg.usage_usec()
         events = self.chain_cg.keyed("memory.events")
         oom = int(events.get("oom_kill", 0)) + int(events.get("oom_group_kill", 0))
         code = os.waitstatus_to_exitcode(status)
+        close = {"final_usec": final, "ledger_usec": self.base + final, "exit": code, "oom_kill": oom,
+                 "reason": reason, "root_rusage_usec": rusage_usec(ru), "memory_events": events}
         self.ledger.append({"event": "close", "instance": self.instance, "final_usec": final,
                             "closed_total_usec": self.base + final, "exit": code, "oom_kill": oom,
                             "root_rusage_usec": rusage_usec(ru), "reason": reason,
                             "chain_failure": bool(oom) or None})
-        write_json_atomic(instance_dir / "close.json", {"final_usec": final, "ledger_usec": self.base + final,
-                                                        "exit": code, "oom_kill": oom, "reason": reason,
-                                                        "root_rusage_usec": rusage_usec(ru),
-                                                        "memory_events": events})
+        write_json_atomic(instance_dir / "close.json", close, durable=True)
         self.chain_cg.rmdir()
+        self.owner_path.unlink(missing_ok=True)
+        for lock in locks:
+            lock.close()
         if oom:
             return EXIT_OOM
         return code if code >= 0 else 128 - code
@@ -679,20 +818,23 @@ def guarded_supervisor(args) -> Supervisor:
     layout = compute_layout(read_topology(), frozen["cores_per_box"], frozen["offbox_cores_per_domain"],
                             len(frozen["boxes"]))
     detected = host_class()
-    check_pins(plan, spec, layout, detected)
+    check_pins(plan, args.chain, spec, layout, detected)
     throughput = None
-    if args.qualification:
-        require(args.max_wall_seconds and 0 < args.max_wall_seconds <= QUALIFICATION_MAX_WALL,
-                "A qualification run needs --max-wall-seconds within 8 days")
-    else:
-        require(args.max_wall_seconds is None, "--max-wall-seconds is for qualification runs")
-        ref = plan.get("throughput")
-        require(ref is not None, "Plan names no box throughput record (COMPUTE-POLICY item 5)")
+    ref = plan.get("throughput")
+    if ref is not None:
         require(sha256_file(ref["path"]) == ref["sha256"], "Throughput record hash changed")
         throughput = dict(require_throughput(json.loads(Path(ref["path"]).read_text()),
                                              throughput_binding(plan, spec)), sha256=ref["sha256"])
+    if args.qualification:
+        cap = QUALIFICATION_MAX_WALL if throughput else UNQUALIFIED_MAX_WALL
+        require(args.max_wall_seconds is not None and 0 < args.max_wall_seconds <= cap,
+                f"A qualification run needs --max-wall-seconds within {cap} s"
+                + ("" if throughput else " without a box throughput record"))
+    else:
+        require(args.max_wall_seconds is None, "--max-wall-seconds is for qualification runs")
+        require(throughput is not None, "Plan names no box throughput record (COMPUTE-POLICY item 5)")
     return Supervisor(plan, plan_sha, args.chain, args.qualification, args.max_wall_seconds, layout, detected,
-                      throughput)
+                      throughput, args.accept_lower_bound)
 
 
 def request(args, name: str) -> int:
@@ -700,11 +842,8 @@ def request(args, name: str) -> int:
     chain_spec(plan, args.chain)
     control = Path(plan["state_root"]) / args.chain / "control"
     require(control.exists(), f"Chain {args.chain} has no supervisor state")
-    payload = json.loads(args.payload) if args.payload else {}
-    if name == "pause.request":
-        accepted = sorted(int(p.name.split(".")[1]) for p in control.glob("pause.*.accepted"))
-        payload = dict(payload, seq=(accepted[-1] + 1) if accepted else 0, by="operator")
-    write_json_atomic(control / name, payload)
+    payload = json.loads(args.payload) if getattr(args, "payload", None) else {}
+    write_json_atomic(control / name, dict(payload, by="operator", unix=time.time()))
     print(f"wrote {control / name}")
     return 0
 
@@ -723,6 +862,7 @@ def main(argv=None) -> int:
     p.add_argument("--chain", required=True)
     p.add_argument("--qualification", default=None)
     p.add_argument("--max-wall-seconds", type=float, default=None)
+    p.add_argument("--accept-lower-bound", default=None, metavar="REASON")
     for name in ("pause", "resume", "kill", "ledger", "verify-ledger"):
         p = sub.add_parser(name)
         p.add_argument("--plan", required=True)
@@ -743,7 +883,9 @@ def main(argv=None) -> int:
             return 0
         if args.command == "run":
             return guarded_supervisor(args).run()
-        if args.command in ("pause", "resume", "kill"):
+        if args.command == "pause":  # an intent: the trainer pauses at its next update boundary
+            return request(args, "pause.intent")
+        if args.command in ("resume", "kill"):
             return request(args, f"{args.command}.request")
         plan, _ = load_plan(args.plan)
         spec = chain_spec(plan, args.chain)
@@ -751,8 +893,7 @@ def main(argv=None) -> int:
         if args.command == "verify-ledger":
             print(json.dumps(ledger.summary(), indent=2))
             return 0
-        slot = plan["layout"]["boxes"][spec["box_slot"]]
-        cg = Cgroup(Path(plan["cgroup_root"]) / f"box{slot['slot']}" / "chain")
+        cg = Cgroup(Path(plan["cgroup_root"]) / f"box{spec['box_slot']}" / "chain")
         print(json.dumps(ledger_value(ledger, cg), indent=2))
         return 0
     except Refusal as exc:
