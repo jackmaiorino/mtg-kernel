@@ -13,9 +13,10 @@ outcome. Every check must hold for the receipt to pass:
   `:neutral-`; training sessions (`episode_session_v1`) never enable them, so the two expose different decisions
   (singleton choices) and parity needs both off.
 - **Ordinary starts:** no training episode starts from a recorded history (`reset`); every episode is game 1
-  (`postboard` false) with `selected` equal to `registered`.
+  (`postboard` false) with two registrations of 60-card mainboards (sideboards at most 15) and `selected` equal to
+  `registered`.
 - **Starting player:** the board assigns it (`host_assigned`) and swaps seats within each pair; training uses both
-  starting seats.
+  starting seats and the learner both plays first and second.
 - **Limits:** training `max_physical_decisions` and `max_policy_steps` equal the board's `max_decisions` and
   `max_steps` (the board's per-seat caps are recorded beside).
 - **Decks:** each board pool deck, as the board revision materializes it (`data/runtime_decks_v1.json`: card ids
@@ -43,7 +44,8 @@ from pathlib import Path
 
 SCHEMA = "w5-runtime-parity/v1"
 BRIDGE_FILES = ("mtg-kernel/src/agent_bridge_v1.rs", "mtg-kernel/src/agent_bridge_flat_v4.rs")
-RULES_CALL = re.compile(r"^[^/]*\bset_runtime_rules_v1\s*\(", re.MULTILINE)
+RULES_CALL = re.compile(r"\bset_runtime_rules_v1\s*\(")
+RUST_NOISE = re.compile(r'//[^\n]*|/\*.*?\*/|r(#*)".*?"\1|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])\'', re.DOTALL)
 
 
 class ParityError(Exception):
@@ -78,8 +80,8 @@ def deck_key(ids, card_names: list[str]) -> Counter:
 
 def training_side(configs: list[dict], card_names: list[str]) -> dict:
     """Mulligan profile, rules, starts, limits and decks of every training episode."""
-    profiles, rules, starts, limits = Counter(), Counter(), Counter(), Counter()
-    resets = postboard = registered_differs = 0
+    profiles, rules, starts, limits, learner_starts = Counter(), Counter(), Counter(), Counter(), Counter()
+    resets = postboard = registered_differs = malformed = 0
     decks: dict[str, Counter] = {}
     for config in configs:
         for ep in episodes(config):
@@ -87,9 +89,13 @@ def training_side(configs: list[dict], card_names: list[str]) -> dict:
             profiles["none" if opening is None and modes is None else f"opening={opening}"] += 1
             rules["default" if ep.get("runtime_rules") is None else str(ep["runtime_rules"])] += 1
             starts[ep["starting_player"]] += 1
+            learner_starts["first" if ep["learner_seat"] == ep["starting_player"] else "second"] += 1
             limits[(ep["max_physical_decisions"], ep["max_policy_steps"])] += 1
             resets += ep.get("reset") is not None
             postboard += bool(ep.get("postboard"))
+            malformed += not (len(ep["registered"]) == len(ep["selected"]) == 2 and all(
+                len(d["mainboard"]) == 60 and len(d.get("sideboard", [])) <= 15
+                for d in ep["registered"] + ep["selected"]))
             for registered, selected in zip(ep["registered"], ep["selected"]):
                 registered_differs += (registered["label"], registered["mainboard"]) != (
                     selected["label"], selected["mainboard"])
@@ -100,6 +106,7 @@ def training_side(configs: list[dict], card_names: list[str]) -> dict:
                 decks[deck["label"]] = named
     return {"mulligan_profiles": dict(profiles), "runtime_rules": dict(rules),
             "starting_players": {str(k): v for k, v in sorted(starts.items())},
+            "learner_plays": dict(learner_starts), "malformed_registrations": malformed,
             "limits": [{"max_physical_decisions": a, "max_policy_steps": b, "episodes": n}
                        for (a, b), n in sorted(limits.items())],
             "reset_episodes": resets, "postboard_episodes": postboard,
@@ -120,9 +127,14 @@ def board_decks(runtime_decks: dict, pool: list[str], card_names: list[str]) -> 
     return out
 
 
+def strip_rust(source: str) -> str:
+    """Rust source without comments, string and char literals (block comments taken as non-nested)."""
+    return RUST_NOISE.sub(" ", source)
+
+
 def bridge_rules(sources: list[str]) -> dict:
-    """The board bridge's runtime-rules facts at its revision (static)."""
-    return {"calls_set_runtime_rules": any(RULES_CALL.search(source) for source in sources)}
+    """The board bridge's runtime-rules facts at its revision (static: calls in code, not comments or strings)."""
+    return {"calls_set_runtime_rules": any(RULES_CALL.search(strip_rust(source)) for source in sources)}
 
 
 def compare(training: dict, board_manifest: dict, board_config: dict, board_pool_decks: dict, bridge: dict) -> dict:
@@ -138,9 +150,9 @@ def compare(training: dict, board_manifest: dict, board_config: dict, board_pool
         "board_rules_profile_is_default": not bridge["calls_set_runtime_rules"],
         "neutral_choices_equal": not board_neutral,  # training sessions never enable them
         "ordinary_starts_game_one": training["reset_episodes"] == 0 and training["postboard_episodes"] == 0
-        and training["selected_differs_from_registered"] == 0,
+        and training["selected_differs_from_registered"] == 0 and training["malformed_registrations"] == 0,
         "starting_player_assigned_both_seats": rules["starting_player"] == "host_assigned"
-        and set(training["starting_players"]) == {"0", "1"},
+        and set(training["starting_players"]) == {"0", "1"} and set(training["learner_plays"]) == {"first", "second"},
         "limits_equal": [(x["max_physical_decisions"], x["max_policy_steps"]) for x in training["limits"]]
         == [(board_limits.get("max_decisions"), board_limits.get("max_steps"))],
     }
