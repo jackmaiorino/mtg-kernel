@@ -107,6 +107,9 @@ pub(crate) struct ProjectionV1 {
     pub survivors: SurvivorTreeV1,
     pub transfers: Vec<TransferV1>,
     pub arrivals: Vec<ArrivalV1>,
+    /// Stream items at which an owner's library order changed unseen by
+    /// V's tracking (a shuffle, a reorder, a scry), with the owner.
+    pub reorders: Vec<(usize, PlayerId)>,
     /// Stream item at which each event-history index was absorbed.
     pub event_items: Vec<usize>,
     /// Objects V identified in each event (move events), by event index.
@@ -169,6 +172,7 @@ struct WalkV1<'a> {
     survivors: SurvivorTreeV1,
     transfers: Vec<TransferV1>,
     arrivals: Vec<ArrivalV1>,
+    reorders: Vec<(usize, PlayerId)>,
     item: usize,
     next_event: usize,
     inconsistencies: Vec<String>,
@@ -209,6 +213,7 @@ pub(crate) fn project_v1(
         survivors: SurvivorTreeV1::default(),
         transfers: Vec::new(),
         arrivals: Vec::new(),
+        reorders: Vec::new(),
         item: 0,
         next_event: 0,
         inconsistencies: Vec::new(),
@@ -339,6 +344,7 @@ pub(crate) fn project_v1(
         survivors: w.survivors,
         transfers: w.transfers,
         arrivals: w.arrivals,
+        reorders: w.reorders,
         event_items,
         event_observed,
         items,
@@ -610,6 +616,7 @@ impl WalkV1<'_> {
         let viewer = self.viewer;
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
+                self.reorders.push((self.item, *owner));
                 self.library[owner.index()].clear();
                 self.settle(&[]);
             }
@@ -638,6 +645,7 @@ impl WalkV1<'_> {
                 ordered,
                 revealed_to,
             } => {
+                self.reorders.push((self.item, *owner));
                 let len = ordered.len() as u32;
                 self.library[owner.index()].retain(|p, _| *p >= len);
                 let mut observed = Vec::new();
@@ -654,6 +662,7 @@ impl WalkV1<'_> {
                 retained_top,
                 ordered_bottom,
             } => {
+                self.reorders.push((self.item, *owner));
                 let top = retained_top.len() as u32;
                 let bottom = ordered_bottom.len() as u32;
                 let prefix = top + bottom;

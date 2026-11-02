@@ -29,7 +29,7 @@ use super::tests::export_at;
 use super::*;
 use crate::ids::{ObjectId, PlayerId};
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
-use crate::state::{GameState, ObservationNoteKindV1};
+use crate::state::{GameState, ObservationNoteKindV1, Zone};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
@@ -218,6 +218,8 @@ fn replay(
         };
         let p = seat(dd.acting_player);
         if i == d && p == viewer {
+            // V's view at d itself, after any exchange applied here.
+            views.push(view(&s));
             break;
         }
         let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
@@ -252,7 +254,7 @@ fn replay(
             ));
         };
         let took_w = matching.is_some();
-        if p == viewer && dd.legal_action_count >= 2 {
+        if p == viewer {
             views.push(view(&s));
         }
         let kind = vals[index]["action_kind"].as_str().unwrap_or("");
@@ -296,12 +298,13 @@ fn replay(
 }
 
 /// Canonical hidden contents of the owner: untracked hand and library
-/// definitions, and pinned definitions by zone.
+/// definitions, and each pinned object's definition and zone (in hand or
+/// not) in contract order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ContentsV1 {
     pub hand: BTreeMap<u16, u32>,
     pub library: BTreeMap<u16, u32>,
-    pub pins: BTreeMap<(u16, bool), u32>,
+    pub pins: Vec<(u16, bool)>,
 }
 
 fn add(m: &mut BTreeMap<u16, u32>, d: u16) {
@@ -316,12 +319,18 @@ pub(crate) fn export_contents(x: &InfosetV1, owner: PlayerId) -> ContentsV1 {
         for id in ids {
             let def = x.state.objects.get(*id).card_def;
             match x.handles[id.0 as usize] {
-                HandleV1::U { pinned: true, .. } => {
-                    *c.pins.entry((def, zone_hand)).or_default() += 1
-                }
+                HandleV1::U { pinned: true, .. } => {}
                 HandleV1::U { .. } => add(if zone_hand { &mut c.hand } else { &mut c.library }, def),
                 _ => {}
             }
+        }
+    }
+    // Pins in contract order: the exported contracts name their occupants.
+    for id in super::export::contract_pins(&x.state) {
+        if matches!(x.handles[id.0 as usize], HandleV1::U { pinned: true, .. })
+            && x.state.objects.get(id).owner == owner
+        {
+            c.pins.push((x.state.objects.get(id).card_def, p.hand.contains(&id)));
         }
     }
     c
@@ -341,7 +350,8 @@ struct TruthV1 {
 fn truth(state: &GameState, viewer: PlayerId, owner: PlayerId) -> TruthV1 {
     let projection =
         super::projection::project_v1(state, state.observation_journal.notes(), viewer);
-    let pins: BTreeSet<ObjectId> = super::export::contract_pins(state).into_iter().collect();
+    let order = super::export::contract_pins(state);
+    let pins: BTreeSet<ObjectId> = order.iter().copied().collect();
     let mut t = TruthV1 {
         contents: ContentsV1::default(),
         seen: Vec::new(),
@@ -358,8 +368,6 @@ fn truth(state: &GameState, viewer: PlayerId, owner: PlayerId) -> TruthV1 {
             }
             let def = state.objects.get(*id).card_def;
             if pins.contains(id) {
-                *t.contents.pins.entry((def, in_hand)).or_default() += 1;
-                t.pins.push((*id, def, in_hand));
                 continue;
             }
             add(
@@ -376,6 +384,14 @@ fn truth(state: &GameState, viewer: PlayerId, owner: PlayerId) -> TruthV1 {
             } else {
                 t.seen.push(entry);
             }
+        }
+    }
+    for id in order {
+        let in_hand = p.hand.contains(&id);
+        if !projection.tracked(id) && (in_hand || p.library.contains(&id)) {
+            let def = state.objects.get(id).card_def;
+            t.contents.pins.push((def, in_hand));
+            t.pins.push((id, def, in_hand));
         }
     }
     t
@@ -402,16 +418,112 @@ fn misplaced(t: &TruthV1, target: &ContentsV1) -> Vec<(ObjectId, bool)> {
             out.push((*id, *in_hand));
         }
     }
-    let mut pins = target.pins.clone();
-    for (id, def, in_hand) in &t.pins {
-        let key = (*def, *in_hand);
-        if pins.get(&key).copied().unwrap_or(0) > 0 {
-            *pins.get_mut(&key).expect("checked") -= 1;
-        } else {
+    for (k, (id, def, in_hand)) in t.pins.iter().enumerate() {
+        if target.pins.get(k) != Some(&(*def, *in_hand)) {
             out.push((*id, *in_hand));
         }
     }
     out
+}
+
+/// A counting proof that no W* holds `target`, independent of the survivor
+/// tree and of the search: Some(reason) when proven.
+///
+/// Hand bound: the objects V tracked in the owner's hand until an
+/// unidentified put-back (their spans end there, in the hand) can leave the
+/// hand afterwards only by unidentified put-backs, one card each, or in V's
+/// sight (then they are tracked again and dropped from the count). Draws
+/// that follow the last put-back with no reorder of the owner's library in
+/// between take put-back cards back (the library top, last in first out).
+/// So at least n - (put-backs - credited draws) of those still-hidden objects
+/// are in the hand, and the untracked hand must hold that many cards of
+/// their names. Pin bound: a pin in the hand needs a distinct unidentified
+/// draw after the earliest pin entered the library.
+pub(crate) fn impossible_v1(
+    state: &GameState,
+    viewer: PlayerId,
+    target: &ContentsV1,
+) -> Option<String> {
+    use super::projection::TransferDirV1;
+    let owner = viewer.opponent();
+    let p = super::projection::project_v1(state, state.observation_journal.notes(), viewer);
+    let pl = &state.players[owner.index()];
+    let hidden = |id: ObjectId| {
+        !p.tracked(id) && (pl.hand.contains(&id) || pl.library.contains(&id))
+    };
+    let mut transfers: Vec<_> = p.transfers.iter().filter(|t| t.owner == owner).collect();
+    transfers.sort_by_key(|t| t.item);
+    let put_backs: Vec<usize> = transfers
+        .iter()
+        .filter(|t| t.dir == TransferDirV1::PutBack)
+        .map(|t| t.item)
+        .collect();
+    if let Some(&last) = put_backs.last() {
+        let credited_until = p
+            .reorders
+            .iter()
+            .filter(|(item, o)| *o == owner && *item > last)
+            .map(|(item, _)| *item)
+            .min()
+            .unwrap_or(usize::MAX);
+        let draws_back = transfers
+            .iter()
+            .filter(|t| t.dir == TransferDirV1::Draw && t.item > last && t.item < credited_until)
+            .count();
+        for &at in &put_backs {
+            let known: Vec<ObjectId> = state
+                .objects
+                .iter()
+                .map(|(id, _)| id)
+                .filter(|id| {
+                    state.objects.get(*id).owner == owner
+                        && p.objects[id.0 as usize].spans.iter().any(|s| {
+                            s.end.is_some_and(|e| e.item == at && e.zone == Zone::Hand)
+                        })
+                        && hidden(*id)
+                })
+                .collect();
+            if known.is_empty() {
+                continue;
+            }
+            let exits = put_backs.iter().filter(|&&x| x >= at).count();
+            let need = known.len().saturating_sub(exits - draws_back.min(exits));
+            let mut names: BTreeMap<u16, u32> = BTreeMap::new();
+            for id in &known {
+                add(&mut names, state.objects.get(*id).card_def);
+            }
+            let have: u32 = names
+                .iter()
+                .map(|(d, k)| (*k).min(target.hand.get(d).copied().unwrap_or(0)))
+                .sum();
+            if (have as usize) < need {
+                return Some(format!(
+                    "{} hidden objects tracked in the hand until the put-back at item {at}, {exits} put-backs, {draws_back} draws back: at least {need} remain, the target's hand holds {have} of their names",
+                    known.len()
+                ));
+            }
+        }
+    }
+    let pins_in_hand = target.pins.iter().filter(|(_, h)| *h).count();
+    if pins_in_hand > 0 {
+        let entry = super::export::contract_pins(state)
+            .into_iter()
+            .filter(|id| hidden(*id))
+            .filter_map(|id| p.last_span(id).and_then(|s| s.end).map(|e| e.item))
+            .min();
+        if let Some(entry) = entry {
+            let draws = transfers
+                .iter()
+                .filter(|t| t.dir == TransferDirV1::Draw && t.item > entry)
+                .count();
+            if pins_in_hand > draws {
+                return Some(format!(
+                    "{pins_in_hand} pins in the hand need distinct draws; {draws} draws followed the earliest pin's entry"
+                ));
+            }
+        }
+    }
+    None
 }
 
 /// The deal exchanges that give the never-tracked objects the target's
@@ -609,29 +721,6 @@ pub(crate) fn realize(
     Err(format!("{last}; {context}"))
 }
 
-/// The known gap of 6.4's ledger (reported to the lead, not assumed away):
-/// after an unidentified put-back, an unidentified draw of the owner takes
-/// a card V knows was put back (the library top), so V can know a revealed
-/// card is back in the hand while the survivor tree, in which arrivals
-/// never count, keeps only the earlier lower bound. Such exports can be
-/// unrealizable. True when the owner drew unidentified after putting back
-/// unidentified.
-pub(crate) fn draw_back_gap(s: &FastActorSessionV1, viewer: PlayerId) -> bool {
-    use super::projection::TransferDirV1;
-    let st = s.game_state();
-    let p = super::projection::project_v1(st, st.observation_journal.notes(), viewer);
-    let owner = viewer.opponent();
-    let mut put_back = false;
-    for t in p.transfers.iter().filter(|t| t.owner == owner) {
-        match t.dir {
-            TransferDirV1::PutBack => put_back = true,
-            TransferDirV1::Draw if put_back => return true,
-            TransferDirV1::Draw => {}
-        }
-    }
-    false
-}
-
 /// The session of `game` at decision step `d` (W itself, no exchanges).
 pub(crate) fn at_step(game: &NativeGameV1, d: usize, viewer: PlayerId) -> FastActorSessionV1 {
     replay(game, &[], &[], d, viewer.opponent(), viewer)
@@ -654,6 +743,19 @@ pub(crate) fn realize_at(
     let target = export_contents(&x, viewer.opponent());
     let bytes = mutant.is_none().then_some(x.bytes.as_slice());
     Ok(realize(game, d, viewer, &target, bytes))
+}
+
+/// The counting proof for the export of `mutant` at decision step `d`
+/// (None when not proven or refused).
+pub(crate) fn impossible_at(
+    game: &NativeGameV1,
+    d: usize,
+    viewer: PlayerId,
+    mutant: Option<MutantV1>,
+) -> Option<String> {
+    let s = at_step(game, d, viewer);
+    let x = export_at(&s, viewer, ExportOptionsV1 { mutant }).ok()?;
+    impossible_v1(s.game_state(), viewer, &export_contents(&x, viewer.opponent()))
 }
 
 #[cfg(test)]
@@ -682,12 +784,15 @@ mod tests {
             match realize_at(game, r.step, v, None) {
                 Ok(Ok(_)) => n += 1,
                 other => {
-                    let s = at_step(game, r.step, v);
+                    // Only a proven impossibility (the draw-back gap of the
+                    // ledger, reported to the lead) is tolerated.
+                    let proof = impossible_at(game, r.step, v, None);
                     assert!(
-                        draw_back_gap(&s, v),
+                        proof.is_some(),
                         "{name}: P is not realizable at step {}: {other:?}",
                         r.step
                     );
+                    eprintln!("{name}: P proven unrealizable at step {}: {}", r.step, proof.unwrap_or_default());
                     GAPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
@@ -697,8 +802,11 @@ mod tests {
 
     static GAPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+    /// A validity mutant fails only with a counting proof (search failure
+    /// alone proves nothing), and the search agrees.
     fn unrealizable(game: &NativeGameV1, d: usize, v: PlayerId, m: MutantV1) -> bool {
-        matches!(realize_at(game, d, v, Some(m)), Ok(Err(_)))
+        impossible_at(game, d, v, Some(m)).is_some()
+            && matches!(realize_at(game, d, v, Some(m)), Ok(Err(_)))
     }
 
     #[test]
@@ -751,11 +859,11 @@ mod tests {
                 if m.as_ref() == r.p.as_ref().ok() {
                     continue;
                 }
-                let result = realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12));
                 assert!(
-                    matches!(result, Ok(Err(_))),
-                    "L12 is realizable at step {} ({hawks} Hawks returned): {result:?}",
-                    r.step
+                    unrealizable(&game, r.step, PlayerId::P1, MutantV1::L12),
+                    "L12 is not proven unrealizable at step {} ({hawks} Hawks returned): {:?}",
+                    r.step,
+                    realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12))
                 );
                 l12 += 1;
             }
@@ -813,7 +921,7 @@ mod tests {
             }
         }
         eprintln!(
-            "realizability: {checked} fixture decisions realized for P, {} in the draw-back gap; L9 unrealizable at {l9} competing-pin decisions",
+            "realizability: {checked} fixture decisions realized for P, {} proven unrealizable (draw-back gap); L9 unrealizable at {l9} competing-pin decisions",
             GAPS.load(std::sync::atomic::Ordering::Relaxed)
         );
         assert!(l9 > 0, "W-pin-2 has decisions where two pins compete for one draw");
@@ -909,8 +1017,7 @@ mod tests {
                             match realize_at(&game, i, viewer, None) {
                                 Ok(Ok(_)) => checked += 1,
                                 Ok(Err(e)) => {
-                                    let w = at_step(&game, i, viewer);
-                                    if draw_back_gap(&w, viewer) {
+                                    if impossible_at(&game, i, viewer, None).is_some() {
                                         gaps += 1;
                                     } else {
                                         failures.push(format!("{decks:?} {viewer:?} step {i}: {e}"))
@@ -931,7 +1038,7 @@ mod tests {
             }
         }
         eprintln!(
-            "realizability on engine games: {checked} realized, {gaps} in the draw-back gap, failures {failures:#?}"
+            "realizability on engine games: {checked} realized, {gaps} proven unrealizable (draw-back gap), failures {failures:#?}"
         );
         assert!(checked > 0);
         assert!(failures.is_empty());
