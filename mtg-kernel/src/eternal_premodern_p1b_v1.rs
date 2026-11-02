@@ -1694,7 +1694,13 @@ fn prune(state: &mut GameState) {
     if p1b.is_empty() {
         return;
     }
-    let on_battlefield = |link: &ObjectLinkV4| link_live_in(state, *link, Zone::Battlefield);
+    // A phased-out permanent keeps its incarnation (and its counters and
+    // records) in the command zone until it phases in.
+    let on_battlefield = |link: &ObjectLinkV4| {
+        link_live_in(state, *link, Zone::Battlefield)
+            || (link_live_in(state, *link, Zone::Command)
+                && crate::eternal_e5a_v1::phasing::phased_out(state, link.object))
+    };
     let opalescences = p1b
         .opalescences
         .iter()

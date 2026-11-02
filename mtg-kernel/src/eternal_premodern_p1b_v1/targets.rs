@@ -22,13 +22,14 @@ pub(crate) fn counts(target: StandardTargetV1) -> Option<(u8, u8)> {
     owns(target).then_some((1, 1))
 }
 
-/// The treasure counters that bound Legacy's Allure's target: those of the
-/// targeting Allure's own incarnation `source` (an object and its zone
-/// change count). While the Allure is on the battlefield (as its ability is
-/// offered and its target chosen) they are its live counters; once it was
-/// sacrificed to activate the ability, the counters recorded for that
-/// incarnation and its ability on the stack. No source, or another
-/// incarnation, bounds nothing above zero.
+/// The treasure counters that bound Legacy's Allure's target, for the
+/// targeting `source` (an object and its zone change count). While the
+/// Allure is on the battlefield (as its ability is offered and its target
+/// chosen) they are its live counters. Once it was sacrificed to activate the
+/// ability, they are the counters recorded for the ability's frozen source,
+/// its battlefield incarnation: a record lasts only while that ability is on
+/// the stack, so it holds however often the card moved since. No source, or
+/// another object, bounds nothing above zero.
 fn treasure_bound(state: &GameState, source: Option<(ObjectId, u32)>) -> u16 {
     let Some((object, zone_change_count)) = source else {
         return 0;
@@ -43,21 +44,7 @@ fn treasure_bound(state: &GameState, source: Option<(ObjectId, u32)>) -> u16 {
     if super::link_live_in(state, live, Zone::Battlefield) {
         return super::statics::treasure_counters(state, object);
     }
-    // The sacrificed incarnation, named by the ability's frozen source or by
-    // the graveyard card it became.
-    [Some(zone_change_count), zone_change_count.checked_sub(1)]
-        .into_iter()
-        .flatten()
-        .find_map(|count| {
-            super::statics::sacrificed_allure_counters(
-                state,
-                ObjectLinkV4 {
-                    object,
-                    zone_change_count: count,
-                },
-            )
-        })
-        .unwrap_or(0)
+    super::statics::sacrificed_allure_counters_before(state, live).unwrap_or(0)
 }
 
 /// Whether `object` matches `target` given Legacy's Allure's treasure

@@ -166,6 +166,24 @@ pub(crate) fn allure_counters_for_link(state: &GameState, allure: ObjectLinkV4) 
     sacrificed_allure_counters(state, allure).unwrap_or(0)
 }
 
+/// The treasure counters recorded for the latest sacrificed battlefield
+/// incarnation of `allure`'s object at or before `allure`, while its
+/// ability is on the stack: the frozen source of that ability, however
+/// often the card moved after it was sacrificed.
+pub(crate) fn sacrificed_allure_counters_before(
+    state: &GameState,
+    allure: ObjectLinkV4,
+) -> Option<u16> {
+    read_state(state)?
+        .sacrificed_allures
+        .iter()
+        .filter(|(host, _)| {
+            host.object == allure.object && host.zone_change_count <= allure.zone_change_count
+        })
+        .max_by_key(|(host, _)| host.zone_change_count)
+        .map(|(_, count)| *count)
+}
+
 /// The treasure counters the Legacy's Allure battlefield incarnation
 /// `allure` had as it was sacrificed for its ability, while that ability is
 /// on the stack.

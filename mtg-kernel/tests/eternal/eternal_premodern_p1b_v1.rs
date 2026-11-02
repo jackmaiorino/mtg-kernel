@@ -1476,3 +1476,56 @@ fn parallax_wave_exile_after_its_leaves_trigger_is_permanent() {
     to_next_turn(&mut state, |_, _| None);
     assert_eq!(zone(&state, elves), Zone::Exile, "never returns");
 }
+
+#[test]
+fn legacys_allure_keeps_its_bound_after_the_sacrificed_card_moves_again() {
+    let mut state = islands();
+    let allure = put(&mut state, P0, "Legacy's Allure", Zone::Battlefield);
+    let furnace = put(&mut state, P0, "Phyrexian Furnace", Zone::Battlefield);
+    // A 2/2: Llanowar Elves with a +1/+1 counter.
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    state.objects.get_mut(elves).counters.plus1_plus1 = 1;
+    for _ in 0..2 {
+        upkeep_options(&mut state, |source| u16::from(source == allure));
+    }
+    assert_eq!(p1b::treasure_counters(&state, allure), 2);
+    activate(&mut state, allure, 0, &[Target::Object(elves)]);
+    next(&mut state);
+    assert_eq!(zone(&state, allure), Zone::Graveyard);
+    // In response, the sacrificed Allure is exiled from the graveyard.
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, furnace, 1, &[Target::Object(allure)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, allure), Zone::Exile);
+    assert_eq!(
+        state.objects.get(elves).controller,
+        P0,
+        "the bound is the ability's own sacrificed Allure"
+    );
+}
+
+#[test]
+fn sterling_grove_and_opalescence_survive_phasing() {
+    let mut state = islands();
+    let opalescence = put(&mut state, P0, "Opalescence", Zone::Hand);
+    enter(&mut state, opalescence);
+    let grove = put(&mut state, P0, "Sterling Grove", Zone::Hand);
+    enter(&mut state, grove);
+    let seal = put(&mut state, P0, "Seal of Cleansing", Zone::Battlefield);
+    settled(&mut state);
+    assert!(is_creature(&state, grove), "Opalescence animates the Grove");
+    assert!(keyword(&state, seal, Keywords::SHROUD));
+    // Talon Gates of Madara phases the Grove out.
+    let gates = put(&mut state, P0, "Talon Gates of Madara", Zone::Hand);
+    pool(&mut state, P0, &[], 4);
+    activate(&mut state, gates, 0, &[]);
+    settle_picking(&mut state, 0, Some(grove));
+    assert!(!state.players[0].battlefield.contains(&grove), "phased out");
+    assert!(!keyword(&state, seal, Keywords::SHROUD));
+    // It phases in at its controller's next untap step, granting shroud
+    // again, and Opalescence still animates it.
+    to_next_turn(&mut state, |_, _| None);
+    assert!(state.players[0].battlefield.contains(&grove), "phased in");
+    assert!(keyword(&state, seal, Keywords::SHROUD));
+    assert!(is_creature(&state, grove));
+}
