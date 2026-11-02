@@ -8235,7 +8235,8 @@ pub(crate) mod tests {
                 assert_eq!(row["selected"], json!(d.selected));
                 if row["kind"] == "root" {
                     assert_eq!(row["acted"], true);
-                    let q: Vec<f64> = serde_json::from_value(row["q"].clone()).unwrap();
+                    let q_bits: Vec<u64> = serde_json::from_value(row["q_bits"].clone()).unwrap();
+                    let q: Vec<f64> = q_bits.into_iter().map(f64::from_bits).collect();
                     let played = crate::w5_xact_v1::w5_played_action_v1(
                         &q,
                         "w5-hook-test",
