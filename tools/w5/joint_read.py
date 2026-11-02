@@ -11,7 +11,7 @@ refit and virtual draws, with section 7.2's estimand computed inside every joint
   kept. The interval is the 1.25% and 98.75% quantiles: sorted indices (n - 1) // 80 and (79 (n - 1) + 79) // 80
   of the n successful replicates (Spellbench's 95% convention at 1/80). Like Spellbench, the read fails closed when
   more than half of the replicate fits fail.
-- **Seed:** the first 8 bytes (big-endian) of SHA256("w5/read/<P1|P2>") seed Spellbench's SplitMix64 stream, drawn
+- **Seed:** the first 8 bytes (little-endian, as EX1 and W5 placement read them) of SHA256("w5/read/<P1|P2>") seed Spellbench's SplitMix64 stream, drawn
   in matchup order then pair slot with Spellbench's unbiased index.
 - **Labels** (in order, the first that holds): A stronger (lower bound > 0 and at least k pair differences
   positive), B stronger (upper bound < 0 and at least k negative), no worthwhile difference (interval inside
@@ -158,7 +158,7 @@ def fit_score_pairs(pairs, reference_id: str) -> dict[str, float]:
 # ---------------------------------------------------------------- statistics
 
 def read_seed(read: str) -> int:
-    return int.from_bytes(hashlib.sha256(f"w5/read/{read}".encode("utf-8")).digest()[:8], "big")
+    return int.from_bytes(hashlib.sha256(f"w5/read/{read}".encode("utf-8")).digest()[:8], "little")
 
 
 def quantile_indices(n: int) -> tuple[int, int]:

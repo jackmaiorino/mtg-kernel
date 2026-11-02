@@ -44,7 +44,7 @@ def spec(read="P1", under=()):
 class StatisticsTests(unittest.TestCase):
     def test_seed_and_quantiles_are_frozen(self):
         self.assertEqual(jr.read_seed("P1"),
-                         int.from_bytes(hashlib.sha256(b"w5/read/P1").digest()[:8], "big"))
+                         int.from_bytes(hashlib.sha256(b"w5/read/P1").digest()[:8], "little"))
         self.assertNotEqual(jr.read_seed("P1"), jr.read_seed("P2"))
         self.assertEqual(jr.quantile_indices(2000), (24, 1975))
         lo, hi = jr.quantile_indices(1999)
