@@ -1325,6 +1325,7 @@ pub(crate) fn drive(
                 .take(5)
                 .map(|&card| bind(state, card))
                 .collect::<Vec<_>>();
+            // spellbench-public-reveal: public reveal to both players.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 state.reveal_library_top(observer, controller, revealed.len());
             }

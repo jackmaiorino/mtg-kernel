@@ -875,16 +875,17 @@ jobs:
         # Windows runs the suite about twice as slowly, so it gets one more
         # shard to finish alongside the Ubuntu shards.
         include:
-          - {os: ubuntu-24.04, shard: 0, shard_count: 2, kernel_bin: target/release/kernel_rl_env}
-          - {os: ubuntu-24.04, shard: 1, shard_count: 2, kernel_bin: target/release/kernel_rl_env}
-          - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
-          - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
-          - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
+          - {os: ubuntu-24.04, shard: 0, shard_count: 2, kernel_bin: target/release/kernel_rl_env, agent_bridge_bin: target/release/agent_bridge_v1}
+          - {os: ubuntu-24.04, shard: 1, shard_count: 2, kernel_bin: target/release/kernel_rl_env, agent_bridge_bin: target/release/agent_bridge_v1}
+          - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
+          - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
+          - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
+      MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/${{ matrix.agent_bridge_bin }}
     steps:
       - name: Use Git Bash for bash steps on Windows
         if: runner.os == 'Windows'
@@ -1007,7 +1008,11 @@ jobs:
           scope: python-env
 
       - name: Build release JSONL environment
-        run: cargo build --release --locked --bin kernel_rl_env
+        run: cargo build --release --locked --bin kernel_rl_env --bin agent_bridge_v1
+
+      - name: Validate agent bridge v1 golden transcripts
+        if: matrix.shard == 0
+        run: uv run --no-sync python python/tools/generate_agent_bridge_goldens.py --check --repo-root .
 
       # Shards of one system build the same output; the first one saves it.
       - name: Save compiled Python environment

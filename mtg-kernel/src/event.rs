@@ -7397,6 +7397,7 @@ fn materialize_zone_change_v1(
                 state.reveal_library_position(owner, owner, position);
             }
             LibraryInsertVisibility::Public => {
+                // spellbench-public-reveal: public reveal to both players.
                 for observer in [PlayerId::P0, PlayerId::P1] {
                     state.reveal_library_position(observer, owner, position);
                 }

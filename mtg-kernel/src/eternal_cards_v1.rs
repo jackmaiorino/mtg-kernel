@@ -1051,6 +1051,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         EternalOpV1::LookAtTopOfTargetLibraryV1 => {
             if let Some(Target::Player(player)) = ctx.targets.first().copied() {
+                // spellbench-public-reveal: rules-granted look at another library.
                 state.reveal_library_top(ctx.controller, player, 1);
             }
         }
