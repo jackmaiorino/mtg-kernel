@@ -113,7 +113,7 @@ impl SConfigV1 {
             && self.card_vocab <= 1 << 20;
         if !positive
             || !bounded
-            || self.d_model % self.heads != 0
+            || !self.d_model.is_multiple_of(self.heads)
             || self.d_model / self.heads > 256
         {
             return Err(format!("invalid S config {self:?}"));
@@ -231,6 +231,9 @@ impl LayoutV1 {
             tensors: Vec::new(),
             total: 0,
         };
+        // `named_parameters()` yields the module's own parameter (`ref_bias`)
+        // before its submodules', then the submodules in definition order.
+        let ref_bias = b.push("ref_bias".into(), vec![2, h], false);
         let card = b.push("card.weight".into(), vec![config.card_vocab, cd], false);
         let obj0 = b.linear("obj_in.0", OBJECT_FEATURE_DIM_V1 + cd, d);
         let obj2 = b.linear("obj_in.2", d, d);
@@ -242,7 +245,6 @@ impl LayoutV1 {
         let ref0 = b.linear("ref_in.0", REF_FEATURE_DIM_V1 + cd, d);
         let ref2 = b.linear("ref_in.2", d, d);
         let edge = b.linear("edge_bias", EDGE_FEATURE_DIM_V1, 2 * h);
-        let ref_bias = b.push("ref_bias".into(), vec![2, h], false);
         let mut blocks = Vec::with_capacity(config.layers);
         for layer in 0..config.layers {
             let p = format!("blocks.{layer}");
@@ -300,7 +302,8 @@ impl LayoutV1 {
     /// Flat ranges whose gradient is defined as exactly zero (module doc).
     pub fn gauge_ranges_v1(&self) -> Vec<std::ops::Range<usize>> {
         let d = self.config.d_model;
-        let mut ranges = vec![self.pol2.b..self.pol2.b + 1];
+        let mut ranges = Vec::with_capacity(1 + self.blocks.len());
+        ranges.push(self.pol2.b..self.pol2.b + 1);
         for block in &self.blocks {
             ranges.push(block.qkv.b + d..block.qkv.b + 2 * d);
         }
@@ -391,7 +394,10 @@ impl<'a> SInputV1<'a> {
             return Err("S input edge shapes differ".into());
         }
         if self.action_features.is_empty()
-            || self.action_features.len() % ACTION_FEATURE_DIM_V1 != 0
+            || !self
+                .action_features
+                .len()
+                .is_multiple_of(ACTION_FEATURE_DIM_V1)
         {
             return Err("S input action shape differs".into());
         }
@@ -511,6 +517,7 @@ impl SModelV1 {
     /// weight and embedding table N(0, 0.02), biases zero, LayerNorms (1, 0),
     /// `ref_bias` zero, drawn from [`SplitMixV1`] (not PyTorch's generator).
     pub fn init_pilot_scheme_v1(config: SConfigV1, seed: u64) -> Result<Self, String> {
+        ensure_mxcsr_v1()?;
         let layout = LayoutV1::of_v1(config)?;
         let mut rng = SplitMixV1::new(seed);
         let mut values = vec![0.0f32; layout.total];
@@ -533,6 +540,7 @@ impl SModelV1 {
     /// A well-conditioned random point for parity and determinism checks:
     /// fan-in-scaled weights, nonzero biases, LayerNorm gains near 1.
     pub fn init_parity_v1(config: SConfigV1, seed: u64) -> Result<Self, String> {
+        ensure_mxcsr_v1()?;
         let layout = LayoutV1::of_v1(config)?;
         let mut rng = SplitMixV1::new(seed);
         let mut values = vec![0.0f32; layout.total];
@@ -628,8 +636,7 @@ impl SModelV1 {
         input: SInputV1<'_>,
         tape: &mut STapeV1,
     ) -> Result<(), String> {
-        crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
-            .map_err(|e| format!("S forward: MXCSR not pinned: {e:?}"))?;
+        ensure_mxcsr_v1()?;
         let config = self.layout.config;
         let counts = input.validate_v1(&config)?;
         let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
@@ -1759,6 +1766,7 @@ impl STrainStateV1 {
         grad: &[f32],
         learning_rate: f32,
     ) -> Result<SAdamUpdateV1, String> {
+        ensure_mxcsr_v1()?;
         if grad.len() != self.model.layout.total {
             return Err("S gradient has the wrong length".into());
         }
@@ -1859,6 +1867,14 @@ impl STrainStateV1 {
         }
         hex_v1(&hasher.finalize())
     }
+}
+
+/// Pins the calling thread's MXCSR (round to nearest, no FTZ or DAZ) on
+/// first use and verifies it on every call: S's arithmetic entry points run
+/// only in that state.
+fn ensure_mxcsr_v1() -> Result<(), String> {
+    crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
+        .map_err(|e| format!("S arithmetic: MXCSR not pinned: {e:?}"))
 }
 
 pub(crate) fn hex_v1(bytes: &[u8]) -> String {

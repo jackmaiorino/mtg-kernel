@@ -6,12 +6,15 @@ autograd, every batch's RT1 GAE loss terms, the per-tensor gradient and one Adam
 native float32 results against E3's bars: each loss term relative error at most 1e-4, per-tensor gradient relative
 L2 error at most 1e-3, and per-tensor Adam parameter-change relative L2 error at most 1e-3.
 
-The Adam bar is read on the update one Adam step adds (before the parameter's own float32 rounding), from a warmed
-optimizer state (S's moments after a few native updates, shared by both sides). Also reported: the stored
-parameters' change, next to the floor float32 storage alone sets (at lr 1e-4 a parameter near 1 holds its change to
-about 6e-4); and the first step from zero moments, which moves every parameter by about the learning rate in the
-direction of its gradient's sign, so a gradient element within float32 rounding of zero can step the other way than
-in float64 (the receipt reports the error without the near-zero gradient elements).
+`design_bars` reads E3's bars literally: loss terms, gradients, and the change of the stored float32 parameters after
+one Adam step from a fresh optimizer (zero moments, step 1, as XS starts native RL). `passed` is that verdict.
+`arithmetic_checks` isolates the implementation from float32 representation: the same loss and gradient bars, and
+the update one Adam step adds (before the parameter's own float32 rounding) from a warmed optimizer state (S's
+moments after a few native updates, shared by both sides). Diagnostics explain any gap between the two: the floor
+float32 storage alone sets on the stored change (at lr 1e-4 a parameter near 1 holds its change to about 6e-4 of
+it), and the fresh step without near-zero gradient elements (the first step moves every parameter by about the
+learning rate in the direction of its gradient's sign, so an element within float32 rounding of zero can step the
+other way than in float64). The exit status is nonzero only when `arithmetic_checks` fails.
 
 `compare-logits A B --receipt R [--bar 1e-5]` compares two `logits-dump` files (for example Linux and Windows builds
 on the same states): maximum absolute logit and value difference at most the bar, and the same argmax except where
@@ -43,6 +46,7 @@ import torch.nn.functional as F
 OBJ, EDGE, ACT, REF, STATE, GROUPS = 98, 41, 195, 25, 219, 20
 STATE_KEEP = STATE - 96
 BARS = {"loss_relative": 1e-4, "gradient_relative_l2": 1e-3, "adam_change_relative_l2": 1e-3}
+RELATIVE_BARS = {"loss_relative": 1e-4, "gradient_relative_l2": 1e-3, "adam_update_relative_l2": 1e-3}
 LOGIT_BAR = 1e-5
 F64 = torch.float64
 
@@ -229,7 +233,8 @@ def parity(args) -> int:
     warm_t = int(batches["warm_adam_step"]) + 1
     if native.size != per * len(batches["batches"]):
         raise SystemExit("native.bin length does not match the batches")
-    worst = {"loss": {}, "gradient": {}, "adam": {}, "fresh": {}, "fresh_far": {}, "stored": {}, "floor": {}}
+    worst = {"loss": {}, "gradient": {}, "adam": {}, "fresh": {}, "fresh_far": {}, "stored": {}, "floor": {},
+             "fresh_stored": {}, "fresh_floor": {}}
     fresh_near_zero = fresh_sign_flips = 0
     rows = []
     b1, b2, eps = 0.9, 0.999, 1e-8
@@ -305,16 +310,33 @@ def parity(args) -> int:
             fresh_sign_flips += int(np.count_nonzero(np.sign(nat_grad[off:off + size]) != np.sign(g)))
             worst["fresh_far"][name] = max(worst["fresh_far"].get(name, 0.0),
                                            rel_l2(delta_nat[far], delta_ref[far]) if far.any() else 0.0)
+            # The literal bar: the stored float32 parameters after the fresh step (Rust adds the f32 update to the
+            # f32 parameter; numpy's float32 add rounds the same way).
+            base32 = base.astype(np.float32)
+            stored_fresh = (base32 + nat_fresh[off:off + size].astype(np.float32)).astype(np.float64) - base
+            worst["fresh_stored"][name] = max(worst["fresh_stored"].get(name, 0.0), rel_l2(stored_fresh, delta_ref))
+            fresh_floor = rel_l2((base + delta_ref).astype(np.float32).astype(np.float64) - base, delta_ref)
+            worst["fresh_floor"][name] = max(worst["fresh_floor"].get(name, 0.0), fresh_floor)
         rows.append(row)
     maxima = {
         "loss_relative": max(worst["loss"].values()),
         "gradient_relative_l2": max(worst["gradient"].values()),
-        "adam_change_relative_l2": max(worst["adam"].values()),
+        "adam_change_relative_l2": max(worst["fresh_stored"].values()),
     }
     passed = all(maxima[k] <= BARS[k] for k in BARS)
+    arithmetic = {
+        "loss_relative": maxima["loss_relative"],
+        "gradient_relative_l2": maxima["gradient_relative_l2"],
+        "adam_update_relative_l2": max(worst["adam"].values()),
+    }
+    arithmetic_passed = all(arithmetic[k] <= RELATIVE_BARS[k] for k in RELATIVE_BARS)
     fresh = {
-        "description": "one Adam step from zero moments (step 1); not the bar, see the module doc",
+        "description": "one Adam step from zero moments (step 1): the update before storage, with and without "
+                       "near-zero gradient elements, and the float32 storage floor of the stored change",
         "max_relative_l2": max(worst["fresh"].values()),
+        "max_float32_storage_floor": max(worst["fresh_floor"].values()),
+        "per_tensor_stored_change_relative_l2": worst["fresh_stored"],
+        "per_tensor_float32_storage_floor": worst["fresh_floor"],
         "max_relative_l2_excluding_near_zero_gradients": max(worst["fresh_far"].values()),
         "worst_tensor": max(worst["fresh"], key=worst["fresh"].get),
         "near_zero_gradient_elements": fresh_near_zero,
@@ -324,13 +346,17 @@ def parity(args) -> int:
     receipt = {
         "schema": "s-parity-receipt-v1",
         "passed": passed,
-        "bars": BARS,
+        "design_bars": {"bars": BARS, "maxima": maxima, "passed": passed,
+                        "adam": "stored float32 parameters after one Adam step from a fresh optimizer"},
+        "arithmetic_checks": {"bars": RELATIVE_BARS, "maxima": arithmetic, "passed": arithmetic_passed,
+                              "adam": "update before storage, one step from the warmed optimizer state"},
         "maxima": maxima,
         "worst_loss_term": worst["loss"],
         "worst_gradient_tensor": max(worst["gradient"], key=worst["gradient"].get),
-        "worst_adam_tensor": max(worst["adam"], key=worst["adam"].get),
+        "worst_adam_tensor": max(worst["fresh_stored"], key=worst["fresh_stored"].get),
         "per_tensor_gradient_relative_l2": worst["gradient"],
-        "per_tensor_adam_change_relative_l2": worst["adam"],
+        "per_tensor_adam_change_relative_l2": worst["fresh_stored"],
+        "per_tensor_warmed_update_relative_l2": worst["adam"],
         "adam_state": f"warmed: S's moments after {batches['warm_adam_step']} native updates, step {warm_t}",
         "fresh_step": fresh,
         "stored_parameter_change": {
@@ -352,11 +378,14 @@ def parity(args) -> int:
     Path(args.receipt).write_text(json.dumps(receipt, indent=1, sort_keys=True))
     summary = {k: receipt[k] for k in ("passed", "maxima", "worst_gradient_tensor", "worst_adam_tensor", "batches",
                                        "decisions")}
-    summary["fresh_step"] = {k: v for k, v in fresh.items() if k != "per_tensor_relative_l2"}
+    summary["arithmetic_checks"] = receipt["arithmetic_checks"]
+    summary["fresh_step"] = {k: v for k, v in fresh.items() if not k.startswith("per_tensor")}
     summary["stored_parameter_change"] = {k: v for k, v in receipt["stored_parameter_change"].items()
                                           if not k.startswith("per_tensor")}
     print(json.dumps(summary, indent=1))
-    return 0 if passed else 1
+    if not passed:
+        print("E3 design bars: NOT MET (see design_bars and the diagnostics)", file=sys.stderr)
+    return 0 if arithmetic_passed else 1
 
 
 def read_logits(path: Path):
@@ -428,7 +457,8 @@ def compare_logits(args) -> int:
             else:
                 mismatches += 1
     bar = args.bar
-    passed = max_logit <= bar and max_value <= bar and mismatches == 0
+    identical = Path(args.a).read_bytes() == Path(args.b).read_bytes()
+    passed = max_logit <= bar and max_value <= bar and mismatches == 0 and (identical or not args.require_identical)
     receipt = {
         "schema": "s-logit-parity-receipt-v1",
         "passed": passed,
@@ -438,6 +468,8 @@ def compare_logits(args) -> int:
         "max_abs_value_difference": max_value,
         "argmax_mismatches": mismatches,
         "argmax_differences_within_tie_bar": ties,
+        "bit_identical": identical,
+        "identity_required": args.require_identical,
         "a": {"path": args.a, "sha256": sha256(Path(args.a))},
         "b": {"path": args.b, "sha256": sha256(Path(args.b))},
     }
@@ -462,6 +494,20 @@ def export_values(args) -> int:
     return 0
 
 
+def compare_hashes(args) -> int:
+    """Compares two `resume-check` receipts (for example Linux and Windows): every after-state hash, the fresh and
+    starting state hashes and the checkpoint's hash must be equal."""
+    a, b = json.loads(Path(args.a).read_text()), json.loads(Path(args.b).read_text())
+    keys = ("after_state_sha256", "fresh_state_sha256", "starting_state_sha256", "checkpoint_sha256", "seed", "steps",
+            "split", "groups_per_batch")
+    differing = [k for k in keys if a.get(k) != b.get(k)]
+    receipt = {"schema": "s-hash-parity-receipt-v1", "passed": not differing, "differing": differing,
+               "after_state_sha256": a.get("after_state_sha256"), "a": args.a, "b": args.b}
+    Path(args.receipt).write_text(json.dumps(receipt, indent=1, sort_keys=True))
+    print(json.dumps(receipt, indent=1, sort_keys=True))
+    return 0 if not differing else 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -473,6 +519,11 @@ def main(argv=None) -> int:
     c.add_argument("b")
     c.add_argument("--receipt", required=True)
     c.add_argument("--bar", type=float, default=LOGIT_BAR)
+    c.add_argument("--require-identical", action="store_true")
+    h = sub.add_parser("compare-hashes")
+    h.add_argument("a")
+    h.add_argument("b")
+    h.add_argument("--receipt", required=True)
     t = sub.add_parser("torch-logits")
     t.add_argument("--state-dict", required=True)
     t.add_argument("--states", required=True)
@@ -483,7 +534,7 @@ def main(argv=None) -> int:
     x.add_argument("--out-dir", required=True)
     args = parser.parse_args(argv)
     commands = {"parity": parity, "compare-logits": compare_logits, "export-values": export_values,
-                "torch-logits": torch_logits}
+                "torch-logits": torch_logits, "compare-hashes": compare_hashes}
     return commands[args.command](args)
 
 

@@ -64,7 +64,8 @@ fn as_groups_v1(
 fn s_layout_has_the_pilot_parameter_count_and_names() {
     let layout = LayoutV1::of_v1(SConfigV1::s_v1()).unwrap();
     assert_eq!(layout.total, 460_346);
-    assert_eq!(layout.tensors.first().unwrap().name, "card.weight");
+    assert_eq!(layout.tensors[0].name, "ref_bias");
+    assert_eq!(layout.tensors[1].name, "card.weight");
     assert_eq!(layout.tensors.last().unwrap().name, "value.2.bias");
     let lookup: usize = layout
         .tensors
@@ -184,7 +185,7 @@ fn gradient_matches_central_differences() {
         .unwrap();
     let layout = model.layout_v1().clone();
     let gauge = layout.gauge_ranges_v1();
-    let card_row0 = layout.tensors[0].offset..layout.tensors[0].offset + TINY_V1.card_dim;
+    let card_row0 = layout.card..layout.card + TINY_V1.card_dim;
     let mut rng = SplitMixV1::new(5);
     let mut checked = 0;
     for spec in &layout.tensors {
@@ -239,7 +240,11 @@ fn gauge_and_padding_gradients_are_exactly_zero() {
     for range in model.layout_v1().gauge_ranges_v1() {
         assert!(grad[range].iter().all(|g| g.to_bits() == 0));
     }
-    assert!(grad[..32].iter().all(|g| g.to_bits() == 0), "card row 0");
+    let card = model.layout_v1().card;
+    assert!(
+        grad[card..card + 32].iter().all(|g| g.to_bits() == 0),
+        "card row 0"
+    );
     assert!(grad.iter().any(|g| *g != 0.0));
 }
 

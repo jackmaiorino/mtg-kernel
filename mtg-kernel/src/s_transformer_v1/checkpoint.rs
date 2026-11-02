@@ -173,6 +173,19 @@ pub fn decode_checkpoint_v1(bytes: &[u8]) -> Result<STrainStateV1, String> {
         return Err("S checkpoint section table differs from the config's layout".into());
     }
     let data_start = align_up_v1(table_end);
+    // The canonical file ends exactly after its last tensor: check the
+    // extent before allocating anything the config sizes.
+    let last = table
+        .sections
+        .last()
+        .ok_or("S checkpoint has no sections")?;
+    let data_end = (data_start as u64)
+        .checked_add(last.offset)
+        .and_then(|end| end.checked_add(last.byte_length))
+        .ok_or("S checkpoint extent overflows")?;
+    if data_end != bytes.len() as u64 {
+        return Err("S checkpoint length differs from its section table".into());
+    }
     let mut data = [
         vec![0.0f32; layout.total],
         vec![0.0f32; layout.total],
