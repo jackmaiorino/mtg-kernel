@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""Float64 PyTorch reference and receipts for native S (mtg-kernel `s_transformer_v1`, W5 E3).
+
+`parity --dir D --receipt R` reads a `s_transformer_v1 parity-dump` directory and recomputes, in float64 with
+autograd, every batch's RT1 GAE loss terms, the per-tensor gradient and one Adam step from a fresh optimizer. It
+compares them with the native float32 results against E3's bars: each loss term relative error at most 1e-4,
+per-tensor gradient relative L2 error at most 1e-3, and per-tensor Adam parameter-change relative L2 error at most
+1e-3.
+
+`compare-logits A B --receipt R` compares two `logits-dump` files (for example Linux and Windows builds on the same
+states): maximum absolute logit and value difference at most 1e-5, and the same argmax except where either side's
+top two logits are within 1e-5.
+
+The model is the bignet pilot's `ObjectTransformer` (collab LANES/bignet-pilot-20261031/code/models.py) written
+functionally: dropout 0, no autocast, state digest dropped, value `tanh(z / 2)`. The gauge parameters native S
+defines as fixed (`policy.2.bias` and the key third of every `qkv.bias`) get a zero gradient here too.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import platform
+import struct
+import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+
+OBJ, EDGE, ACT, REF, STATE, GROUPS = 98, 41, 195, 25, 219, 20
+STATE_KEEP = STATE - 96
+BARS = {"loss_relative": 1e-4, "gradient_relative_l2": 1e-3, "adam_change_relative_l2": 1e-3}
+LOGIT_BAR = 1e-5
+F64 = torch.float64
+
+FIELDS = (  # name, dtype, per-row width, count key (s4a-tensor-dump record)
+    ("state", np.float32, 1, "s"),
+    ("object_features", np.float32, OBJ, "n"),
+    ("object_card_ids", np.int32, 1, "n"),
+    ("object_groups", np.int32, 1, "n"),
+    ("object_node_ids", np.int32, 1, "n"),
+    ("edge_features", np.float32, EDGE, "e"),
+    ("edge_source", np.int32, 1, "e"),
+    ("edge_target", np.int32, 1, "e"),
+    ("action_features", np.float32, ACT, "a"),
+    ("action_ref_features", np.float32, REF, "r"),
+    ("action_ref_card_ids", np.int32, 1, "r"),
+    ("action_ref_action_indices", np.int32, 1, "r"),
+    ("action_ref_node_indices", np.int32, 1, "r"),
+    ("logits", np.float32, 1, "a"),
+    ("value", np.float32, 1, "one"),
+)
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def decode_records(buf: bytes) -> list[dict]:
+    out, pos = [], 0
+    while pos < len(buf):
+        n, e, a, r, s, selected, legal, actor = np.frombuffer(buf, np.uint32, 8, pos)
+        pos += 32
+        counts = {"n": int(n), "e": int(e), "a": int(a), "r": int(r), "s": int(s), "one": 1}
+        rec = {"selected": int(selected)}
+        for name, dtype, width, key in FIELDS:
+            count = counts[key] * width
+            arr = np.frombuffer(buf, dtype, count, pos)
+            pos += count * 4
+            rec[name] = arr.reshape(-1, width) if width > 1 else arr
+        if s != STATE or legal != a:
+            raise ValueError(f"bad record: state {s}, legal {legal}, actions {a}")
+        out.append(rec)
+    return out
+
+
+def collate(recs: list[dict]) -> dict:
+    b = len(recs)
+    no = [len(r["object_card_ids"]) for r in recs]
+    na = [len(r["action_features"]) for r in recs]
+    obase = np.concatenate([[0], np.cumsum(no)[:-1]]).astype(np.int64)
+    abase = np.concatenate([[0], np.cumsum(na)[:-1]]).astype(np.int64)
+    ne = [len(r["edge_source"]) for r in recs]
+    nr = [len(r["action_ref_card_ids"]) for r in recs]
+    omax, amax = max(no), max(na)
+    key_mask = np.zeros((b, 1 + omax + amax), bool)
+    key_mask[:, 0] = True
+    for i in range(b):
+        key_mask[i, 1:1 + no[i]] = True
+        key_mask[i, 1 + omax:1 + omax + na[i]] = True
+
+    def cat(key, dtype, width=None):
+        parts = [np.asarray(r[key]) for r in recs]
+        arr = np.concatenate(parts).astype(dtype) if parts else np.zeros(0, dtype)
+        return arr.reshape(-1, width) if width else arr
+
+    out = {
+        "state": np.stack([r["state"] for r in recs]).astype(np.float64),
+        "obj_feat": cat("object_features", np.float64, OBJ),
+        "obj_card": cat("object_card_ids", np.int64),
+        "obj_group": cat("object_groups", np.int64),
+        "obj_batch": np.repeat(np.arange(b), no),
+        "obj_pos": np.concatenate([np.arange(k) for k in no]),
+        "edge_feat": cat("edge_features", np.float64, EDGE) if sum(ne) else np.zeros((0, EDGE)),
+        "edge_src": cat("edge_source", np.int64) + np.repeat(obase, ne),
+        "edge_tgt": cat("edge_target", np.int64) + np.repeat(obase, ne),
+        "act_feat": cat("action_features", np.float64, ACT),
+        "act_batch": np.repeat(np.arange(b), na),
+        "act_pos": np.concatenate([np.arange(k) for k in na]),
+        "ref_feat": cat("action_ref_features", np.float64, REF) if sum(nr) else np.zeros((0, REF)),
+        "ref_card": cat("action_ref_card_ids", np.int64),
+        "ref_action": cat("action_ref_action_indices", np.int64) + np.repeat(abase, nr),
+        "ref_node": cat("action_ref_node_indices", np.int64) + np.repeat(obase, nr),
+        "key_mask": key_mask,
+    }
+    t = {k: torch.from_numpy(np.ascontiguousarray(v)) for k, v in out.items()}
+    t["omax"], t["amax"], t["na"] = omax, amax, na
+    return t
+
+
+def forward(P: dict, cfg: dict, bt: dict):
+    """models.py ObjectTransformer.forward in float64; returns (per-record logits list, value logit z)."""
+    d, heads = cfg["d_model"], cfg["heads"]
+    dh = d // heads
+    b, omax, amax = bt["state"].shape[0], bt["omax"], bt["amax"]
+    l = 1 + omax + amax
+
+    def lin(x, name):
+        return x @ P[name + ".weight"].T + P[name + ".bias"]
+
+    def mlp(x, name):
+        return lin(F.gelu(lin(x, name + ".0")), name + ".2")
+
+    card = P["card.weight"]
+    obj = mlp(torch.cat([bt["obj_feat"], F.embedding(bt["obj_card"], card, padding_idx=0)], -1), "obj_in")
+    obj = obj + P["group.weight"][bt["obj_group"]]
+    act = mlp(bt["act_feat"], "act_in")
+    if bt["ref_feat"].shape[0] > 0:
+        rh = mlp(torch.cat([bt["ref_feat"], F.embedding(bt["ref_card"], card, padding_idx=0)], -1), "ref_in")
+        act = act.index_add(0, bt["ref_action"], rh)
+    x = torch.zeros(b, l, d, dtype=F64)
+    x[:, 0] = mlp(bt["state"][:, :STATE_KEEP], "state_in")
+    x[bt["obj_batch"], 1 + bt["obj_pos"]] = obj
+    x[bt["act_batch"], 1 + omax + bt["act_pos"]] = act
+    bias = torch.zeros(b, heads, l, l, dtype=F64)
+    hh = torch.arange(heads)
+    if bt["edge_feat"].shape[0] > 0:
+        eb = lin(bt["edge_feat"], "edge_bias").view(-1, 2, heads)
+        eg = bt["obj_batch"][bt["edge_src"]]
+        s, t = 1 + bt["obj_pos"][bt["edge_src"]], 1 + bt["obj_pos"][bt["edge_tgt"]]
+        bias = bias.index_put((eg[:, None], hh[None], s[:, None], t[:, None]), eb[:, 0], accumulate=True)
+        bias = bias.index_put((eg[:, None], hh[None], t[:, None], s[:, None]), eb[:, 1], accumulate=True)
+    if bt["ref_feat"].shape[0] > 0:
+        rg = bt["act_batch"][bt["ref_action"]]
+        ai = 1 + omax + bt["act_pos"][bt["ref_action"]]
+        oi = 1 + bt["obj_pos"][bt["ref_node"]]
+        n = rg.shape[0]
+        rb = P["ref_bias"]
+        bias = bias.index_put((rg[:, None], hh[None], ai[:, None], oi[:, None]), rb[0].expand(n, heads), accumulate=True)
+        bias = bias.index_put((rg[:, None], hh[None], oi[:, None], ai[:, None]), rb[1].expand(n, heads), accumulate=True)
+    bias = bias.masked_fill(~bt["key_mask"][:, None, None, :], float("-inf"))
+    for i in range(cfg["layers"]):
+        p = f"blocks.{i}"
+        h1 = F.layer_norm(x, (d,), P[p + ".ln1.weight"], P[p + ".ln1.bias"], 1e-5)
+        q, k, v = lin(h1, p + ".qkv").view(b, l, 3, heads, dh).permute(2, 0, 3, 1, 4)
+        att = torch.softmax(q @ k.transpose(-1, -2) / math.sqrt(dh) + bias, -1) @ v
+        x = x + lin(att.transpose(1, 2).reshape(b, l, d), p + ".proj")
+        h2 = F.layer_norm(x, (d,), P[p + ".ln2.weight"], P[p + ".ln2.bias"], 1e-5)
+        x = x + lin(F.gelu(lin(h2, p + ".ff.0")), p + ".ff.2")
+    x = F.layer_norm(x, (d,), P["ln.weight"], P["ln.bias"], 1e-5)
+    state_h = x[:, 0]
+    act_out = x[bt["act_batch"], 1 + omax + bt["act_pos"]]
+    flat = mlp(torch.cat([state_h[bt["act_batch"]], act_out], -1), "policy").squeeze(-1)
+    z = mlp(state_h, "value").squeeze(-1)
+    logits, start = [], 0
+    for k in bt["na"]:
+        logits.append(flat[start:start + k])
+        start += k
+    return logits, z
+
+
+def gauge_mask(name: str, shape, d: int):
+    if name == "policy.2.bias":
+        return torch.ones(shape, dtype=torch.bool)
+    if name.startswith("blocks.") and name.endswith(".qkv.bias"):
+        m = torch.zeros(shape, dtype=torch.bool)
+        m[d:2 * d] = True
+        return m
+    return None
+
+
+def rel_l2(native: np.ndarray, ref: np.ndarray) -> float:
+    den = float(np.linalg.norm(ref))
+    num = float(np.linalg.norm(native - ref))
+    if den == 0.0:
+        return 0.0 if num == 0.0 else math.inf
+    return num / den
+
+
+def parity(args) -> int:
+    root = Path(args.dir)
+    layout = json.loads((root / "layout.json").read_text())
+    batches = json.loads((root / "batches.json").read_text())
+    cfg = layout["config"]
+    total = layout["total"]
+    d = cfg["d_model"]
+    p0 = np.frombuffer((root / "params.bin").read_bytes(), "<f4").astype(np.float64)
+    native = np.frombuffer((root / "native.bin").read_bytes(), "<f4")
+    records = decode_records((root / "decisions.td").read_bytes())
+    c = float(np.frombuffer(struct.pack("<I", batches["value_coefficient_bits"]), "<f4")[0])
+    lr = float(np.frombuffer(struct.pack("<I", batches["learning_rate_bits"]), "<f4")[0])
+    tensors = layout["tensors"]
+    per = 3 + 2 * total
+    if native.size != per * len(batches["batches"]):
+        raise SystemExit("native.bin length does not match the batches")
+    worst = {"loss": {}, "gradient": {}, "adam": {}}
+    rows = []
+    b1, b2, eps = 0.9, 0.999, 1e-8
+    for index, batch in enumerate(batches["batches"]):
+        nat = native[index * per:(index + 1) * per].astype(np.float64)
+        nat_terms, nat_grad, nat_after = nat[:3], nat[3:3 + total], nat[3 + total:]
+        P = {}
+        for t in tensors:
+            arr = p0[t["offset"]:t["offset"] + int(np.prod(t["shape"]))].reshape(t["shape"])
+            P[t["name"]] = torch.tensor(arr, dtype=F64, requires_grad=True)
+        flat_ids = [r for g in batch["groups"] for r in g["records"]]
+        bt = collate([records[r] for r in flat_ids])
+        logits, z = forward(P, cfg, bt)
+        value = torch.tanh(0.5 * z)
+        position = {r: i for i, r in enumerate(flat_ids)}
+        policy_sum = torch.zeros((), dtype=F64)
+        value_sum = torch.zeros((), dtype=F64)
+        for g in batch["groups"]:
+            adv = float(np.frombuffer(struct.pack("<I", g["advantage_bits"]), "<f4")[0])
+            tgt = float(np.frombuffer(struct.pack("<I", g["value_target_bits"]), "<f4")[0])
+            joint = torch.zeros((), dtype=F64)
+            for r in g["records"]:
+                lp = torch.log_softmax(logits[position[r]], -1)
+                joint = joint + lp[records[r]["selected"]]
+            policy_sum = policy_sum - joint * adv
+            value_sum = value_sum + (value[position[g["records"][0]]] - tgt) ** 2
+        G = len(batch["groups"])
+        loss = (policy_sum + c * value_sum) / G
+        loss.backward()
+        ref_terms = np.array([float(policy_sum) / G, float(value_sum) / G, float(loss)])
+        row = {"batch": index, "decisions": len(flat_ids)}
+        for k, name in enumerate(["policy_term", "value_term", "loss"]):
+            err = abs(nat_terms[k] - ref_terms[k]) / abs(ref_terms[k])
+            row[name + "_relative_error"] = err
+            worst["loss"][name] = max(worst["loss"].get(name, 0.0), err)
+        for t in tensors:
+            name, off = t["name"], t["offset"]
+            size = int(np.prod(t["shape"]))
+            grad = P[name].grad.detach().clone() if P[name].grad is not None else torch.zeros_like(P[name])
+            mask = gauge_mask(name, grad.shape, d)
+            if mask is not None:
+                grad[mask] = 0.0
+            g = grad.numpy().reshape(-1)
+            gerr = rel_l2(nat_grad[off:off + size], g)
+            worst["gradient"][name] = max(worst["gradient"].get(name, 0.0), gerr)
+            # One Adam step from zero moments (step 1), float64.
+            m = (1 - b1) * g
+            v = (1 - b2) * g * g
+            delta_ref = -(lr / (1 - b1)) * m / (np.sqrt(v) / math.sqrt(1 - b2) + eps)
+            delta_nat = nat_after[off:off + size] - p0[off:off + size]
+            aerr = rel_l2(delta_nat, delta_ref)
+            worst["adam"][name] = max(worst["adam"].get(name, 0.0), aerr)
+        rows.append(row)
+    maxima = {
+        "loss_relative": max(worst["loss"].values()),
+        "gradient_relative_l2": max(worst["gradient"].values()),
+        "adam_change_relative_l2": max(worst["adam"].values()),
+    }
+    passed = all(maxima[k] <= BARS[k] for k in BARS)
+    receipt = {
+        "schema": "s-parity-receipt-v1",
+        "passed": passed,
+        "bars": BARS,
+        "maxima": maxima,
+        "worst_loss_term": worst["loss"],
+        "worst_gradient_tensor": max(worst["gradient"], key=worst["gradient"].get),
+        "worst_adam_tensor": max(worst["adam"], key=worst["adam"].get),
+        "per_tensor_gradient_relative_l2": worst["gradient"],
+        "per_tensor_adam_change_relative_l2": worst["adam"],
+        "batches": len(rows),
+        "decisions": sum(r["decisions"] for r in rows),
+        "seed": batches["seed"],
+        "files_sha256": {p.name: sha256(p) for p in sorted(root.iterdir()) if p.is_file()},
+        "reference": {"torch": torch.__version__, "numpy": np.__version__, "python": platform.python_version(),
+                      "dtype": "float64", "script_sha256": sha256(Path(__file__))},
+        "per_batch": rows,
+    }
+    Path(args.receipt).write_text(json.dumps(receipt, indent=1, sort_keys=True))
+    print(json.dumps({k: receipt[k] for k in ("passed", "maxima", "worst_gradient_tensor", "worst_adam_tensor",
+                                              "batches", "decisions")}, indent=1))
+    return 0 if passed else 1
+
+
+def read_logits(path: Path):
+    buf = path.read_bytes()
+    if buf[:8] != b"SLOGIT01":
+        raise SystemExit(f"{path}: not a logits dump")
+    (count,) = struct.unpack_from("<Q", buf, 8)
+    pos, out = 16, []
+    for _ in range(count):
+        (a,) = struct.unpack_from("<I", buf, pos)
+        pos += 4
+        logits = np.frombuffer(buf, "<f4", a, pos).astype(np.float64)
+        pos += 4 * a
+        (value,) = struct.unpack_from("<f", buf, pos)
+        pos += 4
+        out.append((logits, value))
+    if pos != len(buf):
+        raise SystemExit(f"{path}: trailing bytes")
+    return out
+
+
+def top_two_gap(logits: np.ndarray) -> float:
+    if logits.size < 2:
+        return math.inf
+    s = np.sort(logits)
+    return float(s[-1] - s[-2])
+
+
+def compare_logits(args) -> int:
+    a, b = read_logits(Path(args.a)), read_logits(Path(args.b))
+    if len(a) != len(b):
+        raise SystemExit("different state counts")
+    max_logit = max_value = 0.0
+    mismatches = ties = 0
+    for (la, va), (lb, vb) in zip(a, b):
+        if la.size != lb.size:
+            raise SystemExit("different action counts")
+        max_logit = max(max_logit, float(np.max(np.abs(la - lb))))
+        max_value = max(max_value, abs(va - vb))
+        if int(np.argmax(la)) != int(np.argmax(lb)):
+            if min(top_two_gap(la), top_two_gap(lb)) <= LOGIT_BAR:
+                ties += 1
+            else:
+                mismatches += 1
+    passed = max_logit <= LOGIT_BAR and max_value <= LOGIT_BAR and mismatches == 0
+    receipt = {
+        "schema": "s-logit-parity-receipt-v1",
+        "passed": passed,
+        "bar": LOGIT_BAR,
+        "states": len(a),
+        "max_abs_logit_difference": max_logit,
+        "max_abs_value_difference": max_value,
+        "argmax_mismatches": mismatches,
+        "argmax_differences_within_tie_bar": ties,
+        "a": {"path": args.a, "sha256": sha256(Path(args.a))},
+        "b": {"path": args.b, "sha256": sha256(Path(args.b))},
+    }
+    Path(args.receipt).write_text(json.dumps(receipt, indent=1, sort_keys=True))
+    print(json.dumps(receipt, indent=1, sort_keys=True))
+    return 0 if passed else 1
+
+
+def export_values(args) -> int:
+    """Writes a PyTorch S state dict as `values.bin` (f32 little-endian, parameter order) and `names.json`
+    ([name, shape] pairs), for `s_transformer_v1 import-values`."""
+    state = torch.load(args.state_dict, map_location="cpu", weights_only=True)
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    names, chunks = [], []
+    for name, tensor in state.items():
+        names.append([name, list(tensor.shape)])
+        chunks.append(tensor.detach().to(torch.float32).contiguous().numpy().astype("<f4").tobytes())
+    (out / "values.bin").write_bytes(b"".join(chunks))
+    (out / "names.json").write_text(json.dumps(names))
+    print(json.dumps({"tensors": len(names), "values_sha256": sha256(out / "values.bin")}))
+    return 0
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("parity")
+    p.add_argument("--dir", required=True)
+    p.add_argument("--receipt", required=True)
+    c = sub.add_parser("compare-logits")
+    c.add_argument("a")
+    c.add_argument("b")
+    c.add_argument("--receipt", required=True)
+    x = sub.add_parser("export-values")
+    x.add_argument("--state-dict", required=True)
+    x.add_argument("--out-dir", required=True)
+    args = parser.parse_args(argv)
+    return {"parity": parity, "compare-logits": compare_logits, "export-values": export_values}[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
