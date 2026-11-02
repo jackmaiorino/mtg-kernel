@@ -21,6 +21,14 @@
 //!
 //! The record is a sidecar beside the trajectory, whose bytes the hook never
 //! changes.
+//!
+//! **W5 (`w5-xact-v1`, collab LANES/lead/W5-DESIGN.md v1.3 section 3):** with
+//! `w5` set, placement is one SHA-256 drawn index per learner seat-episode
+//! over W1-eligible decisions (`w5_xact_v1`), at most one search per episode;
+//! at a root with a target the played action is drawn from q, which the
+//! trajectory records as `selected` (the learner's own draw is kept in the
+//! sidecar). Burst rows are EX1's: the student acts. Without `w5` nothing
+//! here changes.
 
 use super::*;
 use crate::ex1_v1::{
@@ -32,6 +40,10 @@ use crate::regret_census_v1::stage4a::{
     ex1_node_covers_v1, ex1_self_target_v1, Ex1LookupV1, Ex1NodeV1, Ex1SearcherV1,
 };
 use crate::rl_session::FastActorDecisionV1;
+use crate::w5_xact_v1::{
+    w5_eligible_v1, w5_placement_hash_v1, w5_placement_index_v1, w5_played_action_v1,
+    W5_BUDGET_MAX_V1, W5_PLACEMENT_MAX_V1, W5_XACT_VERSION_V1,
+};
 use std::collections::BTreeMap;
 
 pub const EX1_COLLECT_SCHEMA_V1: &str = "ex1-collect-episode/v1";
@@ -48,6 +60,16 @@ pub struct Ex1CollectOptionsV1 {
     /// The global update index of this collection.
     pub update: u64,
     pub budget: u64,
+    /// W5's recipe; omitted for EX1, so every EX1 command keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w5: Option<W5CollectOptionsV1>,
+}
+
+/// W5's collection marker: the recipe identifier, `w5-xact-v1`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct W5CollectOptionsV1 {
+    pub recipe: String,
 }
 
 impl Ex1CollectOptionsV1 {
@@ -56,10 +78,22 @@ impl Ex1CollectOptionsV1 {
             !self.run.is_empty() && self.run.len() <= 256,
             "ex1 run id empty or too long",
         )?;
-        ensure(
-            self.budget == EX1_BUDGET_V1,
-            "ex1 search budget differs from the frozen B = 64k",
-        )
+        match &self.w5 {
+            None => ensure(
+                self.budget == EX1_BUDGET_V1,
+                "ex1 search budget differs from the frozen B = 64k",
+            ),
+            Some(w5) => {
+                ensure(
+                    w5.recipe == W5_XACT_VERSION_V1,
+                    "w5 collection names an unknown recipe",
+                )?;
+                ensure(
+                    self.budget > 0 && self.budget <= W5_BUDGET_MAX_V1,
+                    "w5 search budget outside 1..=2^20",
+                )
+            }
+        }
     }
 }
 
@@ -74,6 +108,30 @@ fn turn_key_v1(session: &FastActorSessionV1) -> TurnKeyV1 {
         state.active_player.0,
         state.extra_turn_v1.as_ref().map(|e| e.own_turns_started),
     )
+}
+
+/// W5's per seat-episode placement state.
+struct W5PlacementV1 {
+    slot: u64,
+    hash: u64,
+    /// The 1-based eligible index to search.
+    index: u64,
+    eligible: u64,
+    searched: bool,
+    /// Searches attempted, roots with a target (the search played), roots
+    /// without one.
+    attempted: u64,
+    acted: u64,
+    root_no_target: u64,
+}
+
+impl W5PlacementV1 {
+    fn json(&self) -> Value {
+        json!({"slot":self.slot,"placement_hash":format!("{:016x}",self.hash),
+            "placement_index":self.index,"placement_max":W5_PLACEMENT_MAX_V1,
+            "eligible_decisions":self.eligible,"reached":self.eligible >= self.index,
+            "attempted":self.attempted,"acted":self.acted,"root_no_target":self.root_no_target})
+    }
 }
 
 /// What one learner decision brought to the select step.
@@ -126,6 +184,7 @@ pub(super) struct Ex1EpisodeHookV1 {
     searches: Vec<Value>,
     rows: Vec<Value>,
     offers: Vec<Value>,
+    w5: Option<W5PlacementV1>,
 }
 
 impl Ex1EpisodeHookV1 {
@@ -133,9 +192,10 @@ impl Ex1EpisodeHookV1 {
         options: &Ex1CollectOptionsV1,
         learner: &FrozenPlayPolicyV1,
         episode: &ExpandedEpisodeV1,
+        slot: usize,
     ) -> Result<Self, String> {
         options.validate_v1()?;
-        Self::with_any_budget_v1(options, learner, episode)
+        Self::with_any_budget_v1(options, learner, episode, slot)
     }
 
     /// Tests only: a hook at a budget other than the frozen B.
@@ -144,15 +204,31 @@ impl Ex1EpisodeHookV1 {
         options: &Ex1CollectOptionsV1,
         learner: &FrozenPlayPolicyV1,
         episode: &ExpandedEpisodeV1,
+        slot: usize,
     ) -> Result<Self, String> {
-        Self::with_any_budget_v1(options, learner, episode)
+        Self::with_any_budget_v1(options, learner, episode, slot)
     }
 
     fn with_any_budget_v1(
         options: &Ex1CollectOptionsV1,
         learner: &FrozenPlayPolicyV1,
         episode: &ExpandedEpisodeV1,
+        slot: usize,
     ) -> Result<Self, String> {
+        let w5 = options.w5.as_ref().map(|_| {
+            let hash =
+                w5_placement_hash_v1(&options.run, options.update, episode.seed, slot as u64);
+            W5PlacementV1 {
+                slot: slot as u64,
+                hash,
+                index: w5_placement_index_v1(hash),
+                eligible: 0,
+                searched: false,
+                attempted: 0,
+                acted: 0,
+                root_no_target: 0,
+            }
+        });
         Ok(Self {
             options: options.clone(),
             seed: episode.seed,
@@ -166,6 +242,7 @@ impl Ex1EpisodeHookV1 {
             searches: Vec::new(),
             rows: Vec::new(),
             offers: Vec::new(),
+            w5,
         })
     }
 
@@ -182,11 +259,10 @@ impl Ex1EpisodeHookV1 {
         session: &FastActorSessionV1,
         d: FastActorDecisionV1,
     ) -> Result<Ex1PendingV1, String> {
-        let stratum = ex1_stratum_v1(
-            &session
-                .diagnostic_current_action_semantics()
-                .ok_or("ex1: no live menu at a decision")?,
-        );
+        let menu = session
+            .diagnostic_current_action_semantics()
+            .ok_or("ex1: no live menu at a decision")?;
+        let stratum = ex1_stratum_v1(&menu);
         let turn = turn_key_v1(session);
         if self.burst_turn.is_some_and(|t| t != turn) {
             self.searcher.clear();
@@ -201,10 +277,25 @@ impl Ex1EpisodeHookV1 {
             self.seed,
             d.physical_decision_id,
         );
-        if ex1_placement_v1(run, update, seed, decision, stratum) {
+        // EX1: a per-decision stratum draw. W5: the episode's k-th
+        // W1-eligible decision, once.
+        let trigger = match self.w5.as_mut() {
+            None => ex1_placement_v1(run, update, seed, decision, stratum)
+                .then(|| ex1_hash_u64_v1("ex1/placement", run, update, seed, decision)),
+            Some(w5) => {
+                let eligible = w5_eligible_v1(&menu);
+                w5.eligible += u64::from(eligible);
+                let fire = eligible && !w5.searched && w5.eligible == w5.index;
+                if fire {
+                    w5.searched = true;
+                    w5.attempted += 1;
+                }
+                fire.then_some(w5.hash)
+            }
+        };
+        if let Some(hash) = trigger {
             counts.triggers += 1;
             counts.retriggers += u64::from(self.burst_turn.is_some());
-            let hash = ex1_hash_u64_v1("ex1/placement", run, update, seed, decision);
             let (mut record, ok) = self.searcher.search(
                 session,
                 self.options.budget,
@@ -217,6 +308,9 @@ impl Ex1EpisodeHookV1 {
             record["turn"] = json!(turn.0);
             record["active_player"] = json!(turn.1);
             record["uniform"] = json!(ex1_uniform_v1(hash));
+            if let Some(w5) = &self.w5 {
+                record["eligible_index"] = json!(w5.index);
+            }
             // A search whose tree lacks its own root counts as failed too.
             let root = if ok {
                 match self.searcher.lookup(session, d)? {
@@ -287,33 +381,55 @@ impl Ex1EpisodeHookV1 {
     }
 
     /// The target at the live row from the deployed logits, then the cursor
-    /// follows the learner's own sampled action.
+    /// follows the played action. Returns the played action: the learner's
+    /// own sampled action, except at a W5 root with a target, where q's draw
+    /// plays.
     pub(super) fn after_select_v1(
         &mut self,
         pending: Ex1PendingV1,
         d: FastActorDecisionV1,
         logit_bits: &[u32],
         selected: u32,
-    ) -> Result<(), String> {
+    ) -> Result<u32, String> {
         let counts = self
             .counts
             .get_mut(&pending.stratum)
             .expect("every stratum");
         let mut row_index = None;
+        let mut played = selected;
         if let (Some(kind), Some(node)) = (pending.kind, &pending.node) {
-            match ex1_target_v1(logit_bits, &node.counts)? {
+            let target = ex1_target_v1(logit_bits, &node.counts)?;
+            if let (Some(w5), "root", Err(_)) = (self.w5.as_mut(), kind, &target) {
+                w5.root_no_target += 1;
+            }
+            match target {
                 Err(reason) => match reason {
                     crate::ex1_v1::Ex1NoTargetV1::Support => counts.no_target_support += 1,
                     crate::ex1_v1::Ex1NoTargetV1::Mass => counts.no_target_mass += 1,
                 },
                 Ok(target) => {
+                    let acted = match self.w5.as_mut() {
+                        Some(w5) if kind == "root" => {
+                            w5.acted += 1;
+                            played = u32::try_from(w5_played_action_v1(
+                                &target.target.probabilities,
+                                &self.options.run,
+                                self.options.update,
+                                self.seed,
+                                w5.slot,
+                            )?)
+                            .map_err(|e| e.to_string())?;
+                            true
+                        }
+                        _ => false,
+                    };
                     if kind == "root" {
                         counts.root_rows += 1;
                     } else {
                         counts.burst_rows += 1;
                     }
                     row_index = Some(self.rows.len());
-                    let row = row_json_v1(
+                    let mut row = row_json_v1(
                         kind,
                         pending.stratum,
                         &self.options,
@@ -322,9 +438,13 @@ impl Ex1EpisodeHookV1 {
                         pending.turn,
                         node,
                         &target,
-                        selected,
+                        played,
                         pending.self_target,
                     );
+                    if self.w5.is_some() {
+                        row["acted"] = json!(acted);
+                        row["policy_selected"] = json!(selected);
+                    }
                     self.rows.push(row);
                 }
             }
@@ -339,14 +459,14 @@ impl Ex1EpisodeHookV1 {
                 json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"turn":pending.turn.0,"active_player":pending.turn.1,
                 "self_index":index,"p_self":p.probabilities[index],
-                "chosen":selected as usize == index,"searched":pending.kind,"row":row_index,
+                "chosen":played as usize == index,"searched":pending.kind,"row":row_index,
                 "tree":pending.matched.as_ref().map(|node| offer_tree_json_v1(node, index))}),
             );
         }
         if pending.looked_up {
-            self.searcher.advance(selected);
+            self.searcher.advance(played);
         }
-        Ok(())
+        Ok(played)
     }
 
     /// The attempt's record.
@@ -356,11 +476,15 @@ impl Ex1EpisodeHookV1 {
             .iter()
             .map(|(s, c)| (s.as_str().to_string(), c.json()))
             .collect();
-        json!({"schema":EX1_COLLECT_SCHEMA_V1,"options":self.options,"episode_id":episode.id,
+        let mut record = json!({"schema":EX1_COLLECT_SCHEMA_V1,"options":self.options,"episode_id":episode.id,
             "seed":self.seed,"learner_seat":self.learner_seat,
             "learner_deck":episode.selected[usize::from(self.learner_seat)].label,
             "natural":natural,"strata":strata,"searches":self.searches,"rows":self.rows,
-            "offers":self.offers})
+            "offers":self.offers});
+        if let Some(w5) = &self.w5 {
+            record["w5"] = w5.json();
+        }
+        record
     }
 }
 

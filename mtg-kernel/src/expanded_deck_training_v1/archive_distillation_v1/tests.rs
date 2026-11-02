@@ -1530,6 +1530,7 @@ fn anchor_input<'a>(
         denominator: rows.len(),
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: rows
             .iter()
             .zip(targets)
@@ -2977,6 +2978,7 @@ fn retention_run_config_v1(
         search_targets: None,
         ex1: None,
         record_process_cpu: false,
+        chain_ledger: None,
         output_directory: root.join("run"),
     }
 }

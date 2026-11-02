@@ -6,9 +6,11 @@ use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
     ESupportedTeacherOptionsV1,
 };
-use crate::expanded_deck_training_v1::ex1_collect_v1::{Ex1CollectOptionsV1, EX1_BUDGET_V1};
+use crate::expanded_deck_training_v1::ex1_collect_v1::{
+    Ex1CollectOptionsV1, W5CollectOptionsV1, EX1_BUDGET_V1,
+};
 use crate::expanded_deck_training_v1::ex1_update_v1::{
-    continuation_identity as ex1_continuation_identity_v1, Ex1UpdateOptionsV1,
+    continuation_identity as ex1_continuation_identity_v1, Ex1UpdateOptionsV1, W5UpdateOptionsV1,
 };
 use crate::expanded_deck_training_v1::no_state_digest_v1::{
     is_converted_source_v1, policy_contract_record_v1,
@@ -32,6 +34,7 @@ use crate::expanded_deck_training_v1::{
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
 use crate::training_math_v1::TrainingMathV1;
+use crate::w5_xact_v1::W5_XACT_VERSION_V1;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -149,6 +152,18 @@ pub struct Ex1RunOptionsV1 {
     pub coefficient: f64,
     #[serde(default)]
     pub cap: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1,
+    /// W5's `w5-xact-v1` recipe (collab LANES/lead/W5-DESIGN.md v1.3 section
+    /// 3) at the run's frozen budget B; omitted for EX1, so every EX1 config
+    /// and run identity is unchanged. `run` is the chain id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w5: Option<W5RunOptionsV1>,
+}
+
+/// W5's run options: the frozen search budget B (Stage 0b).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct W5RunOptionsV1 {
+    pub budget: u64,
 }
 
 impl Ex1RunOptionsV1 {
@@ -156,7 +171,10 @@ impl Ex1RunOptionsV1 {
         Ex1CollectOptionsV1 {
             run: self.run.clone(),
             update: self.update_offset + index as u64,
-            budget: EX1_BUDGET_V1,
+            budget: self.w5.as_ref().map_or(EX1_BUDGET_V1, |w5| w5.budget),
+            w5: self.w5.as_ref().map(|_| W5CollectOptionsV1 {
+                recipe: W5_XACT_VERSION_V1.into(),
+            }),
         }
     }
 
@@ -167,7 +185,91 @@ impl Ex1RunOptionsV1 {
             coefficient: self.coefficient,
             cap: self.cap,
             collection,
+            w5: self.w5.as_ref().map(|w5| W5UpdateOptionsV1 {
+                recipe: W5_XACT_VERSION_V1.into(),
+                budget: w5.budget,
+            }),
         }
+    }
+}
+
+/// W5's chain-only CPU ledger (collab LANES/lead/W5-DESIGN.md v1.3 section
+/// 2.1). The guarded launcher (E10) owns the chain's cgroups and writes the
+/// source file `source` (schema `w5-chain-ledger-source/v1`):
+///
+/// - `closed_usec`: the closed total of every earlier cgroup instance of the
+///   chain (pauses, resumes, restarts, the stage transition);
+/// - `cpu_stat`: the live instance's `cpu.stat`, whose `usage_usec` line the
+///   driver reads (it sums every process of the chain, never the filler);
+/// - `instance`: the live instance's ordinal;
+/// - `stop_at_usec` (optional): the driver stops cleanly after the first
+///   update whose ledger value reaches it (resume to R_i).
+///
+/// At every update boundary the driver re-reads the source and records
+/// `closed_usec + usage_usec` in the iteration receipt as `chain_ledger`,
+/// beside the wall clock. The ledger is telemetry: it never enters a train
+/// state, a command or a checkpoint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChainLedgerOptionsV1 {
+    pub source: PathBuf,
+}
+
+pub const CHAIN_LEDGER_SOURCE_SCHEMA_V1: &str = "w5-chain-ledger-source/v1";
+
+/// One update boundary's ledger reading and the source's stop value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChainLedgerReadingV1 {
+    pub record: Value,
+    pub usec: u64,
+    pub stop_at_usec: Option<u64>,
+}
+
+impl ChainLedgerOptionsV1 {
+    pub fn read_v1(&self) -> Result<ChainLedgerReadingV1, String> {
+        let source = read_json(&self.source, SMALL_CAP)?;
+        check(
+            source["schema"] == CHAIN_LEDGER_SOURCE_SCHEMA_V1,
+            "chain ledger source has another schema",
+        )?;
+        let closed = source["closed_usec"]
+            .as_u64()
+            .ok_or("chain ledger source lacks closed_usec")?;
+        let instance = source["instance"]
+            .as_u64()
+            .ok_or("chain ledger source lacks instance")?;
+        let stop_at_usec = match source.get("stop_at_usec") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_u64()
+                    .ok_or("chain ledger stop_at_usec is not an integer")?,
+            ),
+        };
+        let stat_path = PathBuf::from(
+            source["cpu_stat"]
+                .as_str()
+                .ok_or("chain ledger source lacks cpu_stat")?,
+        );
+        let stat = fs::read_to_string(&stat_path)
+            .map_err(|e| format!("chain ledger cpu.stat {}: {e}", stat_path.display()))?;
+        let live = stat
+            .lines()
+            .find_map(|line| line.strip_prefix("usage_usec "))
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .ok_or("chain ledger cpu.stat lacks usage_usec")?;
+        let usec = closed.checked_add(live).ok_or("chain ledger overflows")?;
+        let unix_seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(err)?
+            .as_secs_f64();
+        Ok(ChainLedgerReadingV1 {
+            record: json!({"schema":"w5-chain-ledger/v1","usec":usec,"closed_usec":closed,
+                "live_usec":live,"instance":instance,"unix_seconds":unix_seconds,
+                "chain":source.get("chain").cloned().unwrap_or(Value::Null)}),
+            usec,
+            stop_at_usec,
+        })
     }
 }
 
@@ -327,6 +429,10 @@ pub struct NativeExpandedTrainingRunV1 {
     /// every existing config and receipt is unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub record_process_cpu: bool,
+    /// W5's chain-only CPU ledger; omitted when absent, so every existing
+    /// config and receipt is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_ledger: Option<ChainLedgerOptionsV1>,
     pub output_directory: PathBuf,
 }
 
@@ -1554,6 +1660,7 @@ pub fn run_native_expanded_training_v1(
     let mut history = Vec::new();
     let mut receipts = Vec::new();
     let mut newly_completed = 0usize;
+    let mut stopped_at_ledger = false;
     let mut missing_seen = false;
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
@@ -1636,7 +1743,7 @@ pub fn run_native_expanded_training_v1(
             receipts.push(pin(&complete_path)?);
             continue;
         }
-        if max_new_iterations.is_some_and(|limit| newly_completed >= limit) {
+        if stopped_at_ledger || max_new_iterations.is_some_and(|limit| newly_completed >= limit) {
             break;
         }
         // Invocation telemetry stays outside immutable iteration receipts. It
@@ -1865,6 +1972,14 @@ pub fn run_native_expanded_training_v1(
             receipt["driver_process_cpu_seconds"] =
                 json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
         }
+        let ledger = config
+            .chain_ledger
+            .as_ref()
+            .map(ChainLedgerOptionsV1::read_v1)
+            .transpose()?;
+        if let Some(reading) = &ledger {
+            receipt["chain_ledger"] = reading.record.clone();
+        }
         if let Some(ledger_pin) = collection_non_natural_ledger_pin(&collection)? {
             receipt["non_natural_ledger"] = value(&ledger_pin)?;
         }
@@ -1885,6 +2000,13 @@ pub fn run_native_expanded_training_v1(
         current_identity = after;
         history.push(current.clone());
         newly_completed += 1;
+        // W5 resume to R_i: stop after the first boundary at or past it.
+        if ledger
+            .as_ref()
+            .is_some_and(|r| r.stop_at_usec.is_some_and(|stop| r.usec >= stop))
+        {
+            stopped_at_ledger = true;
+        }
         println!(
             "{}",
             json!({"completed_iteration":index,"adam_step":current_identity.adam_step,
@@ -2089,6 +2211,7 @@ mod tests {
             search_targets: None,
             ex1: None,
             record_process_cpu: false,
+            chain_ledger: None,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -2910,6 +3033,7 @@ mod tests {
             search_targets: None,
             ex1: None,
             record_process_cpu: false,
+            chain_ledger: None,
             output_directory: root.join("run"),
         }
     }
@@ -3298,6 +3422,102 @@ mod tests {
         std::fs::write(options.packets_directory.join("STOP"), b"").unwrap();
         let error = run_native_expanded_training_v1(&stopped, None).unwrap_err();
         assert!(error.contains("stopped"), "{error}");
+    }
+
+    /// W5 (`w5-xact-v1`) through the production run path: every receipt
+    /// records the chain-only ledger from the launcher's source, the ledger
+    /// never changes a state (two runs with different ledgers reach the same
+    /// hashes), `stop_at_usec` stops after the first boundary that reaches
+    /// it, and the resumed run reaches the same hashes.
+    #[test]
+    fn w5_run_records_the_chain_ledger_stops_at_it_and_replays() {
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        };
+        let w5_config = |label: &str, closed: u64, stop: Option<u64>| {
+            let mut config = real_two_iteration_config_v1(label, gae, ExpandedUpdateBackendV1::Cpu);
+            let root = config.output_directory.parent().unwrap().to_path_buf();
+            let stat = root.join("cpu.stat");
+            fs::write(&stat, "usage_usec 1000\nuser_usec 600\nsystem_usec 400\n").unwrap();
+            let source = root.join("ledger-source.json");
+            let mut document = json!({"schema":CHAIN_LEDGER_SOURCE_SCHEMA_V1,"chain":"w5/chain1",
+                "closed_usec":closed,"cpu_stat":stat,"instance":2});
+            if let Some(stop) = stop {
+                document["stop_at_usec"] = json!(stop);
+            }
+            fs::write(&source, serde_json::to_vec(&document).unwrap()).unwrap();
+            config.ex1 = Some(Ex1RunOptionsV1 {
+                run: "w5/chain1".into(),
+                update_offset: 0,
+                coefficient: 1.0,
+                cap:
+                    crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1::Ratio {
+                        kappa: 2.0,
+                    },
+                w5: Some(W5RunOptionsV1 { budget: 1_500 }),
+            });
+            config.chain_ledger = Some(ChainLedgerOptionsV1 { source });
+            config.validate_v1().unwrap();
+            (config, document)
+        };
+        let states = |result: &Value| {
+            (0..2)
+                .map(|i| {
+                    let update: PinnedFileV1 =
+                        serde_json::from_value(iteration_receipt_v1(result, i)["update"].clone())
+                            .unwrap();
+                    read_pin(&update).unwrap()["after_state_sha256"].clone()
+                })
+                .collect::<Vec<_>>()
+        };
+        let (a, _) = w5_config("w5-ledger-a", 5_000, None);
+        let result = run_native_expanded_training_v1(&a, None).unwrap();
+        assert_eq!(result["complete"], true);
+        for i in 0..2 {
+            let receipt = iteration_receipt_v1(&result, i);
+            assert_eq!(receipt["chain_ledger"]["usec"], 6_000);
+            assert_eq!(receipt["chain_ledger"]["instance"], 2);
+            let update: PinnedFileV1 = serde_json::from_value(receipt["update"].clone()).unwrap();
+            let document = read_pin(&update).unwrap();
+            let ex1 = read_pin(&parse_pin(&document["ex1"], "receipt").unwrap()).unwrap();
+            assert_eq!(ex1["method"], "w5-xact-v1");
+            assert_eq!(ex1["w5"]["budget"], 1_500);
+            let telemetry = ex1["w5"]["step_telemetry"].as_bool().unwrap();
+            assert_eq!(telemetry, i == 0, "update {i}");
+        }
+        let (b, _) = w5_config("w5-ledger-b", 9_000_000, None);
+        let other = run_native_expanded_training_v1(&b, None).unwrap();
+        assert_eq!(
+            states(&result),
+            states(&other),
+            "the ledger changed a state"
+        );
+        let (c, mut document) = w5_config("w5-ledger-c", 5_000, Some(6_000));
+        let stopped = run_native_expanded_training_v1(&c, None).unwrap();
+        assert_eq!(stopped["completed_iterations"], 1);
+        assert_eq!(stopped["complete"], false);
+        document["stop_at_usec"] = Value::Null;
+        fs::write(
+            &c.chain_ledger.as_ref().unwrap().source,
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        let resumed = run_native_expanded_training_v1(&c, None).unwrap();
+        assert_eq!(resumed["complete"], true);
+        assert_eq!(states(&result), states(&resumed), "resume changed a state");
+        // An ordinary config without the ledger keeps its receipts.
+        assert!(iteration_receipt_v1(&result, 0)
+            .get("chain_ledger")
+            .is_some());
+        let plain =
+            real_two_iteration_config_v1("w5-ledger-plain", gae, ExpandedUpdateBackendV1::Cpu);
+        plain.validate_v1().unwrap();
+        assert!(serde_json::to_value(&plain)
+            .unwrap()
+            .get("chain_ledger")
+            .is_none());
     }
 
     /// TP1 Stage B's ledger: with `record_process_cpu`, every iteration

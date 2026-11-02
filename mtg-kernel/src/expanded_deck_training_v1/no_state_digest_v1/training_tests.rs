@@ -1549,6 +1549,7 @@ fn run_config(
         search_targets: None,
         ex1: None,
         record_process_cpu: false,
+        chain_ledger: None,
         output_directory,
     }
 }

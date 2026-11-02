@@ -577,6 +577,7 @@ pub(super) fn auxiliary_input_v1<'a>(
         denominator: options.denominator,
         cap: options.cap.kappa_v1(),
         step_telemetry: options.b2_identity_v1().is_some(),
+        policy_mask: Vec::new(),
         rows: rows
             .iter()
             .map(|row| ExternalAuxiliaryRowV1 {

@@ -946,6 +946,7 @@ fn all_pins_v1() -> Vec<PinV1> {
                 denominator: 2,
                 cap: Some(1.0e-3),
                 step_telemetry: true,
+                policy_mask: Vec::new(),
                 rows: (0..2)
                     .map(|_| ExternalAuxiliaryRowV1 {
                         encoded: encoded_decision_view_v3(&fixture.tensors[1]),
