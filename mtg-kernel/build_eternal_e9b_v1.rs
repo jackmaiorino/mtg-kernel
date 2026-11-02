@@ -322,7 +322,7 @@ pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str
     match name {
         "Simic Growth Chamber" => Some(vec!["G"]),
         "Black Dragon Gate" => Some(vec!["B"]),
-        _ => None,
+        _ => super::build_eternal_p1b_v1::primary_mana_ability_colors(name),
     }
 }
 

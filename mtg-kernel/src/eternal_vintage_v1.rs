@@ -1048,6 +1048,12 @@ pub(crate) fn has_type_override(
     {
         return Some(answer);
     }
+    // Opalescence's enchantment creatures (Premodern wave P1b).
+    if let Some(answer) =
+        crate::eternal_premodern_p1b_v1::statics::has_type_override(state, object, card_type)
+    {
+        return Some(answer);
+    }
     let eternal = state.eternal_v1.as_ref()?;
     let vintage = &eternal.vintage;
     if vintage.karn_animated.is_empty() && vintage.robots.is_empty() && vintage.copies.is_empty() {
@@ -1155,6 +1161,12 @@ pub(crate) fn activation_allowed(
             ability_index,
         )
         && crate::eternal_legacy_e9a_v1::statics::activation_allowed(
+            state,
+            source,
+            name,
+            ability_index,
+        )
+        && crate::eternal_premodern_p1b_v1::statics::activation_allowed(
             state,
             source,
             name,
@@ -1660,6 +1672,7 @@ pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
         || active_named(state, object, TIME_VAULT)
         || crate::eternal_e5a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_legacy_e8a_v1::statics::prevents_untap_step(state, object)
+        || crate::eternal_premodern_p1b_v1::statics::prevents_untap_step(state, object)
 }
 
 /// Applies a Time Vault skip to the turn about to begin for the now-active

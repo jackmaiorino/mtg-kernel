@@ -32,6 +32,7 @@ mod build_eternal_e8b_v1;
 mod build_eternal_e9a_v1;
 mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
+mod build_eternal_p1b_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -11491,6 +11492,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Nomad" => "Subtype::Nomad",
         "Scarecrow" => "Subtype::Scarecrow",
         "Peasant" => "Subtype::Peasant",
+        "Atog" => "Subtype::Atog",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

@@ -351,7 +351,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Bitter Triumph" => "Some(&[CostComponent::DiscardCards(1)])",
-        _ => "None",
+        _ => super::build_eternal_p1b_v1::additional_cost_for(name),
     }
 }
 
@@ -390,7 +390,7 @@ pub(super) fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
 /// Lands whose mana ability the runtime grants: Valgavoth's Lair adds the
 /// color chosen as it entered (`eternal_legacy_e8a_v1::statics`).
 pub(super) fn static_only_land(name: &str) -> bool {
-    name == "Valgavoth's Lair"
+    name == "Valgavoth's Lair" || super::build_eternal_p1b_v1::static_only_land(name)
 }
 
 /// Card-database tokens for the triggered abilities in
