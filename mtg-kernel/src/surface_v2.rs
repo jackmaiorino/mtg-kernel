@@ -442,6 +442,22 @@ impl SuppressionCounts {
 /// four suppression rules, same blockers-reshape bookkeeping) but a
 /// separate type, per the H2 contract.
 #[derive(Clone)]
+/// The surface's id-free scalar state (public: derived from public actions
+/// and public counts), carried by the W1 information-set payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarnessSurfaceScalarsV1 {
+    pub combat_priority_spent: [bool; 2],
+    pub combat_priority_round_seen: Option<u64>,
+    pub combat_priority_stack_len_seen: usize,
+    pub combat_priority_mana_count_seen: u64,
+    pub combat_round_opening_mana_count: u64,
+    pub round_opening_stack_len: usize,
+    pub stack_len_round_seen: Option<u64>,
+    pub last_seen_stack_len: Option<usize>,
+    pub mana_count_at_last_stack_change: u64,
+}
+
 pub struct HarnessSurfaceV2 {
     priority_mode: PriorityModeV1,
     suppression_audit_mode: SuppressionAuditMode,
@@ -712,24 +728,40 @@ pub enum PriorityModeV1 {
 }
 
 impl HarnessSurfaceV2 {
-    /// The id-free combat-priority context the W1 export carries
-    /// (`infoset_v1`); None while a blocker reshape (which names objects)
+    /// The id-free throttle and mana-activity context the W1 export carries
+    /// (`infoset_v1`); None while a reshape or exemption that names objects
     /// is active.
-    pub(crate) fn infoset_context_v1(&self) -> Option<([bool; 2], Option<u64>, usize)> {
-        if self.blockers.is_some() {
+    pub(crate) fn infoset_context_v1(&self) -> Option<HarnessSurfaceScalarsV1> {
+        if self.blockers.is_some()
+            || self.discard.is_some()
+            || self.optional_cost.is_some()
+            || self.madness_cast_reprompt_exemption.is_some()
+        {
             return None;
         }
-        Some((
-            self.combat_priority_spent,
-            self.combat_priority_round_seen,
-            self.combat_priority_stack_len_seen,
-        ))
+        Some(HarnessSurfaceScalarsV1 {
+            combat_priority_spent: self.combat_priority_spent,
+            combat_priority_round_seen: self.combat_priority_round_seen,
+            combat_priority_stack_len_seen: self.combat_priority_stack_len_seen,
+            combat_priority_mana_count_seen: self.combat_priority_mana_count_seen,
+            combat_round_opening_mana_count: self.combat_round_opening_mana_count,
+            round_opening_stack_len: self.round_opening_stack_len,
+            stack_len_round_seen: self.stack_len_round_seen,
+            last_seen_stack_len: self.last_seen_stack_len,
+            mana_count_at_last_stack_change: self.mana_count_at_last_stack_change,
+        })
     }
 
-    pub(crate) fn set_infoset_context_v1(&mut self, context: ([bool; 2], Option<u64>, usize)) {
-        self.combat_priority_spent = context.0;
-        self.combat_priority_round_seen = context.1;
-        self.combat_priority_stack_len_seen = context.2;
+    pub(crate) fn set_infoset_context_v1(&mut self, c: HarnessSurfaceScalarsV1) {
+        self.combat_priority_spent = c.combat_priority_spent;
+        self.combat_priority_round_seen = c.combat_priority_round_seen;
+        self.combat_priority_stack_len_seen = c.combat_priority_stack_len_seen;
+        self.combat_priority_mana_count_seen = c.combat_priority_mana_count_seen;
+        self.combat_round_opening_mana_count = c.combat_round_opening_mana_count;
+        self.round_opening_stack_len = c.round_opening_stack_len;
+        self.stack_len_round_seen = c.stack_len_round_seen;
+        self.last_seen_stack_len = c.last_seen_stack_len;
+        self.mana_count_at_last_stack_change = c.mana_count_at_last_stack_change;
     }
 
     pub fn new() -> HarnessSurfaceV2 {

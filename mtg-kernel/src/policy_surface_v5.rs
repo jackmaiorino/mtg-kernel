@@ -389,9 +389,7 @@ pub struct PolicySurfaceV5 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SurfaceContextV1 {
-    pub combat_priority_spent: [bool; 2],
-    pub combat_priority_round_seen: Option<u64>,
-    pub combat_priority_stack_len_seen: usize,
+    pub scalars: crate::surface_v2::HarnessSurfaceScalarsV1,
     pub hunter_order_enabled_v45: bool,
 }
 
@@ -402,21 +400,14 @@ impl PolicySurfaceV5 {
         if self.scan.is_some() || self.hunter_order_v45.is_some() {
             return None;
         }
-        let (spent, round, stack_len) = self.inner.infoset_context_v1()?;
         Some(SurfaceContextV1 {
-            combat_priority_spent: spent,
-            combat_priority_round_seen: round,
-            combat_priority_stack_len_seen: stack_len,
+            scalars: self.inner.infoset_context_v1()?,
             hunter_order_enabled_v45: self.hunter_order_enabled_v45,
         })
     }
 
     pub(crate) fn set_infoset_context_v1(&mut self, context: SurfaceContextV1) {
-        self.inner.set_infoset_context_v1((
-            context.combat_priority_spent,
-            context.combat_priority_round_seen,
-            context.combat_priority_stack_len_seen,
-        ));
+        self.inner.set_infoset_context_v1(context.scalars);
         self.hunter_order_enabled_v45 = context.hunter_order_enabled_v45;
     }
 
