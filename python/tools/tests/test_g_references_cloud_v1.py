@@ -190,6 +190,8 @@ class FakePod:
             return self.granted
         if program is cloud.POD_LAUNCH:
             return {"pid": 7, "start_ticks": 1, "token": "t", "epoch": 1.0}
+        if program is gcloud.POD_MARKER_PROBE:  # the release-marker probe before the launch (#471)
+            return {"ok": True}
         raise AssertionError(program.split("\n", 1)[0])
 
 

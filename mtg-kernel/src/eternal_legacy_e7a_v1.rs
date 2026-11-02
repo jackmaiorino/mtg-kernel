@@ -1588,6 +1588,7 @@ fn therapy(ctx: &ExecCtx, state: &mut GameState, named: u16) {
     };
     let hand = state.players[player.index()].hand.clone();
     for &card in &hand {
+        // spellbench-public-reveal: hand card revealed by the card rules.
         if state
             .reveal_hand_card(player.opponent(), player, card)
             .is_err()

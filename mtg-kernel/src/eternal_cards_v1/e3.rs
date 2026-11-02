@@ -594,6 +594,7 @@ pub(crate) fn finish_selection(
             let mut chosen = chosen.clone();
             if let Some(card) = bindings.first() {
                 // The next player sees the choice before making theirs.
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 state.reveal_hand_card(choice.player.opponent(), choice.player, card.object)?;
                 chosen.push(*card);
             }

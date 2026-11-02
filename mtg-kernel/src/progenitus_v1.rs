@@ -241,6 +241,7 @@ pub(crate) fn reveal_order_sources(
                 }
             }
             Zone::Hand => {
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 for viewer in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
                     state.reveal_hand_card(viewer, owner, binding.object)?;
                 }

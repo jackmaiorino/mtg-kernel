@@ -1277,6 +1277,7 @@ pub(crate) fn drive(
             }
             let hand = state.players[player.index()].hand.clone();
             for &card in &hand {
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 state.reveal_hand_card(player.opponent(), player, card)?;
             }
             let cards = hand
@@ -1622,6 +1623,7 @@ fn finish_tavern(
         }
         event::propose_and_commit(state, ProposedEvent::zone_change(card.object, Zone::Hand));
         if state.objects.get(card.object).zone == Zone::Hand {
+            // spellbench-public-reveal: hand card revealed by the card rules.
             state.reveal_hand_card(player.opponent(), player, card.object)?;
         }
     }

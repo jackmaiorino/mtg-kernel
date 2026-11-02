@@ -1051,7 +1051,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         EternalOpV1::LookAtTopOfTargetLibraryV1 => {
             if let Some(Target::Player(player)) = ctx.targets.first().copied() {
-                // spellbench-public-reveal: rules-granted look at another library.
+                // spellbench-reviewed-look: rules-granted look at another library.
                 state.reveal_library_top(ctx.controller, player, 1);
             }
         }
@@ -1061,6 +1061,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             };
             match state.random_hand_card_v1(player) {
                 Ok(Some(card)) => {
+                    // spellbench-reviewed-look: the card rules let a player look at the other hand.
                     if state
                         .reveal_hand_card(ctx.controller, player, card)
                         .is_err()
