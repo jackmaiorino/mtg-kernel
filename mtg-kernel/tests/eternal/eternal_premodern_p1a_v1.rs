@@ -1523,6 +1523,9 @@ fn goblin_vandal_trades_its_damage_for_an_artifact() {
     let vandal = put(&mut state, P0, "Goblin Vandal", Zone::Battlefield);
     let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
     put(&mut state, P0, "Mountain", Zone::Battlefield);
+    // An instant-speed action keeps P0's priority windows open, so the
+    // check below runs in the declare blockers step.
+    put(&mut state, P0, "Seal of Fire", Zone::Battlefield);
     pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
     act(&mut state, Action::DeclareAttackers(vec![vandal]));
     run_until(
@@ -1533,10 +1536,7 @@ fn goblin_vandal_trades_its_damage_for_an_artifact() {
             _ => None,
         },
     );
-    assert_eq!(
-        state.players[1].life, 20,
-        "the trigger resolves before damage"
-    );
+    assert_eq!(state.step, Step::DeclareBlockers);
     assert!(statics::assigns_no_combat_damage(&state, vandal));
     attack_finish(&mut state);
     assert_eq!(zone(&state, ring), Zone::Graveyard);
