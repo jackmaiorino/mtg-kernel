@@ -25,25 +25,32 @@ namespace `w5/0b`, one record per source episode in episode order) and applies s
 
 It reads terminal rollout outcomes of b512's continuation only: never a rating, panel score or CP7.
 
-  stage0b.py select --captures DIR [--out RESULT.json]        the budget decision (B or stop) and its receipt
-  stage0b.py gate --captures DIR --budget B [--out OUT.json]  section 7.4 gate (c): G at the arm's B on 100
-                                                              fresh states, lower bound above 0
+  stage0b.py select --captures DIR --parent-sha256 H [--out RESULT.json]   the budget decision (B or stop)
+  stage0b.py gate --captures DIR --budget B --arm A --checkpoint-sha256 H [--out OUT.json]
+                                         section 7.4 gate (c): G at the arm's B on 100 fresh states drawn at the
+                                         arm's chain-1 checkpoint, lower bound above 0
   stage0b.py placement --chain C --update U --seed S --slot J
   stage0b.py fixtures [--out FILE]                            placement test vectors for the engine hook
 
 Capture record (`w5-0b-capture/v1`, JSON lines in DIR/capture-*.jsonl):
-  {"schema", "episode": <ordinal in episode order>, "game": <source game id>, "chain", "update", "seed", "slot",
-   "k": <placed index>, "reached": bool, and when reached:
+  {"schema", "episode": <ordinal in episode order>, "game": <source game id>, "chain": "w5/0b" (gate (c):
+   "w5/gate-c/<arm>"), "source_checkpoint_sha256": <the policy that played and searched>, "update", "seed",
+   "slot", "k": <placed index>, "reached": bool, and when reached:
    "policy": {"logit_bits": [f32 bits per legal action, live menu order]},
-   "candidates": [{"budget": 16000|64000, "search_seed": 0|1, "status": "ok"|"failed", "cpu_s": float,
+   "candidates": [{"budget": 16000|64000, "search_seed": 0|1, "seed_root": str, "status": "ok"|"failed",
+                   "cpu_s": float,
                    "n": [...], "wins": [...], "draws": [...], "q_bits": [...] (optional, engine's q)}],
-   "qref": {"rollouts": 128, "actions": [index...], "wins": [...], "draws": [...], "n": [...]}}
+   "qref": {"rollouts": 128, "seed_root": str (distinct from every candidate's), "actions": [index...],
+            "wins": [...], "draws": [...], "n": [...]}}
+Every record is validated before the panel is drawn (types, widths, counts, statuses, seeds, CPU, namespace and
+checkpoint), so a malformed record can neither enter the panel nor shift it.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -65,6 +72,7 @@ N_MAX = 128
 FLOOR_FRACTION = 0.5
 PLACEMENT_TAG = "w5/placement"
 BOOT_TAG = "w5/0b/boot"
+PANEL_NAMESPACE = "w5/0b"
 
 
 class StageError(Exception):
@@ -127,17 +135,62 @@ def candidate_q(cand: dict, logit_bits: list[int], p: list[float]) -> tuple[list
     return result["q"], "target"
 
 
-def state_gains(record: dict) -> dict:
-    """Per budget: G_B(s), attempted-search CPU and target outcomes; refuses an incomplete record."""
+def is_count(x) -> bool:
+    return type(x) is int and x >= 0
+
+
+def check_counts(n, wins, draws, width, what: str) -> None:
+    require(isinstance(n, list) and isinstance(wins, list) and isinstance(draws, list)
+            and len(n) == len(wins) == len(draws) and (width is None or len(n) == width), f"{what}: widths differ")
+    require(all(is_count(x) for x in n + wins + draws), f"{what}: counts must be nonnegative integers")
+    require(all(w + d <= m for m, w, d in zip(n, wins, draws)), f"{what}: wins plus draws exceed visits")
+
+
+def validate_record(record: dict, namespace: str, source_sha256: str, budgets) -> None:
+    """Every capture record, reached or not, before it can enter (or be skipped by) the panel."""
     require(record.get("schema") == CAPTURE_SCHEMA, "wrong capture schema")
+    where = f"episode {record.get('episode')}"
+    require(is_count(record.get("episode")) and isinstance(record.get("game"), str), f"{where}: identity fields")
+    require(record.get("chain") == namespace, f"{where}: chain namespace is not {namespace}")
+    require(record.get("source_checkpoint_sha256") == source_sha256, f"{where}: played by another checkpoint")
+    require(all(is_count(record.get(k)) for k in ("update", "seed", "slot", "k")), f"{where}: placement fields")
+    require(type(record.get("reached")) is bool, f"{where}: reached must be a boolean")
+    if not record["reached"]:
+        return
+    bits = record["policy"]["logit_bits"]
+    require(isinstance(bits, list) and len(bits) >= 2 and all(type(b) is int and 0 <= b < 1 << 32 for b in bits),
+            f"{where}: policy logits")
+    width = len(bits)
+    seen = set()
+    for c in record["candidates"]:
+        require(c.get("status") in ("ok", "failed"), f"{where}: candidate status {c.get('status')!r}")
+        require(c.get("budget") in budgets and c.get("search_seed") in SEEDS, f"{where}: candidate key")
+        require(isinstance(c.get("seed_root"), str) and c["seed_root"], f"{where}: candidate seed root")
+        cpu = c.get("cpu_s")
+        require(type(cpu) in (int, float) and math.isfinite(cpu) and cpu >= 0, f"{where}: candidate CPU")
+        if c["status"] == "ok":
+            check_counts(c["n"], c["wins"], c["draws"], width, f"{where} candidate")
+        seen.add((c["budget"], c["search_seed"]))
+    require(len(seen) == len(record["candidates"]) and seen == {(b, s) for b in budgets for s in SEEDS},
+            f"{where}: candidates must be each budget at search seeds 0 and 1, once")
+    qref = record["qref"]
+    require(qref.get("rollouts") == ROLLOUTS, f"{where}: Q_ref needs {ROLLOUTS} rollouts per action")
+    check_counts(qref["n"], qref["wins"], qref["draws"], len(qref["actions"]), f"{where} Q_ref")
+    require(all(n == ROLLOUTS for n in qref["n"]), f"{where}: Q_ref needs {ROLLOUTS} rollouts per action")
+    actions = qref["actions"]
+    require(all(type(a) is int and 0 <= a < width for a in actions) and len(set(actions)) == len(actions),
+            f"{where}: Q_ref actions must be distinct legal indices")
+    roots = {c["seed_root"] for c in record["candidates"]}
+    require(isinstance(qref.get("seed_root"), str) and qref["seed_root"] and qref["seed_root"] not in roots,
+            f"{where}: Q_ref seeds must be independent of the candidates' (distinct seed root)")
+
+
+def state_gains(record: dict, budgets=BUDGETS) -> dict:
+    """Per budget: G_B(s), attempted-search CPU and target outcomes (the record is already validated)."""
     logit_bits = record["policy"]["logit_bits"]
     p = policy(record)
     cands = {(c["budget"], c["search_seed"]): c for c in record["candidates"]}
-    require(len(cands) == len(record["candidates"]) and set(cands) == {(b, s) for b in BUDGETS for s in SEEDS},
-            f"episode {record['episode']}: candidates must be 16k and 64k at search seeds 0 and 1")
     qref = record["qref"]
-    require(qref["rollouts"] == ROLLOUTS and all(n == ROLLOUTS for n in qref["n"]),
-            f"episode {record['episode']}: Q_ref needs {ROLLOUTS} rollouts per action")
     ref = {a: (w + 0.5 * d) / n for a, w, d, n in zip(qref["actions"], qref["wins"], qref["draws"], qref["n"])}
     supported = {a for c in cands.values() if c["status"] == "ok"
                  for a, n in enumerate(c["n"]) if n >= target_ref.SUPPORT_MIN}
@@ -145,7 +198,7 @@ def state_gains(record: dict) -> dict:
     require(supported | {argmax} <= set(ref), f"episode {record['episode']}: Q_ref misses actions "
             f"{sorted((supported | {argmax}) - set(ref))}")
     out = {}
-    for budget in BUDGETS:
+    for budget in budgets:
         gains, outcomes, cpu = [], [], []
         for seed in SEEDS:
             cand = cands[(budget, seed)]
@@ -176,10 +229,11 @@ def load_records(directory: Path) -> list[dict]:
     return records
 
 
-def draw_panel(records: list[dict], size: int) -> list[dict]:
-    """The first `size` reached states in episode order; every earlier episode must be present (no gaps)."""
+def draw_panel(records: list[dict], size: int, namespace: str, source_sha256: str, budgets=BUDGETS) -> list[dict]:
+    """The first `size` reached states in episode order; every earlier episode present (no gaps) and valid."""
     panel, games = [], set()
     for expected, record in enumerate(records):
+        validate_record(record, namespace, source_sha256, budgets)
         require(record["episode"] == expected, f"episode ordinals have a gap at {expected}")
         require(record["k"] == placement_index(record["chain"], record["update"], record["seed"], record["slot"]),
                 f"episode {expected}: k differs from the placement hash")
@@ -236,9 +290,10 @@ def decide(summary: dict) -> dict:
     return {"decision": "budget", "B": best, "eligible": eligible}
 
 
-def evaluate(records: list[dict], size: int, budgets, boot_tag: str, replicates: int) -> dict:
-    panel = draw_panel(records, size)
-    per_state = [state_gains(r) for r in panel]
+def evaluate(records: list[dict], size: int, budgets, boot_tag: str, replicates: int, namespace: str,
+             source_sha256: str) -> dict:
+    panel = draw_panel(records, size, namespace, source_sha256, budgets)
+    per_state = [state_gains(r, budgets) for r in panel]
     seed = tag_seed(boot_tag)
     samples = bootstrap(per_state, budgets, seed, replicates)
     summary = {}
@@ -247,20 +302,23 @@ def evaluate(records: list[dict], size: int, budgets, boot_tag: str, replicates:
         cpu = [c for s in per_state for c in s[b]["cpu_s"]]
         ordered = sorted(samples[b])
         outcomes = [o for s in per_state for o in s[b]["outcomes"]]
+        require(sum(cpu) > 0, f"budget {b}: no positive search CPU recorded")
         summary[b] = {"G": sum(gains) / len(gains), "lower_10pct": ordered[lower_index(len(ordered))],
                       "c": sum(cpu) / len(cpu), "attempted": len(cpu),
                       "targets": outcomes.count("target"), "failed": outcomes.count("failed"),
                       "no_target": sum(o.startswith("no_target") for o in outcomes)}
     panel_ids = [[r["episode"], r["game"]] for r in panel]
-    return {"panel_size": size, "panel_sha256": hashlib.sha256(json.dumps(panel_ids).encode()).hexdigest(),
+    return {"namespace": namespace, "source_checkpoint_sha256": source_sha256,
+            "panel_size": size, "panel_sha256": hashlib.sha256(json.dumps(panel_ids).encode()).hexdigest(),
             "panel_last_episode": panel[-1]["episode"], "boot_seed": seed, "boot_tag": boot_tag,
             "replicates": replicates, "summary": summary, "per_state": [
                 {"episode": r["episode"], "game": r["game"], **{str(b): s[b]["gain"] for b in budgets}}
                 for r, s in zip(panel, per_state)]}
 
 
-def select(records: list[dict], replicates: int = REPLICATES) -> dict:
-    result = evaluate(records, PANEL, BUDGETS, BOOT_TAG, replicates)
+def select(records: list[dict], parent_sha256: str, replicates: int = REPLICATES) -> dict:
+    """Stage 0b on b512's panel (namespace `w5/0b`, both budgets)."""
+    result = evaluate(records, PANEL, BUDGETS, BOOT_TAG, replicates, PANEL_NAMESPACE, parent_sha256)
     result.update(decide(result["summary"]))
     result["schema"] = RESULT_SCHEMA
     result["law"] = ("outcome-adaptive development tuning on terminal rollout outcomes of b512's continuation; "
@@ -269,10 +327,13 @@ def select(records: list[dict], replicates: int = REPLICATES) -> dict:
     return result
 
 
-def gate(records: list[dict], budget: int, arm: str, replicates: int = REPLICATES) -> dict:
-    """Section 7.4 gate (c): G at the arm's B on 100 fresh states, 10th percentile above 0."""
+def gate(records: list[dict], budget: int, arm: str, checkpoint_sha256: str, replicates: int = REPLICATES) -> dict:
+    """Section 7.4 gate (c): G at the arm's frozen B on 100 fresh states (namespace `w5/gate-c/<arm>`) drawn at
+    the arm's chain-1 checkpoint (every record names it), 10th percentile above 0."""
     require(budget in BUDGETS, "the gate reads the arm's frozen B")
-    result = evaluate(records, GATE_PANEL, (budget,), f"w5/gate-c/boot/{arm}", replicates)
+    result = evaluate(records, GATE_PANEL, (budget,), f"w5/gate-c/boot/{arm}", replicates, f"w5/gate-c/{arm}",
+                      checkpoint_sha256)
+    result["arm"], result["budget"] = arm, budget
     result["pass"] = result["summary"][budget]["lower_10pct"] > 0
     result["summary"] = {str(b): v for b, v in result["summary"].items()}
     return result
@@ -283,11 +344,13 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("select")
     p.add_argument("--captures", type=Path, required=True)
+    p.add_argument("--parent-sha256", required=True, help="b512's checkpoint SHA-256")
     p.add_argument("--out", type=Path)
     p = sub.add_parser("gate")
     p.add_argument("--captures", type=Path, required=True)
     p.add_argument("--budget", type=int, required=True)
     p.add_argument("--arm", required=True)
+    p.add_argument("--checkpoint-sha256", required=True, help="the arm's chain-1 checkpoint SHA-256")
     p.add_argument("--out", type=Path)
     p = sub.add_parser("placement")
     for name, kind in (("--chain", str), ("--update", int), ("--seed", int), ("--slot", int)):
@@ -302,9 +365,9 @@ def main(argv=None) -> int:
         if args.command == "fixtures":
             result = fixtures()
         elif args.command == "select":
-            result = select(load_records(args.captures))
+            result = select(load_records(args.captures), args.parent_sha256)
         else:
-            result = gate(load_records(args.captures), args.budget, args.arm)
+            result = gate(load_records(args.captures), args.budget, args.arm, args.checkpoint_sha256)
     except StageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

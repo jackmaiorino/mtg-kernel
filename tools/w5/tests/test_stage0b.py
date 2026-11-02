@@ -15,8 +15,8 @@ import target_ref  # noqa: E402  (stage0b put tools/ex1 on the path)
 def record(episode, rng, reached=True, fail=(), drop_qref=False, game=None):
     chain, update, seed, slot = "w5/0b", episode // 10, 1000 + episode, episode % 10
     out = {"schema": s0.CAPTURE_SCHEMA, "episode": episode, "game": game or f"g{episode}", "chain": chain,
-           "update": update, "seed": seed, "slot": slot, "k": s0.placement_index(chain, update, seed, slot),
-           "reached": reached}
+           "source_checkpoint_sha256": PARENT, "update": update, "seed": seed, "slot": slot,
+           "k": s0.placement_index(chain, update, seed, slot), "reached": reached}
     if not reached:
         return out
     k = 4
@@ -28,13 +28,17 @@ def record(episode, rng, reached=True, fail=(), drop_qref=False, game=None):
             n = [rng.randint(0, budget // 400) + (8 if a < 3 else 0) for a in range(k)]
             wins = [int(n[a] * true_value[a]) for a in range(k)]
             cands.append({"budget": budget, "search_seed": search_seed, "cpu_s": budget / 1500 + rng.random(),
+                          "seed_root": f"w5/0b/search/{episode}/{budget}/{search_seed}",
                           "status": "failed" if (budget, search_seed) in fail else "ok",
                           "n": n, "wins": wins, "draws": [0] * k})
     out["candidates"] = cands
     actions = list(range(1 if drop_qref else 0, k))
-    out["qref"] = {"rollouts": 128, "actions": actions, "n": [128] * len(actions),
+    out["qref"] = {"rollouts": 128, "seed_root": f"w5/0b/qref/{episode}", "actions": actions, "n": [128] * len(actions),
                    "wins": [int(128 * true_value[a]) for a in actions], "draws": [0] * len(actions)}
     return out
+
+
+PARENT = "b512" * 16
 
 
 def records(count=340, seed=3):
@@ -86,6 +90,25 @@ class GainTests(unittest.TestCase):
         with self.assertRaises(s0.StageError):
             s0.state_gains(record(0, random.Random(5), drop_qref=True))
 
+    def test_malformed_records_are_refused(self):
+        def bad(mutate):
+            rec = record(0, random.Random(5))
+            mutate(rec)
+            with self.assertRaises((s0.StageError, KeyError, TypeError)):
+                s0.validate_record(rec, "w5/0b", PARENT, s0.BUDGETS)
+        bad(lambda r: r["qref"]["wins"].__setitem__(0, 12800))          # wins above visits
+        bad(lambda r: r["qref"]["actions"].__setitem__(1, 0))           # duplicate action
+        bad(lambda r: r["qref"]["n"].pop())                             # unequal widths
+        bad(lambda r: r["candidates"][0].__setitem__("cpu_s", float("nan")))
+        bad(lambda r: r["candidates"][0].__setitem__("cpu_s", -1.0))
+        bad(lambda r: r["candidates"][0].__setitem__("status", "not-attempted"))
+        bad(lambda r: r["candidates"][0]["wins"].__setitem__(0, -1))
+        bad(lambda r: r.__setitem__("reached", "false"))
+        bad(lambda r: r.__setitem__("chain", "w5/chain1"))
+        bad(lambda r: r.__setitem__("source_checkpoint_sha256", "other"))
+        bad(lambda r: r["qref"].__setitem__("seed_root", r["candidates"][0]["seed_root"]))
+        s0.validate_record(record(0, random.Random(5)), "w5/0b", PARENT, s0.BUDGETS)
+
     def test_engine_q_must_match_mirror(self):
         rec = record(0, random.Random(5))
         c = rec["candidates"][0]
@@ -101,7 +124,7 @@ class GainTests(unittest.TestCase):
 class PanelTests(unittest.TestCase):
     def test_first_300_reached_in_episode_order(self):
         recs = records()
-        panel = s0.draw_panel(recs, 300)
+        panel = s0.draw_panel(recs, 300, "w5/0b", PARENT)
         self.assertEqual(len(panel), 300)
         self.assertTrue(all(r["reached"] for r in panel))
         reached = [r for r in recs if r["reached"]]
@@ -110,18 +133,18 @@ class PanelTests(unittest.TestCase):
     def test_refusals(self):
         recs = records()
         with self.assertRaises(s0.StageError):
-            s0.draw_panel(recs[:100], 300)
+            s0.draw_panel(recs[:100], 300, "w5/0b", PARENT)
         gap = recs[:5] + recs[6:]
         with self.assertRaises(s0.StageError):
-            s0.draw_panel(gap, 300)
+            s0.draw_panel(gap, 300, "w5/0b", PARENT)
         bad_k = [dict(r) for r in recs]
         bad_k[3]["k"] = bad_k[3]["k"] % 128 + 1
         with self.assertRaises(s0.StageError):
-            s0.draw_panel(bad_k, 300)
+            s0.draw_panel(bad_k, 300, "w5/0b", PARENT)
         dup = [dict(r) for r in recs]
         dup[2]["game"] = dup[1]["game"]
         with self.assertRaises(s0.StageError):
-            s0.draw_panel(dup, 300)
+            s0.draw_panel(dup, 300, "w5/0b", PARENT)
 
 
 def summary(g16, lo16, c16, g64, lo64, c64):
@@ -154,8 +177,8 @@ class RuleTests(unittest.TestCase):
 class EndToEndTests(unittest.TestCase):
     def test_select_and_gate_are_deterministic(self):
         recs = records()
-        a = s0.select(recs, replicates=400)
-        b = s0.select(recs, replicates=400)
+        a = s0.select(recs, PARENT, replicates=400)
+        b = s0.select(recs, PARENT, replicates=400)
         self.assertEqual(a, b)
         self.assertEqual(a["boot_seed"], s0.tag_seed("w5/0b/boot"))
         self.assertIn(a["decision"], ("budget", "stop"))
@@ -163,7 +186,15 @@ class EndToEndTests(unittest.TestCase):
             path = Path(tmp) / "capture-000.jsonl"
             path.write_text("".join(json.dumps(r) + "\n" for r in reversed(recs)))
             self.assertEqual(s0.load_records(Path(tmp)), recs)
-        g = s0.gate(recs, 16000, "X8", replicates=400)
+        with self.assertRaises(s0.StageError):  # Stage 0b's captures are not the arm's fresh gate states
+            s0.gate(recs, 16000, "X8", PARENT, replicates=400)
+        fresh = [dict(r, chain="w5/gate-c/X8", source_checkpoint_sha256="x8c1",
+                      candidates=[c for c in r.get("candidates", []) if c["budget"] == 16000])
+                 if r["reached"] else dict(r, chain="w5/gate-c/X8", source_checkpoint_sha256="x8c1")
+                 for r in recs[:130]]
+        for r in fresh:
+            r["k"] = s0.placement_index(r["chain"], r["update"], r["seed"], r["slot"])
+        g = s0.gate(fresh, 16000, "X8", "x8c1", replicates=400)
         self.assertEqual(g["panel_size"], 100)
         self.assertIsInstance(g["pass"], bool)
 
