@@ -78,6 +78,8 @@ mod reuse_witness;
 mod root_allocation;
 mod root_rebuild;
 mod seeds;
+mod serve;
+mod serve_ac2;
 mod sharing;
 mod tree;
 mod utility_root;
@@ -159,6 +161,9 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-reused-action"
             | "s4a-policy-ensemble"
             | "s4a-reach"
+            | "s4a-serve"
+            | "s4a-serve-worker"
+            | "s4a-serve-ac2"
     )
 }
 
@@ -1690,6 +1695,15 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         && parse_interchange(std::env::var("S4A_INTERCHANGE"))?
     {
         return Err("reused-action modes require interchange off".into());
+    }
+    if cfg.mode == serve::SERVE_MODE {
+        return serve::run_pool(cfg);
+    }
+    if cfg.mode == serve::WORKER_MODE {
+        return serve::run_worker(policy);
+    }
+    if cfg.mode == serve_ac2::AC2_MODE {
+        return serve_ac2::run(cfg, policy);
     }
     match cfg.mode.as_str() {
         "s4a-bank"
