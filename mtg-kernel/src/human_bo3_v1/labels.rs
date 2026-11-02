@@ -1733,11 +1733,19 @@ fn label_common(
                                     .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
                             )
                         }
+                        ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
+                            format!(
+                                "Sacrifice {}",
+                                handles
+                                    .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
+                            )
+                        }
                     };
                     if !matches!(
                         ability.cost,
                         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
                             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
+                            | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_)
                     ) && cost_target.is_some()
                     {
                         return Err(Error::UnsupportedPrompt);

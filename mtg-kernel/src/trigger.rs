@@ -5582,7 +5582,13 @@ fn triggers_from_events(
     }
     if events.is_empty() {
         // Nothing can match an empty batch; only the use-ledger pruning
-        // above is observable.
+        // above is observable. Premodern wave P1a's hooks queue triggers
+        // without an event (Goblin Vandal's "attacks and isn't blocked", as
+        // blockers are declared), so its queue is drained here too.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_premodern_p1a_v1::delayed_triggers(
+            state, events,
+        ));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;

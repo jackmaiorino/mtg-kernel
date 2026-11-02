@@ -250,7 +250,11 @@ impl SelectedSpellManaCostsV1 {
                     // as an additional cost of an ordinary cast.
                     || (cfg!(feature = "eternal-fixtures")
                         && components.iter().any(|component| {
-                            matches!(component, CostComponent::ExileOtherCardsFromOwnGraveyard(_))
+                            matches!(
+                                component,
+                                CostComponent::ExileOtherCardsFromOwnGraveyard(_)
+                                    | CostComponent::ExileXCardsFromOwnGraveyardV1 { .. }
+                            )
                         }))
             });
         let mut chosen_by_group = Vec::with_capacity(original_groups.len());
@@ -329,6 +333,7 @@ impl SelectedSpellManaCostsV1 {
                     component,
                     CostComponent::ExileOtherCardsFromOwnGraveyard(_)
                         | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+                        | CostComponent::ExileXCardsFromOwnGraveyardV1 { .. }
                 )
             }) {
                 if chosen.iter().any(|object| reserved.contains(object)) {
@@ -730,6 +735,14 @@ pub(super) fn selected_spell_mana_costs_v1(
     {
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, player),
+        );
+        // Goblin Warchief: Goblin spells cost {1} less (wave P1a).
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_premodern_p1a_v1::statics::spell_cost_reduction(
+                state,
+                &selected.spell_subtypes,
+                player,
+            ),
         );
     }
     // Keep surcharges separate from the base so intermediate u8 saturation
@@ -1270,6 +1283,34 @@ fn selected_spell_quote_branch_grant_v1(
                     0,
                     super::checked_graveyard_exile_candidates(player, source, state, &[])?,
                 ))
+            }
+            // "Exile X cards from your graveyard": the chosen cards are the
+            // X exiled (eternal wave P1a).
+            CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => {
+                graveyard_family = true;
+                Some((
+                    chosen_prefix.len(),
+                    super::checked_graveyard_exile_candidates(player, source, state, &[])?
+                        .into_iter()
+                        .filter(|&card| {
+                            !*blue_only
+                                || super::object_color_mask(state, card)
+                                    & card_def::mana_color_mask(crate::mana::ManaColor::U)
+                                    != 0
+                        })
+                        .collect(),
+                ))
+            }
+            // Foil: an Island card first, then any other card.
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                let mut hand = super::island_discard_cost_candidates(player, source, state, &[]);
+                let first = hand.clone();
+                for &card in &state.players[player.index()].hand {
+                    if card != source && !first.contains(&card) {
+                        hand.push(card);
+                    }
+                }
+                Some((2, hand))
             }
             CostComponent::DiscardCards(count) => {
                 discard_count += usize::from(*count);

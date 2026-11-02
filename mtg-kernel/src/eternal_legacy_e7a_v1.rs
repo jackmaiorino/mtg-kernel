@@ -2953,7 +2953,8 @@ pub(crate) fn manifested(state: &GameState, id: ObjectId) -> bool {
 /// this way).
 pub(crate) fn turn_face_up_cost(state: &GameState, id: ObjectId) -> Option<crate::mana::Cost> {
     if !manifested(state, id) {
-        return None;
+        // A face-down morph card turns face up for its morph cost (wave P1a).
+        return crate::eternal_premodern_p1a_v1::statics::morph_face_up_cost(state, id);
     }
     let def = definition(state, id)?;
     def.has_type(CardType::Creature).then_some(def.cost)

@@ -720,6 +720,8 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
             // Vocabulary gap: ObjF has no subtype class.
             (ObjF::Typed(CardTypeF::Land), None)
         }
+        // Vocabulary gap: ObjF has no subtype class.
+        PermanentFilter::WithSubtypeV1(_) => (ObjF::Permanent, None),
     }
 }
 

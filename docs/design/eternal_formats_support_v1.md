@@ -455,3 +455,47 @@ reporting as E1 to E9:
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
 so the catalog needs no format legality check.
+
+P1a is built in `src/eternal_premodern_p1a_v1.rs` (with `statics` and `targets` submodules)
+and `build_eternal_p1a_v1.rs`, whose tables wave E9a's fall through to. New primitives:
+
+- Split cards (Fire // Ice): the second half is the card's Adventure form, cast from hand by
+  choosing it as the spell's form, and it goes to the graveyard instead of exile. On the
+  stack a half has only its own colors and mana value; elsewhere the card has both colors
+  and mana value 4. Fire's divided damage is announced with its targets, two picks among
+  creatures, planeswalkers and players, as Fury's is.
+- Morph (Exalted Angel) reuses disguise's face-down cast for {3} without the ward; turning
+  it face up for the morph cost is the special action manifests already use.
+- "Exile X cards from your graveyard" (Skeletal Scrying's additional cost, Flash of
+  Insight's flashback with blue cards only) reuses Nethergoyf's open-ended graveyard
+  exile: the caster picks cards while one more keeps the cast payable, then X is the
+  number picked. Foil's "discard an Island card and another card" is an alternative cost
+  picked Island first. Skirk Prospector's mana ability sacrifices a Goblin, itself
+  included, as its cost target.
+- Printed protection from a color (Goblin Piledriver, Knight of Stromgald, Mystic Enforcer)
+  joins Sejiri Steppe's protection mask. Funeral Charm's swampwalk, Goblin Goon's attack
+  and block restrictions, Goblin Warchief's cost reduction and haste, threshold (Mystic
+  Enforcer, Barbarian Ring), Terravore's characteristic-defining size, Sulfuric Vortex's
+  "players gain no life" (lifelink included), Goblin Vandal's "assigns no combat damage",
+  Goblin Sharpshooter's untap step and "can't be regenerated" (Incinerate for the turn,
+  Smother for its own destruction) are hooks.
+- Gemstone Mine's mining counters work like wave E8b's depletion counters; Powder Keg's
+  fuse counters are read as its ability resolves, from the incarnation that was
+  sacrificed. Rith's Grove's entry trigger returns a chosen non-Lair land or sacrifices it.
+- Hook-queued triggers: Gempalm Incinerator's cycle trigger (from the cycling discard),
+  damage dealt by Goblin Lackey and Hypnotic Specter and to Jackal Pup, "whenever a
+  creature dies" (Goblin Sharpshooter), Ball Lightning's end step, Anurid Brushhopper's
+  end-step return, Sulfuric Vortex's upkeeps, Goblin Vandal's "attacks and isn't blocked"
+  (as blockers are declared) and Sylvan Library's draw step (put on the stack after the
+  draw). Sylvan Library's "cards drawn this turn" are the turn's draws since its upkeep
+  that are still in hand.
+- Cursed Scroll names a card by first letter, then name, among every registry card name,
+  and reveals a card at random from its controller's hand. Portent's controller orders
+  the top three cards of the target player's library. Vision Charm's land type change
+  chooses one of the 18 modeled land types, then a basic land type, and fixes the affected
+  lands as it resolves (611.2c); wave E8a's land-type change applies it with Harbinger of
+  the Seas and the moons, the latest timestamp winning. Its phasing is wave E5a's.
+
+Known gaps: Ice can be cast only from hand, as an Adventure form can, so a split card cast
+from another zone (a flashback grant, Yawgmoth's Will) is cast as Fire; naming effects name
+the whole card ("Fire // Ice"), not one half. Morph is modeled for Exalted Angel only.

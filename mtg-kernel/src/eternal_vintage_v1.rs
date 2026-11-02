@@ -1660,6 +1660,7 @@ pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
         || active_named(state, object, TIME_VAULT)
         || crate::eternal_e5a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_legacy_e8a_v1::statics::prevents_untap_step(state, object)
+        || crate::eternal_premodern_p1a_v1::statics::prevents_untap_step(state, object)
 }
 
 /// Applies a Time Vault skip to the turn about to begin for the now-active
