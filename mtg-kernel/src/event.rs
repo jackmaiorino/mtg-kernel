@@ -7408,6 +7408,7 @@ fn materialize_zone_change_v1(
         // Returning a publicly identified card to hand does not make that
         // identity secret again. The owner sees it through `own_hand`; the
         // other observer receives an incarnation-bound known-hand fact.
+        // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
                 .reveal_hand_card(observer, owner, id)
@@ -7420,6 +7421,7 @@ fn materialize_zone_change_v1(
         // move; the ordinary constructor above remains deliberately hidden.
         for observer in [PlayerId::P0, PlayerId::P1] {
             if informed_observer_mask & (1 << observer.index()) != 0 {
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 state
                     .reveal_hand_card(observer, owner, id)
                     .expect("known library object just moved into its owner's hand");

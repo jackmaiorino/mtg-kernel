@@ -1449,6 +1449,7 @@ pub(crate) fn drive(
             // "Target player reveals their hand."
             let hand = state.players[player.index()].hand.clone();
             for &card in &hand {
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 state.reveal_hand_card(player.opponent(), player, card)?;
             }
             let cards = hand

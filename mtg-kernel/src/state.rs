@@ -2285,27 +2285,33 @@ pub struct ObservationNoteV1 {
 
 #[cfg(test)]
 thread_local! {
-    /// Test-only record of the source lines where one player learned cards
-    /// of the other player's library. Audits require each to be a reviewed
-    /// public-reveal site (marked `spellbench-public-reveal`).
-    static OPPONENT_LIBRARY_REVEAL_SITES_V1: std::cell::RefCell<
-        std::collections::BTreeSet<(&'static str, u32)>,
+    /// Test-only record of the source lines where one player learned hidden
+    /// cards of the other player (library look or reveal, hand reveal, or a
+    /// library reorder revealed to the opponent). Audits require each to be a
+    /// reviewed site, marked `spellbench-public-reveal` or
+    /// `spellbench-reviewed-look` at the call.
+    static OPPONENT_HIDDEN_REVEAL_SITES_V1: std::cell::RefCell<
+        std::collections::BTreeSet<(&'static str, &'static str, u32)>,
     > = Default::default();
 }
 
 #[cfg(test)]
-fn note_opponent_library_reveal_site_v1(location: &'static std::panic::Location<'static>) {
-    OPPONENT_LIBRARY_REVEAL_SITES_V1.with(|sites| {
+fn note_opponent_reveal_site_v1(
+    kind: &'static str,
+    location: &'static std::panic::Location<'static>,
+) {
+    OPPONENT_HIDDEN_REVEAL_SITES_V1.with(|sites| {
         sites
             .borrow_mut()
-            .insert((location.file(), location.line()))
+            .insert((kind, location.file(), location.line()))
     });
 }
 
-/// Takes this thread's recorded opponent library reveal sites (tests only).
+/// Takes this thread's recorded opponent reveal sites as (kind, file, line)
+/// (tests only).
 #[cfg(test)]
-pub(crate) fn take_opponent_library_reveal_sites_v1() -> Vec<(&'static str, u32)> {
-    OPPONENT_LIBRARY_REVEAL_SITES_V1
+pub(crate) fn take_opponent_reveal_sites_v1() -> Vec<(&'static str, &'static str, u32)> {
+    OPPONENT_HIDDEN_REVEAL_SITES_V1
         .with(|sites| std::mem::take(&mut *sites.borrow_mut()))
         .into_iter()
         .collect()
@@ -3010,12 +3016,17 @@ impl GameState {
     /// Records a revealed hand identity for exactly one observer. The entry
     /// is incarnation-bound and stored in arena-id order for deterministic
     /// snapshots and observation hashes.
+    #[cfg_attr(test, track_caller)]
     pub fn reveal_hand_card(
         &mut self,
         observer: PlayerId,
         owner: PlayerId,
         object: ObjectId,
     ) -> Result<(), String> {
+        #[cfg(test)]
+        if observer != owner {
+            note_opponent_reveal_site_v1("hand", std::panic::Location::caller());
+        }
         let live = self
             .players
             .get(owner.index())
@@ -3286,12 +3297,12 @@ impl GameState {
     /// Records that `observer` looked at the first `count` cards of `owner`'s
     /// library in their current order. Existing knowledge below that prefix is
     /// retained because revealing a prefix does not randomize the rest.
-    #[track_caller]
+    #[cfg_attr(test, track_caller)]
     pub fn reveal_library_top(&mut self, observer: PlayerId, owner: PlayerId, count: usize) {
         let count = count.min(self.players[owner.index()].library.len());
         #[cfg(test)]
         if observer != owner && count > 0 {
-            note_opponent_library_reveal_site_v1(std::panic::Location::caller());
+            note_opponent_reveal_site_v1("library", std::panic::Location::caller());
         }
         let mut entries = self.library_knowledge[observer.index()][owner.index()].clone();
         entries.retain(|entry| entry.position as usize >= count);
@@ -3323,7 +3334,7 @@ impl GameState {
     /// Records one exact, publicly determined library position without
     /// revealing any identities above or below it. The caller must already
     /// have applied any insertion/removal position shifts.
-    #[track_caller]
+    #[cfg_attr(test, track_caller)]
     pub(crate) fn reveal_library_position(
         &mut self,
         observer: PlayerId,
@@ -3332,7 +3343,7 @@ impl GameState {
     ) {
         #[cfg(test)]
         if observer != owner {
-            note_opponent_library_reveal_site_v1(std::panic::Location::caller());
+            note_opponent_reveal_site_v1("library", std::panic::Location::caller());
         }
         let object = *self.players[owner.index()]
             .library
@@ -3361,12 +3372,17 @@ impl GameState {
     /// be a permutation of the current prefix. Observers in `revealed_to`
     /// learn the resulting order; everyone else loses facts inside the
     /// changed prefix while retaining facts below it.
+    #[cfg_attr(test, track_caller)]
     pub fn reorder_library_top(
         &mut self,
         owner: PlayerId,
         ordered: &[ObjectId],
         revealed_to: &[PlayerId],
     ) -> Result<(), String> {
+        #[cfg(test)]
+        if !ordered.is_empty() && revealed_to.iter().any(|&observer| observer != owner) {
+            note_opponent_reveal_site_v1("reorder", std::panic::Location::caller());
+        }
         let count = ordered.len();
         let library = &self.players[owner.index()].library;
         if count > library.len() {

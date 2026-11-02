@@ -106,6 +106,7 @@ pub(super) fn finish(
             event::ProposedEvent::zone_change(card.object, Zone::Hand),
         );
         if state.objects.get(card.object).zone == Zone::Hand {
+            // spellbench-public-reveal: hand card revealed by the card rules.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 state
                     .reveal_hand_card(observer, choice.player, card.object)

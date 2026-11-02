@@ -7386,6 +7386,7 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 let hand = state.players[player.index()].hand.clone();
                 for object in hand {
+                    // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state
                             .reveal_hand_card(observer, player, object)
@@ -27921,6 +27922,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         }
     }
     if to_zone == Zone::Hand && !was_face_down {
+        // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
                 .reveal_hand_card(observer, owner, pending.spell)
@@ -28420,6 +28422,7 @@ fn push_paid_activation(
     if ability.activation_zone == Zone::Hand && state.objects.get(pending.source).zone == Zone::Hand
     {
         let owner = state.objects.get(pending.source).owner;
+        // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             if state
                 .reveal_hand_card(observer, owner, pending.source)
@@ -31117,7 +31120,7 @@ mod tests {
 
     /// Winding Way with no card of the chosen type: the neutral contract
     /// still poses the (empty) forced subset, then the graveyard order of all
-    /// four revealed cards, for both the creature and noncreature options.
+    /// four revealed cards, for both the creature and land options.
     #[test]
     fn spellbench_neutral_winding_way_zero_match_for_both_options() {
         for (option, names) in [
