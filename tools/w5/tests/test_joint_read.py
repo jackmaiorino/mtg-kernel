@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import random
-import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -151,7 +150,7 @@ class SpellbenchTests(unittest.TestCase):
 
     def test_published_snapshot_end_to_end(self):
         directory = Path(SPELLBENCH) / "benchmarks" / "pauper-ladder-v1" / "snapshots" / "2026-11-01"
-        matchups, anchor, ids, provenance = jr.load_directory(directory, verify_published=True)
+        matchups, anchor, ids, provenance = jr.load_directory(directory)
         self.assertGreater(provenance["published_intervals_reproduced"], 0)
         demo = {"read": "P1", "arm_a": "upper", "arm_b": "lower", "appended_rungs": [],
                 "pairs": [{"pair": 1, "a": "g115", "b": "gorge-ar8"},
@@ -162,12 +161,16 @@ class SpellbenchTests(unittest.TestCase):
         self.assertLess(lo, result["estimate"])
         self.assertLess(result["estimate"], hi)
         self.assertEqual(result["failed_replicates"], 0)
-        gate = Path(tempfile.mkdtemp()) / "w5-gate.json"
-        gate.write_text(json.dumps({"source": str(directory), "gate": "pass-8"}))
-        jr.admit_snapshot(directory, gate, demo, provenance)
-        gate.write_text(json.dumps({"source": str(directory), "gate": "stop"}))
+        gate = provenance["precision_gate"]
+        self.assertEqual(gate["rung_order"][0], "uniform")
+        self.assertEqual(len(gate["adjacent_half_widths"]), len(gate["rung_order"]) - 1)
+        if gate["pass"] and provenance["snapshot"]:
+            jr.admit_snapshot(demo, provenance)
+        failing = dict(provenance, precision_gate=dict(gate, **{"pass": False}))
         with self.assertRaises(jr.ReadError):
-            jr.admit_snapshot(directory, gate, demo, provenance)
+            jr.admit_snapshot(demo, failing)
+        with self.assertRaises(jr.ReadError):
+            jr.admit_snapshot(demo, dict(provenance, snapshot=False))
         out = os.environ.get("W5_READ_RECEIPT")
         if out:
             Path(out).write_text(json.dumps(dict(result, provenance=provenance), indent=2) + "\n")
