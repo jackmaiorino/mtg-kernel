@@ -582,3 +582,60 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
         );
     }
 }
+
+/// Sol r2 P1: a reveal opens its span after the events before it. The
+/// opponent holds A, draws a same-name B unidentified, then reveals A or
+/// B: V's histories are identical, so the exports must be byte-equal (the
+/// draw stays a tombstone in both).
+#[test]
+fn a_reveal_never_links_the_unidentified_draw_before_it() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let live = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+        43,
+        43,
+        2_000,
+        20_000,
+        ["Faeries".to_string(), "Faeries".to_string()],
+    )
+    .expect("reset");
+    let viewer = PlayerId::P0;
+    let opp = viewer.opponent();
+    let base = live.game_state().clone();
+    let lists = decklists(&live);
+    let hand = base.players[opp.index()].hand.clone();
+    let library = base.players[opp.index()].library.clone();
+    let Some((a, b)) = hand.iter().find_map(|&a| {
+        let def = base.objects.get(a).card_def;
+        library
+            .iter()
+            .copied()
+            .find(|&b| base.objects.get(b).card_def == def)
+            .map(|b| (a, b))
+    }) else {
+        eprintln!("no same-name pair across hand and library at this seed");
+        return;
+    };
+    let run = |revealed: crate::ids::ObjectId| {
+        let mut st = base.clone();
+        propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Hand));
+        st.reveal_hand_card(viewer, opp, revealed).expect("reveal");
+        propose_and_commit(&mut st, ProposedEvent::life_loss(opp, 1));
+        export_v1(
+            &ExportInputV1 {
+                state: &st,
+                journal: st.observation_journal.notes(),
+                viewer,
+                decklists: [&lists[0], &lists[1]],
+            },
+            ExportOptionsV1::default(),
+        )
+        .map(|x| x.bytes)
+        .map_err(|e| e.code_name().to_string())
+    };
+    assert_eq!(
+        run(a),
+        run(b),
+        "revealing A or B must export the same bytes"
+    );
+}

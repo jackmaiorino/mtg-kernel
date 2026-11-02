@@ -221,6 +221,10 @@ pub(crate) fn project_v1(
     let mut event_observed = Vec::with_capacity(events.len());
     let mut cursor = 0;
     for (index, event) in events.iter().enumerate() {
+        // Notes anchored before event `index` happen after event index-1:
+        // a span they open may link references from event `index` on, never
+        // from an earlier event (Sol r2).
+        w.next_event = index;
         let mut positions = Vec::new();
         let mut after = Vec::new();
         while cursor < journal.len() && journal[cursor].history_len <= index {
@@ -252,6 +256,8 @@ pub(crate) fn project_v1(
         w.event(event, index, &positions);
         event_observed.push(std::mem::take(&mut w.last_observed));
         w.removed.clear();
+        // Deferred notes follow event `index`.
+        w.next_event = index + 1;
         for note in after {
             w.note(note);
         }

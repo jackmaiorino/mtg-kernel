@@ -443,9 +443,14 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
             continue;
         }
         let started = Instant::now();
+        // What a fatal failure still charges: every dispatched partition
+        // plus a_units, under the request's identity.
+        let mut dispatched: u64 = 0;
+        let mut identity: (Value, u64) = (Value::Null, 0);
         let answer = (|| -> Result<Value, String> {
             let req: SearchRequestV1 =
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
+            identity = (json!(req.root_id), req.a_units);
             // The receipt names the payload by the digest import recomputes.
             let root = req.payload.import()?;
             let menu = menu_sha256(&root)?;
@@ -455,6 +460,7 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
             for (t, w) in workers.iter_mut().enumerate() {
                 let tree_req = json!({"root_id": req.root_id, "tree": t,
                     "units": partition_v1(req.budget, t as u64, k), "payload": req.payload});
+                dispatched += partition_v1(req.budget, t as u64, k);
                 writeln!(w.stdin, "{tree_req}").map_err(|e| format!("{FATAL}worker {t}: {e}"))?;
                 w.stdin
                     .flush()
@@ -498,7 +504,10 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
                 "trees": trees, "wall_seconds": started.elapsed().as_secs_f64()}),
             )
         })()
-        .unwrap_or_else(|e| json!({"ok": false, "error": e}));
+        .unwrap_or_else(|e| {
+            json!({"ok": false, "error": e, "root_id": identity.0,
+                "charge": if dispatched > 0 { dispatched + identity.1 } else { 0 }})
+        });
         writeln!(out, "{answer}").map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
         if let Some(e) = answer["error"].as_str().filter(|e| e.starts_with(FATAL)) {
