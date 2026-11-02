@@ -23,8 +23,11 @@ The fit is a verbatim port of spellbench.arena.ratings._fit_score_pairs (Spellbe
 without Spellbench for the statistics; reading a run or snapshot needs Spellbench on PYTHONPATH. Every read checks
 that the point fit reproduces the published leaderboard ratings.
 
-  PYTHONPATH=<spellbench>/python python joint_read.py --directory RUN_OR_SNAPSHOT --spec READ.json [--out OUT.json]
-       [--verify-published]
+  PYTHONPATH=<spellbench>/python python joint_read.py --directory SNAPSHOT --spec READ.json
+       --precision-gate CONTRASTS.json [--out OUT.json] [--verify-published]
+
+An official read refuses a snapshot without a passing W2 precision-gate result for that directory, or an entrant
+that is not rated there. The replicate count is fixed at 2,000 (tests inject smaller counts through `read`).
 
 READ.json (`w5-read-spec/v1`): {"read": "P1", "arm_a": "X8", "arm_b": "C",
   "pairs": [{"pair": 1, "a": "<entrant>", "b": "<entrant>", "under_budget": false}, ...],
@@ -287,6 +290,8 @@ def check_spec(spec: dict) -> None:
     entrants = [p[s] for p in spec["pairs"] for s in ("a", "b")]
     if len(set(entrants)) != len(entrants):
         raise ReadError("an entrant appears twice in the read")
+    if set(spec.get("appended_rungs", [])) & set(entrants):
+        raise ReadError("an appended rung is also an entrant of the read")
 
 
 def read(matchups, anchor: str, ids: dict[str, str], spec: dict, replicates: int = REPLICATES) -> dict:
@@ -333,6 +338,8 @@ def read(matchups, anchor: str, ids: dict[str, str], spec: dict, replicates: int
     for rung in spec.get("appended_rungs", []):
         if rung not in ids:
             raise ReadError(f"appended rung {rung} is not on the snapshot")
+        if ids[rung] == anchor:
+            raise ReadError("the anchor cannot be refit away")
         rid = ids[rung]
         sub = [m for m in matchups if rid not in (m.a_id, m.b_id)]
         sub_point = point_fit(sub, anchor)
@@ -397,9 +404,10 @@ def load_directory(directory: Path, verify_published: bool = False) -> tuple[lis
     anchor = ids[config.rating_anchor]
     point = point_fit(matchups, anchor)
     for row in board["rows"]:
-        if row["rated"] and abs((point[row["bot_id"]] * ELO + 1000) * 1000 - row["elo_milli"]) > 10:
+        if row["rated"] and int(round((point[row["bot_id"]] * ELO + 1000) * 1000)) != row["elo_milli"]:
             raise ReadError(f"point fit does not reproduce {row['name']}'s published rating")
-    provenance = {"directory": str(directory), "manifest_sha256": hashlib.sha256(
+    rated_rows = {row["name"]: bool(row["rated"]) for row in board["rows"]}
+    provenance = {"directory": str(directory), "rated": rated_rows, "manifest_sha256": hashlib.sha256(
         (directory / store.MANIFEST_NAME).read_bytes()).hexdigest(), "anchor": config.rating_anchor,
         "matchups": len(matchups), "pairs": sum(len(m.values) for m in matchups),
         "point_fit_reproduces_leaderboard": True}
@@ -420,18 +428,35 @@ def load_directory(directory: Path, verify_published: bool = False) -> tuple[lis
     return matchups, anchor, ids, provenance
 
 
+def admit_snapshot(directory: Path, gate_path: Path, spec: dict, provenance: dict) -> dict:
+    """An official read needs a snapshot that passed W2's precision gate, with every entrant of the read rated."""
+    gate = json.loads(Path(gate_path).read_text(encoding="utf-8"))
+    if Path(gate["source"]).resolve() != Path(directory).resolve():
+        raise ReadError("the precision-gate result is for another directory")
+    if gate.get("gate") not in ("pass", "pass-8", "pass-12"):
+        raise ReadError(f"the snapshot did not pass W2's precision gate ({gate.get('gate')})")
+    for p in spec["pairs"]:
+        for side in ("a", "b"):
+            if not provenance["rated"].get(p[side]):
+                raise ReadError(f"entrant {p[side]} is not rated on the snapshot")
+    return {"path": str(gate_path), "sha256": hashlib.sha256(Path(gate_path).read_bytes()).hexdigest(),
+            "gate": gate["gate"], "widest_adjacent_half_width": gate.get("widest_adjacent_half_width")}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--verify-published", action="store_true")
-    parser.add_argument("--replicates", type=int, default=REPLICATES, help=argparse.SUPPRESS)
+    parser.add_argument("--precision-gate", type=Path, required=True,
+                        help="W2 contrasts.py's JSON result for this snapshot (gate pass, pass-8 or pass-12)")
     args = parser.parse_args(argv)
     try:
         spec = json.loads(args.spec.read_text(encoding="utf-8"))
         matchups, anchor, ids, provenance = load_directory(args.directory, args.verify_published)
-        result = read(matchups, anchor, ids, spec, args.replicates)
+        provenance["precision_gate"] = admit_snapshot(args.directory, args.precision_gate, spec, provenance)
+        result = read(matchups, anchor, ids, spec)
     except (ReadError, FitError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
