@@ -160,6 +160,15 @@ pub(crate) fn pick(name: &str) -> IntentV1 {
     )
 }
 
+/// Discard a card named `name` (cleanup to hand size).
+pub(crate) fn discard(name: &str) -> IntentV1 {
+    let d = u64::from(id(name));
+    IntentV1::Take(
+        format!("discard {name}"),
+        Box::new(move |v| kind(v) == "discard" && v["cards"][0]["card_db_id"].as_u64() == Some(d)),
+    )
+}
+
 /// Answer yes to an optional payment or a may-choice.
 pub(crate) fn yes() -> IntentV1 {
     IntentV1::Take(
@@ -522,9 +531,18 @@ pub(crate) fn compare_records(a: &[AtV1], b: &[AtV1]) -> PairReportV1 {
 /// Runs one variant of a fixture, recording every V decision.
 pub(crate) fn record(mut script: ScriptV1, v: PlayerId, extra: usize) -> (Vec<AtV1>, ScriptV1) {
     let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
     script.run(400, extra, &mut |s, p, step| {
         if p == v {
-            out.push(observe(s, v, step, &LEAKAGE_V1));
+            let at = observe(s, v, step, &LEAKAGE_V1);
+            if let Err(code) = &at.p {
+                if seen.insert(code.clone()) {
+                    if let Err(e) = export_at(s, v, ExportOptionsV1::default()) {
+                        eprintln!("first {code} refusal at step {step}: {e:?}");
+                    }
+                }
+            }
+            out.push(at);
         }
     });
     (out, script)
@@ -652,6 +670,7 @@ pub(crate) fn fable_bounce(put_back: [&str; 2]) -> ScriptV1 {
             pick("Squadron Hawk"),
             pick("Squadron Hawk"),
             pick("Squadron Hawk"),
+            discard("Journey to Nowhere"),
             play_land("Island"),
             cast("Brainstorm"),
             pick(put_back[0]),
@@ -678,10 +697,11 @@ pub(crate) fn fable_bounce(put_back: [&str; 2]) -> ScriptV1 {
 }
 
 /// The CawGates Lorien fixture (Astra r6-1, R8b). V is Faeries (P1).
-/// CawGates fetches three Hawks, islandcycles a Lorien for the last library
-/// Island, Brainstorms returning `put_back`, plays its third Island and
-/// islandcycles the second Lorien. F is ({Hawk x3, Island}, 2) after the
-/// Brainstorm; a search that finds the Island refuses (R8b) from then on.
+/// CawGates fetches the other three Hawks (turn 2), plays its third Island
+/// (turn 4), islandcycles a Lorien for the last library Island, Brainstorms
+/// returning `put_back` and islandcycles the second Lorien. F is
+/// ({Hawk x3, Island}, 2) after the Brainstorm; a search that finds the
+/// Island refuses (R8b) from then on.
 pub(crate) fn cawgates_lorien(put_back: [&str; 2]) -> ScriptV1 {
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let live = new_game(["CawGates", "Faeries"], 73, o);
@@ -696,16 +716,9 @@ pub(crate) fn cawgates_lorien(put_back: [&str; 2]) -> ScriptV1 {
             "Squadron Hawk",
             "Lorien Revealed",
             "Lorien Revealed",
-            "Brainstorm",
-        ],
-        &[
-            "Island",
             "Sacred Cat",
-            "Thraben Charm",
-            "Spell Pierce",
-            "Preordain",
-            "The Modern Age",
         ],
+        &["Island", "Thraben Charm", "Brainstorm", "Spell Pierce", "Preordain", "The Modern Age"],
     );
     force_deal(
         &mut st,
@@ -725,13 +738,14 @@ pub(crate) fn cawgates_lorien(put_back: [&str; 2]) -> ScriptV1 {
             pick("Squadron Hawk"),
             pick("Squadron Hawk"),
             pick("Squadron Hawk"),
+            discard("Sacred Cat"),
+            play_land("Island"),
             play_land("Island"),
             activate("Lorien Revealed"),
             pick("Island"),
             cast("Brainstorm"),
             pick(put_back[0]),
             pick(put_back[1]),
-            play_land("Island"),
             activate("Lorien Revealed"),
             pick("Island"),
         ],
@@ -859,7 +873,11 @@ pub(crate) fn w_pin(pins: usize, top: PinTopV1) -> ScriptV1 {
         }
     }));
     o_intents.push(activate("Krark-Clan Shaman"));
-    o_intents.push(pick("Ichor Wellspring"));
+    if pins == 1 {
+        // The other Lembas is still an artifact on the battlefield; with
+        // both sacrificed the Wellspring is the only candidate.
+        o_intents.push(pick("Ichor Wellspring"));
+    }
     script.push(o, o_intents);
     script.push(
         v,
