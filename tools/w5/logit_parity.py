@@ -182,14 +182,39 @@ def source_pins(source: Path) -> dict[str, str]:
     return referenced_files(json.loads(Path(source).read_text(encoding="utf-8")), Path(source).parent)
 
 
+def canonical_source(value, files: dict[str, str], base: Path):
+    """The source with every file path replaced by the SHA-256 of its bytes: equal on both hosts exactly when
+    they load the same files with the same settings and overrides."""
+    if isinstance(value, dict):
+        return {k: canonical_source(v, files, base) for k, v in value.items()}
+    if isinstance(value, list):
+        return [canonical_source(v, files, base) for v in value]
+    if isinstance(value, str):
+        for candidate in (str(Path(value)), str(base / value)):
+            if candidate in files:
+                return "sha256:" + files[candidate]
+    return value
+
+
+def source_identity(source: Path) -> str:
+    files = source_pins(source)
+    value = json.loads(Path(source).read_text(encoding="utf-8"))
+    canon = canonical_source(value, files, Path(source).parent)
+    return hashlib.sha256(json.dumps(canon, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def dump(binary: Path, source: Path, pins: list[Path], jobs: Path, out: Path, command: list[str] | None) -> dict:
     loaded = source_pins(source)
     pin_hashes = sorted(sha256_file(x) for x in pins)
     require(pin_hashes and set(pin_hashes) <= set(loaded.values()),
             "the source does not load the pinned checkpoint files")
+    command_files = {}
     if command:
         require(os.path.realpath(command[0]) == os.path.realpath(binary),
                 "--command must run the pinned --binary")
+        for arg in command[1:]:  # every file the command names (scripts, adapters) is pinned in the receipt
+            if Path(arg).is_file():
+                command_files[arg] = sha256_file(arg)
     out.mkdir(parents=True, exist_ok=True)
     rows, tensors = out / "rows.jsonl", out / "tensors.bin"
     require(not rows.exists() and not tensors.exists(), f"{out} already holds a dump")
@@ -204,7 +229,8 @@ def dump(binary: Path, source: Path, pins: list[Path], jobs: Path, out: Path, co
     record = {"schema": DUMP_SCHEMA, "host_class": host_class(), "hostname": platform.node(),
               "binary": {"path": str(binary), "sha256": sha256_file(binary)}, "argv": argv,
               "source": {"path": str(source), "sha256": sha256_file(source)},
-              "pins": pin_hashes, "source_files": loaded, "jobs_sha256": sha256_file(jobs),
+              "pins": pin_hashes, "source_files": loaded, "source_identity": source_identity(source),
+              "command_files": command_files, "jobs_sha256": sha256_file(jobs),
               "rows_sha256": sha256_file(rows), "tensors_sha256": sha256_file(tensors),
               "logits_sha256": sha256_file(out / "logits.jsonl"), "decisions": len(states),
               "states": sum(1 for s in states if s["legal"] >= 2)}
@@ -234,6 +260,8 @@ def compare(linux: tuple[dict, list[dict]], windows: tuple[dict, list[dict]], to
     require(rb["host_class"].startswith("windows-"), "the second dump is not from a Windows host")
     require(ra["jobs_sha256"] == rb["jobs_sha256"], "the dumps replay different fixed states")
     require(ra["pins"] == rb["pins"] and ra["pins"], "the dumps load different pinned checkpoint bytes")
+    require(ra["source_identity"] == rb["source_identity"],
+            "the dumps load different sources (files, settings or overrides beyond host paths)")
     require([(s["job"], s["decision"], s["legal"]) for s in sa] == [(s["job"], s["decision"], s["legal"]) for s in sb],
             "the dumps score different decision sequences")
     keys = [(s["job"], s["decision"]) for s in sa]
@@ -261,14 +289,16 @@ def compare(linux: tuple[dict, list[dict]], windows: tuple[dict, list[dict]], to
             "states": states, "decisions": len(sa), "max_abs_logit_diff": worst, "max_at": worst_at,
             "max_abs_value_diff": value_worst, "argmax_ties_within_tolerance": ties,
             "argmax_breaks": argmax_breaks[:20], "input_tensors_differ": inputs_differ,
-            "checkpoint_pins": ra["pins"], "jobs_sha256": ra["jobs_sha256"],
-            "linux": {k: ra[k] for k in ("host_class", "hostname", "binary", "logits_sha256", "tensors_sha256")},
-            "windows": {k: rb[k] for k in ("host_class", "hostname", "binary", "logits_sha256", "tensors_sha256")}}
+            "checkpoint_pins": ra["pins"], "source_identity": ra["source_identity"], "jobs_sha256": ra["jobs_sha256"],
+            "linux": {k: ra[k] for k in ("host_class", "hostname", "binary", "command_files", "logits_sha256",
+                                         "tensors_sha256")},
+            "windows": {k: rb[k] for k in ("host_class", "hostname", "binary", "command_files", "logits_sha256",
+                                           "tensors_sha256")}}
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="op", required=True)
     p = sub.add_parser("states")
     p.add_argument("--jobs", type=Path, action="append", required=True)
     p.add_argument("--min-states", type=int, default=MIN_STATES)
@@ -286,12 +316,12 @@ def main(argv=None) -> int:
     p.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "states":
+        if args.op == "states":
             chosen, states = fixed_states(args.jobs, args.min_states)
             text = "".join(json.dumps(j, separators=(",", ":")) + "\n" for j in chosen)
             args.out.write_text(text, encoding="utf-8", newline="\n")
             result = {"jobs": len(chosen), "states": states, "sha256": sha256_file(args.out)}
-        elif args.command == "dump":
+        elif args.op == "dump":
             command = json.loads(args.command) if args.command else None
             result = dump(args.binary, args.source, args.pin, args.jobs, args.out, command)
         else:

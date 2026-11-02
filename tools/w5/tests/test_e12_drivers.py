@@ -118,7 +118,7 @@ class DumpCompareTests(unittest.TestCase):
         a = {"job": "g", "decision": 0, "legal": 2, "input_sha256": "x", "logits": [1.0, 1.0 + 4e-6], "value": 0.0}
         b = dict(a, logits=[1.0 + 4e-6, 1.0])
         rec = {"host_class": "linux-x", "jobs_sha256": "j", "pins": ["p"], "hostname": "", "binary": {},
-               "logits_sha256": "", "tensors_sha256": ""}
+               "logits_sha256": "", "tensors_sha256": "", "source_identity": "s", "command_files": {}}
         out = lp.compare((rec, [a]), (dict(rec, host_class="windows-y"), [b]))
         self.assertEqual(out["argmax_ties_within_tolerance"], 1)
         self.assertTrue(out["checks"]["argmax_equal_except_ties"])
@@ -139,6 +139,26 @@ class DumpCompareTests(unittest.TestCase):
         with self.assertRaises(lp.ParityError):
             lp.decode(good + struct.pack("<2f", float("nan"), 0.2) + struct.pack("<f", 0.0))
 
+    def test_cli_dump_with_a_command(self):
+        import os
+        os.environ["FAKE_SHIFT"] = "0"
+        command = json.dumps([sys.executable, str(self.fake), "source={source}", "out={out}"])
+        code = lp.main(["dump", "--binary", sys.executable, "--source", str(self.source), "--pin", str(self.ckpt),
+                        "--jobs", str(self.jobs), "--out", str(self.root / "cli"), "--command", command])
+        self.assertEqual(code, 0)
+        record = json.loads((self.root / "cli" / "dump.json").read_text())
+        self.assertIn(str(self.fake), record["command_files"])
+
+    def test_source_identity_ignores_host_paths_not_settings(self):
+        other_dir = self.root / "elsewhere"
+        other_dir.mkdir()
+        (other_dir / "ckpt.bin").write_bytes(b"weights")
+        moved = other_dir / "source.json"
+        moved.write_text(json.dumps({"kind": "checkpoint", "checkpoint": "ckpt.bin"}))
+        self.assertEqual(lp.source_identity(self.source), lp.source_identity(moved))
+        moved.write_text(json.dumps({"kind": "checkpoint", "checkpoint": "ckpt.bin", "temperature": 0.5}))
+        self.assertNotEqual(lp.source_identity(self.source), lp.source_identity(moved))
+
     def test_dump_binds_the_loaded_checkpoint_and_binary(self):
         other = self.root / "other.bin"
         other.write_bytes(b"other weights")
@@ -154,7 +174,7 @@ def parity(ckpt="c", census="e", linux="linux-zen5-9950x", windows="windows-cpu"
             "tolerance": 1e-5, "argmax_breaks": [],
             "checks": {"states_at_least_10000": True, "max_abs_logit_within_tolerance": True,
                        "argmax_equal_except_ties": True, "input_tensors_identical": True},
-            "states": 10_000, "linux": {"host_class": linux}, "windows": {"host_class": windows,
+            "states": 10_000, "source_identity": None, "linux": {"host_class": linux}, "windows": {"host_class": windows,
                                                                           "binary": {"sha256": census}}}
 
 
@@ -196,8 +216,8 @@ class LookTests(unittest.TestCase):
                          step_c_manifest=manifest)
             files = {}
             for name, value in (("endpoint.json", endpoint), ("panel.json", panel),
-                                ("parity.json", parity(ckpt=ckpt["sha256"], census="e" * 64,
-                                                       windows=this_host))):
+                                ("parity.json", dict(parity(ckpt=ckpt["sha256"], census="e" * 64, windows=this_host),
+                                                     source_identity=lp.source_identity(Path(endpoint["source"]["path"]))))):
                 files[name] = tmp / name
                 files[name].write_text(json.dumps(value))
             original = hl.host_class

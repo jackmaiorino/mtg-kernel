@@ -7,7 +7,9 @@ Endpoints are trained on the Linux class and played here on a Windows host, so a
 - the endpoint record (`w5-endpoint/v1`): chain, arm, look, update, ledger value, the checkpoint and its evaluator
   source by hash, and the training host class (Linux);
 - the frozen panel definition (`w5-h-panel/v1`): namespace, opponent H source, decks, the evaluator's and the
-  same build's census hashes, shards, and Step C's pinned panel manifest, which must pin every one of them;
+  same build's census hashes, shards, and Step C's pinned panel manifest, which must pin every one of them. The
+  definition is a W5 frozen constant: every look receipt records its hash for the reader to check against the
+  frozen value (this driver cannot know it before the freeze);
 - a passing logit parity receipt (`logit_parity.py compare`) for this checkpoint's bytes, from the endpoint's
   Linux class to this host's Windows class, whose Windows dump ran on the panel build's census binary, at the
   frozen thresholds (rechecked here), and an endpoint source that loads exactly that checkpoint.
@@ -31,7 +33,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-from logit_parity import MIN_STATES, TOLERANCE, host_class, sha256_file, source_pins  # noqa: E402
+from logit_parity import MIN_STATES, TOLERANCE, host_class, sha256_file, source_identity, source_pins  # noqa: E402
 
 ENDPOINT_SCHEMA = "w5-endpoint/v1"
 PANEL_SCHEMA = "w5-h-panel/v1"
@@ -107,6 +109,8 @@ def plan(endpoint_path: Path, panel_path: Path, parity_path: Path, out: Path) ->
     source_path = checked(endpoint["source"], "endpoint source")
     require(endpoint["checkpoint"]["sha256"] in source_pins(source_path).values(),
             "the endpoint source does not load the endpoint checkpoint")
+    require(source_identity(source_path) == parity["source_identity"],
+            "the endpoint source differs from the one the parity receipt replayed")
     source = json.loads(source_path.read_text(encoding="utf-8"))
     opponent = json.loads(checked(panel["opponent"], "opponent H").read_text(encoding="utf-8"))
     decks = json.loads(checked(panel["decks"], "decks").read_text(encoding="utf-8"))
