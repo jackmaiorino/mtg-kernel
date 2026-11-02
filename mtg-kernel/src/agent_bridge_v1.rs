@@ -30,7 +30,7 @@ use crate::agent_bridge_flat_v4_encode::{
 };
 pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::agent_bridge_infoset_v1::{
-    infoset_extension_v1, receipt_v1, InfosetBridgeV1, SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
+    infoset_extension_v1, write_receipt_v1, InfosetBridgeV1, SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
 };
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
@@ -86,8 +86,8 @@ pub struct SpellbenchBridgeOptionsV1 {
     /// Run the lockstep training-mode copy and attach `x_kernel_flat_v4`.
     pub x_kernel_flat_v4: bool,
     /// Attach `x_kernel_infoset_v1` (the W1 entrant's canonical state) at
-    /// eligible decisions. Runs on the lockstep copy, so it requires
-    /// `x_kernel_flat_v4`.
+    /// eligible decisions. Runs on the lockstep copy, so it takes effect only
+    /// with `x_kernel_flat_v4` (the command-line flag sets both).
     pub x_kernel_infoset_v1: bool,
     /// Private wrapper metadata. Never forwarded to an agent as an extension.
     /// It observes stack instance IDs without changing the frozen RL schema.
@@ -1080,6 +1080,9 @@ impl SpellbenchBridgeServerV1 {
         let value = self.halted_terminal_value(request_id, &game_id, counts, reason);
         if let Some(game) = self.game.as_mut() {
             game.terminal_sent = true;
+            if let Some(infoset) = game.infoset.as_mut() {
+                write_receipt_v1(&game_id, infoset);
+            }
         }
         value
     }
@@ -1126,10 +1129,7 @@ fn finish_infoset_v1(game: &mut SpellbenchBridgeGameV1, wire: &mut WireResponseV
                 value["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = extension;
             }
         }
-        WireResponseV1::Terminal(_) => {
-            infoset.pending = None;
-            eprintln!("{}", receipt_v1(&game.game_id, infoset));
-        }
+        WireResponseV1::Terminal(_) => write_receipt_v1(&game.game_id, infoset),
     }
 }
 
@@ -3412,7 +3412,20 @@ mod tests {
                     .filter(|a| !matches!(a.semantic, ActionSemanticV1::ActivateManaAbility { .. }))
                     .count();
                 let eligible = legal.len() >= 2 && non_mana >= 2;
+                fn wire_safe(v: &Value) -> bool {
+                    match v {
+                        Value::Number(n) => match (n.as_u64(), n.as_i64()) {
+                            (Some(x), _) => x <= 1 << 53,
+                            (None, Some(x)) => x.unsigned_abs() <= 1 << 53,
+                            _ => true,
+                        },
+                        Value::Array(xs) => xs.iter().all(wire_safe),
+                        Value::Object(m) => m.values().all(wire_safe),
+                        _ => true,
+                    }
+                }
                 let extension = &response["extensions"]["x_kernel_infoset_v1"];
+                assert!(wire_safe(extension), "{deck}: integers within 2^53");
                 assert_eq!(
                     !extension.is_null(),
                     eligible,
@@ -3421,8 +3434,10 @@ mod tests {
                 if let Some(code) = extension["refusal"].as_str() {
                     *refusals.entry(code.to_string()).or_default() += 1;
                 } else if eligible {
-                    let payload: crate::infoset_v1::PayloadV1 =
-                        serde_json::from_value(extension["payload"].clone()).unwrap();
+                    let payload = crate::infoset_v1::PayloadV1::from_bytes(
+                        extension["payload_json"].as_str().unwrap().as_bytes(),
+                    )
+                    .unwrap();
                     let imported = payload.import().expect("the payload imports");
                     let (
                         crate::rl_session::FastActorResponseV1::Decision(a),
@@ -3436,6 +3451,18 @@ mod tests {
                         (b.acting_player, b.legal_action_count),
                         "{deck}: the imported decision matches the lockstep copy"
                     );
+                    // The candidates by kind (ids are canonical in the import).
+                    let kinds = |s: &crate::rl_session::FastActorSessionV1| {
+                        let mut k: Vec<String> = s
+                            .diagnostic_current_action_semantics()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|x| serde_json::to_value(x).unwrap()["action_kind"].to_string())
+                            .collect();
+                        k.sort();
+                        k
+                    };
+                    assert_eq!(kinds(lockstep), kinds(&imported), "{deck}: candidate kinds");
                     payloads += 1;
                 }
                 let rows = rows_of(&response);

@@ -37,6 +37,8 @@ pub(crate) struct InfosetBridgeV1 {
     pub(crate) eligible: [u64; 2],
     /// Exports and refusals by predicate, per seat.
     pub(crate) tally: [RefusalTallyV1; 2],
+    /// Whether the game-end receipt was written.
+    pub(crate) receipt_written: bool,
 }
 
 fn seat(p: PlayerSeatV1) -> PlayerId {
@@ -92,9 +94,12 @@ pub(crate) fn infoset_extension_v1(
         Ok(export) => match PayloadV1::new(&export, fast, viewer, index) {
             Some(payload) => {
                 tally.record(&Ok(()));
+                // JSON text, like `x_kernel_v5`: the canonical state carries
+                // u64 values (the RNG state, hashes) beyond the wire's 2^53
+                // integer bound.
                 json!({
                     "schema": INFOSET_SCHEMA_V1,
-                    "payload": serde_json::to_value(&payload)
+                    "payload_json": String::from_utf8(payload.to_bytes())
                         .map_err(|_| "engine_contract_failure:infoset payload".to_string())?,
                 })
             }
@@ -119,6 +124,15 @@ pub(crate) fn infoset_extension_v1(
     };
     state.pending = Some(value);
     Ok(())
+}
+
+/// Writes the engine-side receipt line to stderr once, when a game ends.
+pub(crate) fn write_receipt_v1(game_id: &str, state: &mut InfosetBridgeV1) {
+    state.pending = None;
+    if !state.receipt_written {
+        state.receipt_written = true;
+        eprintln!("{}", receipt_v1(game_id, state));
+    }
 }
 
 /// The engine-side receipt line written when a game ends.

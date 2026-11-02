@@ -24,7 +24,9 @@ fn main() {
         if argument.to_str() == Some(SPELLBENCH_FLAG_X_KERNEL_FLAT_V4) {
             options.x_kernel_flat_v4 = true;
         } else if argument.to_str() == Some(SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1) {
+            // The producer runs on the flat-v4 lockstep copy.
             options.x_kernel_infoset_v1 = true;
+            options.x_kernel_flat_v4 = true;
         } else if argument.to_str() == Some(SPELLBENCH_FLAG_V2_SUPPORT) {
             options.private_v2_support = true;
         } else {
