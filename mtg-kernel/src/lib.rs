@@ -360,6 +360,7 @@ pub mod flat_policy_v5;
 pub mod heartfire_history_v1;
 pub mod heartfire_public_v1;
 pub mod ids;
+pub(crate) mod infoset_v1;
 pub mod line_b_teacher_target_v1;
 pub mod ooze_public_v1;
 pub mod phase1_agent_v1;

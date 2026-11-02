@@ -19270,6 +19270,73 @@ fn scry_stage_tag(stage: &ScrySelectionStage) -> u16 {
     }
 }
 
+/// The W1 information-set export (`infoset_v1`) renumbers objects and
+/// epochs; the redundant commitments over object bindings are recomputed
+/// from the renumbered bindings, exactly as the engine computes them, and
+/// candidate sets the engine keeps in object-id order are re-sorted.
+pub(crate) fn refresh_binding_fingerprints_v1(state: &mut GameState) {
+    fn frame(f: &mut EffectFrame) {
+        match f {
+            EffectFrame::ScryLibrary {
+                progress,
+                progress_fingerprint,
+                ..
+            } => *progress_fingerprint = scry_progress_fingerprint(progress),
+            EffectFrame::LookTopSelectByTypeToHandBottomRest {
+                progress,
+                progress_fingerprint,
+                ..
+            }
+            | EffectFrame::LookTopPickToHandBottomRest {
+                progress,
+                progress_fingerprint,
+                ..
+            } => *progress_fingerprint = library_partition_progress_fingerprint(progress),
+            _ => {}
+        }
+    }
+    let Some(pending) = state.engine.pending_effect.as_mut() else {
+        return;
+    };
+    pending.frames.iter_mut().for_each(frame);
+    if let Some(PendingEffectChoice::SelectTargets { purpose, legal, .. }) = pending.choice.as_mut()
+    {
+        // Candidate sets the engine builds in object-id order are re-sorted
+        // by the renumbered ids, as the engine itself would order them.
+        if let EffectTargetSelectionPurpose::UntapLands {
+            original_candidates,
+            ..
+        } = purpose
+        {
+            original_candidates.sort_by_key(|binding| binding.object);
+            legal.sort_by_key(|candidate| {
+                candidate
+                    .expected_object
+                    .as_ref()
+                    .map(|binding| binding.object)
+            });
+        }
+        match purpose {
+            EffectTargetSelectionPurpose::ScryLibrary {
+                stage,
+                stage_fingerprint,
+                ..
+            } => *stage_fingerprint = scry_stage_fingerprint(stage),
+            EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                stage,
+                stage_fingerprint,
+                ..
+            }
+            | EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
+                stage,
+                stage_fingerprint,
+                ..
+            } => *stage_fingerprint = library_partition_stage_fingerprint(stage),
+            _ => {}
+        }
+    }
+}
+
 fn scry_stage_fingerprint(stage: &ScrySelectionStage) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325;
     hash = fnv1a_u64(hash, u64::from(scry_stage_tag(stage)));
