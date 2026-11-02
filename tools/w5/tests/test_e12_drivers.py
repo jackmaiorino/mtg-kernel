@@ -27,7 +27,10 @@ for line in open(os.environ["LABEL_JOBS"]):
         n = d["legal_action_count"]
         start = len(block)
         block += struct.pack("<8I", 1, 0, n, 0, 3, d["selected"], n, job["focal"])
-        block += struct.pack("<3f", 0.5, float(i), 1.0)
+        block += struct.pack("<3f", 0.5, float(i), 1.0)                 # state
+        block += struct.pack("<98f", *([0.25] * 98))                     # one object's features
+        block += struct.pack("<3i", 7, 0, 1)                             # its card id, group, node id
+        block += struct.pack(f"<{195 * n}f", *([0.5] * (195 * n)))       # action features (no edges, no refs)
         logits = [0.1 * a + (shift if a == 0 else 0.0) for a in range(n)]
         block += struct.pack(f"<{n}f", *logits) + struct.pack("<f", 0.25)
         rows.append([i, n, d["selected"], 1, start, len(block) - start])
@@ -65,10 +68,10 @@ class DumpCompareTests(unittest.TestCase):
         self.fake.write_text(FAKE_REPLAY)
         self.jobs = root / "fixed.jsonl"
         self.jobs.write_text("".join(json.dumps(j) + "\n" for j in jobs(10)))
-        self.source = root / "source.json"
-        self.source.write_text("{}")
         self.ckpt = root / "ckpt.bin"
         self.ckpt.write_bytes(b"weights")
+        self.source = root / "source.json"
+        self.source.write_text(json.dumps({"kind": "checkpoint", "checkpoint": "ckpt.bin"}))
         self.root = root
 
     def tearDown(self):
@@ -97,29 +100,60 @@ class DumpCompareTests(unittest.TestCase):
         self.dump("lin", host="linux-zen5-9950x")
         self.dump("win", shift=2e-6, host="windows-amd-ryzen-7-3700x")
         self.dump("far", shift=0.5, host="windows-amd-ryzen-7-3700x")
-        ok = lp.compare(lp.load_dump(self.root / "lin"), lp.load_dump(self.root / "win"), 1e-5)
+        ok = lp.compare(lp.load_dump(self.root / "lin"), lp.load_dump(self.root / "win"))
         self.assertTrue(ok["checks"]["max_abs_logit_within_tolerance"])
         self.assertTrue(ok["checks"]["argmax_equal_except_ties"])
         self.assertFalse(ok["checks"]["states_at_least_10000"])  # a small fixture
         self.assertAlmostEqual(ok["max_abs_logit_diff"], 2e-6, delta=1e-6)
-        far = lp.compare(lp.load_dump(self.root / "lin"), lp.load_dump(self.root / "far"), 1e-5)
+        far = lp.compare(lp.load_dump(self.root / "lin"), lp.load_dump(self.root / "far"))
+        self.assertTrue(far["checks"]["input_tensors_identical"])
+        with self.assertRaises(lp.ParityError):  # the tolerance cannot be widened
+            lp.compare(lp.load_dump(self.root / "lin"), lp.load_dump(self.root / "far"), 0.02)
         self.assertFalse(far["checks"]["max_abs_logit_within_tolerance"])
         self.assertTrue(far["argmax_breaks"])
         with self.assertRaises(lp.ParityError):  # both sides Linux
-            lp.compare(lp.load_dump(self.root / "lin"), lp.load_dump(self.root / "lin"), 1e-5)
+            lp.compare(lp.load_dump(self.root / "lin"), lp.load_dump(self.root / "lin"))
 
     def test_ties_within_tolerance_do_not_break_argmax(self):
         a = {"job": "g", "decision": 0, "legal": 2, "input_sha256": "x", "logits": [1.0, 1.0 + 4e-6], "value": 0.0}
         b = dict(a, logits=[1.0 + 4e-6, 1.0])
         rec = {"host_class": "linux-x", "jobs_sha256": "j", "pins": ["p"], "hostname": "", "binary": {},
                "logits_sha256": "", "tensors_sha256": ""}
-        out = lp.compare((rec, [a]), (dict(rec, host_class="windows-y"), [b]), 1e-5)
+        out = lp.compare((rec, [a]), (dict(rec, host_class="windows-y"), [b]))
         self.assertEqual(out["argmax_ties_within_tolerance"], 1)
         self.assertTrue(out["checks"]["argmax_equal_except_ties"])
+        # a small top-two gap never excuses a switch to a third action far below the first winner
+        c = dict(a, legal=3, logits=[0.0, -1e-6, -11e-6])
+        d = dict(c, logits=[-9e-6, -10e-6, -2e-6])
+        third = lp.compare((rec, [c]), (dict(rec, host_class="windows-y"), [d]))
+        self.assertFalse(third["checks"]["argmax_equal_except_ties"])
+
+    def test_records_must_match_their_layout_and_be_finite(self):
+        n = 2
+        good = (struct.pack("<8I", 1, 0, n, 0, 3, 0, n, 0) + struct.pack("<3f", 0, 0, 0)
+                + struct.pack("<98f", *([0.0] * 98)) + struct.pack("<3i", 1, 0, 0)
+                + struct.pack(f"<{195 * n}f", *([0.0] * 195 * n)))
+        lp.decode(good + struct.pack("<2f", 0.1, 0.2) + struct.pack("<f", 0.0))
+        with self.assertRaises(lp.ParityError):
+            lp.decode(good + struct.pack("<2f", 0.1, 0.2))                     # truncated
+        with self.assertRaises(lp.ParityError):
+            lp.decode(good + struct.pack("<2f", float("nan"), 0.2) + struct.pack("<f", 0.0))
+
+    def test_dump_binds_the_loaded_checkpoint_and_binary(self):
+        other = self.root / "other.bin"
+        other.write_bytes(b"other weights")
+        command = [sys.executable, str(self.fake), "source={source}", "out={out}"]
+        with self.assertRaises(lp.ParityError):  # the source does not load this pin
+            lp.dump(Path(sys.executable), self.source, [other], self.jobs, self.root / "x", command)
+        with self.assertRaises(lp.ParityError):  # the command does not run the pinned binary
+            lp.dump(self.fake, self.source, [self.ckpt], self.jobs, self.root / "y", command)
 
 
 def parity(ckpt="c", census="e", linux="linux-zen5-9950x", windows="windows-cpu"):
     return {"schema": "w5-logit-parity/v1", "pass": True, "checkpoint_pins": [ckpt], "max_abs_logit_diff": 0.0,
+            "tolerance": 1e-5, "argmax_breaks": [],
+            "checks": {"states_at_least_10000": True, "max_abs_logit_within_tolerance": True,
+                       "argmax_equal_except_ties": True, "input_tensors_identical": True},
             "states": 10_000, "linux": {"host_class": linux}, "windows": {"host_class": windows,
                                                                           "binary": {"sha256": census}}}
 
@@ -132,7 +166,8 @@ class LookTests(unittest.TestCase):
     def test_admission(self):
         hl.admit(self.endpoint, self.panel, parity(), "windows-cpu")
         for bad in (parity(ckpt="other"), parity(census="other"), parity(linux="linux-other"),
-                    parity(windows="windows-other"), dict(parity(), **{"pass": False})):
+                    parity(windows="windows-other"), dict(parity(), **{"pass": False}),
+                    dict(parity(), tolerance=0.02, max_abs_logit_diff=0.01), dict(parity(), states=9_999)):
             with self.assertRaises(hl.LookError):
                 hl.admit(self.endpoint, self.panel, bad, "windows-cpu")
         with self.assertRaises(hl.LookError):
@@ -150,12 +185,19 @@ class LookTests(unittest.TestCase):
                 return {"path": str(path), "sha256": lp.sha256_file(path)}
             ckpt = pinned("ckpt.bin", {"w": 1})
             this_host = "windows-test-cpu"
-            endpoint = dict(self.endpoint, checkpoint=ckpt, source=pinned("source.json", {"checkpoint": "x"}))
-            panel = dict(self.panel, opponent=pinned("h.json", {"name": "H"}), shards=4,
-                         decks=pinned("decks.json", [{"label": f"d{i}", "mainboard": [i]} for i in range(9)]))
+            endpoint = dict(self.endpoint, checkpoint=ckpt,
+                            source=pinned("source.json", {"checkpoint": ckpt["path"]}))
+            opponent = pinned("h.json", {"name": "H"})
+            decks = pinned("decks.json", [{"label": f"d{i}", "mainboard": [i]} for i in range(9)])
+            evaluator, census = {"sha256": "a" * 64}, {"sha256": "e" * 64}
+            manifest = pinned("step-c.json", {"pins": [opponent["sha256"], decks["sha256"], evaluator["sha256"],
+                                                       census["sha256"]]})
+            panel = dict(self.panel, opponent=opponent, decks=decks, evaluator=evaluator, census=census, shards=4,
+                         step_c_manifest=manifest)
             files = {}
             for name, value in (("endpoint.json", endpoint), ("panel.json", panel),
-                                ("parity.json", parity(ckpt=ckpt["sha256"], windows=this_host))):
+                                ("parity.json", parity(ckpt=ckpt["sha256"], census="e" * 64,
+                                                       windows=this_host))):
                 files[name] = tmp / name
                 files[name].write_text(json.dumps(value))
             original = hl.host_class
@@ -170,6 +212,14 @@ class LookTests(unittest.TestCase):
             self.assertEqual(plan["opponent_name"], "H")
             self.assertEqual(look["host_class"], this_host)
             self.assertIn("w5_look", plan)
+            bad_manifest = pinned("step-c-other.json", {"pins": []})
+            files["panel.json"].write_text(json.dumps(dict(panel, step_c_manifest=bad_manifest)))
+            hl.host_class = lambda: this_host
+            try:
+                with self.assertRaises(hl.LookError):  # an opponent or evaluator Step C never pinned
+                    hl.plan(files["endpoint.json"], files["panel.json"], files["parity.json"], tmp / "look2")
+            finally:
+                hl.host_class = original
 
 
 if __name__ == "__main__":

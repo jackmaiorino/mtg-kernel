@@ -13,17 +13,21 @@ E3 binary (`--command`, a JSON argv template with {source}, {out}; LABEL_JOBS an
   logit_parity.py states --jobs JOBS.jsonl [--jobs ...] [--min-states 10000] --out FIXED.jsonl
   logit_parity.py dump --binary CENSUS --source SRC.json --pin CHECKPOINT [--pin ...] --jobs FIXED.jsonl --out DIR
                        [--command JSON]
-  logit_parity.py compare --linux DIR --windows DIR [--tolerance 1e-5] --out RECEIPT.json
+  logit_parity.py compare --linux DIR --windows DIR --out RECEIPT.json
 
-A state is a scored focal decision with at least two legal actions. `compare` refuses different jobs, pinned
-checkpoint bytes or decision sequences; it reports whether the input tensors are byte-identical and the value
-difference beside the logit rule.
+A state is a scored focal decision with at least two legal actions. `dump` refuses a source that does not load
+the pinned checkpoint files, a `--command` whose program is not the pinned binary, replay rows that do not cover
+exactly the fixed jobs' focal decisions, and any record whose length differs from its declared layout or whose
+logits are not finite. `compare` refuses different jobs, checkpoint bytes or decision sequences, uses the fixed
+1e-5 tolerance (an argmax tie excuses only a switch between the two winners within 1e-5 on both hosts), and
+requires byte-identical input tensors; the value difference is reported beside.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -37,6 +41,8 @@ RECEIPT_SCHEMA = "w5-logit-parity/v1"
 MIN_STATES = 10_000
 TOLERANCE = 1e-5
 HEADER = struct.Struct("<8I")
+# stage4a/tensor_dump.rs record layout (native_policy_value_net_v1.rs dimensions)
+OBJECT_DIM, EDGE_DIM, ACTION_DIM, ACTION_REF_DIM = 98, 41, 195, 25
 
 
 class ParityError(Exception):
@@ -101,26 +107,49 @@ def fixed_states(paths: list[Path], minimum: int) -> tuple[list[dict], int]:
 
 # ---------------------------------------------------------------- one host's dump
 
+def record_size(objects: int, edges: int, actions: int, refs: int, state_len: int) -> int:
+    words = (state_len + objects * (OBJECT_DIM + 3) + edges * (EDGE_DIM + 2) + actions * ACTION_DIM
+             + refs * (ACTION_REF_DIM + 3) + actions + 1)
+    return HEADER.size + 4 * words
+
+
 def decode(block: bytes) -> tuple[bytes, list[float], float, int]:
     """One TD_BIN decision record: (input bytes, logits, value, legal); see stage4a/tensor_dump.rs."""
+    require(len(block) >= HEADER.size, "truncated tensor record")
     objects, edges, actions, refs, state_len, selected, legal, actor = HEADER.unpack_from(block, 0)
+    require(actions == legal and actions >= 1, "tensor record legal count differs from its actions")
+    require(len(block) == record_size(objects, edges, actions, refs, state_len),
+            "tensor record length differs from its declared layout")
     tail = 4 * (actions + 1)
-    require(len(block) > HEADER.size + tail and actions == legal, "malformed tensor record")
     logits = list(struct.unpack_from(f"<{actions}f", block, len(block) - tail))
     value = struct.unpack_from("<f", block, len(block) - 4)[0]
+    require(all(math.isfinite(x) for x in logits) and math.isfinite(value), "non-finite logit or value")
     return block[:len(block) - tail], logits, value, legal
 
 
-def extract(rows_path: Path, tensors_path: Path) -> list[dict]:
-    data = tensors_path.read_bytes()
+def expected_decisions(jobs_path: Path) -> list[tuple[str, list[int]]]:
+    """Each fixed job's focal decision indices, in job order: what the replay must score."""
     out = []
-    for line in rows_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
+    for line in Path(jobs_path).read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            job = json.loads(line)
+            out.append((job["id"], [i for i, d in enumerate(job["decisions"]) if d["actor"] == job["focal"]]))
+    return out
+
+
+def extract(rows_path: Path, tensors_path: Path, jobs_path: Path) -> list[dict]:
+    data = tensors_path.read_bytes()
+    rows = [json.loads(line) for line in rows_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    expected = expected_decisions(jobs_path)
+    require([r.get("id") for r in rows] == [job for job, _ in expected], "replay rows differ from the fixed jobs")
+    out = []
+    for row, (_, indices) in zip(rows, expected):
         require(row.get("kind") == "td_replay", f"replay failed: {row}")
+        require([d[0] for d in row["decisions"]] == indices, f"{row['id']}: scored decisions differ from the job")
         base = row["bin_offset"]
+        require(0 <= base and base + row["bin_bytes"] <= len(data), f"{row['id']}: block outside TD_BIN")
         for index, legal, selected, turn, start, length in row["decisions"]:
+            require(0 <= start and start + length <= row["bin_bytes"], f"{row['id']}: record outside its block")
             inputs, logits, value, legal_rec = decode(data[base + start:base + start + length])
             require(legal_rec == legal, "row and record disagree on the legal count")
             out.append({"job": row["id"], "decision": index, "legal": legal,
@@ -129,7 +158,38 @@ def extract(rows_path: Path, tensors_path: Path) -> list[dict]:
     return out
 
 
+def referenced_files(value, base: Path) -> dict[str, str]:
+    """Every existing file a source JSON names (absolute, or relative to the source), by SHA-256."""
+    found = {}
+    if isinstance(value, dict):
+        for item in value.values():
+            found.update(referenced_files(item, base))
+    elif isinstance(value, list):
+        for item in value:
+            found.update(referenced_files(item, base))
+    elif isinstance(value, str) and len(value) < 1024:
+        for candidate in (Path(value), base / value):
+            try:
+                if candidate.is_file():
+                    found[str(candidate)] = sha256_file(candidate)
+                    break
+            except OSError:
+                pass
+    return found
+
+
+def source_pins(source: Path) -> dict[str, str]:
+    return referenced_files(json.loads(Path(source).read_text(encoding="utf-8")), Path(source).parent)
+
+
 def dump(binary: Path, source: Path, pins: list[Path], jobs: Path, out: Path, command: list[str] | None) -> dict:
+    loaded = source_pins(source)
+    pin_hashes = sorted(sha256_file(x) for x in pins)
+    require(pin_hashes and set(pin_hashes) <= set(loaded.values()),
+            "the source does not load the pinned checkpoint files")
+    if command:
+        require(os.path.realpath(command[0]) == os.path.realpath(binary),
+                "--command must run the pinned --binary")
     out.mkdir(parents=True, exist_ok=True)
     rows, tensors = out / "rows.jsonl", out / "tensors.bin"
     require(not rows.exists() and not tensors.exists(), f"{out} already holds a dump")
@@ -138,13 +198,13 @@ def dump(binary: Path, source: Path, pins: list[Path], jobs: Path, out: Path, co
     done = subprocess.run(argv, env=dict(os.environ, LABEL_JOBS=str(jobs), TD_BIN=str(tensors)),
                           capture_output=True, text=True)
     require(done.returncode == 0, f"replay failed ({done.returncode}): {done.stderr[-2000:]}")
-    states = extract(rows, tensors)
+    states = extract(rows, tensors, jobs)
     (out / "logits.jsonl").write_text("".join(json.dumps(s) + "\n" for s in states), encoding="utf-8",
                                       newline="\n")
     record = {"schema": DUMP_SCHEMA, "host_class": host_class(), "hostname": platform.node(),
               "binary": {"path": str(binary), "sha256": sha256_file(binary)}, "argv": argv,
               "source": {"path": str(source), "sha256": sha256_file(source)},
-              "pins": sorted(sha256_file(p) for p in pins), "jobs_sha256": sha256_file(jobs),
+              "pins": pin_hashes, "source_files": loaded, "jobs_sha256": sha256_file(jobs),
               "rows_sha256": sha256_file(rows), "tensors_sha256": sha256_file(tensors),
               "logits_sha256": sha256_file(out / "logits.jsonl"), "decisions": len(states),
               "states": sum(1 for s in states if s["legal"] >= 2)}
@@ -163,16 +223,12 @@ def load_dump(directory: Path) -> tuple[dict, list[dict]]:
     return record, states
 
 
-def top_two_gap(logits: list[float]) -> float:
-    ordered = sorted(logits, reverse=True)
-    return ordered[0] - ordered[1] if len(ordered) > 1 else float("inf")
-
-
 def argmax(logits: list[float]) -> int:
     return max(range(len(logits)), key=lambda i: (logits[i], -i))
 
 
-def compare(linux: tuple[dict, list[dict]], windows: tuple[dict, list[dict]], tolerance: float) -> dict:
+def compare(linux: tuple[dict, list[dict]], windows: tuple[dict, list[dict]], tolerance: float = TOLERANCE) -> dict:
+    require(math.isfinite(tolerance) and 0 < tolerance <= TOLERANCE, f"tolerance must be in (0, {TOLERANCE}]")
     (ra, sa), (rb, sb) = linux, windows
     require(ra["host_class"].startswith("linux-"), "the first dump is not from a Linux host")
     require(rb["host_class"].startswith("windows-"), "the second dump is not from a Windows host")
@@ -180,21 +236,27 @@ def compare(linux: tuple[dict, list[dict]], windows: tuple[dict, list[dict]], to
     require(ra["pins"] == rb["pins"] and ra["pins"], "the dumps load different pinned checkpoint bytes")
     require([(s["job"], s["decision"], s["legal"]) for s in sa] == [(s["job"], s["decision"], s["legal"]) for s in sb],
             "the dumps score different decision sequences")
+    keys = [(s["job"], s["decision"]) for s in sa]
+    require(len(set(keys)) == len(keys), "a decision is scored twice")
     worst, worst_at, value_worst, argmax_breaks, ties, inputs_differ = 0.0, None, 0.0, [], 0, 0
     for a, b in zip(sa, sb):
+        require(all(math.isfinite(x) for x in a["logits"] + b["logits"]), "non-finite logits")
         diff = max(abs(x - y) for x, y in zip(a["logits"], b["logits"]))
         if diff > worst:
             worst, worst_at = diff, [a["job"], a["decision"]]
         value_worst = max(value_worst, abs(a["value"] - b["value"]))
         inputs_differ += a["input_sha256"] != b["input_sha256"]
-        if a["legal"] >= 2 and argmax(a["logits"]) != argmax(b["logits"]):
-            if min(top_two_gap(a["logits"]), top_two_gap(b["logits"])) <= tolerance:
+        ia, ib = argmax(a["logits"]), argmax(b["logits"])
+        if a["legal"] >= 2 and ia != ib:
+            # a tie only between the two winners themselves, within the tolerance on both hosts
+            if (abs(a["logits"][ia] - a["logits"][ib]) <= tolerance
+                    and abs(b["logits"][ia] - b["logits"][ib]) <= tolerance):
                 ties += 1
             else:
                 argmax_breaks.append([a["job"], a["decision"]])
     states = sum(1 for s in sa if s["legal"] >= 2)
     checks = {"states_at_least_10000": states >= MIN_STATES, "max_abs_logit_within_tolerance": worst <= tolerance,
-              "argmax_equal_except_ties": not argmax_breaks}
+              "argmax_equal_except_ties": not argmax_breaks, "input_tensors_identical": inputs_differ == 0}
     return {"schema": RECEIPT_SCHEMA, "pass": all(checks.values()), "checks": checks, "tolerance": tolerance,
             "states": states, "decisions": len(sa), "max_abs_logit_diff": worst, "max_at": worst_at,
             "max_abs_value_diff": value_worst, "argmax_ties_within_tolerance": ties,
@@ -221,7 +283,6 @@ def main(argv=None) -> int:
     p = sub.add_parser("compare")
     p.add_argument("--linux", type=Path, required=True)
     p.add_argument("--windows", type=Path, required=True)
-    p.add_argument("--tolerance", type=float, default=TOLERANCE)
     p.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -234,7 +295,7 @@ def main(argv=None) -> int:
             command = json.loads(args.command) if args.command else None
             result = dump(args.binary, args.source, args.pin, args.jobs, args.out, command)
         else:
-            result = compare(load_dump(args.linux), load_dump(args.windows), args.tolerance)
+            result = compare(load_dump(args.linux), load_dump(args.windows))
             args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
     except ParityError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -7,13 +7,14 @@ Endpoints are trained on the Linux class and played here on a Windows host, so a
 - the endpoint record (`w5-endpoint/v1`): chain, arm, look, update, ledger value, the checkpoint and its evaluator
   source by hash, and the training host class (Linux);
 - the frozen panel definition (`w5-h-panel/v1`): namespace, opponent H source, decks, the evaluator's and the
-  same build's census hashes, shards;
+  same build's census hashes, shards, and Step C's pinned panel manifest, which must pin every one of them;
 - a passing logit parity receipt (`logit_parity.py compare`) for this checkpoint's bytes, from the endpoint's
-  Linux class to this host's Windows class, whose Windows dump ran on the panel build's census binary.
+  Linux class to this host's Windows class, whose Windows dump ran on the panel build's census binary, at the
+  frozen thresholds (rechecked here), and an endpoint source that loads exactly that checkpoint.
 
   h_look.py plan --endpoint ENDPOINT.json --panel-def H-PANEL.json --parity RECEIPT.json --out DIR
-  h_look.py run --look DIR/look.json --evaluator EXE        qualify (fresh receipt) and run, in the panel runner's
-                                                            own host reservation (nine_deck_public_panel_v1 launch)
+  h_look.py run --look DIR/look.json --evaluator EXE        qualify (fresh receipt), then run, synchronously;
+                                                            start it inside the host's held reservation
   h_look.py rows --look DIR/look.json                       rows file and the look receipt; rows are not read here
 
 The plan, qualification, run, recovery and rows are tools/spy_reset/panel.py and
@@ -30,7 +31,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-from logit_parity import host_class, sha256_file  # noqa: E402
+from logit_parity import MIN_STATES, TOLERANCE, host_class, sha256_file, source_pins  # noqa: E402
 
 ENDPOINT_SCHEMA = "w5-endpoint/v1"
 PANEL_SCHEMA = "w5-h-panel/v1"
@@ -63,7 +64,12 @@ def admit(endpoint: dict, panel: dict, parity: dict, this_host: str) -> None:
     require(endpoint["look"] in LOOKS, "look must be 50pct or endpoint")
     require(endpoint["training_host_class"].startswith("linux-"), "the endpoint was not trained on a Linux class")
     require(this_host.startswith("windows-"), "H looks run on Windows hosts")
-    require(parity.get("schema") == "w5-logit-parity/v1" and parity["pass"], "no passing logit parity receipt")
+    require(parity.get("schema") == "w5-logit-parity/v1" and parity["pass"] and all(parity["checks"].values()),
+            "no passing logit parity receipt")
+    require(parity["tolerance"] <= TOLERANCE and parity["max_abs_logit_diff"] <= parity["tolerance"]
+            and parity["states"] >= MIN_STATES and not parity["argmax_breaks"]
+            and parity["checks"].get("input_tensors_identical") is True,
+            "the parity receipt does not meet the frozen thresholds")
     require(parity["linux"]["host_class"] == endpoint["training_host_class"],
             "the parity receipt's Linux side is not the endpoint's training class")
     require(parity["windows"]["host_class"] == this_host, "the parity receipt is for another Windows host class")
@@ -73,14 +79,35 @@ def admit(endpoint: dict, panel: dict, parity: dict, this_host: str) -> None:
             "the parity receipt's Windows dump did not run on the panel build")
 
 
+def sha256_values(value) -> set[str]:
+    if isinstance(value, dict):
+        return set().union(*(sha256_values(v) for v in value.values())) if value else set()
+    if isinstance(value, list):
+        return set().union(*(sha256_values(v) for v in value)) if value else set()
+    return {value.lower()} if isinstance(value, str) and len(value) == 64 and all(
+        c in "0123456789abcdefABCDEF" for c in value) else set()
+
+
+def anchor_panel(panel: dict) -> None:
+    """The panel's opponent, decks, evaluator and census are Step C's frozen ones (its pinned manifest)."""
+    manifest = json.loads(checked(panel["step_c_manifest"], "Step C panel manifest").read_text(encoding="utf-8"))
+    pinned = sha256_values(manifest)
+    for key in ("opponent", "decks", "evaluator", "census"):
+        require(panel[key]["sha256"].lower() in pinned, f"the panel's {key} is not pinned by Step C's manifest")
+
+
 def plan(endpoint_path: Path, panel_path: Path, parity_path: Path, out: Path) -> dict:
     endpoint = json.loads(endpoint_path.read_text(encoding="utf-8"))
     panel = json.loads(panel_path.read_text(encoding="utf-8"))
     parity = json.loads(parity_path.read_text(encoding="utf-8"))
     this_host = host_class()
     admit(endpoint, panel, parity, this_host)
+    anchor_panel(panel)
     checked(endpoint["checkpoint"], "checkpoint")
-    source = json.loads(checked(endpoint["source"], "endpoint source").read_text(encoding="utf-8"))
+    source_path = checked(endpoint["source"], "endpoint source")
+    require(endpoint["checkpoint"]["sha256"] in source_pins(source_path).values(),
+            "the endpoint source does not load the endpoint checkpoint")
+    source = json.loads(source_path.read_text(encoding="utf-8"))
     opponent = json.loads(checked(panel["opponent"], "opponent H").read_text(encoding="utf-8"))
     decks = json.loads(checked(panel["decks"], "decks").read_text(encoding="utf-8"))
     sys.path.insert(0, str(REPO / "tools" / "spy_reset"))
@@ -115,15 +142,17 @@ def runner(*args: str) -> None:
 
 
 def run(look_path: Path, evaluator: Path) -> None:
+    """Qualify, then run, synchronously; start this command inside the host's held reservation
+    (host_reservation_v1 supervise), as the panel runner's own `qualify` and `run` require."""
     look = load_look(look_path)
     require(sha256_file(evaluator) == look["panel_def"]["evaluator"]["sha256"], "evaluator is not the panel pin")
     root = Path(look["plan"]["path"]).parent
     receipt = root / "qualification" / "receipt.json"
     if not receipt.exists():
-        runner("launch", "qualify", "--plan", look["plan"]["path"], "--sample", "16", "--workers", "1,2,4,8",
+        runner("qualify", "--plan", look["plan"]["path"], "--sample", "16", "--workers", "1,2,4,8",
                "--root", str(root / "qualification"), "--executable", str(evaluator))
-    runner("launch", "run", "--plan", look["plan"]["path"], "--receipt", str(receipt), "--executable",
-           str(evaluator))
+    require(receipt.exists(), "qualification wrote no receipt")
+    runner("run", "--plan", look["plan"]["path"], "--receipt", str(receipt), "--executable", str(evaluator))
 
 
 def rows(look_path: Path) -> dict:
