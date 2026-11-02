@@ -107,6 +107,8 @@ class GainTests(unittest.TestCase):
         bad(lambda r: r.__setitem__("chain", "w5/chain1"))
         bad(lambda r: r.__setitem__("source_checkpoint_sha256", "other"))
         bad(lambda r: r["qref"].__setitem__("seed_root", r["candidates"][0]["seed_root"]))
+        bad(lambda r: r["policy"]["logit_bits"].__setitem__(0, 0x7f800000))  # +inf
+        bad(lambda r: r["policy"]["logit_bits"].__setitem__(0, 0x7fc00000))  # NaN
         s0.validate_record(record(0, random.Random(5)), "w5/0b", PARENT, s0.BUDGETS)
 
     def test_engine_q_must_match_mirror(self):
