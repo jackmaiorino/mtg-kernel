@@ -340,15 +340,20 @@ class LeaseProgress(base.LeaseProgress):
     detached reservation supervisor, no child of this driver: during its native part (its root's started.json
     without execution.json) only the native child's CPU counts, so a stalled native run still goes idle; outside
     it, CPU time under the supervisor counts, while the supervisor is the same process (its token and its start
-    time). A pack qualification's trials are observed through their requests (``<pack root>/*.request.json``),
-    their native parts only. On 2026-11-01 item 6's history trial ran over five minutes with nothing else to
-    observe, and the guard released the Pod mid-qualification.
+    time). A pack qualification's trials are observed through their requests (``<pack root>/*.request.json``):
+    during a native part its native child's ticks; outside it, CPU under the supervisor whose command line names
+    the request (the dispatcher's preparation, admission walk, fingerprints and archive; the supervisor's own
+    polling is left out, as for an attempt). The pack process's own CPU counts at PACK_BUSY_SHARE of a core since
+    the last beat (its volume walk and launches; its 5 s polling stays below it). For any watched root, a newly written started.json, execution.json, report.json or failure.json
+    is activity, so a step shorter than a beat is seen. On 2026-11-01 item 6's history trial ran over five
+    minutes with nothing else to observe, and the guard released the Pod mid-qualification; on 2026-11-02 the
+    history pack's trials prepared for about 80 s and ran natively for 4 s, between beats, and it latched again.
     """
 
     def __init__(self, campaign: Campaign):
         super().__init__(campaign)
         self.counts, self.total = {}, 0
-        self.watched = {}
+        self.watched, self.marks, self.busy = {}, {}, {}
 
     def watch(self, key: str, pid: int | None = None, token: str | None = None, root: str | None = None,
               pack: str | None = None) -> None:
@@ -372,8 +377,57 @@ class LeaseProgress(base.LeaseProgress):
     def unwatch(self, key: str) -> None:
         with self.lock:
             self.watched.pop(key, None)
-            for name in [name for name in self.ticks if name.startswith("watched:" + key + ":")]:
-                self.ticks.pop(name, None)
+            for store in (self.ticks, self.marks, self.busy):
+                for name in [name for name in store if name.startswith("watched:" + key + ":")]:
+                    store.pop(name, None)
+
+    def marked(self, name: str, root: Path, stamp: float) -> None:
+        """A watched root's step records: a new one is activity (a step can start and end between beats)."""
+        marks = tuple(record for record in WATCHED_RECORDS if (root / record).exists())
+        if marks != self.marks.get(name, ()):
+            self.activity = stamp
+        self.marks[name] = marks
+
+    def busy_since(self, name: str, ticks: int, stamp: float, share: float) -> None:
+        """CPU ``ticks`` (cumulative) count as activity at ``share`` of a core since the last beat."""
+        last = self.busy.get(name)
+        if last is not None and (ticks - last[1]) / CLOCK_TICKS >= share * (stamp - last[0]) > 0:
+            self.activity = stamp
+        self.busy[name] = (stamp, ticks)
+
+    def observe_pack(self, key: str, entry: dict, stamp: float, table: dict) -> bool:
+        alive, requests = False, []
+        for request in sorted(Path(entry["pack"]).glob("*.request.json")):
+            try:
+                requests.append((str(request), Path(json.loads(request.read_text(encoding="utf-8"))["root"])))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        commands = process_commands(table) if requests else {}
+        for request, root in requests:
+            self.marked(f"watched:{key}:{root}:marks", root, stamp)
+            ticks = base.native_ticks(root)
+            processes = f"watched:{key}:{root}:processes"
+            if ticks is not None:  # its native part: the native child only
+                alive = alive or ticks >= 0
+                name = f"watched:{key}:{root}"
+                if ticks > self.ticks.get(name, -1):
+                    self.activity = stamp
+                self.ticks[name] = ticks
+                self.ticks.pop(processes, None)
+                continue
+            named = {pid for pid, args in commands.items() if request in args}
+            tops = [pid for pid in named if table[pid][0] not in named]
+            if tops:  # under its supervisor (whose own polling is left out): the dispatcher's work
+                ticks = sum(max(0, base.descendant_ticks(table, pid)) for pid in tops)
+                if ticks > self.ticks.get(processes, ticks):
+                    self.activity = stamp
+                self.ticks[processes] = ticks
+            else:
+                self.ticks.pop(processes, None)
+        child = entry.get("child")
+        if isinstance(child, int) and child in table:  # the pack's own work (a volume walk, launches), not its polling
+            self.busy_since(f"watched:{key}:pack", table[child][1], stamp, PACK_BUSY_SHARE)
+        return alive
 
     @staticmethod
     def same_supervisor(entry: dict) -> bool:
@@ -389,15 +443,14 @@ class LeaseProgress(base.LeaseProgress):
         alive = super().observe(stamp)
         table = None
         for key, entry in list(self.watched.items()):
-            roots = [Path(entry["root"])] if entry["root"] else []
             if entry["pack"]:
-                for request in sorted(Path(entry["pack"]).glob("*.request.json")):
-                    try:
-                        roots.append(Path(json.loads(request.read_text(encoding="utf-8"))["root"]))
-                    except (OSError, ValueError, KeyError, TypeError):
-                        continue
+                table = base.process_table() if table is None else table
+                alive = self.observe_pack(key, entry, stamp, table) or alive
+                continue
+            roots = [Path(entry["root"])] if entry["root"] else []
             native = False
             for root in roots:
+                self.marked(f"watched:{key}:{root}:marks", root, stamp)
                 ticks = base.native_ticks(root)
                 if ticks is None:
                     continue
@@ -448,6 +501,23 @@ def touch(campaign: Campaign) -> None:
 def proc_readable() -> bool:
     """Whether /proc can tell a process's start time (Linux, as on a Pod)."""
     return Path("/proc/self/stat").exists()
+
+
+WATCHED_RECORDS = ("started.json", "execution.json", "report.json", "failure.json")
+PACK_BUSY_SHARE = 0.02  # the pack process: a volume walk is mostly I/O wait, its polling a few file reads per 5 s
+CLOCK_TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+
+
+def process_commands(table: dict) -> dict:
+    """pid -> command-line arguments, for the processes in ``table`` (/proc; empty off Linux)."""
+    commands = {}
+    for pid in table:
+        try:
+            commands[pid] = [arg.decode(errors="replace") for arg in
+                             Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if arg]
+        except OSError:
+            continue
+    return commands
 
 
 class watching:
