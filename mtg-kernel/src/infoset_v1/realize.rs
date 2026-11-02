@@ -734,15 +734,33 @@ mod tests {
             let (records, script) = record(fable_bounce(hawks), PlayerId::P1, 30);
             let game = native_of(&script);
             checked += all_realizable("fable-bounce", &records, &game, PlayerId::P1);
-            let last = records
-                .iter()
-                .rev()
-                .find(|r| r.p.is_ok() && !r.nodes.is_empty())
-                .expect("a node decision");
-            assert!(
-                unrealizable(&game, last.step, PlayerId::P1, MutantV1::L12),
-                "L12 is realizable after the bounce ({hawks} Hawks returned)"
-            );
+            // Decisions where L12's export differs from P's (after the
+            // bounce): L12 must be unrealizable at every one.
+            let mut l12 = 0;
+            for r in records.iter().filter(|r| r.p.is_ok() && !r.nodes.is_empty()) {
+                let s = at_step(&game, r.step, PlayerId::P1);
+                let m = export_at(
+                    &s,
+                    PlayerId::P1,
+                    ExportOptionsV1 {
+                        mutant: Some(MutantV1::L12),
+                    },
+                )
+                .map(|x| x.bytes)
+                .ok();
+                if m.as_ref() == r.p.as_ref().ok() {
+                    continue;
+                }
+                let result = realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12));
+                assert!(
+                    matches!(result, Ok(Err(_))),
+                    "L12 is realizable at step {} ({hawks} Hawks returned): {result:?}",
+                    r.step
+                );
+                l12 += 1;
+            }
+            eprintln!("L12 unrealizable at {l12} post-bounce decisions ({hawks} Hawks returned)");
+            assert!(l12 > 0, "L12 differs from P after the bounce");
         }
 
         // CawGates Lorien: realizable up to the R8b refusal (every export).

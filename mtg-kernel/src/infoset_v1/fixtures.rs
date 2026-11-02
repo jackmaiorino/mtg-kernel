@@ -1067,7 +1067,11 @@ fn cawgates_lorien_engine_fixture() {
             "R8b holds while the node lives"
         );
     }
-    assert!(reports.iter().all(|r| r.compared > 0 && !r.truncated));
+    // The worlds' hands differ after the Brainstorm, so later default
+    // answers may diverge publicly: the pair truncates there, after R8b.
+    assert!(reports
+        .iter()
+        .all(|r| r.compared > 0 && r.p_refusals.get("R8b").copied().unwrap_or(0) > 0));
 }
 
 #[test]
