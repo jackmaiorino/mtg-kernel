@@ -226,10 +226,19 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
         # tool fails its waiting trials, and a running trial's own timeout is already inside the claim time.
         deadline = None if left is None else max(1, math.floor(left - driver.base.LEASE_MARGIN_SECONDS))
         try:
-            with driver.watching(campaign, "pack", pack=Path(read(family["pack"]["path"])["root"])):
-                done = subprocess.run([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
-                                       family["pack"]["path"]], capture_output=True, text=True,
-                                       cwd=str(TOOLS.parents[1]), timeout=deadline)
+            with driver.watching(campaign, "pack", pack=Path(read(family["pack"]["path"])["root"])) as watched:
+                argv = [sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
+                        family["pack"]["path"]]
+                with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                      cwd=str(TOOLS.parents[1])) as process:
+                    watched.exclude_child(process.pid)  # its polling is not activity; its trials' native parts are
+                    try:
+                        stdout, stderr = process.communicate(timeout=deadline)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.communicate()
+                        raise
+                done = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
         except subprocess.TimeoutExpired:
             raise SystemExit("study_wall_cap: the pack qualification reached the study's claim time") from None
         # Beside its plan, under the plan's own name (one per host and bound); the root may not exist yet

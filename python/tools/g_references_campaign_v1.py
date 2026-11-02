@@ -356,7 +356,18 @@ class LeaseProgress(base.LeaseProgress):
         ``root``) or a pack qualification (its ``pack`` root)."""
         start = base.process_start_unix(pid) if isinstance(pid, int) else None
         with self.lock:
-            self.watched[key] = {"pid": pid, "token": token, "start": start, "root": root, "pack": pack}
+            self.watched[key] = {"pid": pid, "token": token, "start": start, "root": root, "pack": pack,
+                                 "child": None}
+
+    def exclude_child(self, key: str, pid: int) -> None:
+        """The watched pack's own process, a child of this driver: its polling is not activity, its trials'
+        native parts are."""
+        with self.lock:
+            if key in self.watched:
+                self.watched[key]["child"] = pid
+
+    def excluded_children(self) -> frozenset:
+        return frozenset(entry["child"] for entry in self.watched.values() if isinstance(entry.get("child"), int))
 
     def unwatch(self, key: str) -> None:
         with self.lock:
@@ -370,7 +381,7 @@ class LeaseProgress(base.LeaseProgress):
         say, its start time. A reused PID, even one under the same reservation, never credits."""
         if not isinstance(entry["pid"], int) or not base.supervisor_owned(entry["pid"], entry["token"]):
             return False
-        if not Path("/proc/self/stat").exists():
+        if not proc_readable():
             return True
         return entry["start"] is not None and base.process_start_unix(entry["pid"]) == entry["start"]
 
@@ -434,6 +445,11 @@ def touch(campaign: Campaign) -> None:
         campaign.lease.touch()
 
 
+def proc_readable() -> bool:
+    """Whether /proc can tell a process's start time (Linux, as on a Pod)."""
+    return Path("/proc/self/stat").exists()
+
+
 class watching:
     """``with watching(campaign, key, ...):`` observes a detached dispatch (``LeaseProgress.watch``) as lease
     activity while the block runs; a no-op without a lease."""
@@ -448,6 +464,10 @@ class watching:
         if self.lease:
             self.lease.watch(self.key, **self.fields)
         return self
+
+    def exclude_child(self, pid: int) -> None:
+        if self.lease:
+            self.lease.exclude_child(self.key, pid)
 
     def __exit__(self, *exc):
         if self.lease:

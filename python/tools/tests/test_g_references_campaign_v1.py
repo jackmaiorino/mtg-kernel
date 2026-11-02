@@ -285,6 +285,9 @@ class DriverTests(unittest.TestCase):
         progress.cpu, progress.activity = (clock["wall"], clock["cpu"]), clock["wall"]
         trial = {"state": "dispatched", "pid": 950, "token": "t950"}
         steps = lease["work_idle_seconds"] // 15
+        proc = patch.object(driver, "proc_readable", return_value=True)  # the Pod's /proc, on any test host
+        proc.start()
+        self.addCleanup(proc.stop)
         with patch.object(driver.base, "process_start_unix", return_value=100.0):
             watched = driver.watching(self.campaign_with(progress), "trial:w1", trial, root=root)
             watched.__enter__()
@@ -317,26 +320,31 @@ class DriverTests(unittest.TestCase):
         for index, root in enumerate(roots):
             (pack / f"packed-{index}.request.json").write_text(json.dumps({"root": str(root)}))
         (pack / "broken.request.json").write_text("{torn")
-        clock, ticks = {"wall": lease["created_epoch"] + 60}, {str(roots[1]): 0}
+        clock, ticks, me = {"wall": lease["created_epoch"] + 60}, {str(roots[1]): 0, "pack": 0}, os.getpid()
+
+        def table():  # the pack process (777) is the driver's child; it polls its trials
+            return {me: (1, 0), 777: (me, ticks["pack"])}
 
         def beat(native=0):
-            clock["wall"] += 15.; ticks[str(roots[1])] += native
+            clock["wall"] += 15.; ticks[str(roots[1])] += native; ticks["pack"] += 3
             with patch.object(driver.time, "time", return_value=clock["wall"]), \
                     patch.object(driver.base.time, "time", return_value=clock["wall"]), \
                     patch.object(driver.base, "driver_cpu_seconds", return_value=progress.cpu[1]), \
-                    patch.object(driver.base, "process_table", return_value={}), \
+                    patch.object(driver.base, "process_table", side_effect=table), \
                     patch.object(driver.base, "native_ticks", side_effect=lambda r: ticks.get(str(r))):
                 progress.beat()
             record = json.loads((guard / "progress.json").read_text())
             return record, lease_guard.decision(lease, clock["wall"], 1.0, record)["reason"]
 
         progress.activity = clock["wall"]
-        with driver.watching(self.campaign_with(progress), "pack", pack=pack):
+        with driver.watching(self.campaign_with(progress), "pack", pack=pack) as watched:
+            watched.exclude_child(777)
             results = [beat(native=40) for _ in range(2 * lease["work_idle_seconds"] // 15)]
             self.assertEqual({reason for _, reason in results}, {None})
             self.assertTrue(results[-1][0]["native_alive"])
             self.assertEqual([beat() for _ in range(lease["work_idle_seconds"] // 15)][-1][1],
-                             "native_work_stalled_or_idle")  # stalled packed trials still go idle
+                             "native_work_stalled_or_idle")  # stalled packed trials go idle, polling or not
+        self.assertEqual(progress.excluded_children(), frozenset())
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc")
     def test_a_real_detached_trial_past_the_bound_on_linux(self):
@@ -345,9 +353,9 @@ class DriverTests(unittest.TestCase):
         watched it does not."""
         def trial(seconds, ready):
             # The launcher exits at once, so the supervisor is reparented: no descendant of this test process.
+            burn = f"import time\nend = time.time() + {seconds}\nwhile time.time() < end: pass\n"
             supervisor = (f"import os, subprocess, sys\n"
-                          f"child = subprocess.Popen([sys.executable, '-c', 'import time\\\\nend = time.time() + "
-                          f"{seconds}\\\\nwhile time.time() < end: pass'])\n"
+                          f"child = subprocess.Popen([sys.executable, '-c', {burn!r}])\n"
                           f"open({str(ready)!r} + '.partial', 'w').write(str(os.getpid()))\n"
                           f"os.replace({str(ready)!r} + '.partial', {str(ready)!r})\n"
                           f"child.wait()\n")
