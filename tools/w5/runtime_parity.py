@@ -1,20 +1,27 @@
 """W5 runtime parity receipt (collab LANES/lead/W5-DESIGN.md v1.3 section 2 "Runtime", lead ruling 7; E11).
 
 The training runtime must equal the board's: the Spellbench v2 adapter plays with mulligans off, as the bridge
-declares, and W5 trains the same way. This tool compares, from their declarations and data, never from an outcome:
+declares, and W5 trains the same way. This tool compares, from declarations, data and source, never from an
+outcome. Every check must hold for the receipt to pass:
 
-- **Mulligans:** the board's resolved `information_rules.rules.mulligan` and the engine's
-  `engine_profile.rules_supported.mulligan` (run manifest) against every training episode's `opening` and
-  `mulligan_modes` (both absent: the keep-seven deal, mulligans off).
-- **Runtime rules:** every training episode's `runtime_rules` absent (the engine's default rules), and the board
-  bridge source at the board's engine revision applying no runtime-rules profile and refusing the opt-in
-  semantics (London mulligans, attack targets, Foundations combat).
-- **Starting player:** the board assigns it (`host_assigned`, no choice); every training episode fixes it.
-- **Decks:** each of the board's pool decks, as the board engine materializes it (`data/runtime_decks_v1.json`
-  at the board revision), equals exactly one training deck label's mainboard (card ids named by
-  `data/cards_v1.json` at the training revision), as a multiset of card names. Training decks without a board deck
-  are listed (W5: Terror). Every training episode is game 1 (`postboard` false), as the board's Bo1.
-- **Recorded beside, not compared:** game limits on both sides, the board extensions and engine identity.
+- **Mulligans:** the board run's resolved `information_rules.rules.mulligan` is `none` (and `none` is supported);
+  every training episode has no `opening` and no `mulligan_modes` (the keep-seven deal).
+- **Runtime rules profile:** every training episode's `runtime_rules` is absent (the engine's default rules), and
+  the bridge sources at the board revision never call `set_runtime_rules_v1` (the FlatV4 lockstep resets with the
+  default profile). A static source check: it cannot see a default changed elsewhere in the engine.
+- **Neutral choices:** the board engine declares Spellbench neutral choices when its `rules_snapshot_id` carries
+  `:neutral-`; training sessions (`episode_session_v1`) never enable them, so the two expose different decisions
+  (singleton choices) and parity needs both off.
+- **Ordinary starts:** no training episode starts from a recorded history (`reset`); every episode is game 1
+  (`postboard` false) with `selected` equal to `registered`.
+- **Starting player:** the board assigns it (`host_assigned`) and swaps seats within each pair; training uses both
+  starting seats.
+- **Limits:** training `max_physical_decisions` and `max_policy_steps` equal the board's `max_decisions` and
+  `max_steps` (the board's per-seat caps are recorded beside).
+- **Decks:** each board pool deck, as the board revision materializes it (`data/runtime_decks_v1.json`: card ids
+  and names), equals at least one training label's mainboard by card id and by name (names from
+  `data/cards_v1.json` at each side's revision), so native ids and cards agree. Training-only decks are listed
+  (W5: Terror).
 
   runtime_parity.py --training-config CFG.json [...] --board-run RUN_DIR --repo MTG_KERNEL_REPO
                     [--training-revision REV] [--out RECEIPT.json]
@@ -28,15 +35,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
 
 SCHEMA = "w5-runtime-parity/v1"
-BRIDGE = "mtg-kernel/src/agent_bridge_v1.rs"
-LOCKSTEP = "mtg-kernel/src/agent_bridge_flat_v4.rs"  # the FlatV4 bot's training-style session copy
-OPT_IN_SEMANTICS = ("ChooseLondonMulligan", "ChooseLondonBottom", "ChooseAttackTarget", "ChooseCombatDamageRange")
+BRIDGE_FILES = ("mtg-kernel/src/agent_bridge_v1.rs", "mtg-kernel/src/agent_bridge_flat_v4.rs")
+RULES_CALL = re.compile(r"^[^/]*\bset_runtime_rules_v1\s*\(", re.MULTILINE)
 
 
 class ParityError(Exception):
@@ -64,72 +71,95 @@ def episodes(config: dict):
             yield entry["episode"] if "episode" in entry else entry
 
 
+def deck_key(ids, card_names: list[str]) -> Counter:
+    """A mainboard as a multiset of (native card id, card name)."""
+    return Counter((i, card_names[i]) for i in ids)
+
+
 def training_side(configs: list[dict], card_names: list[str]) -> dict:
-    """Mulligan profile, runtime rules, starting players, Bo1 and decks of every training episode."""
-    profiles, rules, starts, postboard, limits = Counter(), Counter(), Counter(), Counter(), Counter()
+    """Mulligan profile, rules, starts, limits and decks of every training episode."""
+    profiles, rules, starts, limits = Counter(), Counter(), Counter(), Counter()
+    resets = postboard = registered_differs = 0
     decks: dict[str, Counter] = {}
     for config in configs:
         for ep in episodes(config):
             opening, modes = ep.get("opening"), ep.get("mulligan_modes")
-            profiles["none (keep seven)" if opening is None and modes is None else f"opening={opening}"] += 1
+            profiles["none" if opening is None and modes is None else f"opening={opening}"] += 1
             rules["default" if ep.get("runtime_rules") is None else str(ep["runtime_rules"])] += 1
             starts[ep["starting_player"]] += 1
-            postboard[bool(ep.get("postboard"))] += 1
             limits[(ep["max_physical_decisions"], ep["max_policy_steps"])] += 1
+            resets += ep.get("reset") is not None
+            postboard += bool(ep.get("postboard"))
+            for registered, selected in zip(ep["registered"], ep["selected"]):
+                registered_differs += (registered["label"], registered["mainboard"]) != (
+                    selected["label"], selected["mainboard"])
             for deck in ep["selected"]:
-                named = Counter(card_names[i] for i in deck["mainboard"])
+                named = deck_key(deck["mainboard"], card_names)
                 if deck["label"] in decks and decks[deck["label"]] != named:
                     raise ParityError(f"training deck {deck['label']} has two different mainboards")
                 decks[deck["label"]] = named
     return {"mulligan_profiles": dict(profiles), "runtime_rules": dict(rules),
-            "starting_players": {str(k): v for k, v in starts.items()},
-            "postboard": {str(k): v for k, v in postboard.items()},
+            "starting_players": {str(k): v for k, v in sorted(starts.items())},
             "limits": [{"max_physical_decisions": a, "max_policy_steps": b, "episodes": n}
-                       for (a, b), n in sorted(limits.items())], "decks": decks}
+                       for (a, b), n in sorted(limits.items())],
+            "reset_episodes": resets, "postboard_episodes": postboard,
+            "selected_differs_from_registered": registered_differs, "decks": decks}
 
 
-def board_decks(runtime_decks: dict, pool: list[str]) -> dict[str, Counter]:
+def board_decks(runtime_decks: dict, pool: list[str], card_names: list[str]) -> dict[str, Counter]:
     by_id = {deck["id"]: deck for deck in runtime_decks["decks"]}
     out = {}
     for deck_id in pool:
         if deck_id not in by_id:
             raise ParityError(f"board deck {deck_id} is not in the board engine's runtime decks")
-        out[deck_id] = Counter(row["name"] for row in by_id[deck_id]["materialized_mainboard"])
+        rows = by_id[deck_id]["materialized_mainboard"]
+        for row in rows:
+            if card_names[row["card_id"]] != row["name"]:
+                raise ParityError(f"board card id {row['card_id']} is not {row['name']} at the board revision")
+        out[deck_id] = Counter((row["card_id"], row["name"]) for row in rows)
     return out
 
 
-def bridge_rules(source: str) -> dict:
-    """The bridge's runtime-rules facts at the board revision (static: what the source can do)."""
-    return {"applies_runtime_rules_profile": "set_runtime_rules" in source,
-            "refuses_opt_in_semantics": all(name in source for name in OPT_IN_SEMANTICS)
-            and "semantic outside the Pauper neutral contract" in source}
+def bridge_rules(sources: list[str]) -> dict:
+    """The board bridge's runtime-rules facts at its revision (static)."""
+    return {"calls_set_runtime_rules": any(RULES_CALL.search(source) for source in sources)}
 
 
 def compare(training: dict, board_manifest: dict, board_config: dict, board_pool_decks: dict, bridge: dict) -> dict:
     rules = board_manifest["information_rules"]["rules"]
     supported = board_manifest["engine_profile"]["rules_supported"]
-    checks = {}
-    checks["mulligans_off_on_board"] = rules["mulligan"] == "none" and supported["mulligan"] == ["none"]
-    checks["mulligans_off_in_training"] = set(training["mulligan_profiles"]) == {"none (keep seven)"}
-    checks["training_rules_profile_is_board_default"] = set(training["runtime_rules"]) == {"default"}
-    checks["board_rules_profile_is_default"] = (not bridge["applies_runtime_rules_profile"]
-                                        and bridge["refuses_opt_in_semantics"])
-    checks["starting_player_assigned"] = (rules["starting_player"] == "host_assigned"
-                                          and set(training["starting_players"]) <= {"0", "1"})
-    checks["game_one_only"] = set(training["postboard"]) == {"False"}
+    board_limits = board_config.get("limits") or board_manifest.get("tournament", {}).get("limits") or {}
+    snapshot_id = board_manifest["engine"].get("rules_snapshot_id", "")
+    board_neutral = ":neutral-" in snapshot_id
+    checks = {
+        "mulligans_off_on_board": rules["mulligan"] == "none" and "none" in supported["mulligan"],
+        "mulligans_off_in_training": set(training["mulligan_profiles"]) == {"none"},
+        "training_rules_profile_is_default": set(training["runtime_rules"]) == {"default"},
+        "board_rules_profile_is_default": not bridge["calls_set_runtime_rules"],
+        "neutral_choices_equal": not board_neutral,  # training sessions never enable them
+        "ordinary_starts_game_one": training["reset_episodes"] == 0 and training["postboard_episodes"] == 0
+        and training["selected_differs_from_registered"] == 0,
+        "starting_player_assigned_both_seats": rules["starting_player"] == "host_assigned"
+        and set(training["starting_players"]) == {"0", "1"},
+        "limits_equal": [(x["max_physical_decisions"], x["max_policy_steps"]) for x in training["limits"]]
+        == [(board_limits.get("max_decisions"), board_limits.get("max_steps"))],
+    }
     matches, unmatched_board = {}, []
     for deck_id, cards in board_pool_decks.items():
-        labels = [label for label, named in training["decks"].items() if named == cards]
-        if len(labels) == 1:
-            matches[deck_id] = labels[0]
+        labels = sorted(label for label, named in training["decks"].items() if named == cards)
+        if labels:
+            matches[deck_id] = labels
         else:
-            unmatched_board.append({"deck": deck_id, "training_labels": labels})
-    checks["every_board_deck_equals_one_training_deck"] = not unmatched_board
-    training_only = sorted(set(training["decks"]) - set(matches.values()))
+            unmatched_board.append(deck_id)
+    checks["every_board_deck_equals_a_training_deck"] = not unmatched_board
+    matched = {label for labels in matches.values() for label in labels}
     return {"checks": checks, "deck_matches": matches, "unmatched_board_decks": unmatched_board,
-            "training_only_decks": training_only,
-            "recorded": {"board_limits": board_config.get("limits"), "training_limits": training["limits"],
-                         "board_extensions": rules.get("extensions"), "board_engine": board_manifest["engine"],
+            "training_only_decks": sorted(set(training["decks"]) - matched),
+            "recorded": {"board_limits": board_limits, "training_limits": training["limits"],
+                         "board_rules": {k: rules.get(k) for k in ("mulligan", "starting_player", "starting_seat",
+                                                                   "extensions")},
+                         "board_rules_supported": supported, "board_engine": board_manifest["engine"],
+                         "board_neutral_choices": board_neutral,
                          "board_engine_defaults": board_manifest["information_rules"].get("engine_defaults")}}
 
 
@@ -155,17 +185,23 @@ def main(argv=None) -> int:
         training_rev = git_rev(args.repo, args.training_revision)
         cards_raw = git_show(args.repo, training_rev, "data/cards_v1.json")
         card_names = [card["name"] for card in json.loads(cards_raw)["cards"]]
+        board_cards_raw = git_show(args.repo, board_rev, "data/cards_v1.json")
+        board_card_names = [card["name"] for card in json.loads(board_cards_raw)["cards"]]
         decks_raw = git_show(args.repo, board_rev, "data/runtime_decks_v1.json")
-        bridge_raw = git_show(args.repo, board_rev, BRIDGE)
-        try:
-            bridge_raw += b"\n" + git_show(args.repo, board_rev, LOCKSTEP)
-        except ParityError:
-            pass  # a revision without the FlatV4 lockstep: the bridge file alone
+        bridge_raw = {}
+        for path in BRIDGE_FILES:
+            try:
+                bridge_raw[path] = git_show(args.repo, board_rev, path)
+            except ParityError:
+                pass  # a revision without the FlatV4 lockstep file
+        if BRIDGE_FILES[0] not in bridge_raw:
+            raise ParityError(f"{BRIDGE_FILES[0]} is missing at the board revision")
         pool = [d["catalog_id"] for d in board_config["deck_pool"]]
         training = training_side(configs, card_names)
-        result = compare(training, manifest, board_config, board_decks(json.loads(decks_raw), pool),
-                         bridge_rules(bridge_raw.decode("utf-8")))
-    except (ParityError, KeyError) as exc:
+        result = compare(training, manifest, board_config,
+                         board_decks(json.loads(decks_raw), pool, board_card_names),
+                         bridge_rules([raw.decode("utf-8") for raw in bridge_raw.values()]))
+    except (ParityError, KeyError, IndexError) as exc:
         print(f"error: {exc!r}", file=sys.stderr)
         return 1
     receipt = {"schema": SCHEMA, "pass": all(result["checks"].values()), **result,
@@ -174,8 +210,10 @@ def main(argv=None) -> int:
                                                for p, raw in zip(args.training_config, raw_configs)],
                           "board_manifest_sha256": sha256(manifest_raw), "board_config_sha256": sha256(config_raw),
                           "board_revision": board_rev, "training_revision": training_rev,
-                          "cards_v1_sha256": sha256(cards_raw), "board_runtime_decks_sha256": sha256(decks_raw),
-                          "board_bridge_sha256": sha256(bridge_raw)}}
+                          "training_cards_v1_sha256": sha256(cards_raw),
+                          "board_cards_v1_sha256": sha256(board_cards_raw),
+                          "board_runtime_decks_sha256": sha256(decks_raw),
+                          "board_bridge_sha256": {k: sha256(v) for k, v in bridge_raw.items()}}}
     text = json.dumps(receipt, indent=2) + "\n"
     if args.out:
         args.out.write_text(text, encoding="utf-8", newline="\n")
