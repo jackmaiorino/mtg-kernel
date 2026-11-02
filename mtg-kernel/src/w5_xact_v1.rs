@@ -89,7 +89,7 @@ pub fn w5_played_action_v1(
 /// Whether the update at global index `update` runs the paired Adam-step
 /// comparison.
 pub fn w5_telemetry_update_v1(update: u64) -> bool {
-    update % W5_TELEMETRY_STRIDE_V1 == 0
+    update.is_multiple_of(W5_TELEMETRY_STRIDE_V1)
 }
 
 #[cfg(test)]
