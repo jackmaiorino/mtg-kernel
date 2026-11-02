@@ -28,10 +28,10 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v4_tensor_v1, flat_v4_extension_value_v1, FlatV4EncodeScratchV1,
     SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
 };
+pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::agent_bridge_infoset_v1::{
     infoset_extension_v1, receipt_v1, InfosetBridgeV1, SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
 };
-pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
 use crate::mana::ManaColor;
@@ -3388,7 +3388,8 @@ mod tests {
         let mut longest = 0;
         for (deck, seed) in [("CawGates", 5_u64), ("Wildfire", 6), ("Faeries", 7)] {
             let mut server = infoset_server();
-            let mut line = server.handle_line(&flat_v4_reset(&format!("i-{deck}-{seed}"), deck, seed));
+            let mut line =
+                server.handle_line(&flat_v4_reset(&format!("i-{deck}-{seed}"), deck, seed));
             let mut rng = crate::state::SplitMix64::seed(seed);
             for _ in 0..400 {
                 longest = longest.max(line.len());
@@ -3412,7 +3413,11 @@ mod tests {
                     .count();
                 let eligible = legal.len() >= 2 && non_mana >= 2;
                 let extension = &response["extensions"]["x_kernel_infoset_v1"];
-                assert_eq!(!extension.is_null(), eligible, "{deck}: presence follows eligibility");
+                assert_eq!(
+                    !extension.is_null(),
+                    eligible,
+                    "{deck}: presence follows eligibility"
+                );
                 if let Some(code) = extension["refusal"].as_str() {
                     *refusals.entry(code.to_string()).or_default() += 1;
                 } else if eligible {

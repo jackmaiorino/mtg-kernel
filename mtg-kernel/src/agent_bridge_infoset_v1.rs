@@ -13,11 +13,11 @@
 //! Receipts stay engine-side: per-seat tallies by predicate are written to
 //! the bridge's stderr when the game ends, never into a decision.
 
+use crate::ids::PlayerId;
 use crate::infoset_v1::{
     export_v1, ExportErrorV1, ExportInputV1, ExportOptionsV1, PayloadV1, RefusalTallyV1,
     INFOSET_SCHEMA_V1,
 };
-use crate::ids::PlayerId;
 use crate::rl::{ActionSemanticV1, PlayerSeatV1};
 use crate::rl_session::{FastActorSessionV1, RlSessionDecisionV1};
 use crate::runtime_decks::runtime_deck_by_id;
