@@ -35,6 +35,7 @@ from pathlib import Path
 
 SCHEMA = "w5-runtime-parity/v1"
 BRIDGE = "mtg-kernel/src/agent_bridge_v1.rs"
+LOCKSTEP = "mtg-kernel/src/agent_bridge_flat_v4.rs"  # the FlatV4 bot's training-style session copy
 OPT_IN_SEMANTICS = ("ChooseLondonMulligan", "ChooseLondonBottom", "ChooseAttackTarget", "ChooseCombatDamageRange")
 
 
@@ -110,8 +111,8 @@ def compare(training: dict, board_manifest: dict, board_config: dict, board_pool
     checks = {}
     checks["mulligans_off_on_board"] = rules["mulligan"] == "none" and supported["mulligan"] == ["none"]
     checks["mulligans_off_in_training"] = set(training["mulligan_profiles"]) == {"none (keep seven)"}
-    checks["default_rules_in_training"] = set(training["runtime_rules"]) == {"default"}
-    checks["default_rules_on_board"] = (not bridge["applies_runtime_rules_profile"]
+    checks["training_rules_profile_is_board_default"] = set(training["runtime_rules"]) == {"default"}
+    checks["board_rules_profile_is_default"] = (not bridge["applies_runtime_rules_profile"]
                                         and bridge["refuses_opt_in_semantics"])
     checks["starting_player_assigned"] = (rules["starting_player"] == "host_assigned"
                                           and set(training["starting_players"]) <= {"0", "1"})
@@ -156,6 +157,10 @@ def main(argv=None) -> int:
         card_names = [card["name"] for card in json.loads(cards_raw)["cards"]]
         decks_raw = git_show(args.repo, board_rev, "data/runtime_decks_v1.json")
         bridge_raw = git_show(args.repo, board_rev, BRIDGE)
+        try:
+            bridge_raw += b"\n" + git_show(args.repo, board_rev, LOCKSTEP)
+        except ParityError:
+            pass  # a revision without the FlatV4 lockstep: the bridge file alone
         pool = [d["catalog_id"] for d in board_config["deck_pool"]]
         training = training_side(configs, card_names)
         result = compare(training, manifest, board_config, board_decks(json.loads(decks_raw), pool),

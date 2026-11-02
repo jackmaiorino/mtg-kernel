@@ -68,7 +68,7 @@ class CompareTests(unittest.TestCase):
         self.assertFalse(london["checks"]["mulligans_off_in_training"])
         rules = rp.compare(rp.training_side([training_config(runtime_rules="resolution_boundary_v1")], CARD_NAMES),
                            MANIFEST, {}, self.board(), BRIDGE_OK)
-        self.assertFalse(rules["checks"]["default_rules_in_training"])
+        self.assertFalse(rules["checks"]["training_rules_profile_is_board_default"])
         board_london = json.loads(json.dumps(MANIFEST))
         board_london["information_rules"]["rules"]["mulligan"] = "london"
         out = rp.compare(rp.training_side([training_config()], CARD_NAMES), board_london, {}, self.board(), BRIDGE_OK)
