@@ -1023,11 +1023,16 @@ pub(crate) struct SBackScratchV1 {
     dqkv: Vec<f32>,
     dattn: Vec<f32>,
     dbias: Vec<f32>,
-    drow: Vec<f32>,
     dsmall: Vec<f32>,
     dsmall2: Vec<f32>,
     dfin: Vec<f32>,
     ln_scratch: Vec<f32>,
+    head_q: Vec<f32>,
+    head_k: Vec<f32>,
+    head_vt: Vec<f32>,
+    head_do: Vec<f32>,
+    head_out: Vec<f32>,
+    dscore: Vec<f32>,
 }
 
 impl SModelV1 {
@@ -1116,11 +1121,16 @@ impl SModelV1 {
         sized_v1(&mut ws.dqkv, l * 3 * d);
         sized_v1(&mut ws.dattn, l * d);
         sized_v1(&mut ws.dbias, h * l * l);
-        sized_v1(&mut ws.drow, l);
         sized_v1(&mut ws.dsmall, a.max(r).max(n).max(1) * width);
         sized_v1(&mut ws.dsmall2, a.max(r).max(n).max(1) * width);
         sized_v1(&mut ws.dfin, (1 + a) * d);
         sized_v1(&mut ws.ln_scratch, d);
+        sized_v1(&mut ws.head_q, l * dh);
+        sized_v1(&mut ws.head_k, l * dh);
+        sized_v1(&mut ws.head_vt, dh * l);
+        sized_v1(&mut ws.head_do, l * dh);
+        sized_v1(&mut ws.head_out, l * dh);
+        sized_v1(&mut ws.dscore, l * l);
 
         // Value head: v = tanh(z / 2).
         let dz = dvalue * 0.5 * (1.0 - tape.value * tape.value);
@@ -1186,8 +1196,14 @@ impl SModelV1 {
             let dff = &mut ws.dwide[..l * ffn];
             self.linear_bwd(block.ff2, l, &lt.ff_act, &ws.dx, grad, Some(dff));
             kernels::gelu_backward_slice_v1(&lt.ff_pre, &mut ws.dwide[..l * ffn]);
-            let dpre = ws.dwide[..l * ffn].to_vec();
-            self.linear_bwd(block.ff0, l, &lt.ln2, &dpre, grad, Some(&mut ws.dx2[..]));
+            self.linear_bwd(
+                block.ff0,
+                l,
+                &lt.ln2,
+                &ws.dwide[..l * ffn],
+                grad,
+                Some(&mut ws.dx2[..]),
+            );
             // LN2: dx_mid = dx_out + LN2'(dln2).
             {
                 let (gains, rest) = grad.split_at_mut(block.ln2_b);
@@ -1220,59 +1236,90 @@ impl SModelV1 {
                 grad,
                 Some(&mut ws.dattn[..]),
             );
-            // Attention.
+            // Attention, per head, through the ordered kernels:
+            // dP = dO V^T, dV = P^T dO, dS = P * (dP - rowsum(P * dP)),
+            // dQ = scale dS K, dK = scale dS^T Q; dS also feeds the bias.
             ws.dqkv.fill(0.0);
             for head in 0..h {
-                for i in 0..l {
-                    let p_row = &lt.probs[(head * l + i) * l..(head * l + i + 1) * l];
-                    let d_o = &ws.dattn[i * d + head * dh..i * d + head * dh + dh];
-                    // dP and dV.
-                    for j in 0..l {
-                        let v = &lt.qkv
-                            [j * 3 * d + 2 * d + head * dh..j * 3 * d + 2 * d + head * dh + dh];
-                        let mut dot = 0.0f32;
-                        for c in 0..dh {
-                            dot += d_o[c] * v[c];
-                        }
-                        ws.drow[j] = dot;
-                        let p = p_row[j];
-                        let dv = &mut ws.dqkv
-                            [j * 3 * d + 2 * d + head * dh..j * 3 * d + 2 * d + head * dh + dh];
-                        for c in 0..dh {
-                            dv[c] += p * d_o[c];
-                        }
+                for j in 0..l {
+                    for c in 0..dh {
+                        ws.head_q[j * dh + c] = lt.qkv[j * 3 * d + head * dh + c];
+                        ws.head_k[j * dh + c] = lt.qkv[j * 3 * d + d + head * dh + c];
+                        ws.head_vt[c * l + j] = lt.qkv[j * 3 * d + 2 * d + head * dh + c];
+                        ws.head_do[j * dh + c] = ws.dattn[j * d + head * dh + c];
                     }
+                }
+                let probs = &lt.probs[head * l * l..(head + 1) * l * l];
+                gemm_v1(
+                    l,
+                    l,
+                    dh,
+                    &ws.head_do,
+                    dh,
+                    1,
+                    &ws.head_vt,
+                    InitV1::Zero,
+                    &mut ws.dscore,
+                );
+                gemm_v1(
+                    l,
+                    dh,
+                    l,
+                    probs,
+                    1,
+                    l,
+                    &ws.head_do,
+                    InitV1::Zero,
+                    &mut ws.head_out,
+                );
+                for j in 0..l {
+                    for c in 0..dh {
+                        ws.dqkv[j * 3 * d + 2 * d + head * dh + c] = ws.head_out[j * dh + c];
+                    }
+                }
+                for i in 0..l {
+                    let p_row = &probs[i * l..(i + 1) * l];
+                    let row = &mut ws.dscore[i * l..(i + 1) * l];
                     let mut row_dot = 0.0f32;
                     for j in 0..l {
-                        row_dot += p_row[j] * ws.drow[j];
+                        row_dot += p_row[j] * row[j];
                     }
                     for j in 0..l {
-                        let ds = p_row[j] * (ws.drow[j] - row_dot);
-                        ws.drow[j] = ds;
+                        let ds = p_row[j] * (row[j] - row_dot);
+                        row[j] = ds;
                         ws.dbias[(head * l + i) * l + j] += ds;
                     }
-                    // dQ_i = scale * sum_j dS_ij K_j.
-                    let mut dq = [0.0f32; 256];
-                    let dq = &mut dq[..dh];
-                    for j in 0..l {
-                        let ds = ws.drow[j];
-                        let k = &lt.qkv[j * 3 * d + d + head * dh..j * 3 * d + d + head * dh + dh];
-                        for c in 0..dh {
-                            dq[c] += ds * k[c];
-                        }
-                    }
+                }
+                gemm_v1(
+                    l,
+                    dh,
+                    l,
+                    &ws.dscore,
+                    l,
+                    1,
+                    &ws.head_k,
+                    InitV1::Zero,
+                    &mut ws.head_out,
+                );
+                for i in 0..l {
                     for c in 0..dh {
-                        ws.dqkv[i * 3 * d + head * dh + c] += dq[c] * scale;
+                        ws.dqkv[i * 3 * d + head * dh + c] = ws.head_out[i * dh + c] * scale;
                     }
-                    // dK_j += (scale dS_ij) Q_i.
-                    let q = &lt.qkv[i * 3 * d + head * dh..i * 3 * d + head * dh + dh];
-                    for j in 0..l {
-                        let ds = ws.drow[j] * scale;
-                        let dk =
-                            &mut ws.dqkv[j * 3 * d + d + head * dh..j * 3 * d + d + head * dh + dh];
-                        for c in 0..dh {
-                            dk[c] += ds * q[c];
-                        }
+                }
+                gemm_v1(
+                    l,
+                    dh,
+                    l,
+                    &ws.dscore,
+                    1,
+                    l,
+                    &ws.head_q,
+                    InitV1::Zero,
+                    &mut ws.head_out,
+                );
+                for j in 0..l {
+                    for c in 0..dh {
+                        ws.dqkv[j * 3 * d + d + head * dh + c] = ws.head_out[j * dh + c] * scale;
                     }
                 }
             }
