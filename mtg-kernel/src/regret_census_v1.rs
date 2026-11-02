@@ -1055,6 +1055,26 @@ fn load_policy_v1(path: &str) -> Result<FrozenPlayPolicyV1, String> {
         policy.replace_training_parameters_v3(&params)?;
         eprintln!("parameters overridden from {op} (sha256 {digest})");
     }
+    // Native S (W5 XS, `s_transformer_v1`): `"s_checkpoint"` and
+    // `"s_checkpoint_sha256"` in the wrapper install S's forward on the
+    // source's FlatV4 shell; every search prior, rollout and played decision
+    // of this policy is then S's.
+    if let Some(path) = raw.get("s_checkpoint").and_then(|v| v.as_str()) {
+        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let digest: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if raw.get("s_checkpoint_sha256").and_then(|v| v.as_str()) != Some(digest.as_str()) {
+            return Err(format!("S checkpoint sha256 {digest} differs from pin"));
+        }
+        let state = crate::s_transformer_v1::decode_checkpoint_v1(&bytes)?;
+        policy.install_s_model_v1(std::sync::Arc::new(state.model_v1().clone()))?;
+        eprintln!(
+            "native S installed from {path} (sha256 {digest}, parameters {})",
+            state.model_v1().parameter_sha256_v1()
+        );
+    }
     Ok(policy)
 }
 

@@ -44,6 +44,8 @@
 mod checkpoint;
 mod kernels;
 #[cfg(test)]
+mod policy_tests;
+#[cfg(test)]
 mod tests;
 pub mod tools;
 
@@ -893,6 +895,50 @@ impl SModelV1 {
             return Err("S forward produced a non-finite output".into());
         }
         Ok(())
+    }
+}
+
+thread_local! {
+    /// The calling thread's reusable forward tape for [`SModelV1::score_tensor_v1`].
+    static THREAD_TAPE_V1: std::cell::RefCell<STapeV1> = std::cell::RefCell::new(STapeV1::default());
+}
+
+impl SModelV1 {
+    /// Scores one FlatV4 decision with the calling thread's reusable tape:
+    /// `(logits, RL value)`, the same bits as [`SModelV1::forward_v1`].
+    pub(crate) fn score_tensor_v1(
+        &self,
+        t: &NativeFlatDecisionTensorV2,
+    ) -> Result<(Vec<f32>, f32), String> {
+        THREAD_TAPE_V1.with(|tape| {
+            let mut tape = tape.borrow_mut();
+            self.forward_into_v1(SInputV1::of_tensor_v1(t), &mut tape)?;
+            Ok((tape.logits.clone(), tape.value))
+        })
+    }
+
+    /// SHA-256 of the card table (`card.weight`, f32 bits little-endian).
+    pub(crate) fn card_table_sha256_v1(&self) -> String {
+        let spec = &self.layout.tensors[0];
+        let mut hasher = Sha256::new();
+        for value in &self.values[spec.offset..spec.offset + spec.len] {
+            hasher.update(value.to_bits().to_le_bytes());
+        }
+        hex_v1(&hasher.finalize())
+    }
+
+    /// SHA-256 of the architecture and config: S's counterpart of net-8's
+    /// parameter-manifest digest.
+    pub(crate) fn manifest_sha256_v1(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(S_ARCHITECTURE_V1.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(
+            serde_json::to_string(&self.layout.config)
+                .expect("config serializes")
+                .as_bytes(),
+        );
+        hex_v1(&hasher.finalize())
     }
 }
 

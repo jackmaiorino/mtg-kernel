@@ -248,6 +248,12 @@ pub struct FrozenPlayPolicyV1 {
     /// forward is compared, bit for bit, with its forward on the same
     /// (zero-digest) inputs. Forks keep it.
     no_digest_check: Option<Box<NativePolicyValueNetV1>>,
+    /// Native S (`s_transformer_v1`, W5 XS) in place of the net-8 forward,
+    /// on a plain FlatV4 policy shell: the shell's encoder, tensorizer,
+    /// samplers and RNG streams are used unchanged, and every V4 forward of
+    /// this policy (collection, replay checks, search priors and rollouts)
+    /// is S's. None unless `install_s_model_v1` sets it; forks keep it.
+    s_model: Option<std::sync::Arc<crate::s_transformer_v1::SModelV1>>,
 }
 
 /// An installed no-state-digest input contract (`no_state_digest_v1`).
@@ -571,6 +577,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             input_contract: None,
             no_digest_check: None,
+            s_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -624,6 +631,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             input_contract: None,
             no_digest_check: None,
+            s_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -718,6 +726,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             input_contract: None,
             no_digest_check: None,
+            s_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -788,6 +797,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             input_contract: None,
             no_digest_check: None,
+            s_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -858,6 +868,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             input_contract: None,
             no_digest_check: None,
+            s_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -940,6 +951,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             input_contract: None,
             no_digest_check: None,
+            s_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1127,6 +1139,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             input_contract: None,
             no_digest_check: None,
+            s_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1205,6 +1218,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: self.fast_search_forward,
             input_contract: self.input_contract.clone(),
             no_digest_check: self.no_digest_check.clone(),
+            s_model: self.s_model.clone(),
             training_math: self.training_math,
             inference_cache: self.inference_cache.clone(),
             inference_key: Vec::new(),
@@ -1238,6 +1252,10 @@ impl FrozenPlayPolicyV1 {
     /// transferred policy and the no-state-digest contract.
     pub(crate) fn into_flat_v7_transfer_v1(mut self) -> Result<Self, String> {
         require(
+            self.s_model.is_none(),
+            "this operation is net-8's; a policy with native S refuses it",
+        )?;
+        require(
             self.successor.is_none() && self.input_contract.is_none(),
             "the V4-to-V7 transfer requires a V4 policy with its original inputs",
         )?;
@@ -1265,6 +1283,10 @@ impl FrozenPlayPolicyV1 {
     /// FlatV8 rows. Refused for every other generation, an already converted
     /// policy and the no-state-digest contract.
     pub(crate) fn into_flat_v8_v1(mut self) -> Result<Self, String> {
+        require(
+            self.s_model.is_none(),
+            "this operation is net-8's; a policy with native S refuses it",
+        )?;
         require(
             self.successor.is_none()
                 && self.input_contract.is_none()
@@ -1450,6 +1472,17 @@ impl FrozenPlayPolicyV1 {
     }
 
     pub fn actual_model_identity_v1(&self) -> PlayModelIdentityV1 {
+        if let Some(s_model) = &self.s_model {
+            return PlayModelIdentityV1 {
+                schema: "mtg-kernel-actual-play-model/v1".into(),
+                weights_sha256: s_model.parameter_sha256_v1(),
+                model_parameter_sha256: s_model.manifest_sha256_v1(),
+                embedding_table_sha256: s_model.card_table_sha256_v1(),
+                feature_contract_digest: self.model_feature_contract_digest_v1().to_owned(),
+                feature_encoding_digest: self.identity.feature_encoding_digest_v1().to_owned(),
+                card_db_hash: self.identity.destination_card_db_hash_v1().to_owned(),
+            };
+        }
         let mut weights = Sha256::new();
         let mut embeddings = Sha256::new();
         self.model.visit_parameters_v1(|name, _, values| {
@@ -1497,6 +1530,10 @@ impl FrozenPlayPolicyV1 {
         input_width: usize,
         check: bool,
     ) -> Result<(), String> {
+        require(
+            self.s_model.is_none(),
+            "this operation is net-8's; a policy with native S refuses it",
+        )?;
         require(
             self.input_contract.is_none(),
             "the no-state-digest contract is already installed",
@@ -1600,6 +1637,10 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         parameters: &[NativeNamedParameterV1],
     ) -> Result<(), String> {
+        require(
+            self.s_model.is_none(),
+            "this operation is net-8's; a policy with native S refuses it",
+        )?;
         require(
             self.successor.is_some() || self.fresh_successor.is_some(),
             "training requires explicit successor features",
@@ -1823,6 +1864,10 @@ impl FrozenPlayPolicyV1 {
         &self,
         tensor: &NativeFlatDecisionTensorV4,
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        if let Some(s_model) = &self.s_model {
+            let (logits, value) = s_model.score_tensor_v1(&tensor.common)?;
+            return Ok(FrozenPlayDecisionScoresV1 { logits, value });
+        }
         let output = self
             .model
             .forward_feature_transfer_v4_mode(
@@ -2178,6 +2223,10 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         tensor: &NativeFlatDecisionTensorV4,
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        if let Some(s_model) = &self.s_model {
+            let (logits, value) = s_model.score_tensor_v1(&tensor.common)?;
+            return Ok(FrozenPlayDecisionScoresV1 { logits, value });
+        }
         require(
             self.input_contract.is_none(),
             "diagnostic forwards are not defined under the no-state-digest contract",
@@ -2337,6 +2386,9 @@ impl FrozenPlayPolicyV1 {
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
         use crate::inference_cache_v1::ForwardPathV1;
+        if self.s_model.is_some() {
+            return self.score_owned_s_v1();
+        }
         if self.input_contract.is_some() {
             // Zeroed and removed digest columns agree only in the pinned
             // environment (round to nearest, no flush-to-zero, no
@@ -2472,6 +2524,73 @@ impl FrozenPlayPolicyV1 {
             "invalid frozen inference output",
         )?;
         Ok(scores)
+    }
+
+    /// `score_owned` under native S: the plain V4 tensorization (state digest
+    /// included, which S drops itself), then S's forward, through the
+    /// prediction cache when one is attached.
+    fn score_owned_s_v1(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
+        let s_model = self.s_model.clone().ok_or("native S is not installed")?;
+        let fresh = self
+            .fresh_successor
+            .as_mut()
+            .ok_or("native S requires the V4 scorer")?;
+        fresh.tensorizer.set_state_digest_v1(true);
+        fresh
+            .tensorizer
+            .fill(
+                FlatScoringDecisionViewV4::new(self.owned.view(), &fresh.extensions),
+                &mut fresh.tensor,
+            )
+            .map_err(|e| format!("V4 visible tensorization: {e:?}"))?;
+        let scores = cached_s_forward_v1(
+            &s_model,
+            &fresh.tensor,
+            self.inference_cache.as_ref(),
+            &mut self.inference_key,
+            self.inference_probe.as_mut(),
+        )?;
+        require(
+            scores.logits.len() == self.owned.actions.len()
+                && !scores.logits.is_empty()
+                && scores.logits.iter().all(|x| x.is_finite())
+                && scores.value.is_finite(),
+            "invalid native S output",
+        )?;
+        Ok(scores)
+    }
+
+    /// Installs native S (the `s_model` field) on a plain FlatV4 policy (not
+    /// FlatV7 or FlatV8, no no-state-digest contract or check model) before
+    /// any prediction cache or probe is attached. A cache attached later is
+    /// keyed by S's parameters.
+    pub(crate) fn install_s_model_v1(
+        &mut self,
+        model: std::sync::Arc<crate::s_transformer_v1::SModelV1>,
+    ) -> Result<(), String> {
+        require(
+            self.fresh_successor
+                .as_ref()
+                .is_some_and(|fresh| !fresh.flat_v7 && !fresh.flat_v8),
+            "native S runs on a plain FlatV4 policy",
+        )?;
+        require(
+            self.input_contract.is_none() && self.no_digest_check.is_none(),
+            "native S reads the FlatV4 inputs without the no-state-digest contract",
+        )?;
+        require(
+            self.inference_cache.is_none() && self.inference_probe.is_none(),
+            "install native S before attaching a prediction cache or probe",
+        )?;
+        require(self.s_model.is_none(), "native S is already installed")?;
+        self.s_model = Some(model);
+        self.row_cache = Default::default();
+        Ok(())
+    }
+
+    /// The installed native S, if any.
+    pub(crate) fn s_model_v1(&self) -> Option<&crate::s_transformer_v1::SModelV1> {
+        self.s_model.as_deref()
     }
 
     /// Shares a worker's prediction cache with this policy (and its later
@@ -2774,6 +2893,54 @@ fn cached_forward_v1(
         logits: output.logits.to_vec(),
         value: output.value,
     })
+}
+
+/// [`cached_forward_v1`] for native S: the same key (namespace = S's
+/// parameter digest, the V4 path, a fixed activation byte since S has one
+/// arithmetic) and the same hit, miss and probe accounting.
+fn cached_s_forward_v1(
+    model: &crate::s_transformer_v1::SModelV1,
+    tensor: &NativeFlatDecisionTensorV4,
+    cache: Option<&crate::inference_cache_v1::PolicyCacheV1>,
+    key: &mut Vec<u8>,
+    probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
+) -> Result<FrozenPlayDecisionScoresV1, String> {
+    use crate::inference_cache_v1::{hash_v1, write_key_v1, CallOutcomeV1, ForwardPathV1};
+    let mode = ForwardActivationModeV1::KernelDeterministicTanh;
+    let view = encoded_decision_view_v4(tensor);
+    let hash = cache.map(|c| {
+        write_key_v1(key, &c.model, ForwardPathV1::TransferV4, mode, &view);
+        hash_v1(key)
+    });
+    if let (None, Some(p)) = (cache, probe.as_deref()) {
+        write_key_v1(key, &p.model, ForwardPathV1::TransferV4, mode, &view);
+    }
+    let mut outcome = CallOutcomeV1::Uncached;
+    if let (Some(c), Some(hash)) = (cache, hash) {
+        let mut guard = c.cache.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((logits, value)) = guard.get(hash, key) {
+            if let Some(p) = probe {
+                p.record(CallOutcomeV1::Hit, key, Some(guard.bytes()));
+            }
+            return Ok(FrozenPlayDecisionScoresV1 { logits, value });
+        }
+        guard.count_forward();
+        outcome = CallOutcomeV1::Miss;
+    }
+    let (logits, value) = model.score_tensor_v1(&tensor.common)?;
+    if let (Some(c), Some(hash)) = (cache, hash) {
+        if logits.iter().all(|x| x.is_finite()) && value.is_finite() {
+            c.cache
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(hash, key, &logits, value);
+        }
+    }
+    if let Some(p) = probe {
+        let bytes = cache.map(|c| c.cache.lock().unwrap_or_else(|p| p.into_inner()).bytes());
+        p.record(outcome, key, bytes);
+    }
+    Ok(FrozenPlayDecisionScoresV1 { logits, value })
 }
 
 impl FrozenPlayPolicyV1 {
