@@ -1132,7 +1132,10 @@ fn selected_spell_quote_branch_grant_v1(
     forced_branch: Option<bool>,
     grant: Option<u64>,
 ) -> Option<SpellManaPaymentV1> {
+    // A free cast's X is zero, except Sickening Dreams' X, which counts an
+    // additional cost's discards (Premodern wave P1b).
     if x != 0
+        && !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
             || (cfg!(feature = "eternal-fixtures")
                 && method == CastMethodV4::Normal
