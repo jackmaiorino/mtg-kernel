@@ -919,9 +919,10 @@ impl SModelV1 {
 
     /// SHA-256 of the card table (`card.weight`, f32 bits little-endian).
     pub(crate) fn card_table_sha256_v1(&self) -> String {
-        let spec = &self.layout.tensors[0];
+        let config = self.layout.config;
+        let card = self.layout.card;
         let mut hasher = Sha256::new();
-        for value in &self.values[spec.offset..spec.offset + spec.len] {
+        for value in &self.values[card..card + config.card_vocab * config.card_dim] {
             hasher.update(value.to_bits().to_le_bytes());
         }
         hex_v1(&hasher.finalize())
