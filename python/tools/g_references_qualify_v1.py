@@ -391,10 +391,16 @@ JUDGED_RULE = "g-references-v1/judged-identity-v2"
 EXPOSURE_PATH_DERIVED = ("trajectory_sha256", "opponent_checkpoint_sha256")
 
 
-def normalized_pin_path(path: str) -> str:
-    """A trajectory pin's path without its scratch campaign (``.../scratch/<name>/<run>/...``) or attempt."""
-    path = re.sub(r"/scratch/[^/]+/(?=G\d+/b\d+-a\d+/)", "/", path, count=1)
-    return re.sub(r"/b(\d+)-a\d+/", r"/b\1-a*/", path)
+def normalized_pin_path(path: str, native_root) -> str:
+    """A trajectory pin's path relative to its campaign's native root (``Campaign.native``: a Pod's container
+    disk, a scratch campaign's own folder under it, or the hot root on the desktop), with forward slashes and the
+    attempt of its block folder (``<run>/<block>-a<k>/``) normalized. A pin outside that root keeps its whole
+    path, so it never matches a pin inside one."""
+    path = str(path).replace("\\", "/")
+    root = str(native_root).replace("\\", "/").rstrip("/") + "/"
+    if path.startswith(root):
+        path = "<native>/" + path[len(root):]
+    return re.sub(r"^(<native>/[^/]+/b\d+)-a\d+/", r"\1-a*/", path)
 
 
 def judged_identity(campaign: driver.Campaign, run: str, block: int) -> dict:
@@ -410,7 +416,8 @@ def judged_identity(campaign: driver.Campaign, run: str, block: int) -> dict:
             for line in exposure.read_text(encoding="utf-8").splitlines() if line.strip()]
     return {"file_sha256": item["sha256"], "state_sha256": value["state_sha256"], "adam_step": value["adam_step"],
             "content_sha256": dispatch.digest(content), "outside_trajectories_sha256": dispatch.digest(outside),
-            "pin_count": len(pins), "pin_paths_sha256": dispatch.digest([normalized_pin_path(t["path"]) for t in pins]),
+            "pin_count": len(pins),
+            "pin_paths_sha256": dispatch.digest([normalized_pin_path(t["path"], campaign.native(run)) for t in pins]),
             "exposure_sha256": dispatch.digest(rows), "exposure_rows": len(rows), "rule": JUDGED_RULE}
 
 
