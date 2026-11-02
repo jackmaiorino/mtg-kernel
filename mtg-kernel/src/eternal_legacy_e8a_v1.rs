@@ -1775,7 +1775,7 @@ pub(crate) fn drive(
             // "They reveal their hand."
             let hand = state.players[opponent.index()].hand.clone();
             for &card in &hand {
-                // spellbench-reviewed-look: the card rules let a player look at the other hand.
+                // spellbench-public-reveal: the opponent reveals their hand (Cloak and Dagger).
                 state.reveal_hand_card(controller, opponent, card)?;
             }
             let mut candidates = hand_cards(state, opponent, |def| !def.has_type(CardType::Land));
