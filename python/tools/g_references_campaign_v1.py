@@ -336,9 +336,13 @@ class LeaseProgress(base.LeaseProgress):
     the guard's work_idle_seconds bound releases the pod. ``completed_updates``
     counts this driver's updates for the lease adapter's session.
 
-    A watched process (``watch``: a qualification trial's reservation supervisor, which runs detached and so
-    is no child of this driver) is activity while CPU time advances under it. On 2026-11-01 item 6's history
-    trial ran over five minutes with nothing else to observe, and the guard released the Pod mid-qualification.
+    Watched dispatches (``watch``) are observed like in-flight attempts. A qualification trial runs under a
+    detached reservation supervisor, no child of this driver: during its native part (its root's started.json
+    without execution.json) only the native child's CPU counts, so a stalled native run still goes idle; outside
+    it, CPU time under the supervisor counts, while the supervisor is the same process (its token and its start
+    time). A pack qualification's trials are observed through their requests (``<pack root>/*.request.json``),
+    their native parts only. On 2026-11-01 item 6's history trial ran over five minutes with nothing else to
+    observe, and the guard released the Pod mid-qualification.
     """
 
     def __init__(self, campaign: Campaign):
@@ -346,28 +350,60 @@ class LeaseProgress(base.LeaseProgress):
         self.counts, self.total = {}, 0
         self.watched = {}
 
-    def watch(self, key: str, pid: int, token: str) -> None:
-        """Count CPU time under ``pid`` (a reservation supervisor naming ``token``) as activity until ``unwatch``."""
+    def watch(self, key: str, pid: int | None = None, token: str | None = None, root: str | None = None,
+              pack: str | None = None) -> None:
+        """Observe a detached dispatch until ``unwatch``: a trial (its supervisor ``pid`` naming ``token``, its
+        ``root``) or a pack qualification (its ``pack`` root)."""
+        start = base.process_start_unix(pid) if isinstance(pid, int) else None
         with self.lock:
-            self.watched[key] = (pid, token)
+            self.watched[key] = {"pid": pid, "token": token, "start": start, "root": root, "pack": pack}
 
     def unwatch(self, key: str) -> None:
         with self.lock:
             self.watched.pop(key, None)
-            self.ticks.pop("watched:" + key, None)
+            for name in [name for name in self.ticks if name.startswith("watched:" + key + ":")]:
+                self.ticks.pop(name, None)
+
+    @staticmethod
+    def same_supervisor(entry: dict) -> bool:
+        """The watched PID is still the supervisor it was: its token on its command line and, where /proc can
+        say, its start time. A reused PID, even one under the same reservation, never credits."""
+        if not isinstance(entry["pid"], int) or not base.supervisor_owned(entry["pid"], entry["token"]):
+            return False
+        if not Path("/proc/self/stat").exists():
+            return True
+        return entry["start"] is not None and base.process_start_unix(entry["pid"]) == entry["start"]
 
     def observe(self, stamp: float) -> bool:
         alive = super().observe(stamp)
-        if self.watched:
-            table = base.process_table()
-            for key, (pid, token) in list(self.watched.items()):
-                if not base.supervisor_owned(pid, token):  # ended, or a reused PID: never credits other work
-                    self.ticks.pop("watched:" + key, None)
+        table = None
+        for key, entry in list(self.watched.items()):
+            roots = [Path(entry["root"])] if entry["root"] else []
+            if entry["pack"]:
+                for request in sorted(Path(entry["pack"]).glob("*.request.json")):
+                    try:
+                        roots.append(Path(json.loads(request.read_text(encoding="utf-8"))["root"]))
+                    except (OSError, ValueError, KeyError, TypeError):
+                        continue
+            native = False
+            for root in roots:
+                ticks = base.native_ticks(root)
+                if ticks is None:
                     continue
-                ticks = base.descendant_ticks(table, pid)
-                if ticks > self.ticks.get("watched:" + key, ticks):
+                native, alive = True, alive or ticks >= 0
+                name = f"watched:{key}:{root}"
+                if ticks > self.ticks.get(name, -1):
                     self.activity = stamp
-                self.ticks["watched:" + key] = ticks
+                self.ticks[name] = ticks
+            name = f"watched:{key}:supervised"
+            if native or not self.same_supervisor(entry):  # during a native part only the native child counts
+                self.ticks.pop(name, None)
+                continue
+            table = base.process_table() if table is None else table
+            ticks = base.descendant_ticks(table, entry["pid"])
+            if ticks > self.ticks.get(name, ticks):
+                self.activity = stamp
+            self.ticks[name] = ticks
         return alive
 
     def touch(self) -> None:
@@ -399,20 +435,22 @@ def touch(campaign: Campaign) -> None:
 
 
 class watching:
-    """``with watching(campaign, key, dispatched):`` counts a detached dispatch's CPU time (its supervisor's
-    descendants) as lease activity while the block runs; a no-op without a lease or a supervisor pid."""
+    """``with watching(campaign, key, ...):`` observes a detached dispatch (``LeaseProgress.watch``) as lease
+    activity while the block runs; a no-op without a lease."""
 
-    def __init__(self, campaign: Campaign, key: str, dispatched: dict):
+    def __init__(self, campaign: Campaign, key: str, dispatched: dict | None = None, root=None, pack=None):
         self.lease, self.key = getattr(campaign, "lease", None), key
-        self.pid, self.token = dispatched.get("pid"), dispatched.get("token")
+        dispatched = dispatched or {}
+        self.fields = {"pid": dispatched.get("pid"), "token": dispatched.get("token"),
+                       "root": None if root is None else str(root), "pack": None if pack is None else str(pack)}
 
     def __enter__(self):
-        if self.lease and isinstance(self.pid, int) and self.token:
-            self.lease.watch(self.key, self.pid, self.token)
+        if self.lease:
+            self.lease.watch(self.key, **self.fields)
         return self
 
     def __exit__(self, *exc):
-        if self.lease and isinstance(self.pid, int) and self.token:
+        if self.lease:
             self.lease.unwatch(self.key)
         return False
 
