@@ -207,6 +207,22 @@ def set_aside(path: Path, log, reason: str) -> None:
     log(kind="interrupted-root-kept", path=str(path), kept=str(target), reason=reason)
 
 
+def set_aside_pack(pack_root: Path, log) -> None:
+    """An interrupted pack: its trials' roots (named in ``<pack root>/*.request.json``, beside the base request's
+    roots, so a retry of the same plan would name them again) and then the pack root itself are kept aside."""
+    if not pack_root.exists():
+        return
+    for request in sorted(pack_root.glob("*.request.json")):
+        try:
+            value = read(request)
+        except (OSError, ValueError):
+            continue
+        for key in ("root", "cold_root"):
+            if isinstance(value.get(key), str):
+                set_aside(Path(value[key]), log, f"{request.name} of a pack without its index")
+    set_aside(pack_root, log, "pack without its index")
+
+
 def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> dict:
     reports = {}
     for name, request in family["trials"].items():
@@ -258,7 +274,7 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
         # tool fails its waiting trials, and a running trial's own timeout is already inside the claim time.
         deadline = None if left is None else max(1, math.floor(left - driver.base.LEASE_MARGIN_SECONDS))
         pack_root = Path(read(family["pack"]["path"])["root"])
-        set_aside(pack_root, log, "pack without its index")  # an earlier lease's release interrupted it
+        set_aside_pack(pack_root, log)  # an earlier lease's release interrupted it
         try:
             with driver.watching(campaign, "pack", pack=pack_root) as watched:
                 done = run_pack([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",

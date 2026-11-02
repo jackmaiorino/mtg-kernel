@@ -192,6 +192,11 @@ class QualifyTests(unittest.TestCase):
         pack_root = Path(json.loads(Path(family["pack"]["path"]).read_text())["root"])
         pack_root.mkdir(parents=True)
         (pack_root / "log.jsonl").write_text("")  # started, no pack.json
+        packed = {"root": self.root / "trials" / "w3-plan-packed-0", "cold_root": self.root / "cold" / "w3-plan-packed-0"}
+        for path in packed.values():  # its trials' roots sit beside the base request's, named from the plan
+            path.mkdir(parents=True)
+        (packed["root"] / "report.json").write_text("{}")  # a finished packed trial: kept as evidence
+        (pack_root / "packed-0.request.json").write_text(json.dumps({key: str(path) for key, path in packed.items()}))
         here, events = [{"cpus": "0,16", "efficiency_class": 0}], []
 
         def nested(args):
@@ -215,7 +220,11 @@ class QualifyTests(unittest.TestCase):
         self.assertTrue((interrupted.with_name(interrupted.name + "-interrupted-1") / "started.json").exists())
         self.assertTrue((pack_root.with_name(pack_root.name + "-interrupted-1") / "log.jsonl").exists())
         self.assertTrue((interrupted / "report.json").exists() and (pack_root / "pack.json").exists())
-        self.assertEqual([event["kind"] for event in events].count("interrupted-root-kept"), 2)
+        for path in packed.values():
+            self.assertFalse(path.exists())  # a retry of the same plan gets fresh trial roots
+            self.assertTrue(path.with_name(path.name + "-interrupted-1").exists())
+        self.assertTrue((packed["root"].with_name(packed["root"].name + "-interrupted-1") / "report.json").exists())
+        self.assertEqual([event["kind"] for event in events].count("interrupted-root-kept"), 4)
 
     def test_kill_evidence_survives_a_restart(self):
         path = self.root / "q" / "stages" / "item3-kill.json"
