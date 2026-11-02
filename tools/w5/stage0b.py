@@ -160,6 +160,7 @@ def validate_record(record: dict, namespace: str, source_sha256: str, budgets) -
     bits = record["policy"]["logit_bits"]
     require(isinstance(bits, list) and len(bits) >= 2 and all(type(b) is int and 0 <= b < 1 << 32 for b in bits),
             f"{where}: policy logits")
+    require(all(math.isfinite(target_ref.f32(b)) for b in bits), f"{where}: policy logits must be finite")
     width = len(bits)
     seen = set()
     for c in record["candidates"]:
