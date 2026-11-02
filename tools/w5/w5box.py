@@ -448,6 +448,8 @@ def load_plan(path) -> tuple[dict, str]:
     for key in ("host_class", "layout", "cgroup_root", "state_root", "isolation", "chains", "filler"):
         require(key in plan, f"Plan lacks {key}")
     require(plan["isolation"] in ("partition-root", "none"), "Isolation must be partition-root or none")
+    for key in ("cgroup_root", "state_root"):
+        require(Path(plan[key]).is_absolute(), f"Plan {key} must be an absolute path")
     return plan, sha256_bytes(raw)
 
 
@@ -661,7 +663,7 @@ class Supervisor:
         write_json_atomic(self.ledger_source, source, durable=True)
 
     def last_stop_at(self) -> int | None:
-        stops = [r["payload"]["stop_at_usec"] for r in self.ledger.records()
+        stops = [r["payload"]["stop_at_usec"] for r in self.ledger.records()  # the latest set or clear
                  if r["event"] == "resume" and isinstance(r.get("payload"), dict) and "stop_at_usec" in r["payload"]]
         return stops[-1] if stops else None
 
@@ -670,8 +672,9 @@ class Supervisor:
         filler = self.plan["filler"]
         seed_root = self.filler_seed_root()
         argv = filler_argv(filler, seed_root, self.slot["slot"], self.paused_seq)
-        env = dict(BASE_ENV, **self.plan.get("env", {}), W5_FILLER_SEED_ROOT=seed_root,
-                   W5_BOX_SLOT=str(self.slot["slot"]))
+        env = dict(BASE_ENV)
+        env.update(self.plan.get("env", {}))
+        env.update({"W5_FILLER_SEED_ROOT": seed_root, "W5_BOX_SLOT": str(self.slot["slot"])})
         self.filler_pid = spawn_into(self.filler_cg, argv, env,
                                      instance_dir / f"filler-{self.paused_seq}-{self.filler_exits}.log")
 
@@ -704,9 +707,10 @@ class Supervisor:
     def resume(self, payload: dict) -> None:
         require(self.paused_seq is not None, "Chain is not paused")
         stop_at = payload.get("stop_at_usec")
-        require(stop_at is None or (type(stop_at) is int and stop_at > 0), "stop_at_usec must be a positive integer")
+        require(stop_at is None or (type(stop_at) is int and 0 < stop_at < 1 << 64),
+                "stop_at_usec must be a positive u64 (or null to clear it)")
         filler_usec = self.stop_filler()
-        if stop_at is not None:
+        if "stop_at_usec" in payload:  # null clears an earlier threshold
             self.write_ledger_source(stop_at)
         now = self.chain_cg.usage_usec()
         self.ledger.append({"event": "resume", "instance": self.instance, "seq": self.paused_seq,
