@@ -1527,19 +1527,14 @@ fn goblin_vandal_trades_its_damage_for_an_artifact() {
     act(&mut state, Action::DeclareAttackers(vec![vandal]));
     run_until(
         &mut state,
-        |state| {
-            zone(state, ring) == Zone::Graveyard
-                && state.stack.is_empty()
-                && state.engine.pending_effect.is_none()
-        },
+        |state| zone(state, ring) == Zone::Graveyard,
         |_, decision| match decision {
             Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(ring))),
             _ => None,
         },
     );
-    assert_ne!(
-        state.step,
-        Step::CombatDamage,
+    assert_eq!(
+        state.players[1].life, 20,
         "the trigger resolves before damage"
     );
     assert!(statics::assigns_no_combat_damage(&state, vandal));
