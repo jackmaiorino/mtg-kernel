@@ -113,6 +113,60 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
     Some(serde_json::to_vec(&(obs, rows)).expect("view serializes"))
 }
 
+/// AC3's view: the V4 observation and the menu with `arena_id`s renamed
+/// through `ids` (native to canonical for the live session), bookkeeping
+/// fields dropped, and candidate lists and menu rows sorted (the wire
+/// re-sorts the engine's native-id order).
+fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<serde_json::Value> {
+    fn rename(v: &mut serde_json::Value, ids: Option<&BTreeMap<u64, u64>>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                m.retain(|k, _| {
+                    !k.contains("hash")
+                        && !matches!(
+                            k.as_str(),
+                            "zone_change_count" | "physical_decision_id" | "step_index"
+                        )
+                });
+                for (k, x) in m.iter_mut() {
+                    if k == "arena_id" {
+                        if let (Some(n), Some(ids)) = (x.as_u64(), ids) {
+                            *x = ids
+                                .get(&n)
+                                .map_or(serde_json::json!(format!("unmapped:{n}")), |c| {
+                                    serde_json::json!(c)
+                                });
+                        }
+                        continue;
+                    }
+                    rename(x, ids);
+                }
+                if let Some(serde_json::Value::Array(xs)) = m.get_mut("legal_targets") {
+                    xs.sort_by_key(|x| x.to_string());
+                }
+            }
+            serde_json::Value::Array(xs) => xs.iter_mut().for_each(|x| rename(x, ids)),
+            _ => {}
+        }
+    }
+    let FastActorResponseV1::Decision(d) = s.current_response() else {
+        return None;
+    };
+    let (obs, menu) = s.actor_visible_decision_v4(d).ok()?;
+    let mut obs = serde_json::to_value(&obs).ok()?;
+    rename(&mut obs, ids);
+    let mut rows: Vec<String> = menu
+        .iter()
+        .map(|m| {
+            let mut v = serde_json::to_value(m).expect("semantics serialize");
+            rename(&mut v, ids);
+            v.to_string()
+        })
+        .collect();
+    rows.sort();
+    Some(serde_json::json!([obs, rows]))
+}
+
 /// The semantic form of each candidate at the current decision, with
 /// decision-local ids.
 fn menu(s: &FastActorSessionV1) -> Vec<Vec<u8>> {
@@ -450,12 +504,14 @@ pub(crate) fn ac3_check(
         ));
     }
     // V's observation and menu, with viewer-local ids, are identical.
-    if let (Some(a), Some(b)) = (view(live), view(&imported)) {
+    let ids: BTreeMap<u64, u64> = export
+        .tracked_natives
+        .iter()
+        .enumerate()
+        .map(|(n, id)| (u64::from(id.0), n as u64))
+        .collect();
+    if let (Some(a), Some(b)) = (ac3_view(live, Some(&ids)), ac3_view(&imported, None)) {
         if a != b {
-            let (a, b): (serde_json::Value, serde_json::Value) = (
-                serde_json::from_slice(&a).unwrap_or_default(),
-                serde_json::from_slice(&b).unwrap_or_default(),
-            );
             return Err(format!(
                 "the imported view differs at {:?}",
                 super::tests::diffs(&a, &b, String::new(), 8)
