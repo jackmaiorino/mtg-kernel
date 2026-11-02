@@ -751,7 +751,15 @@ pub(crate) fn export_v1(
         .collect();
 
     // Step 7: handles. C first, then U per owner in step-3 order, then H.
-    let tracked = tracked_order(state, &projection, is(MutantV1::L3));
+    let mut tracked = tracked_order(state, &projection, is(MutantV1::L3));
+    if is(MutantV1::L8) {
+        // Mutant L8's bound copies take `C:` handles (invented continuity).
+        for id in &opp_hand_tracked {
+            if !tracked.contains(id) {
+                tracked.push(*id);
+            }
+        }
+    }
     let mut handles: Vec<HandleV1> = Vec::new();
     let mut new_id: HashMap<ObjectId, u32> = HashMap::new();
     for (n, id) in tracked.iter().enumerate() {
