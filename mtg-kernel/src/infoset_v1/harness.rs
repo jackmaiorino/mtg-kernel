@@ -145,7 +145,19 @@ fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<
                     xs.sort_by_key(|x| x.to_string());
                 }
             }
-            serde_json::Value::Array(xs) => xs.iter_mut().for_each(|x| rename(x, ids)),
+            serde_json::Value::Array(xs) => {
+                xs.iter_mut().for_each(|x| rename(x, ids));
+                // Lists of objects the engine keeps in native-id order
+                // (known hand cards, candidates) compare as sets.
+                let objects = !xs.is_empty()
+                    && xs.iter().all(|x| {
+                        x.as_object()
+                            .is_some_and(|m| m.contains_key("stable") || m.contains_key("arena_id"))
+                    });
+                if objects {
+                    xs.sort_by_key(|x| x.to_string());
+                }
+            }
             _ => {}
         }
     }
