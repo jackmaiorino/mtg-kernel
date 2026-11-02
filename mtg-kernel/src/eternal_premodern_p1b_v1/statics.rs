@@ -21,7 +21,6 @@ use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zon
 /// The definition ids of the cards whose statics the engine asks about on
 /// hot paths, so those checks compare ids before names.
 struct StaticIds {
-    sterling_grove: Option<u16>,
     solitary_confinement: Option<u16>,
     tsabos_web: Option<u16>,
     aura_of_silence: Option<u16>,
@@ -30,7 +29,6 @@ struct StaticIds {
 fn static_ids() -> &'static StaticIds {
     static IDS: std::sync::OnceLock<StaticIds> = std::sync::OnceLock::new();
     IDS.get_or_init(|| StaticIds {
-        sterling_grove: crate::card_def::card_id_by_name(STERLING_GROVE),
         solitary_confinement: crate::card_def::card_id_by_name(SOLITARY_CONFINEMENT),
         tsabos_web: crate::card_def::card_id_by_name(TSABOS_WEB),
         aura_of_silence: crate::card_def::card_id_by_name(AURA_OF_SILENCE),
@@ -162,18 +160,29 @@ pub fn depletion_counters(state: &GameState, object: ObjectId) -> u8 {
 /// The treasure counters a Legacy's Allure incarnation has, or had as it was
 /// sacrificed to activate its ability.
 pub(crate) fn allure_counters_for_link(state: &GameState, allure: ObjectLinkV4) -> u16 {
-    let Some(p1b) = read_state(state) else {
-        return 0;
-    };
     if link_live_in(state, allure, Zone::Battlefield) {
-        return counters_on(&p1b.treasure_counters, allure);
+        return read_state(state).map_or(0, |p1b| counters_on(&p1b.treasure_counters, allure));
     }
-    counters_on(&p1b.sacrificed_allures, allure)
+    sacrificed_allure_counters(state, allure).unwrap_or(0)
+}
+
+/// The treasure counters the Legacy's Allure battlefield incarnation
+/// `allure` had as it was sacrificed for its ability, while that ability is
+/// on the stack.
+pub(crate) fn sacrificed_allure_counters(state: &GameState, allure: ObjectLinkV4) -> Option<u16> {
+    read_state(state)?
+        .sacrificed_allures
+        .iter()
+        .find(|(host, _)| *host == allure)
+        .map(|(_, count)| *count)
 }
 
 /// "Enters with" counters: Parallax Wave's five fade counters (fading 5).
+/// Also records, as they enter, Opalescence's timestamp and the Sterling
+/// Groves whose shroud grant the keyword queries read.
 pub(crate) fn apply_entry_counters(state: &mut GameState, object: ObjectId) {
-    if definition_name(state, object) != Some(PARALLAX_WAVE) {
+    let name = definition_name(state, object);
+    if !matches!(name, Some(PARALLAX_WAVE | OPALESCENCE | STERLING_GROVE)) {
         return;
     }
     let live = state.objects.get(object);
@@ -181,9 +190,15 @@ pub(crate) fn apply_entry_counters(state: &mut GameState, object: ObjectId) {
         return;
     }
     let link = live_link(state, object);
-    let counters = &mut p1b_state(state).fade_counters;
-    counters.retain(|(host, _)| host.object != object);
-    counters.push((link, super::FADE_COUNTERS));
+    match name {
+        Some(PARALLAX_WAVE) => {
+            let counters = &mut p1b_state(state).fade_counters;
+            counters.retain(|(host, _)| host.object != object);
+            counters.push((link, super::FADE_COUNTERS));
+        }
+        Some(OPALESCENCE) => super::record_opalescence(state, link),
+        _ => super::record_sterling_grove(state, link),
+    }
 }
 
 // ---- Activations --------------------------------------------------------------------
@@ -233,14 +248,10 @@ pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_i
             };
             let count =
                 read_state(state).map_or(0, |p1b| counters_on(&p1b.treasure_counters, departed));
+            // Kept while its ability is on the stack (`prune`).
             let sacrificed = &mut p1b_state(state).sacrificed_allures;
             sacrificed.retain(|(host, _)| *host != departed);
             sacrificed.push((departed, count));
-            // Keep only the latest few: an ability countered on the stack
-            // leaves its record behind.
-            if sacrificed.len() > 8 {
-                sacrificed.remove(0);
-            }
         }
         (DECREE_OF_JUSTICE, 0) if live.zone == Zone::Graveyard => {
             let owner = live.owner;
@@ -273,6 +284,13 @@ pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_i
 /// Sterling Grove: "Other enchantments you control have shroud." The
 /// keywords this module grants `object`.
 pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords {
+    // Games without a Sterling Grove answer from the recorded list alone.
+    let Some(groves) = read_state(state)
+        .map(|p1b| p1b.sterling_groves.as_slice())
+        .filter(|groves| !groves.is_empty())
+    else {
+        return Keywords::NONE;
+    };
     let Some(live) = state.objects.try_get(object) else {
         return Keywords::NONE;
     };
@@ -280,13 +298,12 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
         return Keywords::NONE;
     }
     let controller = live.controller;
-    let granted = active_with_id(
-        state,
-        static_ids().sterling_grove,
-        STERLING_GROVE,
-        Some(controller),
-    )
-    .any(|grove| grove != object);
+    let granted = groves.iter().any(|grove| {
+        grove.object != object
+            && link_live_in(state, *grove, Zone::Battlefield)
+            && state.objects.get(grove.object).controller == controller
+            && active_named(state, grove.object, STERLING_GROVE)
+    });
     if granted && crate::engine::object_has_type(state, object, CardType::Enchantment) {
         Keywords::SHROUD
     } else {
@@ -355,7 +372,7 @@ pub(crate) fn spell_tax(state: &GameState, types: &[CardType], caster: PlayerId)
 /// Sickening Dreams: "As an additional cost to cast this spell, discard X
 /// cards." Its X is announced like a mana X.
 pub(crate) fn announces_discard_x(def: &CardDef) -> bool {
-    def.name == SICKENING_DREAMS
+    cfg!(feature = "eternal-fixtures") && def.name == SICKENING_DREAMS
 }
 
 /// The most X Sickening Dreams may announce: the cards in its caster's hand.

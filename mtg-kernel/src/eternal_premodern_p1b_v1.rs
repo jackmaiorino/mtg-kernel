@@ -77,6 +77,10 @@ pub struct P1bStateV1 {
     /// Depletion counters on each Decree of Silence incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depletion_counters: Vec<(ObjectLinkV4, u8)>,
+    /// Sterling Grove incarnations on the battlefield, recorded as they
+    /// enter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sterling_groves: Vec<ObjectLinkV4>,
 }
 
 impl P1bStateV1 {
@@ -118,10 +122,10 @@ pub enum P1bOpV1 {
     DecreeSoldiersOfferV1,
     /// Pay {X} and create X 1/1 Soldiers.
     DecreeSoldiersV1 { x: u16 },
-    /// Decree of Silence: counter the spell `spell` an opponent cast and
-    /// put a depletion counter on the Decree; with three or more, sacrifice
-    /// it.
-    DecreeCounterV1 { spell: StackItemId },
+    /// Decree of Silence: counter the spell `spell` an opponent cast (if it
+    /// was still on the stack as the ability triggered) and put a depletion
+    /// counter on the Decree; with three or more, sacrifice it.
+    DecreeCounterV1 { spell: Option<StackItemId> },
     /// Fact or Fiction: reveal the top five; an opponent separates them.
     /// A choice.
     FactOrFictionV1,
@@ -831,7 +835,9 @@ pub(crate) fn execute(op: &P1bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             create_tokens(ctx, state, SOLDIER_TOKEN, *x);
         }
         P1bOpV1::DecreeCounterV1 { spell } => {
-            counter_spell_item(state, *spell, ctx.source);
+            if let Some(spell) = spell {
+                counter_spell_item(state, *spell, ctx.source);
+            }
             // "and put a depletion counter on this enchantment. If there are
             // three or more depletion counters on it, sacrifice it."
             let Some(decree) = live_ability_source(ctx, state) else {
@@ -1057,30 +1063,30 @@ fn replenish_hosts(
         .collect()
 }
 
-/// Puts Replenish's cards onto the battlefield: every non-Aura card
-/// together, then each Aura attached to its chosen host.
+/// Puts Replenish's cards onto the battlefield in one simultaneous event,
+/// then attaches each Aura to the host chosen for it as it entered.
 fn replenish_return(
     state: &mut GameState,
     rest: &[EffectObjectBinding],
     chosen: &[(EffectObjectBinding, EffectObjectBinding)],
 ) -> Result<(), String> {
+    let chosen = chosen
+        .iter()
+        .copied()
+        .filter(|&(aura, host)| binding_live(state, aura) && binding_live(state, host))
+        .collect::<Vec<_>>();
     event::propose_and_commit_batch(
         state,
         rest.iter()
-            .filter(|&&card| binding_live(state, card))
+            .copied()
+            .filter(|&card| binding_live(state, card))
+            .chain(chosen.iter().map(|(aura, _)| *aura))
             .map(|card| ProposedEvent::zone_change(card.object, Zone::Battlefield))
             .collect(),
     );
-    for &(aura, host) in chosen {
-        if !binding_live(state, aura) || !binding_live(state, host) {
-            continue;
-        }
-        event::propose_and_commit(
-            state,
-            ProposedEvent::zone_change(aura.object, Zone::Battlefield),
-        );
+    for (aura, host) in chosen {
         let live = state.objects.get(aura.object);
-        if live.zone != Zone::Battlefield {
+        if live.zone != Zone::Battlefield || !binding_live(state, host) {
             continue;
         }
         let incarnation = live.zone_change_count;
@@ -1532,14 +1538,12 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
         let CommittedEvent::SpellCast { spell, controller } = *event else {
             continue;
         };
-        let Some(item) = state
+        // Only Decree of Silence's counter needs the spell still on the stack.
+        let item = state
             .stack
             .iter()
             .find(|item| item.kind == StackItemKind::Spell && item.source == spell)
-            .map(|item| item.v4.stack_item_id)
-        else {
-            continue;
-        };
+            .map(|item| item.v4.stack_item_id);
         // "Whenever you cast an enchantment spell, draw a card."
         if crate::trigger::selected_spell_types(state, spell).contains(&CardType::Enchantment) {
             let drawers = active_permanents(state, ARGOTHIAN_ENCHANTRESS, Some(controller))
@@ -1583,7 +1587,25 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
     }
 }
 
-/// Permanents entering: Opalescence's timestamp.
+/// Records an entering Opalescence incarnation's timestamp, once.
+pub(crate) fn record_opalescence(state: &mut GameState, link: ObjectLinkV4) {
+    if read_state(state).is_some_and(|p1b| p1b.opalescences.iter().any(|(host, _)| *host == link)) {
+        return;
+    }
+    let timestamp = crate::engine::next_timestamp(state);
+    p1b_state(state).opalescences.push((link, timestamp));
+}
+
+/// Records an entering Sterling Grove incarnation, once.
+pub(crate) fn record_sterling_grove(state: &mut GameState, link: ObjectLinkV4) {
+    let groves = &mut p1b_state(state).sterling_groves;
+    if !groves.contains(&link) {
+        groves.push(link);
+    }
+}
+
+/// Permanents entering: Opalescence and Sterling Grove, for an entry that
+/// did not pass the entry-counter hook (which records them as they enter).
 fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
     for event in events {
         let CommittedEvent::ZoneChange {
@@ -1594,19 +1616,15 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
         else {
             continue;
         };
-        if state.objects.get(object).zone != Zone::Battlefield
-            || definition_name(state, object) != Some(OPALESCENCE)
-        {
+        if state.objects.get(object).zone != Zone::Battlefield {
             continue;
         }
         let link = live_link(state, object);
-        if read_state(state)
-            .is_some_and(|p1b| p1b.opalescences.iter().any(|(host, _)| *host == link))
-        {
-            continue;
+        match definition_name(state, object) {
+            Some(OPALESCENCE) => record_opalescence(state, link),
+            Some(STERLING_GROVE) => record_sterling_grove(state, link),
+            _ => {}
         }
-        let timestamp = crate::engine::next_timestamp(state);
-        p1b_state(state).opalescences.push((link, timestamp));
     }
 }
 
@@ -1675,6 +1693,12 @@ fn prune(state: &mut GameState) {
         .filter(|(link, _)| on_battlefield(link))
         .copied()
         .collect::<Vec<_>>();
+    let sterling_groves = p1b
+        .sterling_groves
+        .iter()
+        .filter(|link| on_battlefield(link))
+        .copied()
+        .collect::<Vec<_>>();
     let fade_counters = p1b
         .fade_counters
         .iter()
@@ -1700,8 +1724,25 @@ fn prune(state: &mut GameState) {
         .filter(|(_, card)| link_live_in(state, *card, Zone::Exile))
         .copied()
         .collect::<Vec<_>>();
+    // A sacrificed Allure's counters last while its ability is on the stack.
+    let sacrificed_allures = p1b
+        .sacrificed_allures
+        .iter()
+        .filter(|(link, _)| {
+            state.stack.iter().any(|item| {
+                item.kind == StackItemKind::ActivatedAbility
+                    && item.v4.ability_source_contract.is_some_and(|contract| {
+                        contract.source == link.object
+                            && contract.zone_change_count == link.zone_change_count
+                    })
+            })
+        })
+        .copied()
+        .collect::<Vec<_>>();
     let p1b = p1b_state(state);
+    p1b.sacrificed_allures = sacrificed_allures;
     p1b.opalescences = opalescences;
+    p1b.sterling_groves = sterling_groves;
     p1b.fade_counters = fade_counters;
     p1b.treasure_counters = treasure_counters;
     p1b.depletion_counters = depletion_counters;

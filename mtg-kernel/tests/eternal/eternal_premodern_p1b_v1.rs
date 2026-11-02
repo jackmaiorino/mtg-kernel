@@ -386,6 +386,23 @@ fn to_graveyard(state: &mut GameState, object: ObjectId) {
     event::propose_and_commit(state, ProposedEvent::zone_change(object, Zone::Graveyard));
 }
 
+/// Puts `object` onto the battlefield under its owner's control, as if an
+/// effect did.
+fn enter(state: &mut GameState, object: ObjectId) {
+    event::propose_and_commit(state, ProposedEvent::zone_change(object, Zone::Battlefield));
+}
+
+/// Plays to P0's next upkeep triggers, answering each upkeep option by its
+/// source: `pick(source)`.
+fn upkeep_options(state: &mut GameState, pick: impl Fn(ObjectId) -> u16) {
+    to_next_turn(state, |_, decision| match decision {
+        Decision::ChooseEffectOption { source, .. } => {
+            Some(Action::ChooseEffectOption(pick(*source)))
+        }
+        _ => None,
+    });
+}
+
 /// Deals `amount` damage from `source` to `target`.
 fn damage(state: &mut GameState, source: ObjectId, target: Target, amount: i32) {
     event::propose_and_commit(state, ProposedEvent::damage(source, target, amount));
@@ -1298,8 +1315,10 @@ fn standstill_is_sacrificed_and_the_casters_opponent_draws_three() {
 #[test]
 fn sterling_grove_shrouds_enchantments_and_tutors_one_to_the_top() {
     let mut state = game(&["Island"; 10]);
-    let grove = put(&mut state, P0, "Sterling Grove", Zone::Battlefield);
     let seal = put(&mut state, P0, "Seal of Cleansing", Zone::Battlefield);
+    assert!(!keyword(&state, seal, Keywords::SHROUD));
+    let grove = put(&mut state, P0, "Sterling Grove", Zone::Hand);
+    enter(&mut state, grove);
     assert!(keyword(&state, seal, Keywords::SHROUD));
     assert!(
         !keyword(&state, grove, Keywords::SHROUD),
@@ -1335,4 +1354,125 @@ fn tsabos_web_draws_and_keeps_utility_lands_tapped() {
     to_next_turn(&mut state, |_, _| None);
     assert!(state.objects.get(bowl).tapped, "Dust Bowl stays tapped");
     assert!(!state.objects.get(island).tapped);
+}
+
+#[test]
+fn legacys_allure_is_bounded_by_its_own_treasure_counters() {
+    let mut state = islands();
+    let rich = put(&mut state, P0, "Legacy's Allure", Zone::Battlefield);
+    let poor = put(&mut state, P0, "Legacy's Allure", Zone::Battlefield);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    // Only the first Allure takes counters.
+    for _ in 0..2 {
+        upkeep_options(&mut state, |source| u16::from(source == rich));
+    }
+    assert_eq!(p1b::treasure_counters(&state, rich), 2);
+    assert_eq!(p1b::treasure_counters(&state, poor), 0);
+    assert!(
+        !activatable(&mut state, poor, 0),
+        "another Allure's counters don't count"
+    );
+    activate(&mut state, rich, 0, &[Target::Object(elves)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(elves).controller, P0);
+    // The sacrificed Allure's record ends with its ability.
+    assert!(mtg_kernel::eternal_premodern_p1b_v1::read_state(&state)
+        .is_none_or(|p1b| p1b.sacrificed_allures.is_empty()));
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    assert!(
+        !activatable(&mut state, poor, 0),
+        "no stale record of a sacrificed Allure"
+    );
+}
+
+#[test]
+fn an_opponents_sacrificed_allure_does_not_bound_another_allure() {
+    let mut state = islands();
+    let theirs = put(&mut state, P1, "Legacy's Allure", Zone::Battlefield);
+    let mine = put(&mut state, P0, "Legacy's Allure", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    // Through P1's upkeep (a counter for theirs) to P0's (none for mine).
+    upkeep_options(&mut state, |source| u16::from(source == theirs));
+    assert_eq!(p1b::treasure_counters(&state, theirs), 1);
+    assert_eq!(p1b::treasure_counters(&state, mine), 0);
+    // P1 sacrifices theirs for P0's Elves at instant speed.
+    state.priority_player = P1;
+    act(&mut state, Action::ActivateAbility(theirs, 0));
+    choose_target(&mut state, Target::Object(elves));
+    settled(&mut state);
+    assert_eq!(state.objects.get(elves).controller, P1);
+    state.priority_player = P0;
+    assert!(
+        !activatable(&mut state, mine, 0),
+        "the opponent's sacrificed Allure doesn't bound it"
+    );
+}
+
+#[test]
+fn cast_triggers_need_no_spell_on_the_stack() {
+    let mut state = islands();
+    put(&mut state, P0, "Argothian Enchantress", Zone::Battlefield);
+    put(&mut state, P0, "Enchantress's Presence", Zone::Battlefield);
+    let standstill = put(&mut state, P0, "Standstill", Zone::Battlefield);
+    let decree = put(&mut state, P1, "Decree of Silence", Zone::Battlefield);
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    // A cast of an enchantment that already left the stack.
+    let seal = put(&mut state, P0, "Seal of Cleansing", Zone::Graveyard);
+    next(&mut state);
+    state
+        .engine
+        .event_log
+        .push(mtg_kernel::event::CommittedEvent::SpellCast {
+            spell: seal,
+            controller: P0,
+        });
+    act(&mut state, Action::ActivateManaAbility(island));
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), 2, "both enchantresses drew");
+    assert_eq!(zone(&state, standstill), Zone::Graveyard);
+    assert_eq!(state.players[1].hand.len(), 3, "Standstill's draws");
+    assert_eq!(p1b::depletion_counters(&state, decree), 1);
+}
+
+#[test]
+fn sickening_dreams_cast_without_paying_its_mana_cost_still_announces_x() {
+    let mut state = islands();
+    put(&mut state, P0, "Omniscience", Zone::Battlefield);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    put(&mut state, P0, "Island", Zone::Hand);
+    put(&mut state, P0, "Island", Zone::Hand);
+    let dreams = put(&mut state, P0, "Sickening Dreams", Zone::Hand);
+    assert!(castable(&mut state, dreams), "free with no mana");
+    act(&mut state, Action::CastSpell(dreams));
+    // X is an additional cost's count, not part of the waived mana cost.
+    match next(&mut state) {
+        Decision::ChooseEffectOption { option_count, .. } => assert_eq!(option_count, 3),
+        other => panic!("expected X, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseEffectOption(1));
+    settle_with(&mut state, |_, decision| first_answer(decision));
+    assert_eq!(state.players[0].hand.len(), 1, "discarded one");
+    assert_eq!(state.players[0].life, 19);
+    assert_eq!(state.players[1].life, 19);
+    assert_eq!(zone(&state, elves), Zone::Graveyard);
+}
+
+#[test]
+fn parallax_wave_exile_after_its_leaves_trigger_is_permanent() {
+    let mut state = islands();
+    let wave = put(&mut state, P0, "Parallax Wave", Zone::Hand);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);
+    cast(&mut state, wave, &[]);
+    settled(&mut state);
+    activate(&mut state, wave, 0, &[Target::Object(elves)]);
+    next(&mut state);
+    // The Wave leaves with its exile ability still on the stack: its leaves
+    // trigger resolves first and returns nothing.
+    to_graveyard(&mut state, wave);
+    settled(&mut state);
+    assert_eq!(zone(&state, elves), Zone::Exile);
+    to_next_turn(&mut state, |_, _| None);
+    assert_eq!(zone(&state, elves), Zone::Exile, "never returns");
 }

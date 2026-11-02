@@ -781,7 +781,7 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
-        crate::eternal_premodern_p1b_v1::targets::legal_targets(target, controller, prefix, state)
+        crate::eternal_premodern_p1b_v1::targets::legal_targets(target, source, prefix, state)
     {
         return targets;
     }

@@ -6,7 +6,7 @@ use super::LEGACYS_ALLURE;
 use crate::card_def::{CardType, Subtype};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardTargetV1;
-use crate::state::{GameState, Target, Zone};
+use crate::state::{GameState, ObjectLinkV4, Target, Zone};
 
 /// Whether `target` is one of this module's filters.
 pub(crate) fn owns(target: StandardTargetV1) -> bool {
@@ -23,68 +23,87 @@ pub(crate) fn counts(target: StandardTargetV1) -> Option<(u8, u8)> {
 }
 
 /// The treasure counters that bound Legacy's Allure's target: those of the
-/// Allure being activated, or, as its ability resolves or is checked later,
-/// the most any of `controller`'s Allures had. The resolving ability itself
-/// checks its own Allure's count (`P1bOpV1::AllureControlV1`).
-fn treasure_bound(state: &GameState, controller: PlayerId) -> u16 {
-    if let Some(pending) = state.engine.pending_activation.as_ref() {
-        if super::definition_name(state, pending.source) == Some(LEGACYS_ALLURE)
-            && state.objects.get(pending.source).zone == Zone::Battlefield
-        {
-            return super::statics::treasure_counters(state, pending.source);
-        }
-    }
-    let Some(p1b) = super::read_state(state) else {
+/// targeting Allure's own incarnation `source` (an object and its zone
+/// change count). While the Allure is on the battlefield (as its ability is
+/// offered and its target chosen) they are its live counters; once it was
+/// sacrificed to activate the ability, the counters recorded for that
+/// incarnation and its ability on the stack. No source, or another
+/// incarnation, bounds nothing above zero.
+fn treasure_bound(state: &GameState, source: Option<(ObjectId, u32)>) -> u16 {
+    let Some((object, zone_change_count)) = source else {
         return 0;
     };
-    let live = p1b
-        .treasure_counters
-        .iter()
-        .filter(|(host, _)| {
-            super::link_live_in(state, *host, Zone::Battlefield)
-                && state.objects.get(host.object).controller == controller
+    if super::definition_name(state, object) != Some(LEGACYS_ALLURE) {
+        return 0;
+    }
+    let live = ObjectLinkV4 {
+        object,
+        zone_change_count,
+    };
+    if super::link_live_in(state, live, Zone::Battlefield) {
+        return super::statics::treasure_counters(state, object);
+    }
+    // The sacrificed incarnation, named by the ability's frozen source or by
+    // the graveyard card it became.
+    [Some(zone_change_count), zone_change_count.checked_sub(1)]
+        .into_iter()
+        .flatten()
+        .find_map(|count| {
+            super::statics::sacrificed_allure_counters(
+                state,
+                ObjectLinkV4 {
+                    object,
+                    zone_change_count: count,
+                },
+            )
         })
-        .map(|(_, count)| *count);
-    let sacrificed = p1b.sacrificed_allures.iter().map(|(_, count)| *count);
-    live.chain(sacrificed).max().unwrap_or(0)
+        .unwrap_or(0)
 }
 
-/// Whether `object` satisfies this module's filter `target` for
-/// `controller`, or `None` for every other filter.
-pub(crate) fn target_matches(
+/// Whether `object` matches `target` given Legacy's Allure's treasure
+/// `bound`.
+fn matches_with_bound(
     target: StandardTargetV1,
-    controller: PlayerId,
     object: ObjectId,
+    bound: u16,
     state: &GameState,
-) -> Option<bool> {
-    if !owns(target) {
-        return None;
-    }
+) -> bool {
     let Some(live) = state.objects.try_get(object) else {
-        return Some(false);
+        return false;
     };
     if live.zone != Zone::Battlefield
         || !crate::engine::object_has_type(state, object, CardType::Creature)
     {
-        return Some(false);
+        return false;
     }
-    Some(match target {
+    match target {
         StandardTargetV1::CreaturePowerAtMostTreasureCountersV1 => {
-            crate::engine::effective_power(state, object)
-                <= i32::from(treasure_bound(state, controller))
+            crate::engine::effective_power(state, object) <= i32::from(bound)
         }
         StandardTargetV1::AssemblyWorkerCreatureV1 => {
             crate::engine::has_effective_subtype(state, object, Subtype::AssemblyWorker)
         }
         _ => false,
-    })
+    }
 }
 
-/// The legal choices for this module's filter `target`, or `None` for every
-/// other filter.
+/// Whether `object` satisfies this module's filter `target`, or `None` for
+/// every other filter. With no targeting source, Legacy's Allure's filter
+/// takes only creatures with power 0 or less.
+pub(crate) fn target_matches(
+    target: StandardTargetV1,
+    _controller: PlayerId,
+    object: ObjectId,
+    state: &GameState,
+) -> Option<bool> {
+    owns(target).then(|| matches_with_bound(target, object, 0, state))
+}
+
+/// The legal choices for this module's filter `target` from the targeting
+/// `source` incarnation, or `None` for every other filter.
 pub(crate) fn legal_targets(
     target: StandardTargetV1,
-    controller: PlayerId,
+    source: Option<(ObjectId, u32)>,
     prefix: &[Target],
     state: &GameState,
 ) -> Option<Vec<Target>> {
@@ -94,11 +113,16 @@ pub(crate) fn legal_targets(
     if !prefix.is_empty() {
         return Some(Vec::new());
     }
+    let bound = if target == StandardTargetV1::CreaturePowerAtMostTreasureCountersV1 {
+        treasure_bound(state, source)
+    } else {
+        0
+    };
     Some(
         [PlayerId::P0, PlayerId::P1]
             .into_iter()
             .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
-            .filter(|&object| target_matches(target, controller, object, state) == Some(true))
+            .filter(|&object| matches_with_bound(target, object, bound, state))
             .map(Target::Object)
             .collect(),
     )
