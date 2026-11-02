@@ -410,7 +410,7 @@ impl ScriptV1 {
             let mut why = "default".to_string();
             let mut choice = None;
             if let Some(IntentV1::Take(w, pred)) = self.intents[p.index()].front() {
-                if let Some(i) = vals.iter().position(|v| pred(v)) {
+                if let Some(i) = vals.iter().position(pred) {
                     choice = Some(i);
                     why = w.clone();
                 }
