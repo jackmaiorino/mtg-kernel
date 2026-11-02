@@ -55,6 +55,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -376,18 +377,71 @@ def checkpoint_identity(item: dict) -> dict:
 
 IDENTITY_KEYS = ("state_sha256", "adam_step", "content_sha256")
 
+# The block identity the qualification items judge (G(i) lead rulings of 2026-11-01, QUALIFICATION-RESTART.md
+# "Investigation outcome"; mtg-kernel#475). Episode files embed absolute paths and path-derived SHA256s (the
+# campaign root's play-import descriptor, the attempt directory, the previous checkpoint's pin), so trajectory
+# pin SHA256s, and with them content_sha256, differ between roots and attempts under perfect determinism. Two
+# runs of one block are identical when: the state hash and Adam step are equal; every checkpoint member other
+# than the trajectory pins is equal; the pins are as many and their paths equal once the scratch campaign and
+# the attempt directory are normalized; and the block's exposure rows are equal without the two path-derived
+# hashes. content_sha256 and file_sha256 are still recorded.
+JUDGED_KEYS = ("state_sha256", "adam_step", "outside_trajectories_sha256", "pin_count", "pin_paths_sha256",
+               "exposure_sha256")
+JUDGED_RULE = "g-references-v1/judged-identity-v2"
+EXPOSURE_PATH_DERIVED = ("trajectory_sha256", "opponent_checkpoint_sha256")
+
+
+def normalized_pin_path(path: str, native_root) -> str:
+    """A trajectory pin's path relative to its campaign's native root (``Campaign.native``: a Pod's container
+    disk, a scratch campaign's own folder under it, or the hot root on the desktop), with forward slashes and the
+    attempt of its block folder (``<run>/<block>-a<k>/``) normalized. A pin outside that root keeps its whole
+    path, so it never matches a pin inside one."""
+    path = str(path).replace("\\", "/")
+    root = str(native_root).replace("\\", "/").rstrip("/") + "/"
+    if path.startswith(root):
+        path = "<native>/" + path[len(root):]
+    return re.sub(r"^(<native>/[^/]+/b\d+)-a\d+/", r"\1-a*/", path)
+
+
+def judged_identity(campaign: driver.Campaign, run: str, block: int) -> dict:
+    """``checkpoint_identity`` of a block's final checkpoint plus the judged keys (``JUDGED_KEYS``), which also
+    read the block's exposure rows."""
+    item = campaign.run_state(run)["blocks"][str(block)]["final_checkpoint"]
+    value = json.loads(driver.collector.read_bytes_pinned(item))
+    pins = value["trajectories"]
+    content = dict(value, trajectories=[trajectory["sha256"] for trajectory in pins])
+    outside = {key: member for key, member in value.items() if key != "trajectories"}
+    exposure = campaign.exposure / f"{run}-{driver.label(block)}-episodes.jsonl"
+    rows = [{key: field for key, field in json.loads(line).items() if key not in EXPOSURE_PATH_DERIVED}
+            for line in exposure.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return {"file_sha256": item["sha256"], "state_sha256": value["state_sha256"], "adam_step": value["adam_step"],
+            "content_sha256": dispatch.digest(content), "outside_trajectories_sha256": dispatch.digest(outside),
+            "pin_count": len(pins),
+            "pin_paths_sha256": dispatch.digest([normalized_pin_path(t["path"], campaign.native(run)) for t in pins]),
+            "exposure_sha256": dispatch.digest(rows), "exposure_rows": len(rows), "rule": JUDGED_RULE}
+
+
+def judged_equal(straight: dict, rerun: dict) -> bool:
+    return all(key in straight and straight[key] == rerun.get(key) for key in JUDGED_KEYS)
+
 
 def end_of(campaign: driver.Campaign, run: str, block: int) -> dict:
-    return checkpoint_identity(campaign.run_state(run)["blocks"][str(block)]["final_checkpoint"])
+    return judged_identity(campaign, run, block)
 
 
 def compare(campaign: driver.Campaign, run: str, block: int, straight: dict) -> dict:
     entry = campaign.run_state(run)["blocks"][str(block)]
     attempts = [{"attempt": a["attempt"], "outcome": a.get("outcome")} for a in entry["attempts"]]
-    rerun = checkpoint_identity(entry["final_checkpoint"])
+    rerun = judged_identity(campaign, run, block)
     interrupted = len(attempts) > 1 and attempts[0]["outcome"] == "interrupted"
     return {"straight": straight, "rerun": rerun, "attempts": attempts, "interrupted": interrupted,
-            "identical": all(straight[key] == rerun[key] for key in IDENTITY_KEYS)}
+            "identical": judged_equal(straight, rerun), "rule": JUDGED_RULE}
+
+
+def legacy_stage(value: dict) -> bool:
+    """A stage cached by a tool before ``JUDGED_RULE`` (its identity predicate included content_sha256): its
+    verdict is not this tool's, and RESULT.json says so."""
+    return value.get("rule") != JUDGED_RULE
 
 
 def prune_scratch(campaign: driver.Campaign, out: Path, reason: str) -> dict:
@@ -463,11 +517,12 @@ def run(campaign_path: Path, plan_path: Path) -> int:
             for block in (1, 2):
                 alone, concurrent = end_of(campaign, "G1", block), end_of(eighth, "G1", block)
                 repeat[str(block)] = {"alone": alone, "concurrent": concurrent,
-                                      "identical": all(alone[key] == concurrent[key] for key in IDENTITY_KEYS)}
-            value = {"schema": f"{g.PREFIX}/g1-alone-vs-concurrent", "blocks": repeat}
+                                      "identical": judged_equal(alone, concurrent)}
+            value = {"schema": f"{g.PREFIX}/g1-alone-vs-concurrent", "blocks": repeat, "rule": JUDGED_RULE}
             write_json(out / "REPEAT-G1.json", value)
             return value
-        repeat = stage(out, "item1", waves)["blocks"]
+        item1 = stage(out, "item1", waves)
+        repeat = item1["blocks"]
         prune_scratch(scratch(campaign, "concurrent-g1", 2, out), out,
                       "item 1 repeat compared; the main campaign keeps G1's block ends")
 
@@ -530,8 +585,11 @@ def run(campaign_path: Path, plan_path: Path) -> int:
             prune_scratch(scratch(campaign, name, 4, out, synthetic=True), out,
                           "item 6 synthetic block, discarded after its comparison (DESIGN section 6)")
         passed = receipt["pass"] and item6_result["pass"] and all(row["identical"] for row in repeat.values())
-        log(kind="done", passed=passed)
-        write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed})
+        legacy = [name for name, value_ in (("item1", item1), ("item3", receipt), ("item6", item6_result))
+                  if legacy_stage(value_)]
+        log(kind="done", passed=passed, legacy_stages=legacy)
+        write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed,
+                                         "rule": JUDGED_RULE, "legacy_stages": legacy})
         return 0 if passed else 1
     except BaseException as error:  # the supervisor discards stderr: the reason goes in the events
         log(kind="error", error_type=type(error).__name__, error=str(error)[-4000:])

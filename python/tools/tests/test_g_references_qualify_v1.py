@@ -142,21 +142,90 @@ class QualifyTests(unittest.TestCase):
         other = qualify.checkpoint_identity(self.checkpoint("c", "D:/main", state="t" * 64))
         self.assertNotEqual(other["state_sha256"], straight["state_sha256"])
 
+    def block_end(self, campaign, attempt, pin_byte, parameters=(1, 2), paths=3, rows=None, block_folder=None):
+        """A block-2 end in ``campaign``: a checkpoint whose pins live in the driver's own attempt folder
+        (``Campaign.native(run)/G1/b002-a<attempt>``, pin SHA256s path-derived, as on a Pod), and the block's
+        exposure rows (their two path-derived hashes differ per root)."""
+        native = campaign.native("G1") / "G1" / (block_folder or f"{driver.label(2)}-a{attempt}")
+        value = {"state_sha256": "s" * 64, "adam_step": 324, "parameters": list(parameters), "gamma_bits": 7,
+                 "trajectories": [{"path": str(native / "native" / "iterations" / "000161" / "attempt-000000" /
+                                               "collect" / f"episode-{i:04d}.json"), "sha256": pin_byte * 64}
+                                  for i in range(paths)]}
+        item = save(Path(campaign.checkpoints) / f"{pin_byte}-block-002.json", json.dumps(value).encode())
+        rows = rows or [{"episode": i, "winner": "p1", "trajectory_sha256": pin_byte * 64,
+                         "opponent_checkpoint_sha256": pin_byte * 64} for i in range(4)]
+        exposure = Path(campaign.exposure) / f"G1-{driver.label(2)}-episodes.jsonl"
+        exposure.parent.mkdir(parents=True, exist_ok=True)
+        exposure.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        state = campaign.run_state("G1")
+        state["blocks"]["2"] = {"done": True, "final_checkpoint": item,
+                                "attempts": [{"attempt": 1, "outcome": "interrupted"},
+                                             {"attempt": 2, "outcome": "complete"}]}
+        campaign.save_state("G1", state)
+        return state
+
     def test_compare_needs_identity_and_an_interruption(self):
         self.seed_main()
         rerun = qualify.scratch(self.campaign, "interrupt", 2, self.root / "q")
         qualify.seeded(self.campaign, rerun, "G1", {1: 1})
-        straight = self.checkpoint("straight", "D:/main")
-        state = rerun.run_state("G1")
-        state["blocks"]["2"] = {"done": True, "final_checkpoint": self.checkpoint("rerun", "D:/scratch"),
-                                "attempts": [{"attempt": 1, "outcome": "interrupted"},
-                                             {"attempt": 2, "outcome": "complete"}]}
-        rerun.save_state("G1", state)
-        result = qualify.compare(rerun, "G1", 2, qualify.checkpoint_identity(straight))
+        self.block_end(self.campaign, 1, "1")
+        straight = qualify.end_of(self.campaign, "G1", 2)
+        state = self.block_end(rerun, 2, "9")
+        result = qualify.compare(rerun, "G1", 2, straight)
         self.assertTrue(result["identical"] and result["interrupted"])
+        self.assertNotEqual(result["straight"]["content_sha256"], result["rerun"]["content_sha256"])  # #475
+        self.assertEqual(result["rule"], qualify.JUDGED_RULE)
         state["blocks"]["2"]["attempts"] = [{"attempt": 1, "outcome": "complete"}]
         rerun.save_state("G1", state)
-        self.assertFalse(qualify.compare(rerun, "G1", 2, qualify.checkpoint_identity(straight))["interrupted"])
+        self.assertFalse(qualify.compare(rerun, "G1", 2, straight)["interrupted"])
+
+    def test_the_judged_identity_still_sees_every_real_difference(self):
+        self.seed_main()
+        self.block_end(self.campaign, 1, "1")
+        straight = qualify.end_of(self.campaign, "G1", 2)
+        rows = [{"episode": i, "winner": "p1", "trajectory_sha256": "9" * 64, "opponent_checkpoint_sha256": "9" * 64}
+                for i in range(4)]
+        changed = dict(rows[2], winner="p2")
+        for case, kwargs in {"parameters": {"parameters": (1, 3)}, "pin count": {"paths": 2},
+                             "exposure": {"rows": rows[:2] + [changed] + rows[3:]}}.items():
+            rerun = qualify.scratch(self.campaign, "x-" + case.replace(" ", "-"), 2, self.root / "q")
+            qualify.seeded(self.campaign, rerun, "G1", {1: 1})
+            self.block_end(rerun, 2, "9", **kwargs)
+            self.assertFalse(qualify.compare(rerun, "G1", 2, straight)["identical"], case)
+        other = qualify.scratch(self.campaign, "x-path", 2, self.root / "q")
+        qualify.seeded(self.campaign, other, "G1", {1: 1})
+        self.block_end(other, 1, "9", block_folder="b003-a1")  # another block's trajectories
+        self.assertFalse(qualify.compare(other, "G1", 2, straight)["identical"])
+
+    def test_pin_paths_normalize_the_native_root_and_the_attempt_only(self):
+        norm = qualify.normalized_pin_path
+        pod, scratch = "/root/g-native", "/root/g-native/scratch/concurrent-g1"
+        self.assertEqual(norm(f"{scratch}/G1/b001-a1/native/x.json", scratch),
+                         norm(f"{pod}/G1/b001-a2/native/x.json", pod))
+        self.assertNotEqual(norm(f"{pod}/G1/b001-a1/native/x.json", pod), norm(f"{pod}/G2/b001-a1/native/x.json", pod))
+        self.assertNotEqual(norm(f"{pod}/G1/b001-a1/native/x.json", pod), norm(f"{pod}/G1/b002-a1/native/x.json", pod))
+        self.assertNotEqual(norm(f"{pod}/G1/b001-a1/native/x.json", pod),
+                            norm(f"{pod}/G1/b001-a1/native/x-a2/y.json", pod))
+        self.assertNotEqual(norm("/elsewhere/G1/b001-a1/native/x.json", pod), norm(f"{pod}/G1/b001-a1/native/x.json", pod))
+        # The desktop: Windows separators, and the hot-root fallback (scratch hot roots under the qualification).
+        hot, scratch_hot = r"D:\g\campaign\hot", r"D:\g\qualification\scratch\interrupt-b002\hot"
+        self.assertEqual(norm(hot + r"\G1\b002-a1\native\iterations\000161\e.json", hot),
+                         norm(scratch_hot + r"\G1\b002-a2\native\iterations\000161\e.json", scratch_hot))
+
+    def test_driver_native_roots_on_the_desktop_compare_equal(self):
+        """Without roots.native (the desktop), pins live under each campaign's hot root; a scratch campaign's
+        hot root sits under its own folder. Equal blocks still compare equal."""
+        self.seed_main()
+        rerun = qualify.scratch(self.campaign, "interrupt-b002", 2, self.root / "q")
+        qualify.seeded(self.campaign, rerun, "G1", {1: 1})
+        self.assertNotEqual(str(self.campaign.native("G1")), str(rerun.native("G1")))
+        self.block_end(self.campaign, 1, "1")
+        self.block_end(rerun, 2, "9")
+        self.assertTrue(qualify.compare(rerun, "G1", 2, qualify.end_of(self.campaign, "G1", 2))["identical"])
+
+    def test_a_stage_from_the_earlier_rule_is_named_legacy(self):
+        self.assertTrue(qualify.legacy_stage({"blocks": {}}))
+        self.assertFalse(qualify.legacy_stage({"rule": qualify.JUDGED_RULE}))
 
     def test_kill_evidence_survives_a_restart(self):
         path = self.root / "q" / "stages" / "item3-kill.json"
