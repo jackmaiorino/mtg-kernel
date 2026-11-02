@@ -39,6 +39,12 @@ class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        # The destination's 60 GiB reserve is the host's: a CI runner's disk has less free, so the reserve
+        # check sees a large disk here (the refusal itself is the code's, unchanged).
+        disk = unittest.mock.patch.object(archive.shutil, "disk_usage",
+                            return_value=archive.shutil._ntuple_diskusage(10**15, 0, 10**15))
+        disk.start()
+        self.addCleanup(disk.stop)
         self.root = (Path(self.temp.name) / "workspace" / "old").resolve()
         self.out = Path(self.temp.name) / "container" / "out"
         campaign = self.root / "campaign"

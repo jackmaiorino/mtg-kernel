@@ -328,6 +328,10 @@ class LeaseProgress:
         with self.lock:
             self.activity = time.time()
 
+    def excluded_children(self) -> frozenset:
+        """Children of the driver whose CPU is not activity (a subclass observes their work another way)."""
+        return frozenset()
+
     def completed(self) -> None:
         self.productive = time.time()
         self.beat()
@@ -366,7 +370,8 @@ class LeaseProgress:
         supervisors = {root: record["pid"] for root, record in supervisors.items()
                        if isinstance(record.get("pid"), int) and supervisor_owned(record["pid"], record.get("token"))}
         table = process_table()
-        observed = {"driver-children": descendant_ticks(table, os.getpid(), frozenset(supervisors.values()))}
+        observed = {"driver-children": descendant_ticks(table, os.getpid(),
+                                                         frozenset(supervisors.values()) | self.excluded_children())}
         observed |= {root + ":supervised": descendant_ticks(table, pid) for root, pid in supervisors.items()
                      if root in in_flight and native.get(root) is None}
         for root in supervisors:  # unobserved during the native part: a fresh baseline when it ends
