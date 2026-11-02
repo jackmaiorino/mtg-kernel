@@ -399,11 +399,12 @@ class LeaseProgress(base.LeaseProgress):
         alive, requests = False, []
         for request in sorted(Path(entry["pack"]).glob("*.request.json")):
             try:
-                requests.append((str(request), Path(json.loads(request.read_text(encoding="utf-8"))["root"])))
+                value = json.loads(request.read_text(encoding="utf-8"))
+                requests.append((str(request), Path(value["root"]), value.get("start_barrier")))
             except (OSError, ValueError, KeyError, TypeError):
                 continue
         commands = process_commands(table) if requests else {}
-        for request, root in requests:
+        for request, root, barrier in requests:
             self.marked(f"watched:{key}:{root}:marks", root, stamp)
             ticks = base.native_ticks(root)
             processes = f"watched:{key}:{root}:processes"
@@ -415,15 +416,22 @@ class LeaseProgress(base.LeaseProgress):
                 self.ticks[name] = ticks
                 self.ticks.pop(processes, None)
                 continue
-            named = {pid for pid, args in commands.items() if request in args}
-            tops = [pid for pid in named if table[pid][0] not in named]
-            if tops:  # under its supervisor (whose own polling is left out): the dispatcher's work
-                ticks = sum(max(0, base.descendant_ticks(table, pid)) for pid in tops)
-                if ticks > self.ticks.get(processes, ticks):
-                    self.activity = stamp
-                self.ticks[processes] = ticks
-            else:
+            finished = any((root / record).exists() for record in ("report.json", "failure.json"))
+            waiting = (isinstance(barrier, dict) and isinstance(barrier.get("ready"), str)
+                       and Path(barrier["ready"]).exists() and not (root / "started.json").exists())
+            # The trial's own supervisor (its command line: supervise --token <token> -- ... <request>), identified
+            # by PID and start time; an orphan dispatcher, a finished trial or one waiting at its start barrier
+            # (polling every 20 ms) is not activity.
+            tops = sorted((pid, base.process_start_unix(pid)) for pid, args in commands.items()
+                          if pid in table and supervises(args, request))
+            if finished or waiting or not tops:
                 self.ticks.pop(processes, None)
+                self.marks.pop(processes, None)
+                continue
+            ticks = sum(max(0, base.descendant_ticks(table, pid)) for pid, _ in tops)
+            if self.marks.get(processes) == tuple(tops) and ticks > self.ticks.get(processes, ticks):
+                self.activity = stamp
+            self.ticks[processes], self.marks[processes] = ticks, tuple(tops)
         child = entry.get("child")
         if isinstance(child, int) and child in table:  # the pack's own work (a volume walk, launches), not its polling
             self.busy_since(f"watched:{key}:pack", table[child][1], stamp, PACK_BUSY_SHARE)
@@ -506,6 +514,17 @@ def proc_readable() -> bool:
 WATCHED_RECORDS = ("started.json", "execution.json", "report.json", "failure.json")
 PACK_BUSY_SHARE = 0.02  # the pack process: a volume walk is mostly I/O wait, its polling a few file reads per 5 s
 CLOCK_TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+
+
+def supervises(args: list[str], request: str) -> bool:
+    """Whether a command line is a reservation supervisor (host_reservation_v1.supervisor_command) whose work
+    names ``request``."""
+    try:
+        at, token = args.index("supervise"), args.index("--token")
+        work = args.index("--", token)
+    except ValueError:
+        return False
+    return at < token < work and token + 1 < work and bool(args[token + 1]) and request in args[work + 1:]
 
 
 def process_commands(table: dict) -> dict:

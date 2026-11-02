@@ -410,13 +410,16 @@ class DriverTests(unittest.TestCase):
         reasons = self.replay(330, setup, step)
         self.assertEqual({reason for _, reason in reasons}, {None})
 
-    def pack_requests(self, names):
+    def pack_requests(self, names, barrier=False):
         pack = self.root / "history" / "pack"
         pack.mkdir(parents=True, exist_ok=True)
         roots = {}
         for name in names:
             roots[name] = self.root / "history" / "trials" / f"w4-plan-{name}"
-            (pack / f"{name}.request.json").write_text(json.dumps({"root": str(roots[name])}))
+            value = {"root": str(roots[name])}
+            if barrier and name.startswith("packed-"):
+                value["start_barrier"] = {"ready": str(pack / f"{name}.ready.json"), "release": str(pack / "release.json")}
+            (pack / f"{name}.request.json").write_text(json.dumps(value))
         return pack, roots
 
     def pack_setup(self, pack):
@@ -428,58 +431,117 @@ class DriverTests(unittest.TestCase):
             return context
         return setup
 
-    def test_replay_lease_2146_history_pack(self):
-        """Lease 20261102-2146: the history pack's declaration (about 76 s), its solo trial (about 80 s of
-        preparation, 4.4 s native between two beats, its report at 166 s), the storage admission walk of the
-        pack (mostly I/O wait), then the packed trials' launches and preparation. It latched at 300 s after the
-        last report; now none of it goes idle."""
+    @staticmethod
+    def trial_processes(state, request, supervisor, compute=0, parent=1):
+        """A packed or solo trial's supervisor (its real command-line shape) and dispatcher, the dispatcher
+        computing ``compute`` ticks this beat."""
+        dispatcher = supervisor + 1
+        state["table"].setdefault(supervisor, (parent, 0))
+        state["table"].setdefault(dispatcher, (supervisor, 0))
+        state["commands"][supervisor] = ["python3", "host_reservation_v1.py", "supervise", "--token", f"tok{supervisor}",
+                                         "--nested", "--", "python3", "-B", "native_expanded_dispatch_v1.py",
+                                         "_qualify", request]
+        state["commands"][dispatcher] = ["python3", "-B", "native_expanded_dispatch_v1.py", "_qualify", request]
+        state["table"][dispatcher] = (supervisor, state["table"][dispatcher][1] + compute)
+
+    @staticmethod
+    def end_processes(state, *pids):
+        for pid in pids:
+            state["table"].pop(pid, None)
+            state["commands"].pop(pid, None)
+
+    def lease_2146_timeline(self):
+        """The measured shape of lease 20261102-2146's history pack, extended through its packed trials: the
+        declaration (76 s, the pack computing), the solo trial (prepared to 158 s, native for 4.4 s between two
+        beats, its report by 166 s), a quiet wait (the pack polling, 285 s), the pack's storage-admission walk
+        (400 s, mostly I/O wait, 3 % of a core), the eight packed trials' preparation (330 s), their start
+        barrier (dispatchers polling every 20 ms), the release, native parts and reports."""
         names = ["solo-0"] + [f"packed-{i}" for i in range(8)]
-        pack, roots = self.pack_requests(names)
-        solo = str(pack / "solo-0.request.json")
+        pack, roots = self.pack_requests(names, barrier=True)
+        request = {name: str(pack / f"{name}.request.json") for name in names}
 
         def step(t, state):
             pid, ticks = state["table"][777]
-            if t <= 76 or 166 < t <= 346:  # declaration and claims; the admission walk: 3 % of a core
-                state["table"][777] = (pid, ticks + 45)
-            elif t <= 166:
-                state["table"][777] = (pid, ticks + 1)  # waiting for the solo trial: polling only
-            if 76 < t <= 158:  # the solo trial's supervisor and dispatcher prepare
-                state["table"].setdefault(960, (1, 0)); state["table"].setdefault(961, (960, 0))
-                state["commands"].update({960: ["python3", "supervisor", "_qualify", solo], 961: ["python3", "_qualify", solo]})
-                state["table"][961] = (960, state["table"][961][1] + 1400)
-            elif 158 < t <= 166:  # native for 4.4 s between beats, then its records
-                for name in ("started.json", "execution.json", "report.json"):
-                    self.write_mark(roots["solo-0"], name)
-                for p in (960, 961):
-                    state["table"].pop(p, None); state["commands"].pop(p, None)
-            if t > 346:  # the packed trials, launched one after another, prepare together
-                state["table"][777] = (pid, state["table"][777][1] + 30)
-                for i in range(min(8, (t - 346) // 20 + 1)):
-                    sup, dis = 1000 + 2 * i, 1001 + 2 * i
-                    request = str(pack / f"packed-{i}.request.json")
-                    state["table"].setdefault(sup, (1, 0)); state["table"].setdefault(dis, (sup, 0))
-                    state["commands"].update({sup: ["python3", "supervisor", "_qualify", request],
-                                              dis: ["python3", "_qualify", request]})
-                    state["table"][dis] = (sup, state["table"][dis][1] + 1400)
-        reasons = self.replay(600, self.pack_setup(pack), step)
+            walking = t <= 76 or 450 < t <= 850
+            state["table"][777] = (pid, ticks + (45 if walking else 1))  # 3 % of a core, or polling
+            if 76 < t <= 158:
+                self.trial_processes(state, request["solo-0"], 960, compute=1400)
+            elif 158 < t <= 166:  # native for 4.4 s between two beats, then its records
+                for record in ("started.json", "execution.json", "report.json"):
+                    self.write_mark(roots["solo-0"], record)
+                self.end_processes(state, 960, 961)
+            if t > 850:
+                for i in range(8):
+                    name = f"packed-{i}"
+                    if t <= 1180:  # preparation
+                        self.trial_processes(state, request[name], 1000 + 2 * i, compute=1400)
+                    elif t <= 1200:  # at the start barrier, polling
+                        self.write_mark(Path(pack / f"{name}.ready.json").parent, f"{name}.ready.json")
+                        self.trial_processes(state, request[name], 1000 + 2 * i, compute=3)
+                    elif t <= 1260:  # released: the native part
+                        self.write_mark(pack, "release.json")
+                        self.write_mark(roots[name], "started.json")
+                        state["native"][str(roots[name])] = state["native"].get(str(roots[name]), 0) + 1400
+                    else:
+                        state["native"].pop(str(roots[name]), None)
+                        for record in ("execution.json", "report.json"):
+                            self.write_mark(roots[name], record)
+                        self.end_processes(state, 1000 + 2 * i, 1001 + 2 * i)
+        return pack, step
+
+    def test_replay_lease_2146_history_pack(self):
+        """No latch over the whole pack (lease 20261102-2146 latched at about 300 s after the w4 report)."""
+        pack, step = self.lease_2146_timeline()
+        reasons = self.replay(1290, self.pack_setup(pack), step)
         self.assertEqual({reason for _, reason in reasons}, {None})
 
-    def test_replay_a_truly_idle_pack_still_latches(self):
-        """A pack whose trial's dispatcher stopped computing (alive, no CPU, no new records) and whose own
-        process only polls goes idle at the work-idle bound."""
-        pack, roots = self.pack_requests(["solo-0"])
-        solo = str(pack / "solo-0.request.json")
+    def test_replay_lease_2146_needs_each_signal(self):
+        """The timeline holds only with every signal: without the new records (the solo trial's 4.4 s native
+        part between beats), without the pack's own work (its admission walk), or without the trials' processes
+        (their preparation), the guard latches."""
+        for name, ablation in (
+                ("records", patch.object(driver.LeaseProgress, "marked", lambda self, name, root, stamp: None)),
+                ("pack work", patch.object(driver, "PACK_BUSY_SHARE", 10.0)),
+                ("trial processes", patch.object(driver, "supervises", return_value=False))):
+            with self.subTest(signal=name):
+                shutil.rmtree(self.root / "history", ignore_errors=True)
+                shutil.rmtree(self.root / "guard", ignore_errors=True)
+                pack, step = self.lease_2146_timeline()
+                with ablation:
+                    reasons = self.replay(1290, self.pack_setup(pack), step)
+                self.assertIn("native_work_stalled_or_idle", {reason for _, reason in reasons})
+
+    def test_replay_stalled_packs_still_latch(self):
+        """A truly idle pack goes idle at the bound: trials waiting at a barrier that is never released (their
+        dispatchers polling), an orphan dispatcher (its supervisor gone) still computing, a finished trial's
+        lingering processes, and the pack process polling."""
+        pack, roots = self.pack_requests(["solo-0", "packed-0", "packed-1"], barrier=True)
 
         def step(t, state):
             pid, ticks = state["table"][777]
-            state["table"][777] = (pid, ticks + 1)  # polling: under 2 % of a core
-            state["table"].setdefault(960, (1, 0)); state["table"].setdefault(961, (960, 5000))  # stuck, frozen
-            state["commands"].update({960: ["python3", "supervisor", "_qualify", solo], 961: ["python3", "_qualify", solo]})
+            state["table"][777] = (pid, ticks + 1)
+            self.write_mark(pack, "packed-0.ready.json")
+            self.trial_processes(state, str(pack / "packed-0.request.json"), 1000, compute=3)  # at the barrier
+            state["table"][1003] = (1, state["table"].get(1003, (1, 0))[1] + 1400)  # an orphan dispatcher
+            state["commands"][1003] = ["python3", "-B", "native_expanded_dispatch_v1.py", "_qualify",
+                                       str(pack / "packed-1.request.json")]
+            self.write_mark(roots["solo-0"], "report.json")  # finished, its supervisor lingering and computing
+            self.trial_processes(state, str(pack / "solo-0.request.json"), 960, compute=1400)
         reasons = self.replay(330, self.pack_setup(pack), step)
         latched = [t for t, reason in reasons if reason == "native_work_stalled_or_idle"]
         self.assertTrue(latched)
         self.assertGreaterEqual(latched[0], 300)  # not before the bound
         self.assertLessEqual(latched[0], 315)
+
+    def test_supervisor_command_lines(self):
+        request = "/w/pack/packed-0.request.json"
+        line = ["python3", "host_reservation_v1.py", "supervise", "--token", "t1", "--", "python3", "_qualify", request]
+        self.assertTrue(driver.supervises(line, request))
+        self.assertTrue(driver.supervises(line[:5] + ["--nested"] + line[5:], request))
+        self.assertFalse(driver.supervises(["python3", "_qualify", request], request))  # the dispatcher
+        self.assertFalse(driver.supervises(line, request + "x"))
+        self.assertFalse(driver.supervises(["python3", "supervise", "--token", "", "--", request], request))
+        self.assertFalse(driver.supervises(["python3", "supervise", "--", request, "--token", "t"], request))
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc")
     def test_a_real_detached_trial_past_the_bound_on_linux(self):
