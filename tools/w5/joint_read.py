@@ -429,7 +429,16 @@ def load_directory(directory: Path) -> tuple[list[Matchup], str, dict, dict]:
         (directory / store.MANIFEST_NAME).read_bytes()).hexdigest(), "anchor": config.rating_anchor,
         "matchups": len(matchups), "pairs": sum(len(m.values) for m in matchups),
         "point_fit_reproduces_leaderboard": True}
-    provenance["snapshot"] = manifest.get("schema") == snapshot.SCHEMA and manifest.get("allow_unrated") is False
+    run_facts = manifest.get("run", {})
+    sources_rated = all(snapshot.read_source(snapshot.source_directory(directory, r["run"])).manifest["run"]["rated"]
+                        is True for r in manifest.get("sources", []))
+    provenance["snapshot"] = (manifest.get("schema") == snapshot.SCHEMA and manifest.get("allow_unrated") is False
+                              and run_facts.get("rated") is True and run_facts.get("status") == "complete"
+                              and manifest.get("leaderboard_status") == "ok"
+                              and manifest.get("validator", {}).get("verdict") == "pass" and sources_rated)
+    provenance["snapshot_facts"] = {"run": run_facts, "leaderboard_status": manifest.get("leaderboard_status"),
+                                    "validator": manifest.get("validator", {}).get("verdict"),
+                                    "sources_rated": sources_rated, "games": manifest.get("games")}
     # Spellbench's own bootstrap (seed, replicates): every published interval must reproduce, and W2's precision
     # gate (fixed-count form) is recomputed on these exact matchups, so the gate is bound to this snapshot.
     seed = leaderboard.rating_bootstrap_seed(config.stats_seed)
@@ -473,7 +482,8 @@ def admit_snapshot(spec: dict, provenance: dict) -> None:
     """An official read needs a rated snapshot (no unrated entries) that passes W2's precision gate, recomputed on
     its own matchups, with every entrant of the read rated."""
     if not provenance["snapshot"]:
-        raise ReadError("an official read needs a rated snapshot (allow_unrated false), not a run directory")
+        raise ReadError("an official read needs a complete rated snapshot (allow_unrated false, run rated and "
+                        f"complete, leaderboard ok, validator pass, rated sources): {provenance['snapshot_facts']}")
     if not provenance["precision_gate"]["pass"]:
         raise ReadError(f"the snapshot does not pass W2's precision gate: {provenance['precision_gate']}")
     for p in spec["pairs"]:
