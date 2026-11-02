@@ -5367,10 +5367,7 @@ impl FastActorSessionV1 {
         own_decision_index: u64,
         context: Option<crate::policy_surface_v5::SurfaceContextV1>,
     ) -> FastActorSessionV1 {
-        let mut surface = PolicySurfaceV5::new_for_session();
-        if let Some(context) = context {
-            surface.set_infoset_context_v1(context);
-        }
+        let surface = PolicySurfaceV5::new_for_session();
         let mut session = FastActorSessionV1 {
             deck_ids: template.deck_ids.clone(),
             deck_hashes: template.deck_hashes,
@@ -5393,6 +5390,12 @@ impl FastActorSessionV1 {
             terminal: None,
         };
         session.advance_to_decision_or_terminal();
+        // The live surface's context applies from the presented decision on:
+        // presenting it again from that context would replay the surface's
+        // own bookkeeping for this window.
+        if let Some(context) = context {
+            session.surface.set_infoset_context_v1(context);
+        }
         session
     }
 
