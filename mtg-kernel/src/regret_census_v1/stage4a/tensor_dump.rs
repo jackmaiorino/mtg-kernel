@@ -65,7 +65,8 @@ fn put_block(block: &[u8]) -> Result<u64, String> {
 }
 
 fn f32s(out: &mut Vec<u8>, xs: &[f32]) {
-    xs.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes()));
+    xs.iter()
+        .for_each(|x| out.extend_from_slice(&x.to_le_bytes()));
 }
 
 fn i32s(out: &mut Vec<u8>, xs: &[i64]) -> Result<(), String> {
@@ -101,12 +102,17 @@ fn encode(
         (t.edge_features.len(), edges * EDGE_FEATURE_DIM_V1),
         (t.edge_target_indices.len(), edges),
         (t.action_features.len(), actions * ACTION_FEATURE_DIM_V1),
-        (t.action_ref_features.len(), refs * ACTION_REF_FEATURE_DIM_V1),
+        (
+            t.action_ref_features.len(),
+            refs * ACTION_REF_FEATURE_DIM_V1,
+        ),
         (t.action_ref_card_ids.len(), refs),
         (t.action_ref_node_indices.len(), refs),
     ];
     if shapes.iter().any(|(got, want)| got != want) || legal as usize != actions {
-        return Err(format!("tensor shape mismatch {shapes:?}, legal {legal}, actions {actions}"));
+        return Err(format!(
+            "tensor shape mismatch {shapes:?}, legal {legal}, actions {actions}"
+        ));
     }
     for n in [objects, edges, actions, refs, t.state.len()] {
         out.extend_from_slice(&u32_of(n)?.to_le_bytes());
@@ -163,7 +169,11 @@ pub(super) fn dump_game(
             forced += 1;
             0
         } else {
-            let p = if actor == focal_id { &mut *focal } else { &mut *opp };
+            let p = if actor == focal_id {
+                &mut *focal
+            } else {
+                &mut *opp
+            };
             let (a, scores, tensor) = p.select_with_training_tensor_v4(&s)?;
             let start = block.len();
             encode(
@@ -175,8 +185,15 @@ pub(super) fn dump_game(
                 d.legal_action_count,
                 actor.0,
             )?;
-            rows.push(json!([d.step, actor.0, d.legal_action_count, a,
-                s.game_state().turn, start, block.len() - start]));
+            rows.push(json!([
+                d.step,
+                actor.0,
+                d.legal_action_count,
+                a,
+                s.game_state().turn,
+                start,
+                block.len() - start
+            ]));
             a
         };
         apply(&mut s, &d, a, &mut meter, focal_id, None, &defs).map_err(|e| format!("{e:?}"))?;
@@ -245,8 +262,14 @@ fn replay_job(job: &LabelJob, policy: &FrozenPlayPolicyV1) -> Result<Value, Stri
                 d.legal_action_count,
                 job.focal,
             )?;
-            rows.push(json!([i, d.legal_action_count, r.selected,
-                s.game_state().turn, start, block.len() - start]));
+            rows.push(json!([
+                i,
+                d.legal_action_count,
+                r.selected,
+                s.game_state().turn,
+                start,
+                block.len() - start
+            ]));
         }
         s.step(d.episode_id, d.step, r.selected)
             .map_err(|e| format!("{e:?}"))?;
