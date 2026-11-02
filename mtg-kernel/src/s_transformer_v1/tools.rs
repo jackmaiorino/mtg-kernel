@@ -1,8 +1,9 @@
 //! E3's receipt tools for native S (the `s_transformer_v1` binary):
 //!
 //! - `parity-dump`: frozen batches, S's initial parameters and, per batch,
-//!   the native loss terms, the gradient and one Adam step from a fresh and
-//!   from a warmed optimizer state, for the float64
+//!   the native loss terms, the gradient, one Adam step's update from a fresh
+//!   and from a warmed optimizer state, and the warmed step's stored
+//!   parameters, for the float64
 //!   PyTorch reference (`python/tools/s_transformer_reference_v1.py parity`).
 //! - `logits-dump`: logits and values of a model (S, or a net-8 V4 endpoint)
 //!   on fixed states, for the Linux-to-Windows parity receipt
@@ -387,21 +388,23 @@ pub fn parity_dump_v1(
         }
         batch_rows.push(json!({ "groups": group_rows }));
         let sgroups = groups_of_v1(&batch);
-        let mut state = STrainStateV1::fresh_optimizer_v1(model.clone());
+        let fresh = STrainStateV1::fresh_optimizer_v1(model.clone());
         let mut grad = vec![0.0f32; model.layout_v1().total];
         let loss =
             model.gae_loss_gradient_v1(&sgroups, RT1_VALUE_COEFFICIENT_V1, &mut grad, &mut work)?;
-        state.adam_step_with_gradient_v1(&grad, RT1_LEARNING_RATE_V1)?;
-        put_f32s_v1(&mut native, &[loss.policy_term, loss.value_term, loss.loss]);
-        put_f32s_v1(&mut native, &grad);
-        put_f32s_v1(&mut native, state.model_v1().values_v1());
+        let fresh_update = fresh.adam_update_v1(&grad, RT1_LEARNING_RATE_V1)?;
         let mut warmed = STrainStateV1::from_parts_v1(
             model.clone(),
             warm_first.clone(),
             warm_second.clone(),
             WARM_STEPS_V1 as u64,
         )?;
+        let warm_update = warmed.adam_update_v1(&grad, RT1_LEARNING_RATE_V1)?;
         warmed.adam_step_with_gradient_v1(&grad, RT1_LEARNING_RATE_V1)?;
+        put_f32s_v1(&mut native, &[loss.policy_term, loss.value_term, loss.loss]);
+        put_f32s_v1(&mut native, &grad);
+        put_f32s_v1(&mut native, &fresh_update.update);
+        put_f32s_v1(&mut native, &warm_update.update);
         put_f32s_v1(&mut native, warmed.model_v1().values_v1());
     }
     let mut warm_first_bytes = Vec::new();

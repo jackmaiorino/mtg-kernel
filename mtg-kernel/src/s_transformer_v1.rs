@@ -1619,6 +1619,14 @@ pub struct STrainStateV1 {
     adam_step: u64,
 }
 
+/// One Adam step, computed but not applied.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SAdamUpdateV1 {
+    pub first: Vec<f32>,
+    pub second: Vec<f32>,
+    pub update: Vec<f32>,
+}
+
 /// One update's result.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SStepV1 {
@@ -1718,6 +1726,39 @@ impl STrainStateV1 {
         grad: &[f32],
         learning_rate: f32,
     ) -> Result<(), String> {
+        let step = self.adam_update_v1(grad, learning_rate)?;
+        let mut values = self.model.values.clone();
+        for index in 0..values.len() {
+            // Exactly as the step skips it: an all-+0 element keeps its bits.
+            if grad[index].to_bits() == 0
+                && self.first[index].to_bits() == 0
+                && self.second[index].to_bits() == 0
+            {
+                continue;
+            }
+            let parameter = values[index] + step.update[index];
+            if !parameter.is_finite() {
+                return Err(format!("S Adam produced a non-finite value at {index}"));
+            }
+            values[index] = parameter;
+        }
+        self.model.values = values;
+        self.model.rebuild_transposed_v1();
+        self.first = step.first;
+        self.second = step.second;
+        self.adam_step += 1;
+        Ok(())
+    }
+
+    /// The next Adam step without applying it: the new moments and the f32
+    /// update each parameter adds (`(-step_size * m) / denominator`, +0 for
+    /// an element whose gradient and moments are all +0). Receipts compare
+    /// the update itself, before the parameter's own f32 rounding.
+    pub fn adam_update_v1(
+        &self,
+        grad: &[f32],
+        learning_rate: f32,
+    ) -> Result<SAdamUpdateV1, String> {
         if grad.len() != self.model.layout.total {
             return Err("S gradient has the wrong length".into());
         }
@@ -1736,10 +1777,10 @@ impl STrainStateV1 {
         let bias_correction2 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA2_V1), exponent);
         let step_size = (f64::from(learning_rate) / bias_correction1) as f32;
         let bias_correction2_sqrt = bias_correction2.sqrt() as f32;
-        let mut values = self.model.values.clone();
         let mut first = self.first.clone();
         let mut second = self.second.clone();
-        for index in 0..values.len() {
+        let mut update = vec![0.0f32; grad.len()];
+        for index in 0..grad.len() {
             let gradient = grad[index];
             let previous_first = first[index];
             let previous_second = second[index];
@@ -1752,20 +1793,19 @@ impl STrainStateV1 {
             let m = previous_first + (gradient - previous_first) * (1.0 - ADAM_BETA1_V1);
             let v = previous_second * ADAM_BETA2_V1 + gradient * gradient * (1.0 - ADAM_BETA2_V1);
             let denominator = v.sqrt() / bias_correction2_sqrt + ADAM_EPSILON_V1;
-            let parameter = values[index] + (-step_size) * m / denominator;
-            if !m.is_finite() || !v.is_finite() || !parameter.is_finite() || v < 0.0 {
+            let delta = (-step_size) * m / denominator;
+            if !m.is_finite() || !v.is_finite() || !delta.is_finite() || v < 0.0 {
                 return Err(format!("S Adam produced a non-finite value at {index}"));
             }
             first[index] = m;
             second[index] = v;
-            values[index] = parameter;
+            update[index] = delta;
         }
-        self.model.values = values;
-        self.model.rebuild_transposed_v1();
-        self.first = first;
-        self.second = second;
-        self.adam_step = step;
-        Ok(())
+        Ok(SAdamUpdateV1 {
+            first,
+            second,
+            update,
+        })
     }
 
     /// SHA-256 of the whole train state: the schema, the config, the Adam

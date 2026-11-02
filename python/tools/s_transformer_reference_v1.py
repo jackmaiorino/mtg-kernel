@@ -6,10 +6,12 @@ autograd, every batch's RT1 GAE loss terms, the per-tensor gradient and one Adam
 native float32 results against E3's bars: each loss term relative error at most 1e-4, per-tensor gradient relative
 L2 error at most 1e-3, and per-tensor Adam parameter-change relative L2 error at most 1e-3.
 
-The Adam bar is read on a warmed optimizer state (S's moments after a few native updates, shared by both sides).
-The first step from zero moments is also reported: it moves every parameter by about the learning rate in the
-direction of its gradient's sign, so a gradient element within float32 rounding of zero can step the other way
-than in float64; the receipt reports how much of that step's error sits on near-zero gradient elements.
+The Adam bar is read on the update one Adam step adds (before the parameter's own float32 rounding), from a warmed
+optimizer state (S's moments after a few native updates, shared by both sides). Also reported: the stored
+parameters' change, next to the floor float32 storage alone sets (at lr 1e-4 a parameter near 1 holds its change to
+about 6e-4); and the first step from zero moments, which moves every parameter by about the learning rate in the
+direction of its gradient's sign, so a gradient element within float32 rounding of zero can step the other way than
+in float64 (the receipt reports the error without the near-zero gradient elements).
 
 `compare-logits A B --receipt R [--bar 1e-5]` compares two `logits-dump` files (for example Linux and Windows builds
 on the same states): maximum absolute logit and value difference at most the bar, and the same argmax except where
@@ -221,20 +223,22 @@ def parity(args) -> int:
     c = float(np.frombuffer(struct.pack("<I", batches["value_coefficient_bits"]), "<f4")[0])
     lr = float(np.frombuffer(struct.pack("<I", batches["learning_rate_bits"]), "<f4")[0])
     tensors = layout["tensors"]
-    per = 3 + 3 * total
+    per = 3 + 4 * total
     warm_m = np.frombuffer((root / "warm_first.bin").read_bytes(), "<f4").astype(np.float64)
     warm_v = np.frombuffer((root / "warm_second.bin").read_bytes(), "<f4").astype(np.float64)
     warm_t = int(batches["warm_adam_step"]) + 1
     if native.size != per * len(batches["batches"]):
         raise SystemExit("native.bin length does not match the batches")
-    worst = {"loss": {}, "gradient": {}, "adam": {}, "fresh": {}, "fresh_far": {}}
+    worst = {"loss": {}, "gradient": {}, "adam": {}, "fresh": {}, "fresh_far": {}, "stored": {}, "floor": {}}
     fresh_near_zero = fresh_sign_flips = 0
     rows = []
     b1, b2, eps = 0.9, 0.999, 1e-8
     for index, batch in enumerate(batches["batches"]):
         nat = native[index * per:(index + 1) * per].astype(np.float64)
         nat_terms, nat_grad = nat[:3], nat[3:3 + total]
-        nat_fresh, nat_warm = nat[3 + total:3 + 2 * total], nat[3 + 2 * total:]
+        nat_fresh = nat[3 + total:3 + 2 * total]
+        nat_warm = nat[3 + 2 * total:3 + 3 * total]
+        nat_warm_after = nat[3 + 3 * total:]
         P = {}
         for t in tensors:
             arr = p0[t["offset"]:t["offset"] + int(np.prod(t["shape"]))].reshape(t["shape"])
@@ -279,14 +283,21 @@ def parity(args) -> int:
             m = b1 * warm_m[off:off + size] + (1 - b1) * g
             v = b2 * warm_v[off:off + size] + (1 - b2) * g * g
             delta_ref = -(lr / (1 - b1 ** warm_t)) * m / (np.sqrt(v) / math.sqrt(1 - b2 ** warm_t) + eps)
-            aerr = rel_l2(nat_warm[off:off + size] - base, delta_ref)
+            aerr = rel_l2(nat_warm[off:off + size], delta_ref)
             worst["adam"][name] = max(worst["adam"].get(name, 0.0), aerr)
+            # The stored parameters' change, with the floor float32 storage alone sets: the reference step rounded
+            # to float32 (p0 + delta is stored with half an ulp of p, which at lr 1e-4 and |p| near 1 is about
+            # 6e-4 of the step).
+            stored = rel_l2(nat_warm_after[off:off + size] - base, delta_ref)
+            floor = rel_l2((base + delta_ref).astype(np.float32).astype(np.float64) - base, delta_ref)
+            worst["stored"][name] = max(worst["stored"].get(name, 0.0), stored)
+            worst["floor"][name] = max(worst["floor"].get(name, 0.0), floor)
             # One Adam step from zero moments (step 1): a sign-like map of the gradient, reported with how much
             # of its error sits on elements whose gradient is near zero (|g| at most 1e-4 of the tensor's RMS).
             m = (1 - b1) * g
             v = (1 - b2) * g * g
             delta_ref = -(lr / (1 - b1)) * m / (np.sqrt(v) / math.sqrt(1 - b2) + eps)
-            delta_nat = nat_fresh[off:off + size] - base
+            delta_nat = nat_fresh[off:off + size]
             worst["fresh"][name] = max(worst["fresh"].get(name, 0.0), rel_l2(delta_nat, delta_ref))
             rms = float(np.sqrt(np.mean(g * g))) if size else 0.0
             far = np.abs(g) > 1e-4 * rms
@@ -322,6 +333,14 @@ def parity(args) -> int:
         "per_tensor_adam_change_relative_l2": worst["adam"],
         "adam_state": f"warmed: S's moments after {batches['warm_adam_step']} native updates, step {warm_t}",
         "fresh_step": fresh,
+        "stored_parameter_change": {
+            "description": "warmed step, change of the stored float32 parameters; floor = the reference step rounded "
+                           "to float32",
+            "max_relative_l2": max(worst["stored"].values()),
+            "max_float32_floor": max(worst["floor"].values()),
+            "per_tensor_relative_l2": worst["stored"],
+            "per_tensor_float32_floor": worst["floor"],
+        },
         "batches": len(rows),
         "decisions": sum(r["decisions"] for r in rows),
         "seed": batches["seed"],
@@ -334,6 +353,8 @@ def parity(args) -> int:
     summary = {k: receipt[k] for k in ("passed", "maxima", "worst_gradient_tensor", "worst_adam_tensor", "batches",
                                        "decisions")}
     summary["fresh_step"] = {k: v for k, v in fresh.items() if k != "per_tensor_relative_l2"}
+    summary["stored_parameter_change"] = {k: v for k, v in receipt["stored_parameter_change"].items()
+                                          if not k.startswith("per_tensor")}
     print(json.dumps(summary, indent=1))
     return 0 if passed else 1
 
