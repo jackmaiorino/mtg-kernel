@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import random
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -69,6 +70,8 @@ class StatisticsTests(unittest.TestCase):
         bad["pairs"][1]["a"] = "a1"
         with self.assertRaises(jr.ReadError):
             jr.check_spec(bad)
+        with self.assertRaises(jr.ReadError):  # an appended rung cannot also be an entrant
+            jr.check_spec(dict(spec(), appended_rungs=["a1"]))
 
 
 class ReadTests(unittest.TestCase):
@@ -150,7 +153,7 @@ class SpellbenchTests(unittest.TestCase):
         directory = Path(SPELLBENCH) / "benchmarks" / "pauper-ladder-v1" / "snapshots" / "2026-11-01"
         matchups, anchor, ids, provenance = jr.load_directory(directory, verify_published=True)
         self.assertGreater(provenance["published_intervals_reproduced"], 0)
-        demo = {"read": "P1", "arm_a": "upper", "arm_b": "lower", "appended_rungs": ["oh2-r2s1-b512-argmax"],
+        demo = {"read": "P1", "arm_a": "upper", "arm_b": "lower", "appended_rungs": [],
                 "pairs": [{"pair": 1, "a": "g115", "b": "gorge-ar8"},
                           {"pair": 2, "a": "oh2-r2s1-b512", "b": "c12"},
                           {"pair": 3, "a": "oh2-r2s1-b512-argmax", "b": "heuristic"}]}
@@ -159,6 +162,12 @@ class SpellbenchTests(unittest.TestCase):
         self.assertLess(lo, result["estimate"])
         self.assertLess(result["estimate"], hi)
         self.assertEqual(result["failed_replicates"], 0)
+        gate = Path(tempfile.mkdtemp()) / "w5-gate.json"
+        gate.write_text(json.dumps({"source": str(directory), "gate": "pass-8"}))
+        jr.admit_snapshot(directory, gate, demo, provenance)
+        gate.write_text(json.dumps({"source": str(directory), "gate": "stop"}))
+        with self.assertRaises(jr.ReadError):
+            jr.admit_snapshot(directory, gate, demo, provenance)
         out = os.environ.get("W5_READ_RECEIPT")
         if out:
             Path(out).write_text(json.dumps(dict(result, provenance=provenance), indent=2) + "\n")
