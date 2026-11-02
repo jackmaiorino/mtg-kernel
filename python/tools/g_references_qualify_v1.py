@@ -179,14 +179,63 @@ def bounded(campaign: driver.Campaign, request: dict) -> dict:
                       dict(value, wall_seconds=limit))
 
 
+def run_pack(argv: list[str], timeout, watched) -> subprocess.CompletedProcess:
+    """The pack tool as a child of this driver, its own polling left out of the lease's activity (its trials'
+    native parts are observed through ``watched``); at ``timeout`` it is killed, then TimeoutExpired."""
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          cwd=str(TOOLS.parents[1])) as process:
+        watched.exclude_child(process.pid)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+
+
+def set_aside(path: Path, log, reason: str) -> None:
+    """An interrupted earlier lease's trial or pack root (no report or pack index): the dispatcher and the pack
+    tool need fresh roots, so it is kept beside itself as ``<name>-interrupted-<k>`` and the work runs again."""
+    if not path.exists():
+        return
+    k = 1
+    while path.with_name(f"{path.name}-interrupted-{k}").exists():
+        k += 1
+    target = path.with_name(f"{path.name}-interrupted-{k}")
+    path.rename(target)
+    log(kind="interrupted-root-kept", path=str(path), kept=str(target), reason=reason)
+
+
+def set_aside_pack(pack_root: Path, log) -> None:
+    """An interrupted pack: its trials' roots (named in ``<pack root>/*.request.json``, beside the base request's
+    roots, so a retry of the same plan would name them again) and then the pack root itself are kept aside."""
+    if not pack_root.exists():
+        return
+    for request in sorted(pack_root.glob("*.request.json")):
+        try:
+            value = read(request)
+        except (OSError, ValueError):
+            continue
+        for key in ("root", "cold_root"):
+            if isinstance(value.get(key), str):
+                set_aside(Path(value[key]), log, f"{request.name} of a pack without its index")
+    set_aside(pack_root, log, "pack without its index")
+
+
 def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> dict:
     reports = {}
     for name, request in family["trials"].items():
         report = Path(read(request["path"])["root"]) / "report.json"
         if not report.exists():
+            value = read(request["path"])
+            for key in ("root", "cold_root"):  # a trial an earlier lease's release interrupted
+                if value.get(key):
+                    set_aside(Path(value[key]), log, f"trial {name} without a report")
             request = bounded(campaign, request)
             result = nested([str(TOOLS / "native_expanded_dispatch_v1.py"), "qualify", request["path"]])
-            wait_report(report.parent, result["pid"])
+            with driver.watching(campaign, "trial:" + name, result, root=report.parent):  # detached: observed
+                wait_report(report.parent, result["pid"])
         reports[name] = pin(report)
         log(kind="trial", name=name, report=reports[name])
     pack_index = Path(read(family["pack"]["path"])["root"]) / "pack.json"
@@ -224,10 +273,12 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
         # One absolute deadline for the whole pack (its launch retries and barrier waits included): ending the
         # tool fails its waiting trials, and a running trial's own timeout is already inside the claim time.
         deadline = None if left is None else max(1, math.floor(left - driver.base.LEASE_MARGIN_SECONDS))
+        pack_root = Path(read(family["pack"]["path"])["root"])
+        set_aside_pack(pack_root, log)  # an earlier lease's release interrupted it
         try:
-            done = subprocess.run([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
-                                   family["pack"]["path"]], capture_output=True, text=True,
-                                   cwd=str(TOOLS.parents[1]), timeout=deadline)
+            with driver.watching(campaign, "pack", pack=pack_root) as watched:
+                done = run_pack([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
+                                 family["pack"]["path"]], timeout=deadline, watched=watched)
         except subprocess.TimeoutExpired:
             raise SystemExit("study_wall_cap: the pack qualification reached the study's claim time") from None
         # Beside its plan, under the plan's own name (one per host and bound); the root may not exist yet

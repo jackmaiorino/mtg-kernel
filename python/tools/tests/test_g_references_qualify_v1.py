@@ -3,7 +3,9 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -158,6 +160,72 @@ class QualifyTests(unittest.TestCase):
         rerun.save_state("G1", state)
         self.assertFalse(qualify.compare(rerun, "G1", 2, qualify.checkpoint_identity(straight))["interrupted"])
 
+    def test_run_pack_leaves_its_polling_out_and_ends_at_its_timeout(self):
+        excluded = []
+        watched = type("Watched", (), {"exclude_child": lambda self, pid: excluded.append(pid)})()
+        done = qualify.run_pack([sys.executable, "-c", "print('packed')"], timeout=60, watched=watched)
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "packed"))
+        self.assertEqual(len(excluded), 1)
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            qualify.run_pack([sys.executable, "-c", "import time; time.sleep(60)"], timeout=1, watched=watched)
+        self.assertLess(time.monotonic() - started, 30)  # killed, not waited out
+
+    def test_an_interrupted_trial_and_pack_are_kept_aside_and_run_again(self):
+        """Lease 20261101-2302's release interrupted item 6's history trial: its root has no report, and the
+        dispatcher refuses an existing root. A resume keeps the interrupted roots beside themselves and runs the
+        trial (and an interrupted pack) again on fresh roots."""
+        inventory = save(self.root / "inventory.json", b"{}")
+        value = json.loads(Path(qualify.plan(self.path, {"storage": {"accounting_roots": [str(self.root)]},
+                                                         "wall_seconds": 3600, "inventory": inventory},
+                                             self.root / "q")["path"]).read_text())
+        family = value["families"]["empty-pool"]
+        roots = {name: Path(json.loads(Path(request["path"]).read_text())["root"])
+                 for name, request in family["trials"].items()}
+        interrupted = roots["w1"]
+        interrupted.mkdir(parents=True)
+        (interrupted / "started.json").write_text("{}")
+        for name, root in roots.items():
+            if name != "w1":
+                root.mkdir(parents=True, exist_ok=True)
+                (root / "report.json").write_text("{}")
+        pack_root = Path(json.loads(Path(family["pack"]["path"]).read_text())["root"])
+        pack_root.mkdir(parents=True)
+        (pack_root / "log.jsonl").write_text("")  # started, no pack.json
+        packed = {"root": self.root / "trials" / "w3-plan-packed-0", "cold_root": self.root / "cold" / "w3-plan-packed-0"}
+        for path in packed.values():  # its trials' roots sit beside the base request's, named from the plan
+            path.mkdir(parents=True)
+        (packed["root"] / "report.json").write_text("{}")  # a finished packed trial: kept as evidence
+        (pack_root / "packed-0.request.json").write_text(json.dumps({key: str(path) for key, path in packed.items()}))
+        here, events = [{"cpus": "0,16", "efficiency_class": 0}], []
+
+        def nested(args):
+            self.assertFalse(interrupted.exists())  # dispatched on a fresh root
+            return {"state": "dispatched", "pid": 4242, "token": "t"}
+
+        def wait(root, pid):
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "report.json").write_text("{}")
+
+        def pack(args, **kwargs):
+            root = Path(json.loads(Path(args[-1]).read_text())["root"])
+            self.assertFalse(root.exists())
+            root.mkdir(parents=True)
+            (root / "pack.json").write_text(json.dumps({"topology": here}))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        with patch.object(qualify, "nested", side_effect=nested), patch.object(qualify, "wait_report", side_effect=wait), \
+                patch.object(qualify, "run_pack", side_effect=pack), \
+                patch.object(qualify.dispatch, "host_topology", return_value=here):
+            qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: events.append(fields))
+        self.assertTrue((interrupted.with_name(interrupted.name + "-interrupted-1") / "started.json").exists())
+        self.assertTrue((pack_root.with_name(pack_root.name + "-interrupted-1") / "log.jsonl").exists())
+        self.assertTrue((interrupted / "report.json").exists() and (pack_root / "pack.json").exists())
+        for path in packed.values():
+            self.assertFalse(path.exists())  # a retry of the same plan gets fresh trial roots
+            self.assertTrue(path.with_name(path.name + "-interrupted-1").exists())
+        self.assertTrue((packed["root"].with_name(packed["root"].name + "-interrupted-1") / "report.json").exists())
+        self.assertEqual([event["kind"] for event in events].count("interrupted-root-kept"), 4)
+
     def test_kill_evidence_survives_a_restart(self):
         path = self.root / "q" / "stages" / "item3-kill.json"
         driver.write_json(path, {"killed": True, "pid": 7, "completed_updates": 81})
@@ -198,7 +266,7 @@ class QualifyTests(unittest.TestCase):
             report = Path(json.loads(Path(family["trials"][name]["path"]).read_text())["root"]) / "report.json"
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text("{}")
-        with patch.object(qualify.subprocess, "run", side_effect=fake_run):
+        with patch.object(qualify, "run_pack", side_effect=fake_run):
             qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         self.assertEqual(calls[0]["timeout_seconds"], (1800 - 600) // 9)
         (pack_root / "pack.json").unlink()
@@ -206,7 +274,7 @@ class QualifyTests(unittest.TestCase):
         def slow(args, **kwargs):  # busy retries outlasting the claim time end the whole pack
             self.assertEqual(kwargs["timeout"], 1200)
             raise subprocess.TimeoutExpired(args, kwargs["timeout"])
-        with patch.object(qualify.subprocess, "run", side_effect=slow), self.assertRaises(SystemExit):
+        with patch.object(qualify, "run_pack", side_effect=slow), self.assertRaises(SystemExit):
             qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         self.assertLessEqual(json.loads(Path(calls[0]["base_request"]["path"]).read_text())["wall_seconds"], 133)
 
@@ -233,7 +301,7 @@ class QualifyTests(unittest.TestCase):
             (root / "pack.json").write_text(json.dumps({"topology": here}))
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         with patch.object(qualify.dispatch, "host_topology", return_value=here), \
-                patch.object(qualify.subprocess, "run", side_effect=fake_run):
+                patch.object(qualify, "run_pack", side_effect=fake_run):
             first = qualify.trials_and_pack(self.campaign, family, self.root / "q",
                                             lambda **fields: events.append(fields))
             self.assertEqual(len(runs), 1)  # qualified again on this host
@@ -248,7 +316,7 @@ class QualifyTests(unittest.TestCase):
             self.assertEqual(again["pack"], first["pack"])
         # A pack tool that refuses before making its root reports its own reason.
         refused = lambda args, **kwargs: subprocess.CompletedProcess(args, 1, stdout="", stderr="a slot's SMT sibling is not declared")
-        with patch.object(qualify.dispatch, "host_topology", return_value=[{"cpus": "0,2", "efficiency_class": 0}]),                 patch.object(qualify.subprocess, "run", side_effect=refused):
+        with patch.object(qualify.dispatch, "host_topology", return_value=[{"cpus": "0,2", "efficiency_class": 0}]),                 patch.object(qualify, "run_pack", side_effect=refused):
             with self.assertRaisesRegex(RuntimeError, "SMT sibling is not declared"):
                 qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         # Bounded by the claim time (Jack's PC), two hosts keep one bounded plan each.
@@ -256,7 +324,7 @@ class QualifyTests(unittest.TestCase):
         for topology in ([{"cpus": "0,8", "efficiency_class": 0}], [{"cpus": "0,4", "efficiency_class": 0}]):
             with patch.object(qualify.dispatch, "host_topology", return_value=topology), \
                     patch.object(qualify.driver.Campaign, "wall_left", return_value=3300), \
-                    patch.object(qualify.subprocess, "run", side_effect=fake_run):
+                    patch.object(qualify, "run_pack", side_effect=fake_run):
                 qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
             bounded.append(Path(runs[-1][-1]))
         self.assertEqual(len({path.name for path in bounded}), 2)
