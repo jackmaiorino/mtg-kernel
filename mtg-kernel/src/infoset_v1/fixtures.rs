@@ -227,18 +227,27 @@ fn default_choice(vals: &[Value], local: &[Vec<u8>], p: PlayerId) -> usize {
 /// A scripted engine game.
 pub(crate) struct ScriptV1 {
     pub s: FastActorSessionV1,
+    /// The session the script started from.
+    pub start: FastActorSessionV1,
     pub intents: [VecDeque<IntentV1>; 2],
     pub trace: Vec<String>,
     pub steps: usize,
+    /// Each chosen candidate with native ids (realizability replays).
+    pub native: Vec<Value>,
+    /// Library positions the script's edits exchanged: (decision, a, b).
+    pub edits: Vec<(usize, ObjectId, ObjectId)>,
 }
 
 impl ScriptV1 {
     pub(crate) fn new(s: FastActorSessionV1) -> Self {
         Self {
+            start: s.clone(),
             s,
             intents: [VecDeque::new(), VecDeque::new()],
             trace: Vec::new(),
             steps: 0,
+            native: Vec::new(),
+            edits: Vec::new(),
         }
     }
 
@@ -279,7 +288,7 @@ impl ScriptV1 {
 
     /// One decision. `at` sees every decision with at least two candidates
     /// before it is answered. Returns false at a terminal.
-    pub(crate) fn step(&mut self, at: &mut dyn FnMut(&FastActorSessionV1, PlayerId)) -> bool {
+    pub(crate) fn step(&mut self, at: &mut dyn FnMut(&FastActorSessionV1, PlayerId, usize)) -> bool {
         loop {
             let FastActorResponseV1::Decision(d) = self.s.current_response() else {
                 return false;
@@ -300,6 +309,25 @@ impl ScriptV1 {
                     }
                     let mut st = self.s.game_state().clone();
                     f(&mut st);
+                    // Recorded even when nothing moved: a replay restarts
+                    // the session at the same decision.
+                    let mut edit = None;
+                    for p in [PlayerId::P0, PlayerId::P1] {
+                        let (old, new) = (
+                            &self.s.game_state().players[p.index()].library,
+                            &st.players[p.index()].library,
+                        );
+                        let moved: Vec<usize> =
+                            (0..old.len()).filter(|&i| old[i] != new[i]).collect();
+                        if moved.len() == 2 {
+                            edit = Some((self.steps, old[moved[0]], old[moved[1]]));
+                        } else if !moved.is_empty() {
+                            self.fail("an edit must exchange exactly two library positions");
+                        }
+                    }
+                    let first = self.s.game_state().players[0].library[0];
+                    self.edits
+                        .push(edit.unwrap_or((self.steps, first, first)));
                     let context = self.s.surface_context_v1();
                     self.s =
                         FastActorSessionV1::import_infoset_with_surface_v1(&self.s, st, 0, context);
@@ -309,7 +337,7 @@ impl ScriptV1 {
                 _ => {}
             }
             if d.legal_action_count >= 2 {
-                at(&self.s, p);
+                at(&self.s, p, self.steps);
             }
             let sem = self.s.diagnostic_current_action_semantics().unwrap_or_default();
             let vals: Vec<Value> = sem
@@ -329,6 +357,7 @@ impl ScriptV1 {
                 self.intents[p.index()].pop_front();
             }
             let i = choice.unwrap_or_else(|| default_choice(&vals, &local, p));
+            self.native.push(vals[i].clone());
             let st = self.s.game_state();
             self.trace.push(format!(
                 "t{} {:?} P{} {:?} {} of {}: {} [{}]",
@@ -360,7 +389,7 @@ impl ScriptV1 {
         &mut self,
         max: usize,
         extra: usize,
-        at: &mut dyn FnMut(&FastActorSessionV1, PlayerId),
+        at: &mut dyn FnMut(&FastActorSessionV1, PlayerId, usize),
     ) {
         let mut after = 0;
         for _ in 0..max {
@@ -386,6 +415,8 @@ impl ScriptV1 {
 /// What V sees and what each producer exports at one V decision.
 #[derive(Clone, Debug)]
 pub(crate) struct AtV1 {
+    /// The decision's index among the script's steps.
+    pub step: usize,
     pub view: Option<Vec<u8>>,
     pub p: Result<Vec<u8>, String>,
     pub mutants: Vec<(MutantV1, Result<Vec<u8>, String>)>,
@@ -396,7 +427,12 @@ pub(crate) struct AtV1 {
     pub pinned: Vec<String>,
 }
 
-pub(crate) fn observe(s: &FastActorSessionV1, v: PlayerId, mutants: &[MutantV1]) -> AtV1 {
+pub(crate) fn observe(
+    s: &FastActorSessionV1,
+    v: PlayerId,
+    step: usize,
+    mutants: &[MutantV1],
+) -> AtV1 {
     let x = export_at(s, v, ExportOptionsV1::default());
     let state = s.game_state();
     let projection = super::projection::project_v1(state, state.observation_journal.notes(), v);
@@ -436,6 +472,7 @@ pub(crate) fn observe(s: &FastActorSessionV1, v: PlayerId, mutants: &[MutantV1])
     known.sort();
     pinned.sort();
     AtV1 {
+        step,
         view: view(s),
         p: outcome(&x),
         mutants: mutants
@@ -485,9 +522,9 @@ pub(crate) fn compare_records(a: &[AtV1], b: &[AtV1]) -> PairReportV1 {
 /// Runs one variant of a fixture, recording every V decision.
 pub(crate) fn record(mut script: ScriptV1, v: PlayerId, extra: usize) -> (Vec<AtV1>, ScriptV1) {
     let mut out = Vec::new();
-    script.run(400, extra, &mut |s, p| {
+    script.run(400, extra, &mut |s, p, step| {
         if p == v {
-            out.push(observe(s, v, &LEAKAGE_V1));
+            out.push(observe(s, v, step, &LEAKAGE_V1));
         }
     });
     (out, script)

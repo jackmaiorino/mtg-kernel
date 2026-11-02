@@ -237,10 +237,18 @@ fn menu(s: &FastActorSessionV1) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// The chosen candidate's semantics with native ids.
+pub(crate) fn native_action(s: &FastActorSessionV1, index: usize) -> serde_json::Value {
+    let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+    serde_json::to_value(&sem[index]).expect("semantics serialize")
+}
+
 /// A recorded game: the reset session, chosen candidates by semantics.
 pub(crate) struct GameV1 {
     pub start: FastActorSessionV1,
     pub actions: Vec<Vec<u8>>,
+    /// The same choices with native ids (realizability replays).
+    pub native: Vec<serde_json::Value>,
 }
 
 pub(crate) fn record_game(decks: [&str; 2], seed: u64, max_decisions: usize) -> GameV1 {
@@ -256,15 +264,21 @@ pub(crate) fn record_game(decks: [&str; 2], seed: u64, max_decisions: usize) -> 
     let mut s = start.clone();
     let mut rng = SplitMix64::seed(seed ^ 0x51ed);
     let mut actions = Vec::new();
+    let mut native = Vec::new();
     for _ in 0..max_decisions {
         let FastActorResponseV1::Decision(d) = s.current_response() else {
             break;
         };
         let a = (rng.next_u64() % u64::from(d.legal_action_count)) as u32;
         actions.push(menu(&s)[a as usize].clone());
+        native.push(native_action(&s, a as usize));
         s.step(d.episode_id, d.step, a).expect("legal step");
     }
-    GameV1 { start, actions }
+    GameV1 {
+        start,
+        actions,
+        native,
+    }
 }
 
 /// Swaps the definitions of two pristine hidden objects (whole objects:
