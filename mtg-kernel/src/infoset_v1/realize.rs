@@ -320,7 +320,14 @@ pub(crate) fn export_contents(x: &InfosetV1, owner: PlayerId) -> ContentsV1 {
             let def = x.state.objects.get(*id).card_def;
             match x.handles[id.0 as usize] {
                 HandleV1::U { pinned: true, .. } => {}
-                HandleV1::U { .. } => add(if zone_hand { &mut c.hand } else { &mut c.library }, def),
+                HandleV1::U { .. } => add(
+                    if zone_hand {
+                        &mut c.hand
+                    } else {
+                        &mut c.library
+                    },
+                    def,
+                ),
                 _ => {}
             }
         }
@@ -330,7 +337,8 @@ pub(crate) fn export_contents(x: &InfosetV1, owner: PlayerId) -> ContentsV1 {
         if matches!(x.handles[id.0 as usize], HandleV1::U { pinned: true, .. })
             && x.state.objects.get(id).owner == owner
         {
-            c.pins.push((x.state.objects.get(id).card_def, p.hand.contains(&id)));
+            c.pins
+                .push((x.state.objects.get(id).card_def, p.hand.contains(&id)));
         }
     }
     c
@@ -448,9 +456,8 @@ pub(crate) fn impossible_v1(
     let owner = viewer.opponent();
     let p = super::projection::project_v1(state, state.observation_journal.notes(), viewer);
     let pl = &state.players[owner.index()];
-    let hidden = |id: ObjectId| {
-        !p.tracked(id) && (pl.hand.contains(&id) || pl.library.contains(&id))
-    };
+    let hidden =
+        |id: ObjectId| !p.tracked(id) && (pl.hand.contains(&id) || pl.library.contains(&id));
     let mut transfers: Vec<_> = p.transfers.iter().filter(|t| t.owner == owner).collect();
     transfers.sort_by_key(|t| t.item);
     let put_backs: Vec<usize> = transfers
@@ -477,9 +484,10 @@ pub(crate) fn impossible_v1(
                 .map(|(id, _)| id)
                 .filter(|id| {
                     state.objects.get(*id).owner == owner
-                        && p.objects[id.0 as usize].spans.iter().any(|s| {
-                            s.end.is_some_and(|e| e.item == at && e.zone == Zone::Hand)
-                        })
+                        && p.objects[id.0 as usize]
+                            .spans
+                            .iter()
+                            .any(|s| s.end.is_some_and(|e| e.item == at && e.zone == Zone::Hand))
                         && hidden(*id)
                 })
                 .collect();
@@ -587,7 +595,12 @@ pub(crate) fn realize(
             base.shuffles.iter().map(|x| x.0).collect::<Vec<_>>(),
             misplaced(&t, target)
                 .iter()
-                .map(|(o, h)| format!("{}#{}{}", name(o), o.0, if *h { "@hand" } else { "@library" }))
+                .map(|(o, h)| format!(
+                    "{}#{}{}",
+                    name(o),
+                    o.0,
+                    if *h { "@hand" } else { "@library" }
+                ))
                 .collect::<Vec<_>>()
         )
     };
@@ -636,8 +649,14 @@ pub(crate) fn realize(
                     let xw = export_at(&w, viewer, ExportOptionsV1::default())
                         .map_err(|e| format!("export(W) refused: {}", e.code_name()))?;
                     let (a, b) = (
-                        serde_json::json!([xw.handles.iter().map(HandleV1::label).collect::<Vec<_>>(), xw.state]),
-                        serde_json::json!([x.handles.iter().map(HandleV1::label).collect::<Vec<_>>(), x.state]),
+                        serde_json::json!([
+                            xw.handles.iter().map(HandleV1::label).collect::<Vec<_>>(),
+                            xw.state
+                        ]),
+                        serde_json::json!([
+                            x.handles.iter().map(HandleV1::label).collect::<Vec<_>>(),
+                            x.state
+                        ]),
                     );
                     return Err(format!(
                         "{moves:?}: export(W*) differs from export(W) at {:?}",
@@ -738,8 +757,8 @@ pub(crate) fn realize_at(
     mutant: Option<MutantV1>,
 ) -> Result<Result<RealizedV1, String>, String> {
     let s = at_step(game, d, viewer);
-    let x = export_at(&s, viewer, ExportOptionsV1 { mutant })
-        .map_err(|e| e.code_name().to_string())?;
+    let x =
+        export_at(&s, viewer, ExportOptionsV1 { mutant }).map_err(|e| e.code_name().to_string())?;
     let target = export_contents(&x, viewer.opponent());
     let bytes = mutant.is_none().then_some(x.bytes.as_slice());
     Ok(realize(game, d, viewer, &target, bytes))
@@ -755,7 +774,11 @@ pub(crate) fn impossible_at(
 ) -> Option<String> {
     let s = at_step(game, d, viewer);
     let x = export_at(&s, viewer, ExportOptionsV1 { mutant }).ok()?;
-    impossible_v1(s.game_state(), viewer, &export_contents(&x, viewer.opponent()))
+    impossible_v1(
+        s.game_state(),
+        viewer,
+        &export_contents(&x, viewer.opponent()),
+    )
 }
 
 #[cfg(test)]
@@ -792,7 +815,11 @@ mod tests {
                         "{name}: P is not realizable at step {}: {other:?}",
                         r.step
                     );
-                    eprintln!("{name}: P proven unrealizable at step {}: {}", r.step, proof.unwrap_or_default());
+                    eprintln!(
+                        "{name}: P proven unrealizable at step {}: {}",
+                        r.step,
+                        proof.unwrap_or_default()
+                    );
                     GAPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
@@ -845,7 +872,10 @@ mod tests {
             // Decisions where L12's export differs from P's (after the
             // bounce): L12 must be unrealizable at every one.
             let mut l12 = 0;
-            for r in records.iter().filter(|r| r.p.is_ok() && !r.nodes.is_empty()) {
+            for r in records
+                .iter()
+                .filter(|r| r.p.is_ok() && !r.nodes.is_empty())
+            {
                 let s = at_step(&game, r.step, PlayerId::P1);
                 let m = export_at(
                     &s,
@@ -873,7 +903,12 @@ mod tests {
 
         // CawGates Lorien: realizable up to the R8b refusal (every export).
         let (records, script) = record(cawgates_lorien(Some("Squadron Hawk")), PlayerId::P1, 20);
-        checked += all_realizable("cawgates-lorien", &records, &native_of(&script), PlayerId::P1);
+        checked += all_realizable(
+            "cawgates-lorien",
+            &records,
+            &native_of(&script),
+            PlayerId::P1,
+        );
 
         // W-pin-1 and W-pin-2: every variant realizable; L9 is not while two
         // pins compete for one draw (where its export differs from P's).
@@ -897,7 +932,10 @@ mod tests {
                 if pins != 2 {
                     continue;
                 }
-                for r in records.iter().filter(|r| r.pinned.len() == 2 && r.p.is_ok()) {
+                for r in records
+                    .iter()
+                    .filter(|r| r.pinned.len() == 2 && r.p.is_ok())
+                {
                     let s = at_step(&game, r.step, PlayerId::P1);
                     let l9_bytes = export_at(
                         &s,
@@ -924,7 +962,10 @@ mod tests {
             "realizability: {checked} fixture decisions realized for P, {} proven unrealizable (draw-back gap); L9 unrealizable at {l9} competing-pin decisions",
             GAPS.load(std::sync::atomic::Ordering::Relaxed)
         );
-        assert!(l9 > 0, "W-pin-2 has decisions where two pins compete for one draw");
+        assert!(
+            l9 > 0,
+            "W-pin-2 has decisions where two pins compete for one draw"
+        );
     }
 
     /// L10 on the AC3-L shuffle-trigger case (6.5 case A) in the W-pin
@@ -1032,8 +1073,7 @@ mod tests {
                         .iter()
                         .position(|x| serde_json::to_value(x).ok().as_ref() == Some(a))
                         .expect("replay");
-                    s.step(d.episode_id, d.step, index as u32)
-                        .expect("replay");
+                    s.step(d.episode_id, d.step, index as u32).expect("replay");
                 }
             }
         }

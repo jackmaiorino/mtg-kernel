@@ -200,7 +200,12 @@ pub(crate) fn yes() -> IntentV1 {
 pub(crate) fn finish() -> IntentV1 {
     IntentV1::Take(
         "finish".into(),
-        Box::new(|v| matches!(kind(v), "finish_effect_selection" | "finish_target_selection")),
+        Box::new(|v| {
+            matches!(
+                kind(v),
+                "finish_effect_selection" | "finish_target_selection"
+            )
+        }),
     )
 }
 
@@ -243,7 +248,10 @@ fn default_choice(vals: &[Value], local: &[Vec<u8>], p: PlayerId, keep: &BTreeSe
                 3
             }
             "discard" => 8,
-            "activate_mana_ability" | "play_land" | "cast_spell" | "activate_ability"
+            "activate_mana_ability"
+            | "play_land"
+            | "cast_spell"
+            | "activate_ability"
             | "plot_spell" => 9,
             _ => 5,
         }
@@ -337,7 +345,10 @@ impl ScriptV1 {
 
     /// One decision. `at` sees every decision with at least two candidates
     /// before it is answered. Returns false at a terminal.
-    pub(crate) fn step(&mut self, at: &mut dyn FnMut(&FastActorSessionV1, PlayerId, usize)) -> bool {
+    pub(crate) fn step(
+        &mut self,
+        at: &mut dyn FnMut(&FastActorSessionV1, PlayerId, usize),
+    ) -> bool {
         loop {
             let FastActorResponseV1::Decision(d) = self.s.current_response() else {
                 return false;
@@ -375,8 +386,7 @@ impl ScriptV1 {
                         }
                     }
                     let first = self.s.game_state().players[0].library[0];
-                    self.edits
-                        .push(edit.unwrap_or((self.steps, first, first)));
+                    self.edits.push(edit.unwrap_or((self.steps, first, first)));
                     let context = self.s.surface_context_v1();
                     self.s =
                         FastActorSessionV1::import_infoset_with_surface_v1(&self.s, st, 0, context);
@@ -388,7 +398,10 @@ impl ScriptV1 {
             if d.legal_action_count >= 2 {
                 at(&self.s, p, self.steps);
             }
-            let sem = self.s.diagnostic_current_action_semantics().unwrap_or_default();
+            let sem = self
+                .s
+                .diagnostic_current_action_semantics()
+                .unwrap_or_default();
             let vals: Vec<Value> = sem
                 .iter()
                 .map(|x| serde_json::to_value(x).expect("semantics serialize"))
@@ -405,7 +418,8 @@ impl ScriptV1 {
             if choice.is_some() {
                 self.intents[p.index()].pop_front();
             }
-            let i = choice.unwrap_or_else(|| default_choice(&vals, &local, p, &self.keep[p.index()]));
+            let i =
+                choice.unwrap_or_else(|| default_choice(&vals, &local, p, &self.keep[p.index()]));
             self.native.push(vals[i].clone());
             let st = self.s.game_state();
             self.trace.push(format!(
@@ -490,16 +504,15 @@ pub(crate) fn observe(
         .nodes()
         .iter()
         .map(|n| {
-            let mut names: Vec<String> = n
-                .k
-                .iter()
-                .flat_map(|(d, c)| {
-                    std::iter::repeat_n(
-                        crate::card_def::CARD_DEFS[*d as usize].name.to_string(),
-                        *c as usize,
-                    )
-                })
-                .collect();
+            let mut names: Vec<String> =
+                n.k.iter()
+                    .flat_map(|(d, c)| {
+                        std::iter::repeat_n(
+                            crate::card_def::CARD_DEFS[*d as usize].name.to_string(),
+                            *c as usize,
+                        )
+                    })
+                    .collect();
             names.sort();
             (names, n.m)
         })
@@ -511,9 +524,7 @@ pub(crate) fn observe(
                 HandleV1::U {
                     known_name: true, ..
                 } => known.push(o.name.clone()),
-                HandleV1::U { pinned: true, .. } => {
-                    pinned.push(format!("{}@{:?}", o.name, o.zone))
-                }
+                HandleV1::U { pinned: true, .. } => pinned.push(format!("{}@{:?}", o.name, o.zone)),
                 _ => {}
             }
         }
@@ -698,7 +709,13 @@ pub(crate) fn fable_bounce(hawks: usize) -> ScriptV1 {
         &mut st,
         v,
         &[
-            "Island", "Island", "Island", "Snap", "Island", "Force Spike", "Dispel",
+            "Island",
+            "Island",
+            "Island",
+            "Snap",
+            "Island",
+            "Force Spike",
+            "Dispel",
         ],
         &["Island", "Island", "Island"],
     );
@@ -775,7 +792,13 @@ pub(crate) fn cawgates_lorien(with: Option<&str>) -> ScriptV1 {
         &mut st,
         v,
         &[
-            "Island", "Island", "Island", "Island", "Snap", "Force Spike", "Dispel",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+            "Snap",
+            "Force Spike",
+            "Dispel",
         ],
         &["Island", "Island", "Island", "Island"],
     );
@@ -851,7 +874,13 @@ pub(crate) fn w_pin(pins: usize, top: PinTopV1) -> ScriptV1 {
             "Lembas",
             "Krark-Clan Shaman",
         ],
-        &["Forest", "Ichor Wellspring", "Cast Down", "Cast Down", "Cast Down"],
+        &[
+            "Forest",
+            "Ichor Wellspring",
+            "Cast Down",
+            "Cast Down",
+            "Cast Down",
+        ],
     );
     force_deal(
         &mut st,
@@ -880,13 +909,16 @@ pub(crate) fn w_pin(pins: usize, top: PinTopV1) -> ScriptV1 {
         cast("Ichor Wellspring"),
         play_land("Forest"),
         activate("Lembas"),
-        gate("the first shuffle trigger resolved", move |st: &GameState| {
-            st.stack.len() == 1
-                && st.players[0]
-                    .library
-                    .iter()
-                    .any(|x| st.objects.get(*x).card_def == lembas)
-        }),
+        gate(
+            "the first shuffle trigger resolved",
+            move |st: &GameState| {
+                st.stack.len() == 1
+                    && st.players[0]
+                        .library
+                        .iter()
+                        .any(|x| st.objects.get(*x).card_def == lembas)
+            },
+        ),
     ];
     if pins == 2 {
         o_intents.push(activate("Lembas"));
@@ -903,32 +935,38 @@ pub(crate) fn w_pin(pins: usize, top: PinTopV1) -> ScriptV1 {
             },
         ));
     }
-    o_intents.push(edit("force the shuffle outcome", move |st: &mut GameState| {
-        // The pinned sources, in contract order.
-        let pinned: Vec<ObjectId> = super::export::contract_pins(st)
-            .into_iter()
-            .filter(|x| st.objects.get(*x).zone == Zone::Library)
-            .collect();
-        let lib = &mut st.players[0].library;
-        let want = match top {
-            PinTopV1::Neither => None,
-            PinTopV1::First => pinned.first().copied(),
-            PinTopV1::Second => pinned.get(1).copied(),
-        };
-        match want {
-            Some(x) => {
-                let at = lib.iter().position(|y| *y == x).expect("pin in the library");
-                lib.swap(0, at);
+    o_intents.push(edit(
+        "force the shuffle outcome",
+        move |st: &mut GameState| {
+            // The pinned sources, in contract order.
+            let pinned: Vec<ObjectId> = super::export::contract_pins(st)
+                .into_iter()
+                .filter(|x| st.objects.get(*x).zone == Zone::Library)
+                .collect();
+            let lib = &mut st.players[0].library;
+            let want = match top {
+                PinTopV1::Neither => None,
+                PinTopV1::First => pinned.first().copied(),
+                PinTopV1::Second => pinned.get(1).copied(),
+            };
+            match want {
+                Some(x) => {
+                    let at = lib
+                        .iter()
+                        .position(|y| *y == x)
+                        .expect("pin in the library");
+                    lib.swap(0, at);
+                }
+                None => {
+                    let at = lib
+                        .iter()
+                        .position(|y| !pinned.contains(y))
+                        .expect("a card that is not a pin");
+                    lib.swap(0, at);
+                }
             }
-            None => {
-                let at = lib
-                    .iter()
-                    .position(|y| !pinned.contains(y))
-                    .expect("a card that is not a pin");
-                lib.swap(0, at);
-            }
-        }
-    }));
+        },
+    ));
     o_intents.push(activate("Krark-Clan Shaman"));
     if pins == 1 {
         // The other Lembas is still an artifact on the battlefield; with
@@ -965,7 +1003,10 @@ fn pairs(name: &str, runs: Vec<(Vec<AtV1>, ScriptV1)>) -> (Vec<Vec<AtV1>>, Vec<P
         .collect();
     for (i, r) in reports.iter().enumerate() {
         eprintln!("{name} variant 0 vs {}: {r:?}", i + 1);
-        assert_eq!(r.p_differs, 0, "{name}: the correct producer differs: {r:?}");
+        assert_eq!(
+            r.p_differs, 0,
+            "{name}: the correct producer differs: {r:?}"
+        );
     }
     (records, reports)
 }
@@ -993,8 +1034,14 @@ fn spy_versus_terror_engine_fixture() {
         ],
         1,
     );
-    let after: Vec<&AtV1> = records[0].iter().filter(|r| r.nodes.contains(&node)).collect();
-    assert!(!after.is_empty(), "the survivor node ({{Terror, Ponder, Mystic}}, 1) appears");
+    let after: Vec<&AtV1> = records[0]
+        .iter()
+        .filter(|r| r.nodes.contains(&node))
+        .collect();
+    assert!(
+        !after.is_empty(),
+        "the survivor node ({{Terror, Ponder, Mystic}}, 1) appears"
+    );
     for r in &after {
         assert!(r.p.is_ok(), "exported while the node holds: {:?}", r.p);
         assert_eq!(r.known.len(), 1, "one known_name survivor: {:?}", r.known);
@@ -1016,7 +1063,10 @@ fn fable_bounce_engine_fixture() {
         .iter()
         .filter(|r| r.nodes.contains(&node))
         .collect();
-    assert!(!bounced.is_empty(), "the survivor node ({{Hawk x3}}, 1) appears");
+    assert!(
+        !bounced.is_empty(),
+        "the survivor node ({{Hawk x3}}, 1) appears"
+    );
     let last = bounced.last().expect("checked");
     assert!(last.p.is_ok(), "{:?}", last.p);
     assert_eq!(
@@ -1057,7 +1107,9 @@ fn cawgates_lorien_engine_fixture() {
             .map(|k| i + k)
             .expect("R8b refuses once the second Lorien finds the Island");
         assert!(
-            rec[i..first_refusal].iter().all(|r| r.p.is_ok() || r.p == Err("R3".into())),
+            rec[i..first_refusal]
+                .iter()
+                .all(|r| r.p.is_ok() || r.p == Err("R3".into())),
             "exports up to the second Lorien"
         );
         assert!(
@@ -1084,7 +1136,10 @@ fn w_pin_engine_fixtures() {
         } else {
             &[PinTopV1::Neither, PinTopV1::First, PinTopV1::Second]
         };
-        let runs: Vec<_> = tops.iter().map(|t| record(w_pin(pins, *t), v, 12)).collect();
+        let runs: Vec<_> = tops
+            .iter()
+            .map(|t| record(w_pin(pins, *t), v, 12))
+            .collect();
         let (records, reports) = pairs(&format!("w-pin-{pins}"), runs);
         // While the abilities wait after the draw, the canonical choice
         // keeps every pin in the library (6.3: zero transfers satisfy C1
@@ -1093,7 +1148,10 @@ fn w_pin_engine_fixtures() {
             .iter()
             .filter(|r| r.pinned.len() == pins)
             .collect();
-        assert!(!waiting.is_empty(), "w-pin-{pins}: pinned occupants exported");
+        assert!(
+            !waiting.is_empty(),
+            "w-pin-{pins}: pinned occupants exported"
+        );
         for r in &waiting {
             assert!(
                 r.pinned.iter().all(|p| p.ends_with("@Library")),
@@ -1107,5 +1165,8 @@ fn w_pin_engine_fixtures() {
         }
     }
     eprintln!("F-pin witnesses: {totals:?}");
-    assert!(totals.get("L6").copied().unwrap_or(0) > 0, "L6 has F-pin witnesses");
+    assert!(
+        totals.get("L6").copied().unwrap_or(0) > 0,
+        "L6 has F-pin witnesses"
+    );
 }

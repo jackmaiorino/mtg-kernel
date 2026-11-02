@@ -779,7 +779,10 @@ fn ac1_f_choice_on_engine_games() {
     assert!(tried > 0 && pairs > 0 && compared > 0, "F-choice exercised");
     // Hidden choices change which objects history names: the raw-history
     // mutant must show it.
-    assert!(totals.get("L4").copied().unwrap_or(0) > 0, "L4 has F-choice witnesses");
+    assert!(
+        totals.get("L4").copied().unwrap_or(0) > 0,
+        "L4 has F-choice witnesses"
+    );
 }
 
 #[test]
