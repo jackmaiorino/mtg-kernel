@@ -6,6 +6,8 @@ import os
 import shutil
 from pathlib import Path
 import struct
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -234,6 +236,84 @@ class DriverTests(unittest.TestCase):
             progress.activity = 0
             record = beat()
             self.assertEqual((record["last_activity_epoch"], record["completed_updates"]), (0, 1))
+
+    def test_a_watched_trial_longer_than_the_work_idle_bound_keeps_the_lease_active(self):
+        """2026-11-01: a qualification trial (a detached reservation supervisor, no child of the driver) ran past
+        work_idle_seconds and the guard latched native_work_stalled_or_idle. Watched, its CPU time is activity."""
+        sys.path.insert(0, str(Path(driver.__file__).resolve().parent / "phase1_cloud"))
+        import lease_guard
+        guard = self.root / "guard"
+        lease_guard_files(guard)
+        lease = json.loads((guard / "lease.json").read_text())
+        with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", "MTG_LEASE_GUARD_DIR": str(guard)}):
+            progress = driver.LeaseProgress(self.campaign)
+        me, clock, ticks = os.getpid(), {"wall": lease["created_epoch"] + 60, "cpu": 10.}, {"trial": 0}
+
+        def table():  # the trial's supervisor (950, detached: not under this driver) and its native run (951)
+            return {me: (1, 0), 950: (1, 0), 951: (950, ticks["trial"])}
+
+        def beat(trial=0):
+            clock["wall"] += 15.; ticks["trial"] += trial
+            with patch.object(driver.time, "time", return_value=clock["wall"]), \
+                    patch.object(driver.base.time, "time", return_value=clock["wall"]), \
+                    patch.object(driver.base, "driver_cpu_seconds", return_value=clock["cpu"]), \
+                    patch.object(driver.base, "process_table", side_effect=table), \
+                    patch.object(driver.base, "supervisor_owned", side_effect=lambda pid, token: token == "t950"):
+                progress.beat()
+            record = json.loads((guard / "progress.json").read_text())
+            return record, lease_guard.decision(lease, clock["wall"], 1.0, record)["reason"]
+
+        progress.cpu, progress.activity = (clock["wall"], clock["cpu"]), clock["wall"]
+        trial = {"state": "dispatched", "pid": 950, "token": "t950"}
+        with driver.watching(self.campaign_with(progress), "trial:w1", trial):
+            reasons = [beat(trial=40)[1] for _ in range(2 * lease["work_idle_seconds"] // 15)]  # 600 s of trial
+        self.assertEqual(set(reasons), {None})
+        self.assertEqual(progress.watched, {})
+        idle = [beat(trial=40)[1] for _ in range(lease["work_idle_seconds"] // 15)]  # unwatched: not activity
+        self.assertEqual(idle[-1], "native_work_stalled_or_idle")
+        progress.activity = clock["wall"]
+        progress.watch("trial:w2", 950, "t-other")  # a reused PID (another token) never credits
+        self.assertEqual([beat(trial=40)[1] for _ in range(lease["work_idle_seconds"] // 15)][-1],
+                         "native_work_stalled_or_idle")
+        with driver.watching(self.campaign_with(None), "trial:w3", trial):  # no lease: a no-op
+            pass
+
+    def campaign_with(self, lease):
+        campaign = driver.Campaign(self.path)
+        campaign.lease = lease
+        return campaign
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc")
+    def test_a_real_detached_trial_past_the_bound_on_linux(self):
+        """The same with real processes: a supervisor naming its token, detached, whose child computes for
+        longer than a 3 s work-idle bound, while the lease clock beats on its own thread."""
+        sys.path.insert(0, str(Path(driver.__file__).resolve().parent / "phase1_cloud"))
+        import lease_guard
+        guard = self.root / "guard"
+        lease_guard_files(guard)
+        lease = json.loads((guard / "lease.json").read_text())
+        lease["work_idle_seconds"] = 3
+        (guard / "lease.json").write_text(json.dumps(lease))
+        code = ("import subprocess, sys; subprocess.run([sys.executable, '-c', "
+                "'import time\\nend = time.time() + 8\\nwhile time.time() < end: pass'])")
+        supervisor = subprocess.Popen([sys.executable, "-c", code, "tok-trial-1101"], start_new_session=True)
+        try:
+            with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", "MTG_LEASE_GUARD_DIR": str(guard)}):
+                progress = driver.LeaseProgress(self.campaign)
+            progress.start()
+            reasons = []
+            with driver.watching(self.campaign_with(progress), "trial:w1",
+                                 {"pid": supervisor.pid, "token": "tok-trial-1101"}):
+                end = time.time() + 7
+                while time.time() < end:
+                    time.sleep(0.5)
+                    record = json.loads((guard / "progress.json").read_text())
+                    reasons.append(lease_guard.decision(lease, time.time(), 1.0, record)["reason"])
+            progress.stop()
+            self.assertNotIn("native_work_stalled_or_idle", reasons)
+            self.assertTrue(reasons)
+        finally:
+            supervisor.kill(); supervisor.wait()
 
     def test_pack_slots_and_native_root(self):
         raw = json.loads(self.path.read_text())

@@ -335,11 +335,40 @@ class LeaseProgress(base.LeaseProgress):
     guard released a working Pod. A run stuck without CPU work still goes idle, and
     the guard's work_idle_seconds bound releases the pod. ``completed_updates``
     counts this driver's updates for the lease adapter's session.
+
+    A watched process (``watch``: a qualification trial's reservation supervisor, which runs detached and so
+    is no child of this driver) is activity while CPU time advances under it. On 2026-11-01 item 6's history
+    trial ran over five minutes with nothing else to observe, and the guard released the Pod mid-qualification.
     """
 
     def __init__(self, campaign: Campaign):
         super().__init__(campaign)
         self.counts, self.total = {}, 0
+        self.watched = {}
+
+    def watch(self, key: str, pid: int, token: str) -> None:
+        """Count CPU time under ``pid`` (a reservation supervisor naming ``token``) as activity until ``unwatch``."""
+        with self.lock:
+            self.watched[key] = (pid, token)
+
+    def unwatch(self, key: str) -> None:
+        with self.lock:
+            self.watched.pop(key, None)
+            self.ticks.pop("watched:" + key, None)
+
+    def observe(self, stamp: float) -> bool:
+        alive = super().observe(stamp)
+        if self.watched:
+            table = base.process_table()
+            for key, (pid, token) in list(self.watched.items()):
+                if not base.supervisor_owned(pid, token):  # ended, or a reused PID: never credits other work
+                    self.ticks.pop("watched:" + key, None)
+                    continue
+                ticks = base.descendant_ticks(table, pid)
+                if ticks > self.ticks.get("watched:" + key, ticks):
+                    self.activity = stamp
+                self.ticks["watched:" + key] = ticks
+        return alive
 
     def touch(self) -> None:
         with self.lock:
@@ -367,6 +396,25 @@ class LeaseProgress(base.LeaseProgress):
 def touch(campaign: Campaign) -> None:
     if campaign.lease:
         campaign.lease.touch()
+
+
+class watching:
+    """``with watching(campaign, key, dispatched):`` counts a detached dispatch's CPU time (its supervisor's
+    descendants) as lease activity while the block runs; a no-op without a lease or a supervisor pid."""
+
+    def __init__(self, campaign: Campaign, key: str, dispatched: dict):
+        self.lease, self.key = getattr(campaign, "lease", None), key
+        self.pid, self.token = dispatched.get("pid"), dispatched.get("token")
+
+    def __enter__(self):
+        if self.lease and isinstance(self.pid, int) and self.token:
+            self.lease.watch(self.key, self.pid, self.token)
+        return self
+
+    def __exit__(self, *exc):
+        if self.lease and isinstance(self.pid, int) and self.token:
+            self.lease.unwatch(self.key)
+        return False
 
 
 def discard(campaign: Campaign, run: str, block: int, attempt: dict, reason: str) -> None:

@@ -186,7 +186,8 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
         if not report.exists():
             request = bounded(campaign, request)
             result = nested([str(TOOLS / "native_expanded_dispatch_v1.py"), "qualify", request["path"]])
-            wait_report(report.parent, result["pid"])
+            with driver.watching(campaign, "trial:" + name, result):  # a detached trial: its CPU time is activity
+                wait_report(report.parent, result["pid"])
         reports[name] = pin(report)
         log(kind="trial", name=name, report=reports[name])
     pack_index = Path(read(family["pack"]["path"])["root"]) / "pack.json"
