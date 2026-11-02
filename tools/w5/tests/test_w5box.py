@@ -122,7 +122,7 @@ def throughput_record(binding, identity_b=None):
 
 class GuardTests(unittest.TestCase):
     binding = {"host_class": "linux-zen5-9950x", "positions_sha256": "p", "cores_per_box": 2, "boxes": 6,
-               "arm": "C", "binary_sha256": "b", "config_sha256": "c"}
+               "arm": "C", "binary_sha256": "b", "config_sha256": "c", "launch_spec_sha256": "l"}
 
     def test_accepts_serial_and_full_node(self):
         result = w5box.require_throughput(throughput_record(self.binding), self.binding)
@@ -143,22 +143,40 @@ class GuardTests(unittest.TestCase):
 
     def test_pins(self):
         with tempfile.TemporaryDirectory() as tmp:
-            binary = Path(tmp) / "bin"
+            binary, config = Path(tmp) / "bin", Path(tmp) / "cfg.json"
             binary.write_bytes(b"x")
-            ref = {"path": str(binary), "sha256": w5box.sha256_file(binary)}
-            layout = {"positions_sha256": "p"}
-            plan = {"host_class": "linux-zen5-9950x", "layout": layout,
-                    "filler": {"argv": [], "binary": ref, "config": ref, "memory_max_bytes": 1,
+            config.write_bytes(b"{}")
+            bref = {"path": str(binary), "sha256": w5box.sha256_file(binary)}
+            cref = {"path": str(config), "sha256": w5box.sha256_file(config)}
+            layout = w5box.compute_layout(w5box.read_topology(fake_sysfs(Path(tmp) / "sys")), 2, 2)
+            plan = {"host_class": "linux-zen5-9950x", "layout": json.loads(json.dumps(layout)),
+                    "state_root": tmp, "isolation": "partition-root",
+                    "filler": {"argv": [str(binary), "--config", str(config), "--seed", "{seed_root}"],
+                               "binary": bref, "config": cref, "memory_max_bytes": 1,
                                "seed_root_template": "w5/filler{j}"}}
-            spec = {"binary": ref, "config": ref, "memory_max_bytes": 1}
-            w5box.check_pins(plan, spec, layout, "linux-zen5-9950x")
+            spec = {"box_slot": 0, "arm": "C", "seed_root": "w5/chain1", "binary": bref, "config": cref,
+                    "memory_max_bytes": 1, "argv": [str(binary), f"--config={config}", "--seed", "{seed_root}"]}
+            w5box.check_pins(plan, "c1", spec, layout, "linux-zen5-9950x")
+            self.assertEqual(w5box.chain_argv(spec, "c1", Path(tmp))[-1], "w5/chain1")
             with self.assertRaises(w5box.Refusal):
-                w5box.check_pins(plan, spec, layout, "linux-other")
+                w5box.check_pins(plan, "c1", spec, layout, "linux-other")
+            edited = json.loads(json.dumps(plan))
+            edited["layout"]["boxes"][0]["cpus"] = [2, 3]  # stale hash field kept: still refused
             with self.assertRaises(w5box.Refusal):
-                w5box.check_pins(plan, spec, {"positions_sha256": "q"}, "linux-zen5-9950x")
+                w5box.check_pins(edited, "c1", spec, layout, "linux-zen5-9950x")
+            with self.assertRaises(w5box.Refusal):  # argv[0] must be the pinned binary
+                w5box.check_pins(plan, "c1", dict(spec, argv=["/bin/sh"] + spec["argv"][1:]), layout,
+                                 "linux-zen5-9950x")
+            with self.assertRaises(w5box.Refusal):  # the pinned config must be named
+                w5box.check_pins(plan, "c1", dict(spec, argv=[str(binary)]), layout, "linux-zen5-9950x")
+            # the throughput binding covers the launch template, not the chain's seeds
+            same_arm = dict(spec, seed_root="w5/chain2", box_slot=1)
+            self.assertEqual(w5box.throughput_binding(plan, spec), w5box.throughput_binding(plan, same_arm))
+            self.assertNotEqual(w5box.throughput_binding(plan, spec),
+                                w5box.throughput_binding(plan, dict(spec, argv=spec["argv"] + ["--fast"])))
             binary.write_bytes(b"y")
             with self.assertRaises(w5box.Refusal):
-                w5box.check_pins(plan, spec, layout, "linux-zen5-9950x")
+                w5box.check_pins(plan, "c1", spec, layout, "linux-zen5-9950x")
 
     def test_plan_schema(self):
         with tempfile.TemporaryDirectory() as tmp:

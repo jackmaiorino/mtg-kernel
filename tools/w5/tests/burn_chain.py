@@ -79,9 +79,10 @@ def main(argv) -> int:
         ledger = int(os.environ["W5_LEDGER_BASE_USEC"]) + int(
             dict(line.split() for line in Path(os.environ["W5_LEDGER_CGROUP"], "cpu.stat").read_text().splitlines())
             ["usage_usec"])
-        tmp.write_text(json.dumps({"seq": 0, "update": 1, "ledger_usec": ledger}))
+        instance = int(os.environ["W5_LEDGER_INSTANCE"])
+        tmp.write_text(json.dumps({"instance": instance, "seq": 0, "update": 1, "ledger_usec": ledger}))
         os.replace(tmp, control / "pause.request")
-        while not (control / "resume.0.json").exists():
+        while not (control / f"resume.{instance}.0.json").exists():
             time.sleep(0.05)
     reaped += spawn_batch(out, seconds, workers)
     report(out, "root", {"affinity": affinity, "box_cpus": box, "reaped_children_usec": reaped,
