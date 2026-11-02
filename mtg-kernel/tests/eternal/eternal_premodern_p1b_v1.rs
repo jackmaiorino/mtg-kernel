@@ -766,6 +766,8 @@ fn sickening_dreams_discards_x_cards_for_x_damage_to_everything() {
     let mut state = islands();
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let tog = put(&mut state, P0, "Psychatog", Zone::Battlefield);
+    // A 3/4, so it survives the damage.
+    state.objects.get_mut(tog).counters.plus1_plus1 = 2;
     put(&mut state, P0, "Island", Zone::Hand);
     put(&mut state, P0, "Island", Zone::Hand);
     put(&mut state, P0, "Island", Zone::Hand);
