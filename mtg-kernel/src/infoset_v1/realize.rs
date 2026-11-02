@@ -43,13 +43,15 @@ pub(crate) struct NativeGameV1 {
     pub edits: Vec<(usize, ObjectId, ObjectId)>,
 }
 
-/// A candidate's semantics with ids mapped through `sigma` and incarnation
-/// numbers dropped (an exchanged object keeps its own incarnation).
+/// A candidate's semantics with ids mapped through `sigma`, incarnation
+/// numbers and definitions dropped (an exchanged object keeps its own
+/// incarnation, and the forced deal changes definitions of objects V never
+/// tracked).
 fn mapped(v: &Value, sigma: &HashMap<u64, u64>) -> Value {
     match v {
         Value::Object(m) => Value::Object(
             m.iter()
-                .filter(|(k, _)| k.as_str() != "zone_change_count")
+                .filter(|(k, _)| !matches!(k.as_str(), "zone_change_count" | "card_db_id"))
                 .map(|(k, x)| {
                     if k == "arena_id" {
                         if let Some(n) = x.as_u64() {
@@ -110,7 +112,17 @@ struct RunV1 {
     shuffles: Vec<(usize, Vec<ObjectId>)>,
 }
 
-/// Replays W's first `d` steps with the deal exchanges and moves applied.
+fn is_pass(v: &Value) -> bool {
+    v["action_kind"] == "pass"
+}
+
+/// Replays W up to its decision `d` (an index into W's actions, at a V
+/// decision) with the deal exchanges and moves applied. The owner's
+/// priority windows can depend on its hidden hand (the session poses a
+/// window only when it has something to do), so W's actions are aligned,
+/// not indexed: a W pass with no counterpart in W* is skipped, and an extra
+/// window of the owner in W* is passed. V's decisions must line up exactly
+/// (their views are compared).
 fn replay(
     game: &NativeGameV1,
     deal: &[(ObjectId, ObjectId)],
@@ -128,99 +140,134 @@ fn replay(
         }
         FastActorSessionV1::import_infoset_v1(&game.start, st, 0)
     };
+    // sigma maps W's object to W*'s; each exchange composes it with the
+    // transposition of two W* objects.
     let mut sigma: HashMap<u64, u64> = HashMap::new();
     let swap = |sigma: &mut HashMap<u64, u64>, x: u32, y: u32| {
         let (x, y) = (u64::from(x), u64::from(y));
-        // sigma maps W's object to W*'s: compose with the transposition.
-        let mut inv: HashMap<u64, u64> = sigma.iter().map(|(k, v)| (*v, *k)).collect();
-        let (wx, wy) = (
-            *inv.get(&x).unwrap_or(&x),
-            *inv.get(&y).unwrap_or(&y),
-        );
+        let inv: HashMap<u64, u64> = sigma.iter().map(|(k, v)| (*v, *k)).collect();
+        let (wx, wy) = (*inv.get(&x).unwrap_or(&x), *inv.get(&y).unwrap_or(&y));
         sigma.insert(wx, y);
         sigma.insert(wy, x);
-        inv.clear();
     };
-    let mut run = RunV1 {
-        s: s.clone(),
-        views: Vec::new(),
-        choices: Vec::new(),
-        shuffles: Vec::new(),
+    let restart = |s: &FastActorSessionV1, st: GameState| -> Result<FastActorSessionV1, String> {
+        let context = s
+            .surface_context_v1()
+            .ok_or("no surface context at an edit or a forced shuffle outcome")?;
+        Ok(FastActorSessionV1::import_infoset_with_surface_v1(
+            s,
+            st,
+            0,
+            Some(context),
+        ))
     };
-    for i in 0..d {
-        for (at, a, b) in &game.edits {
-            if *at == i {
-                let context = s
-                    .surface_context_v1()
-                    .ok_or("no surface context at W's own edit")?;
-                let mut st = s.game_state().clone();
-                for p in &mut st.players {
-                    let (pa, pb) = (
-                        p.library.iter().position(|o| o == a),
-                        p.library.iter().position(|o| o == b),
-                    );
-                    if let (Some(pa), Some(pb)) = (pa, pb) {
-                        p.library.swap(pa, pb);
-                    }
-                }
-                s = FastActorSessionV1::import_infoset_with_surface_v1(&s, st, 0, Some(context));
-            }
+    let mut views = Vec::new();
+    let mut choices = Vec::new();
+    let mut shuffles = Vec::new();
+    let mut i = 0;
+    let mut applied: Option<usize> = None;
+    let mut guard = 0;
+    loop {
+        guard += 1;
+        if guard > 4 * game.actions.len() + 100 {
+            return Err("the replay does not converge".into());
         }
-        for m in moves {
-            if let MoveV1::Shuffle { at, x, y } = *m {
-                if at == i {
-                    let context = s
-                        .surface_context_v1()
-                        .ok_or("no surface context at a forced shuffle outcome")?;
+        // Edits and forced shuffle outcomes apply once, before W's step
+        // `i` is answered; choice exchanges from that step on.
+        if applied != Some(i) {
+            applied = Some(i);
+            for (at, a, b) in &game.edits {
+                if *at == i {
                     let mut st = s.game_state().clone();
-                    let lib = &mut st.players[owner.index()].library;
-                    let (Some(px), Some(py)) = (
-                        lib.iter().position(|o| o.0 == x),
-                        lib.iter().position(|o| o.0 == y),
-                    ) else {
-                        return Err("a forced shuffle outcome names a card outside the library".into());
-                    };
-                    lib.swap(px, py);
-                    s = FastActorSessionV1::import_infoset_with_surface_v1(&s, st, 0, Some(context));
-                    swap(&mut sigma, x, y);
+                    for pl in &mut st.players {
+                        let (pa, pb) = (
+                            pl.library.iter().position(|o| o == a),
+                            pl.library.iter().position(|o| o == b),
+                        );
+                        if let (Some(pa), Some(pb)) = (pa, pb) {
+                            pl.library.swap(pa, pb);
+                        }
+                    }
+                    s = restart(&s, st)?;
+                }
+            }
+            for m in moves {
+                match *m {
+                    MoveV1::Shuffle { at, x, y } if at == i => {
+                        let mut st = s.game_state().clone();
+                        let lib = &mut st.players[owner.index()].library;
+                        let (Some(px), Some(py)) = (
+                            lib.iter().position(|o| o.0 == x),
+                            lib.iter().position(|o| o.0 == y),
+                        ) else {
+                            return Err(
+                                "a forced shuffle outcome names a card outside the library".into(),
+                            );
+                        };
+                        lib.swap(px, py);
+                        s = restart(&s, st)?;
+                        swap(&mut sigma, x, y);
+                    }
+                    MoveV1::Choice { at, x, y } if at == i => swap(&mut sigma, x, y),
+                    _ => {}
                 }
             }
         }
         let FastActorResponseV1::Decision(dd) = s.current_response() else {
-            return Err(format!("terminal before step {i}"));
+            return Err(format!("terminal before W's step {i}"));
         };
         let p = seat(dd.acting_player);
-        for m in moves {
-            if let MoveV1::Choice { at, x, y } = *m {
-                if at == i {
-                    swap(&mut sigma, x, y);
-                }
-            }
+        if i == d && p == viewer {
+            break;
         }
-        if p == viewer && dd.legal_action_count >= 2 {
-            run.views.push(view(&s));
-        }
-        let want = mapped(&game.actions[i], &sigma);
         let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
         let vals: Vec<Value> = sem
             .iter()
             .map(|x| serde_json::to_value(x).expect("semantics serialize"))
             .collect();
         let empty = HashMap::new();
-        let Some(index) = vals.iter().position(|v| mapped(v, &empty) == want) else {
-            return Err(format!("step {i}: no candidate matches {want}"));
+        let me = if p == PlayerId::P0 { "p0" } else { "p1" };
+        let owner_s = if owner == PlayerId::P0 { "p0" } else { "p1" };
+        let w = game.actions.get(i).filter(|_| i < d);
+        let want = w.map(|a| mapped(a, &sigma));
+        let matching = want
+            .as_ref()
+            .filter(|_| w.is_some_and(|a| a["actor"] == me))
+            .and_then(|want| vals.iter().position(|v| mapped(v, &empty) == *want));
+        let index = if let Some(index) = matching {
+            index
+        } else if w.is_some_and(|a| is_pass(a) && a["actor"] == owner_s) {
+            // The owner passed in a window W* does not have.
+            i += 1;
+            continue;
+        } else if p == owner {
+            // An extra window of the owner in W*.
+            vals.iter()
+                .position(is_pass)
+                .ok_or_else(|| format!("W's step {i}: an unmatched owner decision"))?
+        } else {
+            return Err(format!(
+                "W's step {i}: no candidate matches {}",
+                want.map_or_else(|| "nothing".to_string(), |w| w.to_string())
+            ));
         };
+        let took_w = matching.is_some();
+        if p == viewer && dd.legal_action_count >= 2 {
+            views.push(view(&s));
+        }
         let kind = vals[index]["action_kind"].as_str().unwrap_or("");
-        if p == owner && hidden_choice(kind) {
+        if took_w && p == owner && hidden_choice(kind) {
             let hand = &s.game_state().players[owner.index()].hand;
-            if let Some(chosen) = named_object(&vals[index]).filter(|o| hand.contains(&ObjectId(*o))) {
+            if let Some(chosen) =
+                named_object(&vals[index]).filter(|o| hand.contains(&ObjectId(*o)))
+            {
                 let others: Vec<u32> = vals
                     .iter()
                     .filter(|v| v["action_kind"] == vals[index]["action_kind"])
                     .filter_map(named_object)
                     .filter(|o| *o != chosen && hand.contains(&ObjectId(*o)))
                     .collect();
-                run.choices.push(ChoicePointV1 {
+                choices.push(ChoicePointV1 {
                     at: i,
                     chosen,
                     others,
@@ -229,17 +276,23 @@ fn replay(
         }
         let before = s.game_state().observation_journal.notes().len();
         s.step(dd.episode_id, dd.step, index as u32)
-            .map_err(|e| format!("step {i}: {e:?}"))?;
+            .map_err(|e| format!("W's step {i}: {e:?}"))?;
+        if took_w {
+            i += 1;
+        }
         let notes = s.game_state().observation_journal.notes();
         if notes[before.min(notes.len())..].iter().any(|n| {
             matches!(n.kind, ObservationNoteKindV1::LibraryRandomized { owner: o } if o == owner)
         }) {
-            run.shuffles
-                .push((i + 1, s.game_state().players[owner.index()].library.clone()));
+            shuffles.push((i, s.game_state().players[owner.index()].library.clone()));
         }
     }
-    run.s = s;
-    Ok(run)
+    Ok(RunV1 {
+        s,
+        views,
+        choices,
+        shuffles,
+    })
 }
 
 /// Canonical hidden contents of the owner: untracked hand and library
@@ -451,7 +504,17 @@ pub(crate) fn realize(
                 let x = export_at(&star.s, viewer, ExportOptionsV1::default())
                     .map_err(|e| format!("export(W*) refused: {}", e.code_name()))?;
                 if x.bytes != bytes {
-                    return Err(format!("{moves:?}: export(W*) differs from export(W)"));
+                    let w = at_step(game, d, viewer);
+                    let xw = export_at(&w, viewer, ExportOptionsV1::default())
+                        .map_err(|e| format!("export(W) refused: {}", e.code_name()))?;
+                    let (a, b) = (
+                        serde_json::json!([xw.handles.iter().map(HandleV1::label).collect::<Vec<_>>(), xw.state]),
+                        serde_json::json!([x.handles.iter().map(HandleV1::label).collect::<Vec<_>>(), x.state]),
+                    );
+                    return Err(format!(
+                        "{moves:?}: export(W*) differs from export(W) at {:?}",
+                        super::tests::diffs(&a, &b, String::new(), 4)
+                    ));
                 }
             }
             return Ok(RealizedV1 { moves, deal });
