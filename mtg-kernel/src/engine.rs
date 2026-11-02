@@ -9504,15 +9504,21 @@ fn pending_cast_quote_v1(
 }
 
 /// Records the pay-or-skip answer of a hand cast under a free-cast
-/// permission. Skipping the mana cost makes X zero.
+/// permission. Skipping the mana cost makes X zero, except Sickening
+/// Dreams' X, which counts an additional cost's discards.
 fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
+    let discard_x = state.engine.pending_cast.as_ref().is_some_and(|pending| {
+        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(
+            &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize],
+        )
+    });
     let pending = state
         .engine
         .pending_cast
         .as_mut()
         .expect("a pending cast is choosing its free cast");
     pending.hand_free_cast_v1 = Some(choice);
-    if choice == HandFreeCastV1::WithoutManaCost && pending.x_value.is_none() {
+    if choice == HandFreeCastV1::WithoutManaCost && pending.x_value.is_none() && !discard_x {
         pending.x_value = Some(0);
     }
 }

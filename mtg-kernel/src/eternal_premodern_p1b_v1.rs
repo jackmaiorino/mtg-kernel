@@ -881,11 +881,19 @@ pub(crate) fn execute(op: &P1bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let spec = TargetSpec::StandardV1(
                 crate::standard_cards_v1::StandardTargetV1::CreaturePowerAtMostTreasureCountersV1,
             );
-            let Some(creature) = legal_object_target(ctx, state, 0, spec) else {
+            let allure = ability_source_link(ctx);
+            let target = legal_object_target(ctx, state, 0, spec);
+            let counters =
+                allure.map_or(0, |allure| statics::allure_counters_for_link(state, allure));
+            // The sacrificed Allure's record ends with its ability.
+            if let Some(allure) = allure {
+                p1b_state(state)
+                    .sacrificed_allures
+                    .retain(|(host, _)| *host != allure);
+            }
+            let Some(creature) = target else {
                 return;
             };
-            let counters = ability_source_link(ctx)
-                .map_or(0, |allure| statics::allure_counters_for_link(state, allure));
             if crate::engine::effective_power(state, creature) > i32::from(counters) {
                 return;
             }
