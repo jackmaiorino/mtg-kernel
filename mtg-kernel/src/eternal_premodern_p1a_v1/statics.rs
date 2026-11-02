@@ -173,7 +173,7 @@ pub fn has_swampwalk(state: &GameState, object: ObjectId) -> bool {
 }
 
 /// Goblin Vandal: "this creature assigns no combat damage this turn."
-pub(crate) fn assigns_no_combat_damage(state: &GameState, object: ObjectId) -> bool {
+pub fn assigns_no_combat_damage(state: &GameState, object: ObjectId) -> bool {
     let Some(p1a) = read_state(state) else {
         return false;
     };

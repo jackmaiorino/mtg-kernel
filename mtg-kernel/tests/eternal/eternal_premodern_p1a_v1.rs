@@ -481,6 +481,21 @@ fn finish_cast(state: &mut GameState) {
     panic!("the cast did not finish");
 }
 
+/// Plays the rest of this turn's combat with first answers, to the second
+/// main phase with an empty stack.
+fn attack_finish(state: &mut GameState) {
+    run_until(
+        state,
+        |state| {
+            state.step == Step::Main2
+                && state.stack.is_empty()
+                && state.engine.pending_triggers.is_empty()
+                && state.engine.pending_effect.is_none()
+        },
+        |_, _| None,
+    );
+}
+
 /// Passes priority until `player` holds it with something on the stack.
 fn pass_to(state: &mut GameState, player: PlayerId) {
     for _ in 0..16 {
@@ -1508,11 +1523,27 @@ fn goblin_vandal_trades_its_damage_for_an_artifact() {
     let vandal = put(&mut state, P0, "Goblin Vandal", Zone::Battlefield);
     let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
     put(&mut state, P0, "Mountain", Zone::Battlefield);
-    attack_with(&mut state, vec![vandal], |_, decision| match decision {
-        Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(ring))),
-        Decision::ChooseEffectBoolean { .. } => Some(Action::ChooseEffectBoolean(true)),
-        _ => None,
-    });
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![vandal]));
+    run_until(
+        &mut state,
+        |state| {
+            zone(state, ring) == Zone::Graveyard
+                && state.stack.is_empty()
+                && state.engine.pending_effect.is_none()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(ring))),
+            _ => None,
+        },
+    );
+    assert_ne!(
+        state.step,
+        Step::CombatDamage,
+        "the trigger resolves before damage"
+    );
+    assert!(statics::assigns_no_combat_damage(&state, vandal));
+    attack_finish(&mut state);
     assert_eq!(zone(&state, ring), Zone::Graveyard);
     assert_eq!(state.players[1].life, 20, "it assigned no combat damage");
 }
