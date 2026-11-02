@@ -4,9 +4,13 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 from pathlib import Path
 import struct
+import subprocess
+import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -233,6 +237,170 @@ class DriverTests(unittest.TestCase):
             progress.activity = 0
             record = beat()
             self.assertEqual((record["last_activity_epoch"], record["completed_updates"]), (0, 1))
+
+    def lease_clock(self, work_idle=None):
+        sys.path.insert(0, str(Path(driver.__file__).resolve().parent / "phase1_cloud"))
+        import lease_guard
+        guard = self.root / "guard"
+        lease_guard_files(guard)
+        lease = json.loads((guard / "lease.json").read_text())
+        if work_idle is not None:
+            lease["work_idle_seconds"] = work_idle
+            (guard / "lease.json").write_text(json.dumps(lease))
+        with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", "MTG_LEASE_GUARD_DIR": str(guard)}):
+            progress = driver.LeaseProgress(self.campaign)
+        return progress, lease, guard, lease_guard
+
+    def campaign_with(self, lease):
+        campaign = driver.Campaign(self.path)
+        campaign.lease = lease
+        return campaign
+
+    def test_a_watched_trial_longer_than_the_work_idle_bound_keeps_the_lease_active(self):
+        """2026-11-01: a qualification trial (a detached reservation supervisor, no child of the driver) ran past
+        work_idle_seconds and the guard latched native_work_stalled_or_idle. Watched, it is observed like an
+        in-flight attempt: CPU under its supervisor outside its native part, the native child's CPU inside."""
+        progress, lease, guard, lease_guard = self.lease_clock()
+        me, clock, ticks = os.getpid(), {"wall": lease["created_epoch"] + 60, "cpu": 10.}, {"trial": 0, "native": 0}
+        root = self.root / "trial-w1"; root.mkdir()
+
+        def table():  # the trial's supervisor (950, detached: not under this driver) and its dispatcher (951)
+            return {me: (1, 0), 950: (1, 0), 951: (950, ticks["trial"])}
+
+        def beat(trial=0, native=0, owner="t950", start=100.0):
+            clock["wall"] += 15.; ticks["trial"] += trial; ticks["native"] += native
+            in_native = (root / "started.json").exists() and not (root / "execution.json").exists()
+            with patch.object(driver.time, "time", return_value=clock["wall"]), \
+                    patch.object(driver.base.time, "time", return_value=clock["wall"]), \
+                    patch.object(driver.base, "driver_cpu_seconds", return_value=clock["cpu"]), \
+                    patch.object(driver.base, "process_table", side_effect=table), \
+                    patch.object(driver.base, "process_start_unix", return_value=start), \
+                    patch.object(driver.base, "native_ticks",
+                                 side_effect=lambda r: ticks["native"] if in_native and Path(r) == root else None), \
+                    patch.object(driver.base, "supervisor_owned", side_effect=lambda pid, token: token == owner):
+                progress.beat()
+            record = json.loads((guard / "progress.json").read_text())
+            return lease_guard.decision(lease, clock["wall"], 1.0, record)["reason"]
+
+        progress.cpu, progress.activity = (clock["wall"], clock["cpu"]), clock["wall"]
+        trial = {"state": "dispatched", "pid": 950, "token": "t950"}
+        steps = lease["work_idle_seconds"] // 15
+        proc = patch.object(driver, "proc_readable", return_value=True)  # the Pod's /proc, on any test host
+        proc.start()
+        self.addCleanup(proc.stop)
+        with patch.object(driver.base, "process_start_unix", return_value=100.0):
+            watched = driver.watching(self.campaign_with(progress), "trial:w1", trial, root=root)
+            watched.__enter__()
+        self.assertEqual({beat(trial=40) for _ in range(2 * steps)}, {None})  # preparation: supervised CPU
+        (root / "started.json").write_text("{}")                              # its native part
+        self.assertEqual({beat(native=40) for _ in range(2 * steps)}, {None})  # the native child computes
+        self.assertEqual([beat(trial=40) for _ in range(steps)][-1],           # a stalled native child with a
+                         "native_work_stalled_or_idle")                         # busy dispatcher still goes idle
+        (root / "execution.json").write_text("{}")
+        progress.activity = clock["wall"]
+        self.assertEqual({beat(trial=40) for _ in range(2 * steps)}, {None})  # after it: supervised CPU again
+        progress.activity = clock["wall"]
+        self.assertEqual([beat(trial=40, start=200.0) for _ in range(steps)][-1],  # a reused PID, same token
+                         "native_work_stalled_or_idle")
+        progress.activity = clock["wall"]
+        self.assertEqual([beat(trial=40, owner="t-other") for _ in range(steps)][-1],  # another token
+                         "native_work_stalled_or_idle")
+        watched.__exit__(None, None, None)
+        self.assertEqual(progress.watched, {})
+        self.assertFalse([name for name in progress.ticks if name.startswith("watched:")])
+        progress.activity = clock["wall"]
+        self.assertEqual([beat(trial=40) for _ in range(steps)][-1], "native_work_stalled_or_idle")  # unwatched
+        with driver.watching(self.campaign_with(None), "trial:w3", trial):  # no lease: a no-op
+            pass
+
+    def test_a_watched_pack_counts_its_trials_native_parts(self):
+        progress, lease, guard, lease_guard = self.lease_clock()
+        pack = self.root / "pack"; pack.mkdir()
+        roots = [self.root / "packed-0", self.root / "packed-1"]
+        for index, root in enumerate(roots):
+            (pack / f"packed-{index}.request.json").write_text(json.dumps({"root": str(root)}))
+        (pack / "broken.request.json").write_text("{torn")
+        clock, ticks, me = {"wall": lease["created_epoch"] + 60}, {str(roots[1]): 0, "pack": 0}, os.getpid()
+
+        def table():  # the pack process (777) is the driver's child; it polls its trials
+            return {me: (1, 0), 777: (me, ticks["pack"])}
+
+        def beat(native=0):
+            clock["wall"] += 15.; ticks[str(roots[1])] += native; ticks["pack"] += 3
+            with patch.object(driver.time, "time", return_value=clock["wall"]), \
+                    patch.object(driver.base.time, "time", return_value=clock["wall"]), \
+                    patch.object(driver.base, "driver_cpu_seconds", return_value=progress.cpu[1]), \
+                    patch.object(driver.base, "process_table", side_effect=table), \
+                    patch.object(driver.base, "native_ticks", side_effect=lambda r: ticks.get(str(r))):
+                progress.beat()
+            record = json.loads((guard / "progress.json").read_text())
+            return record, lease_guard.decision(lease, clock["wall"], 1.0, record)["reason"]
+
+        progress.activity = clock["wall"]
+        with driver.watching(self.campaign_with(progress), "pack", pack=pack) as watched:
+            watched.exclude_child(777)
+            results = [beat(native=40) for _ in range(2 * lease["work_idle_seconds"] // 15)]
+            self.assertEqual({reason for _, reason in results}, {None})
+            self.assertTrue(results[-1][0]["native_alive"])
+            self.assertEqual([beat() for _ in range(lease["work_idle_seconds"] // 15)][-1][1],
+                             "native_work_stalled_or_idle")  # stalled packed trials go idle, polling or not
+        self.assertEqual(progress.excluded_children(), frozenset())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc")
+    def test_a_real_detached_trial_past_the_bound_on_linux(self):
+        """Real processes: a supervisor naming its token, reparented away from this driver (as a WMI or setsid
+        launch is), whose child computes for longer than a 3 s work-idle bound. Unwatched the guard latches;
+        watched it does not."""
+        def trial(seconds, ready):
+            # The launcher exits at once, so the supervisor is reparented: no descendant of this test process.
+            burn = f"import time\nend = time.time() + {seconds}\nwhile time.time() < end: pass\n"
+            supervisor = (f"import os, subprocess, sys\n"
+                          f"child = subprocess.Popen([sys.executable, '-c', {burn!r}])\n"
+                          f"open({str(ready)!r} + '.partial', 'w').write(str(os.getpid()))\n"
+                          f"os.replace({str(ready)!r} + '.partial', {str(ready)!r})\n"
+                          f"child.wait()\n")
+            launcher = ("import subprocess, sys\n"
+                        f"subprocess.Popen([sys.executable, '-c', {supervisor!r}, 'tok-trial-1101'], "
+                        "start_new_session=True)\n")
+            subprocess.run([sys.executable, "-c", launcher], check=True)
+            for _ in range(100):
+                if ready.exists():
+                    return int(ready.read_text())
+                time.sleep(0.1)
+            self.fail("the supervisor did not start")
+
+        def run(watched):
+            progress, lease, guard, lease_guard = self.lease_clock(work_idle=3)
+            ready = self.root / f"ready-{watched}"
+            pid = trial(8, ready)
+            try:
+                children = [p for p, (parent, _) in driver.base.process_table().items() if parent == os.getpid()]
+                self.assertNotIn(pid, children)  # detached, as on the Pod
+                progress.start()
+                reasons = []
+                context = driver.watching(self.campaign_with(progress if watched else None), "trial:w1",
+                                          {"pid": pid, "token": "tok-trial-1101"}, root=self.root / "no-native")
+                with context:
+                    end = time.time() + 6
+                    while time.time() < end:
+                        time.sleep(0.5)
+                        record = json.loads((guard / "progress.json").read_text())
+                        reasons.append(lease_guard.decision(lease, time.time(), 1.0, record)["reason"])
+                return reasons
+            finally:
+                progress.done.set()
+                if progress.thread.is_alive():
+                    progress.thread.join()
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                shutil.rmtree(self.root / "guard", ignore_errors=True)
+
+        self.assertIn("native_work_stalled_or_idle", run(False))  # the 2026-11-01 failure, reproduced
+        watched = run(True)
+        self.assertTrue(watched)
+        self.assertNotIn("native_work_stalled_or_idle", watched)
 
     def test_pack_slots_and_native_root(self):
         raw = json.loads(self.path.read_text())
@@ -482,6 +650,69 @@ class DriverTests(unittest.TestCase):
             self.assertEqual((len(walks), driver.volume(self.campaign)["finished"]), (2, 0))
         events = [json.loads(line) for line in self.campaign.events.read_text().splitlines()]
         self.assertEqual([e["kind"] for e in events].count("volume-walk"), 2)  # each walk measured
+
+    def test_a_dispatch_request_carries_its_admission_walk(self):
+        """#463: the walk a block was admitted on goes in its request (the dispatcher checks the same numbers
+        without walking), and each walk is published for the dispatchers' emergency samples."""
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.scratch_campaign(projected=1000)
+        (self.root / "volume").mkdir()
+        (self.root / "volume" / "kept").write_bytes(b"x" * 300)
+        state = {"run": "G4", "status": "running", "blocks": {}}
+        requests = []
+
+        def dispatched(path, host):
+            requests.append(json.loads(Path(path).read_text(encoding="utf-8")))
+            return {"state": "refused"}
+        with self.disk(free=10**6, total=10**6),                 patch.object(driver, "block_spec", return_value={}),                 patch.object(driver.g, "block_config", return_value={}),                 patch.object(driver.g, "require_runtime_rules"),                 patch.object(driver, "request_for", return_value={"storage": self.campaign.raw["storage"]}),                 patch.object(driver.Campaign, "wall_stop", return_value=None),                 patch.object(driver.base, "dispatch_block", side_effect=dispatched):
+            self.assertEqual(driver.run_block(self.campaign, "G4", 1, state), "stopped")
+        admission = requests[0]["admission"]
+        shared = self.campaign.state / driver.SHARED_WALK
+        self.assertEqual((admission["logical_bytes"], admission["finished_since"], admission["shared_walk"],
+                          admission["in_flight"]), (300, 0, str(shared), 0))  # no other block in flight
+        self.assertEqual(driver.native_dispatch.admitted_bytes(admission, self.campaign.raw["storage"]), 300)
+        self.assertEqual(driver.native_dispatch.shared_walk(shared)[0], 300)
+        driver.volume(self.campaign)["finished"] = 2  # blocks finished since the walk count at their projection
+        self.assertEqual(driver.native_dispatch.admitted_bytes(driver.admitted(self.campaign),
+                                                               self.campaign.raw["storage"]), 300 + 2 * 1000)
+        driver.VOLUMES.clear()
+        self.assertIsNone(driver.admitted(self.campaign))  # nothing walked: the dispatcher walks
+        with self.disk(free=10**6, total=10**6):
+            self.assertEqual(driver.admitted(self.campaign, walk=True)["logical_bytes"], 300)  # the choice check
+
+    def test_one_background_walker_publishes_while_blocks_are_in_flight(self):
+        """#463: one walker per volume in the driver serves every dispatcher's emergency samples."""
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.addCleanup(driver.stop_walkers)
+        self.scratch_campaign()
+        raw = json.loads(self.path.read_text())
+        raw["storage"]["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        self.write(raw)
+        (self.root / "volume").mkdir()
+        (self.root / "volume" / "kept").write_bytes(b"x" * 300)
+        shared = self.campaign.state / driver.SHARED_WALK
+        touched = []
+        with patch.object(driver, "WALKER_POLL_SECONDS", 0.05),                 patch.object(driver, "touch", lambda campaign: touched.append(1)):
+            starters = [threading.Thread(target=driver.start_walker, args=(self.campaign,)) for _ in range(8)]
+            for starter in starters:  # eight admissions at once start one walker
+                starter.start()
+            for starter in starters:
+                starter.join()
+            self.assertEqual(len(driver.WALKERS), 1)
+            self.assertEqual(sum(thread.name == "volume-walker" for thread in threading.enumerate()), 1)
+            time.sleep(0.3)
+            self.assertIsNone(driver.native_dispatch.shared_walk(shared))  # nothing in flight: no walk
+            driver.SCRATCH_INFLIGHT.add(str(self.root / "container" / "a"))
+            deadline = time.monotonic() + 10
+            while driver.native_dispatch.shared_walk(shared) is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            found = driver.native_dispatch.shared_walk(shared)
+            self.assertEqual((found[0], found[3]), (300, 1))  # its bytes and the blocks in flight at its start
+            time.sleep(0.3)
+            self.assertEqual(driver.native_dispatch.shared_walk(shared), found)  # fresh: not walked again
+        self.assertEqual(touched, [])  # its walks are not the lease's progress
+        driver.stop_walkers()
+        self.assertEqual(driver.WALKERS, {})
 
     def test_a_long_volume_walk_records_driver_work_while_it_runs(self):
         self.scratch_campaign()

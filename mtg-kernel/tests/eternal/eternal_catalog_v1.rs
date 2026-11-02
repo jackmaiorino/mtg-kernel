@@ -208,29 +208,37 @@ struct SnapshotDeck {
     deck: CustomDeckV1,
 }
 
+/// Metagame snapshots the catalog plays: mtggoldfish for Pauper, Legacy and
+/// Vintage, mtgtop8 for Premodern.
+const SNAPSHOTS: [&str; 2] = [
+    "data/eternal_v1/meta_snapshot_mtggoldfish_20261026.json",
+    "data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json",
+];
+
 /// Every snapshot deck, in snapshot order.
 fn snapshot_decks() -> Vec<SnapshotDeck> {
-    let snapshot = read_json("data/eternal_v1/meta_snapshot_mtggoldfish_20261026.json");
     let mut decks = Vec::new();
-    for (format, archetypes) in snapshot["formats"].as_object().unwrap() {
-        for archetype in archetypes.as_array().unwrap() {
-            let cards = archetype["mainboard"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|row| CustomCardCountV1 {
-                    name: row[1].as_str().unwrap().to_owned(),
-                    count: row[0].as_u64().unwrap() as _,
-                })
-                .collect();
-            decks.push(SnapshotDeck {
-                format: format.clone(),
-                archetype: archetype["archetype"].as_str().unwrap().to_owned(),
-                deck: CustomDeckV1 {
-                    cards,
-                    companion: archetype["companion"].as_str().map(str::to_owned),
-                },
-            });
+    for snapshot in SNAPSHOTS.map(read_json) {
+        for (format, archetypes) in snapshot["formats"].as_object().unwrap() {
+            for archetype in archetypes.as_array().unwrap() {
+                let cards = archetype["mainboard"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| CustomCardCountV1 {
+                        name: row[1].as_str().unwrap().to_owned(),
+                        count: row[0].as_u64().unwrap() as _,
+                    })
+                    .collect();
+                decks.push(SnapshotDeck {
+                    format: format.clone(),
+                    archetype: archetype["archetype"].as_str().unwrap().to_owned(),
+                    deck: CustomDeckV1 {
+                        cards,
+                        companion: archetype["companion"].as_str().map(str::to_owned),
+                    },
+                });
+            }
         }
     }
     decks

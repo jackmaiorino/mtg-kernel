@@ -1094,6 +1094,7 @@ pub(crate) fn drive(
             if top.is_empty() {
                 return Ok(false);
             }
+            // spellbench-public-reveal: public reveal to both players.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 state.reveal_library_top(observer, controller, top.len());
             }

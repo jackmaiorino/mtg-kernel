@@ -594,6 +594,7 @@ pub(crate) fn finish_selection(
             let mut chosen = chosen.clone();
             if let Some(card) = bindings.first() {
                 // The next player sees the choice before making theirs.
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 state.reveal_hand_card(choice.player.opponent(), choice.player, card.object)?;
                 chosen.push(*card);
             }
@@ -2735,6 +2736,7 @@ fn bottom_in_random_order(
 
 /// Reveals the top `count` cards of `player`'s library to both players.
 fn reveal_top_to_all(state: &mut GameState, player: PlayerId, count: usize) {
+    // spellbench-public-reveal: public reveal to both players.
     for observer in [PlayerId::P0, PlayerId::P1] {
         state.reveal_library_top(observer, player, count);
     }

@@ -22,8 +22,10 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 from public_training_dispatch_v2 import checked, pin, read, write, DISK_RESERVE_BYTES
@@ -245,9 +247,8 @@ def scratch_roots(storage):
     return [path.resolve() for path in raw]
 
 
-def accounting_bytes(storage):
-    """The accounting roots (checked: absolute, link-free, disjoint, apart from any scratch root) and the
-    logical bytes of every file under them."""
+def accounting_roots(storage):
+    """The accounting roots, checked: absolute, link-free, disjoint, apart from any scratch root."""
     raw_roots = [Path(path) for path in storage["accounting_roots"]]
     require(all(path.is_absolute() for path in raw_roots), "absolute accounting roots required")
     for raw in raw_roots:
@@ -262,6 +263,12 @@ def accounting_bytes(storage):
     scratch = scratch_roots(storage)
     require(all(not a.is_relative_to(b) and not b.is_relative_to(a) for a in scratch for b in roots),
             "scratch root overlaps an accounting root")
+    return roots
+
+
+def accounting_bytes(storage):
+    """The checked accounting roots (accounting_roots) and the logical bytes of every file under them."""
+    roots = accounting_roots(storage)
     logical = 0
     for root in roots:
         if root.exists():
@@ -288,11 +295,58 @@ def accounting_bytes(storage):
     return roots, logical
 
 
-def validate_storage(storage, extra=None):
+# A campaign driver that walked the accounting trees to admit a block passes that walk in the request
+# ("admission"), so its dispatcher checks the same numbers without walking again (mtg-kernel#463: on a network
+# volume each dispatcher's own walks took about 40 min, eight at once, before any native work). The driver admits
+# on a walk for 600 s after it completed and the dispatch follows within seconds, so the dispatcher uses it while
+# it completed at most ADMISSION_WALK_SECONDS ago; an older one means a walk as before.
+ADMISSION_SCHEMA = "native-expanded-storage-admission/v1"
+ADMISSION_WALK_SECONDS = 900
+CLOCK_SKEW_SECONDS = 60
+
+
+def finite_time(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def admitted_bytes(admission, storage, now=None):
+    """The retained-bytes bound from the driver's admission walk: its logical bytes plus, for each block finished
+    since it, that block's projected retained bytes (the bound the driver admitted on). None without an
+    admission or when the walk is too old (the caller then walks)."""
+    if admission is None:
+        return None
+    require(isinstance(admission, dict) and admission.get("schema") == ADMISSION_SCHEMA,
+            "unsupported storage admission")
+    logical, finished = admission.get("logical_bytes"), admission.get("finished_since")
+    walked, completed = admission.get("walked_unix"), admission.get("completed_unix")
+    require(type(logical) is int and logical >= 0 and type(finished) is int and finished >= 0
+            and finite_time(walked) and finite_time(completed) and walked <= completed,
+            "invalid storage admission")
+    shared = admission.get("shared_walk")
+    require(shared is None or isinstance(shared, str) and Path(shared).is_absolute(), "invalid shared walk path")
+    in_flight = admission.get("in_flight", 0)
+    require(type(in_flight) is int and in_flight >= 0, "invalid storage admission")
+    age = (time.time() if now is None else now) - completed
+    if not -CLOCK_SKEW_SECONDS <= age <= ADMISSION_WALK_SECONDS:
+        return None
+    return logical + finished * storage["projected_additional_bytes"]
+
+
+# This process's last storage validation: its logical bytes and the Unix time its data stands for (a walk's
+# start). A dispatch seeds its emergency samples from it (seed_emergency).
+LAST_STORAGE = {"logical": None, "unix": None}
+
+
+def validate_storage(storage, extra=None, admission=None):
     cap = storage["max_logical_bytes"]
     require(type(cap) is int and 0 < cap <= CAP, "storage cap exceeds 192 GiB")
     require(storage["reserve_bytes"] >= DISK_RESERVE_BYTES, "reserve below 60 GiB")
-    roots, logical = accounting_bytes(storage)
+    bound = admitted_bytes(admission, storage)
+    if bound is None:
+        walked = time.time()
+        roots, logical = accounting_bytes(storage)
+    else:
+        walked, roots, logical = admission["walked_unix"], accounting_roots(storage), bound
     for root in roots:
         anchor = root
         while not anchor.exists():
@@ -309,31 +363,165 @@ def validate_storage(storage, extra=None):
         require(sum(storage["projected_volume_bytes"].values()) >= projected,
                 "volume projection omits planned writes")
     require(logical + projected <= cap, "retained plus projected storage exceeds allowance")
-    return {"logical_bytes": logical, "cap_bytes": cap}
+    # The emergency seed also counts the other blocks in flight at admission, each at its projected retained
+    # bytes: their outputs may postdate the walk (the driver's own admission bound).
+    siblings = 0 if bound is None else admission.get("in_flight", 0) * storage["projected_additional_bytes"]
+    LAST_STORAGE.update(logical=logical + siblings, unix=walked)
+    return {"logical_bytes": logical, "cap_bytes": cap, "source": "walk" if bound is None else "admission"}
 
 
 EMERGENCY_WALK_SECONDS = 600
-EMERGENCY_WALK = {"at": 0.0, "logical": None}  # this attempt's last walk of the accounting trees
+# The campaign driver's one background walker publishes each walk (shared_walk); the samples read the newest. It
+# walks again EMERGENCY_WALK_SECONDS after a walk completes, and a walk of the network volume takes about 11 min
+# alone (its heartbeat bound is 30 min), so a published walk completes at most about 40 min after the last. Only
+# when no walk completed for EMERGENCY_FALLBACK_SECONDS (the walker stopped) does an attempt walk for itself.
+EMERGENCY_FALLBACK_SECONDS = 3600
+MONITOR_POLL_SECONDS = 30  # a running attempt's sample interval (telemetry, memory, storage)
+SHARED_WALK_SCHEMA = "native-expanded-volume-walk/v1"
+EMERGENCY_LOCK = threading.Lock()
 
 
-def running_storage(storage):
+def _fresh_emergency():
+    return {"at": 0.0, "logical": None, "unix": None, "thread": None, "error": None, "closed": False}
+
+
+# This attempt's emergency sample: when it was last updated (monotonic), its bytes, the Unix time its data stands
+# for (a walk's start), its own background walk in flight, that walk's error (raised at the next sample), and
+# whether the attempt has left its native part.
+EMERGENCY_WALK = _fresh_emergency()
+
+
+def reset_emergency():
+    """Forget this process's walks (tests; each dispatch is its own process)."""
+    with EMERGENCY_LOCK:
+        EMERGENCY_WALK.clear()
+        EMERGENCY_WALK.update(_fresh_emergency())
+        LAST_STORAGE.update(logical=None, unix=None)
+
+
+def seed_emergency():
+    """Start this attempt's emergency samples from its validation (a walk, or the driver's admission walk), aged
+    by that data's time, so no sample walks in place."""
+    with EMERGENCY_LOCK:
+        if EMERGENCY_WALK["logical"] is None and LAST_STORAGE["logical"] is not None:
+            age = max(0.0, time.time() - LAST_STORAGE["unix"])
+            EMERGENCY_WALK.update(logical=LAST_STORAGE["logical"], unix=LAST_STORAGE["unix"],
+                                  at=time.monotonic() - age)
+
+
+def close_emergency():
+    """The native part ended: this attempt starts no walk of its own (one in flight finishes). Its CPU after the
+    native part is the lease's activity, so a walk must not stand in for a stalled finish."""
+    with EMERGENCY_LOCK:
+        EMERGENCY_WALK["closed"] = True
+
+
+def publish_walk(path, logical, walked_unix, completed_unix, walker, in_flight=0):
+    """Write a shared walk record atomically (a temporary file renamed over the record). ``in_flight``: blocks in
+    flight when the walk started, whose retained outputs may postdate it."""
+    path = Path(path)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    temporary.write_text(json.dumps({"schema": SHARED_WALK_SCHEMA, "logical_bytes": logical,
+                                     "walked_unix": walked_unix, "completed_unix": completed_unix,
+                                     "seconds": round(completed_unix - walked_unix, 1), "walker": walker,
+                                     "in_flight": in_flight}),
+                         encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def shared_walk(path):
+    """(bytes, walk start, walk end, blocks in flight at its start) of a well-formed shared walk record, else
+    None."""
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("schema") != SHARED_WALK_SCHEMA:
+        return None
+    logical, walked, completed = (value.get(key) for key in ("logical_bytes", "walked_unix", "completed_unix"))
+    in_flight = value.get("in_flight", 0)
+    if type(logical) is not int or logical < 0 or not finite_time(walked) or not finite_time(completed) \
+            or walked > completed or completed - time.time() > CLOCK_SKEW_SECONDS \
+            or type(in_flight) is not int or in_flight < 0:
+        return None
+    return logical, walked, completed, in_flight
+
+
+def adopt_shared(shared, storage):
+    """Take a published walk newer than this attempt's sample (a small file read, each sample), with each block in
+    flight at its start counted at its projected retained bytes (the admission bound: siblings' outputs may
+    postdate the walk); whether the publisher is live (its last walk completed within
+    EMERGENCY_FALLBACK_SECONDS)."""
+    found = shared_walk(shared) if shared else None
+    if found is None:
+        return False
+    logical, walked, completed, in_flight = found
+    with EMERGENCY_LOCK:
+        if EMERGENCY_WALK["unix"] is None or walked > EMERGENCY_WALK["unix"]:
+            EMERGENCY_WALK.update(logical=logical + in_flight * storage["projected_additional_bytes"], unix=walked,
+                                  at=time.monotonic())
+    return time.time() - completed <= EMERGENCY_FALLBACK_SECONDS
+
+
+def emergency_refresh(storage):
+    """One walk of the accounting trees for this attempt's sample. Errors are kept for the next sample."""
+    try:
+        started = time.time()
+        logical = accounting_bytes(storage)[1]
+        with EMERGENCY_LOCK:
+            if EMERGENCY_WALK["unix"] is None or started > EMERGENCY_WALK["unix"]:
+                EMERGENCY_WALK.update(logical=logical, unix=started)
+            EMERGENCY_WALK["at"] = time.monotonic()
+    except BaseException as error:
+        with EMERGENCY_LOCK:
+            EMERGENCY_WALK.update(error=error, at=time.monotonic())
+
+
+def running_storage(storage, shared=None, pending=()):
     """The storage check of a running attempt. With the opt-in ``storage.emergency`` (G(i) amendment 2) it ends
     the attempt only on a physical shortage: the accounting trees past the provisioned volume less its margin,
     or a scratch volume's free space below its margin. The cap and projections then gate new dispatches only.
-    Without it, the cap check as before."""
+    Without it, the cap check as before.
+
+    A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes of a
+    walk. A sample never waits for a walk (inside the monitor loop a walk of minutes hid a native child's end from
+    the lease guard, mtg-kernel#463). With a ``shared`` record (the campaign driver's one background walker) the
+    sample takes its newest walk, and the attempt walks only when no walk completed for EMERGENCY_FALLBACK_SECONDS
+    and its own sample is that old; without one, it walks at most every EMERGENCY_WALK_SECONDS as before. Its own
+    walks run in a background thread and start only in the native part; only a process with no sample yet walks
+    in place. ``pending``: (bytes, Unix time they were all written by) of this attempt's own outputs, each added
+    unless the sample's walk started after that time (a walk overlapping their writing may count some twice)."""
     spec = storage.get("emergency")
     if spec is None:
         return validate_storage(storage, 0)
     volume, margin = spec["volume_bytes"], spec["margin_fraction"]
     require(type(volume) is int and volume > 0 and isinstance(margin, (int, float)) and 0 <= margin < 1,
             "invalid storage emergency spec")
-    # A network volume's free space (df) says nothing of its provisioned size: its use is the logical bytes,
-    # walked at most every EMERGENCY_WALK_SECONDS by this attempt (a walk there takes minutes, and eight
-    # attempts sampling every 30 s kept the volume under continuous scans).
-    if time.monotonic() - EMERGENCY_WALK["at"] > EMERGENCY_WALK_SECONDS or EMERGENCY_WALK["logical"] is None:
-        _, EMERGENCY_WALK["logical"] = accounting_bytes(storage)
-        EMERGENCY_WALK["at"] = time.monotonic()
-    logical = EMERGENCY_WALK["logical"]
+    live = adopt_shared(shared, storage)
+    with EMERGENCY_LOCK:
+        thread = EMERGENCY_WALK["thread"]
+        busy = thread is not None and thread.is_alive()
+        first = EMERGENCY_WALK["logical"] is None
+        if first or EMERGENCY_WALK["closed"]:
+            own = False
+        elif shared:  # the driver's walker serves; walk only once it has stopped publishing
+            own = not live and time.time() - EMERGENCY_WALK["unix"] > EMERGENCY_FALLBACK_SECONDS
+        else:
+            own = time.monotonic() - EMERGENCY_WALK["at"] > EMERGENCY_WALK_SECONDS
+        start = own and not busy
+        if start:
+            thread = threading.Thread(target=emergency_refresh, args=(storage,), name="emergency-walk", daemon=True)
+            EMERGENCY_WALK["thread"] = thread
+    if first:
+        emergency_refresh(storage)  # nothing to sample yet: walk in place
+    elif start:
+        thread.start()
+    with EMERGENCY_LOCK:
+        error, EMERGENCY_WALK["error"] = EMERGENCY_WALK["error"], None
+        logical, walked = EMERGENCY_WALK["logical"], EMERGENCY_WALK["unix"]
+    if error is not None:
+        raise error
+    logical += sum(size for size, written in pending if walked is None or walked < written)
     require(logical <= volume * (1 - margin), "storage emergency: the volume's use passed its provisioned size "
                                               "less the margin")
     for root in scratch_roots(storage):
@@ -343,6 +531,16 @@ def running_storage(storage):
         disk = shutil.disk_usage(anchor)
         require(disk.free >= margin * disk.total, "storage emergency: scratch volume free space below its margin")
     return {"logical_bytes": logical, "cap_bytes": storage["max_logical_bytes"]}
+
+
+def own_output_bytes(storage, path):
+    """The logical bytes of an attempt's own output tree when it lies under an accounting root (the emergency
+    samples' walk may predate it), else 0 (block scratch: outside the cap)."""
+    path = Path(path).resolve()
+    if storage.get("emergency") is None or not path.exists() \
+            or not any(path.is_relative_to(root) for root in accounting_roots(storage)):
+        return 0
+    return accounting_bytes({"accounting_roots": [str(path)]})[1]
 
 
 def runtime_for(request, resolve=checked):
@@ -441,17 +639,19 @@ def start_barrier(request, qualification):
     return barrier
 
 
-def await_release(barrier, request_path, poll=0.02, owner_poll=1.0):
+def await_release(barrier, request_path, poll=0.02, owner_poll=1.0, checkpoint=None):
     """Records that this trial waits at its start barrier, then waits for the
     release. The wait fails once the barrier's owner has ended without releasing
     it (looked at every `owner_poll` seconds), so a dead pack tool cannot hold the
-    trial and its reservation; the timeout is only a backstop. Returns the seconds
-    waited."""
+    trial and its reservation; the timeout is only a backstop. ``checkpoint`` runs
+    each poll (a latched stop ends the wait). Returns the seconds waited."""
     import host_reservation_v1 as reservations
     write(Path(barrier["ready"]), {"request": pin(request_path), "pid": os.getpid()})
     waited = looked = time.monotonic()
     release, owner = Path(barrier["release"]), barrier["owner"]
     while not release.exists():  # the pack tool renames a complete file into place
+        if checkpoint is not None:
+            checkpoint()
         require(time.monotonic() - waited <= barrier["timeout_seconds"], "start barrier timed out")
         if time.monotonic() - looked >= owner_poll:
             looked = time.monotonic()
@@ -533,7 +733,7 @@ def validate_request(request, qualification):
                     and indices == sorted(indices)
                     and all(type(i) is int and 0 <= i < len(config["episodes"]) for i in indices),
                     "invalid bounded evaluation sample")
-    validate_storage(request["storage"])
+    validate_storage(request["storage"], admission=request.get("admission"))
     return config, runtime
 
 
@@ -980,10 +1180,12 @@ def selected_slots(ref):
     return allocation["slots"] if allocation.get("schema") == PACK else [allocation["placement"]]
 
 
-def require_choice(path, request, verify_outputs=False):
+def require_choice(path, request, verify_outputs=False, validated=None):
+    """The selected allocation of a throughput choice. ``validated``: the (config, runtime) its caller already
+    validated from this request (its storage check walks the accounting trees, so it runs once)."""
     choice = read(checked(path))
     require(choice["schema"] == CHOICE, "unsupported throughput choice")
-    config, runtime = validate_request(request, False)
+    config, runtime = validate_request(request, False) if validated is None else validated
     family = workload(config, request["kind"], family=request.get("schedule_family"))
     require(set(choice["inventory"]) == {"desktop", "computehost", "runpod"},
             "inspect all three placement options")
@@ -1119,13 +1321,16 @@ def process_sample(child):
             "cpu_seconds": sum((t.dwHighDateTime << 32) + t.dwLowDateTime for t in times[2:]) / 1e7}
 
 
-def require_mapped_libraries(child, runtime, timeout=30.0):
+def require_mapped_libraries(child, runtime, timeout=30.0, checkpoint=None):
     """One /proc/<pid>/maps observation, once the loader has mapped all four pinned
-    libraries: each mapping must resolve to its pinned file, else the launch fails."""
+    libraries: each mapping must resolve to its pinned file, else the launch fails.
+    ``checkpoint`` runs each poll (a latched stop ends the wait)."""
     pinned = {name: os.path.realpath(item["path"]) for name, item in runtime["libraries"].items()}
     names = {Path(real).name: name for name, real in pinned.items()} | {name: name for name in pinned}
     deadline = time.monotonic() + timeout
     while True:
+        if checkpoint is not None:
+            checkpoint()
         mapped = {}
         for line in (PROC/str(child.pid)/"maps").read_text().splitlines():
             parts = line.split(maxsplit=5)
@@ -1139,6 +1344,97 @@ def require_mapped_libraries(child, runtime, timeout=30.0):
     require(all({os.path.realpath(path) for path in paths} == {pinned[name]} for name, paths in mapped.items()),
             "mapped runtime library differs from its pin")
     return mapped
+
+
+class ExternalStop(BaseException):
+    """This dispatcher was stopped from outside (a signal), not by its block."""
+
+
+INTERRUPTION_SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT")
+# The first stop signal this dispatch received (number, Unix time), latched by the handler. The handler only
+# latches: it neither polls the child nor raises, so it cannot interrupt the child's reaping, a write or the
+# cleanup, and later signals change nothing. The dispatch acts on it at its own checkpoints (check_stop).
+STOP = {"signal": None, "at": None, "child": None,  # child: the native child once spawned (not used by the handler)
+        "release_marker": None}
+# Before it signals a dispatcher, the lease's release path writes a marker named by that dispatcher's PID and start
+# ticks in this Pod-local folder (the container's own disk, never the network volume). The handler looks for its
+# own marker (one local stat) before it latches the first stop: that ties the first stop to the release path without
+# comparing clocks (G(i) AMENDMENT-3 3(b)). Off Linux there is no marker and no such evidence.
+RELEASE_MARKER_DIR = "/run/g-release-markers"
+
+
+def own_marker():
+    """This process's release-marker path (RELEASE_MARKER_DIR/<pid>-<start ticks>), or None off Linux."""
+    try:
+        ticks = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+    return os.path.join(RELEASE_MARKER_DIR, f"{os.getpid()}-{ticks}")
+STOP_WAIT_SECONDS = 1.0  # the monitor loop's longest wait between checkpoints
+
+
+def record_interruption(root, child, signum, at=None, release_marker=None):
+    """Write ``interruption.json`` once, atomically: the signal, and whether the native child was still running
+    when the dispatch acted on it (a running child stopped from outside) or had already exited (with its exit
+    code). Called from the dispatch's own code, never inside the signal handler. An attempt with no such record has
+    no positive evidence of an external stop (a SIGKILL or a lost Pod writes none)."""
+    path = Path(root) / "interruption.json"
+    if path.exists():
+        return
+    code = None if child is None else child.poll()
+    temporary = path.with_name(path.name + ".partial")
+    temporary.write_text(json.dumps({"schema": "native-expanded-interruption/v1",
+                                     "signal": signal.Signals(signum).name,
+                                     "at_unix": time.time() if at is None else at, "recorded_unix": time.time(),
+                                     "child_started": child is not None,
+                                     "child_running": child is not None and code is None,
+                                     "child_exit_code": code,
+                                     "release_marker_seen": release_marker}, indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def check_stop(root, child):
+    """At a checkpoint: if a stop signal was latched, record it (record_interruption) and end the attempt."""
+    if STOP["signal"] is not None:
+        record_interruption(root, child, STOP["signal"], STOP["at"], STOP["release_marker"])
+        raise ExternalStop(f"stopped from outside by {signal.Signals(STOP['signal']).name}")
+
+
+def reset_stop():
+    """Forget any latched stop (each dispatch starts clear; tests)."""
+    STOP.update(signal=None, at=None, child=None, release_marker=None)
+    STOP.pop("first", None)
+
+
+def install_stop_record():
+    """Latch the first of INTERRUPTION_SIGNALS (STOP), noting whether the release path's marker for this process
+    (own_marker) existed at that moment; returns the previous handlers for restore_handlers."""
+    reset_stop()
+    marker = own_marker()
+    previous = {}
+
+    def stopped(signum, frame):
+        if "first" in STOP:
+            return
+        seen = None if marker is None else os.path.exists(marker)  # a local stat, before the latch
+        at = time.time()
+        # One C-level call, which no handler can interrupt: the first latch to complete wins, and a nested handler
+        # that latched meanwhile keeps its own, earlier observation.
+        first = STOP.setdefault("first", (signum, at, seen))
+        STOP.update(signal=first[0], at=first[1], release_marker=first[2])
+    for name in INTERRUPTION_SIGNALS:
+        number = getattr(signal, name, None)
+        if number is not None:
+            try:
+                previous[number] = signal.signal(number, stopped)
+            except (ValueError, OSError):  # not the main thread, or not settable here
+                pass
+    return previous
+
+
+def restore_handlers(previous):
+    for number, handler in previous.items():
+        signal.signal(number, handler)
 
 
 def busy_pattern(binary=None):
@@ -1159,7 +1455,9 @@ def execute(request_path, qualification):
     token = os.environ.get("MTG_HOST_RESERVATION_TOKEN")
     require(token and reservations.status(token).get("token_fate") == "holds",
             "canonical host reservation is not held")
-    selected = None if qualification else require_choice(request["choice"], request)
+    selected = None if qualification else require_choice(request["choice"], request, validated=(config, runtime))
+    seed_emergency()
+    shared = (request.get("admission") or {}).get("shared_walk")
     root, cold = Path(request["root"]), Path(request["cold_root"])
     require(not root.exists() and not cold.exists(), "fresh dispatch and recovery roots required")
     root.mkdir(parents=True); cold.mkdir(parents=True)
@@ -1170,9 +1468,31 @@ def execute(request_path, qualification):
     command = [str(checked(runtime["binary"])), str((root/"config.json").resolve())]
     if qualification and request["kind"] == "training":
         command.extend(["--max-new-iterations", "1"])
+    handlers = install_stop_record()
+    try:
+        return run_attempt(request_path, request, qualification, config, runtime, selected, shared, root, cold,
+                           placed, command, started, token, archive_native, reservations)
+    except BaseException:
+        if STOP["signal"] is not None:  # a stop latched while another error ended the attempt: its evidence
+            try:  # evidence only: the original error is the one raised
+                record_interruption(root, STOP["child"], STOP["signal"], STOP["at"], STOP["release_marker"])
+            except Exception:
+                pass
+        raise
+    finally:
+        restore_handlers(handlers)
+
+
+def run_attempt(request_path, request, qualification, config, runtime, selected, shared, root, cold, placed,
+                command, started, token, archive_native, reservations):
+    """The attempt after its admission checks: the barrier, the native child, its records and archive."""
     barrier = start_barrier(request, qualification)
-    barrier_seconds = 0.0 if barrier is None else await_release(barrier, request_path)
+    barrier_seconds = 0.0 if barrier is None else await_release(barrier, request_path,
+                                                                 checkpoint=lambda: check_stop(root, None))
     started += barrier_seconds  # waiting for the other packed trials is not this trial's time
+    if request["placement"]["host"] == "runpod":
+        require_host(request)  # the lease still has the work's time and allows new work, after the checks above
+    check_stop(root, None)
     failure = None
     with (root/"stdout.jsonl").open("x") as stdout, (root/"stderr.log").open("x") as stderr, \
             (root/"telemetry.jsonl").open("x") as telemetry:
@@ -1182,6 +1502,7 @@ def execute(request_path, qualification):
         child_started = time.monotonic()
         child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
                                  env=native_child_environment(request), **options)
+        STOP["child"] = child
         # Before the reservation's lock, which packed trials take one after another.
         started_unix = time.time()
         reservations.record_descendant(token, child.pid)
@@ -1189,25 +1510,37 @@ def execute(request_path, qualification):
                                     "placement": request["placement"], "request": pin(request_path)})
         try:
             if not WINDOWS:
-                require_mapped_libraries(child, runtime)
+                require_mapped_libraries(child, runtime, checkpoint=lambda: check_stop(root, child))
+            sample_at = time.monotonic() + MONITOR_POLL_SECONDS
             while child.poll() is None:
+                check_stop(root, child)
                 remaining = request["wall_seconds"] - (time.monotonic() - started)
                 require(remaining > 0, "native wall-time limit exceeded")
                 try:
-                    child.wait(timeout=min(30, remaining))
+                    child.wait(timeout=max(0.01, min(STOP_WAIT_SECONDS, remaining, sample_at - time.monotonic())))
                 except subprocess.TimeoutExpired:
-                    sample = process_sample(child)
-                    sample.update(running_storage(request["storage"]))
-                    telemetry.write(json.dumps(sample) + "\n"); telemetry.flush()
-                    require(sample["rss_bytes"] <= request["placement"]["memory_bytes"],
-                            "native memory limit exceeded")
+                    if time.monotonic() >= sample_at:
+                        sample_at = time.monotonic() + MONITOR_POLL_SECONDS
+                        sample = process_sample(child)
+                        sample.update(running_storage(request["storage"], shared))
+                        telemetry.write(json.dumps(sample) + "\n"); telemetry.flush()
+                        require(sample["rss_bytes"] <= request["placement"]["memory_bytes"],
+                                "native memory limit exceeded")
+            check_stop(root, child)  # a stop as the child ended: recorded with its exit code
             require(child.returncode == 0, "native process failed")
         except BaseException as error:
             failure = str(error)
+            if STOP["signal"] is not None:  # a stop latched while another error ended the loop: its evidence
+                try:  # before the kill below; evidence only, so a failed write never skips the cleanup
+                    record_interruption(root, child, STOP["signal"], STOP["at"], STOP["release_marker"])
+                except Exception:
+                    pass
             if child.poll() is None:
                 child.kill()
             child.wait()
         finally:
+            close_emergency()  # the native part is over: its end is recorded now
+            native_ended = time.time()
             child_seconds = time.monotonic() - child_started
             # A qualification's receipt binds its start, which a pack's evidence compares.
             write(root/"execution.json", {"exit_code": child.returncode, "error": failure,
@@ -1224,6 +1557,7 @@ def execute(request_path, qualification):
                 last = json.loads(line)
     require(last is not None, "missing native result")
     write(root/"native-result.json", last)
+    check_stop(root, child)
     fingerprint_started = time.monotonic()
     validated_files = {}
     fingerprint_timing = {}
@@ -1241,13 +1575,15 @@ def execute(request_path, qualification):
         validated_files[str(exposure_path.resolve())] = exposure_pin["sha256"]
     fingerprint_seconds = time.monotonic() - fingerprint_started
     storage_started = time.monotonic()
-    running_storage(request["storage"])
+    native = (own_output_bytes(request["storage"], placed["output_directory"]), native_ended)
+    running_storage(request["storage"], shared, pending=[native])
     storage_validation_seconds = time.monotonic() - storage_started
     # Existing checked, durable, two-shard archive includes full readback. Raw
     # outputs remain. Both locations count against the same campaign allowance.
+    check_stop(root, child)
     archive = archive_native(Path(placed["output_directory"]), cold, validated_files)
     storage_started = time.monotonic()
-    running_storage(request["storage"])
+    running_storage(request["storage"], shared, pending=[native, (archive["compressed_bytes"], time.time())])
     storage_validation_seconds += time.monotonic() - storage_started
     games = len(placed["iterations"][0]["episodes"]) if request["kind"] == "training" and qualification else (
         sum(len(i["episodes"]) for i in placed["iterations"]) if request["kind"] == "training" else len(placed["episodes"]))
@@ -1272,6 +1608,7 @@ def execute(request_path, qualification):
     else:
         report["run"] = pin(Path(placed["output_directory"])/"run.json")
         report["exposure_inputs"] = exposure_pin
+    check_stop(root, child)
     write(root/"report.json", report)
     print(json.dumps({"complete": True, "report": pin(root/"report.json")}))
 
@@ -1306,9 +1643,9 @@ def main():
               "selected": selected, "outputs_verified": True, "launcher": pin(__file__)})
         print(json.dumps(selected))
     else:
-        _, runtime = validate_request(request, qualification)
+        config, runtime = validate_request(request, qualification)
         if not qualification:
-            require_choice(request["choice"], request)
+            require_choice(request["choice"], request, validated=(config, runtime))
         import host_reservation_v1 as reservations
         result = reservations.dispatch(
             lane=request["lane"], work_id=Path(request["root"]).name,

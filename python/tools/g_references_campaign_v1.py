@@ -108,6 +108,7 @@ VOLUME_REWALK_SECONDS = 60  # a refusal resting on blocks finished since an olde
 WALK_HEARTBEAT_SECONDS = 30
 WALK_HEARTBEAT_LIMIT_SECONDS = 1800  # a walk still running past this records no more work: a hung walk goes idle
 VOLUMES: dict = {}  # the shared walks (volume), per accounting roots, under SCRATCH_LOCK
+SHARED_WALK = "volume-walk.json"  # each walk, published for the dispatchers (native_expanded_dispatch_v1)
 
 
 def read_pinned(item: dict) -> dict:
@@ -334,11 +335,87 @@ class LeaseProgress(base.LeaseProgress):
     guard released a working Pod. A run stuck without CPU work still goes idle, and
     the guard's work_idle_seconds bound releases the pod. ``completed_updates``
     counts this driver's updates for the lease adapter's session.
+
+    Watched dispatches (``watch``) are observed like in-flight attempts. A qualification trial runs under a
+    detached reservation supervisor, no child of this driver: during its native part (its root's started.json
+    without execution.json) only the native child's CPU counts, so a stalled native run still goes idle; outside
+    it, CPU time under the supervisor counts, while the supervisor is the same process (its token and its start
+    time). A pack qualification's trials are observed through their requests (``<pack root>/*.request.json``),
+    their native parts only. On 2026-11-01 item 6's history trial ran over five minutes with nothing else to
+    observe, and the guard released the Pod mid-qualification.
     """
 
     def __init__(self, campaign: Campaign):
         super().__init__(campaign)
         self.counts, self.total = {}, 0
+        self.watched = {}
+
+    def watch(self, key: str, pid: int | None = None, token: str | None = None, root: str | None = None,
+              pack: str | None = None) -> None:
+        """Observe a detached dispatch until ``unwatch``: a trial (its supervisor ``pid`` naming ``token``, its
+        ``root``) or a pack qualification (its ``pack`` root)."""
+        start = base.process_start_unix(pid) if isinstance(pid, int) else None
+        with self.lock:
+            self.watched[key] = {"pid": pid, "token": token, "start": start, "root": root, "pack": pack,
+                                 "child": None}
+
+    def exclude_child(self, key: str, pid: int) -> None:
+        """The watched pack's own process, a child of this driver: its polling is not activity, its trials'
+        native parts are."""
+        with self.lock:
+            if key in self.watched:
+                self.watched[key]["child"] = pid
+
+    def excluded_children(self) -> frozenset:
+        return frozenset(entry["child"] for entry in self.watched.values() if isinstance(entry.get("child"), int))
+
+    def unwatch(self, key: str) -> None:
+        with self.lock:
+            self.watched.pop(key, None)
+            for name in [name for name in self.ticks if name.startswith("watched:" + key + ":")]:
+                self.ticks.pop(name, None)
+
+    @staticmethod
+    def same_supervisor(entry: dict) -> bool:
+        """The watched PID is still the supervisor it was: its token on its command line and, where /proc can
+        say, its start time. A reused PID, even one under the same reservation, never credits."""
+        if not isinstance(entry["pid"], int) or not base.supervisor_owned(entry["pid"], entry["token"]):
+            return False
+        if not proc_readable():
+            return True
+        return entry["start"] is not None and base.process_start_unix(entry["pid"]) == entry["start"]
+
+    def observe(self, stamp: float) -> bool:
+        alive = super().observe(stamp)
+        table = None
+        for key, entry in list(self.watched.items()):
+            roots = [Path(entry["root"])] if entry["root"] else []
+            if entry["pack"]:
+                for request in sorted(Path(entry["pack"]).glob("*.request.json")):
+                    try:
+                        roots.append(Path(json.loads(request.read_text(encoding="utf-8"))["root"]))
+                    except (OSError, ValueError, KeyError, TypeError):
+                        continue
+            native = False
+            for root in roots:
+                ticks = base.native_ticks(root)
+                if ticks is None:
+                    continue
+                native, alive = True, alive or ticks >= 0
+                name = f"watched:{key}:{root}"
+                if ticks > self.ticks.get(name, -1):
+                    self.activity = stamp
+                self.ticks[name] = ticks
+            name = f"watched:{key}:supervised"
+            if native or not self.same_supervisor(entry):  # during a native part only the native child counts
+                self.ticks.pop(name, None)
+                continue
+            table = base.process_table() if table is None else table
+            ticks = base.descendant_ticks(table, entry["pid"])
+            if ticks > self.ticks.get(name, ticks):
+                self.activity = stamp
+            self.ticks[name] = ticks
+        return alive
 
     def touch(self) -> None:
         with self.lock:
@@ -366,6 +443,36 @@ class LeaseProgress(base.LeaseProgress):
 def touch(campaign: Campaign) -> None:
     if campaign.lease:
         campaign.lease.touch()
+
+
+def proc_readable() -> bool:
+    """Whether /proc can tell a process's start time (Linux, as on a Pod)."""
+    return Path("/proc/self/stat").exists()
+
+
+class watching:
+    """``with watching(campaign, key, ...):`` observes a detached dispatch (``LeaseProgress.watch``) as lease
+    activity while the block runs; a no-op without a lease."""
+
+    def __init__(self, campaign: Campaign, key: str, dispatched: dict | None = None, root=None, pack=None):
+        self.lease, self.key = getattr(campaign, "lease", None), key
+        dispatched = dispatched or {}
+        self.fields = {"pid": dispatched.get("pid"), "token": dispatched.get("token"),
+                       "root": None if root is None else str(root), "pack": None if pack is None else str(pack)}
+
+    def __enter__(self):
+        if self.lease:
+            self.lease.watch(self.key, **self.fields)
+        return self
+
+    def exclude_child(self, pid: int) -> None:
+        if self.lease:
+            self.lease.exclude_child(self.key, pid)
+
+    def __exit__(self, *exc):
+        if self.lease:
+            self.lease.unwatch(self.key)
+        return False
 
 
 def discard(campaign: Campaign, run: str, block: int, attempt: dict, reason: str) -> None:
@@ -534,9 +641,11 @@ def records_hold(campaign: Campaign, in_flight: int = 0) -> str | None:
 
 
 def volume(campaign: Campaign) -> dict:
-    """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since."""
+    """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since,
+    and the file where each walk is published for the dispatchers (the first campaign's state folder)."""
     key = tuple(campaign.raw["storage"]["accounting_roots"])
-    return VOLUMES.setdefault(key, {"logical": None, "walked": 0.0, "finished": 0})
+    return VOLUMES.setdefault(key, {"logical": None, "started": 0.0, "walked": 0.0, "finished": 0,
+                                    "shared": str(campaign.state / SHARED_WALK)})
 
 
 def walk_volume(campaign: Campaign) -> None:
@@ -545,7 +654,7 @@ def walk_volume(campaign: Campaign) -> None:
     Pod), so it runs in a helper thread while this thread records driver work every WALK_HEARTBEAT_SECONDS,
     for at most WALK_HEARTBEAT_LIMIT_SECONDS, so a hung walk still goes idle. Each walk is an event, so its
     time is measured. The caller holds SCRATCH_LOCK (release, which counts finished blocks, waits for it)."""
-    result, started = {}, time.monotonic()
+    result, started, started_unix = {}, time.monotonic(), time.time()
 
     def walk():
         try:
@@ -561,9 +670,98 @@ def walk_volume(campaign: Campaign) -> None:
     if "error" in result:
         raise result["error"]
     record = volume(campaign)
-    record.update(logical=result["logical"], walked=time.time(), finished=0)
+    record.update(logical=result["logical"], started=started_unix, walked=time.time(), finished=0)
+    seconds = round(time.monotonic() - started, 1)
+    try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
+        Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
+        native_dispatch.publish_walk(record["shared"], result["logical"], started_unix, record["walked"], "driver",
+                                     len(SCRATCH_INFLIGHT))  # the caller holds SCRATCH_LOCK
+    except OSError:
+        pass  # only a shortcut: the background walker publishes too
     touch(campaign)
-    campaign.event(kind="volume-walk", seconds=round(time.monotonic() - started, 1), logical=result["logical"])
+    campaign.event(kind="volume-walk", seconds=seconds, logical=result["logical"])
+
+
+def admission_record(campaign: Campaign, native: Path | None = None) -> dict | None:
+    """The admission walk a dispatch request carries (native_expanded_dispatch_v1.admitted_bytes): the last
+    walk's logical bytes and times, the blocks finished since it, the other blocks in flight (besides ``native``)
+    and the shared walk file. The caller holds SCRATCH_LOCK."""
+    record = volume(campaign)
+    if record["logical"] is None:
+        return None
+    return {"schema": native_dispatch.ADMISSION_SCHEMA, "logical_bytes": record["logical"],
+            "walked_unix": record["started"], "completed_unix": record["walked"], "finished_since": record["finished"],
+            "shared_walk": record["shared"], "in_flight": len(SCRATCH_INFLIGHT - {str(native)})}
+
+
+WALKERS: dict = {}  # accounting roots -> (thread, stop event): this process's one background walker per volume
+WALKER_POLL_SECONDS = 30
+
+
+def start_walker(campaign: Campaign) -> None:
+    """Start this process's background walker of the campaign's accounting trees, once per volume, for the
+    dispatchers' emergency samples (AMENDMENT-2 item 6; mtg-kernel#463: eight attempts each walking the network
+    volume took 40 min a walk). While blocks are in flight it walks when the published walk completed over
+    EMERGENCY_WALK_SECONDS ago and publishes each walk; the dispatchers read it and walk only if it goes stale.
+    It records no driver work: its walk is not the lease's progress, so a stalled driver still goes idle."""
+    storage = campaign.raw["storage"]
+    if not storage.get("emergency") or not storage.get("accounting_roots"):
+        return
+    key = tuple(storage["accounting_roots"])
+    with SCRATCH_LOCK:  # registered and started under the lock: two admissions start one walker
+        if key in WALKERS and WALKERS[key][0].is_alive():
+            return
+        stop = threading.Event()
+        thread = threading.Thread(target=walker, args=(campaign, volume(campaign)["shared"], stop),
+                                  name="volume-walker", daemon=True)
+        WALKERS[key] = (thread, stop)
+        thread.start()
+
+
+def stop_walkers() -> None:
+    """Stop and forget the background walkers (tests; a driver's ends with its process)."""
+    with SCRATCH_LOCK:
+        walkers = list(WALKERS.values())
+        WALKERS.clear()
+    for thread, stop in walkers:
+        stop.set()
+        thread.join(60)
+
+
+def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
+    storage = campaign.raw["storage"]
+    while not stop.wait(WALKER_POLL_SECONDS):
+        with SCRATCH_LOCK:
+            in_flight = len(SCRATCH_INFLIGHT)
+        found = native_dispatch.shared_walk(shared)
+        if not in_flight or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
+            continue
+        started = time.time()
+        try:
+            logical = native_dispatch.accounting_bytes(storage)[1]
+            Path(shared).parent.mkdir(parents=True, exist_ok=True)
+            native_dispatch.publish_walk(shared, logical, started, time.time(), "driver-background", in_flight)
+        except Exception as error:  # the dispatchers walk for themselves once the record is stale
+            if stop.is_set():
+                return
+            campaign.event(kind="volume-walk-error", error=f"{type(error).__name__}: {error}")
+            stop.wait(native_dispatch.EMERGENCY_WALK_SECONDS)
+            continue
+        if stop.is_set():
+            return
+        campaign.event(kind="volume-walk", seconds=round(time.time() - started, 1), logical=logical,
+                       walker="background")
+
+
+def admitted(campaign: Campaign, walk: bool = False, native: Path | None = None) -> dict | None:
+    """admission_record under SCRATCH_LOCK; with ``walk``, after walking when the last walk is stale (a check
+    that precedes admission, such as the qualification's choice check, then serves the admissions after it)."""
+    if not campaign.raw["storage"].get("accounting_roots"):
+        return None
+    with SCRATCH_LOCK:
+        if walk:
+            volume_logical(campaign)
+        return admission_record(campaign, native)
 
 
 def volume_logical(campaign: Campaign) -> tuple[int, int]:
@@ -747,14 +945,18 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             waiting = True
             continue
         waiting = False
+        start_walker(campaign)  # the dispatchers' emergency samples read its walks
         try:
             config = g.block_config(block_spec(campaign, run, block, state, native))
             g.require_runtime_rules(config)  # amendment 1: refuse a block with any episode outside the profile
             config_path = campaign.state / "configs" / f"{run}-{label(block)}-a{attempt}.json"
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
-            request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json",
-                                     request_for(campaign, run, pin(config_path), root, cold, estimate))
+            request = request_for(campaign, run, pin(config_path), root, cold, estimate)
+            admission = admitted(campaign, native=native)  # the walk this block was admitted on
+            if admission is not None:
+                request["admission"] = admission
+            request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json", request)
         except BaseException:
             release(campaign, run, block, native)  # admitted, never dispatched
             raise

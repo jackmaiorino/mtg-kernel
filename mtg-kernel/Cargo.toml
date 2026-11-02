@@ -4,6 +4,8 @@ version = "0.0.4"
 edition.workspace = true
 
 [dependencies]
+base64 = "=0.22.1"
+flate2 = "=1.1.9"
 # Global allocator for most binaries (`fast_global_allocator!`; the exclusions
 # are listed in lib.rs): faster than the system allocator on the search,
 # training and evaluation hot paths. Fixed-work outputs are unchanged; see
@@ -47,6 +49,9 @@ cuda-flat-training-capacity-v1 = ["dep:cudarc"]
 # bit-identical to the CPU forward. cudarc loads the driver and NVRTC at run
 # time, so building needs no CUDA toolkit.
 gpu-exact-v1 = ["dep:cudarc"]
+# Test and qualification builds only: MTG_KERNEL_GPU_EXACT_FAULT=inference:N or
+# learner:U makes that launch trap (a real device fault) to prove the run fails closed.
+gpu-exact-fault-injection-v1 = ["gpu-exact-v1"]
 # Experimental production-parameter forward backend. This is deliberately
 # opt-in and is not a matched-training or evidence identity.
 experimental-burn-net8-packed-cuda-v1 = ["dep:burn", "dep:burn-cuda", "dep:cudarc"]

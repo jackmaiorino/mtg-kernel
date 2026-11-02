@@ -3072,6 +3072,24 @@ fn flat_validate_origin_decision_common_scoped_v42(
                         actor_matches(*actor, *player)
                             && flat_ref_matches_object_v1(semantic_source, *source)
                     }
+                    ActionSemanticV1::ChooseEffectNumber {
+                        actor,
+                        source: semantic_source,
+                        number: 0,
+                        minimum: 0,
+                        maximum: 0,
+                    } => {
+                        state.engine.spellbench_neutral_v1.choices
+                            && *option_count == 1
+                            && index == 0
+                            && actor_matches(*actor, *player)
+                            && flat_ref_matches_object_v1(semantic_source, *source)
+                            && state.engine.pending_cast.as_ref().is_some_and(|pending| {
+                                pending.controller == *player
+                                    && pending.spell == *source
+                                    && pending.selected_x_v59().is_none()
+                            })
+                    }
                     _ => false,
                 };
                 if !matches {
@@ -3580,7 +3598,18 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::FinishTargetSelection { .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
         ) => true,
-        // `ChooseEffectNumber` has no concrete engine `Action` (unlike the
+        // Only the private, forced X=0 numeric prompt has a concrete option
+        // action. Its live pending-cast relation is checked above.
+        (
+            ActionSemanticV1::ChooseEffectNumber {
+                number: 0,
+                minimum: 0,
+                maximum: 0,
+                ..
+            },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectOption(0))),
+        ) => true,
+        // Other `ChooseEffectNumber` rows have no concrete engine `Action` (unlike the
         // color case above, no `Action::ChooseEffectOption`-style primitive
         // exists for an arbitrary-range numeric choice), so it stays
         // rejected pending a contract-level decision kind for it.
@@ -5335,6 +5364,81 @@ pub struct FastActorSessionV1 {
     terminal: Option<RlSessionTerminalV1>,
 }
 
+impl FastActorSessionV1 {
+    /// The W1 information-set import (`infoset_v1`): a session around an
+    /// exported canonical state. Deck identities, limits and the contract
+    /// mode are public and come from `template`; the episode id and the
+    /// environment revision are constants, and both decision counters are
+    /// the viewer's own decision index (design 6.8).
+    pub(crate) fn import_infoset_v1(
+        template: &FastActorSessionV1,
+        state: crate::state::GameState,
+        own_decision_index: u64,
+    ) -> FastActorSessionV1 {
+        Self::import_infoset_with_surface_v1(
+            template,
+            state,
+            own_decision_index,
+            template.surface.infoset_context_v1(),
+        )
+    }
+
+    /// The session surface's carried context (see `SurfaceContextV1`).
+    pub(crate) fn surface_context_v1(&self) -> Option<crate::policy_surface_v5::SurfaceContextV1> {
+        self.surface.infoset_context_v1()
+    }
+
+    /// As `import_infoset_v1`, with the surface context given explicitly
+    /// (from a payload).
+    pub(crate) fn import_infoset_with_surface_v1(
+        template: &FastActorSessionV1,
+        state: crate::state::GameState,
+        own_decision_index: u64,
+        context: Option<crate::policy_surface_v5::SurfaceContextV1>,
+    ) -> FastActorSessionV1 {
+        let surface = PolicySurfaceV5::new_for_session();
+        let mut session = FastActorSessionV1 {
+            deck_ids: template.deck_ids.clone(),
+            deck_hashes: template.deck_hashes,
+            episode_id: 0,
+            max_physical_decisions: template.max_physical_decisions,
+            max_policy_steps: template.max_policy_steps,
+            state,
+            surface,
+            environment_revision: 0,
+            policy_step_count: own_decision_index,
+            physical_decision_count: own_decision_index,
+            current: None,
+            flat_action_contract_mode: template.flat_action_contract_mode,
+            v3_spell_target_reference_adapter: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
+            flat_action_cache_spare: None,
+            flat_action_cache_spare_v2: None,
+            pauper_london_v1: None,
+            terminal: None,
+        };
+        session.advance_to_decision_or_terminal();
+        // The live surface's context applies from the presented decision on:
+        // presenting it again from that context would replay the surface's
+        // own bookkeeping for this window.
+        if let Some(context) = context {
+            session.surface.set_infoset_context_v1(context);
+        }
+        session
+    }
+
+    /// The public deck identities of this session, by seat.
+    pub(crate) fn deck_ids_v1(&self) -> &SessionDeckIdsV1 {
+        &self.deck_ids
+    }
+
+    /// The session's (physical decision, policy step) limits.
+    pub(crate) fn limits_v1(&self) -> (u64, u64) {
+        (self.max_physical_decisions, self.max_policy_steps)
+    }
+}
+
 #[derive(Clone)]
 pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
 
@@ -6038,6 +6142,14 @@ impl RlEpisodeSessionV1 {
     /// never `&mut`: the extractor watches, it does not drive.
     pub fn game_state(&self) -> &crate::state::GameState {
         &self.state
+    }
+
+    pub(crate) fn enable_spellbench_neutral_choices(&mut self) {
+        assert_eq!(
+            self.policy_step_count, 0,
+            "neutral choices are a reset-only option"
+        );
+        self.state.engine.spellbench_neutral_v1.choices = true;
     }
 
     pub fn privileged_environment_hash(&self) -> u64 {
@@ -7674,6 +7786,14 @@ impl FastActorSessionV1 {
     /// never `&mut`: the extractor watches, it does not drive.
     pub fn game_state(&self) -> &crate::state::GameState {
         &self.state
+    }
+
+    pub(crate) fn enable_spellbench_neutral_choices(&mut self) {
+        assert_eq!(
+            self.policy_step_count, 0,
+            "neutral choices are a reset-only option"
+        );
+        self.state.engine.spellbench_neutral_v1.choices = true;
     }
 
     /// Audit-only counterpart to
