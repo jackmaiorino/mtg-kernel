@@ -29,6 +29,8 @@ mod fixtures;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]
+mod realize;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use export::{export_v1, ExportInputV1, ExportOptionsV1, InfosetV1, MutantV1};
