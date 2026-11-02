@@ -19159,7 +19159,8 @@ fn scry_stage_tag(stage: &ScrySelectionStage) -> u16 {
 
 /// The W1 information-set export (`infoset_v1`) renumbers objects and
 /// epochs; the redundant commitments over object bindings are recomputed
-/// from the renumbered bindings, exactly as the engine computes them.
+/// from the renumbered bindings, exactly as the engine computes them, and
+/// candidate sets the engine keeps in object-id order are re-sorted.
 pub(crate) fn refresh_binding_fingerprints_v1(state: &mut GameState) {
     fn frame(f: &mut EffectFrame) {
         match f {
@@ -19185,7 +19186,23 @@ pub(crate) fn refresh_binding_fingerprints_v1(state: &mut GameState) {
         return;
     };
     pending.frames.iter_mut().for_each(frame);
-    if let Some(PendingEffectChoice::SelectTargets { purpose, .. }) = pending.choice.as_mut() {
+    if let Some(PendingEffectChoice::SelectTargets { purpose, legal, .. }) = pending.choice.as_mut()
+    {
+        // Candidate sets the engine builds in object-id order are re-sorted
+        // by the renumbered ids, as the engine itself would order them.
+        if let EffectTargetSelectionPurpose::UntapLands {
+            original_candidates,
+            ..
+        } = purpose
+        {
+            original_candidates.sort_by_key(|binding| binding.object);
+            legal.sort_by_key(|candidate| {
+                candidate
+                    .expected_object
+                    .as_ref()
+                    .map(|binding| binding.object)
+            });
+        }
         match purpose {
             EffectTargetSelectionPurpose::ScryLibrary {
                 stage,

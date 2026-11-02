@@ -14,8 +14,11 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct PayloadV1 {
     pub schema: String,
-    /// SHA-256 of the canonical bytes (`InfosetV1::bytes`).
+    /// SHA-256 of the whole envelope with this field empty: the search
+    /// input the receipts name.
     pub sha256: String,
+    /// SHA-256 of the canonical state bytes (`InfosetV1::sha256`).
+    pub state_sha256: String,
     pub deck_ids: [String; 2],
     pub viewer: u8,
     pub own_decision_index: u64,
@@ -38,9 +41,10 @@ impl PayloadV1 {
     ) -> Option<Self> {
         let (max_physical_decisions, max_policy_steps) = live.limits_v1();
         let surface = live.surface_context_v1()?;
-        Some(Self {
+        let mut payload = Self {
             schema: INFOSET_SCHEMA_V1.into(),
-            sha256: export.sha256.clone(),
+            sha256: String::new(),
+            state_sha256: export.sha256.clone(),
             deck_ids: live.deck_ids_v1().clone(),
             viewer: viewer.0,
             own_decision_index,
@@ -49,7 +53,17 @@ impl PayloadV1 {
             handles: export.handles.iter().map(super::HandleV1::label).collect(),
             surface,
             state: serde_json::to_value(&export.state).expect("state serializes"),
-        })
+        };
+        payload.sha256 = payload.envelope_digest();
+        Some(payload)
+    }
+
+    /// The digest of every field but `sha256`.
+    pub(crate) fn envelope_digest(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut unsigned = self.clone();
+        unsigned.sha256 = String::new();
+        format!("{:x}", Sha256::digest(unsigned.to_bytes()))
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -79,8 +93,11 @@ impl PayloadV1 {
             return Err("payload handles do not cover the arena".into());
         }
         let digest = super::export::canonical_digest_v1(&state, &self.handles);
-        if digest != self.sha256 {
-            return Err("payload digest differs from its canonical bytes".into());
+        if digest != self.state_sha256 {
+            return Err("payload state digest differs from its canonical bytes".into());
+        }
+        if self.envelope_digest() != self.sha256 {
+            return Err("payload digest differs from its envelope".into());
         }
         let template = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
             0,

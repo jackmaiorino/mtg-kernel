@@ -166,6 +166,43 @@ fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<
     };
     let (obs, menu) = s.actor_visible_decision_v4(d).ok()?;
     let mut obs = serde_json::to_value(&obs).ok()?;
+    // Timestamps are re-ranked by design (6.5): compare their dense ranks.
+    fn timestamps(v: &serde_json::Value, out: &mut std::collections::BTreeSet<u64>) {
+        match v {
+            serde_json::Value::Object(m) => m.iter().for_each(|(k, x)| {
+                if k.contains("timestamp") {
+                    if let Some(t) = x.as_u64() {
+                        out.insert(t);
+                    }
+                }
+                timestamps(x, out);
+            }),
+            serde_json::Value::Array(xs) => xs.iter().for_each(|x| timestamps(x, out)),
+            _ => {}
+        }
+    }
+    fn rerank(v: &mut serde_json::Value, rank: &BTreeMap<u64, u64>) {
+        match v {
+            serde_json::Value::Object(m) => m.iter_mut().for_each(|(k, x)| {
+                if k.contains("timestamp") {
+                    if let Some(r) = x.as_u64().and_then(|t| rank.get(&t)) {
+                        *x = serde_json::json!(r);
+                    }
+                }
+                rerank(x, rank);
+            }),
+            serde_json::Value::Array(xs) => xs.iter_mut().for_each(|x| rerank(x, rank)),
+            _ => {}
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    timestamps(&obs, &mut seen);
+    let rank: BTreeMap<u64, u64> = seen
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| (t, i as u64))
+        .collect();
+    rerank(&mut obs, &rank);
     rename(&mut obs, ids);
     let mut rows: Vec<String> = menu
         .iter()

@@ -137,20 +137,6 @@ impl WalkerV1<'_> {
                     }
                     return self.walk(&mut items[0], class, parent);
                 }
-                // A list the engine keeps in object-id order (candidate
-                // sets, bindings) is re-sorted by the new ids: its native
-                // order carried nothing but the native numbering.
-                let pointers: Option<Vec<String>> = (items.len() >= 2)
-                    .then(|| items.iter().map(first_tag_pointer).collect())
-                    .flatten();
-                let ascending = pointers.as_ref().is_some_and(|ps| {
-                    let ids: Vec<u32> = items
-                        .iter()
-                        .zip(ps)
-                        .filter_map(|(x, p)| x.pointer(p).and_then(parse_tag).map(|o| o.0))
-                        .collect();
-                    ids.len() == items.len() && ids.windows(2).all(|w| w[0] < w[1])
-                });
                 for item in items.iter_mut() {
                     if let Some(object) = parse_tag(item) {
                         let r = RefV1 {
@@ -165,17 +151,6 @@ impl WalkerV1<'_> {
                     } else {
                         self.walk(item, class, parent)?;
                     }
-                }
-                if let (true, Some(ps)) = (ascending && self.check_pairs, pointers) {
-                    let mut keyed: Vec<(Option<u64>, Value)> = items
-                        .drain(..)
-                        .zip(&ps)
-                        .map(|(x, p)| (x.pointer(p).and_then(Value::as_u64), x))
-                        .collect();
-                    if keyed.iter().all(|(k, _)| k.is_some()) {
-                        keyed.sort_by_key(|(k, _)| *k);
-                    }
-                    items.extend(keyed.into_iter().map(|(_, x)| x));
                 }
                 Ok(())
             }
@@ -357,38 +332,6 @@ impl WalkerV1<'_> {
         }
         Ok(())
     }
-}
-
-/// The JSON pointer of the first tagged object id in `value` (depth first,
-/// in key order), if any.
-fn first_tag_pointer(value: &Value) -> Option<String> {
-    fn go(v: &Value, path: &mut String) -> bool {
-        match v {
-            Value::String(_) => parse_tag(v).is_some(),
-            Value::Array(xs) => xs.iter().enumerate().any(|(i, x)| {
-                let len = path.len();
-                path.push_str(&format!("/{i}"));
-                let found = go(x, path);
-                if !found {
-                    path.truncate(len);
-                }
-                found
-            }),
-            Value::Object(m) => m.iter().any(|(k, x)| {
-                let len = path.len();
-                path.push('/');
-                path.push_str(&k.replace('~', "~0").replace('/', "~1"));
-                let found = go(x, path);
-                if !found {
-                    path.truncate(len);
-                }
-                found
-            }),
-            _ => false,
-        }
-    }
-    let mut path = String::new();
-    go(value, &mut path).then_some(path)
 }
 
 /// Static assertion: no tagged id survives the rewrite.

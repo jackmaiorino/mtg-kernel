@@ -374,15 +374,17 @@ pub(super) fn run_worker(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     Ok(())
 }
 
-/// A tree whose worker reported an error: excluded, charged nothing it did
-/// not report, and recorded with its fault.
+/// A tree whose worker reported an error (a panic, a lost result): excluded,
+/// recorded with its fault and debited its whole partition, since the work
+/// it spent before failing cannot be recovered (section 2 charges failed
+/// attempts).
 fn failed_tree(tree: u64, units: u64, error: String) -> TreeResultV1 {
     let mut r = TreeResultV1 {
         tree,
         units_budget: units,
         menu_sha256: String::new(),
         edges: None,
-        transitions: 0,
+        transitions: units,
         incomplete: true,
         cap_reached: false,
         faults: vec![error],
