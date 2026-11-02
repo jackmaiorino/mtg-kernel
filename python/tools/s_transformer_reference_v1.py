@@ -11,9 +11,13 @@ The first step from zero moments is also reported: it moves every parameter by a
 direction of its gradient's sign, so a gradient element within float32 rounding of zero can step the other way
 than in float64; the receipt reports how much of that step's error sits on near-zero gradient elements.
 
-`compare-logits A B --receipt R` compares two `logits-dump` files (for example Linux and Windows builds on the same
-states): maximum absolute logit and value difference at most 1e-5, and the same argmax except where either side's
-top two logits are within 1e-5.
+`compare-logits A B --receipt R [--bar 1e-5]` compares two `logits-dump` files (for example Linux and Windows builds
+on the same states): maximum absolute logit and value difference at most the bar, and the same argmax except where
+either side's top two logits are within the bar.
+
+`export-values` and `torch-logits` serve E4's S0 export: the first writes a PyTorch S state dict for
+`s_transformer_v1 import-values`; the second scores tensor-dump states with the state dict in float64, for
+`compare-logits --bar 1e-4` against the native checkpoint's `logits-dump`.
 
 The model is the bignet pilot's `ObjectTransformer` (collab LANES/bignet-pilot-20261031/code/models.py) written
 functionally: dropout 0, no autocast, state digest dropped, value `tanh(z / 2)`. The gauge parameters native S
@@ -360,6 +364,32 @@ def top_two_gap(logits: np.ndarray) -> float:
     return float(s[-1] - s[-2])
 
 
+S_CONFIG = {"d_model": 96, "layers": 3, "heads": 4, "ffn": 384, "card_dim": 32, "card_vocab": 257}
+
+
+def torch_logits(args) -> int:
+    """Scores tensor-dump states with a PyTorch S state dict in float64 and writes a logits dump (float32 values), for
+    E4's export parity against `s_transformer_v1 logits-dump model=s-checkpoint:<path> states=td:<path>`."""
+    state = torch.load(args.state_dict, map_location="cpu", weights_only=True)
+    P = {k: v.detach().to(F64) for k, v in state.items()}
+    cfg = dict(S_CONFIG, **(json.loads(args.config) if args.config else {}))
+    records = decode_records(Path(args.states).read_bytes())
+    out = bytearray(b"SLOGIT01")
+    out += struct.pack("<Q", len(records))
+    with torch.no_grad():
+        for start in range(0, len(records), 256):
+            chunk = records[start:start + 256]
+            logits, z = forward(P, cfg, collate(chunk))
+            value = torch.tanh(0.5 * z)
+            for k, lg in enumerate(logits):
+                out += struct.pack("<I", lg.numel())
+                out += lg.to(torch.float32).numpy().astype("<f4").tobytes()
+                out += struct.pack("<f", float(value[k]))
+    Path(args.out).write_bytes(bytes(out))
+    print(json.dumps({"states": len(records), "sha256": sha256(Path(args.out))}))
+    return 0
+
+
 def compare_logits(args) -> int:
     a, b = read_logits(Path(args.a)), read_logits(Path(args.b))
     if len(a) != len(b):
@@ -372,15 +402,16 @@ def compare_logits(args) -> int:
         max_logit = max(max_logit, float(np.max(np.abs(la - lb))))
         max_value = max(max_value, abs(va - vb))
         if int(np.argmax(la)) != int(np.argmax(lb)):
-            if min(top_two_gap(la), top_two_gap(lb)) <= LOGIT_BAR:
+            if min(top_two_gap(la), top_two_gap(lb)) <= args.bar:
                 ties += 1
             else:
                 mismatches += 1
-    passed = max_logit <= LOGIT_BAR and max_value <= LOGIT_BAR and mismatches == 0
+    bar = args.bar
+    passed = max_logit <= bar and max_value <= bar and mismatches == 0
     receipt = {
         "schema": "s-logit-parity-receipt-v1",
         "passed": passed,
-        "bar": LOGIT_BAR,
+        "bar": bar,
         "states": len(a),
         "max_abs_logit_difference": max_logit,
         "max_abs_value_difference": max_value,
@@ -420,11 +451,19 @@ def main(argv=None) -> int:
     c.add_argument("a")
     c.add_argument("b")
     c.add_argument("--receipt", required=True)
+    c.add_argument("--bar", type=float, default=LOGIT_BAR)
+    t = sub.add_parser("torch-logits")
+    t.add_argument("--state-dict", required=True)
+    t.add_argument("--states", required=True)
+    t.add_argument("--out", required=True)
+    t.add_argument("--config", default="")
     x = sub.add_parser("export-values")
     x.add_argument("--state-dict", required=True)
     x.add_argument("--out-dir", required=True)
     args = parser.parse_args(argv)
-    return {"parity": parity, "compare-logits": compare_logits, "export-values": export_values}[args.command](args)
+    commands = {"parity": parity, "compare-logits": compare_logits, "export-values": export_values,
+                "torch-logits": torch_logits}
+    return commands[args.command](args)
 
 
 if __name__ == "__main__":
