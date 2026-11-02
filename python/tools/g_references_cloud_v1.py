@@ -287,6 +287,64 @@ POD_RECOVER = cloud.POD_RECOVER.replace(
     '''    for name in ("retained", "checkpoints", "exposure", "doses", "qualification"):''')
 assert POD_RECOVER != cloud.POD_RECOVER
 
+# A qualification lease's recovery brings home the records that decide the qualification, not the campaign's
+# bulk: on lease 20261101-2302 the full recovery (every block's checkpoints and retained trees, the whole
+# qualification folder, gzip level 9) ran out of the guard's recovery window and nothing came home. Here: the
+# run states, exposure rows and dose records written by this lease, and the whole qualification folder (stages
+# cached by an earlier lease included), without its payload folders (native, cold and hot trees, scratch
+# checkpoints) and without any single file over QUALIFICATION_RECOVERY_FILE_LIMIT. What is left out stays on the
+# volume and is listed in recovery.json; block checkpoints and retained trees stay on the volume for the next
+# lease, as in production.
+QUALIFICATION_RECOVERY_SKIP_DIRS = ("native", "cold", "hot", "checkpoints")
+QUALIFICATION_RECOVERY_FILE_LIMIT = 8 * 2**20
+POD_RECOVER_QUALIFICATION = '''#pod:recover-qualification
+import hashlib, io, os, pathlib, tarfile, time
+control, campaign = pathlib.Path(ARGS["control"]), pathlib.Path(ARGS["campaign"])
+since = ARGS["since"] if ARGS["since"] is not None else time.time()
+limit, skip_dirs = ARGS["file_limit_bytes"], set(ARGS["skip_dirs"])
+out, members, left_out, skipped_dirs = control / "results.tar.gz", {}, [], []
+def tree(tar, root, prefix, since=None, top=False, skip=frozenset()):
+    if not root.is_dir():
+        return
+    for folder, dirs, files in os.walk(root):
+        here = pathlib.Path(folder)
+        for name in sorted(dirs):
+            if name in skip:
+                skipped_dirs.append(prefix + "/" + (here / name).relative_to(root).as_posix())
+        dirs[:] = sorted(name for name in dirs if name not in skip and not (here / name).is_symlink())
+        for name in sorted(files):
+            path = here / name
+            rel = path.relative_to(root)
+            if path.is_symlink() or not path.is_file() or name.endswith((".tar.gz", ".partial")):
+                continue
+            stat = path.stat()
+            if not (since is None or top and len(rel.parts) == 1 or stat.st_mtime >= since):
+                continue
+            member = prefix + "/" + rel.as_posix()
+            if stat.st_size > limit:
+                left_out.append({"path": member, "bytes": stat.st_size})
+                continue
+            data = path.read_bytes()  # one read for both the archive and its SHA256
+            info = tarfile.TarInfo(member)
+            info.size, info.mtime, info.mode = len(data), int(stat.st_mtime), 0o644
+            tar.addfile(info, io.BytesIO(data))
+            members[member] = hashlib.sha256(data).hexdigest()
+with tarfile.open(out, "w:gz", compresslevel=1) as tar:
+    tree(tar, campaign / "state", "campaign/state", since, top=True)  # run states, events and PRUNE always
+    for name in ("exposure", "doses"):
+        tree(tar, campaign / name, "campaign/" + name, since)
+    tree(tar, campaign / "qualification", "campaign/qualification", None, skip=skip_dirs)  # whole, every lease's
+    tree(tar, pathlib.Path(ARGS["guard"]), "guard")
+    tree(tar, control, "control")
+    tree(tar, pathlib.Path(ARGS["locks"]), "reservation")
+    listing = json.dumps(members, sort_keys=True).encode()
+    info = tarfile.TarInfo("RECOVERED.json")
+    info.size = len(listing)
+    tar.addfile(info, io.BytesIO(listing))
+print(json.dumps({"sha256": digest(out), "bytes": out.stat().st_size, "files": len(members), "since_epoch": since,
+                  "scope": "qualification", "left_out_over_limit": left_out, "skipped_dirs": sorted(skipped_dirs)}))
+'''
+
 
 POD_AFFINITY = '''#pod:affinity
 import os
@@ -624,9 +682,14 @@ class Cycle(cloud.Cycle):
             self.result["recovery"] = "skipped: quiescence left too little time before the guards' release"
             return
         since = 0 if self.recover_all else None if self.worker is None else self.worker["epoch"] - 60
-        packed = self.pod.run(POD_RECOVER, {"control": self.remote_control, "campaign": str(self.base / "campaign"),
-                                            "guard": self.guard, "locks": cloud.LOCK_ROOT, "since": since},
-                              timeout=left())
+        args = {"control": self.remote_control, "campaign": str(self.base / "campaign"), "guard": self.guard,
+                "locks": cloud.LOCK_ROOT, "since": since}
+        if self.manifest["mode"] == "qualification":
+            program = POD_RECOVER_QUALIFICATION
+            args.update(skip_dirs=list(QUALIFICATION_RECOVERY_SKIP_DIRS), file_limit_bytes=QUALIFICATION_RECOVERY_FILE_LIMIT)
+        else:
+            program = POD_RECOVER
+        packed = self.pod.run(program, args, timeout=left())
         target, recovered = self.control / "results.tar.gz", self.control / "recovered"
         require(left() > 0, "recovery time spent before the copy")
         self.pod.get(self.remote_control + "/results.tar.gz", target, timeout=left())
