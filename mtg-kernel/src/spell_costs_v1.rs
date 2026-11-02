@@ -48,6 +48,7 @@ impl PreparedNonmanaActionV1 {
             }
             Self::RevealHand(objects) => {
                 for &object in objects {
+                    // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state
                             .reveal_hand_card(observer, player, object)

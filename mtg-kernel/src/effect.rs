@@ -13946,6 +13946,7 @@ fn drive_resumable_inner_with_native_row_v1(
                         if filter.reveals_selected_card()
                             && state.objects.get(binding.object).zone == Zone::Hand
                         {
+                            // spellbench-public-reveal: hand card revealed by the card rules.
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
                                     .reveal_hand_card(observer, player, binding.object)
@@ -14255,6 +14256,7 @@ fn drive_resumable_inner_with_native_row_v1(
                                 };
                                 event::propose_and_commit(state, event);
                                 if state.objects.get(binding.object).zone == Zone::Hand {
+                                    // spellbench-public-reveal: hand card revealed by the card rules.
                                     for observer in [PlayerId::P0, PlayerId::P1] {
                                         state
                                             .reveal_hand_card(observer, player, binding.object)
@@ -14378,6 +14380,7 @@ fn drive_resumable_inner_with_native_row_v1(
                         if filter.reveals_selected_card()
                             && state.objects.get(binding.object).zone == Zone::Hand
                         {
+                            // spellbench-public-reveal: hand card revealed by the card rules.
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
                                     .reveal_hand_card(observer, player, binding.object)
@@ -16252,6 +16255,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 let original_hand = bind_hand(state, player);
                 validate_bound_hand_exact(state, player, &original_hand)?;
                 for binding in &original_hand {
+                    // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state
                             .reveal_hand_card(observer, player, binding.object)
@@ -16588,6 +16592,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 let original_hand = bind_hand(state, player);
                 validate_bound_hand_exact(state, player, &original_hand)?;
                 for binding in &original_hand {
+                    // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state.reveal_hand_card(observer, player, binding.object)?;
                     }
@@ -18045,6 +18050,7 @@ fn resume_library_partition_frame(
             if filter.reveals_selected() {
                 for binding in selected {
                     if state.objects.get(binding.object).zone == Zone::Hand {
+                        // spellbench-public-reveal: hand card revealed by the card rules.
                         for observer in [PlayerId::P0, PlayerId::P1] {
                             state
                                 .reveal_hand_card(observer, player, binding.object)
@@ -19558,6 +19564,7 @@ fn reveal_until_type_to_hand_random_bottom_v1(
             return Err("reveal-to-hand move halted".into());
         }
         if projected.objects.get(selected.object).zone == Zone::Hand {
+            // spellbench-public-reveal: hand card revealed by the card rules.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 projected.reveal_hand_card(observer, player, selected.object)?;
             }
@@ -21379,6 +21386,7 @@ fn execute_with_native_row_v1(
                 crate::card_def::CARD_DEFS[state.objects.get(top).card_def as usize].mana_value;
             event::propose_and_commit(state, event::ProposedEvent::zone_change(top, Zone::Hand));
             if state.objects.get(top).zone == Zone::Hand {
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 for observer in [PlayerId::P0, PlayerId::P1] {
                     if state.reveal_hand_card(observer, player, top).is_err() {
                         state.engine.halted = Some((
@@ -21422,6 +21430,7 @@ fn execute_with_native_row_v1(
                     event::ProposedEvent::zone_change(card, Zone::Hand),
                 );
                 if state.objects.get(card).zone == Zone::Hand {
+                    // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         if state.reveal_hand_card(observer, player, card).is_err() {
                             state.engine.halted = Some((

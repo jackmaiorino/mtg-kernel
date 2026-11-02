@@ -660,6 +660,7 @@ fn mad_wizards_lair(
         .filter(|card| !before.contains(card))
         .collect::<Vec<_>>();
     for &card in &drawn {
+        // spellbench-public-reveal: hand card revealed by the card rules.
         state.reveal_hand_card(player.opponent(), player, card)?;
     }
     let drawn = drawn
@@ -906,6 +907,7 @@ pub(super) fn finish(
             let mut chosen = chosen.clone();
             if let Some(card) = bindings.first() {
                 if *room == 2 {
+                    // spellbench-public-reveal: hand card revealed by the card rules.
                     state.reveal_hand_card(choice.player.opponent(), choice.player, card.object)?;
                 }
             }
