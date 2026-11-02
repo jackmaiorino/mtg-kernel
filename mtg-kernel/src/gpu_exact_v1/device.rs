@@ -98,7 +98,8 @@ pub(crate) struct ExactDeviceV1 {
     pub(crate) identity: DeviceIdentityV1,
     pub(crate) stream: Arc<CudaStream>,
     pub(crate) net8_forward: CudaFunction,
-    pub(crate) net8_forward_v2: CudaFunction,
+    /// None below sm_80: the v2 source (cp.async) is not compiled there.
+    pub(crate) net8_forward_v2: Option<CudaFunction>,
     /// Dynamic shared memory of one `mtg_net8_forward_v2` block.
     pub(crate) v2_shared_bytes: u32,
     pub(crate) options: ExactOptionsV1,
@@ -119,9 +120,21 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn source_and_options(tile: TileShapeV1) -> (String, Vec<String>) {
+/// The fault-injection kernel, which the v2 source also defines.
+const FAULT_TRAP_SOURCE: &str = "extern \"C\" __global__ void mtg_fault_trap() { __trap(); }\n";
+
+/// The program for `tile`. The v2 source uses `cp.async` (sm_80 and newer),
+/// so without `with_v2` it is left out (keeping its fault-trap kernel) and
+/// the program holds v1 only; the source with v2 is unchanged, and so is its
+/// program hash.
+pub(super) fn source_and_options(tile: TileShapeV1, with_v2: bool) -> (String, Vec<String>) {
+    let v2 = if with_v2 {
+        NET8_V2_SOURCE
+    } else {
+        FAULT_TRAP_SOURCE
+    };
     let source = format!(
-        "#define MTG_HIDDEN 64\n#define MTG_V2_KT {}\n#define MTG_V2_ROWS {}\n{TANH_SOURCE}\n{NET8_SOURCE}\n{NET8_BACKWARD_SOURCE}\n{NET8_V2_SOURCE}",
+        "#define MTG_HIDDEN 64\n#define MTG_V2_KT {}\n#define MTG_V2_ROWS {}\n{TANH_SOURCE}\n{NET8_SOURCE}\n{NET8_BACKWARD_SOURCE}\n{v2}",
         tile.k_tile, tile.rows
     );
     // --fmad=false: no contraction of a separate multiply and add, so every
@@ -213,7 +226,8 @@ impl ExactDeviceV1 {
         } else {
             execution
         };
-        let (source, options) = source_and_options(tile);
+        let with_v2 = compute_capability.0 >= 8;
+        let (source, options) = source_and_options(tile, with_v2);
         let mut h = Sha256::new();
         h.update(PROGRAM_V1.as_bytes());
         h.update(source.as_bytes());
@@ -241,7 +255,11 @@ impl ExactDeviceV1 {
         };
         let device = Self {
             net8_forward: load("mtg_net8_forward")?,
-            net8_forward_v2: load("mtg_net8_forward_v2")?,
+            net8_forward_v2: if with_v2 {
+                Some(load("mtg_net8_forward_v2")?)
+            } else {
+                None
+            },
             v2_shared_bytes: tile.shared_bytes(),
             options: execution,
             net8_reverse: load("mtg_net8_reverse")?,

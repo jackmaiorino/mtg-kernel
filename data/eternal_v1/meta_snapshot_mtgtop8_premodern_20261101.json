@@ -1,0 +1,2889 @@
+{
+ "schema": "eternal_meta_snapshot/v1",
+ "source": "mtgtop8.com Premodern metagame meta=261 (2283 decks), most recent listed deck per archetype",
+ "captured": "2026-11-01",
+ "formats": {
+  "premodern": [
+   {
+    "archetype": "premodern-sligh-rdw",
+    "share": 8.0,
+    "mainboard": [
+     [
+      2,
+      "Barbarian Ring"
+     ],
+     [
+      4,
+      "Bloodstained Mire"
+     ],
+     [
+      10,
+      "Mountain"
+     ],
+     [
+      4,
+      "Wooded Foothills"
+     ],
+     [
+      4,
+      "Ball Lightning"
+     ],
+     [
+      4,
+      "Grim Lavamancer"
+     ],
+     [
+      4,
+      "Jackal Pup"
+     ],
+     [
+      4,
+      "Mogg Fanatic"
+     ],
+     [
+      4,
+      "Fireblast"
+     ],
+     [
+      4,
+      "Incinerate"
+     ],
+     [
+      1,
+      "Lava Dart"
+     ],
+     [
+      4,
+      "Lightning Bolt"
+     ],
+     [
+      1,
+      "Price of Progress"
+     ],
+     [
+      3,
+      "Cursed Scroll"
+     ],
+     [
+      4,
+      "Seal of Fire"
+     ],
+     [
+      3,
+      "Sulfuric Vortex"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Anarchy"
+     ],
+     [
+      1,
+      "Earthquake"
+     ],
+     [
+      1,
+      "Flaring Pain"
+     ],
+     [
+      3,
+      "Overload"
+     ],
+     [
+      1,
+      "Price of Progress"
+     ],
+     [
+      2,
+      "Pyroblast"
+     ],
+     [
+      1,
+      "Pyroclasm"
+     ],
+     [
+      1,
+      "Pyrostatic Pillar"
+     ],
+     [
+      2,
+      "Red Elemental Blast"
+     ],
+     [
+      2,
+      "Tormod's Crypt"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93059&d=906943&f=PREM"
+   },
+   {
+    "archetype": "premodern-terrageddon",
+    "share": 8.0,
+    "mainboard": [
+     [
+      1,
+      "Battlefield Forge"
+     ],
+     [
+      1,
+      "City of Traitors"
+     ],
+     [
+      3,
+      "Forest"
+     ],
+     [
+      4,
+      "Gemstone Mine"
+     ],
+     [
+      1,
+      "Karplusan Forest"
+     ],
+     [
+      2,
+      "Plains"
+     ],
+     [
+      2,
+      "Rishadan Port"
+     ],
+     [
+      2,
+      "Rith's Grove"
+     ],
+     [
+      1,
+      "Secluded Steppe"
+     ],
+     [
+      1,
+      "Tranquil Thicket"
+     ],
+     [
+      4,
+      "Wasteland"
+     ],
+     [
+      4,
+      "Windswept Heath"
+     ],
+     [
+      1,
+      "Anurid Brushhopper"
+     ],
+     [
+      1,
+      "Exalted Angel"
+     ],
+     [
+      1,
+      "Mystic Enforcer"
+     ],
+     [
+      4,
+      "Terravore"
+     ],
+     [
+      3,
+      "Weathered Wayfarer"
+     ],
+     [
+      3,
+      "Wild Mongrel"
+     ],
+     [
+      3,
+      "Armageddon"
+     ],
+     [
+      3,
+      "Call of the Herd"
+     ],
+     [
+      1,
+      "Disenchant"
+     ],
+     [
+      2,
+      "Fire // Ice"
+     ],
+     [
+      1,
+      "Naturalize"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      4,
+      "Mox Diamond"
+     ],
+     [
+      3,
+      "Sylvan Library"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Aura of Silence"
+     ],
+     [
+      2,
+      "Cursed Totem"
+     ],
+     [
+      1,
+      "Pyroblast"
+     ],
+     [
+      3,
+      "Pyroclasm"
+     ],
+     [
+      1,
+      "Ray of Revelation"
+     ],
+     [
+      2,
+      "Red Elemental Blast"
+     ],
+     [
+      1,
+      "Sphere of Law"
+     ],
+     [
+      1,
+      "Tormod's Crypt"
+     ],
+     [
+      2,
+      "Zuran Orb"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93065&d=906979&f=PREM"
+   },
+   {
+    "archetype": "premodern-goblins",
+    "share": 7.0,
+    "mainboard": [
+     [
+      16,
+      "Mountain"
+     ],
+     [
+      4,
+      "Rishadan Port"
+     ],
+     [
+      3,
+      "Wasteland"
+     ],
+     [
+      3,
+      "Gempalm Incinerator"
+     ],
+     [
+      2,
+      "Goblin Goon"
+     ],
+     [
+      4,
+      "Goblin Lackey"
+     ],
+     [
+      4,
+      "Goblin Matron"
+     ],
+     [
+      4,
+      "Goblin Piledriver"
+     ],
+     [
+      4,
+      "Goblin Ringleader"
+     ],
+     [
+      1,
+      "Goblin Sharpshooter"
+     ],
+     [
+      4,
+      "Goblin Warchief"
+     ],
+     [
+      4,
+      "Mogg Fanatic"
+     ],
+     [
+      3,
+      "Siege-Gang Commander"
+     ],
+     [
+      1,
+      "Skirk Prospector"
+     ],
+     [
+      3,
+      "Lightning Bolt"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Anarchy"
+     ],
+     [
+      2,
+      "Overload"
+     ],
+     [
+      2,
+      "Price of Progress"
+     ],
+     [
+      2,
+      "Pyroblast"
+     ],
+     [
+      3,
+      "Pyrokinesis"
+     ],
+     [
+      1,
+      "Red Elemental Blast"
+     ],
+     [
+      3,
+      "Tormod's Crypt"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93065&d=906980&f=PREM"
+   },
+   {
+    "archetype": "premodern-mono-black-aggro",
+    "share": 6.0,
+    "mainboard": [
+     [
+      18,
+      "Swamp"
+     ],
+     [
+      4,
+      "Wasteland"
+     ],
+     [
+      2,
+      "Graveborn Muse"
+     ],
+     [
+      4,
+      "Hypnotic Specter"
+     ],
+     [
+      3,
+      "Knight of Stromgald"
+     ],
+     [
+      3,
+      "Nantuko Shade"
+     ],
+     [
+      4,
+      "Withered Wretch"
+     ],
+     [
+      4,
+      "Cabal Therapy"
+     ],
+     [
+      4,
+      "Dark Ritual"
+     ],
+     [
+      2,
+      "Diabolic Edict"
+     ],
+     [
+      4,
+      "Duress"
+     ],
+     [
+      2,
+      "Funeral Charm"
+     ],
+     [
+      2,
+      "Reanimate"
+     ],
+     [
+      1,
+      "Skeletal Scrying"
+     ],
+     [
+      2,
+      "Smother"
+     ],
+     [
+      1,
+      "Snuff Out"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Dystopia"
+     ],
+     [
+      4,
+      "Engineered Plague"
+     ],
+     [
+      4,
+      "Gloom"
+     ],
+     [
+      1,
+      "Plaguebearer"
+     ],
+     [
+      1,
+      "Powder Keg"
+     ],
+     [
+      2,
+      "Tsabo's Web"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93063&d=906964&f=PREM"
+   },
+   {
+    "archetype": "premodern-madness-threshold",
+    "share": 2.0,
+    "mainboard": [
+     [
+      4,
+      "Brushland"
+     ],
+     [
+      3,
+      "City of Brass"
+     ],
+     [
+      4,
+      "Forest"
+     ],
+     [
+      2,
+      "Gaea's Cradle"
+     ],
+     [
+      2,
+      "Plains"
+     ],
+     [
+      3,
+      "Wasteland"
+     ],
+     [
+      4,
+      "Windswept Heath"
+     ],
+     [
+      1,
+      "Yavimaya Hollow"
+     ],
+     [
+      3,
+      "Arrogant Wurm"
+     ],
+     [
+      4,
+      "Basking Rootwalla"
+     ],
+     [
+      2,
+      "Blastoderm"
+     ],
+     [
+      3,
+      "Glory"
+     ],
+     [
+      4,
+      "Tireless Tribe"
+     ],
+     [
+      3,
+      "Vintara Snapper"
+     ],
+     [
+      4,
+      "Wild Mongrel"
+     ],
+     [
+      4,
+      "Chatter of the Squirrel"
+     ],
+     [
+      1,
+      "Crop Rotation"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      4,
+      "Rancor"
+     ],
+     [
+      2,
+      "Sylvan Library"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Absolute Law"
+     ],
+     [
+      2,
+      "Caller of the Claw"
+     ],
+     [
+      1,
+      "Kor Haven"
+     ],
+     [
+      3,
+      "Ray of Revelation"
+     ],
+     [
+      3,
+      "Seal of Cleansing"
+     ],
+     [
+      2,
+      "Tormod's Crypt"
+     ],
+     [
+      2,
+      "Winter Orb"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93064&d=906965&f=PREM"
+   },
+   {
+    "archetype": "premodern-rg-aggro",
+    "share": 2.0,
+    "mainboard": [
+     [
+      4,
+      "Bloodstained Mire"
+     ],
+     [
+      1,
+      "Forest"
+     ],
+     [
+      4,
+      "Karplusan Forest"
+     ],
+     [
+      6,
+      "Mountain"
+     ],
+     [
+      3,
+      "Wasteland"
+     ],
+     [
+      4,
+      "Wooded Foothills"
+     ],
+     [
+      4,
+      "Goblin Vandal"
+     ],
+     [
+      4,
+      "Grim Lavamancer"
+     ],
+     [
+      4,
+      "Jackal Pup"
+     ],
+     [
+      4,
+      "Mogg Fanatic"
+     ],
+     [
+      3,
+      "Call of the Herd"
+     ],
+     [
+      4,
+      "Fireblast"
+     ],
+     [
+      4,
+      "Incinerate"
+     ],
+     [
+      4,
+      "Lightning Bolt"
+     ],
+     [
+      2,
+      "Cursed Scroll"
+     ],
+     [
+      2,
+      "Seal of Fire"
+     ],
+     [
+      3,
+      "Sylvan Library"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Ensnaring Bridge"
+     ],
+     [
+      4,
+      "Overload"
+     ],
+     [
+      4,
+      "Pyroblast"
+     ],
+     [
+      4,
+      "Tranquil Domain"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93064&d=906968&f=PREM"
+   },
+   {
+    "archetype": "premodern-elves",
+    "share": 1.0,
+    "mainboard": [
+     [
+      10,
+      "Forest"
+     ],
+     [
+      3,
+      "Gaea's Cradle"
+     ],
+     [
+      1,
+      "Mountain"
+     ],
+     [
+      4,
+      "Wooded Foothills"
+     ],
+     [
+      1,
+      "Anger"
+     ],
+     [
+      1,
+      "Birchlore Rangers"
+     ],
+     [
+      1,
+      "Caller of the Claw"
+     ],
+     [
+      2,
+      "Deranged Hermit"
+     ],
+     [
+      4,
+      "Fyndhorn Elves"
+     ],
+     [
+      1,
+      "Genesis"
+     ],
+     [
+      4,
+      "Llanowar Elves"
+     ],
+     [
+      1,
+      "Masticore"
+     ],
+     [
+      4,
+      "Multani's Acolyte"
+     ],
+     [
+      1,
+      "Nantuko Vigilante"
+     ],
+     [
+      4,
+      "Priest of Titania"
+     ],
+     [
+      4,
+      "Quirion Ranger"
+     ],
+     [
+      1,
+      "Squee, Goblin Nabob"
+     ],
+     [
+      1,
+      "Thornscape Battlemage"
+     ],
+     [
+      1,
+      "Wall of Blossoms"
+     ],
+     [
+      1,
+      "Wall of Roots"
+     ],
+     [
+      4,
+      "Wirewood Symbiote"
+     ],
+     [
+      1,
+      "Yavimaya Granger"
+     ],
+     [
+      1,
+      "Naturalize"
+     ],
+     [
+      4,
+      "Survival of the Fittest"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Druid Lyrist"
+     ],
+     [
+      1,
+      "Goblin Sharpshooter"
+     ],
+     [
+      2,
+      "Krosan Reclamation"
+     ],
+     [
+      3,
+      "Naturalize"
+     ],
+     [
+      2,
+      "Phyrexian Furnace"
+     ],
+     [
+      1,
+      "Pyroblast"
+     ],
+     [
+      1,
+      "Ravenous Baloth"
+     ],
+     [
+      1,
+      "Spike Feeder"
+     ],
+     [
+      1,
+      "Tranquil Domain"
+     ],
+     [
+      1,
+      "Uktabi Orangutan"
+     ],
+     [
+      1,
+      "Wall of Blossoms"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93065&d=906978&f=PREM"
+   },
+   {
+    "archetype": "premodern-white-weenie",
+    "share": 1.0,
+    "mainboard": [
+     [
+      18,
+      "Plains"
+     ],
+     [
+      2,
+      "Wasteland"
+     ],
+     [
+      2,
+      "Beloved Chaplain"
+     ],
+     [
+      4,
+      "Devoted Caretaker"
+     ],
+     [
+      4,
+      "Exalted Angel"
+     ],
+     [
+      4,
+      "Glowrider"
+     ],
+     [
+      4,
+      "Mother of Runes"
+     ],
+     [
+      4,
+      "Nova Cleric"
+     ],
+     [
+      4,
+      "Soltari Monk"
+     ],
+     [
+      4,
+      "Soltari Priest"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      2,
+      "Cursed Scroll"
+     ],
+     [
+      4,
+      "Shared Triumph"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Aura of Silence"
+     ],
+     [
+      2,
+      "Crimson Acolyte"
+     ],
+     [
+      2,
+      "Disenchant"
+     ],
+     [
+      2,
+      "Orim's Chant"
+     ],
+     [
+      4,
+      "Tormod's Crypt"
+     ],
+     [
+      1,
+      "True Believer"
+     ],
+     [
+      2,
+      "Tsabo's Web"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=92723&d=904290&f=PREM"
+   },
+   {
+    "archetype": "premodern-landstill-uw-control",
+    "share": 6.0,
+    "mainboard": [
+     [
+      3,
+      "Adarkar Wastes"
+     ],
+     [
+      4,
+      "Coastal Tower"
+     ],
+     [
+      2,
+      "Dust Bowl"
+     ],
+     [
+      4,
+      "Flooded Strand"
+     ],
+     [
+      5,
+      "Island"
+     ],
+     [
+      4,
+      "Mishra's Factory"
+     ],
+     [
+      4,
+      "Plains"
+     ],
+     [
+      4,
+      "Counterspell"
+     ],
+     [
+      4,
+      "Decree of Justice"
+     ],
+     [
+      2,
+      "Disenchant"
+     ],
+     [
+      3,
+      "Fact or Fiction"
+     ],
+     [
+      4,
+      "Impulse"
+     ],
+     [
+      2,
+      "Mana Leak"
+     ],
+     [
+      2,
+      "Prohibit"
+     ],
+     [
+      1,
+      "Rewind"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      2,
+      "Wrath of God"
+     ],
+     [
+      2,
+      "Phyrexian Furnace"
+     ],
+     [
+      4,
+      "Standstill"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Akroma's Vengeance"
+     ],
+     [
+      3,
+      "Annul"
+     ],
+     [
+      2,
+      "Arcane Laboratory"
+     ],
+     [
+      2,
+      "Circle of Protection: Red"
+     ],
+     [
+      1,
+      "Disenchant"
+     ],
+     [
+      1,
+      "Exalted Angel"
+     ],
+     [
+      2,
+      "Hydroblast"
+     ],
+     [
+      2,
+      "Sacred Ground"
+     ],
+     [
+      1,
+      "Tormod's Crypt"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93064&d=906969&f=PREM"
+   },
+   {
+    "archetype": "premodern-oath-of-druids",
+    "share": 5.0,
+    "mainboard": [
+     [
+      4,
+      "Brushland"
+     ],
+     [
+      3,
+      "Forest"
+     ],
+     [
+      4,
+      "Mishra's Factory"
+     ],
+     [
+      1,
+      "Plains"
+     ],
+     [
+      4,
+      "Rishadan Port"
+     ],
+     [
+      4,
+      "Treetop Village"
+     ],
+     [
+      4,
+      "Wasteland"
+     ],
+     [
+      4,
+      "Windswept Heath"
+     ],
+     [
+      4,
+      "Terravore"
+     ],
+     [
+      2,
+      "Naturalize"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      3,
+      "Thermokarst"
+     ],
+     [
+      4,
+      "Winter's Grasp"
+     ],
+     [
+      4,
+      "Mox Diamond"
+     ],
+     [
+      4,
+      "Oath of Druids"
+     ],
+     [
+      4,
+      "Sphere of Resistance"
+     ],
+     [
+      3,
+      "Sylvan Library"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Call of the Herd"
+     ],
+     [
+      2,
+      "Choke"
+     ],
+     [
+      2,
+      "Glowrider"
+     ],
+     [
+      2,
+      "Naturalize"
+     ],
+     [
+      3,
+      "Sphere of Law"
+     ],
+     [
+      2,
+      "Tranquil Domain"
+     ],
+     [
+      1,
+      "Warmth"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93021&d=906633&f=PREM"
+   },
+   {
+    "archetype": "premodern-psychatog",
+    "share": 3.0,
+    "mainboard": [
+     [
+      11,
+      "Island"
+     ],
+     [
+      4,
+      "Polluted Delta"
+     ],
+     [
+      3,
+      "Swamp"
+     ],
+     [
+      3,
+      "Underground River"
+     ],
+     [
+      4,
+      "Psychatog"
+     ],
+     [
+      4,
+      "Accumulated Knowledge"
+     ],
+     [
+      1,
+      "Annul"
+     ],
+     [
+      4,
+      "Counterspell"
+     ],
+     [
+      4,
+      "Duress"
+     ],
+     [
+      1,
+      "Fact or Fiction"
+     ],
+     [
+      3,
+      "Foil"
+     ],
+     [
+      4,
+      "Gush"
+     ],
+     [
+      4,
+      "Impulse"
+     ],
+     [
+      4,
+      "Portent"
+     ],
+     [
+      2,
+      "Sickening Dreams"
+     ],
+     [
+      3,
+      "Smother"
+     ],
+     [
+      1,
+      "Tsabo's Web"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Annul"
+     ],
+     [
+      1,
+      "Cabal Therapy"
+     ],
+     [
+      1,
+      "Dominate"
+     ],
+     [
+      3,
+      "Engineered Plague"
+     ],
+     [
+      1,
+      "Haunting Echoes"
+     ],
+     [
+      4,
+      "Hydroblast"
+     ],
+     [
+      2,
+      "Powder Keg"
+     ],
+     [
+      1,
+      "Tsabo's Web"
+     ],
+     [
+      1,
+      "Zombie Infestation"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=92872&d=905529&f=PREM"
+   },
+   {
+    "archetype": "premodern-survival",
+    "share": 2.0,
+    "mainboard": [
+     [
+      7,
+      "Forest"
+     ],
+     [
+      4,
+      "Gaea's Cradle"
+     ],
+     [
+      3,
+      "Karplusan Forest"
+     ],
+     [
+      1,
+      "Mountain"
+     ],
+     [
+      4,
+      "Wooded Foothills"
+     ],
+     [
+      1,
+      "Anger"
+     ],
+     [
+      2,
+      "Basking Rootwalla"
+     ],
+     [
+      4,
+      "Birds of Paradise"
+     ],
+     [
+      3,
+      "Caller of the Claw"
+     ],
+     [
+      3,
+      "Deranged Hermit"
+     ],
+     [
+      3,
+      "Fyndhorn Elves"
+     ],
+     [
+      1,
+      "Goblin Sharpshooter"
+     ],
+     [
+      3,
+      "Llanowar Elves"
+     ],
+     [
+      3,
+      "Multani's Acolyte"
+     ],
+     [
+      1,
+      "Nantuko Vigilante"
+     ],
+     [
+      1,
+      "Quirion Ranger"
+     ],
+     [
+      1,
+      "Squee, Goblin Nabob"
+     ],
+     [
+      4,
+      "Wall of Roots"
+     ],
+     [
+      3,
+      "Wirewood Symbiote"
+     ],
+     [
+      1,
+      "Yavimaya Granger"
+     ],
+     [
+      3,
+      "Goblin Bombardment"
+     ],
+     [
+      4,
+      "Survival of the Fittest"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Goblin Tinkerer"
+     ],
+     [
+      1,
+      "Nantuko Vigilante"
+     ],
+     [
+      2,
+      "Naturalize"
+     ],
+     [
+      2,
+      "Phyrexian Furnace"
+     ],
+     [
+      1,
+      "Ravenous Baloth"
+     ],
+     [
+      2,
+      "Red Elemental Blast"
+     ],
+     [
+      1,
+      "Tormod's Crypt"
+     ],
+     [
+      2,
+      "Tranquil Domain"
+     ],
+     [
+      2,
+      "Xantid Swarm"
+     ],
+     [
+      1,
+      "Zuran Orb"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93064&d=906972&f=PREM"
+   },
+   {
+    "archetype": "premodern-the-rock",
+    "share": 2.0,
+    "mainboard": [
+     [
+      2,
+      "Dust Bowl"
+     ],
+     [
+      4,
+      "Forest"
+     ],
+     [
+      4,
+      "Llanowar Wastes"
+     ],
+     [
+      11,
+      "Swamp"
+     ],
+     [
+      1,
+      "Tainted Wood"
+     ],
+     [
+      4,
+      "Treetop Village"
+     ],
+     [
+      1,
+      "Bane of the Living"
+     ],
+     [
+      1,
+      "Genesis"
+     ],
+     [
+      3,
+      "Graveborn Muse"
+     ],
+     [
+      1,
+      "Ravenous Baloth"
+     ],
+     [
+      4,
+      "Ravenous Rats"
+     ],
+     [
+      3,
+      "Wall of Blossoms"
+     ],
+     [
+      3,
+      "Withered Wretch"
+     ],
+     [
+      4,
+      "Cabal Therapy"
+     ],
+     [
+      3,
+      "Call of the Herd"
+     ],
+     [
+      2,
+      "Diabolic Edict"
+     ],
+     [
+      2,
+      "Duress"
+     ],
+     [
+      2,
+      "Funeral Charm"
+     ],
+     [
+      1,
+      "Smother"
+     ],
+     [
+      4,
+      "Pernicious Deed"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Duress"
+     ],
+     [
+      3,
+      "Engineered Plague"
+     ],
+     [
+      2,
+      "Haunting Echoes"
+     ],
+     [
+      2,
+      "Nantuko Vigilante"
+     ],
+     [
+      1,
+      "Plaguebearer"
+     ],
+     [
+      2,
+      "Ravenous Baloth"
+     ],
+     [
+      2,
+      "Tranquil Domain"
+     ],
+     [
+      1,
+      "Withered Wretch"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93064&d=906967&f=PREM"
+   },
+   {
+    "archetype": "premodern-mono-black-control",
+    "share": 2.0,
+    "mainboard": [
+     [
+      1,
+      "Dust Bowl"
+     ],
+     [
+      1,
+      "High Market"
+     ],
+     [
+      4,
+      "Mishra's Factory"
+     ],
+     [
+      4,
+      "Rishadan Port"
+     ],
+     [
+      13,
+      "Swamp"
+     ],
+     [
+      1,
+      "Wasteland"
+     ],
+     [
+      4,
+      "Nether Spirit"
+     ],
+     [
+      4,
+      "Cabal Therapy"
+     ],
+     [
+      2,
+      "Diabolic Tutor"
+     ],
+     [
+      4,
+      "Duress"
+     ],
+     [
+      3,
+      "Innocent Blood"
+     ],
+     [
+      1,
+      "Sickening Dreams"
+     ],
+     [
+      3,
+      "Skeletal Scrying"
+     ],
+     [
+      2,
+      "Smother"
+     ],
+     [
+      1,
+      "Snuff Out"
+     ],
+     [
+      3,
+      "Contamination"
+     ],
+     [
+      2,
+      "Nevinyrral's Disk"
+     ],
+     [
+      1,
+      "Phyrexian Furnace"
+     ],
+     [
+      2,
+      "Powder Keg"
+     ],
+     [
+      4,
+      "Zombie Infestation"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Contagion"
+     ],
+     [
+      1,
+      "Cursed Scroll"
+     ],
+     [
+      1,
+      "Cursed Totem"
+     ],
+     [
+      2,
+      "Dystopia"
+     ],
+     [
+      2,
+      "Engineered Plague"
+     ],
+     [
+      3,
+      "Lurking Skirge"
+     ],
+     [
+      1,
+      "Phyrexian Furnace"
+     ],
+     [
+      1,
+      "Phyrexian Processor"
+     ],
+     [
+      1,
+      "Powder Keg"
+     ],
+     [
+      1,
+      "Smother"
+     ],
+     [
+      1,
+      "Tormod's Crypt"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93036&d=906754&f=PREM"
+   },
+   {
+    "archetype": "premodern-grow",
+    "share": 2.0,
+    "mainboard": [
+     [
+      3,
+      "City of Brass"
+     ],
+     [
+      4,
+      "Flooded Strand"
+     ],
+     [
+      3,
+      "Gemstone Mine"
+     ],
+     [
+      8,
+      "Island"
+     ],
+     [
+      1,
+      "Plains"
+     ],
+     [
+      2,
+      "Psychatog"
+     ],
+     [
+      4,
+      "Quirion Dryad"
+     ],
+     [
+      4,
+      "Accumulated Knowledge"
+     ],
+     [
+      2,
+      "Armageddon"
+     ],
+     [
+      4,
+      "Counterspell"
+     ],
+     [
+      2,
+      "Daze"
+     ],
+     [
+      2,
+      "Fire // Ice"
+     ],
+     [
+      2,
+      "Foil"
+     ],
+     [
+      4,
+      "Gush"
+     ],
+     [
+      4,
+      "Opt"
+     ],
+     [
+      4,
+      "Portent"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      3,
+      "Mox Diamond"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Call of the Herd"
+     ],
+     [
+      2,
+      "Hydroblast"
+     ],
+     [
+      3,
+      "Meddling Mage"
+     ],
+     [
+      1,
+      "Phyrexian Furnace"
+     ],
+     [
+      2,
+      "Pyroclasm"
+     ],
+     [
+      1,
+      "Ray of Revelation"
+     ],
+     [
+      1,
+      "Seal of Cleansing"
+     ],
+     [
+      1,
+      "Tranquil Domain"
+     ],
+     [
+      1,
+      "Tsabo's Web"
+     ],
+     [
+      1,
+      "Warmth"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93065&d=906974&f=PREM"
+   },
+   {
+    "archetype": "premodern-bw-control",
+    "share": 2.0,
+    "mainboard": [
+     [
+      4,
+      "Caves of Koilos"
+     ],
+     [
+      2,
+      "Dust Bowl"
+     ],
+     [
+      9,
+      "Plains"
+     ],
+     [
+      8,
+      "Swamp"
+     ],
+     [
+      2,
+      "Tainted Field"
+     ],
+     [
+      4,
+      "Eternal Dragon"
+     ],
+     [
+      4,
+      "Exalted Angel"
+     ],
+     [
+      3,
+      "Decree of Justice"
+     ],
+     [
+      4,
+      "Duress"
+     ],
+     [
+      4,
+      "Gerrard's Verdict"
+     ],
+     [
+      2,
+      "Skeletal Scrying"
+     ],
+     [
+      1,
+      "Smother"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      4,
+      "Vindicate"
+     ],
+     [
+      2,
+      "Wrath of God"
+     ],
+     [
+      1,
+      "Phyrexian Furnace"
+     ],
+     [
+      2,
+      "Seal of Cleansing"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Circle of Protection: Red"
+     ],
+     [
+      2,
+      "Disenchant"
+     ],
+     [
+      3,
+      "Engineered Plague"
+     ],
+     [
+      1,
+      "Haunting Echoes"
+     ],
+     [
+      1,
+      "Infest"
+     ],
+     [
+      1,
+      "Phyrexian Furnace"
+     ],
+     [
+      2,
+      "Rancid Earth"
+     ],
+     [
+      1,
+      "Sacred Ground"
+     ],
+     [
+      2,
+      "Warmth"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93063&d=906962&f=PREM"
+   },
+   {
+    "archetype": "premodern-mono-red-control",
+    "share": 1.0,
+    "mainboard": [
+     [
+      1,
+      "Barbarian Ring"
+     ],
+     [
+      2,
+      "Ghitu Encampment"
+     ],
+     [
+      4,
+      "Mishra's Factory"
+     ],
+     [
+      11,
+      "Mountain"
+     ],
+     [
+      4,
+      "Rishadan Port"
+     ],
+     [
+      4,
+      "Wasteland"
+     ],
+     [
+      3,
+      "Avalanche Riders"
+     ],
+     [
+      2,
+      "Grim Lavamancer"
+     ],
+     [
+      4,
+      "Mogg Fanatic"
+     ],
+     [
+      3,
+      "Veteran Brawlers"
+     ],
+     [
+      1,
+      "Earthquake"
+     ],
+     [
+      2,
+      "Firebolt"
+     ],
+     [
+      2,
+      "Incinerate"
+     ],
+     [
+      4,
+      "Lightning Bolt"
+     ],
+     [
+      4,
+      "Pillage"
+     ],
+     [
+      1,
+      "Raze"
+     ],
+     [
+      4,
+      "Stone Rain"
+     ],
+     [
+      2,
+      "Cursed Scroll"
+     ],
+     [
+      2,
+      "Phyrexian Furnace"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Anarchy"
+     ],
+     [
+      2,
+      "Black Vise"
+     ],
+     [
+      1,
+      "Earthquake"
+     ],
+     [
+      2,
+      "Mogg Salvage"
+     ],
+     [
+      1,
+      "Nevinyrral's Disk"
+     ],
+     [
+      2,
+      "Overload"
+     ],
+     [
+      1,
+      "Pyroblast"
+     ],
+     [
+      2,
+      "Red Elemental Blast"
+     ],
+     [
+      2,
+      "Zuran Orb"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=92657&d=903831&f=PREM"
+   },
+   {
+    "archetype": "premodern-other-control",
+    "share": 1.0,
+    "mainboard": [
+     [
+      1,
+      "Brushland"
+     ],
+     [
+      2,
+      "City of Brass"
+     ],
+     [
+      2,
+      "Forest"
+     ],
+     [
+      3,
+      "Island"
+     ],
+     [
+      4,
+      "Llanowar Wastes"
+     ],
+     [
+      2,
+      "Phyrexian Tower"
+     ],
+     [
+      2,
+      "Plains"
+     ],
+     [
+      2,
+      "Swamp"
+     ],
+     [
+      4,
+      "Yavimaya Coast"
+     ],
+     [
+      4,
+      "Academy Rector"
+     ],
+     [
+      2,
+      "Krosan Tusker"
+     ],
+     [
+      4,
+      "Veteran Explorer"
+     ],
+     [
+      4,
+      "Cabal Therapy"
+     ],
+     [
+      1,
+      "Decree of Justice"
+     ],
+     [
+      1,
+      "Dromar's Charm"
+     ],
+     [
+      4,
+      "Fact or Fiction"
+     ],
+     [
+      3,
+      "Gaea's Blessing"
+     ],
+     [
+      4,
+      "Impulse"
+     ],
+     [
+      3,
+      "Innocent Blood"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      2,
+      "Decree of Silence"
+     ],
+     [
+      1,
+      "Future Sight"
+     ],
+     [
+      2,
+      "Pernicious Deed"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Aura of Silence"
+     ],
+     [
+      1,
+      "Decree of Pain"
+     ],
+     [
+      1,
+      "Decree of Silence"
+     ],
+     [
+      1,
+      "Envelop"
+     ],
+     [
+      3,
+      "Meddling Mage"
+     ],
+     [
+      1,
+      "Overgrown Estate"
+     ],
+     [
+      2,
+      "Pernicious Deed"
+     ],
+     [
+      1,
+      "Phyrexian Furnace"
+     ],
+     [
+      1,
+      "Ray of Revelation"
+     ],
+     [
+      1,
+      "Sphere of Law"
+     ],
+     [
+      1,
+      "Tsabo's Web"
+     ],
+     [
+      1,
+      "Wrath of God"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93065&d=906976&f=PREM"
+   },
+   {
+    "archetype": "premodern-stiflenought",
+    "share": 9.0,
+    "mainboard": [
+     [
+      17,
+      "Island"
+     ],
+     [
+      4,
+      "Phyrexian Dreadnought"
+     ],
+     [
+      2,
+      "Chain of Vapor"
+     ],
+     [
+      4,
+      "Counterspell"
+     ],
+     [
+      2,
+      "Daze"
+     ],
+     [
+      2,
+      "Flash of Insight"
+     ],
+     [
+      4,
+      "Foil"
+     ],
+     [
+      4,
+      "Gush"
+     ],
+     [
+      2,
+      "Impulse"
+     ],
+     [
+      1,
+      "Misdirection"
+     ],
+     [
+      4,
+      "Opt"
+     ],
+     [
+      4,
+      "Portent"
+     ],
+     [
+      4,
+      "Stifle"
+     ],
+     [
+      1,
+      "Thwart"
+     ],
+     [
+      4,
+      "Vision Charm"
+     ],
+     [
+      1,
+      "Powder Keg"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Annul"
+     ],
+     [
+      2,
+      "Back to Basics"
+     ],
+     [
+      3,
+      "Brain Freeze"
+     ],
+     [
+      3,
+      "Essence Flare"
+     ],
+     [
+      4,
+      "Hydroblast"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93064&d=906971&f=PREM"
+   },
+   {
+    "archetype": "premodern-enchantress",
+    "share": 8.0,
+    "mainboard": [
+     [
+      4,
+      "Brushland"
+     ],
+     [
+      5,
+      "Forest"
+     ],
+     [
+      3,
+      "Plains"
+     ],
+     [
+      4,
+      "Serra's Sanctum"
+     ],
+     [
+      4,
+      "Windswept Heath"
+     ],
+     [
+      2,
+      "Wooded Foothills"
+     ],
+     [
+      4,
+      "Argothian Enchantress"
+     ],
+     [
+      2,
+      "Replenish"
+     ],
+     [
+      2,
+      "Swords to Plowshares"
+     ],
+     [
+      3,
+      "Aura of Silence"
+     ],
+     [
+      4,
+      "Enchantress's Presence"
+     ],
+     [
+      1,
+      "Exploration"
+     ],
+     [
+      4,
+      "Mirri's Guile"
+     ],
+     [
+      3,
+      "Opalescence"
+     ],
+     [
+      3,
+      "Parallax Wave"
+     ],
+     [
+      3,
+      "Seal of Cleansing"
+     ],
+     [
+      2,
+      "Solitary Confinement"
+     ],
+     [
+      3,
+      "Sterling Grove"
+     ],
+     [
+      4,
+      "Wild Growth"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Abeyance"
+     ],
+     [
+      2,
+      "Karmic Justice"
+     ],
+     [
+      1,
+      "Replenish"
+     ],
+     [
+      2,
+      "Sacred Ground"
+     ],
+     [
+      1,
+      "Sphere of Law"
+     ],
+     [
+      2,
+      "Tormod's Crypt"
+     ],
+     [
+      2,
+      "Warmth"
+     ],
+     [
+      3,
+      "Xantid Swarm"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93036&d=906753&f=PREM"
+   },
+   {
+    "archetype": "premodern-replenish",
+    "share": 6.0,
+    "mainboard": [
+     [
+      4,
+      "Adarkar Wastes"
+     ],
+     [
+      4,
+      "Ancient Tomb"
+     ],
+     [
+      4,
+      "Flooded Strand"
+     ],
+     [
+      5,
+      "Island"
+     ],
+     [
+      5,
+      "Plains"
+     ],
+     [
+      4,
+      "Skycloud Expanse"
+     ],
+     [
+      4,
+      "Frantic Search"
+     ],
+     [
+      3,
+      "Intuition"
+     ],
+     [
+      4,
+      "Replenish"
+     ],
+     [
+      4,
+      "Swords to Plowshares"
+     ],
+     [
+      4,
+      "Attunement"
+     ],
+     [
+      3,
+      "Decree of Silence"
+     ],
+     [
+      1,
+      "Legacy's Allure"
+     ],
+     [
+      4,
+      "Opalescence"
+     ],
+     [
+      4,
+      "Parallax Wave"
+     ],
+     [
+      3,
+      "Seal of Cleansing"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Abeyance"
+     ],
+     [
+      1,
+      "Alter Reality"
+     ],
+     [
+      1,
+      "Blue Elemental Blast"
+     ],
+     [
+      1,
+      "Disenchant"
+     ],
+     [
+      2,
+      "Essence Flare"
+     ],
+     [
+      1,
+      "Light of Day"
+     ],
+     [
+      4,
+      "Meddling Mage"
+     ],
+     [
+      1,
+      "Sphere of Law"
+     ],
+     [
+      2,
+      "Tsabo's Web"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93064&d=906970&f=PREM"
+   },
+   {
+    "archetype": "premodern-full-english-breakfast",
+    "share": 3.0,
+    "mainboard": [
+     [
+      1,
+      "Brushland"
+     ],
+     [
+      4,
+      "City of Brass"
+     ],
+     [
+      4,
+      "Gemstone Mine"
+     ],
+     [
+      4,
+      "Llanowar Wastes"
+     ],
+     [
+      3,
+      "Reflecting Pool"
+     ],
+     [
+      1,
+      "Treva's Ruins"
+     ],
+     [
+      1,
+      "Undiscovered Paradise"
+     ],
+     [
+      4,
+      "Yavimaya Coast"
+     ],
+     [
+      1,
+      "Akroma, Angel of Wrath"
+     ],
+     [
+      1,
+      "Battlefield Scrounger"
+     ],
+     [
+      4,
+      "Birds of Paradise"
+     ],
+     [
+      2,
+      "Elvish Spirit Guide"
+     ],
+     [
+      4,
+      "Hermit Druid"
+     ],
+     [
+      1,
+      "Karmic Guide"
+     ],
+     [
+      1,
+      "Palinchron"
+     ],
+     [
+      1,
+      "Phyrexian Devourer"
+     ],
+     [
+      1,
+      "Psychatog"
+     ],
+     [
+      1,
+      "Squee, Goblin Nabob"
+     ],
+     [
+      1,
+      "Triskelion"
+     ],
+     [
+      2,
+      "Volrath's Shapeshifter"
+     ],
+     [
+      3,
+      "Wall of Roots"
+     ],
+     [
+      4,
+      "Cabal Therapy"
+     ],
+     [
+      1,
+      "Krosan Reclamation"
+     ],
+     [
+      2,
+      "Shallow Grave"
+     ],
+     [
+      3,
+      "Unearth"
+     ],
+     [
+      1,
+      "Animate Dead"
+     ],
+     [
+      4,
+      "Survival of the Fittest"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Auramancer"
+     ],
+     [
+      2,
+      "Duress"
+     ],
+     [
+      1,
+      "Enlightened Tutor"
+     ],
+     [
+      1,
+      "Ghitu Slinger"
+     ],
+     [
+      1,
+      "Monk Realist"
+     ],
+     [
+      2,
+      "Naturalize"
+     ],
+     [
+      2,
+      "Pyroclasm"
+     ],
+     [
+      1,
+      "Ray of Revelation"
+     ],
+     [
+      1,
+      "Swords to Plowshares"
+     ],
+     [
+      1,
+      "Uktabi Orangutan"
+     ],
+     [
+      2,
+      "Xantid Swarm"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93066&d=906992&f=PREM"
+   },
+   {
+    "archetype": "premodern-stasis",
+    "share": 2.0,
+    "mainboard": [
+     [
+      4,
+      "Forsaken City"
+     ],
+     [
+      15,
+      "Island"
+     ],
+     [
+      4,
+      "Shivan Reef"
+     ],
+     [
+      1,
+      "Brain Freeze"
+     ],
+     [
+      4,
+      "Chain of Vapor"
+     ],
+     [
+      4,
+      "Counterspell"
+     ],
+     [
+      3,
+      "Daze"
+     ],
+     [
+      3,
+      "Fire // Ice"
+     ],
+     [
+      1,
+      "Flash of Insight"
+     ],
+     [
+      4,
+      "Gush"
+     ],
+     [
+      4,
+      "Impulse"
+     ],
+     [
+      1,
+      "Mana Short"
+     ],
+     [
+      3,
+      "Thwart"
+     ],
+     [
+      1,
+      "Upheaval"
+     ],
+     [
+      3,
+      "Black Vise"
+     ],
+     [
+      1,
+      "Root Maze"
+     ],
+     [
+      4,
+      "Stasis"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Annul"
+     ],
+     [
+      2,
+      "Blue Elemental Blast"
+     ],
+     [
+      1,
+      "Brain Freeze"
+     ],
+     [
+      2,
+      "Chill"
+     ],
+     [
+      2,
+      "Cursed Totem"
+     ],
+     [
+      2,
+      "Gaea's Blessing"
+     ],
+     [
+      2,
+      "Pyroclasm"
+     ],
+     [
+      1,
+      "Upheaval"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93059&d=906946&f=PREM"
+   },
+   {
+    "archetype": "premodern-reanimator",
+    "share": 1.0,
+    "mainboard": [
+     [
+      3,
+      "City of Brass"
+     ],
+     [
+      3,
+      "Gemstone Mine"
+     ],
+     [
+      3,
+      "Swamp"
+     ],
+     [
+      4,
+      "Underground River"
+     ],
+     [
+      1,
+      "Undiscovered Paradise"
+     ],
+     [
+      3,
+      "Akroma, Angel of Wrath"
+     ],
+     [
+      1,
+      "Avatar of Woe"
+     ],
+     [
+      3,
+      "Petradon"
+     ],
+     [
+      4,
+      "Phantom Nishoba"
+     ],
+     [
+      4,
+      "Putrid Imp"
+     ],
+     [
+      1,
+      "Verdant Force"
+     ],
+     [
+      4,
+      "Cabal Therapy"
+     ],
+     [
+      4,
+      "Careful Study"
+     ],
+     [
+      4,
+      "Dark Ritual"
+     ],
+     [
+      4,
+      "Exhume"
+     ],
+     [
+      2,
+      "Life // Death"
+     ],
+     [
+      4,
+      "Reanimate"
+     ],
+     [
+      1,
+      "Sickening Dreams"
+     ],
+     [
+      1,
+      "Unmask"
+     ],
+     [
+      2,
+      "Animate Dead"
+     ],
+     [
+      4,
+      "Lotus Petal"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Akroma, Angel of Wrath"
+     ],
+     [
+      1,
+      "Crumble"
+     ],
+     [
+      1,
+      "Duress"
+     ],
+     [
+      1,
+      "Ihsan's Shade"
+     ],
+     [
+      1,
+      "Iridescent Angel"
+     ],
+     [
+      2,
+      "Multani, Maro-Sorcerer"
+     ],
+     [
+      3,
+      "Naturalize"
+     ],
+     [
+      4,
+      "Oath of Druids"
+     ],
+     [
+      1,
+      "Sickening Dreams"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93020&d=906629&f=PREM"
+   }
+  ]
+ }
+}

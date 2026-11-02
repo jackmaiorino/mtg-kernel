@@ -1740,3 +1740,59 @@ fn gpu_exact_learner_preserves_every_bit() {
     assert_eq!(receipt["updates"], 3, "{receipt}");
     eprintln!("{receipt}");
 }
+
+/// A real device fault in the GPU learner's second update (the
+/// fault-injection trigger `learner:2` launches a trapping kernel) fails that
+/// update closed: the step returns the error, the train state keeps the
+/// first update's bits (equal to the CPU's, so a CPU resume from it is the
+/// CPU run), and the receipt records the fatal error with no CPU fallback.
+/// The segment-level fault and CPU resume run with the RT1 binary in the S3b
+/// qualification. Run alone, in its own process (the fault is sticky):
+/// `MTG_KERNEL_GPU_EXACT_FAULT=learner:2 MTG_KERNEL_GPU_EXACT_TEST_ORDINAL=N
+/// cargo test --release --features gpu-exact-fault-injection-v1 --lib --
+/// --exact --ignored
+/// native_policy_train_step_v1::gae_v1::tests::gpu_exact_learner_fault_fails_the_update_closed`.
+#[cfg(feature = "gpu-exact-fault-injection-v1")]
+#[test]
+#[ignore = "needs a CUDA device and its own process (MTG_KERNEL_GPU_EXACT_FAULT=learner:2)"]
+fn gpu_exact_learner_fault_fails_the_update_closed() {
+    if std::env::var("MTG_KERNEL_GPU_EXACT_FAULT").as_deref() != Ok("learner:2") {
+        eprintln!("skipped: set MTG_KERNEL_GPU_EXACT_FAULT=learner:2 and run this test alone");
+        return;
+    }
+    let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .parse()
+        .unwrap();
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = many_substeps(&fixture, 120);
+    let batch = physical_groups(&steps);
+    let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    assert!(
+        !crate::gpu_exact_v1::learner_installed_v1(),
+        "run this test alone"
+    );
+    let mut cpu = start.clone();
+    profiled_step(&mut cpu, &batch, 4).unwrap();
+    let after_first = state_bits(&cpu);
+    let second_fixture = Fixture::capture(&cpu.model);
+    let second_steps = many_substeps(&second_fixture, 80);
+    let second_batch = physical_groups(&second_steps);
+    crate::gpu_exact_v1::install_learner_v1(ordinal).unwrap();
+    let mut gpu = start.clone();
+    profiled_step(&mut gpu, &batch, 4).unwrap();
+    assert_eq!(state_bits(&gpu), after_first);
+    let error = profiled_step(&mut gpu, &second_batch, 4).expect_err("the faulted update fails");
+    eprintln!("{error:?}");
+    assert_eq!(
+        state_bits(&gpu),
+        after_first,
+        "no state from the failed update"
+    );
+    let receipt = crate::gpu_exact_v1::learner_receipt_v1().unwrap();
+    assert_eq!(receipt["updates"], 1, "{receipt}");
+    assert_eq!(receipt["cpu_fallbacks"], 0, "{receipt}");
+    assert!(receipt["fatal_error"].is_string(), "{receipt}");
+    eprintln!("{receipt}");
+}

@@ -3777,6 +3777,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             ex1,
             output_directory,
         } => {
+            // Serial collection plays on this thread: its policy forwards use
+            // the exact GPU service too when the run installed one (same
+            // bits), as the parallel collector threads do.
+            #[cfg(feature = "gpu-exact-v1")]
+            let _gpu = crate::gpu_exact_v1::service::enter_collector_v1();
             let collection_started = std::time::Instant::now();
             ensure(
                 !episodes.is_empty() && episodes.len() <= 1024,

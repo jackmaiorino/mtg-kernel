@@ -4,6 +4,7 @@
 .gitignore text eol=lf
 .python-version text eol=lf
 *.json text eol=lf
+*.jsonl text eol=lf
 *.java text eol=lf
 *.lock text eol=lf
 *.md text eol=lf

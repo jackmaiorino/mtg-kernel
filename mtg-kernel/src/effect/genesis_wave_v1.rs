@@ -919,6 +919,7 @@ pub(crate) fn start(state: &mut GameState, p: &mut EffectContinuation) -> Result
         .take(usize::from(p.ctx.x_value))
         .copied()
         .collect::<Vec<_>>();
+    // spellbench-public-reveal: public reveal to both players.
     for viewer in [player, player.opponent()] {
         state.reveal_library_top(viewer, player, prefix.len());
     }

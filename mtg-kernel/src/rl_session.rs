@@ -3072,6 +3072,24 @@ fn flat_validate_origin_decision_common_scoped_v42(
                         actor_matches(*actor, *player)
                             && flat_ref_matches_object_v1(semantic_source, *source)
                     }
+                    ActionSemanticV1::ChooseEffectNumber {
+                        actor,
+                        source: semantic_source,
+                        number: 0,
+                        minimum: 0,
+                        maximum: 0,
+                    } => {
+                        state.engine.spellbench_neutral_v1.choices
+                            && *option_count == 1
+                            && index == 0
+                            && actor_matches(*actor, *player)
+                            && flat_ref_matches_object_v1(semantic_source, *source)
+                            && state.engine.pending_cast.as_ref().is_some_and(|pending| {
+                                pending.controller == *player
+                                    && pending.spell == *source
+                                    && pending.selected_x_v59().is_none()
+                            })
+                    }
                     _ => false,
                 };
                 if !matches {
@@ -3580,7 +3598,18 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::FinishTargetSelection { .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
         ) => true,
-        // `ChooseEffectNumber` has no concrete engine `Action` (unlike the
+        // Only the private, forced X=0 numeric prompt has a concrete option
+        // action. Its live pending-cast relation is checked above.
+        (
+            ActionSemanticV1::ChooseEffectNumber {
+                number: 0,
+                minimum: 0,
+                maximum: 0,
+                ..
+            },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectOption(0))),
+        ) => true,
+        // Other `ChooseEffectNumber` rows have no concrete engine `Action` (unlike the
         // color case above, no `Action::ChooseEffectOption`-style primitive
         // exists for an arbitrary-range numeric choice), so it stays
         // rejected pending a contract-level decision kind for it.
@@ -6115,6 +6144,14 @@ impl RlEpisodeSessionV1 {
         &self.state
     }
 
+    pub(crate) fn enable_spellbench_neutral_choices(&mut self) {
+        assert_eq!(
+            self.policy_step_count, 0,
+            "neutral choices are a reset-only option"
+        );
+        self.state.engine.spellbench_neutral_v1.choices = true;
+    }
+
     pub fn privileged_environment_hash(&self) -> u64 {
         self.compute_environment_hash(self.current.as_ref())
             .expect("session environment serializes")
@@ -7749,6 +7786,14 @@ impl FastActorSessionV1 {
     /// never `&mut`: the extractor watches, it does not drive.
     pub fn game_state(&self) -> &crate::state::GameState {
         &self.state
+    }
+
+    pub(crate) fn enable_spellbench_neutral_choices(&mut self) {
+        assert_eq!(
+            self.policy_step_count, 0,
+            "neutral choices are a reset-only option"
+        );
+        self.state.engine.spellbench_neutral_v1.choices = true;
     }
 
     /// Audit-only counterpart to

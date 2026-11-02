@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 import struct
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -482,6 +483,69 @@ class DriverTests(unittest.TestCase):
             self.assertEqual((len(walks), driver.volume(self.campaign)["finished"]), (2, 0))
         events = [json.loads(line) for line in self.campaign.events.read_text().splitlines()]
         self.assertEqual([e["kind"] for e in events].count("volume-walk"), 2)  # each walk measured
+
+    def test_a_dispatch_request_carries_its_admission_walk(self):
+        """#463: the walk a block was admitted on goes in its request (the dispatcher checks the same numbers
+        without walking), and each walk is published for the dispatchers' emergency samples."""
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.scratch_campaign(projected=1000)
+        (self.root / "volume").mkdir()
+        (self.root / "volume" / "kept").write_bytes(b"x" * 300)
+        state = {"run": "G4", "status": "running", "blocks": {}}
+        requests = []
+
+        def dispatched(path, host):
+            requests.append(json.loads(Path(path).read_text(encoding="utf-8")))
+            return {"state": "refused"}
+        with self.disk(free=10**6, total=10**6),                 patch.object(driver, "block_spec", return_value={}),                 patch.object(driver.g, "block_config", return_value={}),                 patch.object(driver.g, "require_runtime_rules"),                 patch.object(driver, "request_for", return_value={"storage": self.campaign.raw["storage"]}),                 patch.object(driver.Campaign, "wall_stop", return_value=None),                 patch.object(driver.base, "dispatch_block", side_effect=dispatched):
+            self.assertEqual(driver.run_block(self.campaign, "G4", 1, state), "stopped")
+        admission = requests[0]["admission"]
+        shared = self.campaign.state / driver.SHARED_WALK
+        self.assertEqual((admission["logical_bytes"], admission["finished_since"], admission["shared_walk"],
+                          admission["in_flight"]), (300, 0, str(shared), 0))  # no other block in flight
+        self.assertEqual(driver.native_dispatch.admitted_bytes(admission, self.campaign.raw["storage"]), 300)
+        self.assertEqual(driver.native_dispatch.shared_walk(shared)[0], 300)
+        driver.volume(self.campaign)["finished"] = 2  # blocks finished since the walk count at their projection
+        self.assertEqual(driver.native_dispatch.admitted_bytes(driver.admitted(self.campaign),
+                                                               self.campaign.raw["storage"]), 300 + 2 * 1000)
+        driver.VOLUMES.clear()
+        self.assertIsNone(driver.admitted(self.campaign))  # nothing walked: the dispatcher walks
+        with self.disk(free=10**6, total=10**6):
+            self.assertEqual(driver.admitted(self.campaign, walk=True)["logical_bytes"], 300)  # the choice check
+
+    def test_one_background_walker_publishes_while_blocks_are_in_flight(self):
+        """#463: one walker per volume in the driver serves every dispatcher's emergency samples."""
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.addCleanup(driver.stop_walkers)
+        self.scratch_campaign()
+        raw = json.loads(self.path.read_text())
+        raw["storage"]["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
+        self.write(raw)
+        (self.root / "volume").mkdir()
+        (self.root / "volume" / "kept").write_bytes(b"x" * 300)
+        shared = self.campaign.state / driver.SHARED_WALK
+        touched = []
+        with patch.object(driver, "WALKER_POLL_SECONDS", 0.05),                 patch.object(driver, "touch", lambda campaign: touched.append(1)):
+            starters = [threading.Thread(target=driver.start_walker, args=(self.campaign,)) for _ in range(8)]
+            for starter in starters:  # eight admissions at once start one walker
+                starter.start()
+            for starter in starters:
+                starter.join()
+            self.assertEqual(len(driver.WALKERS), 1)
+            self.assertEqual(sum(thread.name == "volume-walker" for thread in threading.enumerate()), 1)
+            time.sleep(0.3)
+            self.assertIsNone(driver.native_dispatch.shared_walk(shared))  # nothing in flight: no walk
+            driver.SCRATCH_INFLIGHT.add(str(self.root / "container" / "a"))
+            deadline = time.monotonic() + 10
+            while driver.native_dispatch.shared_walk(shared) is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            found = driver.native_dispatch.shared_walk(shared)
+            self.assertEqual((found[0], found[3]), (300, 1))  # its bytes and the blocks in flight at its start
+            time.sleep(0.3)
+            self.assertEqual(driver.native_dispatch.shared_walk(shared), found)  # fresh: not walked again
+        self.assertEqual(touched, [])  # its walks are not the lease's progress
+        driver.stop_walkers()
+        self.assertEqual(driver.WALKERS, {})
 
     def test_a_long_volume_walk_records_driver_work_while_it_runs(self):
         self.scratch_campaign()

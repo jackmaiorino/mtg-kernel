@@ -4,6 +4,8 @@ version = "0.0.4"
 edition.workspace = true
 
 [dependencies]
+base64 = "=0.22.1"
+flate2 = "=1.1.9"
 # Global allocator for most binaries (`fast_global_allocator!`; the exclusions
 # are listed in lib.rs): faster than the system allocator on the search,
 # training and evaluation hot paths. Fixed-work outputs are unchanged; see

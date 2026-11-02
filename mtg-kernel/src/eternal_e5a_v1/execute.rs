@@ -377,6 +377,7 @@ fn oath_reveal(state: &mut GameState, player: PlayerId) -> Result<(), String> {
             .is_some_and(|def| def.has_type(CardType::Creature))
     });
     let revealed = found.map_or(library.len(), |index| index + 1);
+    // spellbench-public-reveal: public reveal to both players.
     for observer in [PlayerId::P0, PlayerId::P1] {
         state.reveal_library_top(observer, player, revealed);
     }

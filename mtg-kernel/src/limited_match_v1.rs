@@ -678,6 +678,28 @@ pub fn play_game_v1(
     starting_player: PlayerId,
     limits: GameLimitsV1,
 ) -> GameResultV1 {
+    play_game_observed_v1(
+        decks,
+        policies,
+        beliefs,
+        env_seed,
+        starting_player,
+        limits,
+        &mut |_| {},
+    )
+}
+
+/// [`play_game_v1`], showing `observe` the session before each step and at
+/// the end.
+pub(crate) fn play_game_observed_v1(
+    decks: [&[u16]; 2],
+    policies: [&PolicySpecV1; 2],
+    beliefs: [Option<&LimitedBeliefV1>; 2],
+    env_seed: u64,
+    starting_player: PlayerId,
+    limits: GameLimitsV1,
+    observe: &mut dyn FnMut(&FastActorSessionV1),
+) -> GameResultV1 {
     let mut result = GameResultV1 {
         outcome: GameOutcomeV1::Stall,
         turns: 0,
@@ -733,6 +755,7 @@ pub fn play_game_v1(
         &[env_seed],
     ));
     loop {
+        observe(&session);
         result.turns = session.game_state().turn;
         let decision = match session.current_response() {
             FastActorResponseV1::Terminal(t) => {
