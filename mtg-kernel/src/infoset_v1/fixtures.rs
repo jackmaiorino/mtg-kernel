@@ -160,6 +160,21 @@ pub(crate) fn pick(name: &str) -> IntentV1 {
     )
 }
 
+/// Choose a card whose name is none of `names` (a role, not a name: the
+/// first such candidate in decision-local order).
+pub(crate) fn pick_other_than(names: &[&str]) -> IntentV1 {
+    let ds: Vec<u64> = names.iter().map(|n| u64::from(id(n))).collect();
+    IntentV1::Take(
+        format!("pick a card other than {names:?}"),
+        Box::new(move |v| {
+            matches!(
+                kind(v),
+                "choose_target" | "choose_effect_target" | "choose_cost_target"
+            ) && named_def(v).is_some_and(|d| !ds.contains(&d))
+        }),
+    )
+}
+
 /// Discard a card named `name` (cleanup to hand size).
 pub(crate) fn discard(name: &str) -> IntentV1 {
     let d = u64::from(id(name));
@@ -200,7 +215,7 @@ pub(crate) fn edit(what: &str, f: impl Fn(&mut GameState) + 'static) -> IntentV1
 /// The default answer: pass, attack and block with nothing, decline, target
 /// the other player, finish a selection, else the smallest decision-local
 /// candidate (independent of native ids).
-fn default_choice(vals: &[Value], local: &[Vec<u8>], p: PlayerId) -> usize {
+fn default_choice(vals: &[Value], local: &[Vec<u8>], p: PlayerId, keep: &BTreeSet<u64>) -> usize {
     let me = if p == PlayerId::P0 { "p0" } else { "p1" };
     let rank = |v: &Value| -> u8 {
         let empty = |k: &str| v[k].as_array().is_some_and(Vec::is_empty);
@@ -219,6 +234,15 @@ fn default_choice(vals: &[Value], local: &[Vec<u8>], p: PlayerId) -> usize {
                 1
             }
             "finish_effect_selection" | "finish_target_selection" => 2,
+            // Cleanup discards never take a card the script still needs.
+            "discard"
+                if v["cards"][0]["card_db_id"]
+                    .as_u64()
+                    .is_some_and(|d| !keep.contains(&d)) =>
+            {
+                3
+            }
+            "discard" => 8,
             "activate_mana_ability" | "play_land" | "cast_spell" | "activate_ability"
             | "plot_spell" => 9,
             _ => 5,
@@ -245,6 +269,8 @@ pub(crate) struct ScriptV1 {
     pub native: Vec<Value>,
     /// Library positions the script's edits exchanged: (decision, a, b).
     pub edits: Vec<(usize, ObjectId, ObjectId)>,
+    /// Cards a seat's default cleanup discard never takes.
+    pub keep: [BTreeSet<u64>; 2],
 }
 
 impl ScriptV1 {
@@ -257,7 +283,12 @@ impl ScriptV1 {
             steps: 0,
             native: Vec::new(),
             edits: Vec::new(),
+            keep: [BTreeSet::new(), BTreeSet::new()],
         }
+    }
+
+    pub(crate) fn keep(&mut self, p: PlayerId, names: &[&str]) {
+        self.keep[p.index()].extend(names.iter().map(|n| u64::from(id(n))));
     }
 
     pub(crate) fn push(&mut self, p: PlayerId, xs: Vec<IntentV1>) {
@@ -374,7 +405,7 @@ impl ScriptV1 {
             if choice.is_some() {
                 self.intents[p.index()].pop_front();
             }
-            let i = choice.unwrap_or_else(|| default_choice(&vals, &local, p));
+            let i = choice.unwrap_or_else(|| default_choice(&vals, &local, p, &self.keep[p.index()]));
             self.native.push(vals[i].clone());
             let st = self.s.game_state();
             self.trace.push(format!(
@@ -636,8 +667,10 @@ pub(crate) fn spy_versus_terror(put_back: [&str; 2]) -> ScriptV1 {
 /// Faeries (P1). CawGates casts Squadron Hawk and fetches the other three,
 /// then Brainstorms returning `put_back`; Faeries Snaps the battlefield Hawk
 /// back. The survivor tree is ({Hawk x3}, 1); the bounced Hawk is tracked
-/// and never counts toward it.
-pub(crate) fn fable_bounce(put_back: [&str; 2]) -> ScriptV1 {
+/// and never counts toward it. `hawks` of the two returned cards are Hawks
+/// (the others are untracked cards: the Hawk search shuffles the library,
+/// so the Brainstorm's draws are named by role).
+pub(crate) fn fable_bounce(hawks: usize) -> ScriptV1 {
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let live = new_game(["CawGates", "Faeries"], 72, o);
     let mut st = live.game_state().clone();
@@ -679,13 +712,21 @@ pub(crate) fn fable_bounce(put_back: [&str; 2]) -> ScriptV1 {
             pick("Squadron Hawk"),
             pick("Squadron Hawk"),
             pick("Squadron Hawk"),
-            discard("Journey to Nowhere"),
             play_land("Island"),
             cast("Brainstorm"),
-            pick(put_back[0]),
-            pick(put_back[1]),
+            if hawks >= 1 {
+                pick("Squadron Hawk")
+            } else {
+                pick_other_than(&["Squadron Hawk"])
+            },
+            if hawks >= 2 {
+                pick("Squadron Hawk")
+            } else {
+                pick_other_than(&["Squadron Hawk"])
+            },
         ],
     );
+    script.keep(o, &["Island", "Squadron Hawk", "Brainstorm"]);
     script.push(
         v,
         vec![
@@ -706,12 +747,13 @@ pub(crate) fn fable_bounce(put_back: [&str; 2]) -> ScriptV1 {
 }
 
 /// The CawGates Lorien fixture (Astra r6-1, R8b). V is Faeries (P1).
-/// CawGates fetches the other three Hawks (turn 2), plays its third Island
-/// (turn 4), islandcycles a Lorien for the last library Island, Brainstorms
-/// returning `put_back` and islandcycles the second Lorien. F is
-/// ({Hawk x3, Island}, 2) after the Brainstorm; a search that finds the
-/// Island refuses (R8b) from then on.
-pub(crate) fn cawgates_lorien(put_back: [&str; 2]) -> ScriptV1 {
+/// CawGates fetches the other three Hawks (its third turn), plays its third
+/// Island and islandcycles a Lorien for the last library Island (its fourth
+/// turn), Brainstorms returning that Island and `with`, and islandcycles the
+/// second Lorien. F is ({Hawk x3, Island}, 2) after the Brainstorm; the
+/// second search finds the Island and refuses (R8b) from then on. `with` is
+/// "Squadron Hawk" or None (an untracked card).
+pub(crate) fn cawgates_lorien(with: Option<&str>) -> ScriptV1 {
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let live = new_game(["CawGates", "Faeries"], 73, o);
     let mut st = live.game_state().clone();
@@ -725,9 +767,9 @@ pub(crate) fn cawgates_lorien(put_back: [&str; 2]) -> ScriptV1 {
             "Squadron Hawk",
             "Lorien Revealed",
             "Lorien Revealed",
-            "Sacred Cat",
+            "Brainstorm",
         ],
-        &["Island", "Thraben Charm", "Brainstorm", "Spell Pierce", "Preordain", "The Modern Age"],
+        &["Island", "Sacred Cat", "Thraben Charm", "Spell Pierce"],
     );
     force_deal(
         &mut st,
@@ -743,21 +785,27 @@ pub(crate) fn cawgates_lorien(put_back: [&str; 2]) -> ScriptV1 {
         vec![
             play_land("Azorius Guildgate"),
             play_land("Island"),
+            play_land("Island"),
             cast("Squadron Hawk"),
             pick("Squadron Hawk"),
             pick("Squadron Hawk"),
             pick("Squadron Hawk"),
-            discard("Sacred Cat"),
-            play_land("Island"),
             play_land("Island"),
             activate("Lorien Revealed"),
             pick("Island"),
             cast("Brainstorm"),
-            pick(put_back[0]),
-            pick(put_back[1]),
+            pick("Island"),
+            match with {
+                Some(name) => pick(name),
+                None => pick_other_than(&["Squadron Hawk", "Island", "Lorien Revealed"]),
+            },
             activate("Lorien Revealed"),
             pick("Island"),
         ],
+    );
+    script.keep(
+        o,
+        &["Island", "Squadron Hawk", "Brainstorm", "Lorien Revealed"],
     );
     script.push(
         v,
@@ -958,14 +1006,9 @@ fn spy_versus_terror_engine_fixture() {
 #[test]
 fn fable_bounce_engine_fixture() {
     let v = PlayerId::P1;
-    let variants = [
-        ["Spell Pierce", "Preordain"],
-        ["Squadron Hawk", "Squadron Hawk"],
-        ["Squadron Hawk", "The Modern Age"],
-    ];
-    let runs: Vec<_> = variants
+    let runs: Vec<_> = [0, 2, 1]
         .iter()
-        .map(|pb| record(fable_bounce(*pb), v, 30))
+        .map(|hawks| record(fable_bounce(*hawks), v, 30))
         .collect();
     let (records, reports) = pairs("fable-bounce", runs);
     let node = (vec!["Squadron Hawk".to_string(); 3], 1);
@@ -989,13 +1032,9 @@ fn cawgates_lorien_engine_fixture() {
     let v = PlayerId::P1;
     // Both variants return the fetched Island, so the second Lorien finds
     // it in both worlds.
-    let variants = [
-        ["Island", "Squadron Hawk"],
-        ["Island", "Spell Pierce"],
-    ];
-    let runs: Vec<_> = variants
+    let runs: Vec<_> = [Some("Squadron Hawk"), None]
         .iter()
-        .map(|pb| record(cawgates_lorien(*pb), v, 20))
+        .map(|with| record(cawgates_lorien(*with), v, 20))
         .collect();
     let (records, reports) = pairs("cawgates-lorien", runs);
     let node = (
