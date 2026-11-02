@@ -1,8 +1,8 @@
 """E10 acceptance on a real cgroup v2 host (run as root; CI runs it on an Ubuntu runner).
 
 Through the real launcher (`w5box.py run`, qualification mode), in one box:
-- chain `t1`, instances 0 and 1 (a restart): workers burn, the chain pauses at an "update boundary" (the trainer
-  handshake, namespaced by instance), the launcher freezes it and starts the filler in the same box, the filler
+- chain `t1`, instances 0 and 1 (a restart): workers burn, the chain pauses (instance 0 at an "update boundary"
+  by the trainer handshake, instance 1 by the controller's `pause --now`), the launcher freezes it and starts the filler in the same box, the filler
   burns for FILLER_SECONDS while the chain's cgroup is sampled, `w5box.py resume` freezes and kills the filler and
   thaws the chain, more workers burn, exit.
 - chain `t2`: an OOM kill is recorded as a chain failure.
@@ -92,8 +92,15 @@ def main() -> int:
     receipt = {"host_class": detected, "kernel": os.uname().release, "layout": layout, "isolation": args.isolation}
     try:
         pauses = []
+        source_path = work / "state" / "t1" / "ledger-source.json"
         for instance in (0, 1):
+            if instance == 1:  # the restart pauses by the controller (freeze now), not the trainer handshake
+                plan["chains"]["t1"]["argv"] = plan["chains"]["t1"]["argv"][:-1]
+                plan_path.write_text(json.dumps(plan, indent=2))
             sup = start(*common, "--chain", "t1", *qual)
+            if instance == 1:
+                wait_for(lambda: chain_cg.exists() and chain_cg.usage_usec() > 1_500_000, 60, "instance 1 running")
+                launcher("pause", *common, "--chain", "t1", "--now")
             wait_for(lambda: any(r["event"] == "pause" and r["instance"] == instance for r in ledger.records()),
                      120, f"the pause of instance {instance}")
             paused = [r for r in ledger.records() if r["event"] == "pause"][-1]["usage_usec"]
@@ -103,12 +110,15 @@ def main() -> int:
                 samples.append(chain_cg.usage_usec())
                 time.sleep(0.5)
             filler_cpus = w5box.parse_cpu_list(filler_cg.read("cpuset.cpus.effective"))
-            launcher("resume", *common, "--chain", "t1", "--payload", json.dumps({"R_i_usec": 123}))
+            source_before = json.loads(source_path.read_text())
+            launcher("resume", *common, "--chain", "t1", "--payload", json.dumps({"stop_at_usec": 987654321}))
             assert sup.wait(timeout=300) == 0, f"t1 instance {instance} failed"
+            source_after = json.loads(source_path.read_text())
             resume = [r for r in ledger.records() if r["event"] == "resume"][-1]
             pauses.append({"instance": instance, "paused_usec": paused, "samples": samples,
                            "resume_usec": resume["usage_usec"], "unchanged": resume["unchanged_since_pause"],
-                           "filler_usage_usec": resume["filler_usage_usec"], "filler_cpus": filler_cpus})
+                           "filler_usage_usec": resume["filler_usage_usec"], "filler_cpus": filler_cpus,
+                           "ledger_source_before": source_before, "ledger_source_after": source_after})
         # t2: an OOM kill is a chain failure
         oom = launcher("run", *common, "--chain", "t2", *qual, check=False)
         oom_close = [r for r in w5box.Ledger(work / "state" / "t2" / "ledger.jsonl").records()
@@ -166,6 +176,12 @@ def main() -> int:
             "filler_burned_in_box": all((p["filler_usage_usec"] or 0) >= 0.5 * FILLER_SECONDS * 1e6
                                         and p["filler_cpus"] == box_cpus for p in pauses),
             "chain_confined_to_box": len(roots) == 2 and all(r["affinity"] == box_cpus for r in roots),
+            "ledger_source_for_the_trainer": all(
+                p["ledger_source_before"]["schema"] == "w5-chain-ledger-source/v1"
+                and p["ledger_source_before"]["instance"] == p["instance"]
+                and p["ledger_source_after"]["stop_at_usec"] == 987654321
+                and p["ledger_source_before"]["cpu_stat"].endswith("/chain/cpu.stat") for p in pauses)
+            and pauses[1]["ledger_source_before"]["closed_usec"] == closes[0]["final_usec"],
             "oom_is_chain_failure": oom.returncode == w5box.EXIT_OOM and oom_close["oom_kill"] > 0
             and oom_close["chain_failure"] is True,
             "recovery_exact_from_cgroup": t3["refused_while_running"] and t3["second_exit"] == 0
