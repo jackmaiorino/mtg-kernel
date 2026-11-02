@@ -124,8 +124,23 @@ class CompareTests(unittest.TestCase):
             rp.training_side([cfg], CARD_NAMES)
 
     def test_bridge_call_detection_ignores_comments(self):
-        self.assertFalse(rp.bridge_rules(["// session.set_runtime_rules_v1(x)"])["calls_set_runtime_rules"])
-        self.assertTrue(rp.bridge_rules(["    session.set_runtime_rules_v1(rules)?;"])["calls_set_runtime_rules"])
+        calls = lambda src: rp.bridge_rules([src])["calls_set_runtime_rules"]  # noqa: E731
+        self.assertFalse(calls("// session.set_runtime_rules_v1(x)"))
+        self.assertFalse(calls("/* a block\n session.set_runtime_rules_v1(x)\n */ let y = 1;"))
+        self.assertFalse(calls('let s = "set_runtime_rules_v1(";'))
+        self.assertTrue(calls("    session.set_runtime_rules_v1(rules)?;"))
+        self.assertTrue(calls("session /* rules */ .set_runtime_rules_v1(rules)?;"))
+
+    def test_learner_must_play_first_and_second(self):
+        cfg = training_config()
+        for entry in cfg["iterations"][0]["episodes"]:
+            entry["episode"]["learner_seat"] = entry["episode"]["starting_player"]
+        self.assertFalse(run(cfg)["checks"]["starting_player_assigned_both_seats"])
+
+    def test_registrations_must_be_complete(self):
+        cfg = training_config()
+        cfg["iterations"][0]["episodes"][0]["episode"]["registered"] = []
+        self.assertFalse(run(cfg)["checks"]["ordinary_starts_game_one"])
 
 
 def has_revision(revision):
