@@ -14127,14 +14127,18 @@ pub(crate) fn validate_pending_cast(
 
     let selected_cost =
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
-    // Replicate's payment count is announced and validated like X.
-    let replicate = !resolution_cast_v1::free_cast(state, pending.spell)
-        && (crate::eternal_cards_v1::replicate_cost(def.name).is_some()
-            || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some());
-    let expected_seed_x: Option<u8> = if resolution_cast_v1::free_cast(state, pending.spell)
-        || (def.cost.x_count == 0
-            && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
-            && !replicate)
+    // Replicate's payment count is announced and validated like X, and so
+    // is Sickening Dreams' "discard X cards", even for a free cast.
+    let discard_x = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def);
+    let replicate = discard_x
+        || (!resolution_cast_v1::free_cast(state, pending.spell)
+            && (crate::eternal_cards_v1::replicate_cost(def.name).is_some()
+                || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()));
+    let expected_seed_x: Option<u8> = if !discard_x
+        && (resolution_cast_v1::free_cast(state, pending.spell)
+            || (def.cost.x_count == 0
+                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
+                && !replicate))
     {
         Some(0)
     } else {

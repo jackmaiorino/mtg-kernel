@@ -470,7 +470,8 @@ opponent (`E3ChoiceKindV1::P1bV1`); the caster takes a Fact or Fiction pile by p
 one of its cards, or at none to take an empty pile. Replenish chooses each Aura's host among
 the permanents already on the battlefield, then returns everything together; an Aura with no
 legal host stays. Sickening Dreams' "discard X cards" announces X like replicate (at most the
-cards in hand). Solitary Confinement skips its controller's draw step and gives them shroud
+cards in hand). Frantic Search chooses its lands before its discard; the two choices are
+independent, so the order is unobservable. Solitary Confinement skips its controller's draw step and gives them shroud
 and damage prevention; Sterling Grove grants shroud; Tsabo's Web keeps lands with nonmana
 activated abilities tapped; Aura of Silence taxes its opponents' artifact and enchantment
 spells. Mishra's Factory and Treetop Village reuse the Standard manland animation, Serra's
@@ -478,7 +479,9 @@ Sanctum Tolarian Academy's yield, and Skycloud Expanse is a paid additional mana
 adding a fixed bundle. Known gaps: the module-state counters are invisible to effects that
 read or move counters generally (no such card is in the catalog); Replenish leaves in the
 graveyard an Aura whose enchant rule neither `AttachmentDef` nor the Standard Aura entry
-models (Animate Dead's "enchant creature card in a graveyard").
+models (Animate Dead's "enchant creature card in a graveyard"); casting Sickening Dreams needs
+another card in hand even for X = 0, since the cast checks accept a one-card discard as the
+cost's shape, and a free cast of it (Omniscience) announces X = 0.
 
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
