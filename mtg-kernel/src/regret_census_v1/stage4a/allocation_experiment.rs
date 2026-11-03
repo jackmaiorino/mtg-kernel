@@ -121,6 +121,7 @@ impl Config {
                 sharing: arm == "B",
                 cpu_seconds,
                 work_limit,
+                value_leaf: None,
             },
             arm,
             seed,

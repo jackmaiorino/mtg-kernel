@@ -19,6 +19,8 @@ pub(crate) struct SearchOptions {
     pub(crate) cpu_seconds: Option<f64>,
     /// Attempted simulations, including rejected samples, for exact replay.
     pub(crate) work_limit: Option<u64>,
+    /// Opt-in value-leaf search (`value_leaf.rs`); None keeps E unchanged.
+    pub(crate) value_leaf: Option<super::value_leaf::ValueLeafV1>,
 }
 
 #[derive(Default)]
