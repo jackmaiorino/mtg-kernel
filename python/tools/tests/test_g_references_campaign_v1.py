@@ -1190,10 +1190,51 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
         self.assertTrue(driver.WALK_STATE[(str(self.root),)]["latched"])
 
+    def test_a_moved_folder_is_measured_empty_before_it_counts_nothing(self):
+        self.walking_campaign()
+        self.sealed_tree([3])
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+        seal = json.loads((self.campaign.state / "seals" / "G2-b003.json").read_text())
+        for item in seal["files"]:
+            (self.root / item["path"]).unlink()
+        stray = self.root / "retained" / "G2" / "b03" / "stray.json"  # not the seal's: the copy-back leaves it
+        stray.write_bytes(b"s" * 27)
+        (self.campaign.state / "moved").mkdir(parents=True)
+        (self.campaign.state / "moved" / "G2-b003.json").write_text('{"deleted": true}')
+        with patch.object(driver.Campaign, "event", lambda self, **fields: None):
+            self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+        self.assertTrue(driver.WALK_STATE[(str(self.root),)]["latched"])
+
+    def test_walks_of_one_process_run_one_at_a_time(self):
+        self.walking_campaign()
+        self.sealed_tree([3])
+        entered, release, order = threading.Event(), threading.Event(), []
+        real = driver.walk_trees
+
+        def slow(*args):
+            order.append("start")
+            entered.set()
+            release.wait(5)
+            result = real(*args)
+            order.append("end")
+            return result
+        with patch.object(driver, "walk_trees", side_effect=slow):
+            first = threading.Thread(target=driver.accounted_bytes, args=(self.campaign,))
+            first.start()
+            entered.wait(5)
+            second = threading.Thread(target=driver.accounted_bytes, args=(self.campaign,))
+            second.start()
+            second.join(0.3)
+            self.assertEqual(order, ["start"])  # the second walk waits for the first
+            release.set()
+            first.join(5); second.join(5)
+        self.assertEqual(order, ["start", "end", "start", "end"])
+
     def test_a_latch_is_never_undone_by_a_later_agreeing_walk(self):
         self.walking_campaign()
         self.sealed_tree([3])
-        driver.WALK_STATE[(str(self.root),)] = {"latched": True, "folders": {}, "static": {}, "static_at": 0.0}
+        driver.WALK_STATE[(str(self.root),)] = {"latched": True, "folders": {}, "moved": set(), "static": {},
+                                                "static_at": 0.0}
         calls, expected = [], self.full_walk()
         real = driver.native_dispatch.accounting_bytes
         with patch.object(driver.native_dispatch, "accounting_bytes", lambda storage: calls.append(1) or real(storage)):
