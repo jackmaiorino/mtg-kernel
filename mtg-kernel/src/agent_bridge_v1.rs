@@ -3458,7 +3458,7 @@ mod tests {
                     for _depth in 0..4 {
                         prefix.push(lockstep_rows[pairing[0]]);
                         let preview = json!({"protocol": SPELLBENCH_PROTOCOL_V1,
-                            "request_type": "preview_steps", "request_id": "pv",
+                            "request_type": "preview_steps", "request_id": format!("pv-{}-{}", response["step"], prefix.len()),
                             "game_id": response["game_id"], "expected_step": response["step"],
                             "candidate_ids": prefix})
                         .to_string();
