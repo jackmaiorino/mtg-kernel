@@ -384,13 +384,130 @@ pub struct PolicySurfaceV5 {
     hunter_order_v45: Option<hunter_order_v45::TriggerOrderV45>,
 }
 
-/// The session surface's public, id-free context, carried by the W1
-/// information-set payload so an imported session flows like the live one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The session surface's public context, carried by the W1 information-set
+/// payload so an imported session flows like the live one. Id-free except
+/// `combat`, whose objects the producer writes as canonical arena indices.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SurfaceContextV1 {
     pub scalars: crate::surface_v2::HarnessSurfaceScalarsV1,
     pub hunter_order_enabled_v45: bool,
+    /// A live combat declaration's progress (amendment 43.1); absent at
+    /// every other decision, so those payloads keep their bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combat: Option<CombatContextV1>,
+}
+
+/// A live combat inclusion scan with the blocker reshape around it
+/// (amendment 43.1): the candidates in the scan's own order, the cursor,
+/// the answered inclusions, and for blocks the per-attacker reshape. All of
+/// it is V's transcript: the order is the order of V's inclusion points,
+/// and the progress is V's own answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CombatContextV1 {
+    pub kind: CombatScanKindV1,
+    pub player: PlayerId,
+    /// The attacker being blocked (blocker scans only).
+    pub attacker: Option<ObjectId>,
+    pub candidates: Vec<ObjectId>,
+    pub cursor: usize,
+    pub selected: Vec<ObjectId>,
+    /// The surface's blocker reshape (blocker scans only).
+    pub blockers: Option<crate::surface_v2::BlockersReshapePublicV2>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CombatScanKindV1 {
+    Attackers,
+    Blockers,
+}
+
+impl CombatContextV1 {
+    /// Every object renamed through `f`; None if any has no image.
+    pub(crate) fn rename(&self, f: impl Fn(ObjectId) -> Option<ObjectId>) -> Option<Self> {
+        let all = |xs: &[ObjectId]| xs.iter().map(|x| f(*x)).collect::<Option<Vec<_>>>();
+        let blockers = match &self.blockers {
+            None => None,
+            Some(b) => Some(crate::surface_v2::BlockersReshapePublicV2 {
+                current_attacker: match b.current_attacker {
+                    None => None,
+                    Some(a) => Some(f(a)?),
+                },
+                accumulated: b
+                    .accumulated
+                    .iter()
+                    .map(|(x, y)| Some((f(*x)?, f(*y)?)))
+                    .collect::<Option<Vec<_>>>()?,
+                remaining: b
+                    .remaining
+                    .iter()
+                    .map(|(a, xs)| Some((f(*a)?, all(xs)?)))
+                    .collect::<Option<Vec<_>>>()?,
+            }),
+        };
+        Some(Self {
+            kind: self.kind,
+            player: self.player,
+            attacker: match self.attacker {
+                None => None,
+                Some(a) => Some(f(a)?),
+            },
+            candidates: all(&self.candidates)?,
+            cursor: self.cursor,
+            selected: all(&self.selected)?,
+            blockers,
+        })
+    }
+
+    /// The import's fail-closed check: objects inside the arena, a presented
+    /// (unexhausted) scan whose selection is a subset of its answered
+    /// prefix, and a blocker scan inside a reshape whose current attacker
+    /// it names.
+    pub(crate) fn validate(&self, arena_len: usize) -> Result<(), String> {
+        let inside = |x: &ObjectId| (x.0 as usize) < arena_len;
+        let mut ids: Vec<&ObjectId> = self.candidates.iter().chain(&self.selected).collect();
+        ids.extend(self.attacker.iter());
+        if let Some(b) = &self.blockers {
+            ids.extend(b.current_attacker.iter());
+            ids.extend(b.accumulated.iter().flat_map(|(x, y)| [x, y]));
+            ids.extend(
+                b.remaining
+                    .iter()
+                    .flat_map(|(a, xs)| std::iter::once(a).chain(xs)),
+            );
+        }
+        if !ids.into_iter().all(inside) {
+            return Err("combat context names an object outside the arena".into());
+        }
+        if self.player.0 > 1 {
+            return Err("combat context player".into());
+        }
+        let mut distinct = self.candidates.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() != self.candidates.len() {
+            return Err("combat context repeats a candidate".into());
+        }
+        if self.candidates.is_empty()
+            || self.cursor >= self.candidates.len()
+            || self.selected.len() > self.cursor
+            || self
+                .selected
+                .iter()
+                .any(|x| !self.candidates[..self.cursor].contains(x))
+        {
+            return Err("combat context progress".into());
+        }
+        match (self.kind, self.attacker, &self.blockers) {
+            (CombatScanKindV1::Attackers, None, None) => Ok(()),
+            (CombatScanKindV1::Blockers, Some(a), Some(b)) if b.current_attacker == Some(a) => {
+                Ok(())
+            }
+            _ => Err("combat context kind".into()),
+        }
+    }
 }
 
 impl PolicySurfaceV5 {
@@ -403,7 +520,84 @@ impl PolicySurfaceV5 {
         Some(SurfaceContextV1 {
             scalars: self.inner.infoset_context_v1()?,
             hunter_order_enabled_v45: self.hunter_order_enabled_v45,
+            combat: None,
         })
+    }
+
+    /// As `infoset_context_v1`, and during a combat scan the context with
+    /// its combat record in native object ids (the producer renames them).
+    /// None while a Hunter trigger order or another reshape names objects.
+    pub(crate) fn infoset_context_with_combat_v1(&self) -> Option<SurfaceContextV1> {
+        let Some(scan) = &self.scan else {
+            return self.infoset_context_v1();
+        };
+        if self.hunter_order_v45.is_some() {
+            return None;
+        }
+        let blockers = self.inner.public_context().blockers;
+        let combat = match scan {
+            CombatScanV5::Attackers {
+                player,
+                ordered_candidates,
+                cursor,
+                selected,
+                ..
+            } => CombatContextV1 {
+                kind: CombatScanKindV1::Attackers,
+                player: *player,
+                attacker: None,
+                candidates: ordered_candidates.clone(),
+                cursor: *cursor,
+                selected: selected.clone(),
+                blockers,
+            },
+            CombatScanV5::Blockers {
+                player,
+                attacker,
+                ordered_candidates,
+                cursor,
+                selected,
+                ..
+            } => CombatContextV1 {
+                kind: CombatScanKindV1::Blockers,
+                player: *player,
+                attacker: Some(*attacker),
+                candidates: ordered_candidates.clone(),
+                cursor: *cursor,
+                selected: selected.clone(),
+                blockers,
+            },
+        };
+        Some(SurfaceContextV1 {
+            scalars: self.inner.infoset_scalars_in_combat_v1()?,
+            hunter_order_enabled_v45: self.hunter_order_enabled_v45,
+            combat: Some(combat),
+        })
+    }
+
+    /// Restores a carried (validated) combat record, amendment 43.1, before
+    /// the imported session presents its first decision, bound to that
+    /// session's environment revision.
+    pub(crate) fn set_combat_context_v1(&mut self, combat: &CombatContextV1, revision: u64) {
+        self.inner.set_blockers_reshape_v1(combat.blockers.as_ref());
+        let binding = CombatScanBindingV5::OwnedEnvironmentRevision(revision);
+        self.scan = Some(match (combat.kind, combat.attacker) {
+            (CombatScanKindV1::Blockers, Some(attacker)) => CombatScanV5::Blockers {
+                player: combat.player,
+                attacker,
+                ordered_candidates: combat.candidates.clone(),
+                cursor: combat.cursor,
+                selected: combat.selected.clone(),
+                binding,
+            },
+            _ => CombatScanV5::Attackers {
+                player: combat.player,
+                ordered_candidates: combat.candidates.clone(),
+                cursor: combat.cursor,
+                selected: combat.selected.clone(),
+                binding,
+            },
+        });
     }
 
     pub(crate) fn set_infoset_context_v1(&mut self, context: SurfaceContextV1) {

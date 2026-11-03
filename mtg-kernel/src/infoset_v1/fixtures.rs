@@ -534,7 +534,7 @@ pub(crate) fn observe(
     AtV1 {
         step,
         view: view(s),
-        p: outcome(&x),
+        p: super::harness::p_outcome(s, v),
         mutants: mutants
             .iter()
             .map(|m| {

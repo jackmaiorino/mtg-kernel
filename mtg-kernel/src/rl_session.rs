@@ -5388,6 +5388,26 @@ impl FastActorSessionV1 {
         self.surface.infoset_context_v1()
     }
 
+    /// The context a payload carries (amendment 43.1): as
+    /// `surface_context_v1`, and during a combat scan with its combat record
+    /// renamed through `ids` (native object id to canonical arena index).
+    /// None if a combat object has no canonical index.
+    pub(crate) fn payload_surface_context_v1(
+        &self,
+        ids: &std::collections::BTreeMap<u64, u64>,
+    ) -> Option<crate::policy_surface_v5::SurfaceContextV1> {
+        let mut context = self.surface.infoset_context_with_combat_v1()?;
+        if let Some(combat) = &context.combat {
+            let renamed = combat.rename(|o| {
+                ids.get(&u64::from(o.0))
+                    .and_then(|n| u32::try_from(*n).ok())
+                    .map(ObjectId)
+            })?;
+            context.combat = Some(renamed);
+        }
+        Some(context)
+    }
+
     /// As `import_infoset_v1`, with the surface context given explicitly
     /// (from a payload).
     pub(crate) fn import_infoset_with_surface_v1(
@@ -5396,7 +5416,13 @@ impl FastActorSessionV1 {
         own_decision_index: u64,
         context: Option<crate::policy_surface_v5::SurfaceContextV1>,
     ) -> FastActorSessionV1 {
-        let surface = PolicySurfaceV5::new_for_session();
+        let mut surface = PolicySurfaceV5::new_for_session();
+        // A carried combat record (amendment 43.1) is the live surface's
+        // object-naming progress: restored before the first decision is
+        // presented, so the import presents the live scan point itself.
+        if let Some(combat) = context.as_ref().and_then(|c| c.combat.as_ref()) {
+            surface.set_combat_context_v1(combat, 0);
+        }
         let mut session = FastActorSessionV1 {
             deck_ids: template.deck_ids.clone(),
             deck_hashes: template.deck_hashes,

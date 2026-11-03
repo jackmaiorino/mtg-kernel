@@ -298,6 +298,28 @@ pub(crate) fn outcome(r: &Result<InfosetV1, ExportErrorV1>) -> Result<Vec<u8>, S
     }
 }
 
+/// P's compared bytes: the export, and at a combat scan point the
+/// payload's combat record (amendment 43.1), which AC1 compares like any
+/// payload field. A combat record that cannot be carried is R2.
+pub(crate) fn p_outcome(s: &FastActorSessionV1, viewer: PlayerId) -> Result<Vec<u8>, String> {
+    let x = export_at(s, viewer, ExportOptionsV1::default());
+    let mut bytes = outcome(&x)?;
+    let x = x.expect("outcome passed");
+    if s.surface_context_v1().is_none() {
+        let ids = super::order::canonical_ids_v1(&x);
+        match s.payload_surface_context_v1(&ids) {
+            Some(c) => {
+                if let Some(combat) = c.combat {
+                    bytes.extend_from_slice(b"|combat:");
+                    bytes.extend(serde_json::to_vec(&combat).expect("combat serializes"));
+                }
+            }
+            None => return Err("R2".into()),
+        }
+    }
+    Ok(bytes)
+}
+
 /// Plays W and W' in lockstep from `w` and `w2` (equal up to the family's
 /// permutation), comparing every viewer decision while views agree.
 pub(crate) fn compare_worlds(
@@ -338,8 +360,8 @@ pub(crate) fn compare_worlds_with(
                 report.truncated = true;
                 break;
             }
-            let p = outcome(&export_at(&s, viewer, ExportOptionsV1::default()));
-            let p2 = outcome(&export_at(&t, viewer, ExportOptionsV1::default()));
+            let p = p_outcome(&s, viewer);
+            let p2 = p_outcome(&t, viewer);
             report.compared += 1;
             if let Err(code) = &p {
                 *report.p_refusals.entry(code.clone()).or_default() += 1;

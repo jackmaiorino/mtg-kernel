@@ -732,8 +732,16 @@ impl HarnessSurfaceV2 {
     /// (`infoset_v1`); None while a reshape or exemption that names objects
     /// is active.
     pub(crate) fn infoset_context_v1(&self) -> Option<HarnessSurfaceScalarsV1> {
-        if self.blockers.is_some()
-            || self.discard.is_some()
+        if self.blockers.is_some() {
+            return None;
+        }
+        self.infoset_scalars_in_combat_v1()
+    }
+
+    /// As `infoset_context_v1`, while a blocker reshape may be active: the
+    /// combat context (amendment 43.1) carries the reshape itself.
+    pub(crate) fn infoset_scalars_in_combat_v1(&self) -> Option<HarnessSurfaceScalarsV1> {
+        if self.discard.is_some()
             || self.optional_cost.is_some()
             || self.madness_cast_reprompt_exemption.is_some()
         {
@@ -750,6 +758,16 @@ impl HarnessSurfaceV2 {
             last_seen_stack_len: self.last_seen_stack_len,
             mana_count_at_last_stack_change: self.mana_count_at_last_stack_change,
         })
+    }
+
+    /// The blocker reshape a carried combat context restores (amendment
+    /// 43.1); the reshape's order and progress are the live surface's.
+    pub(crate) fn set_blockers_reshape_v1(&mut self, b: Option<&BlockersReshapePublicV2>) {
+        self.blockers = b.map(|b| BlockersReshape {
+            remaining: b.remaining.iter().cloned().collect(),
+            accumulated: b.accumulated.clone(),
+            current_attacker: b.current_attacker,
+        });
     }
 
     pub(crate) fn set_infoset_context_v1(&mut self, c: HarnessSurfaceScalarsV1) {
