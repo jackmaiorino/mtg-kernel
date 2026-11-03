@@ -2600,11 +2600,6 @@ impl FrozenPlayPolicyV1 {
         Ok(())
     }
 
-    /// The installed native S, if any.
-    pub(crate) fn s_model_v1(&self) -> Option<&crate::s_transformer_v1::SModelV1> {
-        self.s_model.as_deref()
-    }
-
     /// Shares a worker's prediction cache with this policy (and its later
     /// collection forks), keyed by the installed parameters' digest.
     pub(crate) fn attach_inference_cache_v1(

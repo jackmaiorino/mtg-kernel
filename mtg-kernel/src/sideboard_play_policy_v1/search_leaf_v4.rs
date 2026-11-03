@@ -15,7 +15,7 @@ impl<'a> V4SearchLeafEvaluatorV1<'a> {
             "search leaf requires explicit V4 policy",
         )?;
         require(
-            policy.s_model_v1().is_none(),
+            policy.s_model.is_none(),
             "the model-guided search leaf is net-8's; native S searches through s4a",
         )?;
         crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
