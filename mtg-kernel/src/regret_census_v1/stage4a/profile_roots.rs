@@ -187,7 +187,10 @@ const VL_GUARD_PER_SIMULATION: u64 = 512;
 /// `S4A_VALUE_LEAF=h0|t0` with `S4A_VL_SIMS=N` selects the value-leaf search
 /// (`value_leaf.rs`); both unset keeps the formal E search.
 fn value_leaf_env() -> Result<Option<(super::value_leaf::ValueLeafV1, u64)>, String> {
-    match (std::env::var("S4A_VALUE_LEAF"), std::env::var("S4A_VL_SIMS")) {
+    match (
+        std::env::var("S4A_VALUE_LEAF"),
+        std::env::var("S4A_VL_SIMS"),
+    ) {
         (Err(_), Err(_)) => Ok(None),
         (Ok(h), Ok(n)) => {
             let horizon = super::value_leaf::Horizon::parse(&h)?;
@@ -214,7 +217,8 @@ fn vl_split(records: &[super::arms::SimRecord]) -> Value {
         .filter(|r| r.outcome != SimRecord::REJECTED)
         .collect();
     let n = accepted.len().max(1) as f64;
-    let mean = |f: &dyn Fn(&SimRecord) -> u64| accepted.iter().map(|r| f(*r)).sum::<u64>() as f64 / n;
+    let mean =
+        |f: &dyn Fn(&SimRecord) -> u64| accepted.iter().map(|r| f(*r)).sum::<u64>() as f64 / n;
     let prefix = |r: &SimRecord| r.expansion.or(r.depth_limit);
     let point = |get: fn(&SimRecord) -> Option<Snap>| {
         let reached: Vec<Snap> = accepted.iter().filter_map(|r| get(*r)).collect();

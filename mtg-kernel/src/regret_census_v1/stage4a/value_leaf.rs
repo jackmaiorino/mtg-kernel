@@ -40,7 +40,9 @@ impl Horizon {
         match label {
             "h0" => Ok(Self::H0),
             "t0" => Ok(Self::T0),
-            other => Err(format!("value-leaf horizon must be h0 or t0, got {other:?}")),
+            other => Err(format!(
+                "value-leaf horizon must be h0 or t0, got {other:?}"
+            )),
         }
     }
 
@@ -184,7 +186,11 @@ pub(crate) fn merge(trees: &[RootEdges]) -> Result<RootEdges, String> {
         })
         .collect();
     for (k, t) in trees.iter().enumerate() {
-        if t.len() != out.len() || t.iter().zip(&out).any(|(a, b)| a.edge != b.edge || a.live != b.live) {
+        if t.len() != out.len()
+            || t.iter()
+                .zip(&out)
+                .any(|(a, b)| a.edge != b.edge || a.live != b.live)
+        {
             return Err(format!("tree {k}: root edges differ"));
         }
         for (o, x) in out.iter_mut().zip(t) {
@@ -208,7 +214,8 @@ pub(crate) fn pick_v2(edges: &RootEdges) -> Option<usize> {
         en > fn_
             || (en == fn_
                 && (u128::from(es) * u128::from(fn_) > u128::from(fs) * u128::from(en)
-                    || (u128::from(es) * u128::from(fn_) == u128::from(fs) * u128::from(en) && el < fl)))
+                    || (u128::from(es) * u128::from(fn_) == u128::from(fs) * u128::from(en)
+                        && el < fl)))
     };
     let mut best: Option<usize> = None;
     for (i, e) in edges.iter().enumerate() {
@@ -235,7 +242,10 @@ pub(crate) fn q_hat(edges: &RootEdges) -> Vec<Option<f64>> {
 pub(crate) fn edges_json(edges: &RootEdges) -> Value {
     let hex = |b: &[u8]| -> String {
         use sha2::{Digest, Sha256};
-        Sha256::digest(b).iter().map(|x| format!("{x:02x}")).collect()
+        Sha256::digest(b)
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect()
     };
     Value::Array(
         edges
@@ -297,7 +307,10 @@ mod tests {
     fn merge_sums_in_order_and_refuses_different_roots() {
         let a = edges(&[(0, 1, 3, 10), (1, 0, 5, 20)]);
         let b = edges(&[(0, 1, 4, 1), (1, 0, 0, 0)]);
-        assert_eq!(merge(&[a.clone(), b.clone()]).unwrap(), edges(&[(0, 1, 7, 11), (1, 0, 5, 20)]));
+        assert_eq!(
+            merge(&[a.clone(), b.clone()]).unwrap(),
+            edges(&[(0, 1, 7, 11), (1, 0, 5, 20)])
+        );
         // Order of summation cannot change an integer sum.
         assert_eq!(merge(&[a.clone(), b.clone()]), merge(&[b, a.clone()]));
         assert!(merge(&[a.clone(), edges(&[(0, 1, 1, 1), (2, 0, 1, 1)])]).is_err());
@@ -308,7 +321,10 @@ mod tests {
     #[test]
     fn pick_v2_visits_then_exact_mean_then_index() {
         // Most visits wins.
-        assert_eq!(pick_v2(&edges(&[(0, 0, 3, 3 * UNIT), (1, 1, 5, 0)])), Some(1));
+        assert_eq!(
+            pick_v2(&edges(&[(0, 0, 3, 3 * UNIT), (1, 1, 5, 0)])),
+            Some(1)
+        );
         // Equal visits: higher mean.
         assert_eq!(pick_v2(&edges(&[(0, 0, 4, 1), (1, 1, 4, 2)])), Some(1));
         // Full tie: the lowest live index, not the canonical position.
@@ -316,7 +332,10 @@ mod tests {
         assert_eq!(pick_v2(&edges(&[(0, 0, 4, 2), (1, 1, 4, 2)])), Some(0));
         // Unvisited edges never win.
         assert_eq!(pick_v2(&edges(&[(0, 0, 0, 0), (1, 1, 0, 0)])), None);
-        assert_eq!(q_hat(&edges(&[(0, 0, 2, UNIT), (1, 1, 0, 0)])), vec![Some(0.5), None]);
+        assert_eq!(
+            q_hat(&edges(&[(0, 0, 2, UNIT), (1, 1, 0, 0)])),
+            vec![Some(0.5), None]
+        );
     }
 
     /// Exact backups: leaf and natural units, visit counts, win and draw
@@ -337,16 +356,37 @@ mod tests {
         let (r, c) = ([1u8; 32], [2u8; 32]);
         let mut t = Tree::default();
         t.backup_value(&[(r, 1)], vec![(r, node(2))], 700_000, None);
-        t.backup_value(&[(r, 1), (c, 0)], vec![(c, node(3))], natural_units(true, false), Some((true, false)));
-        t.backup_value(&[(r, 0)], vec![], natural_units(false, true), Some((false, true)));
-        t.backup_value(&[(r, 1), (c, 2)], vec![], natural_units(false, false), Some((false, false)));
+        t.backup_value(
+            &[(r, 1), (c, 0)],
+            vec![(c, node(3))],
+            natural_units(true, false),
+            Some((true, false)),
+        );
+        t.backup_value(
+            &[(r, 0)],
+            vec![],
+            natural_units(false, true),
+            Some((false, true)),
+        );
+        t.backup_value(
+            &[(r, 1), (c, 2)],
+            vec![],
+            natural_units(false, false),
+            Some((false, false)),
+        );
         let root = &t.nodes[&r];
         assert_eq!((root.visits, root.n.clone()), (4, vec![1, 3]));
         assert_eq!(root.vsum, vec![UNIT / 2, 700_000 + UNIT]);
-        assert_eq!((root.wins.clone(), root.draws.clone()), (vec![0, 1], vec![1, 0]));
+        assert_eq!(
+            (root.wins.clone(), root.draws.clone()),
+            (vec![0, 1], vec![1, 0])
+        );
         let child = &t.nodes[&c];
         assert_eq!((child.visits, child.n.clone()), (2, vec![1, 0, 1]));
         assert_eq!(child.vsum, vec![UNIT, 0, 0]);
-        assert_eq!((child.wins.clone(), child.draws.clone()), (vec![1, 0, 0], vec![0, 0, 0]));
+        assert_eq!(
+            (child.wins.clone(), child.draws.clone()),
+            (vec![1, 0, 0], vec![0, 0, 0])
+        );
     }
 }

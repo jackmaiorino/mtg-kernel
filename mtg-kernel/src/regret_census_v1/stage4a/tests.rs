@@ -1962,7 +1962,10 @@ fn value_leaf_root() -> (FastActorSessionV1, world::DeckPrior) {
         Ok(false)
     })
     .unwrap();
-    (root.expect("a fixture root"), world::DeckPrior::new(&cfg.decks))
+    (
+        root.expect("a fixture root"),
+        world::DeckPrior::new(&cfg.decks),
+    )
 }
 
 /// V9-lite: the same value-leaf config twice gives the same counts, tree and
@@ -1981,7 +1984,10 @@ fn value_leaf_search_repeats_exactly() {
         assert_eq!(ta.nodes.len(), tb.nodes.len());
         for (k, n) in &ta.nodes {
             let m = &tb.nodes[k];
-            assert_eq!((&n.n, &n.wins, &n.draws, &n.vsum), (&m.n, &m.wins, &m.draws, &m.vsum));
+            assert_eq!(
+                (&n.n, &n.wins, &n.draws, &n.vsum),
+                (&m.n, &m.wins, &m.draws, &m.vsum)
+            );
         }
         let census = &a.extra["value_leaf"]["census"];
         let leaves = census["leaves"].as_u64().unwrap();
@@ -2083,8 +2089,14 @@ fn value_leaf_root_parallel_merge_is_order_and_thread_independent() {
     let mut reversed = serial.clone();
     reversed.reverse();
     assert_eq!(merged, value_leaf::merge(&reversed).unwrap());
-    assert_eq!(merged.iter().map(|e| e.n).sum::<u64>(), serial.iter().flatten().map(|e| e.n).sum::<u64>());
-    assert_eq!(value_leaf::pick_v2(&merged), value_leaf::pick_v2(&value_leaf::merge(&concurrent).unwrap()));
+    assert_eq!(
+        merged.iter().map(|e| e.n).sum::<u64>(),
+        serial.iter().flatten().map(|e| e.n).sum::<u64>()
+    );
+    assert_eq!(
+        value_leaf::pick_v2(&merged),
+        value_leaf::pick_v2(&value_leaf::merge(&concurrent).unwrap())
+    );
 }
 
 /// V9-lite: a transition guard that binds stops the search with
@@ -2092,9 +2104,27 @@ fn value_leaf_root_parallel_merge_is_order_and_thread_independent() {
 #[test]
 fn value_leaf_guard_exhaustion_is_clean_and_repeatable() {
     let (session, prior) = value_leaf_root();
-    let (a, _) = value_leaf_search(&session, &prior, "vl-cap", value_leaf::Horizon::T0, 1_000, 300);
-    let (b, _) = value_leaf_search(&session, &prior, "vl-cap", value_leaf::Horizon::T0, 1_000, 300);
-    assert!(a.cap_reached && !a.incomplete && a.faults.is_empty(), "{:?}", a.faults);
+    let (a, _) = value_leaf_search(
+        &session,
+        &prior,
+        "vl-cap",
+        value_leaf::Horizon::T0,
+        1_000,
+        300,
+    );
+    let (b, _) = value_leaf_search(
+        &session,
+        &prior,
+        "vl-cap",
+        value_leaf::Horizon::T0,
+        1_000,
+        300,
+    );
+    assert!(
+        a.cap_reached && !a.incomplete && a.faults.is_empty(),
+        "{:?}",
+        a.faults
+    );
     assert!(a.attempted < 1_000);
     assert_eq!(value_leaf_primary(&a), value_leaf_primary(&b));
 }
