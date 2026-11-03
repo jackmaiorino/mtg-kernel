@@ -744,42 +744,64 @@ def volume(campaign: Campaign) -> dict:
                                     "shared": str(campaign.state / SHARED_WALK)})
 
 
-# The incremental accounting walk. A sealed block's record folders (state/seals) hold exactly the seal's files
-# until the copy-back deletes them (state/moved, deleted true: then nothing), and nothing writes there after the
-# seal; a static root (the campaign's static_roots: the qualification folder, which production never writes)
-# is fixed.
-# Each driver process's first walk per volume measures every such folder (the full walk) and checks the sealed
-# ones against their seals; while they all agree, later walks count those folders by their seal or by that
-# measurement instead of walking them, so a walk costs the unsealed trees, not every block so far. Any
-# disagreement is an event and the process keeps walking in full.
-WALK_STATE: dict = {}  # accounting roots -> {"verified": bool, "static": {folder: bytes}}
+# The incremental accounting walk. A sealed block's record folders (the retained, failed-attempt and dispatch
+# folders its seal lists files under, state/seals) hold exactly the seal's files until the copy-back deletes
+# them, and nothing writes there after the seal; once the copy-back confirms them gone (state/moved, deleted
+# true) they hold nothing. A static root (the campaign's static_roots: the qualification folder, which production
+# never writes) is fixed. A walk counts a sealed folder by its seal only after a walk of this process measured
+# it equal to its seal, and for at most REVERIFY_SECONDS after that measurement (then it is measured again); a
+# moved block's folders count nothing; a static root counts its last measurement for REVERIFY_SECONDS. Every
+# other folder, a folder the seal does not list (a later attempt) included, is walked. Any sealed folder that
+# measures other than its seal latches this process's walks of that volume full (an event), for good.
+WALK_LOCK = threading.Lock()
+WALK_STATE: dict = {}  # accounting roots -> {"latched", "folders": {key: (seal bytes, measured at)}, "static", "static_at"}
+REVERIFY_SECONDS = 6 * 3600
 
 
 def folder_key(path) -> str:
     return os.path.normcase(os.path.abspath(str(path)))
 
 
-def sealed_folders(campaign: Campaign) -> dict[str, int]:
-    """Every sealed block's record folders that exist, with the seal's bytes under them (0 once moved)."""
+def seal_folders(campaign: Campaign, value: dict) -> dict[str, int]:
+    """The record folders a seal lists files under (relative to the records root), each with its seal bytes."""
+    run, name = value["run"], label(value["block"])
+    root = records_root(campaign)
+    hot = (campaign.hot(run) / run).relative_to(root).as_posix()
+    retained = (campaign.retained / run).relative_to(root).as_posix()
+    folders: dict[str, int] = {}
+    for item in value["files"]:
+        path = item["path"]
+        for parent in (retained, hot):
+            if not path.startswith(parent + "/"):
+                continue
+            folder = path[len(parent) + 1:].split("/", 1)[0]
+            listed = (parent == retained and (folder == f"b{value['block']:02d}"
+                                              or folder.startswith(f"{name}-a") and folder.endswith("-failed"))
+                      or parent == hot and folder.startswith(f"{name}-a"))
+            if listed and "/" in path[len(parent) + 1:]:
+                key = f"{parent}/{folder}"
+                folders[key] = folders.get(key, 0) + item["bytes"]
+    return folders
+
+
+def sealed_folders(campaign: Campaign) -> tuple[dict[str, int], dict[str, int]]:
+    """(sealed folders not yet moved: folder -> seal bytes, moved blocks' folders: folder -> 0), existing ones."""
     seals, markers, root = campaign.state / "seals", campaign.state / "moved", records_root(campaign)
-    folders = {}
+    held, gone = {}, {}
     for path in sorted(seals.glob("*.json")) if seals.exists() else []:
         value = json.loads(path.read_text(encoding="utf-8"))
         if value.get("schema") != RECORDS_SCHEMA:
             continue
-        gone = moved(markers / path.name)
-        for source in seal_sources(campaign, value["run"], value["block"]):
-            if not source.is_dir():
-                continue
-            prefix = source.relative_to(root).as_posix() + "/"
-            folders[folder_key(source)] = 0 if gone else sum(item["bytes"] for item in value["files"]
-                                                              if item["path"].startswith(prefix))
-    return folders
+        target = gone if moved(markers / path.name) else held
+        for folder, size in seal_folders(campaign, value).items():
+            if (root / folder).is_dir():
+                target[folder_key(root / folder)] = 0 if target is gone else size
+    return held, gone
 
 
-def walk_trees(roots, counted: dict[str, int], measure: bool) -> tuple[int, dict[str, int]]:
-    """native_expanded_dispatch_v1.accounting_bytes, except that a folder in ``counted`` adds its recorded bytes
-    unwalked, or with ``measure`` is walked and its own bytes returned too."""
+def walk_trees(roots, counted: dict[str, int], measure: set[str]) -> tuple[int, dict[str, int]]:
+    """native_expanded_dispatch_v1.accounting_bytes, except that a folder in ``measure`` is walked and its own
+    bytes returned too, and any other folder in ``counted`` adds its given bytes unwalked."""
     logical, measured = 0, {}
 
     def walk(top, inside=None):
@@ -788,12 +810,12 @@ def walk_trees(roots, counted: dict[str, int], measure: bool) -> tuple[int, dict
         while pending:
             folder = pending.pop()
             key = folder_key(folder)
-            if key in counted and key != inside:
-                if measure:
-                    measured[key] = walk_one(folder)
-                    logical += measured[key]
-                else:
-                    logical += counted[key]
+            if key != inside and key in measure:
+                measured[key] = walk_one(folder, key)
+                logical += measured[key]
+                continue
+            if key != inside and key in counted:
+                logical += counted[key]
                 continue
             try:
                 with os.scandir(folder) as entries:
@@ -811,12 +833,11 @@ def walk_trees(roots, counted: dict[str, int], measure: bool) -> tuple[int, dict
                 except FileNotFoundError:  # deleted by its owner mid-walk: freed
                     pass
 
-    def walk_one(folder):
+    def walk_one(folder, key):
         nonlocal logical
         before = logical
-        walk(folder, inside=folder_key(folder))
-        size = logical - before
-        logical = before
+        walk(folder, inside=key)
+        size, logical = logical - before, before
         return size
 
     for root in roots:
@@ -827,26 +848,42 @@ def walk_trees(roots, counted: dict[str, int], measure: bool) -> tuple[int, dict
 
 
 def accounted_bytes(campaign: Campaign) -> int:
-    """The accounting trees' logical bytes: the full walk (accounting_bytes) on this process's first walk per
-    volume, checking sealed folders against their seals; afterwards the incremental walk while they agreed."""
+    """The accounting trees' logical bytes: the incremental walk (above), or the full walk (accounting_bytes)
+    when nothing is sealed or static, or once a sealed folder disagreed with its seal."""
     storage = campaign.raw["storage"]
-    state = WALK_STATE.setdefault(tuple(storage["accounting_roots"]), {"verified": False, "static": {}})
-    sealed = sealed_folders(campaign)
-    static = {folder_key(path): 0 for path in campaign.raw.get("static_roots", []) if Path(path).is_dir()}
-    if not sealed and not static:
+    held, gone = sealed_folders(campaign)
+    static = {folder_key(path) for path in campaign.raw.get("static_roots", []) if Path(path).is_dir()}
+    if not held and not gone and not static:
         return native_dispatch.accounting_bytes(storage)[1]
-    roots = native_dispatch.accounting_roots(storage)
-    if not state["verified"]:
-        logical, measured = walk_trees(roots, {**sealed, **static}, measure=True)
-        wrong = {key: (measured[key], sealed[key]) for key in sealed if key in measured and measured[key] != sealed[key]}
-        if wrong:
-            campaign.event(kind="volume-walk-seal-mismatch", folders={k: list(v) for k, v in sorted(wrong.items())[:20]},
-                           count=len(wrong))
+    key = tuple(storage["accounting_roots"])
+    now = time.time()
+    with WALK_LOCK:
+        state = WALK_STATE.setdefault(key, {"latched": False, "folders": {}, "static": {}, "static_at": 0.0})
+        if state["latched"]:
+            trusted, static_known = None, {}
         else:
-            state.update(verified=True, static={key: measured[key] for key in static if key in measured})
-        return logical
-    counted = {**sealed, **{key: state["static"][key] for key in static if key in state["static"]}}
-    return walk_trees(roots, counted, measure=False)[0]
+            trusted = {folder: size for folder, size in held.items()
+                       if (entry := state["folders"].get(folder)) and entry[0] == size and now - entry[1] < REVERIFY_SECONDS}
+            static_known = dict(state["static"]) if now - state["static_at"] < REVERIFY_SECONDS else {}
+    if trusted is None:
+        return native_dispatch.accounting_bytes(storage)[1]
+    measure = {folder for folder in held if folder not in trusted} | {folder for folder in static
+                                                                     if folder not in static_known}
+    counted = {**gone, **trusted, **{folder: static_known[folder] for folder in static if folder in static_known}}
+    logical, measured = walk_trees(native_dispatch.accounting_roots(storage), counted, measure)
+    wrong = {folder: (measured[folder], held[folder]) for folder in held
+             if folder in measured and measured[folder] != held[folder]}
+    with WALK_LOCK:
+        if wrong:
+            state["latched"] = True
+        elif not state["latched"]:
+            state["folders"].update({folder: (held[folder], now) for folder in held if folder in measured})
+            if static and all(folder in measured for folder in static - set(static_known)) and not static_known:
+                state["static"], state["static_at"] = {folder: measured[folder] for folder in static}, now
+    if wrong:
+        campaign.event(kind="volume-walk-seal-mismatch", count=len(wrong),
+                       folders={folder: list(sizes) for folder, sizes in sorted(wrong.items())[:20]})
+    return logical
 
 
 def walk_volume(campaign: Campaign) -> None:

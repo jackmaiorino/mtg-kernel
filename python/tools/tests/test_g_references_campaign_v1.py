@@ -1124,7 +1124,7 @@ class DriverTests(unittest.TestCase):
             (self.root / item["path"]).unlink()
         (moved / "G2-b003.json").write_text('{"deleted": true}')
         self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())  # the first walk: full, checked
-        self.assertTrue(driver.WALK_STATE[(str(self.root),)]["verified"])
+        self.assertFalse(driver.WALK_STATE[(str(self.root),)]["latched"])
         listed = []
         real = os.scandir
 
@@ -1154,10 +1154,52 @@ class DriverTests(unittest.TestCase):
         events = []
         with patch.object(driver.Campaign, "event", lambda self, **fields: events.append(fields)):
             self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
-            self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())  # still full
-        self.assertFalse(driver.WALK_STATE[(str(self.root),)]["verified"])
-        self.assertEqual([event["kind"] for event in events], ["volume-walk-seal-mismatch"] * 2)
+            self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())  # latched: full for good
+        self.assertTrue(driver.WALK_STATE[(str(self.root),)]["latched"])
+        self.assertEqual([event["kind"] for event in events], ["volume-walk-seal-mismatch"])
         self.assertIn(driver.folder_key(self.root / "retained" / "G3" / "b04"), events[0]["folders"])
+
+    def test_a_later_attempt_folder_the_seal_does_not_list_is_walked(self):
+        self.walking_campaign()
+        self.sealed_tree([3])
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+        later = self.root / "hot" / "G2" / "b003-a3" / "dispatch" / "report.json"  # not in the seal
+        later.parent.mkdir(parents=True)
+        later.write_bytes(b"l" * 64)
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+
+    def test_a_new_seal_is_measured_before_it_is_trusted_and_trust_expires(self):
+        self.walking_campaign()
+        self.sealed_tree([3])
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+        self.sealed_tree([4], runs=("G2",))  # published, then written again before any walk measured it
+        extra = self.root / "retained" / "G2" / "b04" / "late.json"
+        extra.write_bytes(b"x" * 33)
+        with patch.object(driver.Campaign, "event", lambda self, **fields: None):
+            self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+        self.assertTrue(driver.WALK_STATE[(str(self.root),)]["latched"])
+        # Growth inside a trusted folder is found when its trust expires (REVERIFY_SECONDS) and latches.
+        driver.WALK_STATE.clear()
+        extra.unlink()
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())  # now trusted
+        grown = self.root / "retained" / "G3" / "b03" / "grown.json"
+        grown.write_bytes(b"g" * 21)
+        later = time.time() + driver.REVERIFY_SECONDS + 1
+        with patch.object(driver.time, "time", return_value=later),                 patch.object(driver.Campaign, "event", lambda self, **fields: None):
+            self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+        self.assertTrue(driver.WALK_STATE[(str(self.root),)]["latched"])
+
+    def test_a_latch_is_never_undone_by_a_later_agreeing_walk(self):
+        self.walking_campaign()
+        self.sealed_tree([3])
+        driver.WALK_STATE[(str(self.root),)] = {"latched": True, "folders": {}, "static": {}, "static_at": 0.0}
+        calls, expected = [], self.full_walk()
+        real = driver.native_dispatch.accounting_bytes
+        with patch.object(driver.native_dispatch, "accounting_bytes", lambda storage: calls.append(1) or real(storage)):
+            self.assertEqual(driver.accounted_bytes(self.campaign), expected)
+        self.assertEqual(calls, [1])  # latched: the full walk
+        self.assertTrue(driver.WALK_STATE[(str(self.root),)]["latched"])
 
     def test_without_seals_or_static_roots_the_walk_is_the_full_walk(self):
         raw = json.loads(self.path.read_text())
