@@ -1176,9 +1176,11 @@ class Measurement:
                 g = read_json(self._group_record(gi))
                 blocks += [b['d_read_mean'] for b in g['blocks'] if b['d_read_mean'] is not None]
         cal['d_read_baseline'] = statistics.median(blocks) if blocks else None
+        cal['relative_read_threshold'] = (relative_read_threshold(cal['d_read_baseline'])
+                                          if cal['d_read_baseline'] is not None else None)
         manifest = read_json(self.manifest_path)
         manifest['calibration'] = {k: cal[k] for k in ('contrasts', 'mean', 'sd', 'lower', 'upper', 'valid', 'n',
-                                                      'd_read_baseline')}
+                                                      'd_read_baseline', 'relative_read_threshold')}
         manifest['calibration_recorded_at'] = now_iso()
         write_json(self.manifest_path, manifest)
         self.event('calibration', **manifest['calibration'])

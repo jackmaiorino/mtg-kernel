@@ -554,6 +554,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(len(manifest['order_bits']), 64)
         self.assertEqual(manifest['calibration']['n'], 6)
         self.assertEqual(manifest['calibration']['d_read_baseline'], 5e6)
+        self.assertEqual(manifest['calibration']['relative_read_threshold'], 20e6)
         groups = sorted((self.root / 'art' / 'attempt-001' / 'groups').iterdir())
         self.assertEqual(len(groups), 21)
         self.assertTrue(all(g.is_dir() for g in groups))
