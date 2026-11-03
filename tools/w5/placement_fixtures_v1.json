@@ -1,0 +1,52 @@
+{
+  "version": "w5-placement-v1",
+  "tag": "w5/placement",
+  "n_max": 128,
+  "cases": [
+    {
+      "chain": "w5/chain1",
+      "update": 0,
+      "seed": 0,
+      "slot": 0,
+      "hash": 5536456789014401058,
+      "uniform_bits": 4599078316000927796,
+      "k": 39
+    },
+    {
+      "chain": "w5/chain1",
+      "update": 1,
+      "seed": 1,
+      "slot": 9,
+      "hash": 4353837578059463899,
+      "uniform_bits": 4597671609310182812,
+      "k": 31
+    },
+    {
+      "chain": "w5/0b",
+      "update": 0,
+      "seed": 12345,
+      "slot": 3,
+      "hash": 17256475831303919360,
+      "uniform_bits": 4606601233134780282,
+      "k": 120
+    },
+    {
+      "chain": "w5/chain6",
+      "update": 83000,
+      "seed": 18446744073709551615,
+      "slot": 9,
+      "hash": 15630388180825691903,
+      "uniform_bits": 4605807245024195210,
+      "k": 109
+    },
+    {
+      "chain": "w5/filler2",
+      "update": 7,
+      "seed": 9007199254740993,
+      "slot": 0,
+      "hash": 6555192634149702588,
+      "uniform_bits": 4600073175224692738,
+      "k": 46
+    }
+  ]
+}

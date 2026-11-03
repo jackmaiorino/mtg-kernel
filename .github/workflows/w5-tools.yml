@@ -7,9 +7,9 @@ name: W5 tools
 on:
   push:
     branches: [main]
-    paths: ['tools/w5/**', '.github/workflows/w5-tools.yml']
+    paths: ['tools/w5/**', 'tools/ex1/target_ref.py', '.github/workflows/w5-tools.yml']
   pull_request:
-    paths: ['tools/w5/**', '.github/workflows/w5-tools.yml']
+    paths: ['tools/w5/**', 'tools/ex1/target_ref.py', '.github/workflows/w5-tools.yml']
   workflow_dispatch:
 
 permissions:
