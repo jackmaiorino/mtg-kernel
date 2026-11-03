@@ -516,25 +516,50 @@ def valid_receipts(plan):
     return bool(receipts)
 
 
-def lock(path, stale_s=3600):
-    """An exclusive lock file; None when another process holds it (a lock older than stale_s is broken)."""
+def owner_alive(owner):
+    """True while the process that wrote a lock still runs (same PID and the same start time, so a reused PID does
+    not count)."""
+    try:
+        proc = stagep.psutil.Process(owner["pid"])
+        return abs(proc.create_time() - owner["created"]) < 1.0
+    except (stagep.psutil.NoSuchProcess, stagep.psutil.AccessDenied, KeyError, TypeError):
+        return False
+
+
+def lock(path):
+    """An exclusive lock file owned by this process; None while a live process holds it. A lock whose owner has
+    exited is reclaimed; a live owner's lock is never taken, however old."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
+    me = {"pid": os.getpid(), "created": stagep.psutil.Process().create_time(), "token": uuid.uuid4().hex}
+    for _ in range(3):
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, json.dumps({"pid": os.getpid(), "at": time.time()}).encode())
+            os.write(fd, json.dumps(me).encode())
             os.close(fd)
-            return path
+            return (path, me["token"])
         except FileExistsError:
             try:
-                if time.time() - path.stat().st_mtime > stale_s:
-                    path.unlink()
-                    continue
+                owner = json.loads(path.read_text(encoding="utf-8") or "{}")
+            except (FileNotFoundError, ValueError):
+                owner = {}
+            if owner_alive(owner):
+                return None
+            try:
+                path.unlink()
             except FileNotFoundError:
-                continue
-            return None
+                pass
     return None
+
+
+def unlock(held):
+    """Removes the lock only while it is still this process's own (the token matches)."""
+    path, token = held
+    try:
+        if json.loads(path.read_text(encoding="utf-8")).get("token") == token:
+            path.unlink()
+    except (FileNotFoundError, ValueError):
+        pass
 
 
 def manifest_rows(path):
@@ -592,7 +617,7 @@ def purge_held(plan, apply):
         return out
     finally:
         if held_lock is not None:
-            held_lock.unlink(missing_ok=True)
+            unlock(held_lock)
 
 
 # ---------------------------------------------------------------- run

@@ -341,11 +341,17 @@ class StageFTests(unittest.TestCase):
         rows = stagef.thin_rows(self.root)
         later = rows[-1]["moved_at"] + 7 * 86400 + 1
         lock = self.root / "thin" / "PURGE.lock"
-        lock.write_text("{}")
-        os.utime(lock, (later, later))                    # held now, at the mocked clock
+        live = {"pid": os.getpid(), "created": stagef.stagep.psutil.Process().create_time(), "token": "other"}
+        lock.write_text(json.dumps(live))
+        os.utime(lock, (0, 0))                            # old, but its owner (this process) still runs
         with mock.patch.object(stagef.time, "time", return_value=later):
             self.assertTrue(stagef.purge_held(stagef.load_plan(self.plan), apply=True).get("busy"))
-        lock.unlink()
+        self.assertEqual(json.loads(lock.read_text())["token"], "other")      # never taken from a live owner
+        lock.write_text(json.dumps(dict(live, created=live["created"] - 1000)))   # a reused PID: reclaimed
+        held = stagef.lock(lock)
+        self.assertIsNotNone(held)
+        stagef.unlock(held)
+        self.assertFalse(lock.exists())
         hold = self.root / "_hold-thin"
         outside = self.t / "outside"
         hold.rename(outside)
