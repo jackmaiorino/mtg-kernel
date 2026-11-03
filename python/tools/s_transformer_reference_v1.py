@@ -220,6 +220,9 @@ def gauge_mask(name: str, shape, d: int):
 
 
 def rel_l2(native: np.ndarray, ref: np.ndarray) -> float:
+    """Relative L2 error; infinite when either side holds a non-finite value, so it can never pass a bar."""
+    if not (np.all(np.isfinite(native)) and np.all(np.isfinite(ref))):
+        return math.inf
     den = float(np.linalg.norm(ref))
     num = float(np.linalg.norm(native - ref))
     if den == 0.0:
@@ -249,6 +252,7 @@ def parity(args) -> int:
     worst = {"loss": {}, "gradient": {}, "adam": {}, "fresh": {}, "fresh_far": {}, "stored": {}, "floor": {},
              "fresh_stored": {}, "fresh_floor": {}, "fresh_stored_far": {}}
     opposite_kept = 0
+    fresh_excluded = 0
     fresh_near_zero = fresh_sign_flips = 0
     rows = []
     b1, b2, eps = 0.9, 0.999, 1e-8
@@ -285,6 +289,8 @@ def parity(args) -> int:
         row = {"batch": index, "decisions": len(flat_ids)}
         for k, name in enumerate(["policy_term", "value_term", "loss"]):
             err = abs(nat_terms[k] - ref_terms[k]) / abs(ref_terms[k])
+            if not math.isfinite(err):
+                err = math.inf
             row[name + "_relative_error"] = err
             worst["loss"][name] = max(worst["loss"].get(name, 0.0), err)
         for t in tensors:
@@ -321,6 +327,7 @@ def parity(args) -> int:
             rms = float(np.sqrt(np.mean(g * g))) if size else 0.0
             far = np.abs(g) > NOISE_FLOOR_FRACTION * rms
             fresh_near_zero += int(np.count_nonzero(~far & (g != 0)))
+            fresh_excluded += int(np.count_nonzero(~far))
             opposite = np.sign(nat_grad[off:off + size]) != np.sign(g)
             fresh_sign_flips += int(np.count_nonzero(opposite))
             opposite_kept += int(np.count_nonzero(opposite & far))
@@ -378,7 +385,8 @@ def parity(args) -> int:
             "definition": "an element is excluded from part (b) when |float64 reference gradient| is at or below "
                           "this fraction of its tensor's float64 gradient RMS",
             "fraction_of_tensor_rms": NOISE_FLOOR_FRACTION,
-            "excluded_elements": fresh_near_zero,
+            "excluded_elements": fresh_excluded,
+            "excluded_elements_with_nonzero_gradient": fresh_near_zero,
             "opposite_sign_elements": fresh_sign_flips,
             "opposite_sign_elements_above_floor": opposite_kept,
         },
