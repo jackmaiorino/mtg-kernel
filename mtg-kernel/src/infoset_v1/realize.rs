@@ -869,9 +869,14 @@ mod tests {
             let (records, script) = record(fable_bounce(hawks), PlayerId::P1, 30);
             let game = native_of(&script);
             checked += all_realizable("fable-bounce", &records, &game, PlayerId::P1);
-            // Decisions where L12's export differs from P's (after the
-            // bounce): L12 must be unrealizable at every one.
+            // Decisions where L12's output differs from P's (after the
+            // bounce): L12 must fail at every one, either by an export
+            // proven unrealizable or by a refusal of the ledger's own
+            // consistency check (R4: its allocation contradicts the
+            // tracker-rule facts), which is how it fails while a count fact
+            // survives.
             let mut l12 = 0;
+            let mut l12_r4 = 0;
             for r in records
                 .iter()
                 .filter(|r| r.p.is_ok() && !r.nodes.is_empty())
@@ -883,21 +888,27 @@ mod tests {
                     ExportOptionsV1 {
                         mutant: Some(MutantV1::L12),
                     },
-                )
-                .map(|x| x.bytes)
-                .ok();
-                if m.as_ref() == r.p.as_ref().ok() {
-                    continue;
-                }
-                assert!(
-                    unrealizable(&game, r.step, PlayerId::P1, MutantV1::L12),
-                    "L12 is not proven unrealizable at step {} ({hawks} Hawks returned): {:?}",
-                    r.step,
-                    realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12))
                 );
+                match &m {
+                    Ok(x) if Some(&x.bytes) == r.p.as_ref().ok() => continue,
+                    Err(e) => {
+                        assert_eq!(e.code_name(), "R4", "L12 at step {}: {e:?}", r.step);
+                        l12_r4 += 1;
+                    }
+                    Ok(_) => {
+                        assert!(
+                            unrealizable(&game, r.step, PlayerId::P1, MutantV1::L12),
+                            "L12 is not proven unrealizable at step {} ({hawks} Hawks returned): {:?}",
+                            r.step,
+                            realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12))
+                        );
+                    }
+                }
                 l12 += 1;
             }
-            eprintln!("L12 unrealizable at {l12} post-bounce decisions ({hawks} Hawks returned)");
+            eprintln!(
+                "L12 fails at {l12} post-bounce decisions ({l12_r4} by R4) ({hawks} Hawks returned)"
+            );
             assert!(l12 > 0, "L12 differs from P after the bounce");
         }
 
