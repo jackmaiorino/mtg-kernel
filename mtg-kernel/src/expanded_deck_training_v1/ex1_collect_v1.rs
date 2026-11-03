@@ -449,6 +449,7 @@ impl Ex1EpisodeHookV1 {
                 looked_up: false,
                 self_target,
                 turn,
+                capture_hash: None,
             });
         }
         counts.burst_lookups += 1;
