@@ -14,6 +14,7 @@ use super::bank::{bank_roles, guide_ctx};
 use super::canon2::KeyMode;
 use super::play::decision;
 use super::refresh::{Cursor, Lookup};
+use super::root_allocation::SearchOptions;
 use super::seeds::RootSeeds;
 use super::world::DeckPrior;
 use crate::ex1_v1::{Ex1EdgeCountsV1, EX1_SUPPORT_MIN_V1};
@@ -58,6 +59,8 @@ pub(crate) struct Ex1SearcherV1 {
     /// The cursor's pending hit at the current decision (advanced with the
     /// learner's sampled action).
     pending: Option<super::refresh::Hit>,
+    /// An explicit exact key memo (W5); `None` keeps the process default.
+    key_memo: Option<Option<usize>>,
 }
 
 impl Ex1SearcherV1 {
@@ -69,7 +72,21 @@ impl Ex1SearcherV1 {
             focal,
             cursor: None,
             pending: None,
+            key_memo: None,
         })
+    }
+
+    /// Every search runs with an exact key memo of `bytes` (W5's recorded
+    /// setting; keys, trees, selection and statistics are unchanged).
+    pub(crate) fn with_key_memo_v1(mut self, bytes: usize) -> Self {
+        self.key_memo = Some(Some(bytes));
+        self
+    }
+
+    /// Every search runs with the key memo off, whatever the process default.
+    pub(crate) fn with_key_memo_off_v1(mut self) -> Self {
+        self.key_memo = Some(None);
+        self
     }
 
     /// Drops the retained tree (the burst's turn ended).
@@ -102,11 +119,17 @@ impl Ex1SearcherV1 {
         // The search recurses deeply: it runs on its own thread with the
         // census binary's stack, whatever thread collects the episode.
         let roles = &mut self.roles;
+        let options = SearchOptions {
+            key_memo: self.key_memo,
+            ..SearchOptions::default()
+        };
         let (sel, tree) = std::thread::scope(|scope| {
             std::thread::Builder::new()
                 .name("ex1-search".into())
                 .stack_size(EX1_SEARCH_STACK_BYTES_V1)
-                .spawn_scoped(scope, || roles.select_e(&ctx))
+                .spawn_scoped(scope, || {
+                    roles.select_e_options(&ctx, None, 1, None, None, None, &options)
+                })
                 .map_err(|e| format!("ex1 search thread: {e}"))?
                 .join()
                 .map_err(|_| "ex1 search thread panicked".to_string())
@@ -119,6 +142,10 @@ impl Ex1SearcherV1 {
             "sampler":sel.sampler.json(),"boundary_encoding_failures":
                 sel.sampler.kinds.get("SampleBoundaryEncodingFailed").copied().unwrap_or(0),
             "nodes":tree.nodes.len(),"wall":wall,"failed":failed});
+        let mut record = record;
+        if let Some(memo) = self.key_memo {
+            record["key_memo_bytes"] = json!(memo);
+        }
         if !failed {
             self.cursor = Some(Cursor::new(tree, 0, KeyMode::Legacy, false));
         }

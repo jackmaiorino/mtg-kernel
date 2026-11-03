@@ -54,6 +54,8 @@ pub const EX1_METHOD_V1: &str = "ex1-search-in-training-v1-20261029";
 pub struct W5UpdateOptionsV1 {
     pub recipe: String,
     pub budget: u64,
+    /// The search's exact key memo limit in MiB (0: off).
+    pub key_memo_mib: u64,
 }
 
 /// One update's EX1 options.
@@ -107,6 +109,7 @@ impl Ex1UpdateOptionsV1 {
             budget: self.w5.as_ref().map_or(EX1_BUDGET_V1, |w5| w5.budget),
             w5: self.w5.as_ref().map(|w5| W5CollectOptionsV1 {
                 recipe: w5.recipe.clone(),
+                key_memo_mib: w5.key_memo_mib,
             }),
         }
     }
@@ -129,6 +132,7 @@ pub fn continuation_identity(options: &Ex1UpdateOptionsV1) -> Value {
             "rollout":"SELF","search":crate::regret_census_v1::stage4a::ex1_search_identity_v1(),
             "eligibility":"w1-two-non-mana-candidates","placement":"w5/placement",
             "placement_max":W5_PLACEMENT_MAX_V1,"acting":"w5/act inverse-cdf of q",
+            "key_memo_mib":w5.key_memo_mib,
             "policy_gradient":"masked at played roots","telemetry_stride":W5_TELEMETRY_STRIDE_V1,
             "run":options.run,"coefficient_bits":options.coefficient.to_bits(),
             "cap":options.cap.kappa_v1().map_or(json!({"mode":"off"}),
@@ -147,17 +151,28 @@ pub fn continuation_identity(options: &Ex1UpdateOptionsV1) -> Value {
 }
 
 /// A checkpoint's saved EX1 identity must equal this run's; a checkpoint
-/// without one continues only an ordinary run.
+/// without one continues only an ordinary run. A W5 checkpoint also names
+/// its next global update, which the continuing update must be.
 pub(super) fn check_continuation_v1(
     saved: Option<&Value>,
     options: Option<&Ex1UpdateOptionsV1>,
 ) -> Result<(), String> {
     match (saved, options) {
         (None, _) => Ok(()),
-        (Some(saved), options) => ensure(
-            options.map(continuation_identity).as_ref() == saved.get("continuation"),
-            "ex1 continuation must preserve the target, constants, dose and cap",
-        ),
+        (Some(saved), options) => {
+            ensure(
+                options.map(continuation_identity).as_ref() == saved.get("continuation"),
+                "ex1 continuation must preserve the target, constants, dose and cap",
+            )?;
+            match (saved.get("w5_next_update"), options) {
+                (None, _) => Ok(()),
+                (Some(next), Some(options)) => ensure(
+                    next == &json!(options.update),
+                    "w5 continuation must take the checkpoint's next global update",
+                ),
+                (Some(_), None) => Err("a w5 checkpoint continues only its chain".into()),
+            }
+        }
     }
 }
 
@@ -252,6 +267,10 @@ pub(super) fn ex1_teach_v1(
             search_wall += search["wall"].as_f64().unwrap_or(0.0);
         }
         offers += last["offers"].as_array().map_or(0, |o| o.len() as u64);
+        ensure(
+            options.w5.is_some() || trajectory.search_played.is_none(),
+            "an ex1 trajectory names search-played rows",
+        )?;
         if options.w5.is_some() {
             let placement = last["w5"]
                 .as_object()
@@ -259,6 +278,31 @@ pub(super) fn ex1_teach_v1(
             ensure(
                 placement.get("slot") == Some(&json!(slot)),
                 "w5 placement belongs to another slot",
+            )?;
+            // Every row the search played, and only those, is a root row
+            // of the record with the learner's own draw beside it.
+            let mut acted: Vec<(u64, Value)> = last["rows"]
+                .as_array()
+                .ok_or("ex1 rows missing")?
+                .iter()
+                .filter(|row| row["kind"] == "root")
+                .map(|row| {
+                    (
+                        row["step"].as_u64().unwrap_or(u64::MAX),
+                        row["policy_selected"].clone(),
+                    )
+                })
+                .collect();
+            acted.sort_by_key(|(step, _)| *step);
+            let played: Vec<(u64, Value)> = trajectory
+                .search_played
+                .iter()
+                .flatten()
+                .map(|row| (row.step, json!(row.policy_selected)))
+                .collect();
+            ensure(
+                acted == played,
+                "w5 trajectory's search-played rows differ from the record's roots",
             )?;
             for key in ["attempted", "acted", "root_no_target"] {
                 *w5_totals.entry(key.into()).or_default() +=
@@ -524,6 +568,7 @@ mod tests {
             w5: Some(W5UpdateOptionsV1 {
                 recipe: W5_XACT_VERSION_V1.into(),
                 budget,
+                key_memo_mib: 512,
             }),
             ..options(1.0, capped, update)
         };
@@ -536,6 +581,12 @@ mod tests {
         assert_ne!(identity, continuation_identity(&w5(6, 64_000)));
         let saved = json!({"continuation":identity});
         assert!(check_continuation_v1(Some(&saved), Some(&options(1.0, capped, 6))).is_err());
+        // The saved cursor binds the next global update.
+        let cursor = json!({"continuation":identity,"w5_next_update":6});
+        assert!(check_continuation_v1(Some(&cursor), Some(&w5(6, 16_000))).is_ok());
+        assert!(check_continuation_v1(Some(&cursor), Some(&w5(7, 16_000))).is_err());
+        assert!(check_continuation_v1(Some(&cursor), Some(&w5(5, 16_000))).is_err());
+        assert!(check_continuation_v1(Some(&cursor), None).is_err());
         let collect = w5(5, 16_000).collect_options_v1();
         assert_eq!(collect.budget, 16_000);
         assert_eq!(collect.w5.as_ref().unwrap().recipe, W5_XACT_VERSION_V1);

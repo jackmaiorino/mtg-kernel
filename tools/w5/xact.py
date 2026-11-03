@@ -31,9 +31,10 @@ DOSES = {'primary': (1.0, 2.0), 'fallback': (0.3, 1.0)}
 
 
 def hash_u64(tag, chain, update, seed, slot):
-    """SHA256(json([tag, chain, update, seed, slot])) with compact JSON, first 8 bytes little-endian."""
-    text = json.dumps([tag, chain, update, seed, slot], separators=(',', ':'))
-    return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], 'little')
+    """SHA256(json([tag, chain, update, seed, slot])) with compact UTF-8 JSON (serde_json's form), first 8 bytes
+    little-endian."""
+    text = json.dumps([tag, chain, update, seed, slot], separators=(',', ':'), ensure_ascii=False)
+    return int.from_bytes(hashlib.sha256(text.encode('utf-8')).digest()[:8], 'little')
 
 
 def uniform(h):

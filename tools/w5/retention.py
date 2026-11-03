@@ -4,6 +4,7 @@ A chain is a sequence of native training segments (`native_expanded_training_run
 manifest (schema `w5-chain/v1`):
 
   {"schema": "w5-chain/v1", "chain": "w5/chain1", "arm": "X" | "C", "launched_unix": 1.0e9,
+   "x_cap_seconds": 907200.0,  (optional; the X cap frozen at Stage 0, default 10.5 days)
    "segments": [{"config": "/abs/seg-000.json", "offset": 0}, ...]}
 
 `offset` is the global update index of the segment's first iteration. Boundary b is the state after b updates
@@ -55,7 +56,8 @@ HORIZON = 7 * DAY
 SNAPSHOT_TRIGGER = 0.85
 PAUSE_AT = 1.10
 SNAPSHOT_CAP_BYTES = 30 * 10**9
-X_CAP_SECONDS = 10.5 * DAY
+X_CAP_SECONDS = 10.5 * DAY  # default; a chain manifest's `x_cap_seconds` (frozen at Stage 0) overrides it
+HISTORY_KINDS = ('initial', 'completed_iteration')
 INDEX_SCHEMA = 'w5-chain-index/v1'
 
 
@@ -231,20 +233,22 @@ def decide(x_chain, x_records, c_chain, c_records, c_ended, x_running_s=None, no
     """The pair's next action for X: run, snapshot (keep every checkpoint from now), pause, resume_to (R_i),
     select, or stop_under_budget (X cap). Ledger values only; never R-hat for recoverability."""
     x_ledger = x_records[-1]['ledger_usec'] if x_records else 0
-    out = {'x_ledger_usec': x_ledger, 'x_boundary': x_records[-1]['boundary'] if x_records else 0}
+    x_cap = float(x_chain.get('x_cap_seconds', X_CAP_SECONDS))
+    out = {'x_ledger_usec': x_ledger, 'x_boundary': x_records[-1]['boundary'] if x_records else 0,
+           'x_cap_seconds': x_cap}
     if c_ended:
         r = c_records[-1]['ledger_usec']
         out['r_usec'] = r
         hit = first_at_or_past(x_records, r)
         if hit:
             return dict(out, action='select', endpoint_boundary=hit['boundary'])
-        if x_running_s is not None and x_running_s >= X_CAP_SECONDS:
+        if x_running_s is not None and x_running_s >= x_cap:
             return dict(out, action='stop_under_budget')
         return dict(out, action='resume_to', stop_at_usec=r)
     proj = project(c_records, c_chain['launched_unix'], now)
     out['projection'] = proj
     rhat = proj['r_hat_usec']
-    if x_running_s is not None and x_running_s >= X_CAP_SECONDS:
+    if x_running_s is not None and x_running_s >= x_cap:
         return dict(out, action='stop_under_budget')
     if x_ledger >= PAUSE_AT * rhat:
         return dict(out, action='pause')
@@ -289,53 +293,81 @@ def select(chain, records, r_usec):
 
 def replay_config(chain, spec, out_dir):
     """A segment config that replays boundaries from+1..endpoint: the chain's own iterations, the kept state as
-    its source, the global update offset of its first update, and no ledger."""
+    its source, the global update offset of its first update, and no ledger. Opponent assignments that name the
+    run's own history (`initial`, `completed_iteration`) resolve against a segment's source and iteration
+    indices, so a replay that slices them is refused; every segment crossed must share one opponent roster and
+    one source import."""
     replay = spec['replay']
     first = replay['from']['boundary']
     last = spec['endpoint_boundary']
-    iterations, base = [], None
+    iterations, used = [], []
     for seg in chain['segments']:
         cfg = read(seg['config'])
         for i, item in enumerate(cfg['iterations']):
             if first <= seg['offset'] + i < last:
+                for episode in item['episodes']:
+                    if episode['opponent'].get('kind') in HISTORY_KINDS:
+                        raise SystemExit('stop: the replay range uses a history-relative opponent '
+                                         f"({episode['opponent']['kind']}); replay its whole segment instead")
                 iterations.append(item)
-                base = base or (cfg, seg)
-    cfg, seg = base
-    cfg = json.loads(json.dumps(cfg))
-    first_cfg = read(chain['segments'][0]['config'])
-    source = dict(first_cfg['initial_source'])
+                if not used or used[-1][1] is not seg:
+                    used.append((cfg, seg))
+    if len(iterations) != last - first or not 1 <= len(iterations) <= 4096:
+        raise SystemExit('stop: the replay range is not covered by the chain segments, or exceeds 4096')
+    cfg = json.loads(json.dumps(used[0][0]))
+    for other, _ in used[1:]:
+        if other['opponents'] != cfg['opponents'] or {k: v for k, v in other['initial_source'].items()
+                                                       if k != 'checkpoint'} != {
+                k: v for k, v in cfg['initial_source'].items() if k != 'checkpoint'}:
+            raise SystemExit('stop: the replay crosses segments with different rosters or source imports')
+    source = dict(cfg['initial_source'])
     if replay['from']['checkpoint'] is not None:
         source['checkpoint'] = replay['from']['checkpoint']
+    elif first != 0:
+        raise SystemExit('stop: a replay from a nonzero boundary needs its kept checkpoint')
+    else:
+        source = dict(read(chain['segments'][0]['config'])['initial_source'])
     cfg['initial_source'] = source
     cfg['iterations'] = iterations
     if cfg.get('ex1'):
         cfg['ex1']['update_offset'] = first
     cfg.pop('chain_ledger', None)
     cfg['output_directory'] = Path(out_dir).as_posix()
-    if len(iterations) != last - first or not 1 <= len(iterations) <= 4096:
-        raise SystemExit('stop: the replay range is not covered by the chain segments, or exceeds 4096')
     return cfg
 
 
 def verify_replay(spec, replay_root):
     """Every replayed update must reproduce its recorded after-state hash."""
     expected = spec['replay']['expected']
-    got = []
+    got, checkpoint = [], None
     for i, item in enumerate(expected):
         complete = Path(replay_root, 'iterations', f'{i:06d}', 'complete.json')
         doc = read(read(complete)['update']['path']) if complete.exists() else {}
         got.append(doc.get('after_state_sha256'))
+        checkpoint = doc.get('checkpoint')
     equal = [g == e['after_state_sha256'] for g, e in zip(got, expected)]
+    ok = all(equal) and len(got) == len(expected)
+    if ok and not (checkpoint and Path(checkpoint['path']).exists() and sha(checkpoint['path']) == checkpoint['sha256']):
+        ok = False
     return {'schema': 'w5-replay-receipt/v1', 'endpoint_boundary': spec['endpoint_boundary'],
             'from_boundary': spec['replay']['from']['boundary'], 'updates': len(expected),
-            'equal': all(equal), 'first_mismatch': None if all(equal) else expected[equal.index(False)]['boundary'],
-            'endpoint_after_state_sha256': got[-1] if got else None}
+            'equal': ok, 'first_mismatch': None if all(equal) else expected[equal.index(False)]['boundary'],
+            'endpoint_after_state_sha256': got[-1] if got else None,
+            'endpoint_checkpoint': checkpoint if ok else None}
 
 
-def prune_manifest(chain, records, selected_boundary):
+def prune_manifest(chain, records, selected_boundary, replay_receipt=None):
     """ARTIFACT-LAW PRUNE manifest after the pair's endpoint is fixed: every checkpoint on disk except the
-    selected one; receipts (complete.json, update.json, ledgers) are kept."""
+    selected one; receipts (complete.json, update.json, ledgers) are kept. A selected boundary rebuilt by replay
+    is kept through its verified replay receipt (the replayed checkpoint, outside the chain's trees)."""
     prune, keep = [], []
+    if replay_receipt is not None:
+        if not (replay_receipt.get('equal') and replay_receipt.get('endpoint_boundary') == selected_boundary
+                and replay_receipt.get('endpoint_checkpoint')):
+            raise SystemExit('stop: the replay receipt is not a verified replay of the selected boundary')
+        pin = replay_receipt['endpoint_checkpoint']
+        keep.append({'boundary': selected_boundary, 'path': Path(pin['path']).as_posix(), 'sha256': pin['sha256'],
+                     'bytes': Path(pin['path']).stat().st_size, 'replayed': True})
     for rec in records:
         path = Path(rec['checkpoint']['path'])
         if not path.exists():
@@ -384,6 +416,7 @@ def main(argv=None):
     p.add_argument('chain'); p.add_argument('spec'); p.add_argument('out'); p.add_argument('output_dir')
     p = sub.add_parser('verify-replay'); p.add_argument('spec'); p.add_argument('replay_root')
     p = sub.add_parser('prune-manifest'); p.add_argument('chain'); p.add_argument('boundary', type=int); p.add_argument('out')
+    p.add_argument('--replay-receipt')
     p = sub.add_parser('guard'); p.add_argument('roots', nargs='+'); p.add_argument('--cap-bytes', type=int, required=True)
     p.add_argument('--next-bytes', type=int, default=0)
     a = ap.parse_args(argv)
@@ -415,7 +448,7 @@ def main(argv=None):
         out = verify_replay(read(a.spec), a.replay_root)
     elif a.cmd == 'prune-manifest':
         chain, records = index(a.chain)
-        out = prune_manifest(chain, records, a.boundary)
+        out = prune_manifest(chain, records, a.boundary, read(a.replay_receipt) if a.replay_receipt else None)
         write(a.out, out)
     else:
         out = guard(a.roots, a.cap_bytes, a.next_bytes)

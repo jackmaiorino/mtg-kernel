@@ -19,6 +19,10 @@ class MirrorTests(unittest.TestCase):
         a = xact.hash_u64('w5/act', 'w5/chain1', 7, 42, 3)
         self.assertEqual(a, 15_846_080_588_647_116_512)
         self.assertEqual(xact.uniform(a), 0.8590177499795791)
+        # A non-ASCII chain id hashes its UTF-8 bytes, as serde_json writes them.
+        u = xact.hash_u64('w5/placement', 'w5/cha\u00een1', 7, 42, 3)
+        self.assertEqual(u, 16_614_139_203_310_030_779)
+        self.assertEqual(1 + (u >> 57), 116)
 
     def test_placement_index_spans_one_to_128(self):
         self.assertEqual(1 + (0 >> 57), 1)
@@ -50,7 +54,8 @@ def make_chain(tmp, arm, segments, per_segment, ledger_step=1000, t0=1.0e9, dt=6
     segs = []
     for s in range(segments):
         root = tmp / f'{arm}-seg{s:03d}'
-        cfg = {'output_directory': root.as_posix(), 'iterations': [{'episodes': [s, i]} for i in range(per_segment)],
+        cfg = {'output_directory': root.as_posix(), 'iterations': [{'episodes': [{'opponent': {'kind': 'current'}, 'tag': [s, i]}]}
+                              for i in range(per_segment)],
                'initial_source': {'play_import': {'path': 'import.json', 'sha256': 'i'}, 'checkpoint': None},
                'ex1': {'run': 'w5/chain1', 'update_offset': s * per_segment} if arm == 'X' else None,
                'chain_ledger': {'source': 'ledger.json'}}
@@ -152,6 +157,10 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual((d['action'], d['stop_at_usec']), ('resume_to', 128_000))
             d = retention.decide(x_chain, x_rec[:50], c_chain, c_rec, c_ended=True, x_running_s=11 * 86400)
             self.assertEqual(d['action'], 'stop_under_budget')
+            # A cap frozen at Stage 0 above 10.5 days is honoured.
+            longer = dict(x_chain, x_cap_seconds=13 * 86400)
+            d = retention.decide(longer, x_rec[:50], c_chain, c_rec, c_ended=True, x_running_s=11 * 86400)
+            self.assertEqual(d['action'], 'resume_to')
 
     def test_selection_replay_and_prune_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -165,7 +174,7 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual(spec['replay']['expected'][-1]['after_state_sha256'], 'h101')
             cfg = retention.replay_config(retention.load_chain(chain_path), spec, Path(tmp) / 'replay')
             self.assertEqual(len(cfg['iterations']), 37)
-            self.assertEqual(cfg['iterations'][0], {'episodes': [1, 0]})
+            self.assertEqual(cfg['iterations'][0]['episodes'][0]['tag'], [1, 0])
             self.assertEqual(cfg['ex1']['update_offset'], 64)
             self.assertNotIn('chain_ledger', cfg)
             self.assertEqual(cfg['initial_source']['checkpoint']['path'], records[63]['checkpoint']['path'])
@@ -174,9 +183,18 @@ class RetentionTests(unittest.TestCase):
             for i, item in enumerate(spec['replay']['expected']):
                 it = root / 'iterations' / f'{i:06d}'
                 it.mkdir(parents=True)
-                (it / 'u.json').write_text(json.dumps({'after_state_sha256': item['after_state_sha256']}))
+                ck = it / 'checkpoint.json'
+                ck.write_text(f'replayed-{i}')
+                (it / 'u.json').write_text(json.dumps({'after_state_sha256': item['after_state_sha256'],
+                                                       'checkpoint': {'path': ck.as_posix(),
+                                                                      'sha256': retention.sha(ck)}}))
                 (it / 'complete.json').write_text(json.dumps({'update': {'path': (it / 'u.json').as_posix()}}))
-            self.assertTrue(retention.verify_replay(spec, root)['equal'])
+            verified = retention.verify_replay(spec, root)
+            self.assertTrue(verified['equal'])
+            # The replayed endpoint is kept through its verified receipt.
+            manifest = retention.prune_manifest(chain, records, 101, verified)
+            self.assertEqual([k['boundary'] for k in manifest['keep']['selected_checkpoint']], [101])
+            self.assertTrue(manifest['keep']['selected_checkpoint'][0]['replayed'])
             (root / 'iterations' / '000005' / 'u.json').write_text(json.dumps({'after_state_sha256': 'bad'}))
             receipt = retention.verify_replay(spec, root)
             self.assertFalse(receipt['equal'])
@@ -190,6 +208,21 @@ class RetentionTests(unittest.TestCase):
             self.assertIn(64, [p['boundary'] for p in manifest['prune']])
             with self.assertRaises(SystemExit):
                 retention.prune_manifest(chain, records, 101)
+            with self.assertRaises(SystemExit):
+                retention.prune_manifest(chain, records, 101, receipt)
+
+    def test_replay_refuses_history_relative_opponents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=2, per_segment=64)
+            chain = retention.load_chain(chain_path)
+            cfg = retention.read(chain['segments'][0]['config'])
+            for item in cfg['iterations']:
+                item['episodes'] = [{'opponent': {'kind': 'initial'}}]
+            Path(chain['segments'][0]['config']).write_text(json.dumps(cfg))
+            spec = {'endpoint_boundary': 40, 'replay': {'from': {'boundary': 20, 'checkpoint': {'path': 'x',
+                                                                                               'sha256': 'y'}}}}
+            with self.assertRaises(SystemExit):
+                retention.replay_config(retention.load_chain(chain_path), spec, Path(tmp) / 'r')
 
     def test_guard(self):
         with tempfile.TemporaryDirectory() as tmp:

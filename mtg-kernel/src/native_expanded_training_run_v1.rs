@@ -159,11 +159,18 @@ pub struct Ex1RunOptionsV1 {
     pub w5: Option<W5RunOptionsV1>,
 }
 
-/// W5's run options: the frozen search budget B (Stage 0b).
+/// W5's run options: the frozen search budget B (Stage 0b) and the search's
+/// exact key memo limit in MiB (default 512; 0 turns it off).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct W5RunOptionsV1 {
     pub budget: u64,
+    #[serde(default = "default_w5_key_memo_mib")]
+    pub key_memo_mib: u64,
+}
+
+fn default_w5_key_memo_mib() -> u64 {
+    crate::w5_xact_v1::W5_KEY_MEMO_MIB_DEFAULT_V1
 }
 
 impl Ex1RunOptionsV1 {
@@ -172,8 +179,9 @@ impl Ex1RunOptionsV1 {
             run: self.run.clone(),
             update: self.update_offset + index as u64,
             budget: self.w5.as_ref().map_or(EX1_BUDGET_V1, |w5| w5.budget),
-            w5: self.w5.as_ref().map(|_| W5CollectOptionsV1 {
+            w5: self.w5.as_ref().map(|w5| W5CollectOptionsV1 {
                 recipe: W5_XACT_VERSION_V1.into(),
+                key_memo_mib: w5.key_memo_mib,
             }),
         }
     }
@@ -188,6 +196,7 @@ impl Ex1RunOptionsV1 {
             w5: self.w5.as_ref().map(|w5| W5UpdateOptionsV1 {
                 recipe: W5_XACT_VERSION_V1.into(),
                 budget: w5.budget,
+                key_memo_mib: w5.key_memo_mib,
             }),
         }
     }
@@ -226,12 +235,29 @@ pub struct ChainLedgerReadingV1 {
 }
 
 impl ChainLedgerOptionsV1 {
-    pub fn read_v1(&self) -> Result<ChainLedgerReadingV1, String> {
+    fn source_v1(&self) -> Result<Value, String> {
         let source = read_json(&self.source, SMALL_CAP)?;
         check(
             source["schema"] == CHAIN_LEDGER_SOURCE_SCHEMA_V1,
             "chain ledger source has another schema",
         )?;
+        Ok(source)
+    }
+
+    /// The source's stop value, read without the live counter.
+    pub fn stop_at_usec_v1(&self) -> Result<Option<u64>, String> {
+        let source = self.source_v1()?;
+        match source.get("stop_at_usec") {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| "chain ledger stop_at_usec is not an integer".into()),
+        }
+    }
+
+    pub fn read_v1(&self) -> Result<ChainLedgerReadingV1, String> {
+        let source = self.source_v1()?;
         let closed = source["closed_usec"]
             .as_u64()
             .ok_or("chain ledger source lacks closed_usec")?;
@@ -1661,6 +1687,12 @@ pub fn run_native_expanded_training_v1(
     let mut receipts = Vec::new();
     let mut newly_completed = 0usize;
     let mut stopped_at_ledger = false;
+    let recovered_stop_at_usec = config
+        .chain_ledger
+        .as_ref()
+        .map(ChainLedgerOptionsV1::stop_at_usec_v1)
+        .transpose()?
+        .flatten();
     let mut missing_seen = false;
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
@@ -1737,6 +1769,14 @@ pub fn run_native_expanded_training_v1(
                 receipt["output_identity"] == value(&after)?,
                 "iteration checkpoint identity differs",
             )?;
+            // A recovered boundary at or past the source's stop value stops
+            // the run before any new work (a relaunch never passes R_i).
+            if let (Some(stop), Some(usec)) = (
+                recovered_stop_at_usec,
+                receipt["chain_ledger"]["usec"].as_u64(),
+            ) {
+                stopped_at_ledger = usec >= stop;
+            }
             current = next;
             current_identity = after;
             history.push(current.clone());
@@ -3456,7 +3496,10 @@ mod tests {
                     crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1::Ratio {
                         kappa: 2.0,
                     },
-                w5: Some(W5RunOptionsV1 { budget: 1_500 }),
+                w5: Some(W5RunOptionsV1 {
+                    budget: 1_500,
+                    key_memo_mib: 512,
+                }),
             });
             config.chain_ledger = Some(ChainLedgerOptionsV1 { source });
             config.validate_v1().unwrap();
@@ -3498,6 +3541,9 @@ mod tests {
         let stopped = run_native_expanded_training_v1(&c, None).unwrap();
         assert_eq!(stopped["completed_iterations"], 1);
         assert_eq!(stopped["complete"], false);
+        // A relaunch with the same stop value does no new work.
+        let again = run_native_expanded_training_v1(&c, None).unwrap();
+        assert_eq!(again["completed_iterations"], 1);
         document["stop_at_usec"] = Value::Null;
         fs::write(
             &c.chain_ledger.as_ref().unwrap().source,

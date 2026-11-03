@@ -1428,6 +1428,21 @@ struct ExpandedTrajectoryV1 {
     /// with `opening`; absent otherwise, preserving archived bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opening_record: Option<PauperOpeningRecordV1>,
+    /// W5 (`w5-xact-v1`): the learner rows whose played action the search
+    /// drew from q, each with the learner's own draw (the sampler stream
+    /// still advanced). Absent otherwise, preserving archived bytes. The
+    /// update authenticates every entry against the collection's record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_played: Option<Vec<SearchPlayedRowV1>>,
+}
+
+/// One learner row the search played (`w5-xact-v1`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchPlayedRowV1 {
+    step: u64,
+    /// The learner sampler's own draw at the row.
+    policy_selected: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2399,6 +2414,7 @@ fn collect_episode_hooked_v1(
         other.policy.reset_sampling_v1(seeds);
     }
     let mut decisions = Vec::new();
+    let mut search_played = Vec::new();
     loop {
         match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
@@ -2430,6 +2446,7 @@ fn collect_episode_hooked_v1(
                     training_math: policy.training_math_v1(),
                     input_contract,
                     opening_record: session.pauper_opening_record_v1().cloned(),
+                    search_played: (!search_played.is_empty()).then_some(search_played),
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -2478,12 +2495,19 @@ fn collect_episode_hooked_v1(
                         (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                     };
                 let logits = bits(&scores.logits);
-                let selected = match (hook.as_deref_mut(), pending) {
+                let played = match (hook.as_deref_mut(), pending) {
                     (Some(hook), Some(pending)) => {
                         hook.after_select_v1(pending, d, &logits, selected)?
                     }
-                    _ => selected,
+                    _ => None,
                 };
+                if let Some(played) = played {
+                    search_played.push(SearchPlayedRowV1 {
+                        step: d.step,
+                        policy_selected: selected,
+                    });
+                }
+                let selected = played.unwrap_or(selected);
                 let record = DecisionRecordV1 {
                     step: d.step,
                     physical_decision_id: d.physical_decision_id,
@@ -2911,10 +2935,40 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     if contract.input_contract_digest_v1().is_some() {
         no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
     }
+    // W5: a row the search played replays the learner's own draw; the
+    // update authenticates the played action against q.
+    let replayed;
+    let decisions = match &t.search_played {
+        None => &t.decisions,
+        Some(rows) => {
+            ensure(
+                !rows.is_empty() && rows.windows(2).all(|w| w[0].step < w[1].step),
+                "search-played rows empty or not in step order",
+            )?;
+            let mut copy = t.decisions.clone();
+            let (step_offset, _) = t.episode.reset_offsets_v1();
+            for row in rows {
+                let index = row
+                    .step
+                    .checked_sub(step_offset)
+                    .and_then(|i| usize::try_from(i).ok())
+                    .filter(|&i| i < copy.len())
+                    .ok_or("search-played row outside the trajectory")?;
+                let decision = &mut copy[index];
+                ensure(
+                    decision.step == row.step && decision.actor == t.episode.learner_seat,
+                    "search-played row is not a learner decision",
+                )?;
+                decision.selected = row.policy_selected;
+            }
+            replayed = copy;
+            &replayed
+        }
+    };
     validate_episode_records_with_learner_sampler_v1(
         &t.episode,
         &t.configuration_sha256,
-        &t.decisions,
+        decisions,
         &t.terminal,
         t.learner_sampler.as_deref(),
     )
@@ -5229,9 +5283,15 @@ fn execute_update_inner_v1(
         search_targets:search_targets.as_ref().map(|options|json!({
             "continuation":search_targets_v1::continuation_identity(options),
             "packet":options.packet,"census":st_census_pin})),
-        ex1: ex1.as_ref().map(|options| json!({
-            "continuation":ex1_update_v1::continuation_identity(options),
-            "collection":options.collection,"receipt":ex1_pin})),
+        ex1: ex1.as_ref().map(|options| {
+            let mut saved = json!({
+                "continuation":ex1_update_v1::continuation_identity(options),
+                "collection":options.collection,"receipt":ex1_pin});
+            if options.w5.is_some() {
+                saved["w5_next_update"] = json!(options.update + 1);
+            }
+            saved
+        }),
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: snapshot
@@ -6183,6 +6243,7 @@ pub(crate) mod tests {
             training_math: TrainingMathV1::PlatformLibm,
             input_contract: None,
             opening_record: None,
+            search_played: None,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -8171,9 +8232,13 @@ pub(crate) mod tests {
         let learner = test_behavior(&policy, false);
         let episode = fast_self_play_episode_v1("w5-hook", 2_026_110_201, 0);
         let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
-        let w5 = Some(ex1_collect_v1::W5CollectOptionsV1 {
-            recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
-        });
+        let w5_memo = |key_memo_mib: u64| {
+            Some(ex1_collect_v1::W5CollectOptionsV1 {
+                recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                key_memo_mib,
+            })
+        };
+        let w5 = w5_memo(512);
         let mut acted_rows = 0;
         for slot in 0..48_usize {
             let options = ex1_collect_v1::Ex1CollectOptionsV1 {
@@ -8189,6 +8254,42 @@ pub(crate) mod tests {
                 collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
                     .unwrap();
             let record = hook.finish_v1(&episode, true);
+            // The exact key memo off gives the same trajectory, searches and
+            // targets (wall time and the recorded memo setting aside).
+            let off = ex1_collect_v1::Ex1CollectOptionsV1 {
+                w5: w5_memo(0),
+                ..options.clone()
+            };
+            let mut off_hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::new(&off, &policy, &episode, slot).unwrap();
+            let off_trajectory = collect_episode_hooked_v1(
+                &mut policy,
+                &learner,
+                None,
+                &episode,
+                Some(&mut off_hook),
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_vec(&hooked).unwrap(),
+                serde_json::to_vec(&off_trajectory).unwrap(),
+                "slot {slot}: the key memo changed the trajectory"
+            );
+            let off_record = off_hook.finish_v1(&episode, true);
+            let strip = |record: &Value| {
+                let mut record = record.clone();
+                record["options"] = Value::Null;
+                for search in record["searches"].as_array_mut().unwrap() {
+                    search["wall"] = Value::Null;
+                    search["key_memo_bytes"] = Value::Null;
+                }
+                record
+            };
+            assert_eq!(strip(&record), strip(&off_record), "slot {slot}");
+            if let Some(search) = record["searches"].as_array().unwrap().first() {
+                assert_eq!(search["key_memo_bytes"], 512 << 20);
+                assert!(off_record["searches"][0]["key_memo_bytes"].is_null());
+            }
             let placement = &record["w5"];
             let searches = record["searches"].as_array().unwrap();
             assert!(searches.len() <= 1, "at most one search per episode");
@@ -8246,6 +8347,14 @@ pub(crate) mod tests {
                     )
                     .unwrap();
                     assert_eq!(d.selected as usize, played);
+                    let entry = hooked
+                        .search_played
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .find(|r| json!(r.step) == row["step"])
+                        .unwrap();
+                    assert_eq!(json!(entry.policy_selected), row["policy_selected"]);
                     acted_rows += 1;
                 } else {
                     assert_eq!(row["acted"], false);

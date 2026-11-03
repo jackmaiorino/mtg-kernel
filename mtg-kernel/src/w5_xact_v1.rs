@@ -26,6 +26,11 @@ pub const W5_PLACEMENT_MAX_V1: u64 = 128;
 pub const W5_TELEMETRY_STRIDE_V1: u64 = 16;
 /// The largest admitted search budget B (raw selection transitions).
 pub const W5_BUDGET_MAX_V1: u64 = 1_048_576;
+/// The default exact key memo limit of a W5 search, in MiB (the value-leaf
+/// M1 measurement's 512 MiB, about 70 KB per stored entry).
+pub const W5_KEY_MEMO_MIB_DEFAULT_V1: u64 = 512;
+/// The largest admitted key memo limit, in MiB.
+pub const W5_KEY_MEMO_MIB_MAX_V1: u64 = 4096;
 
 /// W1's eligibility: at least two candidates that are not mana abilities
 /// (which implies at least two candidates).
@@ -157,6 +162,10 @@ mod tests {
         let act = w5_act_hash_v1("w5/chain1", 7, 42, 3);
         assert_eq!(act, 15_846_080_588_647_116_512);
         assert_eq!(ex1_uniform_v1(act), 0.8590177499795791);
+        // serde_json writes non-ASCII as UTF-8, mirrored with ensure_ascii=False.
+        let unicode = w5_placement_hash_v1("w5/cha\u{ee}n1", 7, 42, 3);
+        assert_eq!(unicode, 16_614_139_203_310_030_779);
+        assert_eq!(w5_placement_index_v1(unicode), 116);
     }
 
     #[test]

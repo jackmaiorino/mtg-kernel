@@ -42,7 +42,7 @@ use crate::regret_census_v1::stage4a::{
 use crate::rl_session::FastActorDecisionV1;
 use crate::w5_xact_v1::{
     w5_eligible_v1, w5_placement_hash_v1, w5_placement_index_v1, w5_played_action_v1,
-    W5_BUDGET_MAX_V1, W5_PLACEMENT_MAX_V1, W5_XACT_VERSION_V1,
+    W5_BUDGET_MAX_V1, W5_KEY_MEMO_MIB_MAX_V1, W5_PLACEMENT_MAX_V1, W5_XACT_VERSION_V1,
 };
 use std::collections::BTreeMap;
 
@@ -65,11 +65,15 @@ pub struct Ex1CollectOptionsV1 {
     pub w5: Option<W5CollectOptionsV1>,
 }
 
-/// W5's collection marker: the recipe identifier, `w5-xact-v1`.
+/// W5's collection options: the recipe identifier, `w5-xact-v1`, and the
+/// search's exact key memo limit in MiB (0: off). The memo is exact (keys,
+/// trees, selection and statistics are unchanged; only time is), so it is a
+/// recorded cost setting, not a recipe constant.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct W5CollectOptionsV1 {
     pub recipe: String,
+    pub key_memo_mib: u64,
 }
 
 impl Ex1CollectOptionsV1 {
@@ -87,6 +91,10 @@ impl Ex1CollectOptionsV1 {
                 ensure(
                     w5.recipe == W5_XACT_VERSION_V1,
                     "w5 collection names an unknown recipe",
+                )?;
+                ensure(
+                    w5.key_memo_mib <= W5_KEY_MEMO_MIB_MAX_V1,
+                    "w5 key memo limit above 4096 MiB",
                 )?;
                 ensure(
                     self.budget > 0 && self.budget <= W5_BUDGET_MAX_V1,
@@ -233,7 +241,17 @@ impl Ex1EpisodeHookV1 {
             options: options.clone(),
             seed: episode.seed,
             learner_seat: episode.learner_seat,
-            searcher: Ex1SearcherV1::new(learner, PlayerId(episode.learner_seat))?,
+            searcher: match options.w5.as_ref().map(|w5| w5.key_memo_mib) {
+                // W5 runs the search with its recorded exact key memo; EX1's
+                // searches keep the process default, unchanged.
+                Some(mib) if mib > 0 => {
+                    Ex1SearcherV1::new(learner, PlayerId(episode.learner_seat))?
+                        .with_key_memo_v1((mib as usize) << 20)
+                }
+                Some(_) => Ex1SearcherV1::new(learner, PlayerId(episode.learner_seat))?
+                    .with_key_memo_off_v1(),
+                None => Ex1SearcherV1::new(learner, PlayerId(episode.learner_seat))?,
+            },
             burst_turn: None,
             counts: Ex1StratumV1::ALL
                 .iter()
@@ -381,22 +399,23 @@ impl Ex1EpisodeHookV1 {
     }
 
     /// The target at the live row from the deployed logits, then the cursor
-    /// follows the played action. Returns the played action: the learner's
-    /// own sampled action, except at a W5 root with a target, where q's draw
-    /// plays.
+    /// follows the played action. Returns `Some(action)` when the search
+    /// plays (a W5 root with a target, q's draw); otherwise the learner's own
+    /// sampled action plays and this returns `None`.
     pub(super) fn after_select_v1(
         &mut self,
         pending: Ex1PendingV1,
         d: FastActorDecisionV1,
         logit_bits: &[u32],
         selected: u32,
-    ) -> Result<u32, String> {
+    ) -> Result<Option<u32>, String> {
         let counts = self
             .counts
             .get_mut(&pending.stratum)
             .expect("every stratum");
         let mut row_index = None;
         let mut played = selected;
+        let mut search_played = false;
         if let (Some(kind), Some(node)) = (pending.kind, &pending.node) {
             let target = ex1_target_v1(logit_bits, &node.counts)?;
             if let (Some(w5), "root", Err(_)) = (self.w5.as_mut(), kind, &target) {
@@ -423,6 +442,7 @@ impl Ex1EpisodeHookV1 {
                         }
                         _ => false,
                     };
+                    search_played = acted;
                     if kind == "root" {
                         counts.root_rows += 1;
                     } else {
@@ -466,7 +486,7 @@ impl Ex1EpisodeHookV1 {
         if pending.looked_up {
             self.searcher.advance(played);
         }
-        Ok(played)
+        Ok(search_played.then_some(played))
     }
 
     /// The attempt's record.
