@@ -269,6 +269,10 @@ class Capture0bTests(unittest.TestCase):
         self.assertEqual(command['episodes'][0]['opponent'], self.source)
         self.assertEqual(command['episodes'][1]['opponent'], self.parent['source'])
         self.assertTrue(command['episodes'][0]['id'].startswith('w5/0b-w5/0b-u1-j0'))
+        self.assertNotIn('training_math', command)
+        portable = dict(self.base, training_math='portable-math-v1')
+        made = capture0b.jobs(portable, {'source': self.source}, self.root / 'portable', updates=1)
+        self.assertEqual(capture0b.read(made[0])['training_math'], 'portable-math-v1')
         bad = dict(self.base, iterations=[{'episodes': [{'episode': {'id': 'z', 'seed': 3, 'learner_seat': 0},
                                                          'opponent': {'kind': 'completed_iteration', 'index': 0}}]}])
         with self.assertRaises(SystemExit):

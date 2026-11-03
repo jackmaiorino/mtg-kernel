@@ -77,6 +77,10 @@ def jobs(base, dose, out_dir, updates, first_update=0, chain='w5/0b', budgets=(1
                    'output_directory': (Path(out_dir) / 'runs' / f'u{update:06d}').as_posix()}
         if not command['max_non_natural_episode_fraction']:
             del command['max_non_natural_episode_fraction']
+        # The run's sampler and math, as the native driver's collection command carries them.
+        for key in ('collection_sampler', 'training_math'):
+            if key in cfg:
+                command[key] = cfg[key]
         path = Path(out_dir) / 'jobs' / f'u{update:06d}.json'
         write(path, command)
         out.append(path.as_posix())

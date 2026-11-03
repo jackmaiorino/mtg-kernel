@@ -8436,9 +8436,15 @@ pub(crate) mod tests {
             assert_eq!(capture["policy"]["logit_bits"], json!(d.logits));
             let actions: Vec<usize> =
                 serde_json::from_value(capture["qref"]["actions"].clone()).unwrap();
-            let logits: Vec<f32> = d.logits.iter().map(|&b| f32::from_bits(b)).collect();
-            let argmax =
-                (0..logits.len()).fold(0, |b, a| if logits[a] > logits[b] { a } else { b });
+            let z: Vec<f64> = d
+                .logits
+                .iter()
+                .map(|&b| f64::from(f32::from_bits(b)))
+                .collect();
+            let p = crate::line_b_teacher_target_v1::line_b_softmax_v1(&z)
+                .unwrap()
+                .probabilities;
+            let argmax = (0..p.len()).fold(0, |b, a| if p[a] > p[b] { a } else { b });
             assert!(actions.contains(&argmax));
             for c in candidates.iter().filter(|c| c["status"] == "ok") {
                 let n: Vec<u64> = serde_json::from_value(c["n"].clone()).unwrap();

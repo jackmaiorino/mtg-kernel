@@ -650,10 +650,20 @@ impl Ex1EpisodeHookV1 {
                 candidates.push(candidate);
             }
         }
-        // The policy's argmax, ties to the lowest index.
-        let logits: Vec<f32> = logit_bits.iter().map(|&b| f32::from_bits(b)).collect();
-        let argmax =
-            (0..logits.len()).fold(0, |best, a| if logits[a] > logits[best] { a } else { best });
+        // The policy's argmax on its binary64 softmax (the consumer's
+        // `ex1-target-v1` mirror), ties to the lowest index.
+        let z: Vec<f64> = logit_bits
+            .iter()
+            .map(|&b| f64::from(f32::from_bits(b)))
+            .collect();
+        let p = line_b_softmax_v1(&z).map_err(|e| format!("w5 capture: {e}"))?;
+        let argmax = (0..p.probabilities.len()).fold(0, |best, a| {
+            if p.probabilities[a] > p.probabilities[best] {
+                a
+            } else {
+                best
+            }
+        });
         actions.insert(argmax);
         let actions: Vec<usize> = actions.into_iter().collect();
         let focal = self.learner_seat;
