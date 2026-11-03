@@ -191,5 +191,23 @@ class GuardTests(unittest.TestCase):
                 w5box.load_plan(path)
 
 
+class NodeStateTests(unittest.TestCase):
+    def test_repeated_faults_clears_and_operator_freeze(self):
+        log = [{"event": "fault", "box_slot": 1, "unix": 1}]
+        self.assertTrue(w5box.NodeLog.state(log)["frozen"])
+        log += [{"event": "escalate", "box_slot": 1}, {"event": "clear", "box_slot": 1}]
+        state = w5box.NodeLog.state(log)
+        self.assertFalse(state["frozen"])
+        self.assertEqual(state["escalated"], [])
+        log += [{"event": "fault", "box_slot": 1, "unix": 2}, {"event": "fault", "box_slot": 3, "unix": 3},
+                {"event": "clear", "box_slot": 1}]
+        state = w5box.NodeLog.state(log)
+        self.assertEqual(sorted(state["open_faults"]), [3])
+        log += [{"event": "clear", "box_slot": 3}, {"event": "node-freeze", "reason": "x"}]
+        self.assertTrue(w5box.NodeLog.state(log)["frozen"])
+        log += [{"event": "node-thaw", "reason": "x"}]
+        self.assertFalse(w5box.NodeLog.state(log)["frozen"])
+
+
 if __name__ == "__main__":
     unittest.main()
