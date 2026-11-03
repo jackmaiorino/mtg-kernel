@@ -862,9 +862,10 @@ pub(crate) fn l8_bound_copies(put_back: L8PutBackV1) -> ScriptV1 {
         pick("Squadron Hawk"),
         pick("Squadron Hawk"),
         gate("the Hawk bounced", |st: &GameState| {
-            st.battlefield
-                .iter()
-                .all(|x| st.objects.get(*x).card_def != id("Squadron Hawk"))
+            st.players[0].hand.iter().any(|x| {
+                let o = st.objects.get(*x);
+                o.card_def == id("Squadron Hawk") && o.zone_change_count >= 3
+            })
         }),
         play_land("Island"),
         cast("Brainstorm"),
