@@ -45,7 +45,7 @@ from pathlib import Path
 SCHEMA = "w5-runtime-parity/v1"
 BRIDGE_FILES = ("mtg-kernel/src/agent_bridge_v1.rs", "mtg-kernel/src/agent_bridge_flat_v4.rs")
 RULES_CALL = re.compile(r"\bset_runtime_rules_v1\s*\(")
-RUST_NOISE = re.compile(r'//[^\n]*|/\*.*?\*/|r(#*)".*?"\1|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])\'', re.DOTALL)
+RAW_STRING = re.compile(r'r(#*)"')
 
 
 class ParityError(Exception):
@@ -128,8 +128,40 @@ def board_decks(runtime_decks: dict, pool: list[str], card_names: list[str]) -> 
 
 
 def strip_rust(source: str) -> str:
-    """Rust source without comments, string and char literals (block comments taken as non-nested)."""
-    return RUST_NOISE.sub(" ", source)
+    """Rust source without comments (nested block comments included), string, raw-string and char literals."""
+    out, i, n = [], 0, len(source)
+    while i < n:
+        two = source[i:i + 2]
+        if two == "//":
+            end = source.find("\n", i)
+            i = n if end < 0 else end
+        elif two == "/*":
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if source[i:i + 2] == "/*":
+                    depth, i = depth + 1, i + 2
+                elif source[i:i + 2] == "*/":
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+        elif source[i] == "r" and (i == 0 or not (source[i - 1].isalnum() or source[i - 1] == "_")) \
+                and RAW_STRING.match(source, i):
+            hashes = RAW_STRING.match(source, i).group(1)
+            end = source.find('"' + hashes, i + 2 + len(hashes))
+            i = n if end < 0 else end + 1 + len(hashes)
+        elif source[i] == '"':
+            i += 1
+            while i < n and source[i] != '"':
+                i += 2 if source[i] == "\\" else 1
+            i += 1
+        elif source[i] == "'" and i + 2 < n and (source[i + 2] == "'" or (source[i + 1] == "\\" and "'" in source[i + 2:i + 12])):
+            i = source.index("'", i + 2) + 1  # a char literal ('x' or an escape); lifetimes have no closing quote
+        else:
+            out.append(source[i])
+            i += 1
+            continue
+        out.append(" ")
+    return "".join(out)
 
 
 def bridge_rules(sources: list[str]) -> dict:

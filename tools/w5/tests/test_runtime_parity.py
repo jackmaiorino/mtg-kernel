@@ -130,6 +130,9 @@ class CompareTests(unittest.TestCase):
         self.assertFalse(calls('let s = "set_runtime_rules_v1(";'))
         self.assertTrue(calls("    session.set_runtime_rules_v1(rules)?;"))
         self.assertTrue(calls("session /* rules */ .set_runtime_rules_v1(rules)?;"))
+        self.assertTrue(calls('/* outer /* inner */ " */ session.set_runtime_rules_v1(x); let _ = "";'))
+        self.assertFalse(calls("/* outer /* inner */ session.set_runtime_rules_v1(x) */ fn f<'a>(x: &'a str) {}"))
+        self.assertFalse(calls('let s = r#"set_runtime_rules_v1("#;'))
 
     def test_learner_must_play_first_and_second(self):
         cfg = training_config()
