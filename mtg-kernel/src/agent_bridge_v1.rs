@@ -3419,7 +3419,24 @@ mod tests {
                     break;
                 }
                 let extension = &response["extensions"]["x_kernel_infoset_v1"];
-                if let (Some(text), Some(live_rows)) = (
+                // Only an unfinished blocker or arrangement declaration's root
+                // has private previews; everything else refuses them.
+                let support = &response["extensions"]["x_kernel_v2_support"];
+                let buffered_root = support["at_block_root"] == json!(true)
+                    || matches!(
+                        support["choice"]["purpose"].as_str(),
+                        Some(
+                            "scry"
+                                | "look_select"
+                                | "look"
+                                | "reveal_partition"
+                                | "mill"
+                                | "put_on_top"
+                                | "discard_order"
+                        )
+                    );
+                if let (true, Some(text), Some(live_rows)) = (
+                    buffered_root,
                     extension["payload_json"].as_str(),
                     extension["live_rows"].as_array(),
                 ) {
