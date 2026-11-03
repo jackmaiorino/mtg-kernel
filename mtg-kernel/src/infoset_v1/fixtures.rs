@@ -763,6 +763,132 @@ pub(crate) fn fable_bounce(hawks: usize) -> ScriptV1 {
     script
 }
 
+/// The zone change count of the card a choice names.
+fn named_generation(v: &Value) -> Option<u64> {
+    v["target"]["object"]["zone_change_count"]
+        .as_u64()
+        .or_else(|| v["candidate"]["zone_change_count"].as_u64())
+        .or_else(|| v["card"]["zone_change_count"].as_u64())
+}
+
+/// Choose a copy of `name` by its history: `bounced` takes a copy that has
+/// been on the battlefield (at least three zone changes: drawn, cast,
+/// resolved, returned), otherwise one that has not.
+pub(crate) fn pick_copy(name: &str, bounced: bool) -> IntentV1 {
+    let d = u64::from(id(name));
+    IntentV1::Take(
+        format!("pick a {} {name}", if bounced { "bounced" } else { "fresh" }),
+        Box::new(move |v| {
+            matches!(
+                kind(v),
+                "choose_target" | "choose_effect_target" | "choose_cost_target"
+            ) && named_def(v) == Some(d)
+                && named_generation(v).is_some_and(|g| (g >= 3) == bounced)
+        }),
+    )
+}
+
+/// The L8 fixture (count facts bound to copies whose exported attributes
+/// differ; CawGates versus Faeries, off-board). V is Faeries (P1).
+/// CawGates casts Squadron Hawk and fetches the other three; Faeries Snaps
+/// the battlefield Hawk back, so the hand holds four tracked Hawks, one of
+/// them with a battlefield history (its span began on the stack). CawGates
+/// then Brainstorms and puts back `put_back`, and the tracker keeps two
+/// Hawk count facts. P exports two `known_name` Hawks in every variant;
+/// mutant L8 binds the facts to the first two true remaining Hawks, which
+/// include the bounced copy (exported generation above 1) only when two
+/// fresh Hawks were put back.
+pub(crate) fn l8_bound_copies(put_back: L8PutBackV1) -> ScriptV1 {
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let live = new_game(["CawGates", "Faeries"], 72, o);
+    let mut st = live.game_state().clone();
+    force_deal(
+        &mut st,
+        o,
+        &[
+            "Azorius Guildgate",
+            "Island",
+            "Island",
+            "Squadron Hawk",
+            "Brainstorm",
+            "Prismatic Strands",
+            "Journey to Nowhere",
+        ],
+        &[
+            "Sacred Cat",
+            "Thraben Charm",
+            "Spell Pierce",
+            "Preordain",
+            "The Modern Age",
+        ],
+    );
+    force_deal(
+        &mut st,
+        v,
+        &[
+            "Island",
+            "Island",
+            "Island",
+            "Snap",
+            "Island",
+            "Force Spike",
+            "Dispel",
+        ],
+        &["Island", "Island", "Island"],
+    );
+    let mut script = ScriptV1::new(restart(&live, st));
+    let returns = match put_back {
+        L8PutBackV1::NoHawk => [
+            pick_other_than(&["Squadron Hawk"]),
+            pick_other_than(&["Squadron Hawk"]),
+        ],
+        L8PutBackV1::TwoFresh => [
+            pick_copy("Squadron Hawk", false),
+            pick_copy("Squadron Hawk", false),
+        ],
+        L8PutBackV1::BouncedAndFresh => [
+            pick_copy("Squadron Hawk", true),
+            pick_copy("Squadron Hawk", false),
+        ],
+    };
+    let mut o_script = vec![
+        play_land("Azorius Guildgate"),
+        play_land("Island"),
+        cast("Squadron Hawk"),
+        pick("Squadron Hawk"),
+        pick("Squadron Hawk"),
+        pick("Squadron Hawk"),
+        gate("the Hawk bounced", |st: &GameState| {
+            st.battlefield
+                .iter()
+                .all(|x| st.objects.get(*x).card_def != id("Squadron Hawk"))
+        }),
+        play_land("Island"),
+        cast("Brainstorm"),
+    ];
+    o_script.extend(returns);
+    script.push(o, o_script);
+    script.keep(o, &["Island", "Squadron Hawk", "Brainstorm"]);
+    script.push(
+        v,
+        vec![
+            play_land("Island"),
+            play_land("Island"),
+            cast("Snap"),
+            pick("Squadron Hawk"),
+        ],
+    );
+    script
+}
+
+/// What the L8 fixture's Brainstorm puts back.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum L8PutBackV1 {
+    NoHawk,
+    TwoFresh,
+    BouncedAndFresh,
+}
+
 /// The CawGates Lorien fixture (Astra r6-1, R8b). V is Faeries (P1).
 /// CawGates fetches the other three Hawks (its third turn), plays its third
 /// Island and islandcycles a Lorien for the last library Island (its fourth
@@ -1196,5 +1322,68 @@ fn w_pin_engine_fixtures() {
     assert!(
         totals.get("L6").copied().unwrap_or(0) > 0,
         "L6 has F-pin witnesses"
+    );
+}
+
+/// L8 (count-fact binding) witnesses: compared decisions where the correct
+/// producer exports equal bytes in both worlds and mutant L8 differs. The
+/// bounced Hawk's span began on the stack, so L8's `C:` binding exports its
+/// generation above 1, while a fresh Hawk exports 1. Putting back two
+/// fresh Hawks makes L8 bind the bounced copy; putting back the bounced
+/// Hawk and a fresh one makes it bind two fresh copies, as in the base
+/// world (the control: binding alone is invisible between equal copies).
+#[test]
+fn l8_bound_copies_engine_fixture() {
+    let v = PlayerId::P1;
+    let runs: Vec<_> = [
+        L8PutBackV1::NoHawk,
+        L8PutBackV1::TwoFresh,
+        L8PutBackV1::BouncedAndFresh,
+    ]
+    .iter()
+    .map(|p| record(l8_bound_copies(*p), v, 30))
+    .collect();
+    let (records, reports) = pairs("l8-bound-copies", runs);
+    // Witnesses where P exports (not merely refuses alike) in both worlds.
+    let exporting_witnesses = |b: &[AtV1]| -> u64 {
+        let mut n = 0;
+        for (x, y) in records[0].iter().zip(b) {
+            if x.view != y.view {
+                break;
+            }
+            let l8 = |r: &AtV1| {
+                r.mutants
+                    .iter()
+                    .find(|(m, _)| *m == MutantV1::L8)
+                    .map(|(_, o)| o.clone())
+            };
+            if x.p.is_ok() && x.p == y.p && l8(x) != l8(y) {
+                n += 1;
+            }
+        }
+        n
+    };
+    let two_fresh = exporting_witnesses(&records[1]);
+    let control = exporting_witnesses(&records[2]);
+    let known: Vec<&Vec<String>> = records[0]
+        .iter()
+        .filter(|r| r.known.len() == 2)
+        .map(|r| &r.known)
+        .take(1)
+        .collect();
+    eprintln!(
+        "l8-bound-copies: L8 witnesses with P exporting: two fresh put back {two_fresh}, bounced and fresh put back {control}; P's known_name survivors {known:?}"
+    );
+    assert!(
+        reports.iter().all(|r| r.compared > 0),
+        "both pairs compare decisions: {reports:?}"
+    );
+    assert!(
+        two_fresh >= 5,
+        "L8 has at least 5 witnesses with P exporting (design 13): {two_fresh}"
+    );
+    assert_eq!(
+        control, 0,
+        "binding between equal copies leaves L8's bytes unchanged"
     );
 }
