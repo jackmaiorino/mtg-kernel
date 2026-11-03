@@ -110,6 +110,8 @@ pub(crate) struct ProjectionV1 {
     /// Stream items at which an owner's library order changed unseen by
     /// V's tracking (a shuffle, a reorder, a scry), with the owner.
     pub reorders: Vec<(usize, PlayerId)>,
+    /// Unidentified draws from the top of an owner's library (not searches).
+    pub top_draws: Vec<(usize, PlayerId)>,
     /// Stream item at which each event-history index was absorbed.
     pub event_items: Vec<usize>,
     /// Objects V identified in each event (move events), by event index.
@@ -176,6 +178,7 @@ struct WalkV1<'a> {
     /// Unidentified put-backs per owner still on top of the library (no
     /// reorder since): the next unidentified draws take them back.
     put_backs_on_top: [usize; 2],
+    top_draws: Vec<(usize, PlayerId)>,
     item: usize,
     next_event: usize,
     inconsistencies: Vec<String>,
@@ -218,6 +221,7 @@ pub(crate) fn project_v1(
         arrivals: Vec::new(),
         reorders: Vec::new(),
         put_backs_on_top: [0, 0],
+        top_draws: Vec::new(),
         item: 0,
         next_event: 0,
         inconsistencies: Vec::new(),
@@ -349,6 +353,7 @@ pub(crate) fn project_v1(
         transfers: w.transfers,
         arrivals: w.arrivals,
         reorders: w.reorders,
+        top_draws: w.top_draws,
         event_items,
         event_observed,
         items,
@@ -524,8 +529,11 @@ impl WalkV1<'_> {
                         owner: *player,
                         dir: TransferDirV1::Draw,
                     });
+                    self.top_draws.push((self.item, *player));
                     // A draw from the top takes back the latest unidentified
-                    // put-back (6.4 gap; R8 fallback, ruling 40.4).
+                    // put-back (6.4 gap; R8 fallback, ruling 40.4). A scry or
+                    // a reorder since keeps the put-back cards among the top
+                    // ones, so only a shuffle clears the count (conservative).
                     let pending = &mut self.put_backs_on_top[player.index()];
                     if *pending > 0 {
                         *pending -= 1;
@@ -661,7 +669,7 @@ impl WalkV1<'_> {
                 revealed_to,
             } => {
                 self.reorders.push((self.item, *owner));
-                self.put_backs_on_top[owner.index()] = 0;
+                // Put-back cards stay among the top cards: no reset.
                 let len = ordered.len() as u32;
                 self.library[owner.index()].retain(|p, _| *p >= len);
                 let mut observed = Vec::new();
@@ -679,7 +687,7 @@ impl WalkV1<'_> {
                 ordered_bottom,
             } => {
                 self.reorders.push((self.item, *owner));
-                self.put_backs_on_top[owner.index()] = 0;
+                // Put-back cards stay among the top cards: no reset.
                 let top = retained_top.len() as u32;
                 let bottom = ordered_bottom.len() as u32;
                 let prefix = top + bottom;

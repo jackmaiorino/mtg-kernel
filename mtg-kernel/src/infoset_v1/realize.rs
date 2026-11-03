@@ -466,17 +466,35 @@ pub(crate) fn impossible_v1(
         .map(|t| t.item)
         .collect();
     if let Some(&last) = put_backs.last() {
-        let credited_until = p
+        // Credit only draws from the top after the last put-back, before any
+        // reorder of the owner's library, and at most the put-backs since
+        // the reorder before them (earlier ones may have been shuffled
+        // away or scried down).
+        let reorders: Vec<usize> = p
             .reorders
             .iter()
-            .filter(|(item, o)| *o == owner && *item > last)
+            .filter(|(_, o)| *o == owner)
             .map(|(item, _)| *item)
+            .collect();
+        let credited_until = reorders
+            .iter()
+            .copied()
+            .filter(|item| *item > last)
             .min()
             .unwrap_or(usize::MAX);
-        let draws_back = transfers
+        let since = reorders
             .iter()
-            .filter(|t| t.dir == TransferDirV1::Draw && t.item > last && t.item < credited_until)
-            .count();
+            .copied()
+            .filter(|item| *item < last)
+            .max()
+            .unwrap_or(0);
+        let on_top = put_backs.iter().filter(|&&x| x > since).count();
+        let draws_back = p
+            .top_draws
+            .iter()
+            .filter(|(item, o)| *o == owner && *item > last && *item < credited_until)
+            .count()
+            .min(on_top);
         for &at in &put_backs {
             let known: Vec<ObjectId> = state
                 .objects
@@ -513,13 +531,24 @@ pub(crate) fn impossible_v1(
         }
     }
     let pins_in_hand = target.pins.iter().filter(|(_, h)| *h).count();
-    if pins_in_hand > 0 {
-        let entry = super::export::contract_pins(state)
-            .into_iter()
-            .filter(|id| hidden(*id))
-            .filter_map(|id| p.last_span(id).and_then(|s| s.end).map(|e| e.item))
+    let hidden_pins: Vec<ObjectId> = super::export::contract_pins(state)
+        .into_iter()
+        .filter(|id| hidden(*id))
+        .collect();
+    // The pin bound holds only if every hidden pin was last seen in the
+    // library (a pin last seen in the hand needs no draw).
+    let all_from_library = hidden_pins.iter().all(|id| {
+        p.last_span(*id)
+            .and_then(|s| s.end)
+            .is_some_and(|e| e.zone == Zone::Library)
+    });
+    if pins_in_hand > 0 && all_from_library {
+        let entry = hidden_pins
+            .iter()
+            .filter_map(|id| p.last_span(*id).and_then(|s| s.end).map(|e| e.item))
             .min();
         if let Some(entry) = entry {
+            // Any library-to-hand move can carry a pin (searches included).
             let draws = transfers
                 .iter()
                 .filter(|t| t.dir == TransferDirV1::Draw && t.item > entry)

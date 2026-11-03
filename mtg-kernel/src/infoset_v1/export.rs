@@ -609,7 +609,7 @@ pub(crate) fn export_v1(
         // V knows; refuse until the node is pruned.
         return Err(refuse(
             RefusalCodeV1::R8,
-            "a draw took back a put-back card while a survivor node lives",
+            "a draw took back a put-back card while a survivor node lived",
         ));
     }
     if survivors.tainted() && !is(MutantV1::L11) {

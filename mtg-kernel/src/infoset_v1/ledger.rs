@@ -55,6 +55,11 @@ pub(crate) struct SurvivorTreeV1 {
     nodes: Vec<NodeV1>,
     /// A laminarity assertion failed after some update (R8).
     pub laminarity_violation: bool,
+    /// R8 (ruling 40.4 fallback): a draw took back a put-back card while a
+    /// node lived. Kept until the tree is cleared (a full reveal or a hand
+    /// with no untracked card): pruning a node does not restore what the
+    /// draw-back made V know.
+    drawn_back_sticky: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +102,7 @@ impl SurvivorTreeV1 {
 
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
+        self.drawn_back_sticky = false;
     }
 
     fn children(&self, i: usize) -> Vec<usize> {
@@ -198,14 +204,18 @@ impl SurvivorTreeV1 {
         self.prune();
     }
 
-    /// Whether a live node saw a draw-back (R8).
+    /// Whether a draw-back happened while a node lived, since the tree was
+    /// last cleared (R8).
     pub(crate) fn drawn_back(&self) -> bool {
-        self.live().any(|i| self.nodes[i].drawn_back)
+        self.drawn_back_sticky
     }
 
     /// An unidentified draw took back a put-back card: every live node is
     /// marked until it is pruned.
     pub(crate) fn mark_drawn_back(&mut self) {
+        if !self.is_empty() {
+            self.drawn_back_sticky = true;
+        }
         for i in self.live().collect::<Vec<_>>() {
             self.nodes[i].drawn_back = true;
         }
