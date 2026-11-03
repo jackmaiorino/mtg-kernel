@@ -38,9 +38,7 @@ pub(crate) fn canonical_rename_v1(v: &mut Value, ids: Option<&BTreeMap<u64, u64>
                     if let (Some(n), Some(ids)) = (x.as_u64(), ids) {
                         *x = ids
                             .get(&n)
-                            .map_or(serde_json::json!("hidden"), |c| {
-                                serde_json::json!(c)
-                            });
+                            .map_or(serde_json::json!("hidden"), |c| serde_json::json!(c));
                     }
                     continue;
                 }
@@ -120,7 +118,10 @@ pub(crate) fn live_rows_v1(lockstep: &[String], imported: &[String]) -> Option<V
     }
     let mut by_key: BTreeMap<&str, u32> = BTreeMap::new();
     for (row, key) in lockstep.iter().enumerate() {
-        if by_key.insert(key.as_str(), u32::try_from(row).ok()?).is_some() {
+        if by_key
+            .insert(key.as_str(), u32::try_from(row).ok()?)
+            .is_some()
+        {
             return None;
         }
     }

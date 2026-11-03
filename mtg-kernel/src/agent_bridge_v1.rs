@@ -30,7 +30,8 @@ use crate::agent_bridge_flat_v4_encode::{
 };
 pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::agent_bridge_infoset_v1::{
-    infoset_extension_v1, preview_row_keys_v1, write_receipt_v1, InfosetBridgeV1, SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
+    infoset_extension_v1, preview_row_keys_v1, write_receipt_v1, InfosetBridgeV1,
+    SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
 };
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
@@ -3566,16 +3567,14 @@ imported {:#?}",
                                     )
                                 );
                             }
-                            line = server.handle_line(&flat_v4_step(
-                                &response,
-                                rows_of(&response)[0],
-                            ));
+                            line =
+                                server.handle_line(&flat_v4_step(&response, rows_of(&response)[0]));
                             payloads += 1;
                             continue;
                         }
                     };
-                    let keys: Vec<String> = serde_json::from_value(extension["row_keys"].clone())
-                        .expect("row keys");
+                    let keys: Vec<String> =
+                        serde_json::from_value(extension["row_keys"].clone()).expect("row keys");
                     assert_eq!(rows.len(), keys.len(), "{deck}: one key per lockstep row");
                     let lists = lockstep.deck_ids_v1().clone().map(|id| {
                         crate::runtime_decks::runtime_deck_by_id(&id)
@@ -3595,8 +3594,7 @@ imported {:#?}",
                     )
                     .expect("the export repeats");
                     let ids = crate::infoset_v1::order::canonical_ids_v1(&export);
-                    let imported_ids =
-                        crate::infoset_v1::order::imported_ids_v1(&payload.handles);
+                    let imported_ids = crate::infoset_v1::order::imported_ids_v1(&payload.handles);
                     let semantic = |s: &crate::rl_session::FastActorSessionV1,
                                     row: usize,
                                     ids: Option<&std::collections::BTreeMap<u64, u64>>| {

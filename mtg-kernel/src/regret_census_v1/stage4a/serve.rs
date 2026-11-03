@@ -353,7 +353,10 @@ struct PointRequestV1 {
 
 /// The imported payload stepped along `path` (live indices). Every step
 /// must be a decision of the payload's viewer within its menu.
-pub(crate) fn import_at_v1(payload: &PayloadV1, path: &[u32]) -> Result<FastActorSessionV1, String> {
+pub(crate) fn import_at_v1(
+    payload: &PayloadV1,
+    path: &[u32],
+) -> Result<FastActorSessionV1, String> {
     let mut s = payload.import()?;
     for (i, &a) in path.iter().enumerate() {
         let d = decision(&s).ok_or_else(|| format!("path step {i}: terminal"))?;
@@ -404,8 +407,10 @@ fn point_v1(req: &PointRequestV1) -> Result<Value, String> {
     let rows: Vec<u32> = (0..d.legal_action_count).collect();
     let flat = crate::agent_bridge_flat_v4_encode::flat_v4_extension_value_v1(&encoded, &rows)
         .map_err(|e| format!("encode: {e:?}"))?;
-    Ok(json!({"viewer_decision": true, "keys": keys, "eligible": eligible_session_v1(&s),
-        "flat": flat}))
+    Ok(
+        json!({"viewer_decision": true, "keys": keys, "eligible": eligible_session_v1(&s),
+        "flat": flat}),
+    )
 }
 
 fn host_name() -> String {
@@ -539,8 +544,8 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
             identity = (json!(req.root_id), req.a_units);
             // The receipt names the payload by the digest import recomputes.
             let root = import_at_v1(&req.payload, &req.path)?;
-            let viewer_decision = decision(&root)
-                .is_some_and(|d| super::play::acting(&d).0 == req.payload.viewer);
+            let viewer_decision =
+                decision(&root).is_some_and(|d| super::play::acting(&d).0 == req.payload.viewer);
             if !viewer_decision {
                 return Err("the searched point is not the viewer's decision".into());
             }
@@ -768,7 +773,10 @@ mod tests {
                     .unwrap())
                 );
                 let width = d.legal_action_count as usize;
-                assert_eq!(root["flat"]["row_candidate_ids"].as_array().unwrap().len(), width);
+                assert_eq!(
+                    root["flat"]["row_candidate_ids"].as_array().unwrap().len(),
+                    width
+                );
                 points += 1;
                 // Out of the menu: refused.
                 assert!(import_at_v1(&payload, &[d.legal_action_count]).is_err());

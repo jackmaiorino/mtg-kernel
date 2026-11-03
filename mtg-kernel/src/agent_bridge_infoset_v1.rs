@@ -14,6 +14,7 @@
 //! the bridge's stderr when the game ends, never into a decision.
 
 use crate::ids::PlayerId;
+use crate::infoset_v1::order::{canonical_ids_v1, imported_ids_v1, live_rows_v1, row_keys_v1};
 use crate::infoset_v1::{
     export_v1, ExportErrorV1, ExportInputV1, ExportOptionsV1, PayloadV1, RefusalTallyV1,
     INFOSET_SCHEMA_V1,
@@ -21,7 +22,6 @@ use crate::infoset_v1::{
 use crate::rl::{ActionSemanticV1, PlayerSeatV1};
 use crate::rl_session::{FastActorSessionV1, RlSessionDecisionV1};
 use crate::runtime_decks::runtime_deck_by_id;
-use crate::infoset_v1::order::{canonical_ids_v1, imported_ids_v1, live_rows_v1, row_keys_v1};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
