@@ -177,7 +177,11 @@ struct WalkV1<'a> {
     reorders: Vec<(usize, PlayerId)>,
     /// Unidentified put-backs per owner still on top of the library (no
     /// reorder since): the next unidentified draws take them back.
-    put_backs_on_top: [usize; 2],
+    /// Per owner, the unidentified put-backs still on top of the library,
+    /// newest last, each flagged when V knew something about the hand it
+    /// left (a hand fact or a survivor node): drawing such a card back can
+    /// tell V more than the tree keeps.
+    put_backs_on_top: [Vec<bool>; 2],
     top_draws: Vec<(usize, PlayerId)>,
     item: usize,
     next_event: usize,
@@ -220,7 +224,7 @@ pub(crate) fn project_v1(
         transfers: Vec::new(),
         arrivals: Vec::new(),
         reorders: Vec::new(),
-        put_backs_on_top: [0, 0],
+        put_backs_on_top: [Vec::new(), Vec::new()],
         top_draws: Vec::new(),
         item: 0,
         next_event: 0,
@@ -534,12 +538,9 @@ impl WalkV1<'_> {
                     // put-back (6.4 gap; R8 fallback, ruling 40.4). A scry or
                     // a reorder since keeps the put-back cards among the top
                     // ones, so only a shuffle clears the count (conservative).
-                    let pending = &mut self.put_backs_on_top[player.index()];
-                    if *pending > 0 {
-                        *pending -= 1;
-                        if *player == self.opp() {
-                            self.survivors.mark_drawn_back();
-                        }
+                    let informative = self.put_backs_on_top[player.index()].pop();
+                    if informative == Some(true) && *player == self.opp() {
+                        self.survivors.mark_drawn_back();
                     }
                 }
                 // Prior tracking identifies the moved card only if V still
@@ -565,6 +566,9 @@ impl WalkV1<'_> {
                 if !self.objs[id.0 as usize].exists {
                     self.objs[id.0 as usize].exists = true;
                 }
+                // Whether V knows anything about the hand a card leaves.
+                let informative =
+                    owner == self.opp() && (!self.hand.is_empty() || !self.survivors.is_empty());
                 self.moved(id, *to);
                 let public = is_public(*from) || is_public(*to);
                 let named = public || owner == self.viewer;
@@ -579,7 +583,7 @@ impl WalkV1<'_> {
                     });
                 }
                 if *from == Zone::Hand && *to == Zone::Library && !named {
-                    self.put_backs_on_top[owner.index()] += 1;
+                    self.put_backs_on_top[owner.index()].push(informative);
                     self.transfers.push(TransferV1 {
                         item: self.item,
                         owner,
@@ -639,7 +643,7 @@ impl WalkV1<'_> {
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
                 self.reorders.push((self.item, *owner));
-                self.put_backs_on_top[owner.index()] = 0;
+                self.put_backs_on_top[owner.index()].clear();
                 self.library[owner.index()].clear();
                 self.settle(&[]);
             }
