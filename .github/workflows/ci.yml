@@ -112,9 +112,25 @@ jobs:
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # Three concurrent rustc processes, not four, to limit the peak.
+      # Lints are unchanged.
+      CARGO_BUILD_JOBS: "3"
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      # The Limited Clippy step needs more than the runner's 16 GB: its two
+      # whole-crate checks run at about 8.8 and 6.5 GB at once, and main
+      # itself (a7f3f92) was killed there with 8 MB left. With 8 GB of swap
+      # it passes, using about 5.6 GB of it (PR #486).
+      - name: Add swap space for the whole-crate checks
+        run: |
+          sudo fallocate -l 8G /mnt/lint.swap
+          sudo chmod 600 /mnt/lint.swap
+          sudo mkswap /mnt/lint.swap
+          sudo swapon /mnt/lint.swap
+          free -m
 
       - name: Install pinned Rust in a fresh toolchain directory
         shell: bash

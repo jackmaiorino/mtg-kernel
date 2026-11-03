@@ -1,0 +1,134 @@
+name: S transformer receipts
+
+# W5 E3 receipts for native S (mtg-kernel/src/s_transformer_v1): float64
+# PyTorch parity, determinism across runs and resume, the Linux-to-Windows
+# logit parity receipt (S and net-8) and the speed ratio against net-8. Runs
+# on hosted runners only, for changes to S's own files.
+
+'on':
+  pull_request:
+    paths:
+      - mtg-kernel/src/s_transformer_v1.rs
+      - mtg-kernel/src/s_transformer_v1/**
+      - mtg-kernel/src/bin/s_transformer_v1.rs
+      - python/tools/s_transformer_reference_v1.py
+      - .github/workflows/s-transformer-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: s-transformer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  LOGIT_STATES: synthetic:7:10000
+
+jobs:
+  receipts:
+    name: Receipts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install pinned Rust
+        run: |
+          channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --no-self-update
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Build the receipt tool
+        run: cargo build --release --locked -p mtg-kernel --bin s_transformer_v1
+
+      - name: Determinism across runs and checkpoint resume
+        run: |
+          mkdir -p receipts
+          target/release/s_transformer_v1 resume-check out=resume steps=6 split=3 groups=16 > receipts/resume-${{ runner.os }}.json
+          cat receipts/resume-${{ runner.os }}.json
+
+      - name: Logit dumps (S and net-8)
+        run: |
+          target/release/s_transformer_v1 logits-dump out=receipts/s-logits-${{ runner.os }}.bin model=s-parity:20261102 states=$LOGIT_STATES > receipts/s-logits-${{ runner.os }}.json
+          target/release/s_transformer_v1 logits-dump out=receipts/net8-logits-${{ runner.os }}.bin model=net8-fixed states=$LOGIT_STATES > receipts/net8-logits-${{ runner.os }}.json
+          cat receipts/s-logits-${{ runner.os }}.json receipts/net8-logits-${{ runner.os }}.json
+
+      - name: Speed against net-8
+        run: |
+          target/release/s_transformer_v1 bench count=2000 reps=3 > receipts/bench-${{ runner.os }}.json
+          cat receipts/bench-${{ runner.os }}.json
+
+      - name: Float64 PyTorch parity (64 frozen batches)
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install "numpy>=1.26,<3"
+          python -m pip install "torch>=2.2,<3" --index-url https://download.pytorch.org/whl/cpu
+          target/release/s_transformer_v1 parity-dump out=parity batches=64 groups=32 > receipts/parity-dump.json
+          cat receipts/parity-dump.json
+          python python/tools/s_transformer_reference_v1.py parity --dir parity --receipt receipts/parity-receipt.json
+
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s-transformer-receipts-${{ runner.os }}
+          path: receipts
+          retention-days: 30
+
+  logit-parity:
+    name: Linux-to-Windows logit parity
+    needs: receipts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Download receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: s-transformer-receipts-*
+          merge-multiple: true
+          path: receipts
+
+      - name: Compare Linux and Windows logits
+        run: |
+          python -m pip install "numpy>=1.26,<3"
+          python -m pip install "torch>=2.2,<3" --index-url https://download.pytorch.org/whl/cpu
+          python python/tools/s_transformer_reference_v1.py compare-logits receipts/s-logits-Linux.bin receipts/s-logits-Windows.bin --require-identical --receipt receipts/s-logit-parity.json
+          python python/tools/s_transformer_reference_v1.py compare-logits receipts/net8-logits-Linux.bin receipts/net8-logits-Windows.bin --receipt receipts/net8-logit-parity.json
+          python python/tools/s_transformer_reference_v1.py compare-hashes receipts/resume-Linux.json receipts/resume-Windows.json --receipt receipts/s-hash-parity.json
+
+      - name: Upload parity receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s-transformer-logit-parity
+          path: |
+            receipts/s-logit-parity.json
+            receipts/net8-logit-parity.json
+            receipts/s-hash-parity.json
+          retention-days: 30
