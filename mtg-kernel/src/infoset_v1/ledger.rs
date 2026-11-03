@@ -43,10 +43,6 @@ pub(crate) struct NodeV1 {
     /// R8b: a later public event located a card of a name in K outside the
     /// hand while this node existed.
     pub tainted: bool,
-    /// R8 (ruling 40.4 fallback): an unidentified draw took back a card V
-    /// knows was put back unidentified while this node existed, so V may
-    /// know more members are in the hand than m says.
-    pub drawn_back: bool,
     alive: bool,
 }
 
@@ -55,12 +51,6 @@ pub(crate) struct SurvivorTreeV1 {
     nodes: Vec<NodeV1>,
     /// A laminarity assertion failed after some update (R8).
     pub laminarity_violation: bool,
-    /// R8 (ruling 40.4 fallback): a draw took back a card put back from a
-    /// hand V knew something about. Kept until the tree is cleared (a full
-    /// reveal or a hand with no untracked card, when the drawn card is
-    /// tracked or gone): pruning a node does not restore what the draw-back
-    /// made V know.
-    drawn_back_sticky: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,7 +93,6 @@ impl SurvivorTreeV1 {
 
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
-        self.drawn_back_sticky = false;
     }
 
     fn children(&self, i: usize) -> Vec<usize> {
@@ -188,7 +177,6 @@ impl SurvivorTreeV1 {
             m: root_m,
             parent: None,
             tainted: false,
-            drawn_back: false,
             alive: true,
         });
         for i in tops {
@@ -199,25 +187,9 @@ impl SurvivorTreeV1 {
             m: t_size - 1,
             parent: Some(root),
             tainted: false,
-            drawn_back: false,
             alive: true,
         });
         self.prune();
-    }
-
-    /// Whether a draw-back happened while a node lived, since the tree was
-    /// last cleared (R8).
-    pub(crate) fn drawn_back(&self) -> bool {
-        self.drawn_back_sticky
-    }
-
-    /// An unidentified draw took back a put-back card: every live node is
-    /// marked until it is pruned.
-    pub(crate) fn mark_drawn_back(&mut self) {
-        self.drawn_back_sticky = true;
-        for i in self.live().collect::<Vec<_>>() {
-            self.nodes[i].drawn_back = true;
-        }
     }
 
     /// R8b: every node whose K holds `name` is tainted.
@@ -426,7 +398,6 @@ mod tests {
                 m: 2,
                 parent: None,
                 tainted: false,
-                drawn_back: false,
                 alive: true
             }]
         );
@@ -447,7 +418,6 @@ mod tests {
             m: 2,
             parent: None,
             tainted: false,
-            drawn_back: false,
             alive: true,
         });
         f.nodes.push(NodeV1 {
@@ -455,7 +425,6 @@ mod tests {
             m: 1,
             parent: Some(0),
             tainted: false,
-            drawn_back: false,
             alive: true,
         });
         let pool = names(&[1, 1, 1, 2]);
