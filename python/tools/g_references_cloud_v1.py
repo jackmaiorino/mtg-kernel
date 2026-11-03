@@ -193,6 +193,8 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
             campaign[key] = item
     require(spec["mode"] == "qualification" or "placement_record" in campaign,
             "production needs the placement record on the volume")
+    if spec["mode"] == "production":  # the qualification folder: production never writes it (incremental walks)
+        campaign["static_roots"] = [str(base / "campaign" / "qualification")]
     block = spec.get("lease_block_seconds", template.get("lease_block_seconds"))
     if block is not None:
         cloud.native_dispatch.positive(block, "lease block seconds")

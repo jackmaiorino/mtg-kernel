@@ -678,12 +678,7 @@ def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
         entry["sealed"] = pin(published)
         campaign.save_state(run, state)
         return
-    sources = [campaign.retained / run / f"b{block:02d}",
-               *sorted((campaign.retained / run).glob(f"{name}-a*-failed")),
-               *sorted((campaign.hot(run) / run).glob(f"{name}-a*")),
-               campaign.exposure / f"{run}-{name}-episodes.jsonl",
-               *sorted((campaign.state / "configs").glob(f"{run}-{name}-a*.json")),
-               *sorted((campaign.state / "requests").glob(f"{run}-{name}-a*.json"))]
+    sources = seal_sources(campaign, run, block)
     files = []
     for source in sources:
         for path in [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file()):
@@ -694,6 +689,18 @@ def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
                                         "sealed_at": now(), "epoch": time.time()})
     campaign.save_state(run, state)
     touch(campaign)
+
+
+def seal_sources(campaign: Campaign, run: str, block: int) -> list[Path]:
+    """A finished block's record sources, as ``seal`` hashes them: its retained and failed-attempt folders,
+    dispatch folders, exposure rows, configs and requests."""
+    name = label(block)
+    return [campaign.retained / run / f"b{block:02d}",
+            *sorted((campaign.retained / run).glob(f"{name}-a*-failed")),
+            *sorted((campaign.hot(run) / run).glob(f"{name}-a*")),
+            campaign.exposure / f"{run}-{name}-episodes.jsonl",
+            *sorted((campaign.state / "configs").glob(f"{run}-{name}-a*.json")),
+            *sorted((campaign.state / "requests").glob(f"{run}-{name}-a*.json"))]
 
 
 def pending_seals(campaign: Campaign) -> int:
@@ -737,6 +744,111 @@ def volume(campaign: Campaign) -> dict:
                                     "shared": str(campaign.state / SHARED_WALK)})
 
 
+# The incremental accounting walk. A sealed block's record folders (state/seals) hold exactly the seal's files
+# until the copy-back deletes them (state/moved, deleted true: then nothing), and nothing writes there after the
+# seal; a static root (the campaign's static_roots: the qualification folder, which production never writes)
+# is fixed.
+# Each driver process's first walk per volume measures every such folder (the full walk) and checks the sealed
+# ones against their seals; while they all agree, later walks count those folders by their seal or by that
+# measurement instead of walking them, so a walk costs the unsealed trees, not every block so far. Any
+# disagreement is an event and the process keeps walking in full.
+WALK_STATE: dict = {}  # accounting roots -> {"verified": bool, "static": {folder: bytes}}
+
+
+def folder_key(path) -> str:
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def sealed_folders(campaign: Campaign) -> dict[str, int]:
+    """Every sealed block's record folders that exist, with the seal's bytes under them (0 once moved)."""
+    seals, markers, root = campaign.state / "seals", campaign.state / "moved", records_root(campaign)
+    folders = {}
+    for path in sorted(seals.glob("*.json")) if seals.exists() else []:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if value.get("schema") != RECORDS_SCHEMA:
+            continue
+        gone = moved(markers / path.name)
+        for source in seal_sources(campaign, value["run"], value["block"]):
+            if not source.is_dir():
+                continue
+            prefix = source.relative_to(root).as_posix() + "/"
+            folders[folder_key(source)] = 0 if gone else sum(item["bytes"] for item in value["files"]
+                                                              if item["path"].startswith(prefix))
+    return folders
+
+
+def walk_trees(roots, counted: dict[str, int], measure: bool) -> tuple[int, dict[str, int]]:
+    """native_expanded_dispatch_v1.accounting_bytes, except that a folder in ``counted`` adds its recorded bytes
+    unwalked, or with ``measure`` is walked and its own bytes returned too."""
+    logical, measured = 0, {}
+
+    def walk(top, inside=None):
+        nonlocal logical
+        pending = [top]
+        while pending:
+            folder = pending.pop()
+            key = folder_key(folder)
+            if key in counted and key != inside:
+                if measure:
+                    measured[key] = walk_one(folder)
+                    logical += measured[key]
+                else:
+                    logical += counted[key]
+                continue
+            try:
+                with os.scandir(folder) as entries:
+                    listed = list(entries)
+            except FileNotFoundError:  # a folder removed mid-walk
+                continue
+            for entry in listed:
+                native_dispatch.require(not entry.is_symlink() and not entry.is_junction(),
+                                        "accounting tree contains a link")
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        logical += entry.stat(follow_symlinks=False).st_size
+                except FileNotFoundError:  # deleted by its owner mid-walk: freed
+                    pass
+
+    def walk_one(folder):
+        nonlocal logical
+        before = logical
+        walk(folder, inside=folder_key(folder))
+        size = logical - before
+        logical = before
+        return size
+
+    for root in roots:
+        if root.exists():
+            native_dispatch.require(not root.is_symlink() and not root.is_junction(), "accounting root is a link")
+            walk(str(root))
+    return logical, measured
+
+
+def accounted_bytes(campaign: Campaign) -> int:
+    """The accounting trees' logical bytes: the full walk (accounting_bytes) on this process's first walk per
+    volume, checking sealed folders against their seals; afterwards the incremental walk while they agreed."""
+    storage = campaign.raw["storage"]
+    state = WALK_STATE.setdefault(tuple(storage["accounting_roots"]), {"verified": False, "static": {}})
+    sealed = sealed_folders(campaign)
+    static = {folder_key(path): 0 for path in campaign.raw.get("static_roots", []) if Path(path).is_dir()}
+    if not sealed and not static:
+        return native_dispatch.accounting_bytes(storage)[1]
+    roots = native_dispatch.accounting_roots(storage)
+    if not state["verified"]:
+        logical, measured = walk_trees(roots, {**sealed, **static}, measure=True)
+        wrong = {key: (measured[key], sealed[key]) for key in sealed if key in measured and measured[key] != sealed[key]}
+        if wrong:
+            campaign.event(kind="volume-walk-seal-mismatch", folders={k: list(v) for k, v in sorted(wrong.items())[:20]},
+                           count=len(wrong))
+        else:
+            state.update(verified=True, static={key: measured[key] for key in static if key in measured})
+        return logical
+    counted = {**sealed, **{key: state["static"][key] for key in static if key in state["static"]}}
+    return walk_trees(roots, counted, measure=False)[0]
+
+
 def walk_volume(campaign: Campaign) -> None:
     """Walk the accounting trees once. On the network volume a walk takes minutes (at least 325 s on
     2026-11-01, when walks per admission under the lock let the lease guard's 300 s idle bound release the
@@ -747,7 +859,7 @@ def walk_volume(campaign: Campaign) -> None:
 
     def walk():
         try:
-            result["logical"] = native_dispatch.accounting_bytes(campaign.raw["storage"])[1]
+            result["logical"] = accounted_bytes(campaign)
         except BaseException as error:
             result["error"] = error
     thread = threading.Thread(target=walk, name="volume-walk", daemon=True)
@@ -827,7 +939,7 @@ def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
             continue
         started = time.time()
         try:
-            logical = native_dispatch.accounting_bytes(storage)[1]
+            logical = accounted_bytes(campaign)
             Path(shared).parent.mkdir(parents=True, exist_ok=True)
             native_dispatch.publish_walk(shared, logical, started, time.time(), "driver-background", in_flight)
         except Exception as error:  # the dispatchers walk for themselves once the record is stale

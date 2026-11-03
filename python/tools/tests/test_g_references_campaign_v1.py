@@ -1075,6 +1075,102 @@ class DriverTests(unittest.TestCase):
             (moved / "G2-b003.json").write_text('{"deleted": true}')  # the copy-back moved a block just now
             self.assertIsNone(driver.records_hold(self.campaign))
 
+    def sealed_tree(self, blocks, runs=("G2", "G3")):
+        """Block records for ``blocks`` of ``runs`` (retained iterations, a failed attempt, dispatch folders,
+        exposure rows, configs and requests), each sealed as the driver seals it."""
+        for run in runs:
+            state = {"run": run, "blocks": {}}
+            for block in blocks:
+                name = driver.label(block)
+                files = {f"retained/{run}/b{block:02d}/run.json": b"{}" * block,
+                         f"retained/{run}/{name}-a1-failed/RETAINED.json": b"f" * block,
+                         f"hot/{run}/{name}-a2/dispatch/report.json": b"r" * (block + 3),
+                         f"exposure/{run}-{name}-episodes.jsonl": b"row\n" * block,
+                         f"state/configs/{run}-{name}-a2.json": b"c" * 50,
+                         f"state/requests/{run}-{name}-a2.json": b"q" * 20}
+                for update in range(6):
+                    for leaf in ("collect/collection.json", "update/update.json"):
+                        files[f"retained/{run}/b{block:02d}/iterations/{update:06d}/attempt-000000/{leaf}"] = \
+                            b"x" * (update + block)
+                for name_, data in files.items():
+                    (self.root / name_).parent.mkdir(parents=True, exist_ok=True)
+                    (self.root / name_).write_bytes(data)
+                state["blocks"][str(block)] = {"attempts": [], "done": True}
+                driver.seal(self.campaign, run, block, state)
+
+    def walking_campaign(self):
+        self.records_campaign()
+        raw = json.loads(self.path.read_text())
+        raw["storage"]["accounting_roots"] = [str(self.root)]
+        raw["static_roots"] = [str(self.root / "qualification")]
+        self.write(raw)
+        for k in range(5):
+            name = self.root / "qualification" / "scratch" / f"s{k}" / "state" / "G1.json"
+            name.parent.mkdir(parents=True, exist_ok=True)
+            name.write_bytes(b"q" * (k + 10))
+        driver.WALK_STATE.clear()
+        self.addCleanup(driver.WALK_STATE.clear)
+
+    def full_walk(self):
+        return driver.native_dispatch.accounting_bytes(self.campaign.raw["storage"])[1]
+
+    def test_the_incremental_walk_equals_the_full_walk_and_skips_sealed_folders(self):
+        self.walking_campaign()
+        self.sealed_tree([3, 4, 5])
+        moved = self.campaign.state / "moved"
+        moved.mkdir(parents=True)
+        seal = json.loads((self.campaign.state / "seals" / "G2-b003.json").read_text())
+        for item in seal["files"]:  # the copy-back moved G2 block 3: its files are gone, its folders stay
+            (self.root / item["path"]).unlink()
+        (moved / "G2-b003.json").write_text('{"deleted": true}')
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())  # the first walk: full, checked
+        self.assertTrue(driver.WALK_STATE[(str(self.root),)]["verified"])
+        listed = []
+        real = os.scandir
+
+        def scandir(path):
+            listed.append(Path(path))
+            return real(path)
+        expected = self.full_walk()
+        with patch.object(driver.os, "scandir", side_effect=scandir):  # os is one module: no full walk inside
+            self.assertEqual(driver.accounted_bytes(self.campaign), expected)
+        sealed = [self.root / "retained" / "G3" / "b04", self.root / "hot" / "G2" / "b005-a2",
+                  self.root / "retained" / "G2" / "b03", self.root / "qualification"]
+        for folder in sealed:  # counted by their seal (or the first walk), not walked
+            self.assertFalse([path for path in listed if path == folder or folder in path.parents], folder)
+        # New, unsealed work is walked: the next block's records and the growing state.
+        (self.root / "retained" / "G2" / "b06" / "run.json").parent.mkdir(parents=True)
+        (self.root / "retained" / "G2" / "b06" / "run.json").write_bytes(b"new" * 100)
+        (self.root / "state" / "events.jsonl").write_bytes(b"e" * 999)
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+        self.sealed_tree([6], runs=("G2",))  # and once sealed, counted by its seal
+        self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+
+    def test_a_sealed_folder_that_changed_keeps_the_walks_full(self):
+        self.walking_campaign()
+        self.sealed_tree([3, 4])
+        changed = self.root / "retained" / "G3" / "b04" / "iterations" / "000002" / "attempt-000000" / "extra.json"
+        changed.write_bytes(b"z" * 77)  # written after its seal: the seal no longer describes the folder
+        events = []
+        with patch.object(driver.Campaign, "event", lambda self, **fields: events.append(fields)):
+            self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())
+            self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())  # still full
+        self.assertFalse(driver.WALK_STATE[(str(self.root),)]["verified"])
+        self.assertEqual([event["kind"] for event in events], ["volume-walk-seal-mismatch"] * 2)
+        self.assertIn(driver.folder_key(self.root / "retained" / "G3" / "b04"), events[0]["folders"])
+
+    def test_without_seals_or_static_roots_the_walk_is_the_full_walk(self):
+        raw = json.loads(self.path.read_text())
+        raw["storage"]["accounting_roots"] = [str(self.root)]
+        self.write(raw)
+        driver.WALK_STATE.clear()
+        self.addCleanup(driver.WALK_STATE.clear)
+        calls, expected = [], self.full_walk()
+        real = driver.native_dispatch.accounting_bytes
+        with patch.object(driver.native_dispatch, "accounting_bytes", lambda storage: calls.append(1) or real(storage)):
+            self.assertEqual(driver.accounted_bytes(self.campaign), expected)
+        self.assertEqual(calls, [1])
+
     def test_a_published_seal_is_adopted_not_rebuilt(self):
         self.records_campaign()
         published = self.campaign.state / "seals" / "G2-b003.json"
