@@ -3447,9 +3447,13 @@ mod tests {
                         .to_string();
                         let answer: Value =
                             serde_json::from_str(&server.handle_line(&preview)).unwrap();
-                        if answer["response_type"] != "private_preview" {
+                        if answer["response_type"] == "private_complete" {
                             break;
                         }
+                        assert_eq!(
+                            answer["response_type"], "private_preview",
+                            "{deck}: preview of a buffered group failed: {answer}"
+                        );
                         if !opened {
                             opened = true;
                             groups += 1;
@@ -3485,6 +3489,10 @@ mod tests {
         assert!(
             checked > 0,
             "no buffered group with a payload was previewed"
+        );
+        assert!(
+            checked > groups,
+            "no group was previewed past its first native point"
         );
     }
 
