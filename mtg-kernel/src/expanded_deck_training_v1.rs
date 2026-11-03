@@ -8695,20 +8695,27 @@ pub(crate) mod tests {
                 let actions: Vec<u64> = serde_json::from_value(q["actions"].clone()).unwrap();
                 let wins: Vec<u64> = serde_json::from_value(q["wins"].clone()).unwrap();
                 let draws: Vec<u64> = serde_json::from_value(q["draws"].clone()).unwrap();
-                (0..actions.len()).map(|i| (actions[i], (wins[i], draws[i]))).collect()
+                (0..actions.len())
+                    .map(|i| (actions[i], (wins[i], draws[i])))
+                    .collect()
             };
             assert_eq!(a["qref"], b["qref"], "the 0b Q_ref moved");
             let mut qb = qref(b);
             let extra = json!({"qref": b["qref_extra"].clone()});
             for (action, value) in qref(&extra) {
-                assert!(qb.insert(action, value).is_none(), "extra repeats a 0b action");
+                assert!(
+                    qb.insert(action, value).is_none(),
+                    "extra repeats a 0b action"
+                );
             }
             assert_ne!(b["qref_extra"]["seed_root"], b["qref"]["seed_root"]);
             let rows = b["value_leaf"].as_array().unwrap();
             assert_eq!(rows.len(), 4);
             let width = b["policy"]["logit_bits"].as_array().unwrap().len();
-            let roots: std::collections::BTreeSet<&str> =
-                rows.iter().map(|r| r["seed_root"].as_str().unwrap()).collect();
+            let roots: std::collections::BTreeSet<&str> = rows
+                .iter()
+                .map(|r| r["seed_root"].as_str().unwrap())
+                .collect();
             assert_eq!(roots.len(), 4);
             for r in rows {
                 assert_eq!(r["primary_sha256"].as_str().unwrap().len(), 64);

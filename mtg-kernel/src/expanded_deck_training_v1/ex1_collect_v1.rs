@@ -716,7 +716,8 @@ impl Ex1EpisodeHookV1 {
                                 }
                             }
                             row["n"] = json!(root.iter().map(|x| x.0).collect::<Vec<_>>());
-                            row["value_units"] = json!(root.iter().map(|x| x.1).collect::<Vec<_>>());
+                            row["value_units"] =
+                                json!(root.iter().map(|x| x.1).collect::<Vec<_>>());
                             row["draws"] = json!(root.iter().map(|x| x.2).collect::<Vec<_>>());
                         }
                         value_leaf.push(row);
