@@ -1,0 +1,224 @@
+"""W5 runtime receipt under amendment A1 (collab LANES/lead/w5/RULINGS-r0.md, "Amendment A1" and "A1 correction").
+
+The raw parity checks of `runtime_parity.py` run unchanged and are reported as they are. Exactly three named
+differences may then be accepted as declared exceptions, each only under its stated conditions; any other failed
+raw check fails the receipt. Raw failures and accepted exceptions are kept in separate fields.
+
+Accepted exceptions (A1):
+- `spellbench-neutral-choices`: covers the raw check `neutral_choices_equal`, when the board declares exactly
+  `:neutral-v2` and the A1 census result (sha256 below) is supplied.
+- `graveyard-order-profile`: covers `training_rules_profile_is_default`, when every training episode uses exactly
+  `resolution-boundary-v1`, the board applies no profile, and no card in any training or board deck has Delve
+  (the only reader of graveyard order; `data/cards_v1.json` mechanics at each revision).
+- `buffered-completion-selection`: covers `selection_equal`, when the board wrapper selects buffered groups by
+  `deterministic-completion-logprob/v1` over `mtg-kernel-spellbench-completion-proposals/v1`.
+
+Further raw checks added here (never excepted): the H panels and the S0 recording run the training runtime.
+
+Recorded (A1 condition 1): the amendment (file, sha256, commit); the actual runtimes of training, search (the
+w5-xact search runs inside the collection session), H panels and S0; the frozen configs and the pool hash; the
+engine, wrapper and scorer identities, with the engine and wrapper bound to the board run's `engine_files`; the
+board snapshot, with the run bound to its sources; each exception's evidence.
+
+  runtime_receipt.py --training-config CFG.json [...] --board-run RUN_DIR --board-snapshot SNAPSHOT_DIR
+      --repo MTG_KERNEL_REPO [--training-revision REV] --amendment RULINGS-r0.md --amendment-commit SHA
+      --census w5-neutral-census.json --h-plan PLAN.json [...] --s0-config CFG.json [...]
+      --engine-binary EXE --wrapper kernel_engine_v2.py --scorer EXE [--out RECEIPT.json]
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import hashlib
+import io
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runtime_parity as rp  # noqa: E402
+
+SCHEMA = "w5-runtime-receipt-a1/v1"
+CENSUS_SHA256 = "811d9af07e8da9365089b30f2e9352336c747b000a502335e22fb3d776ac88e1"
+NEUTRAL_ID = ":neutral-v2"
+PROFILE = "resolution-boundary-v1"
+PROPOSALS = "mtg-kernel-spellbench-completion-proposals/v1"
+MAPPING = "deterministic-completion-logprob/v1"
+AMENDMENT_MARKERS = ("## Amendment A1: runtime parity", "### A1 correction")
+EXCEPTIONS = {
+    "spellbench-neutral-choices": "neutral_choices_equal",
+    "graveyard-order-profile": "training_rules_profile_is_default",
+    "buffered-completion-selection": "selection_equal",
+}
+
+
+class ReceiptError(Exception):
+    pass
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def runtime_profile(configs: list[dict]) -> dict[str, int]:
+    out = Counter()
+    for config in configs:
+        for ep in rp.episodes(config):
+            out["default" if ep.get("runtime_rules") is None else str(ep["runtime_rules"])] += 1
+    return dict(out)
+
+
+def plan_runtime(plan: dict) -> str:
+    return "default" if plan.get("runtime_rules") is None else str(plan["runtime_rules"])
+
+
+def delve_cards(cards: list[dict], deck_ids) -> list[str]:
+    return sorted({cards[i]["name"] for i in deck_ids if "delve" in cards[i].get("mechanics", [])})
+
+
+def wrapper_selection(source: str) -> dict:
+    return {"buffered_completion_proposals": PROPOSALS in source, "completion_mapping": MAPPING if MAPPING in source
+            else None}
+
+
+def evaluate(raw: dict, training_profile: dict, h_plans: list[dict], s0_profile: dict, board_manifest: dict,
+             wrapper: dict, delve: dict, census_ok: bool) -> dict:
+    """Raw checks (as computed) plus A1's three exceptions, each with its conditions."""
+    checks = dict(raw["checks"])
+    training_runtimes = set(training_profile)
+    checks["selection_equal"] = not wrapper["buffered_completion_proposals"]
+    checks["h_panel_runtime_equals_training"] = bool(h_plans) and all(
+        {plan_runtime(p)} == training_runtimes for p in h_plans)
+    checks["s0_runtime_equals_training"] = bool(s0_profile) and set(s0_profile) == training_runtimes
+    conditions = {
+        "spellbench-neutral-choices": {
+            "board_declares_neutral_v2": board_manifest["engine"].get("rules_snapshot_id", "").endswith(NEUTRAL_ID),
+            "census_evidence_matches": census_ok},
+        "graveyard-order-profile": {
+            "training_profile_exactly_resolution_boundary": training_runtimes == {PROFILE},
+            "board_applies_no_profile": raw["checks"]["board_rules_profile_is_default"],
+            "no_delve_card_in_any_deck": not delve["training"] and not delve["board"]},
+        "buffered-completion-selection": {
+            "wrapper_buffers_with_completion_proposals": wrapper["buffered_completion_proposals"],
+            "wrapper_maps_by_completion_logprob": wrapper["completion_mapping"] == MAPPING},
+    }
+    raw_failures = sorted(k for k, v in checks.items() if not v)
+    accepted, refused = [], []
+    for name, check in EXCEPTIONS.items():
+        if check in raw_failures:
+            entry = {"exception": name, "covers": check, "conditions": conditions[name]}
+            (accepted if all(conditions[name].values()) else refused).append(entry)
+    covered = {e["covers"] for e in accepted}
+    unexcepted = [k for k in raw_failures if k not in covered]
+    return {"raw_checks": checks, "raw_failures": raw_failures, "accepted_exceptions": accepted,
+            "refused_exceptions": refused, "unexcepted_failures": unexcepted}
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--training-config", type=Path, action="append", required=True)
+    parser.add_argument("--board-run", type=Path, required=True)
+    parser.add_argument("--board-snapshot", type=Path, required=True)
+    parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--training-revision", default="HEAD")
+    parser.add_argument("--amendment", type=Path, required=True)
+    parser.add_argument("--amendment-commit", required=True)
+    parser.add_argument("--census", type=Path, required=True)
+    parser.add_argument("--h-plan", type=Path, action="append", required=True)
+    parser.add_argument("--s0-config", type=Path, action="append", required=True)
+    parser.add_argument("--engine-binary", type=Path, required=True)
+    parser.add_argument("--wrapper", type=Path, required=True)
+    parser.add_argument("--scorer", type=Path, required=True)
+    parser.add_argument("--out", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        raw_receipt_path = (args.out or Path("runtime-parity-raw.json")).with_suffix(".raw.json")
+        config_args = [x for p in args.training_config for x in ("--training-config", str(p))]
+        with contextlib.redirect_stdout(io.StringIO()):  # the raw receipt goes to its own file
+            code = rp.main([*config_args, "--board-run", str(args.board_run), "--repo", str(args.repo),
+                            "--training-revision", args.training_revision, "--out", str(raw_receipt_path)])
+        if not raw_receipt_path.exists():
+            raise ReceiptError(f"the raw parity receipt could not be computed (exit {code})")
+        raw = json.loads(raw_receipt_path.read_text(encoding="utf-8"))
+        amendment = args.amendment.read_bytes()
+        amendment_text = amendment.decode("utf-8")
+        missing = [m for m in AMENDMENT_MARKERS if m not in amendment_text]
+        if missing:
+            raise ReceiptError(f"the amendment file lacks {missing}")
+        census_sha = sha256_bytes(args.census.read_bytes())
+        configs = [json.loads(p.read_bytes()) for p in args.training_config]
+        s0_configs = [json.loads(p.read_bytes()) for p in args.s0_config]
+        h_plans = [json.loads(p.read_bytes()) for p in args.h_plan]
+        manifest_raw = (args.board_run / "manifest.json").read_bytes()
+        manifest = json.loads(manifest_raw)
+        snapshot_raw = (args.board_snapshot / "manifest.json").read_bytes()
+        snapshot = json.loads(snapshot_raw)
+        wrapper_raw = args.wrapper.read_bytes()
+        engine_sha, wrapper_sha, scorer_sha = (sha256_bytes(p.read_bytes()) for p in
+                                               (args.engine_binary, args.wrapper, args.scorer))
+        engine_files = {f["sha256"]: f.get("file_name") for f in manifest.get("engine_files", [])}
+        training_rev = raw["inputs"]["training_revision"]
+        board_rev = raw["inputs"]["board_revision"]
+        cards_t = json.loads(rp.git_show(args.repo, training_rev, "data/cards_v1.json"))["cards"]
+        cards_b = json.loads(rp.git_show(args.repo, board_rev, "data/cards_v1.json"))["cards"]
+        decks_b = json.loads(rp.git_show(args.repo, board_rev, "data/runtime_decks_v1.json"))
+        pool = [d["catalog_id"] for d in json.loads((args.board_run / "config.json").read_bytes())["deck_pool"]]
+        training_ids = [i for c in configs for ep in rp.episodes(c) for d in ep["selected"] for i in d["mainboard"]]
+        board_ids = [r["card_id"] for d in decks_b["decks"] if d["id"] in pool for r in d["materialized_mainboard"]]
+        delve = {"training": delve_cards(cards_t, training_ids), "board": delve_cards(cards_b, board_ids)}
+        training_profile = runtime_profile(configs)
+        result = evaluate(raw, training_profile, h_plans, runtime_profile(s0_configs), manifest,
+                          wrapper_selection(wrapper_raw.decode("utf-8")), delve, census_sha == CENSUS_SHA256)
+    except (ReceiptError, rp.ParityError, KeyError, ValueError) as exc:
+        print(f"error: {exc!r}", file=sys.stderr)
+        return 1
+    bindings = {
+        "engine_binary_in_board_engine_files": engine_sha in engine_files,
+        "wrapper_in_board_engine_files": wrapper_sha in engine_files,
+        "run_is_a_snapshot_source": sha256_bytes(manifest_raw) in {s.get("manifest_sha256")
+                                                                   for s in snapshot.get("sources", [])},
+        "census_hash_is_a1s": census_sha == CENSUS_SHA256,
+    }
+    pool_hash = sha256_bytes(json.dumps(sorted({d["label"]: d["mainboard"] for c in configs for ep in rp.episodes(c)
+                                                for d in ep["selected"]}.items()),
+                                        separators=(",", ":")).encode())
+    search = [{"config": str(p), "ex1": c.get("ex1")} for p, c in zip(args.training_config, configs)]
+    receipt = {
+        "schema": SCHEMA,
+        "pass": not result["unexcepted_failures"] and not result["refused_exceptions"] and all(bindings.values()),
+        **result, "bindings": bindings,
+        "amendment": {"path": str(args.amendment), "sha256": sha256_bytes(amendment), "commit": args.amendment_commit,
+                      "sections": list(AMENDMENT_MARKERS)},
+        "runtimes": {
+            "training": training_profile,
+            "search": {"runs_in": "the collection session (w5-xact-v1 hook), so it shares the training runtime",
+                       "configs": search},
+            "h_panels": [{"plan": str(p), "sha256": sha256_bytes(p.read_bytes()), "runtime_rules": plan_runtime(h),
+                          "seed_namespace": h.get("seed_namespace")} for p, h in zip(args.h_plan, h_plans)],
+            "s0": runtime_profile(s0_configs)},
+        "configs": {"training": [{"path": str(p), "sha256": sha256_bytes(p.read_bytes())} for p in args.training_config],
+                    "s0": [{"path": str(p), "sha256": sha256_bytes(p.read_bytes())} for p in args.s0_config],
+                    "training_pool_sha256": pool_hash,
+                    "board_runtime_decks_sha256": raw["inputs"]["board_runtime_decks_sha256"]},
+        "identities": {"engine_binary": {"path": str(args.engine_binary), "sha256": engine_sha},
+                       "wrapper": {"path": str(args.wrapper), "sha256": wrapper_sha},
+                       "scorer": {"path": str(args.scorer), "sha256": scorer_sha},
+                       "board_engine": manifest.get("engine"), "board_engine_files": manifest.get("engine_files")},
+        "board_snapshot": {"path": str(args.board_snapshot), "manifest_sha256": sha256_bytes(snapshot_raw),
+                           "run_manifest_sha256": sha256_bytes(manifest_raw)},
+        "exception_evidence": {"census": {"path": str(args.census), "sha256": census_sha},
+                               "delve_cards": delve, "wrapper_selection": wrapper_selection(wrapper_raw.decode())},
+        "raw_receipt": {"path": str(raw_receipt_path), "sha256": sha256_bytes(raw_receipt_path.read_bytes())},
+        "limitation": ("A1 condition 3: whether the mismatch affects the arms differently is unmeasured; the Elves and "
+                       "Spy partition decisions are plausibly outcome-equivalent, unverified."),
+    }
+    text = json.dumps(receipt, indent=2) + "\n"
+    if args.out:
+        args.out.write_text(text, encoding="utf-8", newline="\n")
+    print(text, end="")
+    return 0 if receipt["pass"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
