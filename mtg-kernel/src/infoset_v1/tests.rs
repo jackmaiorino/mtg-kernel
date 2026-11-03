@@ -428,7 +428,7 @@ fn public_summary(s: &FastActorSessionV1) -> serde_json::Value {
 
 /// Events committed since `from`, up to the next turn, with every object
 /// named by its definition.
-fn public_events(s: &FastActorSessionV1, from: usize) -> serde_json::Value {
+pub(crate) fn public_events(s: &FastActorSessionV1, from: usize) -> serde_json::Value {
     let st = s.game_state();
     let events: Vec<_> = st.engine.event_history[from.min(st.engine.event_history.len())..]
         .iter()
@@ -462,7 +462,7 @@ fn public_events(s: &FastActorSessionV1, from: usize) -> serde_json::Value {
 
 /// Passes priority until the stack is shorter than `below` (the waiting
 /// item resolved) or `limit` decisions pass; other decisions take index 0.
-fn resolve_waiting(s: &mut FastActorSessionV1, below: usize, limit: usize) {
+pub(crate) fn resolve_waiting(s: &mut FastActorSessionV1, below: usize, limit: usize) {
     for _ in 0..limit {
         if s.game_state().stack.len() < below {
             return;

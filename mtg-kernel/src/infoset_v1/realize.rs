@@ -1,0 +1,1135 @@
+//! AC1's realizability construction (W1 design v7, section 13; rulings 35,
+//! 37.6 and 39).
+//!
+//! For a decision d of world W and an export's canonical hidden contents,
+//! the harness builds W* from W with three kinds of change, all legal
+//! alternatives of the same game:
+//! - a forced deal: definitions exchanged among the owner's objects that V
+//!   never tracked up to d (equivalent to another shuffle at the start);
+//! - forced shuffle outcomes: two library objects exchange positions right
+//!   after a shuffle of their owner's library, when V tracks neither from
+//!   then to d;
+//! - forced hidden choices: at an owner's effect choice (a Brainstorm
+//!   put-back, a scry order), another object of the hand is chosen.
+//!
+//! W's later actions are replayed with native ids mapped through the
+//! exchanges. W* passes when V's views equal W's at every V decision up to
+//! d and W*'s true hidden zones equal the export's canonical contents:
+//! per-zone name multisets of the owner's untracked cards, pinned objects'
+//! zones (and, for the correct producer, export(W*) = export(W)).
+//!
+//! The search looks for exchanges that put every misplaced object V once
+//! tracked (revealed, then hidden; a pinned source) in its canonical zone;
+//! never-tracked objects are then matched by the deal. It is a
+//! construction, checked by replay: a failure for the correct producer is
+//! reported, never assumed away.
+
+use super::harness::{seat, swap_objects, view};
+use super::tests::export_at;
+use super::*;
+use crate::ids::{ObjectId, PlayerId};
+use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+use crate::state::{GameState, ObservationNoteKindV1, Zone};
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+
+/// W: its start and each chosen candidate with native ids.
+#[derive(Clone)]
+pub(crate) struct NativeGameV1 {
+    pub start: FastActorSessionV1,
+    pub actions: Vec<Value>,
+    /// W's own forced shuffle outcomes (a fixture's edits): library
+    /// positions exchanged at a decision, already reflected in `actions`.
+    pub edits: Vec<(usize, ObjectId, ObjectId)>,
+}
+
+/// A candidate's semantics with ids mapped through `sigma`, incarnation
+/// numbers and definitions dropped (an exchanged object keeps its own
+/// incarnation, and the forced deal changes definitions of objects V never
+/// tracked).
+fn mapped(v: &Value, sigma: &HashMap<u64, u64>) -> Value {
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .filter(|(k, _)| !matches!(k.as_str(), "zone_change_count" | "card_db_id"))
+                .map(|(k, x)| {
+                    if k == "arena_id" {
+                        if let Some(n) = x.as_u64() {
+                            return (k.clone(), Value::from(*sigma.get(&n).unwrap_or(&n)));
+                        }
+                    }
+                    (k.clone(), mapped(x, sigma))
+                })
+                .collect(),
+        ),
+        Value::Array(xs) => Value::Array(xs.iter().map(|x| mapped(x, sigma)).collect()),
+        _ => v.clone(),
+    }
+}
+
+/// The object a choice names, if any.
+fn named_object(v: &Value) -> Option<u32> {
+    v["target"]["object"]["arena_id"]
+        .as_u64()
+        .or_else(|| v["candidate"]["arena_id"].as_u64())
+        .or_else(|| v["card"]["arena_id"].as_u64())
+        .map(|n| n as u32)
+}
+
+fn hidden_choice(kind: &str) -> bool {
+    matches!(
+        kind,
+        "choose_effect_target" | "choose_effect_option" | "choose_cost_target"
+    )
+}
+
+/// One exchange that makes W*.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum MoveV1 {
+    /// At step `at`, the owner's choice names `x` where W's named `y`;
+    /// from then on the two objects exchange roles.
+    Choice { at: usize, x: u32, y: u32 },
+    /// At decision `at`, the first after a shuffle of the owner's library,
+    /// `x` and `y` exchange library positions (and roles).
+    Shuffle { at: usize, x: u32, y: u32 },
+}
+
+/// An owner's effect choice in a replay: the object chosen and the other
+/// hand objects it could have named.
+#[derive(Clone, Debug)]
+struct ChoicePointV1 {
+    at: usize,
+    chosen: u32,
+    others: Vec<u32>,
+}
+
+struct RunV1 {
+    s: FastActorSessionV1,
+    views: Vec<Option<Vec<u8>>>,
+    choices: Vec<ChoicePointV1>,
+    /// Decision indices right after a shuffle of the owner's library, with
+    /// the owner's library at that decision.
+    shuffles: Vec<(usize, Vec<ObjectId>)>,
+}
+
+fn is_pass(v: &Value) -> bool {
+    v["action_kind"] == "pass"
+}
+
+/// Replays W up to its decision `d` (an index into W's actions, at a V
+/// decision) with the deal exchanges and moves applied. The owner's
+/// priority windows can depend on its hidden hand (the session poses a
+/// window only when it has something to do), so W's actions are aligned,
+/// not indexed: a W pass with no counterpart in W* is skipped, and an extra
+/// window of the owner in W* is passed. V's decisions must line up exactly
+/// (their views are compared).
+fn replay(
+    game: &NativeGameV1,
+    deal: &[(ObjectId, ObjectId)],
+    moves: &[MoveV1],
+    d: usize,
+    owner: PlayerId,
+    viewer: PlayerId,
+) -> Result<RunV1, String> {
+    let mut s = if deal.is_empty() {
+        game.start.clone()
+    } else {
+        let mut st = game.start.game_state().clone();
+        for (a, b) in deal {
+            swap_objects(&mut st, *a, *b);
+        }
+        FastActorSessionV1::import_infoset_v1(&game.start, st, 0)
+    };
+    // sigma maps W's object to W*'s; each exchange composes it with the
+    // transposition of two W* objects.
+    let mut sigma: HashMap<u64, u64> = HashMap::new();
+    let swap = |sigma: &mut HashMap<u64, u64>, x: u32, y: u32| {
+        let (x, y) = (u64::from(x), u64::from(y));
+        let inv: HashMap<u64, u64> = sigma.iter().map(|(k, v)| (*v, *k)).collect();
+        let (wx, wy) = (*inv.get(&x).unwrap_or(&x), *inv.get(&y).unwrap_or(&y));
+        sigma.insert(wx, y);
+        sigma.insert(wy, x);
+    };
+    let restart = |s: &FastActorSessionV1, st: GameState| -> Result<FastActorSessionV1, String> {
+        let context = s
+            .surface_context_v1()
+            .ok_or("no surface context at an edit or a forced shuffle outcome")?;
+        Ok(FastActorSessionV1::import_infoset_with_surface_v1(
+            s,
+            st,
+            0,
+            Some(context),
+        ))
+    };
+    let mut views = Vec::new();
+    let mut choices = Vec::new();
+    let mut shuffles = Vec::new();
+    let mut i = 0;
+    let mut applied: Option<usize> = None;
+    let mut guard = 0;
+    loop {
+        guard += 1;
+        if guard > 4 * game.actions.len() + 100 {
+            return Err("the replay does not converge".into());
+        }
+        // Edits and forced shuffle outcomes apply once, before W's step
+        // `i` is answered; choice exchanges from that step on.
+        if applied != Some(i) {
+            applied = Some(i);
+            for (at, a, b) in &game.edits {
+                if *at == i {
+                    let mut st = s.game_state().clone();
+                    for pl in &mut st.players {
+                        let (pa, pb) = (
+                            pl.library.iter().position(|o| o == a),
+                            pl.library.iter().position(|o| o == b),
+                        );
+                        if let (Some(pa), Some(pb)) = (pa, pb) {
+                            pl.library.swap(pa, pb);
+                        }
+                    }
+                    s = restart(&s, st)?;
+                }
+            }
+            for m in moves {
+                match *m {
+                    MoveV1::Shuffle { at, x, y } if at == i => {
+                        let mut st = s.game_state().clone();
+                        let lib = &mut st.players[owner.index()].library;
+                        let (Some(px), Some(py)) = (
+                            lib.iter().position(|o| o.0 == x),
+                            lib.iter().position(|o| o.0 == y),
+                        ) else {
+                            return Err(
+                                "a forced shuffle outcome names a card outside the library".into(),
+                            );
+                        };
+                        lib.swap(px, py);
+                        s = restart(&s, st)?;
+                        swap(&mut sigma, x, y);
+                    }
+                    MoveV1::Choice { at, x, y } if at == i => swap(&mut sigma, x, y),
+                    _ => {}
+                }
+            }
+        }
+        let FastActorResponseV1::Decision(dd) = s.current_response() else {
+            return Err(format!("terminal before W's step {i}"));
+        };
+        let p = seat(dd.acting_player);
+        if i == d && p == viewer {
+            // V's view at d itself, after any exchange applied here.
+            views.push(view(&s));
+            break;
+        }
+        let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+        let vals: Vec<Value> = sem
+            .iter()
+            .map(|x| serde_json::to_value(x).expect("semantics serialize"))
+            .collect();
+        let empty = HashMap::new();
+        let me = if p == PlayerId::P0 { "p0" } else { "p1" };
+        let owner_s = if owner == PlayerId::P0 { "p0" } else { "p1" };
+        let w = game.actions.get(i).filter(|_| i < d);
+        let want = w.map(|a| mapped(a, &sigma));
+        let matching = want
+            .as_ref()
+            .filter(|_| w.is_some_and(|a| a["actor"] == me))
+            .and_then(|want| vals.iter().position(|v| mapped(v, &empty) == *want));
+        let index = if let Some(index) = matching {
+            index
+        } else if w.is_some_and(|a| is_pass(a) && a["actor"] == owner_s) {
+            // The owner passed in a window W* does not have.
+            i += 1;
+            continue;
+        } else if p == owner {
+            // An extra window of the owner in W*.
+            vals.iter()
+                .position(is_pass)
+                .ok_or_else(|| format!("W's step {i}: an unmatched owner decision"))?
+        } else {
+            return Err(format!(
+                "W's step {i}: no candidate matches {}",
+                want.map_or_else(|| "nothing".to_string(), |w| w.to_string())
+            ));
+        };
+        let took_w = matching.is_some();
+        if p == viewer {
+            views.push(view(&s));
+        }
+        let kind = vals[index]["action_kind"].as_str().unwrap_or("");
+        if took_w && p == owner && hidden_choice(kind) {
+            let hand = &s.game_state().players[owner.index()].hand;
+            if let Some(chosen) =
+                named_object(&vals[index]).filter(|o| hand.contains(&ObjectId(*o)))
+            {
+                let others: Vec<u32> = vals
+                    .iter()
+                    .filter(|v| v["action_kind"] == vals[index]["action_kind"])
+                    .filter_map(named_object)
+                    .filter(|o| *o != chosen && hand.contains(&ObjectId(*o)))
+                    .collect();
+                choices.push(ChoicePointV1 {
+                    at: i,
+                    chosen,
+                    others,
+                });
+            }
+        }
+        let before = s.game_state().observation_journal.notes().len();
+        s.step(dd.episode_id, dd.step, index as u32)
+            .map_err(|e| format!("W's step {i}: {e:?}"))?;
+        if took_w {
+            i += 1;
+        }
+        let notes = s.game_state().observation_journal.notes();
+        if notes[before.min(notes.len())..].iter().any(|n| {
+            matches!(n.kind, ObservationNoteKindV1::LibraryRandomized { owner: o } if o == owner)
+        }) {
+            shuffles.push((i, s.game_state().players[owner.index()].library.clone()));
+        }
+    }
+    Ok(RunV1 {
+        s,
+        views,
+        choices,
+        shuffles,
+    })
+}
+
+/// Canonical hidden contents of the owner: untracked hand and library
+/// definitions, and each pinned object's definition and zone (in hand or
+/// not) in contract order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ContentsV1 {
+    pub hand: BTreeMap<u16, u32>,
+    pub library: BTreeMap<u16, u32>,
+    pub pins: Vec<(u16, bool)>,
+}
+
+fn add(m: &mut BTreeMap<u16, u32>, d: u16) {
+    *m.entry(d).or_default() += 1;
+}
+
+/// The export's canonical contents of the opponent's hidden zones.
+pub(crate) fn export_contents(x: &InfosetV1, owner: PlayerId) -> ContentsV1 {
+    let mut c = ContentsV1::default();
+    let p = &x.state.players[owner.index()];
+    for (zone_hand, ids) in [(true, &p.hand), (false, &p.library)] {
+        for id in ids {
+            let def = x.state.objects.get(*id).card_def;
+            match x.handles[id.0 as usize] {
+                HandleV1::U { pinned: true, .. } => {}
+                HandleV1::U { .. } => add(
+                    if zone_hand {
+                        &mut c.hand
+                    } else {
+                        &mut c.library
+                    },
+                    def,
+                ),
+                _ => {}
+            }
+        }
+    }
+    // Pins in contract order: the exported contracts name their occupants.
+    for id in super::export::contract_pins(&x.state) {
+        if matches!(x.handles[id.0 as usize], HandleV1::U { pinned: true, .. })
+            && x.state.objects.get(id).owner == owner
+        {
+            c.pins
+                .push((x.state.objects.get(id).card_def, p.hand.contains(&id)));
+        }
+    }
+    c
+}
+
+/// The true contents of the owner's hidden zones, as V's projection
+/// partitions them, with each untracked object's class.
+struct TruthV1 {
+    contents: ContentsV1,
+    /// Untracked hidden objects V tracked earlier (fixed definitions).
+    seen: Vec<(ObjectId, u16, bool)>,
+    /// Untracked hidden objects V never tracked.
+    never: Vec<(ObjectId, u16, bool)>,
+    pins: Vec<(ObjectId, u16, bool)>,
+}
+
+fn truth(state: &GameState, viewer: PlayerId, owner: PlayerId) -> TruthV1 {
+    let projection =
+        super::projection::project_v1(state, state.observation_journal.notes(), viewer);
+    let order = super::export::contract_pins(state);
+    let pins: BTreeSet<ObjectId> = order.iter().copied().collect();
+    let mut t = TruthV1 {
+        contents: ContentsV1::default(),
+        seen: Vec::new(),
+        never: Vec::new(),
+        pins: Vec::new(),
+    };
+    let p = &state.players[owner.index()];
+    for (in_hand, ids) in [(true, &p.hand), (false, &p.library)] {
+        for (pos, id) in ids.iter().enumerate() {
+            if projection.tracked(*id)
+                || (!in_hand && projection.library[owner.index()].contains_key(&(pos as u32)))
+            {
+                continue;
+            }
+            let def = state.objects.get(*id).card_def;
+            if pins.contains(id) {
+                continue;
+            }
+            add(
+                if in_hand {
+                    &mut t.contents.hand
+                } else {
+                    &mut t.contents.library
+                },
+                def,
+            );
+            let entry = (*id, def, in_hand);
+            if projection.objects[id.0 as usize].spans.is_empty() {
+                t.never.push(entry);
+            } else {
+                t.seen.push(entry);
+            }
+        }
+    }
+    for id in order {
+        let in_hand = p.hand.contains(&id);
+        if !projection.tracked(id) && (in_hand || p.library.contains(&id)) {
+            let def = state.objects.get(id).card_def;
+            t.contents.pins.push((def, in_hand));
+            t.pins.push((id, def, in_hand));
+        }
+    }
+    t
+}
+
+fn take(m: &mut BTreeMap<u16, u32>, d: u16) -> bool {
+    match m.get_mut(&d) {
+        Some(c) if *c > 0 => {
+            *c -= 1;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Objects in the wrong zone for `target`: seen objects whose definition
+/// the target zone cannot absorb, and pins in the wrong zone.
+fn misplaced(t: &TruthV1, target: &ContentsV1) -> Vec<(ObjectId, bool)> {
+    let (mut hand, mut library) = (target.hand.clone(), target.library.clone());
+    let mut out = Vec::new();
+    for (id, def, in_hand) in &t.seen {
+        let room = if *in_hand { &mut hand } else { &mut library };
+        if !take(room, *def) {
+            out.push((*id, *in_hand));
+        }
+    }
+    for (k, (id, def, in_hand)) in t.pins.iter().enumerate() {
+        if target.pins.get(k) != Some(&(*def, *in_hand)) {
+            out.push((*id, *in_hand));
+        }
+    }
+    out
+}
+
+/// A counting proof that no W* holds `target`, independent of the survivor
+/// tree and of the search: Some(reason) when proven.
+///
+/// Hand bound: the objects V tracked in the owner's hand until an
+/// unidentified put-back (their spans end there, in the hand) can leave the
+/// hand afterwards only by unidentified put-backs, one card each, or in V's
+/// sight (then they are tracked again and dropped from the count). Draws
+/// that follow the last put-back with no reorder of the owner's library in
+/// between take put-back cards back (the library top, last in first out).
+/// So at least n - (put-backs - credited draws) of those still-hidden objects
+/// are in the hand, and the untracked hand must hold that many cards of
+/// their names. Pin bound: a pin in the hand needs a distinct unidentified
+/// draw after the earliest pin entered the library.
+pub(crate) fn impossible_v1(
+    state: &GameState,
+    viewer: PlayerId,
+    target: &ContentsV1,
+) -> Option<String> {
+    use super::projection::TransferDirV1;
+    let owner = viewer.opponent();
+    let p = super::projection::project_v1(state, state.observation_journal.notes(), viewer);
+    let pl = &state.players[owner.index()];
+    let hidden =
+        |id: ObjectId| !p.tracked(id) && (pl.hand.contains(&id) || pl.library.contains(&id));
+    let mut transfers: Vec<_> = p.transfers.iter().filter(|t| t.owner == owner).collect();
+    transfers.sort_by_key(|t| t.item);
+    let put_backs: Vec<usize> = transfers
+        .iter()
+        .filter(|t| t.dir == TransferDirV1::PutBack)
+        .map(|t| t.item)
+        .collect();
+    if let Some(&last) = put_backs.last() {
+        // Credit only draws from the top after the last put-back, before any
+        // reorder of the owner's library, and at most the put-backs since
+        // the reorder before them (earlier ones may have been shuffled
+        // away or scried down).
+        let reorders: Vec<usize> = p
+            .reorders
+            .iter()
+            .filter(|(_, o)| *o == owner)
+            .map(|(item, _)| *item)
+            .collect();
+        let credited_until = reorders
+            .iter()
+            .copied()
+            .filter(|item| *item > last)
+            .min()
+            .unwrap_or(usize::MAX);
+        let since = reorders
+            .iter()
+            .copied()
+            .filter(|item| *item < last)
+            .max()
+            .unwrap_or(0);
+        let on_top = put_backs.iter().filter(|&&x| x > since).count();
+        let draws_back = p
+            .top_draws
+            .iter()
+            .filter(|(item, o)| *o == owner && *item > last && *item < credited_until)
+            .count()
+            .min(on_top);
+        for &at in &put_backs {
+            let known: Vec<ObjectId> = state
+                .objects
+                .iter()
+                .map(|(id, _)| id)
+                .filter(|id| {
+                    state.objects.get(*id).owner == owner
+                        && p.objects[id.0 as usize]
+                            .spans
+                            .iter()
+                            .any(|s| s.end.is_some_and(|e| e.item == at && e.zone == Zone::Hand))
+                        // Not tracked again since (a later public departure
+                        // is not among the put-backs).
+                        && p.objects[id.0 as usize]
+                            .spans
+                            .iter()
+                            .all(|s| s.start_item <= at)
+                        && hidden(*id)
+                })
+                .collect();
+            if known.is_empty() {
+                continue;
+            }
+            let exits = put_backs.iter().filter(|&&x| x >= at).count();
+            let need = known.len().saturating_sub(exits - draws_back.min(exits));
+            let mut names: BTreeMap<u16, u32> = BTreeMap::new();
+            for id in &known {
+                add(&mut names, state.objects.get(*id).card_def);
+            }
+            let have: u32 = names
+                .iter()
+                .map(|(d, k)| (*k).min(target.hand.get(d).copied().unwrap_or(0)))
+                .sum();
+            if (have as usize) < need {
+                return Some(format!(
+                    "{} hidden objects tracked in the hand until the put-back at item {at}, {exits} put-backs, {draws_back} draws back: at least {need} remain, the target's hand holds {have} of their names",
+                    known.len()
+                ));
+            }
+        }
+    }
+    let pins_in_hand = target.pins.iter().filter(|(_, h)| *h).count();
+    let hidden_pins: Vec<ObjectId> = super::export::contract_pins(state)
+        .into_iter()
+        .filter(|id| hidden(*id))
+        .collect();
+    // The pin bound holds only if every hidden pin was last seen in the
+    // library (a pin last seen in the hand needs no draw).
+    let all_from_library = hidden_pins.iter().all(|id| {
+        p.last_span(*id)
+            .and_then(|s| s.end)
+            .is_some_and(|e| e.zone == Zone::Library)
+    });
+    if pins_in_hand > 0 && all_from_library {
+        let entry = hidden_pins
+            .iter()
+            .filter_map(|id| p.last_span(*id).and_then(|s| s.end).map(|e| e.item))
+            .min();
+        if let Some(entry) = entry {
+            // Any library-to-hand move can carry a pin (searches included).
+            let draws = transfers
+                .iter()
+                .filter(|t| t.dir == TransferDirV1::Draw && t.item > entry)
+                .count();
+            if pins_in_hand > draws {
+                return Some(format!(
+                    "{pins_in_hand} pins in the hand need distinct draws; {draws} draws followed the earliest pin's entry"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// The deal exchanges that give the never-tracked objects the target's
+/// remaining definitions, or None if the multisets disagree.
+fn deal_for(t: &TruthV1, target: &ContentsV1) -> Option<Vec<(ObjectId, ObjectId)>> {
+    let mut need = target.hand.clone();
+    for (_, def, in_hand) in &t.seen {
+        if *in_hand && !take(&mut need, *def) {
+            return None;
+        }
+    }
+    let hand: Vec<&(ObjectId, u16, bool)> = t.never.iter().filter(|x| x.2).collect();
+    let library: Vec<&(ObjectId, u16, bool)> = t.never.iter().filter(|x| !x.2).collect();
+    let mut wrong = Vec::new();
+    for x in &hand {
+        if !take(&mut need, x.1) {
+            wrong.push(x.0);
+        }
+    }
+    let mut used = BTreeSet::new();
+    let mut swaps = Vec::new();
+    for a in wrong {
+        let b = library
+            .iter()
+            .find(|y| !used.contains(&y.0) && need.get(&y.1).copied().unwrap_or(0) > 0)?;
+        take(&mut need, b.1);
+        used.insert(b.0);
+        swaps.push((a, b.0));
+    }
+    need.values().all(|c| *c == 0).then_some(swaps)
+}
+
+/// A constructed W*.
+#[derive(Clone, Debug)]
+pub(crate) struct RealizedV1 {
+    pub moves: Vec<MoveV1>,
+    pub deal: Vec<(ObjectId, ObjectId)>,
+}
+
+/// Builds W* for decision step `d` of `game` and `target` (the owner is
+/// V's opponent). `check_export` also requires export(W*) = `export_w`.
+pub(crate) fn realize(
+    game: &NativeGameV1,
+    d: usize,
+    viewer: PlayerId,
+    target: &ContentsV1,
+    export_w: Option<&[u8]>,
+) -> Result<RealizedV1, String> {
+    const MAX_NODES: usize = 400;
+    let owner = viewer.opponent();
+    let base = replay(game, &[], &[], d, owner, viewer)?;
+    let context = {
+        let t = truth(base.s.game_state(), viewer, owner);
+        let name = |o: &ObjectId| base.s.game_state().objects.get(*o).name.clone();
+        format!(
+            "choice points {:?}; shuffles at {:?}; misplaced in W {:?}; target {target:?}",
+            base.choices
+                .iter()
+                .map(|c| (c.at, c.chosen, c.others.clone()))
+                .collect::<Vec<_>>(),
+            base.shuffles.iter().map(|x| x.0).collect::<Vec<_>>(),
+            misplaced(&t, target)
+                .iter()
+                .map(|(o, h)| format!(
+                    "{}#{}{}",
+                    name(o),
+                    o.0,
+                    if *h { "@hand" } else { "@library" }
+                ))
+                .collect::<Vec<_>>()
+        )
+    };
+    let mut queue: VecDeque<Vec<MoveV1>> = VecDeque::from([Vec::new()]);
+    let mut visited: BTreeSet<Vec<MoveV1>> = BTreeSet::new();
+    let mut last = String::from("no candidate W*");
+    let mut nodes = 0;
+    while let Some(moves) = queue.pop_front() {
+        nodes += 1;
+        if nodes > MAX_NODES {
+            return Err(format!("search budget spent; last: {last}; {context}"));
+        }
+        let run = match replay(game, &[], &moves, d, owner, viewer) {
+            Ok(r) => r,
+            Err(e) => {
+                last = e;
+                continue;
+            }
+        };
+        if run.views != base.views {
+            last = format!("{moves:?}: V's views differ");
+            continue;
+        }
+        let t = truth(run.s.game_state(), viewer, owner);
+        let wrong = misplaced(&t, target);
+        if wrong.is_empty() {
+            let Some(deal) = deal_for(&t, target) else {
+                last = format!("{moves:?}: the deal cannot match the target multisets");
+                continue;
+            };
+            let star = replay(game, &deal, &moves, d, owner, viewer)?;
+            if star.views != base.views {
+                last = format!("{moves:?} with the deal: V's views differ");
+                continue;
+            }
+            let got = truth(star.s.game_state(), viewer, owner).contents;
+            if got != *target {
+                last = format!("{moves:?}: W* contents {got:?} differ from {target:?}");
+                continue;
+            }
+            if let Some(bytes) = export_w {
+                let x = export_at(&star.s, viewer, ExportOptionsV1::default())
+                    .map_err(|e| format!("export(W*) refused: {}", e.code_name()))?;
+                if x.bytes != bytes {
+                    let w = at_step(game, d, viewer);
+                    let xw = export_at(&w, viewer, ExportOptionsV1::default())
+                        .map_err(|e| format!("export(W) refused: {}", e.code_name()))?;
+                    let (a, b) = (
+                        serde_json::json!([
+                            xw.handles.iter().map(HandleV1::label).collect::<Vec<_>>(),
+                            xw.state
+                        ]),
+                        serde_json::json!([
+                            x.handles.iter().map(HandleV1::label).collect::<Vec<_>>(),
+                            x.state
+                        ]),
+                    );
+                    return Err(format!(
+                        "{moves:?}: export(W*) differs from export(W) at {:?}",
+                        super::tests::diffs(&a, &b, String::new(), 4)
+                    ));
+                }
+            }
+            return Ok(RealizedV1 { moves, deal });
+        }
+        if moves.len() >= 4 {
+            last = format!("{moves:?}: {} objects still misplaced", wrong.len());
+            continue;
+        }
+        // Exchanges that move a misplaced object to the other zone.
+        let end_zone: HashMap<u32, bool> = {
+            let st = run.s.game_state();
+            let p = &st.players[owner.index()];
+            p.hand
+                .iter()
+                .map(|o| (o.0, true))
+                .chain(p.library.iter().map(|o| (o.0, false)))
+                .collect()
+        };
+        let mut next: Vec<MoveV1> = Vec::new();
+        for (m, in_hand) in &wrong {
+            let m = m.0;
+            for c in &run.choices {
+                // m is in the hand at d: it must be the one chosen instead
+                // of an object W chose (or the reverse).
+                if c.others.contains(&m) && end_zone.get(&c.chosen) == Some(&!in_hand) {
+                    next.push(MoveV1::Choice {
+                        at: c.at,
+                        x: m,
+                        y: c.chosen,
+                    });
+                }
+                if c.chosen == m {
+                    for o in &c.others {
+                        if end_zone.get(o) == Some(&!in_hand) {
+                            next.push(MoveV1::Choice {
+                                at: c.at,
+                                x: *o,
+                                y: m,
+                            });
+                        }
+                    }
+                }
+            }
+            for (at, lib) in &run.shuffles {
+                if !lib.iter().any(|o| o.0 == m) {
+                    continue;
+                }
+                for o in lib.iter().take(12) {
+                    if o.0 != m && end_zone.get(&o.0) == Some(&!in_hand) {
+                        next.push(MoveV1::Shuffle {
+                            at: *at,
+                            x: m,
+                            y: o.0,
+                        });
+                    }
+                }
+            }
+        }
+        for mv in next {
+            let at = |m: &MoveV1| match *m {
+                MoveV1::Choice { at, .. } => (at, true),
+                MoveV1::Shuffle { at, .. } => (at, false),
+            };
+            // One exchange per choice point; no move twice.
+            if moves.contains(&mv) || (at(&mv).1 && moves.iter().any(|m| at(m) == at(&mv))) {
+                continue;
+            }
+            let mut ms = moves.clone();
+            ms.push(mv);
+            ms.sort();
+            if visited.insert(ms.clone()) {
+                queue.push_back(ms);
+            }
+        }
+    }
+    Err(format!("{last}; {context}"))
+}
+
+/// The session of `game` at decision step `d` (W itself, no exchanges).
+pub(crate) fn at_step(game: &NativeGameV1, d: usize, viewer: PlayerId) -> FastActorSessionV1 {
+    replay(game, &[], &[], d, viewer.opponent(), viewer)
+        .expect("W replays")
+        .s
+}
+
+/// W* for the export of `mutant` (None: the correct producer) at decision
+/// step `d`. The outer error is a refusal (no export); the inner one a
+/// construction failure.
+pub(crate) fn realize_at(
+    game: &NativeGameV1,
+    d: usize,
+    viewer: PlayerId,
+    mutant: Option<MutantV1>,
+) -> Result<Result<RealizedV1, String>, String> {
+    let s = at_step(game, d, viewer);
+    let x =
+        export_at(&s, viewer, ExportOptionsV1 { mutant }).map_err(|e| e.code_name().to_string())?;
+    let target = export_contents(&x, viewer.opponent());
+    let bytes = mutant.is_none().then_some(x.bytes.as_slice());
+    Ok(realize(game, d, viewer, &target, bytes))
+}
+
+/// The counting proof for the export of `mutant` at decision step `d`
+/// (None when not proven or refused).
+pub(crate) fn impossible_at(
+    game: &NativeGameV1,
+    d: usize,
+    viewer: PlayerId,
+    mutant: Option<MutantV1>,
+) -> Option<String> {
+    let s = at_step(game, d, viewer);
+    let x = export_at(&s, viewer, ExportOptionsV1 { mutant }).ok()?;
+    impossible_v1(
+        s.game_state(),
+        viewer,
+        &export_contents(&x, viewer.opponent()),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::fixtures::{
+        cawgates_lorien, fable_bounce, record, spy_versus_terror, w_pin, AtV1, PinTopV1, ScriptV1,
+    };
+    use super::*;
+
+    fn native_of(script: &ScriptV1) -> NativeGameV1 {
+        NativeGameV1 {
+            start: script.start.clone(),
+            actions: script.native.clone(),
+            edits: script.edits.clone(),
+        }
+    }
+
+    /// Every exported decision of a fixture run is realizable for the
+    /// correct producer; returns the number checked.
+    /// Every exported decision of a fixture run is realizable for the
+    /// correct producer, except the known draw-back gap (counted in
+    /// `GAPS`); returns the number realized.
+    fn all_realizable(name: &str, records: &[AtV1], game: &NativeGameV1, v: PlayerId) -> u64 {
+        let mut n = 0;
+        for r in records.iter().filter(|r| r.p.is_ok()) {
+            match realize_at(game, r.step, v, None) {
+                Ok(Ok(_)) => n += 1,
+                other => {
+                    // Only a proven impossibility (the draw-back gap of the
+                    // ledger, reported to the lead) is tolerated.
+                    let proof = impossible_at(game, r.step, v, None);
+                    assert!(
+                        proof.is_some(),
+                        "{name}: P is not realizable at step {}: {other:?}",
+                        r.step
+                    );
+                    eprintln!(
+                        "{name}: P proven unrealizable at step {}: {}",
+                        r.step,
+                        proof.unwrap_or_default()
+                    );
+                    GAPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+        n
+    }
+
+    static GAPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// A validity mutant fails only with a counting proof (search failure
+    /// alone proves nothing), and the search agrees.
+    fn unrealizable(game: &NativeGameV1, d: usize, v: PlayerId, m: MutantV1) -> bool {
+        impossible_at(game, d, v, Some(m)).is_some()
+            && matches!(realize_at(game, d, v, Some(m)), Ok(Err(_)))
+    }
+
+    #[test]
+    fn realizability_and_validity_mutants_on_fixtures() {
+        let mut checked = 0;
+        GAPS.store(0, std::sync::atomic::Ordering::Relaxed);
+        // Spy versus Terror: L11 (tracker-rule facts only) is not realizable.
+        let (records, script) = record(
+            spy_versus_terror(["Thought Scour", "Mental Note"]),
+            PlayerId::P0,
+            30,
+        );
+        let game = native_of(&script);
+        checked += all_realizable("spy-versus-terror", &records, &game, PlayerId::P0);
+        let with_node: Vec<&AtV1> = records
+            .iter()
+            .filter(|r| !r.nodes.is_empty() && r.p.is_ok())
+            .collect();
+        assert!(!with_node.is_empty());
+        let l11 = with_node
+            .iter()
+            .filter(|r| unrealizable(&game, r.step, PlayerId::P0, MutantV1::L11))
+            .count();
+        eprintln!(
+            "L11 unrealizable at {l11} of {} node decisions (Spy versus Terror)",
+            with_node.len()
+        );
+        assert_eq!(l11, with_node.len(), "L11 fails wherever the node holds");
+
+        // Fable bounce: L12 (arrivals counted) is not realizable after the
+        // bounce.
+        for hawks in [0, 2] {
+            let (records, script) = record(fable_bounce(hawks), PlayerId::P1, 30);
+            let game = native_of(&script);
+            checked += all_realizable("fable-bounce", &records, &game, PlayerId::P1);
+            // Decisions where L12's output differs from P's (after the
+            // bounce): L12 must fail at every one, either by an export
+            // proven unrealizable or by a refusal of the ledger's own
+            // consistency check (R4: its allocation contradicts the
+            // tracker-rule facts), which is how it fails while a count fact
+            // survives.
+            let mut l12 = 0;
+            let mut l12_r4 = 0;
+            for r in records
+                .iter()
+                .filter(|r| r.p.is_ok() && !r.nodes.is_empty())
+            {
+                let s = at_step(&game, r.step, PlayerId::P1);
+                let m = export_at(
+                    &s,
+                    PlayerId::P1,
+                    ExportOptionsV1 {
+                        mutant: Some(MutantV1::L12),
+                    },
+                );
+                match &m {
+                    Ok(x) if Some(&x.bytes) == r.p.as_ref().ok() => continue,
+                    Err(e) => {
+                        assert_eq!(e.code_name(), "R4", "L12 at step {}: {e:?}", r.step);
+                        l12_r4 += 1;
+                    }
+                    Ok(_) => {
+                        assert!(
+                            unrealizable(&game, r.step, PlayerId::P1, MutantV1::L12),
+                            "L12 is not proven unrealizable at step {} ({hawks} Hawks returned): {:?}",
+                            r.step,
+                            realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12))
+                        );
+                    }
+                }
+                l12 += 1;
+            }
+            eprintln!(
+                "L12 fails at {l12} post-bounce decisions ({l12_r4} by R4) ({hawks} Hawks returned)"
+            );
+            assert!(l12 > 0, "L12 differs from P after the bounce");
+        }
+
+        // CawGates Lorien: realizable up to the R8b refusal (every export).
+        let (records, script) = record(cawgates_lorien(Some("Squadron Hawk")), PlayerId::P1, 20);
+        checked += all_realizable(
+            "cawgates-lorien",
+            &records,
+            &native_of(&script),
+            PlayerId::P1,
+        );
+
+        // W-pin-1 and W-pin-2: every variant realizable; L9 is not while two
+        // pins compete for one draw (where its export differs from P's).
+        let mut l9 = 0;
+        for (pins, tops) in [
+            (1, vec![PinTopV1::Neither, PinTopV1::First]),
+            (
+                2,
+                vec![PinTopV1::Neither, PinTopV1::First, PinTopV1::Second],
+            ),
+        ] {
+            for top in tops {
+                let (records, script) = record(w_pin(pins, top), PlayerId::P1, 12);
+                let game = native_of(&script);
+                checked += all_realizable(
+                    &format!("w-pin-{pins} {top:?}"),
+                    &records,
+                    &game,
+                    PlayerId::P1,
+                );
+                if pins != 2 {
+                    continue;
+                }
+                for r in records
+                    .iter()
+                    .filter(|r| r.pinned.len() == 2 && r.p.is_ok())
+                {
+                    let s = at_step(&game, r.step, PlayerId::P1);
+                    let l9_bytes = export_at(
+                        &s,
+                        PlayerId::P1,
+                        ExportOptionsV1 {
+                            mutant: Some(MutantV1::L9),
+                        },
+                    )
+                    .map(|x| x.bytes)
+                    .ok();
+                    if l9_bytes.as_ref() == r.p.as_ref().ok() {
+                        continue;
+                    }
+                    assert!(
+                        unrealizable(&game, r.step, PlayerId::P1, MutantV1::L9),
+                        "L9 is realizable at step {} ({top:?})",
+                        r.step
+                    );
+                    l9 += 1;
+                }
+            }
+        }
+        let gaps = GAPS.load(std::sync::atomic::Ordering::Relaxed);
+        eprintln!(
+            "realizability: {checked} fixture decisions realized for P, {gaps} proven unrealizable; L9 unrealizable at {l9} competing-pin decisions"
+        );
+        // With R8's draw-back fallback no exported decision is unrealizable.
+        assert_eq!(gaps, 0, "P exports an unrealizable state");
+        assert!(
+            l9 > 0,
+            "W-pin-2 has decisions where two pins compete for one draw"
+        );
+    }
+
+    /// L10 on the AC3-L shuffle-trigger case (6.5 case A) in the W-pin
+    /// fixture: with Lembas sacrificed and its shuffle trigger waiting, P's
+    /// export continues like the true state; L10's export refuses, halts
+    /// on the validator, or continues differently.
+    #[test]
+    fn l10_fails_on_the_waiting_shuffle_trigger() {
+        let v = PlayerId::P1;
+        let (records, script) = record(w_pin(1, PinTopV1::Neither), v, 12);
+        let game = native_of(&script);
+        let lembas = super::super::fixtures::id("Lembas");
+        let mut cases = 0;
+        let mut l10_fails = 0;
+        for r in records.iter().filter(|r| r.p.is_ok()) {
+            let s = at_step(&game, r.step, v);
+            let st = s.game_state();
+            let waiting = st.stack.len() == 2
+                && st.players[0]
+                    .graveyard
+                    .iter()
+                    .any(|x| st.objects.get(*x).card_def == lembas);
+            if !waiting {
+                continue;
+            }
+            cases += 1;
+            let from = st.engine.event_history.len();
+            let continue_from = |state: GameState| -> Result<Value, String> {
+                let mut c = FastActorSessionV1::import_infoset_v1(&s, state, 0);
+                super::super::tests::resolve_waiting(&mut c, 1, 60);
+                if let FastActorResponseV1::Terminal(t) = c.current_response() {
+                    if t.terminal_classification == crate::rl::TerminalClassificationV1::Halted {
+                        return Err(format!("halted: {}", t.terminal_reason));
+                    }
+                }
+                Ok(super::super::tests::public_events(&c, from))
+            };
+            let mut truth = s.clone();
+            super::super::tests::resolve_waiting(&mut truth, 1, 60);
+            let expected = super::super::tests::public_events(&truth, from);
+            let p = export_at(&s, v, ExportOptionsV1::default()).expect("P exports");
+            assert_eq!(
+                continue_from(p.state).as_ref(),
+                Ok(&expected),
+                "P's continuation matches the true state"
+            );
+            let fails = match export_at(
+                &s,
+                v,
+                ExportOptionsV1 {
+                    mutant: Some(MutantV1::L10),
+                },
+            ) {
+                Err(_) => true,
+                Ok(x) => continue_from(x.state).as_ref() != Ok(&expected),
+            };
+            l10_fails += u64::from(fails);
+        }
+        eprintln!("L10: fails at {l10_fails} of {cases} shuffle-trigger decisions");
+        assert!(cases > 0, "the fixture reaches the waiting shuffle trigger");
+        assert_eq!(l10_fails, cases);
+    }
+
+    #[test]
+    fn realizability_on_engine_games() {
+        let mut checked = 0;
+        let mut gaps = 0;
+        let mut failures = Vec::new();
+        for (decks, seed) in [
+            (["CawGates", "Faeries"], 11u64),
+            (["Wildfire", "Burn"], 12),
+            (["Faeries", "Terror"], 33),
+        ] {
+            let g = super::super::harness::record_game(decks, seed, 300);
+            let game = NativeGameV1 {
+                start: g.start.clone(),
+                actions: g.native.clone(),
+                edits: Vec::new(),
+            };
+            for viewer in [PlayerId::P0, PlayerId::P1] {
+                let mut s = g.start.clone();
+                let mut k = 0;
+                for (i, a) in g.native.iter().enumerate() {
+                    let FastActorResponseV1::Decision(d) = s.current_response() else {
+                        break;
+                    };
+                    if seat(d.acting_player) == viewer && d.legal_action_count >= 2 {
+                        k += 1;
+                        if k % 6 == 0 {
+                            match realize_at(&game, i, viewer, None) {
+                                Ok(Ok(_)) => checked += 1,
+                                Ok(Err(e)) => {
+                                    if impossible_at(&game, i, viewer, None).is_some() {
+                                        gaps += 1;
+                                    } else {
+                                        failures.push(format!("{decks:?} {viewer:?} step {i}: {e}"))
+                                    }
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                    }
+                    let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+                    let index = sem
+                        .iter()
+                        .position(|x| serde_json::to_value(x).ok().as_ref() == Some(a))
+                        .expect("replay");
+                    s.step(d.episode_id, d.step, index as u32).expect("replay");
+                }
+            }
+        }
+        eprintln!(
+            "realizability on engine games: {checked} realized, {gaps} proven unrealizable, failures {failures:#?}"
+        );
+        assert!(checked > 0);
+        assert!(failures.is_empty());
+        assert_eq!(gaps, 0, "P exports an unrealizable state");
+    }
+}

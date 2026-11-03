@@ -217,6 +217,12 @@ fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<
 }
 
 /// The semantic form of each candidate at the current decision, with
+/// decision-local ids (fixtures order their default answers by it).
+pub(crate) fn local_menu(s: &FastActorSessionV1) -> Vec<Vec<u8>> {
+    menu(s)
+}
+
+/// The semantic form of each candidate at the current decision, with
 /// decision-local ids.
 fn menu(s: &FastActorSessionV1) -> Vec<Vec<u8>> {
     let mut ids = BTreeMap::new();
@@ -231,10 +237,18 @@ fn menu(s: &FastActorSessionV1) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// The chosen candidate's semantics with native ids.
+pub(crate) fn native_action(s: &FastActorSessionV1, index: usize) -> serde_json::Value {
+    let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+    serde_json::to_value(&sem[index]).expect("semantics serialize")
+}
+
 /// A recorded game: the reset session, chosen candidates by semantics.
 pub(crate) struct GameV1 {
     pub start: FastActorSessionV1,
     pub actions: Vec<Vec<u8>>,
+    /// The same choices with native ids (realizability replays).
+    pub native: Vec<serde_json::Value>,
 }
 
 pub(crate) fn record_game(decks: [&str; 2], seed: u64, max_decisions: usize) -> GameV1 {
@@ -250,15 +264,21 @@ pub(crate) fn record_game(decks: [&str; 2], seed: u64, max_decisions: usize) -> 
     let mut s = start.clone();
     let mut rng = SplitMix64::seed(seed ^ 0x51ed);
     let mut actions = Vec::new();
+    let mut native = Vec::new();
     for _ in 0..max_decisions {
         let FastActorResponseV1::Decision(d) = s.current_response() else {
             break;
         };
         let a = (rng.next_u64() % u64::from(d.legal_action_count)) as u32;
         actions.push(menu(&s)[a as usize].clone());
+        native.push(native_action(&s, a as usize));
         s.step(d.episode_id, d.step, a).expect("legal step");
     }
-    GameV1 { start, actions }
+    GameV1 {
+        start,
+        actions,
+        native,
+    }
 }
 
 /// Swaps the definitions of two pristine hidden objects (whole objects:
@@ -313,7 +333,7 @@ pub(crate) struct PairReportV1 {
     pub witnesses: BTreeMap<String, u64>,
 }
 
-fn outcome(r: &Result<InfosetV1, ExportErrorV1>) -> Result<Vec<u8>, String> {
+pub(crate) fn outcome(r: &Result<InfosetV1, ExportErrorV1>) -> Result<Vec<u8>, String> {
     match r {
         Ok(x) => Ok(x.bytes.clone()),
         Err(e) => Err(e.code_name().to_string()),
@@ -329,7 +349,7 @@ pub(crate) fn compare_worlds(
     viewer: PlayerId,
     mutants: &[MutantV1],
 ) -> PairReportV1 {
-    compare_worlds_with(w, w2, actions, viewer, mutants, false)
+    compare_worlds_with(w, w2, actions, viewer, mutants, false, usize::MAX)
 }
 
 /// As [`compare_worlds`]; with `index_fallback`, W' takes W's candidate
@@ -342,10 +362,14 @@ pub(crate) fn compare_worlds_with(
     viewer: PlayerId,
     mutants: &[MutantV1],
     index_fallback: bool,
+    limit: usize,
 ) -> PairReportV1 {
     let mut report = PairReportV1::default();
     let (mut s, mut t) = (w, w2);
     for chosen in actions {
+        if report.compared as usize >= limit {
+            break;
+        }
         let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
             (s.current_response(), t.current_response())
         else {
@@ -480,6 +504,7 @@ pub(crate) fn f_prov(
         viewer,
         mutants,
         true,
+        usize::MAX,
     ))
 }
 
@@ -509,10 +534,20 @@ pub(crate) fn f_slot(
         .copied()
         .filter(|id| !p.tracked(*id) && !pinned.contains(id))
         .collect();
-    let a = *unknown.first()?;
-    let b = *unknown
-        .iter()
-        .find(|id| state.objects.get(**id).card_def != state.objects.get(a).card_def)?;
+    // Prefer two occupants whose definitions and true incarnations both
+    // differ (a drawn card and a library card), so L2 can show.
+    let differ = |a: ObjectId, b: ObjectId, zcc: bool| {
+        let (x, y) = (state.objects.get(a), state.objects.get(b));
+        x.card_def != y.card_def && (!zcc || x.zone_change_count != y.zone_change_count)
+    };
+    let (a, b) = [true, false].iter().find_map(|&zcc| {
+        unknown.iter().find_map(|&a| {
+            unknown
+                .iter()
+                .find(|&&b| differ(a, b, zcc))
+                .map(|&b| (a, b))
+        })
+    })?;
     let mut st = state.clone();
     // Whole objects change places: each keeps its definition and incarnation
     // and takes the other's slot (and zone).
@@ -591,9 +626,106 @@ pub(crate) fn ac3_check(
     Err("the rollout did not reach a terminal".into())
 }
 
+/// Opponent choices made while resolving an effect: the kinds whose
+/// alternatives can stay hidden from V (put-back sets, scry and surveil
+/// orders, look-and-bottom, search picks).
+fn hidden_choice_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "choose_effect_target"
+            | "choose_effect_option"
+            | "finish_effect_selection"
+            | "choose_cost_target"
+    )
+}
+
+/// F-choice on an engine game: at up to `points` opponent effect choices,
+/// W' takes up to `alternatives` other candidates of the same kind, then
+/// both replay W's later actions by semantic match. Only alternatives that
+/// keep V's views equal give compared decisions (the rest truncate at once);
+/// each pair compares at most `limit` decisions.
+pub(crate) fn f_choice(
+    game: &GameV1,
+    viewer: PlayerId,
+    mutants: &[MutantV1],
+    points: usize,
+    alternatives: usize,
+    limit: usize,
+) -> (Vec<PairReportV1>, u64) {
+    let opp = viewer.opponent();
+    let mut out = Vec::new();
+    let mut tried = 0u64;
+    let mut used = 0;
+    let mut s = game.start.clone();
+    let kind_of = |x: &[u8]| -> String {
+        serde_json::from_slice::<serde_json::Value>(x)
+            .ok()
+            .and_then(|v| v["action_kind"].as_str().map(str::to_string))
+            .unwrap_or_default()
+    };
+    for (i, chosen) in game.actions.iter().enumerate() {
+        let FastActorResponseV1::Decision(d) = s.current_response() else {
+            break;
+        };
+        let m = menu(&s);
+        let Some(a) = m.iter().position(|x| x == chosen) else {
+            break;
+        };
+        let k = kind_of(chosen.as_slice());
+        if used < points && seat(d.acting_player) == opp && hidden_choice_kind(&k) {
+            let alts: Vec<usize> = (0..m.len())
+                .filter(|&b| b != a && kind_of(m[b].as_slice()) == k)
+                .take(alternatives)
+                .collect();
+            if !alts.is_empty() {
+                used += 1;
+            }
+            for b in alts {
+                let (mut w, mut w2) = (s.clone(), s.clone());
+                if w.step(d.episode_id, d.step, a as u32).is_err()
+                    || w2.step(d.episode_id, d.step, b as u32).is_err()
+                {
+                    continue;
+                }
+                tried += 1;
+                let r = compare_worlds_with(
+                    w,
+                    w2,
+                    &game.actions[i + 1..],
+                    viewer,
+                    mutants,
+                    false,
+                    limit,
+                );
+                if r.compared > 0 {
+                    out.push(r);
+                }
+            }
+        }
+        s.step(d.episode_id, d.step, a as u32).expect("replay");
+    }
+    (out, tried)
+}
+
+fn tally(reports: &[PairReportV1], totals: &mut BTreeMap<String, u64>) -> (u64, u64) {
+    let (mut compared, mut truncated) = (0, 0);
+    for r in reports {
+        assert_eq!(
+            r.p_differs, 0,
+            "the correct producer differs across worlds: {r:?}"
+        );
+        compared += r.compared;
+        truncated += u64::from(r.truncated);
+        for (m, n) in &r.witnesses {
+            *totals.entry(m.clone()).or_default() += n;
+        }
+    }
+    (compared, truncated)
+}
+
 #[test]
 fn ac1_f_deal_and_f_slot_on_engine_games() {
-    let mutants = [MutantV1::L1, MutantV1::L2, MutantV1::L3, MutantV1::L7];
+    let mutants = super::fixtures::LEAKAGE_V1;
     let mut totals: BTreeMap<String, u64> = BTreeMap::new();
     let mut compared = 0;
     let mut truncated = 0;
@@ -610,23 +742,47 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
             for at in [20, 60, 120] {
                 reports.extend(f_slot(&game, viewer, at, &mutants));
             }
-            for r in reports {
-                assert_eq!(
-                    r.p_differs, 0,
-                    "the correct producer differs across worlds: {r:?}"
-                );
-                compared += r.compared;
-                truncated += u64::from(r.truncated);
-                for (m, n) in r.witnesses {
-                    *totals.entry(m).or_default() += n;
-                }
-            }
+            let (c, t) = tally(&reports, &mut totals);
+            compared += c;
+            truncated += t;
         }
     }
     eprintln!(
-        "AC1 engine-game families: compared {compared}, truncated pairs {truncated}, witnesses {totals:?}"
+        "AC1 engine-game families (F-deal, F-prov, F-slot): compared {compared}, truncated pairs {truncated}, witnesses {totals:?}"
     );
     assert!(compared > 0);
+}
+
+#[test]
+fn ac1_f_choice_on_engine_games() {
+    let mutants = super::fixtures::LEAKAGE_V1;
+    let mut totals: BTreeMap<String, u64> = BTreeMap::new();
+    let (mut compared, mut truncated, mut pairs, mut tried) = (0, 0, 0, 0);
+    for (decks, seed) in [
+        (["CawGates", "Faeries"], 31u64),
+        (["Terror", "CawGates"], 32),
+        (["Faeries", "Terror"], 33),
+    ] {
+        let game = record_game(decks, seed, 300);
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let (reports, n) = f_choice(&game, viewer, &mutants, 3, 2, 40);
+            tried += n;
+            pairs += reports.len();
+            let (c, t) = tally(&reports, &mut totals);
+            compared += c;
+            truncated += t;
+        }
+    }
+    eprintln!(
+        "AC1 engine-game F-choice: alternatives {tried}, pairs with compared decisions {pairs}, compared {compared}, truncated pairs {truncated}, witnesses {totals:?}"
+    );
+    assert!(tried > 0 && pairs > 0 && compared > 0, "F-choice exercised");
+    // Hidden choices change which objects history names: the raw-history
+    // mutant must show it.
+    assert!(
+        totals.get("L4").copied().unwrap_or(0) > 0,
+        "L4 has F-choice witnesses"
+    );
 }
 
 #[test]

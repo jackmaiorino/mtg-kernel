@@ -107,6 +107,19 @@ pub(crate) struct ProjectionV1 {
     pub survivors: SurvivorTreeV1,
     pub transfers: Vec<TransferV1>,
     pub arrivals: Vec<ArrivalV1>,
+    /// Stream items at which an owner's library order changed unseen by
+    /// V's tracking (a shuffle, a reorder, a scry), with the owner.
+    pub reorders: Vec<(usize, PlayerId)>,
+    /// Unidentified draws from the top of an owner's library (not searches).
+    pub top_draws: Vec<(usize, PlayerId)>,
+    /// R8 (ruling 40.4's fallback for a gap of 6.4): V may know more about
+    /// the opponent's hidden cards than the survivor tree keeps, because a
+    /// card put back from a hand V knew something about was drawn back, or
+    /// such put-back cards were scried or reordered. Set from V-observable
+    /// events only; released once the opponent's hand is fully tracked (the
+    /// tree is cleared) and no such put-back card is left in its library
+    /// (a shuffle).
+    pub r8_latch: bool,
     /// Stream item at which each event-history index was absorbed.
     pub event_items: Vec<usize>,
     /// Objects V identified in each event (move events), by event index.
@@ -169,6 +182,19 @@ struct WalkV1<'a> {
     survivors: SurvivorTreeV1,
     transfers: Vec<TransferV1>,
     arrivals: Vec<ArrivalV1>,
+    reorders: Vec<(usize, PlayerId)>,
+    /// Unidentified put-backs per owner still on top of the library (no
+    /// reorder since): the next unidentified draws take them back.
+    /// Per owner, the unidentified put-backs still on top of the library,
+    /// newest last, each flagged when V knew something about the hand it
+    /// left (a hand fact or a survivor node): drawing such a card back can
+    /// tell V more than the tree keeps.
+    put_backs_on_top: [Vec<bool>; 2],
+    /// Per owner: a scry or reorder touched the put-back cards since the
+    /// last shuffle, so draws no longer retire their markers in order.
+    put_backs_scrambled: [bool; 2],
+    top_draws: Vec<(usize, PlayerId)>,
+    r8_latch: bool,
     item: usize,
     next_event: usize,
     inconsistencies: Vec<String>,
@@ -209,6 +235,11 @@ pub(crate) fn project_v1(
         survivors: SurvivorTreeV1::default(),
         transfers: Vec::new(),
         arrivals: Vec::new(),
+        reorders: Vec::new(),
+        put_backs_on_top: [Vec::new(), Vec::new()],
+        put_backs_scrambled: [false, false],
+        top_draws: Vec::new(),
+        r8_latch: false,
         item: 0,
         next_event: 0,
         inconsistencies: Vec::new(),
@@ -339,6 +370,9 @@ pub(crate) fn project_v1(
         survivors: w.survivors,
         transfers: w.transfers,
         arrivals: w.arrivals,
+        reorders: w.reorders,
+        top_draws: w.top_draws,
+        r8_latch: w.r8_latch,
         event_items,
         event_observed,
         items,
@@ -460,6 +494,9 @@ impl WalkV1<'_> {
         let opp_hand = self.state_hand_untracked(opp);
         if opp_hand == 0 {
             self.survivors.clear();
+            if !self.put_backs_on_top[opp.index()].iter().any(|x| *x) {
+                self.r8_latch = false;
+            }
         }
         self.survivors.assert_laminar();
         self.item += 1;
@@ -514,6 +551,19 @@ impl WalkV1<'_> {
                         owner: *player,
                         dir: TransferDirV1::Draw,
                     });
+                    self.top_draws.push((self.item, *player));
+                    // A draw from the top takes back the latest unidentified
+                    // put-back (6.4 gap; R8 fallback, ruling 40.4). A scry or
+                    // a reorder since keeps the put-back cards among the top
+                    // ones, so only a shuffle clears the count (conservative).
+                    let stack = &mut self.put_backs_on_top[player.index()];
+                    let informative = stack.iter().any(|x| *x);
+                    if !self.put_backs_scrambled[player.index()] {
+                        stack.pop();
+                    }
+                    if informative && *player == self.opp() {
+                        self.r8_latch = true;
+                    }
                 }
                 // Prior tracking identifies the moved card only if V still
                 // tracks it after the move (a known library card drawn); an
@@ -538,6 +588,9 @@ impl WalkV1<'_> {
                 if !self.objs[id.0 as usize].exists {
                     self.objs[id.0 as usize].exists = true;
                 }
+                // Whether V knows anything about the hand a card leaves.
+                let informative = owner == self.opp()
+                    && (!self.hand.is_empty() || !self.survivors.is_empty() || self.r8_latch);
                 self.moved(id, *to);
                 let public = is_public(*from) || is_public(*to);
                 let named = public || owner == self.viewer;
@@ -552,6 +605,7 @@ impl WalkV1<'_> {
                     });
                 }
                 if *from == Zone::Hand && *to == Zone::Library && !named {
+                    self.put_backs_on_top[owner.index()].push(informative);
                     self.transfers.push(TransferV1 {
                         item: self.item,
                         owner,
@@ -610,6 +664,9 @@ impl WalkV1<'_> {
         let viewer = self.viewer;
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
+                self.reorders.push((self.item, *owner));
+                self.put_backs_on_top[owner.index()].clear();
+                self.put_backs_scrambled[owner.index()] = false;
                 self.library[owner.index()].clear();
                 self.settle(&[]);
             }
@@ -638,6 +695,15 @@ impl WalkV1<'_> {
                 ordered,
                 revealed_to,
             } => {
+                self.reorders.push((self.item, *owner));
+                // Put-back cards stay among the top cards: no reset; their
+                // positions are no longer certain (R8 latch).
+                if !self.put_backs_on_top[owner.index()].is_empty() {
+                    self.put_backs_scrambled[owner.index()] = true;
+                }
+                if *owner == self.opp() && self.put_backs_on_top[owner.index()].iter().any(|x| *x) {
+                    self.r8_latch = true;
+                }
                 let len = ordered.len() as u32;
                 self.library[owner.index()].retain(|p, _| *p >= len);
                 let mut observed = Vec::new();
@@ -654,6 +720,15 @@ impl WalkV1<'_> {
                 retained_top,
                 ordered_bottom,
             } => {
+                self.reorders.push((self.item, *owner));
+                // Put-back cards stay among the top cards: no reset; their
+                // positions are no longer certain (R8 latch).
+                if !self.put_backs_on_top[owner.index()].is_empty() {
+                    self.put_backs_scrambled[owner.index()] = true;
+                }
+                if *owner == self.opp() && self.put_backs_on_top[owner.index()].iter().any(|x| *x) {
+                    self.r8_latch = true;
+                }
                 let top = retained_top.len() as u32;
                 let bottom = ordered_bottom.len() as u32;
                 let prefix = top + bottom;
