@@ -1042,25 +1042,33 @@ fn spy_versus_terror_engine_fixture() {
         !after.is_empty(),
         "the survivor node ({{Terror, Ponder, Mystic}}, 1) appears"
     );
-    // Exported while the node holds, until Terror's next draw takes a
-    // put-back card back (R8, ruling 40.4's fallback for that 6.4 gap).
-    let first_r8 = after
-        .iter()
-        .position(|r| r.p == Err("R8".to_string()))
-        .unwrap_or(after.len());
-    assert!(first_r8 > 0, "exports before the draw-back");
-    for r in &after[..first_r8] {
+    for r in &after {
         assert!(r.p.is_ok(), "exported while the node holds: {:?}", r.p);
         assert_eq!(r.known.len(), 1, "one known_name survivor: {:?}", r.known);
     }
-    assert!(after[first_r8..]
+    // Terror's next draw takes a put-back card back: the draw-back
+    // amendment to 6.4 undoes that put-back's removal, so the node is
+    // ({Terror, Ponder, Mystic}, 2) and two survivors are exported (no R8).
+    let restored = (node.0.clone(), 2);
+    let back: Vec<&AtV1> = records[0]
         .iter()
-        .all(|r| r.p == Err("R8".to_string())));
+        .filter(|r| r.nodes.contains(&restored))
+        .collect();
+    assert!(
+        !back.is_empty(),
+        "the restored node appears after the draw-back"
+    );
+    for r in &back {
+        assert!(r.p.is_ok(), "exported after the draw-back: {:?}", r.p);
+        assert_eq!(r.known.len(), 2, "two known_name survivors: {:?}", r.known);
+    }
+    assert!(
+        records[0].iter().all(|r| r.p != Err("R8".to_string())),
+        "no R8 after an in-order draw-back"
+    );
     eprintln!(
-        "spy-versus-terror canonical survivor: {:?}; R8 (draw-back) at {} of {} node decisions",
-        after[0].known,
-        after.len() - first_r8,
-        after.len()
+        "spy-versus-terror canonical survivors: {:?}, after the draw-back {:?}",
+        after[0].known, back[0].known
     );
     assert!(reports.iter().all(|r| r.compared > 0 && !r.truncated));
 }

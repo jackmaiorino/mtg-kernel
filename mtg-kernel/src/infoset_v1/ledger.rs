@@ -37,6 +37,8 @@ fn add(a: &mut NamesV1, b: &NamesV1) {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NodeV1 {
+    /// Stable identity (indices change when pruned nodes are compacted).
+    pub id: u64,
     pub k: NamesV1,
     pub m: i64,
     pub parent: Option<usize>,
@@ -51,6 +53,10 @@ pub(crate) struct SurvivorTreeV1 {
     nodes: Vec<NodeV1>,
     /// A laminarity assertion failed after some update (R8).
     pub laminarity_violation: bool,
+    next_id: u64,
+    /// Nodes a put-back still on top of the library may restore (the
+    /// draw-back amendment to 6.4): kept, dormant, when m falls to 0.
+    pinned: std::collections::BTreeSet<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,8 +85,9 @@ impl SurvivorTreeV1 {
         self.live().next().is_none()
     }
 
+    /// Active nodes (m >= 1); dormant ones do not count toward R8's limits.
     pub(crate) fn len(&self) -> usize {
-        self.live().count()
+        self.live().filter(|&i| self.nodes[i].m > 0).count()
     }
 
     pub(crate) fn nodes(&self) -> Vec<NodeV1> {
@@ -93,6 +100,7 @@ impl SurvivorTreeV1 {
 
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
+        self.pinned.clear();
     }
 
     fn children(&self, i: usize) -> Vec<usize> {
@@ -148,13 +156,26 @@ impl SurvivorTreeV1 {
 
     /// An unidentified departure from the hand; `tracked` holds the names of
     /// the physical facts just before it (T).
-    pub(crate) fn unidentified_departure(&mut self, tracked: &[u16]) {
+    /// Returns the departure's removal record: the identities of the nodes
+    /// whose m it lowered by one (decremented, or created one below a
+    /// tracked count) and that are still present after its pruning. With
+    /// `keep` (a put-back that may be drawn back) those nodes are pinned:
+    /// they stay, dormant, if m falls to 0.
+    pub(crate) fn unidentified_departure(&mut self, tracked: &[u16], keep: bool) -> Vec<u64> {
+        let mut lowered: Vec<u64> = self.live().map(|i| self.nodes[i].id).collect();
         if tracked.is_empty() {
             for i in self.live().collect::<Vec<_>>() {
                 self.nodes[i].m -= 1;
             }
+            if keep {
+                self.pinned.extend(lowered.iter().copied());
+            }
             self.prune();
-            return;
+            return if keep {
+                self.present(lowered)
+            } else {
+                Vec::new()
+            };
         }
         let mut t = NamesV1::new();
         for n in tracked {
@@ -172,7 +193,11 @@ impl SurvivorTreeV1 {
             self.nodes[i].m -= 1;
         }
         let root = self.nodes.len();
+        let (root_id, child_id) = (self.next_id, self.next_id + 1);
+        self.next_id += 2;
+        lowered.extend([root_id, child_id]);
         self.nodes.push(NodeV1 {
+            id: root_id,
             k: root_k,
             m: root_m,
             parent: None,
@@ -183,13 +208,63 @@ impl SurvivorTreeV1 {
             self.nodes[i].parent = Some(root);
         }
         self.nodes.push(NodeV1 {
+            id: child_id,
             k: t,
             m: t_size - 1,
             parent: Some(root),
             tainted: false,
             alive: true,
         });
+        if keep {
+            self.pinned.extend(lowered.iter().copied());
+        }
         self.prune();
+        if keep {
+            self.present(lowered)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The ids still present (alive), unpinning the others.
+    fn present(&mut self, ids: Vec<u64>) -> Vec<u64> {
+        let alive: std::collections::BTreeSet<u64> =
+            self.live().map(|i| self.nodes[i].id).collect();
+        let (kept, gone): (Vec<u64>, Vec<u64>) = ids.into_iter().partition(|id| alive.contains(id));
+        for id in gone {
+            self.pinned.remove(&id);
+        }
+        kept
+    }
+
+    /// The put-back that made `record` will not be drawn back (its card is
+    /// gone from the top, or the library was shuffled): release its pins.
+    /// Pins shared with another record stay until that one goes too, so
+    /// callers pass every remaining record's ids in `keep`.
+    pub(crate) fn unpin(&mut self, record: &[u64], keep: &[u64]) {
+        for id in record {
+            if !keep.contains(id) {
+                self.pinned.remove(id);
+            }
+        }
+        self.prune();
+    }
+
+    /// The draw-back amendment to 6.4: the card of the put-back that made
+    /// `record` was drawn back, so its removal is undone (each recorded
+    /// node's m rises by one). False when a recorded node is gone (cleared
+    /// or pruned since) or laminarity fails: the caller latches R8.
+    pub(crate) fn undo_departure(&mut self, record: &[u64]) -> bool {
+        let index: BTreeMap<u64, usize> = self.live().map(|i| (self.nodes[i].id, i)).collect();
+        if record.iter().any(|id| !index.contains_key(id)) {
+            return false;
+        }
+        for id in record {
+            self.nodes[index[id]].m += 1;
+        }
+        self.prune();
+        self.assert_laminar();
+        !self.laminarity_violation
     }
 
     /// R8b: every node whose K holds `name` is tainted.
@@ -213,7 +288,9 @@ impl SurvivorTreeV1 {
     /// (m_c <= m_p - abs(K_p minus K_c)), until none is left.
     fn prune(&mut self) {
         loop {
-            let dead = self.live().find(|&i| self.nodes[i].m <= 0);
+            let dead = self
+                .live()
+                .find(|&i| self.nodes[i].m <= 0 && !self.pinned.contains(&self.nodes[i].id));
             if let Some(i) = dead {
                 self.remove(i);
                 continue;
@@ -390,10 +467,11 @@ mod tests {
         let mut f = SurvivorTreeV1::default();
         // Fiend reveal of 5, Dispel exiled, Brainstorm cast: physical facts
         // Terror, Ponder, Mystic; draw 3 (no change); two unidentified returns.
-        f.unidentified_departure(&[4, 3, 2]);
+        f.unidentified_departure(&[4, 3, 2], false);
         assert_eq!(
             f.nodes(),
             vec![NodeV1 {
+                id: 0,
                 k: names(&[2, 3, 4]),
                 m: 2,
                 parent: None,
@@ -401,7 +479,7 @@ mod tests {
                 alive: true
             }]
         );
-        f.unidentified_departure(&[]);
+        f.unidentified_departure(&[], false);
         let nodes = f.nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].m, 1);
@@ -414,6 +492,7 @@ mod tests {
         // K = {A, B}, m = 2 with one A already placed for a child.
         let mut f = SurvivorTreeV1::default();
         f.nodes.push(NodeV1 {
+            id: 0,
             k: names(&[1, 2]),
             m: 2,
             parent: None,
@@ -421,6 +500,7 @@ mod tests {
             alive: true,
         });
         f.nodes.push(NodeV1 {
+            id: 1,
             k: names(&[1]),
             m: 1,
             parent: Some(0),
@@ -443,13 +523,13 @@ mod tests {
     #[test]
     fn empty_tracked_set_decrements_in_place_and_two_brainstorms_stay_shallow() {
         let mut f = SurvivorTreeV1::default();
-        f.unidentified_departure(&[1, 2, 3]);
-        f.unidentified_departure(&[]);
-        f.unidentified_departure(&[]);
+        f.unidentified_departure(&[1, 2, 3], false);
+        f.unidentified_departure(&[], false);
+        f.unidentified_departure(&[], false);
         assert!(f.is_empty(), "three departures exhaust a node of m = 2");
         let mut f = SurvivorTreeV1::default();
-        f.unidentified_departure(&[1, 2, 3, 4]);
-        f.unidentified_departure(&[]);
+        f.unidentified_departure(&[1, 2, 3, 4], false);
+        f.unidentified_departure(&[], false);
         assert_eq!(f.len(), 1);
         assert_eq!(f.depth(), 1);
     }
@@ -457,7 +537,7 @@ mod tests {
     #[test]
     fn tracked_in_place_and_identified_departure_shrink_nodes() {
         let mut f = SurvivorTreeV1::default();
-        f.unidentified_departure(&[1, 2]);
+        f.unidentified_departure(&[1, 2], false);
         assert_eq!(f.nodes()[0].m, 1);
         f.tracked_in_place(3);
         assert_eq!(f.nodes()[0].m, 1, "a name outside K changes nothing");
@@ -468,13 +548,13 @@ mod tests {
     #[test]
     fn taint_marks_nodes_holding_the_name_until_they_are_pruned() {
         let mut f = SurvivorTreeV1::default();
-        f.unidentified_departure(&[7, 7, 7, 9]);
-        f.unidentified_departure(&[]);
+        f.unidentified_departure(&[7, 7, 7, 9], false);
+        f.unidentified_departure(&[], false);
         assert!(!f.tainted());
         f.taint_name(9);
         assert!(f.tainted());
-        f.unidentified_departure(&[]);
-        f.unidentified_departure(&[]);
+        f.unidentified_departure(&[], false);
+        f.unidentified_departure(&[], false);
         assert!(f.is_empty() && !f.tainted());
     }
 
@@ -485,8 +565,8 @@ mod tests {
     #[test]
     fn fable_bounce_keeps_one_untracked_survivor() {
         let mut f = SurvivorTreeV1::default();
-        f.unidentified_departure(&[5, 5, 5]);
-        f.unidentified_departure(&[]);
+        f.unidentified_departure(&[5, 5, 5], false);
+        f.unidentified_departure(&[], false);
         assert_eq!(f.len(), 1);
         assert_eq!(f.nodes()[0].m, 1);
         // Pool5: four Hawks minus the bounced (tracked) one, plus fillers.
