@@ -1157,7 +1157,7 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(driver.accounted_bytes(self.campaign), self.full_walk())  # latched: full for good
         self.assertTrue(driver.WALK_STATE[(str(self.root),)]["latched"])
         self.assertEqual([event["kind"] for event in events], ["volume-walk-seal-mismatch"])
-        self.assertIn(driver.folder_key(self.root / "retained" / "G3" / "b04"), events[0]["folders"])
+        self.assertIn(driver.resolved_key(self.root / "retained" / "G3" / "b04"), events[0]["folders"])
 
     def test_a_later_attempt_folder_the_seal_does_not_list_is_walked(self):
         self.walking_campaign()
@@ -1229,6 +1229,19 @@ class DriverTests(unittest.TestCase):
             release.set()
             first.join(5); second.join(5)
         self.assertEqual(order, ["start", "end", "start", "end"])
+
+    def test_a_walk_publishes_inside_its_turn(self):
+        """A walk's total is published before the next walk of the process starts (no stale total after a newer
+        one)."""
+        self.walking_campaign()
+        self.sealed_tree([3])
+        order = []
+        real = driver.accounted_bytes_serial
+        with patch.object(driver, "accounted_bytes_serial", side_effect=lambda c: order.append("walk") or real(c)):
+            driver.accounted_bytes(self.campaign, publish=lambda logical: order.append(("publish", logical)))
+            driver.accounted_bytes(self.campaign, publish=lambda logical: order.append(("publish", logical)))
+        self.assertEqual([item if item == "walk" else item[0] for item in order], ["walk", "publish", "walk", "publish"])
+        self.assertEqual(order[1][1], self.full_walk())
 
     def test_a_latch_is_never_undone_by_a_later_agreeing_walk(self):
         self.walking_campaign()

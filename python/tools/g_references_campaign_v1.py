@@ -761,7 +761,13 @@ REVERIFY_SECONDS = 6 * 3600
 
 
 def folder_key(path) -> str:
+    """A walked folder's key: its path as the walk lists it under the resolved accounting roots."""
     return os.path.normcase(os.path.abspath(str(path)))
+
+
+def resolved_key(path) -> str:
+    """A sealed or static folder's key, resolved as the accounting roots are (links, short-name aliases)."""
+    return os.path.normcase(os.path.realpath(str(path)))
 
 
 def seal_folders(campaign: Campaign, value: dict) -> dict[str, int]:
@@ -797,7 +803,7 @@ def sealed_folders(campaign: Campaign) -> tuple[dict[str, int], dict[str, int]]:
         target = gone if moved(markers / path.name) else held
         for folder, size in seal_folders(campaign, value).items():
             if (root / folder).is_dir():
-                target[folder_key(root / folder)] = 0 if target is gone else size
+                target[resolved_key(root / folder)] = 0 if target is gone else size
     return held, gone
 
 
@@ -849,18 +855,22 @@ def walk_trees(roots, counted: dict[str, int], measure: set[str]) -> tuple[int, 
     return logical, measured
 
 
-def accounted_bytes(campaign: Campaign) -> int:
+def accounted_bytes(campaign: Campaign, publish=None) -> int:
     """The accounting trees' logical bytes: the incremental walk (above), or the full walk (accounting_bytes)
     when nothing is sealed or static, or once a sealed folder disagreed with its seal. Walks of one process run
-    one at a time (WALK_SERIAL), so no walk returns an incremental total after another found a mismatch."""
+    one at a time (WALK_SERIAL), each with its ``publish``, so no walk returns or publishes a total after a later
+    walk found a mismatch."""
     with WALK_SERIAL:
-        return accounted_bytes_serial(campaign)
+        logical = accounted_bytes_serial(campaign)
+        if publish is not None:
+            publish(logical)
+        return logical
 
 
 def accounted_bytes_serial(campaign: Campaign) -> int:
     storage = campaign.raw["storage"]
     held, gone = sealed_folders(campaign)
-    static = {folder_key(path) for path in campaign.raw.get("static_roots", []) if Path(path).is_dir()}
+    static = {resolved_key(path) for path in campaign.raw.get("static_roots", []) if Path(path).is_dir()}
     if not held and not gone and not static:
         return native_dispatch.accounting_bytes(storage)[1]
     key = tuple(storage["accounting_roots"])
@@ -906,10 +916,20 @@ def walk_volume(campaign: Campaign) -> None:
     for at most WALK_HEARTBEAT_LIMIT_SECONDS, so a hung walk still goes idle. Each walk is an event, so its
     time is measured. The caller holds SCRATCH_LOCK (release, which counts finished blocks, waits for it)."""
     result, started, started_unix = {}, time.monotonic(), time.time()
+    record = volume(campaign)
+
+    def publish(logical):  # in order with the other walks of this process (WALK_SERIAL)
+        record.update(logical=logical, started=started_unix, walked=time.time(), finished=0)
+        try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
+            Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
+            native_dispatch.publish_walk(record["shared"], logical, started_unix, record["walked"], "driver",
+                                         len(SCRATCH_INFLIGHT))  # the caller holds SCRATCH_LOCK
+        except OSError:
+            pass  # only a shortcut: the background walker publishes too
 
     def walk():
         try:
-            result["logical"] = accounted_bytes(campaign)
+            result["logical"] = accounted_bytes(campaign, publish)
         except BaseException as error:
             result["error"] = error
     thread = threading.Thread(target=walk, name="volume-walk", daemon=True)
@@ -920,15 +940,7 @@ def walk_volume(campaign: Campaign) -> None:
             touch(campaign)  # the walk is the admission's work in progress
     if "error" in result:
         raise result["error"]
-    record = volume(campaign)
-    record.update(logical=result["logical"], started=started_unix, walked=time.time(), finished=0)
     seconds = round(time.monotonic() - started, 1)
-    try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
-        Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
-        native_dispatch.publish_walk(record["shared"], result["logical"], started_unix, record["walked"], "driver",
-                                     len(SCRATCH_INFLIGHT))  # the caller holds SCRATCH_LOCK
-    except OSError:
-        pass  # only a shortcut: the background walker publishes too
     touch(campaign)
     campaign.event(kind="volume-walk", seconds=seconds, logical=result["logical"])
 
@@ -988,10 +1000,11 @@ def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
         if not in_flight or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
             continue
         started = time.time()
-        try:
-            logical = accounted_bytes(campaign)
+        def publish(logical):  # in order with the other walks of this process (WALK_SERIAL)
             Path(shared).parent.mkdir(parents=True, exist_ok=True)
             native_dispatch.publish_walk(shared, logical, started, time.time(), "driver-background", in_flight)
+        try:
+            logical = accounted_bytes(campaign, publish)
         except Exception as error:  # the dispatchers walk for themselves once the record is stale
             if stop.is_set():
                 return
