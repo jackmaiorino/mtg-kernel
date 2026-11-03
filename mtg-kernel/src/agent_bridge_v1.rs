@@ -3385,6 +3385,7 @@ mod tests {
         );
         let mut payloads = 0;
         let mut refusals: std::collections::BTreeMap<String, u64> = Default::default();
+        let mut eligible_total = 0;
         let mut longest = 0;
         for (deck, seed) in [("CawGates", 5_u64), ("Wildfire", 6), ("Faeries", 7)] {
             let mut server = infoset_server();
@@ -3425,6 +3426,7 @@ mod tests {
                     }
                 }
                 let extension = &response["extensions"]["x_kernel_infoset_v1"];
+                eligible_total += u64::from(eligible);
                 assert!(wire_safe(extension), "{deck}: integers within 2^53");
                 assert_eq!(
                     !extension.is_null(),
@@ -3432,7 +3434,34 @@ mod tests {
                     "{deck}: presence follows eligibility"
                 );
                 if let Some(code) = extension["refusal"].as_str() {
-                    *refusals.entry(code.to_string()).or_default() += 1;
+                    // The refusal's detail, recomputed on the lockstep copy
+                    // (diagnostics; the wire carries the code only).
+                    let lists = lockstep.deck_ids_v1().clone().map(|id| {
+                        crate::runtime_decks::runtime_deck_by_id(&id)
+                            .unwrap()
+                            .card_ids
+                            .to_vec()
+                    });
+                    let st = lockstep.game_state();
+                    let viewer = if response["acting_seat"] == "p0" {
+                        crate::ids::PlayerId::P0
+                    } else {
+                        crate::ids::PlayerId::P1
+                    };
+                    let detail = match crate::infoset_v1::export_v1(
+                        &crate::infoset_v1::ExportInputV1 {
+                            state: st,
+                            journal: st.observation_journal.notes(),
+                            viewer,
+                            decklists: [&lists[0], &lists[1]],
+                        },
+                        crate::infoset_v1::ExportOptionsV1::default(),
+                    ) {
+                        Err(crate::infoset_v1::ExportErrorV1::Refused { detail, .. }) => detail,
+                        _ => "surface mid-scan".to_string(),
+                    };
+                    let detail: String = detail.chars().take(60).collect();
+                    *refusals.entry(format!("{code}: {detail}")).or_default() += 1;
                 } else if eligible {
                     let payload = crate::infoset_v1::PayloadV1::from_bytes(
                         extension["payload_json"].as_str().unwrap().as_bytes(),
@@ -3471,7 +3500,7 @@ mod tests {
             }
         }
         eprintln!(
-            "bridge infoset: {payloads} payloads, refusals {refusals:?}, longest line {longest} bytes"
+            "bridge infoset: {eligible_total} eligible, {payloads} payloads, refusals {refusals:#?}, longest line {longest} bytes"
         );
         assert!(payloads > 0);
         assert!(longest < SPELLBENCH_MAX_LINE_BYTES_V1);
