@@ -624,12 +624,13 @@ def valid_rows(rows, artifact_disk=True):
 
 
 def window_stats(rows, start, end, interval, artifact_disk=True):
-    """Counter means over a span. Only rows with every required counter count as present; the expected count is
-    round(span / interval), so a sampler on schedule misses at most one row by phase."""
+    """Counter means and maxima over a span. Presence counts only rows with every required counter finite; the
+    expected count is round(span / interval), so a sampler on schedule misses at most one row by phase. Each
+    counter's mean and maximum use all of its own finite observations."""
     expected = max(1, round((end - start) / interval))
     good = valid_rows(rows, artifact_disk)
-    d = [r[1] for r in good]
-    e = [r[2] for r in good if _finite(r[2])]
+    d = [r[1] for r in rows if _finite(r[1])]  # every finite observation of each counter, not only complete rows
+    e = [r[2] for r in rows if _finite(r[2])]
     return {'rows': len(good), 'all_rows': len(rows), 'expected_rows': expected,
             'missing_fraction': max(0.0, 1.0 - len(good) / expected),
             'd_read_mean': statistics.fmean(d) if d else None, 'e_busy_mean': statistics.fmean(e) if e else None,
@@ -686,9 +687,10 @@ class Sampler(threading.Thread):
                     if parsed is None:
                         continue
                     at, values = parsed
-                    e_busy = None if not self.artifact_disk or e_idle not in values else max(
-                        0.0, 100.0 - values[e_idle])
-                    self.samples.add(at, values.get(d_read), e_busy)
+                    idle = values.get(e_idle) if self.artifact_disk else None
+                    e_busy = max(0.0, 100.0 - idle) if _finite(idle) else None
+                    d = values.get(d_read)
+                    self.samples.add(at, d if _finite(d) else None, e_busy)
         except Exception as error:  # noqa: BLE001 - recorded; missing rows then contaminate blocks
             self.error = f'{type(error).__name__}: {error}'
 
@@ -964,24 +966,30 @@ def tree_manifest(path):
 
 
 def move_retained(src, dest_root, log_path):
-    """Copy to a staging name, verify every file and size, rename into place, then delete the source. Restartable:
-    a staging copy left by an interruption is discarded; a complete destination with its source still present is
-    verified and the source removed."""
+    """Copy to a staging name, verify every file and size, record the verified manifest beside the destination,
+    rename into place, then delete the source. Restartable at every step: a staging copy is discarded and redone;
+    a published destination is checked against its recorded manifest and whatever remains of the source is
+    deleted."""
     src = Path(src)
     dest = Path(dest_root) / src.name
     staging = dest.with_name(dest.name + '.partial')
+    sidecar = dest.with_name(dest.name + '.manifest.json')
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
-        require(src.exists() and tree_manifest(src) == tree_manifest(dest), f'{dest} exists and differs from {src}')
+        require(sidecar.is_file() and [tuple(x) for x in read_json(sidecar)['files']] == tree_manifest(dest),
+                f'{dest} exists without a matching verified manifest')
     else:
         if staging.exists():
             shutil.rmtree(staging)
         append_jsonl(log_path, {'at': now_iso(), 'phase': 'intent', 'from': src.as_posix(), 'to': dest.as_posix()})
         shutil.copytree(src, staging)
-        require(tree_manifest(src) == tree_manifest(staging), f'the copy of {src} is incomplete')
+        manifest = tree_manifest(src)
+        require(manifest == tree_manifest(staging), f'the copy of {src} is incomplete')
+        write_json(sidecar, {'from': src.as_posix(), 'to': dest.as_posix(), 'files': manifest})
         os.replace(staging, dest)
     size = tree_bytes(dest)
-    shutil.rmtree(src)
+    if src.exists():
+        shutil.rmtree(src)
     row = {'at': now_iso(), 'phase': 'moved', 'from': src.as_posix(), 'to': dest.as_posix(), 'bytes': size}
     append_jsonl(log_path, row)
     return row

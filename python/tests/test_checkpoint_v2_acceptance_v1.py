@@ -317,13 +317,26 @@ class RetentionTests(unittest.TestCase):
             self.assertFalse(src.exists())
             self.assertFalse(staging.exists())
             self.assertEqual(acc.tree_manifest(dest_root / 'g000'), [('a/f.json', 10)])
+            # Interrupted after publication, part way through deleting the source.
             src2 = tmp / 'hot' / 'g001'
             (src2 / 'a').mkdir(parents=True)
             (src2 / 'a' / 'f.json').write_text('y')
-            import shutil
-            shutil.copytree(src2, dest_root / 'g001')
+            (src2 / 'b.json').write_text('z')
+            real_rmtree = acc.shutil.rmtree
+            with mock.patch.object(acc.shutil, 'rmtree', side_effect=OSError('interrupted')):
+                with self.assertRaises(OSError):
+                    acc.move_retained(src2, dest_root, tmp / 'm.jsonl')
+            (src2 / 'b.json').unlink()
             acc.move_retained(src2, dest_root, tmp / 'm.jsonl')
             self.assertFalse(src2.exists())
+            self.assertEqual(acc.tree_manifest(dest_root / 'g001'), [('a/f.json', 1), ('b.json', 1)])
+            # Interrupted after deleting the source, before logging.
+            acc.move_retained(tmp / 'hot' / 'g001', dest_root, tmp / 'm.jsonl')
+            # A destination without its verified manifest is refused.
+            (dest_root / 'g002').mkdir()
+            with self.assertRaises(acc.Refused):
+                acc.move_retained(tmp / 'hot' / 'g002', dest_root, tmp / 'm.jsonl')
+            self.assertIs(acc.shutil.rmtree, real_rmtree)
 
     def test_correspondence_and_formal_placement(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -398,6 +411,16 @@ class CountersTests(unittest.TestCase):
         reads = [(t, 1e6, 1.0) for t in range(0, 600, 5)]
         reads[3] = (15, 61e6, 1.0)
         self.assertTrue(acc.start_window_failures(acc.window_stats(reads, 0, 600, 5)))
+
+    def test_counters_are_summarized_separately(self):
+        rows = [(t, 1e6, 49.0) for t in range(90)] + [(t, None, 100.0) for t in range(90, 100)]
+        stats = acc.window_stats(rows, 0, 100, 1)
+        self.assertAlmostEqual(stats['e_busy_mean'], 54.1)
+        self.assertAlmostEqual(stats['missing_fraction'], 0.10)
+        self.assertTrue(acc.block_contamination(stats, acc.claim_stats([(0, [], True)], 0, 50), None))
+        spike = [(t, 1e6, 1.0) for t in range(100)] + [(100, 90e6, None)]
+        self.assertTrue(acc.start_window_failures(acc.window_stats(spike, 0, 101, 1)))
+        self.assertEqual(acc.window_stats([(0, float('nan'), float('inf'))], 0, 1, 1)['rows'], 0)
 
     def test_own_claim(self):
         status = {'claims': [{'id': 'm', 'pid': 7, 'cores': list(range(20))}, {'id': 'x', 'pid': 8, 'cores': [21]}]}
