@@ -3900,8 +3900,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                     ex1.is_some(),
                 )?
             } else {
-                let (mut policy, mut state, transfer) =
-                    initialize_with_transfer_context(&source)?;
+                let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
                 if let Some(context) = &transfer {
                     context.validate_batch(&episodes)?;
                 }

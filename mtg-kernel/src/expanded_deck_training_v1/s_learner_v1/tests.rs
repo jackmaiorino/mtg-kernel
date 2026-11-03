@@ -4,9 +4,9 @@
 
 use super::*;
 use crate::expanded_deck_training_v1::{
-    execute_v1, initialize_any_math_v1, read_pinned, sha, write_synthetic_fresh_source_with_parameters_v1,
-    ExpandedDeckListV1, ExpandedEpisodeV1, ExpandedTrainingCommandV1,
-    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    execute_v1, initialize_any_math_v1, read_pinned, sha,
+    write_synthetic_fresh_source_with_parameters_v1, ExpandedDeckListV1, ExpandedEpisodeV1,
+    ExpandedTrainingCommandV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
 use crate::native_expanded_training_run_v1::{
     run_native_expanded_training_v1, ExpandedOpponentAssignmentV1, ExpandedRunIterationV1,
@@ -203,7 +203,10 @@ fn a_source_without_s_learner_keeps_its_wire_bytes() {
         with
     );
     // An explicit null is absence, as for every optional member.
-    let null = legacy.replace(r#""checkpoint":null}"#, r#""checkpoint":null,"s_learner":null}"#);
+    let null = legacy.replace(
+        r#""checkpoint":null}"#,
+        r#""checkpoint":null,"s_learner":null}"#,
+    );
     let parsed: ExpandedModelSourceV1 = serde_json::from_str(&null).unwrap();
     assert_eq!(serde_json::to_string(&parsed).unwrap(), legacy);
 }
@@ -227,7 +230,9 @@ fn s_learner_end_to_end_v1() {
     // The fresh start: the initial parameters with step 0 and zero moments.
     let (policy, identity) = load_inference_v1(&s).unwrap();
     assert_eq!(identity.adam_step, 0);
-    let initial = decode_checkpoint_v1(&fs::read(&s.s_learner.as_ref().unwrap().initial.path).unwrap()).unwrap();
+    let initial =
+        decode_checkpoint_v1(&fs::read(&s.s_learner.as_ref().unwrap().initial.path).unwrap())
+            .unwrap();
     let fresh = STrainStateV1::fresh_optimizer_v1(initial.model_v1().clone());
     assert_eq!(identity.state_sha256, fresh.state_sha256_v1());
     assert_eq!(
@@ -290,7 +295,10 @@ fn s_learner_end_to_end_v1() {
         learning_rate_bits: 1.0e-3f32.to_bits(),
         value_coefficient_bits: 0.5f32.to_bits(),
     };
-    assert_eq!(load_update_inference_v1(&next, &expectation).unwrap(), after);
+    assert_eq!(
+        load_update_inference_v1(&next, &expectation).unwrap(),
+        after
+    );
     let wrong = CheckpointInputExpectationV1 {
         learning_rate_bits: 2.0e-3f32.to_bits(),
         ..expectation
@@ -359,14 +367,26 @@ fn run_config(
         iterations: vec![
             ExpandedRunIterationV1 {
                 episodes: vec![
-                    scheduled("iter-0-self", 2_026_110_311, ExpandedOpponentAssignmentV1::Current),
+                    scheduled(
+                        "iter-0-self",
+                        2_026_110_311,
+                        ExpandedOpponentAssignmentV1::Current,
+                    ),
                     scheduled("iter-0-net8", 2_026_110_312, fixed()),
                 ],
             },
             ExpandedRunIterationV1 {
                 episodes: vec![
-                    scheduled("iter-1-self", 2_026_110_313, ExpandedOpponentAssignmentV1::Current),
-                    scheduled("iter-1-initial", 2_026_110_314, ExpandedOpponentAssignmentV1::Initial),
+                    scheduled(
+                        "iter-1-self",
+                        2_026_110_313,
+                        ExpandedOpponentAssignmentV1::Current,
+                    ),
+                    scheduled(
+                        "iter-1-initial",
+                        2_026_110_314,
+                        ExpandedOpponentAssignmentV1::Initial,
+                    ),
                 ],
             },
         ],
@@ -432,12 +452,15 @@ fn s_learner_refusals_v1() {
     .err()
     .unwrap()
     .contains("legacy sampler"));
-    assert!(
-        collection_learner_v1(&s, TrainingMathV1::PlatformLibm, CollectionSamplerV1::Legacy, true)
-            .err()
-            .unwrap()
-            .contains("EX1")
-    );
+    assert!(collection_learner_v1(
+        &s,
+        TrainingMathV1::PlatformLibm,
+        CollectionSamplerV1::Legacy,
+        true
+    )
+    .err()
+    .unwrap()
+    .contains("EX1"));
     // Update options, refused before any input is read.
     let fake = vec![PinnedFileV1 {
         path: root.join("missing.json"),
