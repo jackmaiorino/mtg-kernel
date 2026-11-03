@@ -350,6 +350,7 @@ mod tests {
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         // This is deliverable 1's own confirmation: the transfer source this
         // CLI just wrote loads for evaluation through the exact function

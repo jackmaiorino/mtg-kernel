@@ -457,6 +457,7 @@ fn fixture_v1(label: &str) -> FixtureV1 {
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
             },
             checkpoint: None,
+            s_learner: None,
         },
     }];
     config.fitting.batch_groups = 8;

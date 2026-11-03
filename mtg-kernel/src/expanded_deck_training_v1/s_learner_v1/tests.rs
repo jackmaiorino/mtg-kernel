@@ -1,0 +1,479 @@
+//! The S learner in RT1: wire bytes without it, collection against net-8
+//! and S opponents, the GAE update, checkpoint readback, the run driver
+//! (resumed, revalidated, serial equal to parallel), and the refusals.
+
+use super::*;
+use crate::expanded_deck_training_v1::{
+    execute_v1, initialize_any_math_v1, read_pinned, sha, write_synthetic_fresh_source_with_parameters_v1,
+    ExpandedDeckListV1, ExpandedEpisodeV1, ExpandedTrainingCommandV1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+};
+use crate::native_expanded_training_run_v1::{
+    run_native_expanded_training_v1, ExpandedOpponentAssignmentV1, ExpandedRunIterationV1,
+    NamedExpandedOpponentV1, NativeExpandedTrainingRunV1, ScheduledExpandedEpisodeV1,
+};
+use crate::s_transformer_v1::{SConfigV1, SModelV1};
+use crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3;
+use std::path::Path;
+
+/// A small S for tests; the card table keeps S's 257 rows.
+const SMALL_V1: SConfigV1 = SConfigV1 {
+    d_model: 8,
+    layers: 1,
+    heads: 2,
+    ffn: 16,
+    card_dim: 4,
+    card_vocab: 257,
+};
+
+fn on_large_stack(body: fn()) {
+    let run = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(body)
+        .unwrap();
+    if let Err(payload) = run.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn temp_root(label: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "s-learner-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    root.canonicalize().unwrap()
+}
+
+/// A fresh-initialization net-8 source (V4) without a checkpoint: the
+/// net-8 opponent, and the S learner's shell.
+fn net8_source(root: &Path) -> ExpandedModelSourceV1 {
+    let identity = FRESH_FEATURE_IDENTITY_V4;
+    let descriptor =
+        write_synthetic_fresh_source_with_parameters_v1(&root.join("net8"), identity, |_| {});
+    let bytes = serde_json::to_vec(&descriptor).unwrap();
+    let path = root.join("net8-descriptor.json");
+    fs::write(&path, &bytes).unwrap();
+    ExpandedModelSourceV1 {
+        play_import: PinnedFileV1 {
+            path,
+            sha256: sha(&bytes),
+        },
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: identity.feature_contract_digest.into(),
+            expected_feature_encoding_digest: identity.feature_encoding_digest.into(),
+        },
+        checkpoint: None,
+        s_learner: None,
+    }
+}
+
+/// `shell` with an S learner whose initial state carries nonzero Adam
+/// moments and step, which the fresh start must drop.
+fn s_source(root: &Path, shell: &ExpandedModelSourceV1) -> ExpandedModelSourceV1 {
+    let model = SModelV1::init_pilot_scheme_v1(SMALL_V1, 20_261_103).unwrap();
+    let total = model.values_v1().len();
+    let mut state = STrainStateV1::fresh_optimizer_v1(model);
+    let grad = vec![0.0f32; total];
+    // One step with a zero gradient keeps every value and moment at +0 but
+    // advances the step, so the start's reset is visible.
+    state.adam_step_with_gradient_v1(&grad, 1.0e-4).unwrap();
+    assert_eq!(state.adam_step_v1(), 1);
+    let bytes = encode_checkpoint_v1(&state);
+    let path = root.join("s0.bin");
+    fs::write(&path, &bytes).unwrap();
+    ExpandedModelSourceV1 {
+        s_learner: Some(SLearnerSourceV1 {
+            schema: S_LEARNER_SOURCE_SCHEMA_V1.into(),
+            initial: PinnedFileV1 {
+                path,
+                sha256: sha(&bytes),
+            },
+        }),
+        ..shell.clone()
+    }
+}
+
+fn list(id: &str) -> ExpandedDeckListV1 {
+    let registration = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+    let cards = registration.registered_configuration();
+    ExpandedDeckListV1 {
+        label: id.into(),
+        mainboard: cards.mainboard().to_vec(),
+        sideboard: cards.sideboard().to_vec(),
+    }
+}
+
+fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> ExpandedEpisodeV1 {
+    let decks = [list("Affinity"), list("Terror")];
+    ExpandedEpisodeV1 {
+        id: id.into(),
+        seed,
+        starting_player: 0,
+        learner_seat: 0,
+        opponent,
+        opponent_kind: None,
+        opponent_search: None,
+        registered: decks.clone(),
+        selected: decks,
+        postboard: false,
+        max_physical_decisions: 100_000,
+        max_policy_steps: 1_000_000,
+        runtime_rules: None,
+        reset: None,
+        opening: None,
+        mulligan_modes: None,
+    }
+}
+
+fn gae() -> ExpandedLossSelectionV1 {
+    ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+    }
+}
+
+fn collect(
+    source: &ExpandedModelSourceV1,
+    episodes: Vec<ExpandedEpisodeV1>,
+    output_directory: PathBuf,
+) -> Result<Value, String> {
+    execute_v1(ExpandedTrainingCommandV1::Collect {
+        source: source.clone(),
+        episodes,
+        max_non_natural_episode_fraction: 0.0,
+        collection_sampler: CollectionSamplerV1::Legacy,
+        training_math: TrainingMathV1::PlatformLibm,
+        ex1: None,
+        output_directory,
+    })
+}
+
+fn update(
+    source: &ExpandedModelSourceV1,
+    trajectories: Vec<PinnedFileV1>,
+    loss_selection: ExpandedLossSelectionV1,
+    record_format: CheckpointRecordFormatV1,
+    output_directory: PathBuf,
+) -> Result<Value, String> {
+    execute_v1(ExpandedTrainingCommandV1::Update {
+        source: source.clone(),
+        trajectories,
+        learning_rate: 1.0e-3,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection,
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format,
+        output_directory,
+    })
+}
+
+#[test]
+fn a_source_without_s_learner_keeps_its_wire_bytes() {
+    let legacy = concat!(
+        r#"{"play_import":{"path":"/models/import.json","sha256":"#,
+        r#""0000000000000000000000000000000000000000000000000000000000000001"},"#,
+        r#""feature_transfer":{"expected_feature_contract_digest":"c","#,
+        r#""expected_feature_encoding_digest":"e"},"checkpoint":null}"#
+    );
+    let source: ExpandedModelSourceV1 = serde_json::from_str(legacy).unwrap();
+    assert!(source.s_learner.is_none());
+    assert_eq!(serde_json::to_string(&source).unwrap(), legacy);
+    let with = ExpandedModelSourceV1 {
+        s_learner: Some(SLearnerSourceV1 {
+            schema: S_LEARNER_SOURCE_SCHEMA_V1.into(),
+            initial: source.play_import.clone(),
+        }),
+        ..source.clone()
+    };
+    let text = serde_json::to_string(&with).unwrap();
+    assert!(text.ends_with(
+        r#""checkpoint":null,"s_learner":{"schema":"w5-s-learner/v1","initial":{"path":"/models/import.json","sha256":"0000000000000000000000000000000000000000000000000000000000000001"}}}"#
+    ));
+    assert_eq!(
+        serde_json::from_str::<ExpandedModelSourceV1>(&text).unwrap(),
+        with
+    );
+    // An explicit null is absence, as for every optional member.
+    let null = legacy.replace(r#""checkpoint":null}"#, r#""checkpoint":null,"s_learner":null}"#);
+    let parsed: ExpandedModelSourceV1 = serde_json::from_str(&null).unwrap();
+    assert_eq!(serde_json::to_string(&parsed).unwrap(), legacy);
+}
+
+/// End to end on real games: S collects against itself and a net-8
+/// opponent, updates once (fresh Adam from the initial parameters),
+/// publishes a checkpoint that resumes; the run driver then trains two
+/// iterations against the current S and the fixed net-8 opponent, resumes
+/// after the first and revalidates, and its parallel collection and prepared
+/// update reach the serial run's state.
+#[test]
+fn s_learner_collects_updates_and_runs_against_net8_opponents() {
+    on_large_stack(s_learner_end_to_end_v1);
+}
+
+fn s_learner_end_to_end_v1() {
+    let root = temp_root("e2e");
+    let net8 = net8_source(&root);
+    let s = s_source(&root, &net8);
+
+    // The fresh start: the initial parameters with step 0 and zero moments.
+    let (policy, identity) = load_inference_v1(&s).unwrap();
+    assert_eq!(identity.adam_step, 0);
+    let initial = decode_checkpoint_v1(&fs::read(&s.s_learner.as_ref().unwrap().initial.path).unwrap()).unwrap();
+    let fresh = STrainStateV1::fresh_optimizer_v1(initial.model_v1().clone());
+    assert_eq!(identity.state_sha256, fresh.state_sha256_v1());
+    assert_eq!(
+        identity.model.weights_sha256,
+        initial.model_v1().parameter_sha256_v1()
+    );
+    assert_eq!(policy.feature_identity_v1(), FRESH_FEATURE_IDENTITY_V4);
+    drop(policy);
+
+    let collection = collect(
+        &s,
+        vec![
+            episode("s-self", 2_026_110_301, None),
+            episode("s-vs-net8", 2_026_110_302, Some(net8.clone())),
+        ],
+        root.join("collect"),
+    )
+    .unwrap();
+    assert_eq!(collection["behavior_state_sha256"], identity.state_sha256);
+    let trajectories: Vec<PinnedFileV1> =
+        serde_json::from_value(collection["trajectories"].clone()).unwrap();
+    let crossed: super::super::ExpandedTrajectoryV1 = read_pinned(&trajectories[1]).unwrap();
+    let behaviors = crossed.seat_behaviors.as_ref().unwrap();
+    assert_eq!(behaviors[0].identity, identity);
+    assert_eq!(behaviors[1].source, net8);
+    assert_ne!(
+        behaviors[1].identity.model.weights_sha256,
+        identity.model.weights_sha256
+    );
+
+    let updated = update(
+        &s,
+        trajectories.clone(),
+        gae(),
+        CheckpointRecordFormatV1::V1,
+        root.join("update"),
+    )
+    .unwrap();
+    assert_eq!(updated["adam_step"], 1);
+    assert_eq!(updated["before_state_sha256"], identity.state_sha256);
+    assert_ne!(updated["after_state_sha256"], identity.state_sha256);
+    assert_eq!(updated["numerical_backend"], "native-cpu-sequential");
+    assert!(updated["loss"].as_f64().unwrap().is_finite());
+    let checkpoint: PinnedFileV1 = serde_json::from_value(updated["checkpoint"].clone()).unwrap();
+    let next = ExpandedModelSourceV1 {
+        checkpoint: Some(checkpoint.clone()),
+        ..s.clone()
+    };
+    let (_, after) = load_inference_v1(&next).unwrap();
+    assert_eq!(after.adam_step, 1);
+    assert_eq!(updated["after_state_sha256"], after.state_sha256);
+    assert_ne!(after.model.weights_sha256, identity.model.weights_sha256);
+    let record: SLearnerCheckpointV1 = read_pinned(&checkpoint).unwrap();
+    assert_eq!(record.trajectories, trajectories);
+    let restored = decode_checkpoint_v1(&fs::read(&record.state.path).unwrap()).unwrap();
+    assert_eq!(restored.state_sha256_v1(), after.state_sha256);
+    // The run driver's continuation read binds the update's inputs.
+    let expectation = CheckpointInputExpectationV1 {
+        trajectories: &trajectories,
+        learning_rate_bits: 1.0e-3f32.to_bits(),
+        value_coefficient_bits: 0.5f32.to_bits(),
+    };
+    assert_eq!(load_update_inference_v1(&next, &expectation).unwrap(), after);
+    let wrong = CheckpointInputExpectationV1 {
+        learning_rate_bits: 2.0e-3f32.to_bits(),
+        ..expectation
+    };
+    assert!(load_update_inference_v1(&next, &wrong).is_err());
+    // The same update again reproduces the same state.
+    let again = update(
+        &s,
+        trajectories.clone(),
+        gae(),
+        CheckpointRecordFormatV1::V1,
+        root.join("update-again"),
+    )
+    .unwrap();
+    assert_eq!(again["after_state_sha256"], updated["after_state_sha256"]);
+    // A stale batch is refused at the next state.
+    assert!(update(
+        &next,
+        trajectories,
+        gae(),
+        CheckpointRecordFormatV1::V1,
+        root.join("stale"),
+    )
+    .unwrap_err()
+    .contains("stale trajectory"));
+
+    // The run driver: parallel collection and prepared updates, resumed and
+    // revalidated, then the serial run.
+    let parallel = run_config(&s, &net8, 2, root.join("run-parallel"));
+    let first = run_native_expanded_training_v1(&parallel, Some(1)).unwrap();
+    assert_eq!(first["completed_iterations"], 1);
+    let finished = run_native_expanded_training_v1(&parallel, None).unwrap();
+    assert_eq!(finished["complete"], true);
+    assert_eq!(finished["actual_identity"]["adam_step"], 2);
+    let revalidated = run_native_expanded_training_v1(&parallel, None).unwrap();
+    assert_eq!(revalidated, finished);
+    let serial = run_config(&s, &net8, 1, root.join("run-serial"));
+    let serial_result = run_native_expanded_training_v1(&serial, None).unwrap();
+    for field in ["state_sha256", "model", "adam_step"] {
+        assert_eq!(
+            serial_result["actual_identity"][field],
+            finished["actual_identity"][field]
+        );
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+fn run_config(
+    initial_source: &ExpandedModelSourceV1,
+    net8: &ExpandedModelSourceV1,
+    workers: usize,
+    output_directory: PathBuf,
+) -> NativeExpandedTrainingRunV1 {
+    let scheduled = |name: &str, seed: u64, opponent| ScheduledExpandedEpisodeV1 {
+        episode: episode(name, seed, None),
+        opponent,
+    };
+    let fixed = || ExpandedOpponentAssignmentV1::Fixed { id: "net8".into() };
+    NativeExpandedTrainingRunV1 {
+        schema: "mtg-kernel-native-expanded-training-run/v1".into(),
+        initial_source: initial_source.clone(),
+        opponents: vec![NamedExpandedOpponentV1 {
+            id: "net8".into(),
+            source: net8.clone(),
+        }],
+        iterations: vec![
+            ExpandedRunIterationV1 {
+                episodes: vec![
+                    scheduled("iter-0-self", 2_026_110_311, ExpandedOpponentAssignmentV1::Current),
+                    scheduled("iter-0-net8", 2_026_110_312, fixed()),
+                ],
+            },
+            ExpandedRunIterationV1 {
+                episodes: vec![
+                    scheduled("iter-1-self", 2_026_110_313, ExpandedOpponentAssignmentV1::Current),
+                    scheduled("iter-1-initial", 2_026_110_314, ExpandedOpponentAssignmentV1::Initial),
+                ],
+            },
+        ],
+        record_format: Default::default(),
+        learning_rate: 1.0e-3,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        loss_selection: gae(),
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        collection_workers: workers,
+        preparation_workers: workers,
+        max_non_natural_episode_fraction: 0.0,
+        max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        collection_sampler: CollectionSamplerV1::Legacy,
+        training_math: TrainingMathV1::PlatformLibm,
+        line_b: None,
+        e_supported: None,
+        soft_q: None,
+        search_targets: None,
+        ex1: None,
+        record_process_cpu: false,
+        chain_ledger: None,
+        output_directory,
+    }
+}
+
+#[test]
+fn s_learner_refuses_unsupported_options() {
+    on_large_stack(s_learner_refusals_v1);
+}
+
+fn s_learner_refusals_v1() {
+    let root = temp_root("refusals");
+    let net8 = net8_source(&root);
+    let s = s_source(&root, &net8);
+    // Net-8-only loaders refuse an S source.
+    match initialize_any_math_v1(&s) {
+        Ok(_) => panic!("the net-8 loader admitted an S source"),
+        Err(error) => assert_eq!(error, S_LEARNER_NET8_REFUSAL_V1),
+    }
+    // FlatV7 and FlatV8 shells.
+    let v7 = ExpandedModelSourceV1 {
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7.into(),
+            expected_feature_encoding_digest:
+                crate::native_flat_tensorizer_v7::FEATURE_ENCODING_DIGEST_V7.into(),
+        },
+        ..s.clone()
+    };
+    assert!(load_inference_v1(&v7).err().unwrap().contains("FlatV7"));
+    // An unknown member schema.
+    let mut unknown = s.clone();
+    unknown.s_learner.as_mut().unwrap().schema = "w5-s-learner/v0".into();
+    assert!(load_inference_v1(&unknown).is_err());
+    // Collection options.
+    assert!(collection_learner_v1(
+        &s,
+        TrainingMathV1::PlatformLibm,
+        CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1,
+        false
+    )
+    .err()
+    .unwrap()
+    .contains("legacy sampler"));
+    assert!(
+        collection_learner_v1(&s, TrainingMathV1::PlatformLibm, CollectionSamplerV1::Legacy, true)
+            .err()
+            .unwrap()
+            .contains("EX1")
+    );
+    // Update options, refused before any input is read.
+    let fake = vec![PinnedFileV1 {
+        path: root.join("missing.json"),
+        sha256: "0".repeat(64),
+    }];
+    let refused = |loss, format, name: &str| {
+        update(&s, fake.clone(), loss, format, root.join(name)).unwrap_err()
+    };
+    assert!(refused(
+        ExpandedLossSelectionV1::TerminalReinforceValueV3,
+        CheckpointRecordFormatV1::V1,
+        "terminal"
+    )
+    .contains("GAE loss"));
+    assert!(refused(gae(), CheckpointRecordFormatV1::V2, "v2").contains("record format v2"));
+    let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        source: s.clone(),
+        trajectories: fake.clone(),
+        learning_rate: 1.0e-3,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: gae(),
+        line_b: Some(super::super::LineBUpdateOptionsV1 {
+            optimizer_mask: super::super::OptimizerMaskV1::LineBHeadOnlyV1,
+            teacher: None,
+        }),
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format: CheckpointRecordFormatV1::V1,
+        output_directory: root.join("line-b"),
+    })
+    .unwrap_err();
+    assert!(error.contains("line (b)"), "{error}");
+    // The run driver refuses the same before any work.
+    let mut config = run_config(&s, &net8, 1, root.join("run"));
+    config.loss_selection = ExpandedLossSelectionV1::TerminalReinforceValueV3;
+    assert!(config.validate_v1().unwrap_err().contains("S learner run"));
+    let _ = fs::remove_dir_all(&root);
+}

@@ -43,6 +43,7 @@ fn episode(learner_seat: u8, kind: Option<ExpandedOpponentKindV1>) -> ExpandedEp
             expected_feature_encoding_digest: "27".repeat(32),
         },
         checkpoint: None,
+        s_learner: None,
     };
     ExpandedEpisodeV1 {
         id: format!("opponent-kind-fixture-{learner_seat}"),

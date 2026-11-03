@@ -227,6 +227,7 @@ fn preservation_check_v1(
                 expected_feature_encoding_digest: encoding.into(),
             },
             checkpoint: Some(checkpoint.clone()),
+            s_learner: None,
         };
     let parent_saved: ExpandedCheckpointV1 = read_pinned(&request.parent_checkpoint)?;
     let parent_source = source(

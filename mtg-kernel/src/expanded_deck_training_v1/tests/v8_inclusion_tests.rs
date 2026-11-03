@@ -127,6 +127,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
             expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
         },
         checkpoint: None,
+        s_learner: None,
     };
     let parent = iterate(&v4_source, "v4-parent", 2_026_103_001);
     let receipt = convert_checkpoint_to_v8_inclusion_v1(&V8ConversionRequestV1 {
@@ -157,6 +158,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
             expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V8.into(),
         },
         checkpoint: Some(v8_checkpoint.clone()),
+        s_learner: None,
     };
     // A FlatV8 source refuses the V4 parent checkpoint and a missing one.
     assert!(initialize(&ExpandedModelSourceV1 {

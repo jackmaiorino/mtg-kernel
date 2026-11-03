@@ -11,6 +11,7 @@ pub mod exploration_probe_v1;
 pub mod no_state_digest_v1;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub mod own_registration;
+pub mod s_learner_v1;
 pub mod search_targets_v1;
 pub mod soft_q_teacher_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
@@ -383,6 +384,11 @@ pub struct ExpandedModelSourceV1 {
     /// None means an explicit fresh-optimizer warm start. A successor
     /// checkpoint resumes both model and Adam, with the same feature identity.
     pub checkpoint: Option<PinnedFileV1>,
+    /// W5's native S learner (`s_learner_v1`): the play import is then only
+    /// the FlatV4 shell S plays on, and `checkpoint` pins an S checkpoint
+    /// record. Omitted when absent, so every existing source keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s_learner: Option<s_learner_v1::SLearnerSourceV1>,
 }
 
 /// Inference identity after exact current-feature model/optimizer validation.
@@ -465,6 +471,9 @@ pub(crate) fn load_expanded_inference_bound_v1(
 fn load_expanded_inference_any_math_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    if source.s_learner.is_some() {
+        return s_learner_v1::load_inference_v1(source);
+    }
     // Inference alone admits the explicit BO3 objective. Legacy initialization
     // and update dispatch keep rejecting its descriptor/checkpoint schemas.
     let bytes = read_pinned_bytes(&source.play_import)?;
@@ -520,12 +529,15 @@ pub(crate) fn load_expanded_update_inference_v1(
     learning_rate: f32,
     value_coefficient: f32,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
-    let bytes = read_pinned_bytes(&source.play_import)?;
     let inputs = CheckpointInputExpectationV1 {
         trajectories,
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
     };
+    if source.s_learner.is_some() {
+        return s_learner_v1::load_update_inference_v1(source, &inputs);
+    }
+    let bytes = read_pinned_bytes(&source.play_import)?;
     let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, Some(&inputs))?;
     inference_identity_v1(source, &policy, &state)
 }
@@ -785,6 +797,10 @@ fn verify_collection_opponent_sources_v1(
             continue;
         }
         checked.push(source.clone());
+        // An S source keeps its own full load (`s_learner_v1`) every time.
+        if source.s_learner.is_some() {
+            continue;
+        }
         let bytes = read_pinned_bytes(&source.play_import)?;
         let checkpoint_bytes = source
             .checkpoint
@@ -832,6 +848,9 @@ pub(super) type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
 pub(super) fn opponent_cache_files_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<Option<VerifiedFilesV1>, String> {
+    if source.s_learner.is_some() {
+        return Ok(None);
+    }
     let bytes = read_pinned_bytes(&source.play_import)?;
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     let (pins, checkpoints) = if probe.get("schema").and_then(Value::as_str)
@@ -1645,6 +1664,10 @@ fn initialize_from_source_bytes_v1(
     ),
     String,
 > {
+    ensure(
+        source.s_learner.is_none(),
+        s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
     if flat_v8_requested_v1(source)? {
         // A FlatV8 source (the V8 inclusion contract). Its checkpoint is a V8
         // one: the first is made by the function-preserving V8 conversion
@@ -3869,30 +3892,40 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 episode.configurations()?;
                 ensure(ids.insert(&episode.id), "duplicate episode id")?;
             }
-            let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
-            if let Some(context) = &transfer {
-                context.validate_batch(&episodes)?;
-            }
-            bind_training_math_v1(
-                &source,
-                transfer.as_ref(),
-                training_math,
-                &mut policy,
-                &mut state,
-            )?;
-            collection_sampler.apply_to_learner_v1(&mut policy);
-            let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
-            let learner = ExpandedSeatBehaviorV1 {
-                source: source.clone(),
-                identity: inference_identity_with_state_sha256_v1(
+            let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
+                s_learner_v1::collection_learner_v1(
                     &source,
-                    &policy,
-                    &state,
-                    state_hash.clone(),
-                ),
+                    training_math,
+                    collection_sampler,
+                    ex1.is_some(),
+                )?
+            } else {
+                let (mut policy, mut state, transfer) =
+                    initialize_with_transfer_context(&source)?;
+                if let Some(context) = &transfer {
+                    context.validate_batch(&episodes)?;
+                }
+                bind_training_math_v1(
+                    &source,
+                    transfer.as_ref(),
+                    training_math,
+                    &mut policy,
+                    &mut state,
+                )?;
+                collection_sampler.apply_to_learner_v1(&mut policy);
+                let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
+                let learner = ExpandedSeatBehaviorV1 {
+                    source: source.clone(),
+                    identity: inference_identity_with_state_sha256_v1(
+                        &source,
+                        &policy,
+                        &state,
+                        state_hash.clone(),
+                    ),
+                };
+                (policy, learner, state_hash)
             };
             let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
-            drop(state);
             let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
             let mut opponent_cache = OpponentCacheV1::for_collection(verified_sources)
                 .with_training_math_v1(training_math);
@@ -4133,20 +4166,42 @@ fn compute_gae_targets_v1(
             .ok_or_else(|| format!("gae group {index} has no substeps"))?;
         values.push(f32::from_bits(first.expected_value_bits));
     }
-    let mut advantage_and_target = vec![(0.0f32, 0.0f32); groups.len()];
+    let terminal_returns: Vec<i8> = groups.iter().map(|group| group.terminal_return).collect();
+    compute_gae_targets_of_values_v1(&values, &terminal_returns, episode_ordinals, gamma, lambda)
+}
+
+/// [`compute_gae_targets_v1`]'s arithmetic on each group's first-substep
+/// value and terminal return, for a learner whose groups are not net-8's
+/// (`s_learner_v1`).
+fn compute_gae_targets_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<GaeTargetsV1, String> {
+    ensure(
+        values.len() == episode_ordinals.len() && terminal_returns.len() == values.len(),
+        "gae group and episode-ordinal counts differ",
+    )?;
+    ensure(
+        !values.is_empty(),
+        "gae update requires at least one physical decision",
+    )?;
+    let mut advantage_and_target = vec![(0.0f32, 0.0f32); values.len()];
     let mut start = 0usize;
-    while start < groups.len() {
+    while start < values.len() {
         let mut end = start + 1;
-        while end < groups.len() && episode_ordinals[end] == episode_ordinals[start] {
+        while end < values.len() && episode_ordinals[end] == episode_ordinals[start] {
             end += 1;
         }
         for offset in start..end {
             ensure(
-                groups[offset].terminal_return == groups[start].terminal_return,
+                terminal_returns[offset] == terminal_returns[start],
                 "gae episode's physical decisions must share one terminal_return",
             )?;
         }
-        let terminal_return = f32::from(groups[start].terminal_return);
+        let terminal_return = f32::from(terminal_returns[start]);
         let decisions: Vec<(f32, bool)> = (start..end)
             .map(|offset| (values[offset], offset == end - 1))
             .collect();
@@ -4307,6 +4362,30 @@ fn execute_update_inner_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
+    if source.s_learner.is_some() {
+        return s_learner_v1::execute_s_update_v1(s_learner_v1::SUpdateInputsV1 {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            update_backend,
+            backward_execution,
+            loss_selection,
+            output_directory,
+            preparation_workers,
+            max_prepared_tensor_mebibytes,
+            unsupported: s_learner_v1::SUnsupportedOptionsV1 {
+                line_b: line_b.is_some(),
+                e_supported: e_supported.is_some(),
+                soft_q: soft_q.is_some(),
+                search_targets: search_targets.is_some(),
+                ex1: ex1.is_some(),
+            },
+            training_math,
+            record_format,
+            started: update_started,
+        });
+    }
     if let Some(pin) = &source.checkpoint {
         let saved: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(pin)?;
         if let Some(identity) = &saved.e_supported {
@@ -6258,6 +6337,7 @@ pub(crate) mod tests {
                 path: "test-opponent.json".into(),
                 sha256: "b".repeat(64),
             }),
+            s_learner: None,
         };
         ExpandedSeatBehaviorV1 {
             identity: inference_identity_v1(&source, policy, &test_state(policy)).unwrap(),
@@ -6819,6 +6899,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let error = match load_expanded_inference_v1(&source) {
             Ok(_) => panic!("mismatched source pin accepted"),
@@ -7045,6 +7126,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "e66cbb478196b24a1c47123a0bda3bae505307c8e505a13bfec4f5037c4c9e9a".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7053,6 +7135,7 @@ pub(crate) mod tests {
             },
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7190,6 +7273,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "502ca59eba7552626be4ca36a55c7eb33f2d8cf8c52390046c12320c0bcb9b5f".into(),
             }),
+            s_learner: None,
         };
         let learner_source = shared_source.clone();
         let opponent_source = shared_source;
@@ -7320,6 +7404,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "4f3cfdaed698e5d6cad84299072d468e36c339d6f0f11414e536015e7c3397b9".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7328,6 +7413,7 @@ pub(crate) mod tests {
             },
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7438,6 +7524,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "0a8f4228d22184c65a7e225f7425a9b6ccbb1b36617fc3d2c67ebe83b09ac464".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7446,6 +7533,7 @@ pub(crate) mod tests {
             },
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7576,6 +7664,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "eba59f2ad70ce5e132fde3e6dc527dcd36705c02f73218c8f94747d2a1bc1ad3".into(),
             }),
+            s_learner: None,
         };
         let learner_source = shared_source.clone();
         let opponent_source = shared_source;
@@ -7708,6 +7797,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "7ab89dea50edbe10a546849a1dd71a39c8781264c0d82871008fd1c748a717c3".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7722,6 +7812,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "8519bd678cd9f4a09056176ae3821374476fabfa5100d0e078f4993028543d80".into(),
             }),
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7841,6 +7932,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "1ba4135e286529be44cabe35357423fb794965854e9ec5f8b6f0eca8ff425d0e".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7855,6 +7947,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "97ac8aa60017c46d3e9c45688ca19e7fdf67a923a67d3c9d3a661563546c9299".into(),
             }),
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7987,6 +8080,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "382b5d3c259baa81ddfede7b76296ccbcf5b4746e8e4d6c107119689c065b1e3".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -8001,6 +8095,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "a5c66d7c17f6cfd7a8491ca6cdf747dc821474d70046ce8b344299177a8ec941".into(),
             }),
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -8139,6 +8234,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "1917db9d1a132b9180ff638e991a7f2570f74577933cb10ce199125426da42c1".into(),
             }),
+            s_learner: None,
         };
         // Seat 0 (Burn), the opponent: this episode's `opponent.kind` is
         // "initial", i.e. the run config's own `initial_source` checkpoint
@@ -8157,6 +8253,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "7af505e551efa5f524bc969a96f6fd00e0ab19d0e24570268a1fff1ae1906cc1".into(),
             }),
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -8930,6 +9027,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let episodes: Vec<_> = (0..4u64)
             .map(|index| {
@@ -9792,6 +9890,7 @@ pub(crate) mod tests {
             play_import,
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let mut final_contract = String::new();
         let mut final_encoding = String::new();
@@ -10168,6 +10267,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let collect = |learner: &ExpandedModelSourceV1,
@@ -10597,6 +10697,7 @@ pub(crate) mod tests {
                         .into(),
                 },
                 checkpoint: None,
+                s_learner: None,
             };
             let initial_source = source.clone();
             let decks = [list("Affinity"), list("Terror")];
@@ -11339,6 +11440,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
@@ -11813,6 +11915,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
@@ -11961,6 +12064,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {

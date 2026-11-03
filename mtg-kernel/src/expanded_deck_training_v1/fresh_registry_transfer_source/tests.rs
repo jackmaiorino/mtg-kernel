@@ -254,6 +254,7 @@ pub(in crate::expanded_deck_training_v1) fn fixture() -> Fixture {
             expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
         },
         checkpoint: None,
+        s_learner: None,
     };
     Fixture {
         root,

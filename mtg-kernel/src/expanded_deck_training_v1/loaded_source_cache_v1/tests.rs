@@ -72,6 +72,7 @@ fn fresh_source_with_v1(
             expected_feature_encoding_digest: identity.feature_encoding_digest.into(),
         },
         checkpoint: None,
+        s_learner: None,
     }
 }
 

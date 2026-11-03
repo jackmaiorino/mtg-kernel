@@ -72,6 +72,7 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
             expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
         },
         checkpoint: None,
+        s_learner: None,
     };
     let decks = [list("Affinity"), list("Terror")];
     let episode = ExpandedEpisodeV1 {
@@ -266,6 +267,7 @@ fn record_format_v1_serializes_like_absence() {
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
             },
             checkpoint: None,
+            s_learner: None,
         },
         trajectories: Vec::new(),
         learning_rate: 0.0001,
