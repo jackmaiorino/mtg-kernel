@@ -92,6 +92,14 @@ class CorrespondenceTests(unittest.TestCase):
         self.assertEqual(out['derived_digests'], 1)
         self.assertTrue(out['after_states_equal'])
 
+    def test_a_passed_receipt_can_be_inherited_and_a_failed_one_cannot(self):
+        first = self.receipt()
+        self.assertTrue(first['ok'])
+        again = cc.correspond(self.root / 'v1', self.root / 'v2', [], first)
+        self.assertTrue(again['ok'], again)
+        failed = dict(first, ok=False)
+        self.assertIn('inherited', cc.correspond(self.root / 'v1', self.root / 'v2', [], failed)['failure'])
+
     def test_without_the_seed_pair_nothing_downstream_matches(self):
         self.assertFalse(self.receipt(seeds=[])['ok'])
 

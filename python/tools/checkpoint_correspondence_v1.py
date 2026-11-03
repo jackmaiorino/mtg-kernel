@@ -12,6 +12,8 @@ an entry never changes, and no two v2 hashes map to one v1 hash.
   `checkpoint_container_v1.export_v1`), with S applied, must equal V as JSON. Then sha(C) -> sha(V) joins S.
 - **Seed pairs** (opponents staged as containers in the v2 run and as v1 checkpoints in the v1 run): the container
   must export to exactly the v1 checkpoint before its pair joins S.
+- **Inherited correspondence.** A segment that continues another (case B after A) starts from the earlier pair's
+  verified receipt: its S, every entry of which was earned there.
 - **Derived digests.** `episodes_sha256` in an iteration's `complete.json` is SHA-256 of the compact JSON of the
   resolved schedule, the `episodes` of that iteration's `collect-command.json`. Each tree's preimage must hash to its
   own recorded value; the v2 schedule with S applied must equal the v1 schedule; then the pair joins S.
@@ -26,7 +28,8 @@ an entry never changes, and no two v2 hashes map to one v1 hash.
 Matching runs to a fixpoint (a pair is matched once S holds what it needs); then every matched pair is checked
 again against the final S, so no early match survives a later entry. Anything unmatched fails the receipt.
 
-  checkpoint_correspondence_v1.py V1_TREE V2_TREE [--seed-pair V2_CONTAINER=V1_CHECKPOINT ...] [--out RECEIPT]
+  checkpoint_correspondence_v1.py V1_TREE V2_TREE [--seed-pair V2_CONTAINER=V1_CHECKPOINT ...]
+                                  [--inherit EARLIER_RECEIPT.json] [--out RECEIPT]
 """
 import argparse
 import hashlib
@@ -154,7 +157,7 @@ class Correspondence:
         return 'substituted'
 
 
-def correspond(v1_root, v2_root, seed_pairs=()) -> dict:
+def correspond(v1_root, v2_root, seed_pairs=(), inherit=None) -> dict:
     v1_root, v2_root = Path(v1_root), Path(v2_root)
     a, b = files(v1_root), files(v2_root)
     out = {'schema': 'checkpoint-container-correspondence/v2', 'v1': v1_root.as_posix(), 'v2': v2_root.as_posix(),
@@ -170,6 +173,11 @@ def correspond(v1_root, v2_root, seed_pairs=()) -> dict:
 
     c = Correspondence()
     try:
+        if inherit is not None:
+            if not (inherit.get('ok') and isinstance(inherit.get('mapping'), dict)):
+                raise Mismatch('the inherited receipt is not a passed correspondence')
+            for v2, v1 in inherit['mapping'].items():
+                c.earn(v2, v1)
         for v2_path, v1_path in seed_pairs:
             v2_data, v1_data = Path(v2_path).read_bytes(), Path(v1_path).read_bytes()
             if not container.is_container(v2_data) or container.export_v1(v2_path) != v1_data:
@@ -216,7 +224,7 @@ def correspond(v1_root, v2_root, seed_pairs=()) -> dict:
     kinds = {k: list(matched.values()).count(k) for k in ('container', 'identical', 'substituted')}
     out.update(files=len(set(a) & set(b)), matched=len(matched), kinds=kinds, derived_digests=derived,
                substitutions=len(c.mapping), unmatched=sorted(pending)[:50], stale=stale[:50],
-               updates=len(states), after_states_equal=bool(states) and all(states))
+               updates=len(states), after_states_equal=bool(states) and all(states), mapping=c.mapping)
     out['ok'] = (not out['only_v1'] and not out['only_v2'] and not pending and not stale
                  and out['after_states_equal'] and kinds['container'] > 0)
     return out
@@ -227,10 +235,12 @@ def main(argv=None):
     ap.add_argument('v1_tree')
     ap.add_argument('v2_tree')
     ap.add_argument('--seed-pair', action='append', default=[])
+    ap.add_argument('--inherit')
     ap.add_argument('--out')
     a = ap.parse_args(argv)
     pairs = [tuple(item.split('=', 1)) for item in a.seed_pair]
-    receipt = correspond(a.v1_tree, a.v2_tree, pairs)
+    inherit = json.loads(Path(a.inherit).read_text(encoding='utf-8')) if a.inherit else None
+    receipt = correspond(a.v1_tree, a.v2_tree, pairs, inherit)
     text = json.dumps(receipt, indent=1)
     if a.out:
         Path(a.out).write_text(text, encoding='utf-8')
