@@ -2160,6 +2160,7 @@ fn world_v1(label: &str) -> WorldV1 {
         },
         line_b: None,
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: root.join("parent-update"),
     })
     .unwrap();
@@ -2956,6 +2957,7 @@ fn retention_run_config_v1(
         initial_source,
         opponents: vec![],
         iterations,
+        record_format: Default::default(),
         learning_rate: 0.0001,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,
