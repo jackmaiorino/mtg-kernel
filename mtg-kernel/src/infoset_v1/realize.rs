@@ -506,6 +506,12 @@ pub(crate) fn impossible_v1(
                             .spans
                             .iter()
                             .any(|s| s.end.is_some_and(|e| e.item == at && e.zone == Zone::Hand))
+                        // Not tracked again since (a later public departure
+                        // is not among the put-backs).
+                        && p.objects[id.0 as usize]
+                            .spans
+                            .iter()
+                            .all(|s| s.start_item <= at)
                         && hidden(*id)
                 })
                 .collect();

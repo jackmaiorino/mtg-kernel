@@ -60,6 +60,10 @@ pub(crate) struct SurvivorTreeV1 {
     /// with no untracked card): pruning a node does not restore what the
     /// draw-back made V know.
     drawn_back_sticky: bool,
+    /// A node was formed (an unidentified departure while tracked cards
+    /// were in the hand) since the tree was last cleared: a later draw-back
+    /// can restore a bound even after every node was pruned.
+    formed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +107,7 @@ impl SurvivorTreeV1 {
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
         self.drawn_back_sticky = false;
+        self.formed = false;
     }
 
     fn children(&self, i: usize) -> Vec<usize> {
@@ -166,6 +171,7 @@ impl SurvivorTreeV1 {
             self.prune();
             return;
         }
+        self.formed = true;
         let mut t = NamesV1::new();
         for n in tracked {
             *t.entry(*n).or_default() += 1;
@@ -213,7 +219,7 @@ impl SurvivorTreeV1 {
     /// An unidentified draw took back a put-back card: every live node is
     /// marked until it is pruned.
     pub(crate) fn mark_drawn_back(&mut self) {
-        if !self.is_empty() {
+        if !self.is_empty() || self.formed {
             self.drawn_back_sticky = true;
         }
         for i in self.live().collect::<Vec<_>>() {
