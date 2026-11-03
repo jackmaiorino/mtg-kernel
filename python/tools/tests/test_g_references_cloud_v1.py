@@ -93,6 +93,15 @@ class PackageTests(unittest.TestCase):
                 gcloud.package(self.fixture.spec(campaign_root=ROOT + "-q2", superseded_campaign_roots=bad),
                                Path(self.temp.name) / f"bad-{time.monotonic_ns()}")
 
+    def test_exports_name_campaign_files_for_the_lease_to_copy_home(self):
+        out = Path(self.temp.name) / "package-exports"
+        manifest = gcloud.package(self.fixture.spec(exports=["checkpoints/G1/block-002.json"]), out)
+        self.assertEqual(manifest["exports"], [f"/workspace/{ROOT}/campaign/checkpoints/G1/block-002.json"])
+        self.assertNotIn("exports", gcloud.package(self.fixture.spec(), Path(self.temp.name) / "plain"))
+        for bad in (["../escape.json"], ["/abs.json"], ["a.json", "a.json"], [""], "a.json", [1]):
+            with self.assertRaisesRegex(ValueError, "exports are distinct"):
+                gcloud.package(self.fixture.spec(exports=bad), Path(self.temp.name) / f"bad-{time.monotonic_ns()}")
+
     def test_qualification_package(self):
         out = Path(self.temp.name) / "package"
         manifest = gcloud.package(self.fixture.spec(), out)
@@ -481,6 +490,43 @@ class LeaseTests(unittest.TestCase):
         cycle.recover()  # 200 s less the 120 s release reserve: too little to quiesce and recover
         self.assertTrue(cycle.result["recovery"].startswith("skipped: too little time"))
         self.assertEqual(set(ran), {gcloud.POD_GUARD_RELEASE})  # nothing quiesced, packed or copied
+
+    def test_exports_are_copied_home_and_checked(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.control, cycle.result = Path(tempfile.mkdtemp()), {}
+        self.addCleanup(shutil.rmtree, cycle.control, True)
+        cycle.base = PurePosixPath("/workspace/root")
+        good, gone, wrong = ("/workspace/root/campaign/checkpoints/G1/block-002.json",
+                             "/workspace/root/campaign/checkpoints/G2/block-002.json",
+                             "/workspace/root/campaign/checkpoints/G3/block-002.json")
+        data = {good: b"checkpoint", wrong: b"changed"}
+
+        class Pod:
+            def run(self, program, args, timeout=30, read_only=False):
+                assert program is gcloud.POD_EXPORTS and read_only
+                return {good: {"sha256": hashlib.sha256(b"checkpoint").hexdigest(), "bytes": 10}, gone: None,
+                        wrong: {"sha256": "0" * 64, "bytes": 7}}
+
+            def get(self, remote, local, timeout=600):
+                Path(local).write_bytes(data[remote])
+        cycle.pod = Pod()
+        cycle.manifest = {"exports": [good, gone]}
+        cycle.export(lambda: 3600)
+        record = json.loads((cycle.control / "exports.json").read_text())
+        self.assertEqual(Path(record["files"][good]["local"]).read_bytes(), b"checkpoint")
+        self.assertEqual(Path(record["files"][good]["local"]).name, "checkpoints__G1__block-002.json")
+        self.assertEqual(record["files"][gone], {"error": "absent on the volume"})
+        self.assertEqual(cycle.result["exports"], {"files": 1, "error": None})
+        cycle.manifest = {"exports": [wrong]}
+        cycle.export(lambda: 3600)  # a copy that differs is an error, recorded; the release still follows
+        self.assertIn("exported file differs", json.loads((cycle.control / "exports.json").read_text())["error"])
+        cycle.manifest = {"exports": [good]}
+        cycle.export(lambda: 10)  # too little time: recorded, nothing fetched
+        self.assertIn("too little time", json.loads((cycle.control / "exports.json").read_text())["error"])
+        (cycle.control / "exports.json").unlink()
+        cycle.manifest = {}
+        cycle.export(lambda: 3600)
+        self.assertFalse((cycle.control / "exports.json").exists())
 
     def test_the_release_path_signals_dispatchers_before_stopping_the_worker(self):
         cycle = gcloud.Cycle.__new__(gcloud.Cycle)

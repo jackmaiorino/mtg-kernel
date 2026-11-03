@@ -193,12 +193,18 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
             campaign[key] = item
     require(spec["mode"] == "qualification" or "placement_record" in campaign,
             "production needs the placement record on the volume")
+    # Files a lease copies home after its recovery (a block-2 checkpoint for Jack's PC's qualification items 4
+    # and 5): campaign-relative paths, each fetched and checked against its SHA256 on the Pod.
+    exports = spec.get("exports", [])
+    require(isinstance(exports, list) and len(set(exports)) == len(exports) and all(
+        isinstance(item, str) and item and not PurePosixPath(item).is_absolute() and ".." not in PurePosixPath(item).parts
+        for item in exports), "exports are distinct campaign-relative paths")
     block = spec.get("lease_block_seconds", template.get("lease_block_seconds"))
     if block is not None:
         cloud.native_dispatch.positive(block, "lease block seconds")
         campaign["lease_block_seconds"] = block
     cloud.native_dispatch.positive(campaign["wall_seconds"], "wall-time limit")
-    extra = {}
+    extra = {"exports": [str(base / "campaign" / item) for item in exports]} if exports else {}
     if spec["mode"] == "qualification":
         inventory = read(spec["inventory"])
         inventory["inventory"] = {host: {**status, "evidence": carry(status["evidence"])}
@@ -343,6 +349,16 @@ with tarfile.open(out, "w:gz", compresslevel=1) as tar:
     tar.addfile(info, io.BytesIO(listing))
 print(json.dumps({"sha256": digest(out), "bytes": out.stat().st_size, "files": len(members), "since_epoch": since,
                   "scope": "qualification", "left_out_over_limit": left_out, "skipped_dirs": sorted(skipped_dirs)}))
+'''
+
+
+POD_EXPORTS = '''#pod:exports
+import pathlib
+out = {}
+for path in ARGS["paths"]:
+    item = pathlib.Path(path)
+    out[path] = {"sha256": digest(item), "bytes": item.stat().st_size} if item.is_file() else None
+print(json.dumps(out))
 '''
 
 
@@ -709,6 +725,36 @@ class Cycle(cloud.Cycle):
                 runs[run] = {"blocks_done": [key for key, value in read(path)["blocks"].items() if value.get("done")]}
         self.count(runs)
         self.result["recovered"] = True
+        self.export(left)
+
+    def export(self, left) -> None:
+        """Copy the package's exports home (control/exports), each checked against its SHA256 on the Pod;
+        what time or the Pod does not allow is recorded, never retried past the recovery deadline."""
+        paths = self.manifest.get("exports") or []
+        if not paths:
+            return
+        record = {"files": {}}
+        try:
+            require(left() > 60, "too little time before the guards' release")
+            listed = self.pod.run(POD_EXPORTS, {"paths": paths}, timeout=max(1, min(120, left())), read_only=True)
+            folder = self.control / "exports"
+            folder.mkdir(exist_ok=True)
+            for path in paths:
+                found = listed.get(path)
+                if found is None:
+                    record["files"][path] = {"error": "absent on the volume"}
+                    continue
+                target = folder / safe_name(PurePosixPath(path).relative_to(self.base / "campaign").as_posix()
+                                            .replace("/", "__"))
+                require(left() > 30, "too little time before the guards' release")
+                self.pod.get(path, target, timeout=max(1, left() - 30))
+                require(sha(target) == found["sha256"], "exported file differs: " + path)
+                record["files"][path] = {"local": str(target), **found}
+        except Exception as error:  # noqa: BLE001 - the release still follows
+            record["error"] = f"{type(error).__name__}: {error}"[-400:]
+        write(self.control / "exports.json", record, replace=True)
+        self.result["exports"] = {"files": len([v for v in record["files"].values() if "local" in v]),
+                                  "error": record.get("error")}
 
 
 def driver_command(manifest):

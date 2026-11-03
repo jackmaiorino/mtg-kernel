@@ -427,6 +427,7 @@ def checkpoint_identity(item: dict) -> dict:
 
 
 IDENTITY_KEYS = ("state_sha256", "adam_step", "content_sha256")
+RECORD_NAME = "QUALIFICATION-RECORD.json"  # ``record``'s output in the qualification folder
 
 # The block identity the qualification items judge (G(i) lead rulings of 2026-11-01, QUALIFICATION-RESTART.md
 # "Investigation outcome"; mtg-kernel#475). Episode files embed absolute paths and path-derived SHA256s (the
@@ -487,6 +488,16 @@ def compare(campaign: driver.Campaign, run: str, block: int, straight: dict) -> 
     interrupted = len(attempts) > 1 and attempts[0]["outcome"] == "interrupted"
     return {"straight": straight, "rerun": rerun, "attempts": attempts, "interrupted": interrupted,
             "identical": judged_equal(straight, rerun), "rule": JUDGED_RULE}
+
+
+def record_after(campaign_path: Path, plan_path: Path, out: Path, log) -> None:
+    """Items 2 and 7 and the run's measurements (``record``) from the volume itself, beside RESULT.json, so a
+    qualification lease brings them home with its folder; a failure here is an event, the verdicts stand."""
+    try:
+        recorded = record(campaign_path, plan_path, out / RECORD_NAME)
+        log(kind="record", record=recorded, passed=read(out / RECORD_NAME)["pass"])
+    except Exception as error:  # noqa: BLE001 - the qualification's own verdicts are already written
+        log(kind="record-error", error_type=type(error).__name__, error=str(error)[-4000:])
 
 
 def legacy_stage(value: dict) -> bool:
@@ -641,6 +652,7 @@ def run(campaign_path: Path, plan_path: Path) -> int:
         log(kind="done", passed=passed, legacy_stages=legacy)
         write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed,
                                          "rule": JUDGED_RULE, "legacy_stages": legacy})
+        record_after(campaign_path, plan_path, out, log)
         return 0 if passed else 1
     except BaseException as error:  # the supervisor discards stderr: the reason goes in the events
         log(kind="error", error_type=type(error).__name__, error=str(error)[-4000:])
