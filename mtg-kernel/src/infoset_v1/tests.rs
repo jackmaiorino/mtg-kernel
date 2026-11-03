@@ -780,10 +780,22 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
                     seat(d.acting_player) == v && inclusion(&live),
                     seat(e.acting_player) == v && inclusion(&imported),
                 );
-                assert_eq!(
-                    in_live, in_imported,
-                    "{decks:?}: depth {depth}: scans end together"
-                );
+                if in_live != in_imported {
+                    let forms = |x: &FastActorSessionV1| {
+                        x.diagnostic_current_action_semantics()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|a| serde_json::to_string(a).unwrap())
+                            .collect::<Vec<_>>()
+                    };
+                    panic!(
+                        "{decks:?}: depth {depth}: scans end apart (live {in_live}, imported {in_imported}); root combat {combat:?}; live actor {:?} menu {:?}; imported actor {:?} menu {:?}",
+                        d.acting_player,
+                        forms(&live),
+                        e.acting_player,
+                        forms(&imported)
+                    );
+                }
                 if !in_live {
                     break;
                 }
