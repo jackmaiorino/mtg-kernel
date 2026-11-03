@@ -395,7 +395,9 @@ fn point_v1(req: &PointRequestV1) -> Result<Value, String> {
     if super::play::acting(&d).0 != req.payload.viewer {
         return Ok(json!({"viewer_decision": false}));
     }
-    let keys = crate::infoset_v1::order::row_keys_v1(&s, None).ok_or("the point has no V4 menu")?;
+    let ids = crate::infoset_v1::order::imported_ids_v1(&req.payload.handles);
+    let keys =
+        crate::infoset_v1::order::row_keys_v1(&s, Some(&ids)).ok_or("the point has no V4 menu")?;
     let mut scratch = crate::agent_bridge_flat_v4_encode::FlatV4EncodeScratchV1::default();
     let encoded = crate::agent_bridge_flat_v4_encode::encode_flat_v4_tensor_v1(&s, &mut scratch)
         .map_err(|e| format!("encode: {e:?}"))?;
@@ -759,7 +761,11 @@ mod tests {
                 assert_eq!(root["eligible"], json!(true));
                 assert_eq!(
                     root["keys"],
-                    json!(crate::infoset_v1::order::row_keys_v1(&imported, None).unwrap())
+                    json!(crate::infoset_v1::order::row_keys_v1(
+                        &imported,
+                        Some(&crate::infoset_v1::order::imported_ids_v1(&payload.handles))
+                    )
+                    .unwrap())
                 );
                 let width = d.legal_action_count as usize;
                 assert_eq!(root["flat"]["row_candidate_ids"].as_array().unwrap().len(), width);

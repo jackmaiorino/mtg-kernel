@@ -21,7 +21,7 @@ use crate::infoset_v1::{
 use crate::rl::{ActionSemanticV1, PlayerSeatV1};
 use crate::rl_session::{FastActorSessionV1, RlSessionDecisionV1};
 use crate::runtime_decks::runtime_deck_by_id;
-use crate::infoset_v1::order::{canonical_ids_v1, live_rows_v1, row_keys_v1};
+use crate::infoset_v1::order::{canonical_ids_v1, imported_ids_v1, live_rows_v1, row_keys_v1};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -114,7 +114,11 @@ pub(crate) fn infoset_extension_v1(
                 // buffered group's completions.
                 let ids = canonical_ids_v1(&export);
                 let lockstep_keys = row_keys_v1(fast, Some(&ids));
-                let imported_keys = payload.import().ok().and_then(|s| row_keys_v1(&s, None));
+                let imported_ids = imported_ids_v1(&payload.handles);
+                let imported_keys = payload
+                    .import()
+                    .ok()
+                    .and_then(|s| row_keys_v1(&s, Some(&imported_ids)));
                 let live_rows = match (&lockstep_keys, &imported_keys) {
                     (Some(a), Some(b)) => live_rows_v1(a, b),
                     _ => None,

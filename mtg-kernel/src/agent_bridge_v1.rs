@@ -3558,7 +3558,12 @@ mod tests {
 lockstep {:#?}
 imported {:#?}",
                                     forms(lockstep, Some(&ids)),
-                                    forms(&imported, None)
+                                    forms(
+                                        &imported,
+                                        Some(&crate::infoset_v1::order::imported_ids_v1(
+                                            &payload.handles
+                                        ))
+                                    )
                                 );
                             }
                             line = server.handle_line(&flat_v4_step(
@@ -3590,6 +3595,8 @@ imported {:#?}",
                     )
                     .expect("the export repeats");
                     let ids = crate::infoset_v1::order::canonical_ids_v1(&export);
+                    let imported_ids =
+                        crate::infoset_v1::order::imported_ids_v1(&payload.handles);
                     let semantic = |s: &crate::rl_session::FastActorSessionV1,
                                     row: usize,
                                     ids: Option<&std::collections::BTreeMap<u64, u64>>| {
@@ -3603,7 +3610,7 @@ imported {:#?}",
                     for (i, &r) in rows.iter().enumerate() {
                         assert_eq!(
                             semantic(lockstep, r as usize, Some(&ids)),
-                            semantic(&imported, i, None),
+                            semantic(&imported, i, Some(&imported_ids)),
                             "{deck}: imported row {i} and lockstep row {r} are one action"
                         );
                     }

@@ -22,8 +22,7 @@ const KEY_HEX: usize = 16;
 /// Renames `arena_id`s through `ids` (none: keep them, the imported side),
 /// drops the bookkeeping fields AC3 drops and sorts the lists the engine
 /// keeps in native-id order (legal targets, object lists). An `arena_id`
-/// missing from `ids` becomes `"unmapped:<n>"`, which never equals an
-/// imported row.
+/// missing from `ids` becomes `"hidden"`.
 pub(crate) fn canonical_rename_v1(v: &mut Value, ids: Option<&BTreeMap<u64, u64>>) {
     match v {
         Value::Object(m) => {
@@ -39,7 +38,7 @@ pub(crate) fn canonical_rename_v1(v: &mut Value, ids: Option<&BTreeMap<u64, u64>
                     if let (Some(n), Some(ids)) = (x.as_u64(), ids) {
                         *x = ids
                             .get(&n)
-                            .map_or(serde_json::json!(format!("unmapped:{n}")), |c| {
+                            .map_or(serde_json::json!("hidden"), |c| {
                                 serde_json::json!(c)
                             });
                     }
@@ -76,6 +75,16 @@ pub(crate) fn canonical_ids_v1(export: &super::InfosetV1) -> BTreeMap<u64, u64> 
         .iter()
         .enumerate()
         .map(|(n, id)| (u64::from(id.0), n as u64))
+        .collect()
+}
+
+/// The imported side's map: identity on the arena indices of `C:` handles.
+pub(crate) fn imported_ids_v1(handles: &[String]) -> BTreeMap<u64, u64> {
+    handles
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| h.starts_with("C:"))
+        .map(|(n, _)| (n as u64, n as u64))
         .collect()
 }
 
@@ -158,7 +167,7 @@ mod tests {
             live,
             serde_json::json!({"kind": "x", "cards": [{"arena_id": 0}, {"arena_id": 1}],
                 "legal_targets": [{"arena_id": 0}, {"arena_id": 1}],
-                "other": {"arena_id": "unmapped:7"}})
+                "other": {"arena_id": "hidden"}})
         );
         let mut imported = serde_json::json!({"cards": [{"arena_id": 1}, {"arena_id": 0}]});
         canonical_rename_v1(&mut imported, None);
