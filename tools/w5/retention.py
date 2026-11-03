@@ -45,6 +45,7 @@ Commands:
 """
 import argparse
 import hashlib
+import math
 import json
 import os
 import subprocess
@@ -210,6 +211,26 @@ def snapshot(chain_path, binary, snapshot_from):
     return made
 
 
+def probe_snapshot_bytes(records, binary):
+    """The size of a weights-only snapshot of the latest checkpoint, cut to a temporary file and deleted."""
+    if binary is None:
+        return None
+    for rec in reversed(records):
+        if Path(rec['checkpoint']['path']).exists():
+            out = Path(rec['checkpoint']['path']).with_name('probe.weights')
+            out.unlink(missing_ok=True)
+            try:
+                run = subprocess.run([binary, 'weights-snapshot', '--input', rec['checkpoint']['path'], '--sha256',
+                                      rec['checkpoint']['sha256'], '--output', out.resolve().as_posix()],
+                                     capture_output=True, text=True)
+                if run.returncode != 0:
+                    raise SystemExit(f'stop: the probe snapshot failed: {run.stderr.strip()[-400:]}')
+                return json.loads(run.stdout)['snapshot_bytes']
+            finally:
+                out.unlink(missing_ok=True)
+    return None
+
+
 def plan(chain_path, snapshot_from=None):
     """Rolling prune plan. A checkpoint is pruned when its boundary keeps no full state, its segment and the next
     segment are complete, it is not the latest, and, inside the snapshot window (boundary at or past
@@ -217,6 +238,11 @@ def plan(chain_path, snapshot_from=None):
     recent are pruned."""
     chain, records = index(chain_path)
     have = snapshots(chain_path)
+    after = {r['boundary']: r['after_state_sha256'] for r in records}
+
+    def verified(b):
+        snap = have.get(b)
+        return bool(snap) and snap['cut_from_state_sha256'] == after.get(b) and sha(snap['path']) == snap['sha256']
     latest = records[-1]['boundary'] if records else 0
     segs = chain['segments']
     complete = [segment_complete(s) for s in segs]
@@ -225,7 +251,7 @@ def plan(chain_path, snapshot_from=None):
         s = rec['segment']
         if keeps_full_state(chain['arm'], rec['boundary'], latest) or rec['boundary'] == latest:
             continue
-        if snapshot_from is not None and rec['boundary'] >= snapshot_from and rec['boundary'] not in have:
+        if snapshot_from is not None and rec['boundary'] >= snapshot_from and not verified(rec['boundary']):
             continue
         if not (complete[s] and s + 1 < len(segs) and complete[s + 1]):
             continue
@@ -323,7 +349,8 @@ def decide(x_chain, x_records, c_chain, c_records, c_ended, x_running_s=None, no
         per_update = ((recent[-1]['ledger_usec'] - recent[0]['ledger_usec']) / (len(recent) - 1)
                       if len(recent) > 1 else None)
         if per_update and snapshot_bytes:
-            projected = (PAUSE_AT - SNAPSHOT_TRIGGER) * rhat / per_update
+            # Whole boundaries, both ends of the window included.
+            projected = math.ceil((PAUSE_AT - SNAPSHOT_TRIGGER) * rhat / per_update) + 1
             fits = snapshot_bytes * projected <= SNAPSHOT_CAP_BYTES
         else:
             projected, fits = None, False
@@ -452,7 +479,9 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
             continue
         item = {'boundary': rec['boundary'], 'kind': 'full', 'path': path.as_posix(),
                 'sha256': rec['checkpoint']['sha256'], 'bytes': path.stat().st_size}
-        (keep if rec['boundary'] == selected_boundary and not keep else prune).append(item)
+        # The endpoint's full state is kept only when it still matches its pin (as selection requires).
+        intact = rec['boundary'] == selected_boundary and not keep and sha(path) == rec['checkpoint']['sha256']
+        (keep if intact else prune).append(item)
     for b, snap in sorted(weights.items()):
         item = {'boundary': b, 'kind': 'weights', 'path': snap['path'], 'sha256': snap['sha256'],
                 'bytes': Path(snap['path']).stat().st_size}
@@ -500,7 +529,9 @@ def guard(roots, cap_bytes, next_bytes=0, chains=()):
         chain, records = index(chain_path)
         full = [Path(r['checkpoint']['path']) for r in records if Path(r['checkpoint']['path']).exists()]
         weights = [Path(s['path']) for s in snapshots(chain_path).values()]
-        escaped += [p.as_posix() for p in full + weights if not under(p, roots)]
+        # Where the chain will write (segment roots and its snapshot directory), checked before anything exists.
+        destinations = [Path(seg['root']) for seg in chain['segments']] + [snapshot_dir(chain_path, chain)]
+        escaped += [p.as_posix() for p in destinations + full + weights if not under(p, roots)]
         kinds.append({'chain': chain['chain'], 'full_state_bytes': sum(p.stat().st_size for p in full),
                       'full_states': len(full), 'weights_bytes': sum(p.stat().st_size for p in weights),
                       'weights_snapshots': len(weights)})
@@ -521,6 +552,7 @@ def main(argv=None):
     p = sub.add_parser('decide')
     p.add_argument('x_chain'); p.add_argument('c_chain'); p.add_argument('--c-ended', action='store_true')
     p.add_argument('--x-running-seconds', type=float); p.add_argument('--now', type=float)
+    p.add_argument('--binary')
     p = sub.add_parser('select'); p.add_argument('chain'); p.add_argument('r_usec', type=int)
     p = sub.add_parser('replay-config')
     p.add_argument('chain'); p.add_argument('spec'); p.add_argument('out'); p.add_argument('output_dir')
@@ -547,15 +579,13 @@ def main(argv=None):
     elif a.cmd == 'decide':
         x_chain, x_records = index(a.x_chain)
         c_chain, c_records = index(a.c_chain)
-        # A measured snapshot when one exists; otherwise a third of the latest full state (parameters and two
-        # moment lists of equal size), labelled as an estimate.
+        # A measured snapshot: one already cut, or a probe cut from the latest checkpoint and deleted. Without
+        # either the window is not admitted (the endpoint is rebuilt by replay).
         made = snapshots(a.x_chain)
         if made:
             size, measured = max(s['bytes'] for s in made.values()), True
         else:
-            full = [Path(r['checkpoint']['path']).stat().st_size for r in x_records[-1:]
-                    if Path(r['checkpoint']['path']).exists()]
-            size, measured = (full[0] // 3 if full else None), False
+            size, measured = probe_snapshot_bytes(x_records, a.binary), a.binary is not None
         out = decide(x_chain, x_records, c_chain, c_records, a.c_ended, a.x_running_seconds, a.now, size)
         out['snapshot_bytes'] = size
         out['snapshot_bytes_measured'] = measured

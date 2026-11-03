@@ -270,6 +270,16 @@ class RetentionTests(unittest.TestCase):
             self.assertNotIn(101, [p['boundary'] for p in manifest['prune'] if p['kind'] == 'weights'])
             self.assertEqual(set(manifest['prune_bytes_by_kind']), {'full', 'weights'})
             self.assertEqual(manifest['prune_bytes_by_kind']['weights'], 10 * (len(have) - 1))
+            # A damaged full state at the endpoint is not kept; its verified snapshot is.
+            full150 = next(r for r in records if r['boundary'] == 150)['checkpoint']['path']
+            Path(full150).write_text('damaged')
+            manifest = retention.prune_manifest(chain, records, 150, weights=have)
+            self.assertEqual([(k['boundary'], k['kind']) for k in manifest['keep']['selected_checkpoint']],
+                             [(150, 'weights')])
+            self.assertIn((150, 'full'), [(p['boundary'], p['kind']) for p in manifest['prune']])
+            # A snapshot that no longer matches its index never authorizes a prune.
+            Path(have[160]['path']).write_bytes(b'x' * 10)
+            self.assertNotIn(160, {c['boundary'] for c in retention.plan(chain_path, snapshot_from=100)['checkpoints']})
             # The guard reports both kinds and refuses a snapshot directory outside its roots.
             ok = retention.guard([tmp], 10**12, chains=[chain_path])
             self.assertTrue(ok['ok'])
@@ -277,6 +287,16 @@ class RetentionTests(unittest.TestCase):
             self.assertGreater(ok['by_chain'][0]['full_state_bytes'], 0)
             outside = retention.guard([Path(tmp) / 'X-seg000'], 10**12, chains=[chain_path])
             self.assertFalse(outside['ok'])
+
+    def test_the_guard_checks_destinations_before_files_exist(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as elsewhere:
+            chain_path = make_chain(tmp, 'X', segments=1, per_segment=2)
+            doc = json.loads(Path(chain_path).read_text())
+            doc['snapshot_dir'] = elsewhere
+            Path(chain_path).write_text(json.dumps(doc))
+            out = retention.guard([tmp], 10**12, chains=[chain_path])
+            self.assertFalse(out['ok'])
+            self.assertIn(Path(elsewhere).as_posix(), [Path(p).as_posix() for p in out['outside_roots']])
 
     def test_a_snapshot_cut_from_another_state_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
