@@ -121,6 +121,7 @@ def selection_facts(wrapper_source: str, bot_source: str) -> dict:
     """How the deployed board selects: the wrapper's buffered groups and the bot's completion mapping."""
     wrapper, bot = module_constants(wrapper_source), module_constants(bot_source)
     return {"buffered_completion_proposals": wrapper.get("PROPOSALS") == PROPOSALS,
+            "wrapper_proposals_constant": wrapper.get("PROPOSALS"),
             "bot_reads_completion_proposals": bot.get("PROPOSAL_SCHEMA") == PROPOSALS,
             "bot_completion_mapping": bot.get("PROPOSAL_MAPPING"),
             "bot_stepwise_sampler": bot.get("SAMPLED")}
@@ -132,7 +133,8 @@ def evaluate(raw: dict, training_profile: dict, h_runtimes: list[str], s0_profil
     checks = dict(raw["checks"])
     training_runtimes = set(training_profile)
     # Equal only for a known training-style deployment: no buffered groups and the stepwise sampler training uses.
-    checks["selection_equal"] = (not selection["buffered_completion_proposals"]
+    checks["selection_equal"] = (selection.get("wrapper_proposals_constant") is None
+                                 and not selection["buffered_completion_proposals"]
                                  and selection.get("bot_stepwise_sampler") == STEPWISE)
     checks["h_panel_runtime_equals_training"] = bool(h_runtimes) and set(h_runtimes) == training_runtimes
     checks["s0_runtime_equals_training"] = bool(s0_profile) and set(s0_profile) == training_runtimes

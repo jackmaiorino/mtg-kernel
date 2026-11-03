@@ -22,7 +22,8 @@ CARDS = json.loads((REPO / "data" / "cards_v1.json").read_text(encoding="utf-8")
 NEUTRAL = json.loads(json.dumps(MANIFEST))
 NEUTRAL["engine"]["rules_snapshot_id"] += ":neutral-v2"
 WRAPPER = {"buffered_completion_proposals": True, "bot_reads_completion_proposals": True,
-           "bot_completion_mapping": rr.MAPPING, "bot_stepwise_sampler": "sampled-wide-v1"}
+           "bot_completion_mapping": rr.MAPPING, "bot_stepwise_sampler": "sampled-wide-v1",
+           "wrapper_proposals_constant": rr.PROPOSALS}
 NO_DELVE = {"training": [], "board": []}
 
 
@@ -89,6 +90,8 @@ class ExceptionTests(unittest.TestCase):
         out = board_runtime(wrapper=unknown)
         self.assertIn("selection_equal", out["raw_failures"])
         self.assertIn("buffered-completion-selection", [e["exception"] for e in out["refused_exceptions"]])
+        other_wrapper = rr.selection_facts('PROPOSALS = "unsupported/v2"\n', bot)  # an unknown buffering mode
+        self.assertFalse(board_runtime(wrapper=other_wrapper)["raw_checks"]["selection_equal"])
         comment_only = f'# PROPOSALS = "{rr.PROPOSALS}"\nx = "{rr.PROPOSALS}"\n'
         self.assertFalse(rr.selection_facts(comment_only, bot)["buffered_completion_proposals"])
         other = rr.selection_facts(f'PROPOSALS = "{rr.PROPOSALS}"\n', 'PROPOSAL_MAPPING = "argmax"\n')
