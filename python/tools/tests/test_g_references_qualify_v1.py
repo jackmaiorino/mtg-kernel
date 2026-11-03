@@ -442,7 +442,7 @@ class QualifyTests(unittest.TestCase):
         with patch.object(qualify, "record", side_effect=recorded):
             qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: events.append(fields))
         self.assertEqual([(event["kind"], event["passed"]) for event in events], [("record", False)])
-        self.assertEqual(events[0]["record"]["path"], str(out / qualify.RECORD_NAME))
+        self.assertTrue(Path(events[0]["record"]["path"]).samefile(out / qualify.RECORD_NAME))  # a short-name alias
         events.clear()
         with patch.object(qualify, "record", side_effect=FileNotFoundError("no block 2 checkpoint")):
             qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: events.append(fields))
