@@ -173,6 +173,9 @@ struct WalkV1<'a> {
     transfers: Vec<TransferV1>,
     arrivals: Vec<ArrivalV1>,
     reorders: Vec<(usize, PlayerId)>,
+    /// Unidentified put-backs per owner still on top of the library (no
+    /// reorder since): the next unidentified draws take them back.
+    put_backs_on_top: [usize; 2],
     item: usize,
     next_event: usize,
     inconsistencies: Vec<String>,
@@ -214,6 +217,7 @@ pub(crate) fn project_v1(
         transfers: Vec::new(),
         arrivals: Vec::new(),
         reorders: Vec::new(),
+        put_backs_on_top: [0, 0],
         item: 0,
         next_event: 0,
         inconsistencies: Vec::new(),
@@ -520,6 +524,15 @@ impl WalkV1<'_> {
                         owner: *player,
                         dir: TransferDirV1::Draw,
                     });
+                    // A draw from the top takes back the latest unidentified
+                    // put-back (6.4 gap; R8 fallback, ruling 40.4).
+                    let pending = &mut self.put_backs_on_top[player.index()];
+                    if *pending > 0 {
+                        *pending -= 1;
+                        if *player == self.opp() {
+                            self.survivors.mark_drawn_back();
+                        }
+                    }
                 }
                 // Prior tracking identifies the moved card only if V still
                 // tracks it after the move (a known library card drawn); an
@@ -558,6 +571,7 @@ impl WalkV1<'_> {
                     });
                 }
                 if *from == Zone::Hand && *to == Zone::Library && !named {
+                    self.put_backs_on_top[owner.index()] += 1;
                     self.transfers.push(TransferV1 {
                         item: self.item,
                         owner,
@@ -617,6 +631,7 @@ impl WalkV1<'_> {
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
                 self.reorders.push((self.item, *owner));
+                self.put_backs_on_top[owner.index()] = 0;
                 self.library[owner.index()].clear();
                 self.settle(&[]);
             }
@@ -646,6 +661,7 @@ impl WalkV1<'_> {
                 revealed_to,
             } => {
                 self.reorders.push((self.item, *owner));
+                self.put_backs_on_top[owner.index()] = 0;
                 let len = ordered.len() as u32;
                 self.library[owner.index()].retain(|p, _| *p >= len);
                 let mut observed = Vec::new();
@@ -663,6 +679,7 @@ impl WalkV1<'_> {
                 ordered_bottom,
             } => {
                 self.reorders.push((self.item, *owner));
+                self.put_backs_on_top[owner.index()] = 0;
                 let top = retained_top.len() as u32;
                 let bottom = ordered_bottom.len() as u32;
                 let prefix = top + bottom;

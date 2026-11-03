@@ -969,10 +969,12 @@ mod tests {
                 }
             }
         }
+        let gaps = GAPS.load(std::sync::atomic::Ordering::Relaxed);
         eprintln!(
-            "realizability: {checked} fixture decisions realized for P, {} proven unrealizable (draw-back gap); L9 unrealizable at {l9} competing-pin decisions",
-            GAPS.load(std::sync::atomic::Ordering::Relaxed)
+            "realizability: {checked} fixture decisions realized for P, {gaps} proven unrealizable; L9 unrealizable at {l9} competing-pin decisions"
         );
+        // With R8's draw-back fallback no exported decision is unrealizable.
+        assert_eq!(gaps, 0, "P exports an unrealizable state");
         assert!(
             l9 > 0,
             "W-pin-2 has decisions where two pins compete for one draw"
@@ -1089,9 +1091,10 @@ mod tests {
             }
         }
         eprintln!(
-            "realizability on engine games: {checked} realized, {gaps} proven unrealizable (draw-back gap), failures {failures:#?}"
+            "realizability on engine games: {checked} realized, {gaps} proven unrealizable, failures {failures:#?}"
         );
         assert!(checked > 0);
         assert!(failures.is_empty());
+        assert_eq!(gaps, 0, "P exports an unrealizable state");
     }
 }

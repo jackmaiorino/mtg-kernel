@@ -602,6 +602,16 @@ pub(crate) fn export_v1(
             ));
         }
     };
+    if survivors.drawn_back() && !is(MutantV1::L11) {
+        // Ruling 40.4's fallback for the draw-back gap of 6.4: after an
+        // unidentified put-back, a draw from the top took a put-back card
+        // back while a node lived, so the node's bound may understate what
+        // V knows; refuse until the node is pruned.
+        return Err(refuse(
+            RefusalCodeV1::R8,
+            "a draw took back a put-back card while a survivor node lives",
+        ));
+    }
     if survivors.tainted() && !is(MutantV1::L11) {
         return Err(refuse(
             RefusalCodeV1::R8b,

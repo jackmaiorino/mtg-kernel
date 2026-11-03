@@ -43,6 +43,10 @@ pub(crate) struct NodeV1 {
     /// R8b: a later public event located a card of a name in K outside the
     /// hand while this node existed.
     pub tainted: bool,
+    /// R8 (ruling 40.4 fallback): an unidentified draw took back a card V
+    /// knows was put back unidentified while this node existed, so V may
+    /// know more members are in the hand than m says.
+    pub drawn_back: bool,
     alive: bool,
 }
 
@@ -177,6 +181,7 @@ impl SurvivorTreeV1 {
             m: root_m,
             parent: None,
             tainted: false,
+            drawn_back: false,
             alive: true,
         });
         for i in tops {
@@ -187,9 +192,23 @@ impl SurvivorTreeV1 {
             m: t_size - 1,
             parent: Some(root),
             tainted: false,
+            drawn_back: false,
             alive: true,
         });
         self.prune();
+    }
+
+    /// Whether a live node saw a draw-back (R8).
+    pub(crate) fn drawn_back(&self) -> bool {
+        self.live().any(|i| self.nodes[i].drawn_back)
+    }
+
+    /// An unidentified draw took back a put-back card: every live node is
+    /// marked until it is pruned.
+    pub(crate) fn mark_drawn_back(&mut self) {
+        for i in self.live().collect::<Vec<_>>() {
+            self.nodes[i].drawn_back = true;
+        }
     }
 
     /// R8b: every node whose K holds `name` is tainted.
@@ -398,6 +417,7 @@ mod tests {
                 m: 2,
                 parent: None,
                 tainted: false,
+                drawn_back: false,
                 alive: true
             }]
         );
@@ -418,6 +438,7 @@ mod tests {
             m: 2,
             parent: None,
             tainted: false,
+            drawn_back: false,
             alive: true,
         });
         f.nodes.push(NodeV1 {
@@ -425,6 +446,7 @@ mod tests {
             m: 1,
             parent: Some(0),
             tainted: false,
+            drawn_back: false,
             alive: true,
         });
         let pool = names(&[1, 1, 1, 2]);

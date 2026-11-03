@@ -1042,11 +1042,26 @@ fn spy_versus_terror_engine_fixture() {
         !after.is_empty(),
         "the survivor node ({{Terror, Ponder, Mystic}}, 1) appears"
     );
-    for r in &after {
+    // Exported while the node holds, until Terror's next draw takes a
+    // put-back card back (R8, ruling 40.4's fallback for that 6.4 gap).
+    let first_r8 = after
+        .iter()
+        .position(|r| r.p == Err("R8".to_string()))
+        .unwrap_or(after.len());
+    assert!(first_r8 > 0, "exports before the draw-back");
+    for r in &after[..first_r8] {
         assert!(r.p.is_ok(), "exported while the node holds: {:?}", r.p);
         assert_eq!(r.known.len(), 1, "one known_name survivor: {:?}", r.known);
     }
-    eprintln!("spy-versus-terror canonical survivor: {:?}", after[0].known);
+    assert!(after[first_r8..]
+        .iter()
+        .all(|r| r.p == Err("R8".to_string())));
+    eprintln!(
+        "spy-versus-terror canonical survivor: {:?}; R8 (draw-back) at {} of {} node decisions",
+        after[0].known,
+        after.len() - first_r8,
+        after.len()
+    );
     assert!(reports.iter().all(|r| r.compared > 0 && !r.truncated));
 }
 
@@ -1067,8 +1082,13 @@ fn fable_bounce_engine_fixture() {
         !bounced.is_empty(),
         "the survivor node ({{Hawk x3}}, 1) appears"
     );
-    let last = bounced.last().expect("checked");
-    assert!(last.p.is_ok(), "{:?}", last.p);
+    // The last export while the node holds (after the bounce, before the
+    // owner's next draw takes a put-back card back: R8).
+    let last = bounced
+        .iter()
+        .rev()
+        .find(|r| r.p.is_ok())
+        .expect("an export while the node holds");
     assert_eq!(
         last.known,
         vec!["Squadron Hawk".to_string()],
