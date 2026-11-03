@@ -568,36 +568,9 @@ impl WalkV1<'_> {
                         dir: TransferDirV1::Draw,
                     });
                     self.top_draws.push((self.item, *player));
-                    // A draw from the top takes back the latest unidentified
-                    // put-back (6.4 gap; R8 fallback, ruling 40.4). A scry or
-                    // a reorder since keeps the put-back cards among the top
-                    // ones, so only a shuffle clears the count (conservative).
-                    // With the library order certain, the draw takes the newest
-                    // put-back's card back: its removal is undone (the
-                    // draw-back amendment to 6.4, Sol-reviewed); if that cannot
-                    // be done soundly, or the order is uncertain while an
-                    // informative put-back remains, R8 latches (ruling 40.4).
-                    let opp = self.opp();
-                    if self.put_backs_scrambled[player.index()] {
-                        let informative = self.put_backs_on_top[player.index()]
-                            .iter()
-                            .any(|x| x.informative);
-                        if informative && *player == opp {
-                            self.r8_latch = true;
-                        }
-                    } else if let Some(top) = self.put_backs_on_top[player.index()].pop() {
-                        if *player == opp && top.informative {
-                            let undone = self.survivors.undo_departure(&top.record);
-                            let keep: Vec<u64> = self.put_backs_on_top[player.index()]
-                                .iter()
-                                .flat_map(|x| x.record.iter().copied())
-                                .collect();
-                            self.survivors.unpin(&top.record, &keep);
-                            if !undone {
-                                self.r8_latch = true;
-                            }
-                        }
-                    }
+                }
+                if from_library {
+                    self.draw_from_top(*player, !named && !was);
                 }
                 // Prior tracking identifies the moved card only if V still
                 // tracks it after the move (a known library card drawn); an
@@ -638,7 +611,8 @@ impl WalkV1<'_> {
                         dir: TransferDirV1::Draw,
                     });
                 }
-                if *from == Zone::Hand && *to == Zone::Library && !named {
+                let put_back = *from == Zone::Hand && *to == Zone::Library && !named;
+                if put_back {
                     let record = if owner == self.opp() {
                         std::mem::take(&mut self.last_departure)
                     } else {
@@ -648,13 +622,29 @@ impl WalkV1<'_> {
                         informative,
                         record,
                     });
+                    // On top only when the insertion note says position 0;
+                    // anywhere else (or unknown) the order is uncertain.
+                    let at_top = positions.iter().any(|n| {
+                        matches!(n.kind, ObservationNoteKindV1::LibraryInsertion { owner: o, position: 0 } if o == owner)
+                    });
+                    if !at_top {
+                        self.put_backs_scrambled[owner.index()] = true;
+                    }
+                } else if (*from == Zone::Library || *to == Zone::Library)
+                    && !self.put_backs_on_top[owner.index()].is_empty()
+                {
+                    // Any other move into or out of that library (a search,
+                    // a mill, an identified card put on top) disturbs the
+                    // put-back cards' positions.
+                    self.put_backs_scrambled[owner.index()] = true;
+                }
+                if put_back {
                     self.transfers.push(TransferV1 {
                         item: self.item,
                         owner,
                         dir: TransferDirV1::PutBack,
                     });
                 }
-                let _ = positions;
                 // Prior tracking identifies the moved card only if V still
                 // tracks it after the move (a known library card drawn); an
                 // unidentified departure never names it.
@@ -859,6 +849,40 @@ impl WalkV1<'_> {
                     .map(|(p, o)| (if p >= *position { p + 1 } else { p }, o))
                     .collect();
             }
+        }
+    }
+
+    /// A draw from the top of `player`'s library. With the order certain it
+    /// takes the newest put-back's card: an unidentified draw of a card from
+    /// a hand V knew about undoes that put-back's removal (the draw-back
+    /// amendment to 6.4, Sol-reviewed); an identified one just retires the
+    /// record. If the undo cannot be done soundly, or the order is uncertain
+    /// while an informative put-back remains, R8 latches (ruling 40.4).
+    fn draw_from_top(&mut self, player: PlayerId, unidentified: bool) {
+        let opp = self.opp();
+        let p = player.index();
+        if self.put_backs_scrambled[p] {
+            let informative = self.put_backs_on_top[p].iter().any(|x| x.informative);
+            if unidentified && informative && player == opp {
+                self.r8_latch = true;
+            }
+            return;
+        }
+        let Some(top) = self.put_backs_on_top[p].pop() else {
+            return;
+        };
+        if player != opp {
+            return;
+        }
+        let undone =
+            !unidentified || !top.informative || self.survivors.undo_departure(&top.record);
+        let keep: Vec<u64> = self.put_backs_on_top[p]
+            .iter()
+            .flat_map(|x| x.record.iter().copied())
+            .collect();
+        self.survivors.unpin(&top.record, &keep);
+        if !undone {
+            self.r8_latch = true;
         }
     }
 

@@ -115,12 +115,16 @@ impl SurvivorTreeV1 {
             .collect()
     }
 
+    /// Depth over active nodes (dormant ones do not count toward R8).
     pub(crate) fn depth(&self) -> usize {
         self.live()
+            .filter(|&i| self.nodes[i].m > 0)
             .map(|mut i| {
                 let mut d = 1;
                 while let Some(p) = self.nodes[i].parent {
-                    d += 1;
+                    if self.nodes[p].m > 0 {
+                        d += 1;
+                    }
                     i = p;
                 }
                 d
