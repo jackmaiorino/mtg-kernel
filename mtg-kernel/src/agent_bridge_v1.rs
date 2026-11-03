@@ -30,7 +30,7 @@ use crate::agent_bridge_flat_v4_encode::{
 };
 pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::agent_bridge_infoset_v1::{
-    infoset_extension_v1, write_receipt_v1, InfosetBridgeV1, SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
+    infoset_extension_v1, preview_row_keys_v1, write_receipt_v1, InfosetBridgeV1, SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
 };
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
@@ -690,6 +690,18 @@ impl SpellbenchBridgeServerV1 {
             Err(_) => return reject("private view failed encoding"),
         };
         let support = private_v2_support(game);
+        // Design 7: when the group's root carried a payload, the preview's
+        // rows carry canonical keys under the root export's id map, so the
+        // entrant can match its local walk against each completion.
+        let keys = match (
+            self.game.as_ref().and_then(|g| g.infoset.as_ref()),
+            game.flat_v4.as_ref(),
+        ) {
+            (Some(infoset), Some(lockstep)) => {
+                preview_row_keys_v1(infoset, expected_step, lockstep.fast_session())
+            }
+            _ => None,
+        };
         let answer = match copy.session_response_to_wire(
             request_id,
             game_id,
@@ -698,7 +710,10 @@ impl SpellbenchBridgeServerV1 {
             extension,
             Some(support),
         ) {
-            WireResponseV1::Decision(view) => {
+            WireResponseV1::Decision(mut view) => {
+                if let Some(keys) = keys {
+                    view["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = keys;
+                }
                 json!({"response_type": "private_preview", "protocol": SPELLBENCH_PROTOCOL_V1,
                 "request_id": request_id, "view": view})
             }
@@ -3387,6 +3402,10 @@ mod tests {
         let mut refusals: std::collections::BTreeMap<String, u64> = Default::default();
         let mut eligible_total = 0;
         let mut longest = 0;
+        let (mut mapped, mut missing_maps) = (0u64, 0u64);
+        fn payload_viewer(p: &crate::infoset_v1::PayloadV1) -> crate::ids::PlayerId {
+            crate::ids::PlayerId(p.viewer)
+        }
         for (deck, seed) in [("CawGates", 5_u64), ("Wildfire", 6), ("Faeries", 7)] {
             let mut server = infoset_server();
             let mut line =
@@ -3492,6 +3511,61 @@ mod tests {
                         k
                     };
                     assert_eq!(kinds(lockstep), kinds(&imported), "{deck}: candidate kinds");
+                    // The order map pairs each imported row with the lockstep
+                    // row of the same action: the actions agree once ids are
+                    // renamed to canonical arena indices, and stepping both
+                    // rows reaches equal canonical menus.
+                    let rows: Vec<u32> = match extension["live_rows"].as_array() {
+                        Some(r) => r.iter().map(|x| x.as_u64().unwrap() as u32).collect(),
+                        None => {
+                            missing_maps += 1;
+                            line = server.handle_line(&flat_v4_step(
+                                &response,
+                                rows_of(&response)[0],
+                            ));
+                            payloads += 1;
+                            continue;
+                        }
+                    };
+                    let keys: Vec<String> = serde_json::from_value(extension["row_keys"].clone())
+                        .expect("row keys");
+                    assert_eq!(rows.len(), keys.len(), "{deck}: one key per lockstep row");
+                    let lists = lockstep.deck_ids_v1().clone().map(|id| {
+                        crate::runtime_decks::runtime_deck_by_id(&id)
+                            .unwrap()
+                            .card_ids
+                            .to_vec()
+                    });
+                    let st = lockstep.game_state();
+                    let export = crate::infoset_v1::export_v1(
+                        &crate::infoset_v1::ExportInputV1 {
+                            state: st,
+                            journal: st.observation_journal.notes(),
+                            viewer: payload_viewer(&payload),
+                            decklists: [&lists[0], &lists[1]],
+                        },
+                        crate::infoset_v1::ExportOptionsV1::default(),
+                    )
+                    .expect("the export repeats");
+                    let ids = crate::infoset_v1::order::canonical_ids_v1(&export);
+                    let semantic = |s: &crate::rl_session::FastActorSessionV1,
+                                    row: usize,
+                                    ids: Option<&std::collections::BTreeMap<u64, u64>>| {
+                        let mut v = serde_json::to_value(
+                            &s.diagnostic_current_action_semantics().unwrap()[row],
+                        )
+                        .unwrap();
+                        crate::infoset_v1::order::canonical_rename_v1(&mut v, ids);
+                        v
+                    };
+                    for (i, &r) in rows.iter().enumerate() {
+                        assert_eq!(
+                            semantic(lockstep, r as usize, Some(&ids)),
+                            semantic(&imported, i, None),
+                            "{deck}: imported row {i} and lockstep row {r} are one action"
+                        );
+                    }
+                    mapped += 1;
                     payloads += 1;
                 }
                 let rows = rows_of(&response);
@@ -3500,8 +3574,9 @@ mod tests {
             }
         }
         eprintln!(
-            "bridge infoset: {eligible_total} eligible, {payloads} payloads, refusals {refusals:#?}, longest line {longest} bytes"
+            "bridge infoset: {eligible_total} eligible, {payloads} payloads ({mapped} with an order map, {missing_maps} without), refusals {refusals:#?}, longest line {longest} bytes"
         );
+        assert_eq!(missing_maps, 0, "every payload carries an order map");
         assert!(payloads > 0);
         assert!(longest < SPELLBENCH_MAX_LINE_BYTES_V1);
         // R5 is a ledger bug, never an expected refusal.
