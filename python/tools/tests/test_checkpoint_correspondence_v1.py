@@ -116,6 +116,11 @@ class CorrespondenceTests(unittest.TestCase):
         self.assertFalse(out['ok'])
         self.assertIn('iterations/000000/attempt-000000/update-command.json', out['unmatched'])
 
+    def test_json_types_are_compared_strictly(self):
+        out = self.receipt(v1_options={'wait': True}, wait=1)
+        self.assertFalse(out['ok'])
+        self.assertIn('iterations/000000/attempt-000000/update-command.json', out['unmatched'])
+
     def test_a_missing_state_digest_fails(self):
         out = self.receipt(v1_options={'no_state': True}, no_state=True)
         self.assertFalse(out['ok'])

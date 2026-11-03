@@ -113,6 +113,11 @@ def compact(value) -> bytes:
     return json.dumps(value, separators=(',', ':'), ensure_ascii=False).encode()
 
 
+def same(a, b) -> bool:
+    """Strict JSON equality: types (true is not 1, 1 is not 1.0) and key order count."""
+    return compact(a) == compact(b)
+
+
 class Correspondence:
     def __init__(self):
         self.mapping, self.inverse = {}, {}
@@ -134,7 +139,7 @@ class Correspondence:
         """The pair's kind if it corresponds under the current S, else None."""
         if container.is_container(v2):
             a, b = self.doc(('v1', rel), v1), self.doc(('export', rel), export(rel))
-            if a is None or b is None or substitute(b, self.mapping) != a:
+            if a is None or b is None or not same(substitute(b, self.mapping), a):
                 return None
             return 'container'
         a, b = self.doc(('v1', rel), v1), self.doc(('v2', rel), v2)
@@ -144,7 +149,7 @@ class Correspondence:
             return None
         if digests(b) - digests(a) - set(self.mapping):
             return None
-        if allowed(rel, substitute(b, self.mapping)) != allowed(rel, a):
+        if not same(allowed(rel, substitute(b, self.mapping)), allowed(rel, a)):
             return None
         return 'substituted'
 
@@ -167,7 +172,7 @@ def correspond(v1_root, v2_root, seed_pairs=()) -> dict:
     try:
         for v2_path, v1_path in seed_pairs:
             v2_data, v1_data = Path(v2_path).read_bytes(), Path(v1_path).read_bytes()
-            if not container.is_container(v2_data) or parse(container.export_v1(v2_path)) != parse(v1_data):
+            if not container.is_container(v2_data) or container.export_v1(v2_path) != v1_data:
                 raise Mismatch(f'seed pair {v2_path} does not export to {v1_path}')
             c.earn(sha(v2_data), sha(v1_data))
         pending = sorted(set(a) & set(b))
@@ -193,7 +198,7 @@ def correspond(v1_root, v2_root, seed_pairs=()) -> dict:
                         d2 = parse(v2_bytes[complete])['episodes_sha256']
                         if sha(compact(e1)) != d1 or sha(compact(e2)) != d2:
                             raise Mismatch(f'{complete}: the preimage does not reproduce episodes_sha256')
-                        if substitute(e2, c.mapping) != e1:
+                        if not same(substitute(e2, c.mapping), e1):
                             raise Mismatch(f'{complete}: the v2 schedule does not correspond')
                         c.earn(d2, d1)
                         derived += 1
