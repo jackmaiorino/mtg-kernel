@@ -127,6 +127,27 @@ def board_decks(runtime_decks: dict, pool: list[str], card_names: list[str]) -> 
     return out
 
 
+def char_literal_end(source: str, i: int) -> int | None:
+    """The index after the char literal opening at source[i] == "'", or None (a lifetime or label)."""
+    j = i + 1
+    if j >= len(source):
+        return None
+    if source[j] == "\\":
+        kind = source[j + 1:j + 2]
+        if kind == "x":
+            j += 4
+        elif kind == "u":
+            close = source.find("}", j)
+            if close < 0:
+                return None
+            j = close + 1
+        else:
+            j += 2
+    else:
+        j += 1
+    return j + 1 if source[j:j + 1] == "'" else None
+
+
 def strip_rust(source: str) -> str:
     """Rust source without comments (nested block comments included), string, raw-string and char literals."""
     out, i, n = [], 0, len(source)
@@ -155,8 +176,8 @@ def strip_rust(source: str) -> str:
             while i < n and source[i] != '"':
                 i += 2 if source[i] == "\\" else 1
             i += 1
-        elif source[i] == "'" and i + 2 < n and (source[i + 2] == "'" or (source[i + 1] == "\\" and "'" in source[i + 2:i + 12])):
-            i = source.index("'", i + 2) + 1  # a char literal ('x' or an escape); lifetimes have no closing quote
+        elif source[i] == "'" and char_literal_end(source, i) is not None:
+            i = char_literal_end(source, i)  # 'x', '\'', '\x41', '\u{1F600}' (b'..' too); a lifetime has no close
         else:
             out.append(source[i])
             i += 1
