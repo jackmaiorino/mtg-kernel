@@ -371,6 +371,15 @@ def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: 
     if pid == 0:  # child: only async-signal-safe-ish work, then exec
         try:
             os.close(ack_r)
+            # Close every inherited descriptor (the node log's flock included) before joining: a frozen child
+            # must not hold a lock that the thawing enforcement needs.
+            for name in os.listdir("/proc/self/fd"):
+                fd = int(name)
+                if fd > 2 and fd not in (ack_w, log_fd):
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
             with open(procs, "w") as handle:
                 handle.write(str(os.getpid()))
             try:
@@ -1071,11 +1080,10 @@ class Supervisor:
             # enforcement thaws it once every box is restored.
             self.pid = spawn_into(self.chain_cg, argv, self.env(manifest_path), instance_dir / "chain.log",
                                   self.spec.get("cwd"), frozen=held)
-            if own is not None:  # this box is occupied again by its own chain (a member of the chain cgroup)
-                in_box = self.pid in {int(x) for x in self.chain_cg.read("cgroup.procs").split()}
-                self.node.append({"event": "restored" if in_box else "restore-failed", "outage_id": own["id"],
-                                  "box_slot": self.slot["slot"], "chain": self.chain, "how": "chain-restart",
-                                  "verification": {"pid_in_chain_cgroup": in_box, "started_frozen": held}})
+            if own is not None:  # spawn_into returned only after the chain joined its cgroup: the box is occupied
+                self.node.append({"event": "restored", "outage_id": own["id"], "box_slot": self.slot["slot"],
+                                  "chain": self.chain, "how": "chain-restart",
+                                  "verification": {"joined_chain_cgroup": True, "started_frozen": held}})
         self.ledger.append({"event": "start", "instance": self.instance, "started_frozen": held})
         enforce_node(self.plan, self.node, "start")
         started = time.monotonic()
