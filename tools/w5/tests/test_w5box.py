@@ -212,6 +212,10 @@ class NodeStateTests(unittest.TestCase):
         log += [{"event": "node-thaw", "reason": "x"}]
         self.assertFalse(state(log)["frozen"])
         self.assertTrue(state(log, torn=True)["frozen"])  # a torn tail keeps the node frozen
+        log += [{"event": "torn-tail-repaired", "bytes": 12}]
+        self.assertTrue(state(log)["frozen"])  # the lost event may have been a fault: held until an operator thaw
+        log += [{"event": "node-thaw", "reason": "checked"}]
+        self.assertFalse(state(log)["frozen"])
 
 
 if __name__ == "__main__":

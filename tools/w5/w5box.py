@@ -634,10 +634,12 @@ class NodeLog:
     @staticmethod
     def state(records: list[dict], torn: bool = False) -> dict:
         """Open outages and faults by box, escalations, the operator freeze, the last enforcement."""
-        outages, faults, escalated, operator, enforced = {}, {}, set(), None, None
+        outages, faults, escalated, operator, enforced, torn_hold = {}, {}, set(), None, None, None
         for r in records:
             event = r["event"]
-            if event == "outage-start":
+            if event == "torn-tail-repaired":  # the lost event may have been a fault: hold until an operator thaw
+                torn_hold = r
+            elif event == "outage-start":
                 outages.setdefault(r["box_slot"], r)
             elif event == "fault":
                 faults[r["box_slot"]] = r
@@ -650,11 +652,12 @@ class NodeLog:
                 operator = r
             elif event == "node-thaw":
                 operator = None
+                torn_hold = None
             elif event == "enforced":
                 enforced = r
         return {"open_outages": outages, "open_faults": faults, "escalated": sorted(escalated),
-                "operator_freeze": operator, "torn_tail": torn,
-                "frozen": bool(outages) or bool(faults) or operator is not None or torn,
+                "operator_freeze": operator, "torn_tail": torn, "torn_hold": torn_hold,
+                "frozen": bool(outages) or bool(faults) or operator is not None or torn or torn_hold is not None,
                 "enforced_frozen": None if enforced is None else enforced["frozen"]}
 
 
@@ -729,8 +732,9 @@ class Supervisor:
         self.owner_path = self.state_root / f"box{self.slot['slot']}.owner.json"
         self.ledger_source = self.state / "ledger-source.json"
         self.node = NodeLog(self.state_root)
-        self.watermark_path = self.state / "node-watermark.json"
         self.paused_path = self.state / "paused.json"
+        self.filler_spawns = 0
+        self.node_copied = None  # the next node index to copy, recovered from this chain's ledger
         self.instance = self.base = self.pid = self.filler_pid = None
         self.paused_seq = self.paused_usec = None
 
@@ -769,8 +773,9 @@ class Supervisor:
             require(self.filler_cg.wait_empty(SETTLE_SECONDS), "A leftover filler did not die")
             self.filler_cg.rmdir()
             with self.node.locked():
-                self.node.append({"event": "filler-replaced-by-chain", "box_slot": self.slot["slot"],
-                                  "chain": self.chain})
+                self.node.append({"event": "outage-start", "id": f"{self.chain}/recovery/{time.time_ns()}",
+                                  "box_slot": self.slot["slot"], "chain": self.chain, "reason": "recovery",
+                                  "affected": node_chains(self.state_root)})
         self.paused_path.unlink(missing_ok=True)
         if self.owner_path.exists():
             self.owner_path.unlink()
@@ -830,12 +835,15 @@ class Supervisor:
         env.update(self.plan.get("env", {}))
         env.update({"W5_FILLER_SEED_ROOT": seed_root, "W5_BOX_SLOT": str(self.slot["slot"])})
         self.filler_pid = spawn_into(self.filler_cg, argv, env,
-                                     instance_dir / f"filler-{self.paused_seq}-{self.filler_exits}.log")
+                                     instance_dir / f"filler-{self.paused_seq}-{self.filler_spawns}.log")
+        self.filler_spawns += 1
 
     def pause(self, request: dict, instance_dir: Path) -> None:
-        # The paused mark comes first, so node enforcement never thaws a chain that is pausing.
-        write_json_atomic(self.paused_path, {"instance": self.instance, "seq": int(request["seq"])}, durable=True)
-        self.chain_cg.freeze(True)
+        # The paused mark and the freeze happen under the node lock, so enforcement never thaws a pausing chain.
+        with self.node.locked():
+            write_json_atomic(self.paused_path, {"instance": self.instance, "seq": int(request["seq"])},
+                              durable=True)
+            self.chain_cg.freeze(True)
         self.paused_usec = self.chain_cg.usage_usec()
         self.paused_seq = int(request["seq"])
         os.replace(self.control / "pause.request",
@@ -979,17 +987,19 @@ class Supervisor:
         enforce_node(self.plan, self.node, "refill")
 
     def follow_node(self) -> None:
-        """Copy new node events into this chain's ledger exactly once (a durable watermark survives restarts),
-        then enforce the node state."""
+        """Copy new node events into this chain's ledger exactly once (the ledger's own last copied index is the
+        watermark, so a crash cannot duplicate one), then enforce the node state."""
         with self.node.locked():
             records, _ = self.node.read()
-        mark = json.loads(self.watermark_path.read_text()) if self.watermark_path.exists() else {"count": 0}
-        if mark["count"] > len(records):
-            raise RuntimeError("node log is shorter than this chain's watermark")
-        for index in range(mark["count"], len(records)):
+        if self.node_copied is None:  # the chain ledger is the watermark: no separate file to fall out of step
+            copied = [r["index"] for r in self.ledger.records() if r["event"] == "node-event"]
+            self.node_copied = max(copied) + 1 if copied else 0
+        if self.node_copied > len(records):
+            raise RuntimeError("node log is shorter than this chain's copied events")
+        for index in range(self.node_copied, len(records)):
             self.ledger.append({"event": "node-event", "instance": self.instance, "index": index,
                                 "node": records[index]})
-            write_json_atomic(self.watermark_path, {"count": index + 1}, durable=True)
+            self.node_copied = index + 1
         enforce_node(self.plan, self.node, "follow")
 
     # --- the run
@@ -1022,16 +1032,26 @@ class Supervisor:
         self.ledger.append({"event": "open", "instance": self.instance, "base_usec": self.base,
                             "cgroup": str(self.chain_cg.path), "cgroup_inode": self.chain_cg.inode(),
                             "manifest_sha256": sha256_file(manifest_path)})
-        while True:  # no measured execution starts while the node is not clear
+        while True:  # no measured execution starts while the node is not clear (decided and spawned under the lock)
             with self.node.locked():
                 records, torn = self.node.read()
-            if not NodeLog.state(records, torn)["frozen"]:
-                break
+                state = NodeLog.state(records, torn)
+                own = state["open_outages"].get(self.slot["slot"])
+                own_recovery = own is not None and own.get("reason") == "recovery"
+                others = {k: v for k, v in state["open_outages"].items() if k != self.slot["slot"] or not own_recovery}
+                clear = (not others and not state["open_faults"] and state["operator_freeze"] is None
+                         and not state["torn_tail"] and state["torn_hold"] is None)
+                if clear:
+                    self.pid = spawn_into(self.chain_cg, argv, self.env(manifest_path), instance_dir / "chain.log",
+                                          self.spec.get("cwd"))
+                    if own_recovery:  # the running chain occupies its box again
+                        self.node.append({"event": "restored", "outage_id": own["id"], "box_slot": self.slot["slot"],
+                                          "chain": self.chain, "how": "chain-restart"})
+                    break
             self.ledger.append({"event": "start-held", "instance": self.instance, "reason": "node not clear"})
             time.sleep(LIVE_EVERY_SECONDS)
+        enforce_node(self.plan, self.node, "start")
         started = time.monotonic()
-        self.pid = spawn_into(self.chain_cg, argv, self.env(manifest_path), instance_dir / "chain.log",
-                              self.spec.get("cwd"))
         stop = {"flag": False}
         signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("flag", True))
         status, ru, last_live, reason = None, None, 0.0, None
