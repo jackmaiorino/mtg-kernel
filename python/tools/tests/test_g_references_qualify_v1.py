@@ -447,6 +447,15 @@ class QualifyTests(unittest.TestCase):
         with patch.object(qualify, "record", side_effect=FileNotFoundError("no block 2 checkpoint")):
             qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: events.append(fields))
         self.assertEqual((events[0]["kind"], events[0]["error_type"]), ("record-error", "FileNotFoundError"))
+        touches = []
+
+        def slow(*args):  # a step longer than a heartbeat records the work in progress
+            time.sleep(0.3)
+            return driver.write_json(out / qualify.RECORD_NAME, {"pass": True})
+        with patch.object(qualify, "record", side_effect=slow), patch.object(qualify, "RECORD_HEARTBEAT_SECONDS", 0.05):
+            qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: None,
+                                 touch=lambda: touches.append(1))
+        self.assertGreaterEqual(len(touches), 2)
 
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):

@@ -490,14 +490,34 @@ def compare(campaign: driver.Campaign, run: str, block: int, straight: dict) -> 
             "identical": judged_equal(straight, rerun), "rule": JUDGED_RULE}
 
 
-def record_after(campaign_path: Path, plan_path: Path, out: Path, log) -> None:
+RECORD_HEARTBEAT_SECONDS, RECORD_HEARTBEAT_LIMIT_SECONDS = 30, 1800
+
+
+def record_after(campaign_path: Path, plan_path: Path, out: Path, log, touch=None) -> None:
     """Items 2 and 7 and the run's measurements (``record``) from the volume itself, beside RESULT.json, so a
-    qualification lease brings them home with its folder; a failure here is an event, the verdicts stand."""
-    try:
-        recorded = record(campaign_path, plan_path, out / RECORD_NAME)
-        log(kind="record", record=recorded, passed=read(out / RECORD_NAME)["pass"])
-    except Exception as error:  # noqa: BLE001 - the qualification's own verdicts are already written
+    qualification lease brings them home with its folder; a failure here is an event, the verdicts stand. Its
+    walks of the network volume are mostly I/O wait, so, as for the driver's volume walk, the step runs in a
+    helper thread while this one records the work in progress (``touch``) for at most
+    RECORD_HEARTBEAT_LIMIT_SECONDS: a hung step still goes idle."""
+    result, started = {}, time.monotonic()
+
+    def work():
+        try:
+            result["pin"] = record(campaign_path, plan_path, out / RECORD_NAME)
+        except Exception as error:  # noqa: BLE001 - reported below
+            result["error"] = error
+    thread = threading.Thread(target=work, name="record", daemon=True)
+    thread.start()
+    while thread.is_alive():
+        thread.join(RECORD_HEARTBEAT_SECONDS)
+        if touch and thread.is_alive() and time.monotonic() - started < RECORD_HEARTBEAT_LIMIT_SECONDS:
+            touch()
+    if "error" in result:
+        error = result["error"]
         log(kind="record-error", error_type=type(error).__name__, error=str(error)[-4000:])
+        return
+    log(kind="record", record=result["pin"], passed=read(out / RECORD_NAME)["pass"],
+        seconds=round(time.monotonic() - started, 1))
 
 
 def legacy_stage(value: dict) -> bool:
@@ -652,7 +672,8 @@ def run(campaign_path: Path, plan_path: Path) -> int:
         log(kind="done", passed=passed, legacy_stages=legacy)
         write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed,
                                          "rule": JUDGED_RULE, "legacy_stages": legacy})
-        record_after(campaign_path, plan_path, out, log)
+        record_after(campaign_path, plan_path, out, log,
+                     touch=campaign.lease.touch if campaign.lease else None)
         return 0 if passed else 1
     except BaseException as error:  # the supervisor discards stderr: the reason goes in the events
         log(kind="error", error_type=type(error).__name__, error=str(error)[-4000:])
