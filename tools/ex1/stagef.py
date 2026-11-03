@@ -516,50 +516,38 @@ def valid_receipts(plan):
     return bool(receipts)
 
 
-def owner_alive(owner):
-    """True while the process that wrote a lock still runs (same PID and the same start time, so a reused PID does
-    not count)."""
-    try:
-        proc = stagep.psutil.Process(owner["pid"])
-        return abs(proc.create_time() - owner["created"]) < 1.0
-    except (stagep.psutil.NoSuchProcess, stagep.psutil.AccessDenied, KeyError, TypeError):
-        return False
-
-
 def lock(path):
-    """An exclusive lock file owned by this process; None while a live process holds it. A lock whose owner has
-    exited is reclaimed; a live owner's lock is never taken, however old."""
+    """An exclusive operating-system lock on the file (msvcrt byte-range lock on Windows, flock elsewhere), held by
+    this open handle; None while any other handle holds it. The system releases it when the holder exits, so there
+    is nothing to reclaim and no owner to inspect."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    me = {"pid": os.getpid(), "created": stagep.psutil.Process().create_time(), "token": uuid.uuid4().hex}
-    for _ in range(3):
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, json.dumps(me).encode())
-            os.close(fd)
-            return (path, me["token"])
-        except FileExistsError:
-            try:
-                owner = json.loads(path.read_text(encoding="utf-8") or "{}")
-            except (FileNotFoundError, ValueError):
-                owner = {}
-            if owner_alive(owner):
-                return None
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
-    return None
-
-
-def unlock(held):
-    """Removes the lock only while it is still this process's own (the token matches)."""
-    path, token = held
+    f = open(path, "a+b")
     try:
-        if json.loads(path.read_text(encoding="utf-8")).get("token") == token:
-            path.unlink()
-    except (FileNotFoundError, ValueError):
-        pass
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
+def unlock(f):
+    try:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    finally:
+        f.close()
 
 
 def manifest_rows(path):
