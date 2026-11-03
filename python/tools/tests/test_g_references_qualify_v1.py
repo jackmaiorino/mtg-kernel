@@ -431,6 +431,32 @@ class QualifyTests(unittest.TestCase):
         self.assertGreaterEqual(checks[0]["admission"]["logical_bytes"], 500)
         self.assertIsNotNone(driver.native_dispatch.admitted_bytes(checks[0]["admission"], checks[0]["storage"]))
 
+    def test_record_after_writes_the_record_beside_result_or_logs_why_not(self):
+        out, events = self.root / "q", []
+        out.mkdir()
+
+        def recorded(campaign_path, plan_path, target):
+            self.assertEqual((campaign_path, plan_path, target), (self.path, self.root / "plan.json",
+                                                                  out / qualify.RECORD_NAME))
+            return driver.write_json(target, {"pass": False, "item2": {}, "item7": {}})
+        with patch.object(qualify, "record", side_effect=recorded):
+            qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: events.append(fields))
+        self.assertEqual([(event["kind"], event["passed"]) for event in events], [("record", False)])
+        self.assertTrue(Path(events[0]["record"]["path"]).samefile(out / qualify.RECORD_NAME))  # a short-name alias
+        events.clear()
+        with patch.object(qualify, "record", side_effect=FileNotFoundError("no block 2 checkpoint")):
+            qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: events.append(fields))
+        self.assertEqual((events[0]["kind"], events[0]["error_type"]), ("record-error", "FileNotFoundError"))
+        touches = []
+
+        def slow(*args):  # a step longer than a heartbeat records the work in progress
+            time.sleep(0.3)
+            return driver.write_json(out / qualify.RECORD_NAME, {"pass": True})
+        with patch.object(qualify, "record", side_effect=slow), patch.object(qualify, "RECORD_HEARTBEAT_SECONDS", 0.05):
+            qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: None,
+                                 touch=lambda: touches.append(1))
+        self.assertGreaterEqual(len(touches), 2)
+
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):
             qualify.run(self.path, self.root / "plan.json")
