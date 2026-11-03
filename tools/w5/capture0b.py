@@ -97,6 +97,7 @@ def run(binary, out_dir):
         command = read(job)
         if Path(command['output_directory'], 'collection.json').exists():
             continue
+        Path(command['output_directory']).parent.mkdir(parents=True, exist_ok=True)
         log = Path(job).with_suffix('.log')
         with open(log, 'wb') as f:
             code = subprocess.call([binary, job], stdout=f, stderr=subprocess.STDOUT)
