@@ -605,7 +605,8 @@ mod tests {
         let record = f.unidentified_departure(&[4, 5], true);
         assert!(f.undo_departure(&record));
         assert_eq!(m_of(&f, &[4, 5]), Some(2));
-        assert_eq!(m_of(&f, &[1, 2, 3]), Some(2));
+        // The old node is implied by the root (m 4 over five names) and pruned.
+        assert_eq!(m_of(&f, &[1, 2, 3, 4, 5]), Some(4));
     }
 
     /// Sol r4's case: a node the put-back took to 0 stays dormant and keeps
