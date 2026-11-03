@@ -525,6 +525,91 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
 mod tests {
     use super::*;
 
+    /// The entrant searches imported payloads: the search's world sampler
+    /// must accept them (it rejected every world of every AC2 root with the
+    /// b512 checkpoint, so every tree ran zero transitions). Compares the
+    /// sampler on the imported payload and on the true state.
+    #[test]
+    fn imported_payload_roots_sample_worlds() {
+        use crate::infoset_v1::{export_v1, ExportInputV1, ExportOptionsV1};
+        use crate::rl_session::FastActorResponseV1;
+        use std::collections::BTreeMap;
+        let (mut ok, mut true_ok, mut tried) = (0u64, 0u64, 0u64);
+        let mut errors: BTreeMap<String, u64> = BTreeMap::new();
+        let mut true_errors: BTreeMap<String, u64> = BTreeMap::new();
+        for (decks, seed) in [(["CawGates", "Faeries"], 3u64), (["Wildfire", "Burn"], 5)] {
+            let mut s = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+                seed,
+                seed,
+                2_000,
+                20_000,
+                decks.map(str::to_string),
+            )
+            .expect("reset");
+            let lists = decks.map(|d| {
+                RUNTIME_DECKS
+                    .iter()
+                    .find(|x| x.id == d)
+                    .expect("deck")
+                    .card_ids
+                    .to_vec()
+            });
+            let mut rng = crate::state::SplitMix64::seed(seed);
+            for step in 0..240u64 {
+                let FastActorResponseV1::Decision(d) = s.current_response() else {
+                    break;
+                };
+                if d.legal_action_count >= 2 && step % 9 == 0 {
+                    let viewer = super::super::play::acting(&d);
+                    let st = s.game_state();
+                    if let Ok(x) = export_v1(
+                        &ExportInputV1 {
+                            state: st,
+                            journal: st.observation_journal.notes(),
+                            viewer,
+                            decklists: [&lists[0], &lists[1]],
+                        },
+                        ExportOptionsV1::default(),
+                    ) {
+                        if let Some(payload) = PayloadV1::new(&x, &s, viewer, step) {
+                            let imported = payload.import().expect("imports");
+                            let prior =
+                                DeckPrior::new(&[opponent_deck_index(&payload).expect("deck")]);
+                            for k in 0..3 {
+                                tried += 1;
+                                match super::super::world::sample_recorded(
+                                    &imported, k, &prior, &mut None,
+                                ) {
+                                    Ok(_) => ok += 1,
+                                    Err(e) => {
+                                        *errors.entry(e.chars().take(160).collect()).or_default() +=
+                                            1
+                                    }
+                                }
+                                match super::super::world::sample_recorded(&s, k, &prior, &mut None)
+                                {
+                                    Ok(_) => true_ok += 1,
+                                    Err(e) => {
+                                        *true_errors
+                                            .entry(e.chars().take(160).collect())
+                                            .or_default() += 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let a = (rng.next_u64() % u64::from(d.legal_action_count)) as u32;
+                s.step(d.episode_id, d.step, a).expect("step");
+            }
+        }
+        eprintln!(
+            "payload sampling: {ok} of {tried} worlds (true state {true_ok}); payload rejections {errors:#?}; true-state rejections {true_errors:#?}"
+        );
+        assert!(tried > 0);
+        assert_eq!(ok, tried, "the sampler accepts imported payloads");
+    }
+
     fn c(n: u64, wins: u64, draws: u64) -> CountsV1 {
         CountsV1 { n, wins, draws }
     }

@@ -260,6 +260,9 @@ fn observed_cards(state: &GameState, owner: PlayerId, unknown: &HashSet<ObjectId
                 && !o.v4.is_token
                 && o.spell_copy_origin.is_none()
                 && !unknown.contains(id)
+                // The command zone holds no card of the pool's decks; the W1
+                // canonical export (x_kernel_infoset_v1) parks its inert
+                // history tombstones there, which are not deck cards.
                 && matches!(
                     o.zone,
                     Zone::Hand
@@ -268,7 +271,6 @@ fn observed_cards(state: &GameState, owner: PlayerId, unknown: &HashSet<ObjectId
                         | Zone::Graveyard
                         | Zone::Exile
                         | Zone::Stack
-                        | Zone::Command
                 )
         })
         .map(|(_, o)| o.card_def)

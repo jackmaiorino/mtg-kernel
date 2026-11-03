@@ -602,6 +602,16 @@ pub(crate) fn export_v1(
             ));
         }
     };
+    if projection.r8_latch && !is(MutantV1::L11) {
+        // Ruling 40.4's fallback for the draw-back gap of 6.4: a card put
+        // back from a hand V knew about was drawn back (or such cards were
+        // scried or reordered), so V may know more than the tree keeps;
+        // refuse until the projection releases the latch.
+        return Err(refuse(
+            RefusalCodeV1::R8,
+            "a put-back card from a hand V knew about was drawn back or reordered",
+        ));
+    }
     if survivors.tainted() && !is(MutantV1::L11) {
         return Err(refuse(
             RefusalCodeV1::R8b,
@@ -751,7 +761,15 @@ pub(crate) fn export_v1(
         .collect();
 
     // Step 7: handles. C first, then U per owner in step-3 order, then H.
-    let tracked = tracked_order(state, &projection, is(MutantV1::L3));
+    let mut tracked = tracked_order(state, &projection, is(MutantV1::L3));
+    if is(MutantV1::L8) {
+        // Mutant L8's bound copies take `C:` handles (invented continuity).
+        for id in &opp_hand_tracked {
+            if !tracked.contains(id) {
+                tracked.push(*id);
+            }
+        }
+    }
     let mut handles: Vec<HandleV1> = Vec::new();
     let mut new_id: HashMap<ObjectId, u32> = HashMap::new();
     for (n, id) in tracked.iter().enumerate() {
@@ -1057,21 +1075,32 @@ pub(crate) fn export_v1(
         .as_object_mut()
         .ok_or_else(|| refuse(RefusalCodeV1::R2, "state shape"))?;
     map.insert("objects".into(), json!({ "items": items }));
+    // Every object a zone vector or knowledge row names has a handle; a
+    // projection that tracks a fact's object without tracking the object
+    // is a ledger bug, refused (R5) rather than exported.
+    let handle_of = |id: &ObjectId| -> Result<u32, ExportErrorV1> {
+        new_id.get(id).copied().ok_or_else(|| {
+            refuse(
+                RefusalCodeV1::R5,
+                format!("object {} is placed without a handle", id.0),
+            )
+        })
+    };
     for owner in [PlayerId::P0, PlayerId::P1] {
         let p = &state.players[owner.index()];
         let mut hand: Vec<u32> = Vec::new();
         if owner == v {
             for id in &p.hand {
-                hand.push(new_id[id]);
+                hand.push(handle_of(id)?);
             }
         } else {
             for id in &opp_hand_tracked {
-                hand.push(new_id[id]);
+                hand.push(handle_of(id)?);
             }
         }
         let mut library: Vec<Option<u32>> = vec![None; p.library.len()];
         for (pos, id) in &projection.library[owner.index()] {
-            library[*pos as usize] = Some(new_id[id]);
+            library[*pos as usize] = Some(handle_of(id)?);
         }
         for (i, s) in slots.iter().enumerate() {
             if s.owner != owner {
@@ -1103,14 +1132,14 @@ pub(crate) fn export_v1(
         for (pos, id) in &projection.library[owner.index()] {
             library_knowledge[v.index()][owner.index()].push(LibraryKnowledgeEntry {
                 position: *pos,
-                object: ObjectId(new_id[id]),
+                object: ObjectId(handle_of(id)?),
                 zone_change_count: phi(*id, state.objects.get(*id).zone_change_count).unwrap_or(1),
             });
         }
     }
     for id in &opp_hand_tracked {
         hand_knowledge[v.index()][opp.index()].push(HandKnowledgeEntry {
-            object: ObjectId(new_id[id]),
+            object: ObjectId(handle_of(id)?),
             zone_change_count: phi(*id, state.objects.get(*id).zone_change_count).unwrap_or(1),
         });
     }

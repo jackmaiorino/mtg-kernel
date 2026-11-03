@@ -168,6 +168,7 @@ pub mod eaten_public_v46;
 // framing used by src/bin/agent_bridge_v1.rs. Purely additive surface; no
 // kernel_rl_jsonl v5/v6 behavior changes.
 pub(crate) mod agent_bridge_flat_v4;
+pub(crate) mod agent_bridge_infoset_v1;
 pub mod agent_bridge_v1;
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
