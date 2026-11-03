@@ -83,9 +83,12 @@ fn native_s_refuses_shells_and_net8_only_operations() {
     let mut v3 = FrozenPlayPolicyV1::training_fixture_v3();
     assert!(v3.install_s_model_v1(model.clone()).is_err());
     let mut v4 = FrozenPlayPolicyV1::training_fixture_v4();
+    let parameters = v4.training_parameters_v3();
     v4.install_s_model_v1(model.clone()).unwrap();
     assert!(v4.install_s_model_v1(model).is_err());
-    let parameters = v4.training_parameters_v3();
+    assert!(
+        crate::sideboard_play_policy_v1::search_leaf_v4::V4SearchLeafEvaluatorV1::new(&v4).is_err()
+    );
     assert!(v4.replace_training_parameters_v3(&parameters).is_err());
     assert!(v4.into_flat_v7_transfer_v1().is_err());
 }

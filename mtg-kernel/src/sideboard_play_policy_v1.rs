@@ -1510,10 +1510,18 @@ impl FrozenPlayPolicyV1 {
     /// Independent train model with already validated parameters and derived
     /// inference weights. Avoid a snapshot conversion and second installation.
     pub(crate) fn training_model_v3(&self) -> NativePolicyValueNetV1 {
+        assert!(
+            self.s_model.is_none(),
+            "training_model_v3 is net-8's; a policy with native S has no net-8 training model"
+        );
         self.model.clone()
     }
 
     pub(crate) fn training_parameters_v3(&self) -> Vec<NativeNamedParameterV1> {
+        assert!(
+            self.s_model.is_none(),
+            "training_parameters_v3 is net-8's; a policy with native S has no net-8 parameters"
+        );
         self.model.parameter_snapshot_v1()
     }
 
@@ -1945,6 +1953,10 @@ impl FrozenPlayPolicyV1 {
         require(
             self.input_contract.is_none(),
             "hidden capture is not defined under the no-state-digest contract",
+        )?;
+        require(
+            self.s_model.is_none(),
+            "hidden capture is net-8's; a policy with native S refuses it",
         )?;
         let fresh = self
             .fresh_successor
@@ -2606,8 +2618,12 @@ impl FrozenPlayPolicyV1 {
         Ok(())
     }
 
-    /// The cache's model namespace: the installed parameters' digest.
+    /// The cache's model namespace: the installed parameters' digest (for
+    /// native S, a digest of its family, config and parameters).
     fn inference_model_v1(&self) -> Result<[u8; 32], String> {
+        if let Some(s_model) = &self.s_model {
+            return Ok(s_model.cache_namespace_v1());
+        }
         let digest = self.actual_model_identity_v1().weights_sha256;
         let mut model = [0u8; 32];
         for (i, byte) in model.iter_mut().enumerate() {

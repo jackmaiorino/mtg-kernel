@@ -928,6 +928,16 @@ impl SModelV1 {
         hex_v1(&hasher.finalize())
     }
 
+    /// A prediction-cache namespace that no net-8 model shares: SHA-256 of a
+    /// family tag, the manifest digest and the parameter digest.
+    pub(crate) fn cache_namespace_v1(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(b"mtg-kernel/s-transformer-v1/cache-namespace\0");
+        hasher.update(self.manifest_sha256_v1().as_bytes());
+        hasher.update(self.parameter_sha256_v1().as_bytes());
+        hasher.finalize().into()
+    }
+
     /// SHA-256 of the architecture and config: S's counterpart of net-8's
     /// parameter-manifest digest.
     pub(crate) fn manifest_sha256_v1(&self) -> String {
@@ -1582,6 +1592,7 @@ impl SModelV1 {
         grad: &mut [f32],
         work: &mut SWorkV1,
     ) -> Result<SLossV1, String> {
+        ensure_mxcsr_v1()?;
         if groups.is_empty() {
             return Err("S update has no groups".into());
         }
