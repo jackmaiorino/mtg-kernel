@@ -356,8 +356,13 @@ def make_leaf(box: Cgroup, name: str, memory_max: int) -> Cgroup:
     return leaf
 
 
-def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: str | None = None) -> int:
-    """Fork, move the child into the cgroup before exec, so every descendant is metered there."""
+def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: str | None = None,
+               frozen: bool = False) -> int:
+    """Fork, move the child into the cgroup before exec, so every descendant is metered there. With `frozen`
+    the cgroup is frozen first: the child stops as it joins (before exec) and runs only when the cgroup thaws;
+    the parent then confirms membership from cgroup.procs instead of the child's acknowledgement."""
+    if frozen:
+        cgroup.write("cgroup.freeze", 1)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     procs = str(cgroup.path / "cgroup.procs")
@@ -368,8 +373,12 @@ def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: 
             os.close(ack_r)
             with open(procs, "w") as handle:
                 handle.write(str(os.getpid()))
-            os.write(ack_w, b"1")
+            try:
+                os.write(ack_w, b"1")
+            except OSError:  # a frozen spawn's parent may have stopped listening
+                pass
             os.close(ack_w)
+            signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # the chain gets the default disposition, not Python's
             os.setsid()
             os.dup2(log_fd, 1)
             os.dup2(log_fd, 2)
@@ -383,6 +392,16 @@ def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: 
         os._exit(127)
     os.close(log_fd)
     os.close(ack_w)
+    if frozen:
+        deadline = time.monotonic() + SETTLE_SECONDS
+        while pid not in {int(x) for x in cgroup.read("cgroup.procs").split()}:
+            done, _ = os.waitpid(pid, os.WNOHANG)
+            if done == pid or time.monotonic() > deadline:
+                os.close(ack_r)
+                raise RuntimeError(f"frozen spawn into {cgroup.path} failed before the child joined")
+            time.sleep(0.01)
+        os.close(ack_r)
+        return pid
     joined = os.read(ack_r, 1)
     os.close(ack_r)
     if joined != b"1":  # the child died before joining: nothing ran outside the meter's knowledge
@@ -1040,30 +1059,24 @@ class Supervisor:
         self.ledger.append({"event": "open", "instance": self.instance, "base_usec": self.base,
                             "cgroup": str(self.chain_cg.path), "cgroup_inode": self.chain_cg.inode(),
                             "manifest_sha256": sha256_file(manifest_path)})
-        while True:  # no measured execution starts while the node is not clear (decided and spawned under the lock)
-            with self.node.locked():
-                records, torn = self.node.read()
-                state = NodeLog.state(records, torn)
-                own = state["open_outages"].get(self.slot["slot"])
-                blocking_outages = {k: v for k, v in state["open_outages"].items()
-                                    if k != self.slot["slot"] and v.get("reason") != "recovery"}
-                blocking_faults = {k for k in state["open_faults"] if k != self.slot["slot"]}
-                clear = (not blocking_outages and not blocking_faults and state["operator_freeze"] is None
-                         and not state["torn_tail"] and state["torn_hold"] is None)
-                if clear:
-                    self.pid = spawn_into(self.chain_cg, argv, self.env(manifest_path), instance_dir / "chain.log",
-                                          self.spec.get("cwd"))
-                    break
-            self.ledger.append({"event": "start-held", "instance": self.instance, "reason": "node not clear"})
-            time.sleep(LIVE_EVERY_SECONDS)
-        if own is not None:  # this box's open outage closes once the restarted chain is verified to occupy it
-            time.sleep(1.0)
-            in_box = self.pid in {int(x) for x in self.chain_cg.read("cgroup.procs").split()}
-            alive = in_box  # an exited process leaves the cgroup; the main loop reaps it with its status
-            with self.node.locked():
-                self.node.append({"event": "restored" if alive and in_box else "restore-failed",
-                                  "outage_id": own["id"], "box_slot": self.slot["slot"], "chain": self.chain,
-                                  "how": "chain-restart", "verification": {"alive": alive, "pid_in_chain_cgroup": in_box}})
+        with self.node.locked():  # the start is decided and spawned under the lock
+            records, torn = self.node.read()
+            state = NodeLog.state(records, torn)
+            own = state["open_outages"].get(self.slot["slot"])
+            foreign = ({k for k in state["open_outages"] if k != self.slot["slot"]}
+                       | {k for k in state["open_faults"] if k != self.slot["slot"]})
+            held = bool(foreign) or state["operator_freeze"] is not None or state["torn_tail"] or \
+                state["torn_hold"] is not None
+            # No measured execution while any other box is unoccupied: the chain starts frozen and the node's
+            # enforcement thaws it once every box is restored.
+            self.pid = spawn_into(self.chain_cg, argv, self.env(manifest_path), instance_dir / "chain.log",
+                                  self.spec.get("cwd"), frozen=held)
+            if own is not None:  # this box is occupied again by its own chain (a member of the chain cgroup)
+                in_box = self.pid in {int(x) for x in self.chain_cg.read("cgroup.procs").split()}
+                self.node.append({"event": "restored" if in_box else "restore-failed", "outage_id": own["id"],
+                                  "box_slot": self.slot["slot"], "chain": self.chain, "how": "chain-restart",
+                                  "verification": {"pid_in_chain_cgroup": in_box, "started_frozen": held}})
+        self.ledger.append({"event": "start", "instance": self.instance, "started_frozen": held})
         enforce_node(self.plan, self.node, "start")
         started = time.monotonic()
         stop = {"flag": False}
