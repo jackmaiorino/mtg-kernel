@@ -179,6 +179,7 @@ mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
