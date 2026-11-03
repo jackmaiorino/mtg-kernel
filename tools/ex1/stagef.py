@@ -8,8 +8,9 @@ outcome: it trains Stage F's eight chains and records what the lead reads.
                  --place CHAIN=HOST:CORES[:GROUP] [...] [--wrapper HOST=JSON_LIST] [--reserve HOST=GIB]
                  [--byte-cap BYTES] [--regeneration-receipt RECEIPT.json]
   stagef.py throughput --plan PLAN.json --host HOST --arm x|o [--pack K [--repeats R] [--stagger S]]
+  stagef.py segcheck --plan PLAN.json --host HOST --arm x|o --out RECEIPT.json
   stagef.py run --plan PLAN.json --chain CHAIN [--chain CHAIN ...]
-  stagef.py thin --plan PLAN.json [--apply] [--loop SECONDS]
+  stagef.py thin --plan PLAN.json [--apply]
   stagef.py purge --plan PLAN.json [--apply]
   stagef.py status --plan PLAN.json
 
@@ -26,17 +27,29 @@ with rate = 0.07 USD per CPU-h (ruling R2), B_train = the budget snapshot's allo
 R3), C_i = the qualification's mean CPU-s per X update for X chains and the O timing record's per-lineage value
 for O chains (ruling R4). Every chain runs U updates.
 
-`run` refuses to start unless every pin matches, the host has a throughput record for the chain's arm, binary,
-workers, cores and pack size whose state equals the qualified one, and the volume has room. Owned hosts only:
-every chain is metered at 0 USD (ruling R5). The in-Stage-F stop: every chain stops at update 300 (the hold) until
-the lead writes HOLD-300-CLEARED.json in the root; STAGEF-STOPPED.json, or a STOP file, stops everything. An
-interrupted iteration is moved aside and rerun fresh (mtg-kernel#336).
+Segments. The native trainer revalidates every completed iteration of its run on resume, trajectories and
+checkpoints included, so bulk can leave only a finished run. Each chain therefore runs as consecutive native runs
+over one pinned full config: segment 0 is updates 1 to 300 (in `chains/<chain>/native`, the Stage P layout, so the
+Stage P reader reads the hold unchanged), then segments of 100 updates (`chains/<chain>/seg-NNN/native`). A segment's
+config is the full config's slice of iterations with `ex1.update_offset` at the segment's first global update, and
+its initial source is the source the next update of the previous segment would read: that segment's last source
+with the checkpoint replaced by its last output checkpoint. Episode ids, seeds and placement keys are unchanged, so
+a segmented chain trains as one run does; `segcheck` measures that on a host (states and trajectories, path fields
+aside) and its record is the regeneration receipt `purge` relies on.
 
-`thin` is the rolling storage plan (ruling R6; ARTIFACT-LAW clauses 3, 4 and 6). It moves only uncited bulk, the
-episode trajectories and the update checkpoint of an iteration, into a same-volume holding folder with a manifest,
-after checking each file against the hash its iteration's records pin. It keeps every record file, every
-iteration's files at multiples of keep_every, at the hold and at U, and the last keep_last completed iterations.
-`purge` deletes held files after hold_days, or at once when the plan pins a regeneration receipt.
+`run` refuses to start unless every pin matches, the host has a throughput record for the chain's arm, binary,
+workers, cores and pack size whose state equals the qualified one, the run root holds less than the byte cap, and
+the volume has room. Owned hosts only: every chain is metered at 0 USD (ruling R5). The in-Stage-F stop: a chain
+stops when segment 0 ends (update 300, exactly) until the lead writes HOLD-300-CLEARED.json in the root;
+STAGEF-STOPPED.json, or a STOP file, stops everything. An interrupted iteration is moved aside and rerun fresh
+(mtg-kernel#336). The supervisor also stops every chain when the run root passes the byte cap.
+
+Storage (ruling R6; ARTIFACT-LAW clauses 3, 4 and 6). After each segment ends, every finished segment's uncited bulk
+(episode trajectories, and update checkpoints except the segment's last) moves into `_hold-thin` on the same
+volume, each file first checked against the hash its records pin, with a THIN-MANIFEST.jsonl row. Record files
+(complete, collection, update, ex1 and ledger JSON) never move, so every segment's last checkpoint (updates 300, 400,
+..., U) stays. `purge` deletes held files listed in the manifest once hold_days have passed since each move, or at
+once when the plan pins a regeneration receipt; it never walks a tree and never follows a link.
 """
 import argparse
 import json
@@ -50,6 +63,7 @@ import subprocess
 import sys
 import time
 import uuid
+import copy
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -78,7 +92,9 @@ PAIR_ONLY_KEYS = {"ex1", "preparation_workers", "output_directory"}
 BYTES_PER_UPDATE = 53_000_000          # qualification: trajectories up to 32 MB, checkpoint 21 MB
 BYTE_CAP = 400_000_000_000             # ruling R6: at most 400 GB across D: and E:
 RESERVE_GIB = 60.0
-THIN = {"keep_every": 100, "keep_last": 20, "hold_days": 7}
+THIN = {"hold_days": 7}
+SEGMENT = 100                          # updates per segment after the hold
+BYTES_CHECK_S = 600
 POLL_S = 30
 EXIT_STOP = 5
 EXIT_HOLD = 6
@@ -213,6 +229,7 @@ def make_plan(args):
                        "rate_usd_per_cpu_h": RATE_USD_PER_CPU_H, "reserve_factor": RESERVE_FACTOR,
                        "cpu_seconds_per_update": cost, "updates": updates},
             "hold": {"update": HOLD, "cleared_file": HOLD_CLEARED, "stopped_file": STOPPED},
+            "segments": {"first": HOLD, "length": SEGMENT, "count": len(segments(updates))},
             "byte_budget": {"bytes_per_update": BYTES_PER_UPDATE,
                             "projected_bytes_unthinned": BYTES_PER_UPDATE * updates * len(CHAINS),
                             "cap_bytes": int(args.byte_cap)},
@@ -338,17 +355,192 @@ def guard(plan, name, chain):
     return t
 
 
+# ---------------------------------------------------------------- segments
+
+def segments(updates):
+    """[(first global update index, length)]: the hold segment, then segments of SEGMENT updates."""
+    out, start = [(0, HOLD)], HOLD
+    while start < updates:
+        n = min(SEGMENT, updates - start)
+        out.append((start, n))
+        start += n
+    return out
+
+
+def segment_native(chain, s):
+    base = Path(chain["native"])
+    return base if s == 0 else base.parent / f"seg-{s:03d}" / "native"
+
+
+def segment_done(native, n):
+    return Path(native, "completion.json").exists() and completed(native) == n
+
+
+def progress(chain):
+    """(completed updates over all segments, index of the first unfinished segment or None)."""
+    total = 0
+    for s, (_, n) in enumerate(segments(chain["updates"])):
+        native = segment_native(chain, s)
+        done = completed(native) if native.exists() else 0
+        total += done
+        if not segment_done(native, n):
+            return total, s
+    return total, None
+
+
+def attempt_dir(iteration, complete):
+    return iteration / [p for p in re.split(r"[\\/]", complete["update"]["path"]) if p.startswith("attempt-")][0]
+
+
+def next_source(native):
+    """The source the update after this run's last one reads: its last source, with the checkpoint replaced by its
+    last output checkpoint (checked against the pinned hash)."""
+    its = sorted(p for p in (Path(native) / "iterations").iterdir() if (p / "complete.json").exists())
+    last = its[-1]
+    complete = read(last / "complete.json")
+    checkpoint = attempt_dir(last, complete) / "update" / "checkpoint.json"
+    digest = complete["output_identity"]["checkpoint_sha256"]
+    if not checkpoint.exists() or sha(checkpoint) != digest:
+        raise SystemExit(f"stop: {checkpoint} is missing or differs from its pinned hash")
+    source = copy.deepcopy(complete["source"])
+    source["checkpoint"] = {"path": checkpoint.as_posix(), "sha256": digest}
+    return source
+
+
+def segment_config(full, start, n, native, source):
+    cfg = {k: copy.deepcopy(v) for k, v in full.items() if k != "iterations"}
+    cfg["iterations"] = copy.deepcopy(full["iterations"][start:start + n])
+    cfg["output_directory"] = Path(native).as_posix()
+    cfg["initial_source"] = source
+    if "ex1" in cfg:
+        cfg["ex1"]["update_offset"] = full["ex1"]["update_offset"] + start
+    return cfg
+
+
+# ---------------------------------------------------------------- storage (ruling R6)
+
+def is_link(path):
+    p = Path(path)
+    return p.is_symlink() or (hasattr(p, "is_junction") and p.is_junction())
+
+
+def tree_bytes(root):
+    """Bytes of regular files under root; links and junctions are neither followed nor counted."""
+    total, stack = 0, [Path(root)]
+    while stack:
+        d = stack.pop()
+        try:
+            entries = list(os.scandir(d))
+        except FileNotFoundError:
+            continue
+        for e in entries:
+            if e.is_symlink() or (hasattr(e, "is_junction") and e.is_junction()):
+                continue
+            if e.is_dir(follow_symlinks=False):
+                stack.append(Path(e.path))
+            elif e.is_file(follow_symlinks=False):
+                total += e.stat(follow_symlinks=False).st_size
+    return total
+
+
+def bulk_files(iteration, keep_checkpoint):
+    """An iteration's uncited bulk, each with the hash its records pin: trajectories (pinned by collection.json)
+    and, unless kept, the update checkpoint (pinned by complete.json's output identity)."""
+    complete = read(iteration / "complete.json")
+    attempt = attempt_dir(iteration, complete)
+    collection = read(attempt / "collect" / re.split(r"[\\/]", complete["collection"]["path"])[-1])
+    out = [(attempt / "collect" / re.split(r"[\\/]", p["path"])[-1], p["sha256"])
+           for p in collection.get("trajectories", [])]
+    if not keep_checkpoint:
+        out.append((attempt / "update" / "checkpoint.json", complete["output_identity"]["checkpoint_sha256"]))
+    return out
+
+
+def thin_chain(plan, name, apply):
+    """Moves the bulk of every finished segment into the holding folder; returns (files, bytes)."""
+    chain, root = plan["chains"][name], Path(plan["root"])
+    files = size = 0
+    for s, (_, n) in enumerate(segments(chain["updates"])):
+        native = segment_native(chain, s)
+        if not segment_done(native, n):
+            break
+        if is_link(native) or is_link(native / "iterations"):
+            raise SystemExit(f"refused: {native} is a link")
+        for i in range(n):
+            it = native / "iterations" / f"{i:06d}"
+            for path, digest in bulk_files(it, keep_checkpoint=(i == n - 1)):
+                if not path.exists():
+                    continue
+                if is_link(path) or sha(path) != digest:
+                    raise SystemExit(f"stop: {path} is a link or differs from the hash its records pin")
+                dest = root / "_hold-thin" / name / path.relative_to(Path(chain["native"]).parent)
+                files += 1
+                size += path.stat().st_size
+                if apply:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(path, dest)           # same volume: a rename
+                    with open(root / "THIN-MANIFEST.jsonl", "a", encoding="utf-8", newline="\n") as f:
+                        f.write(json.dumps({"chain": name, "from": path.as_posix(), "to": dest.as_posix(),
+                                            "bytes": dest.stat().st_size, "sha256": digest,
+                                            "moved_at": time.time()}) + "\n")
+    return files, size
+
+
+def manifest_rows(path):
+    return [json.loads(x) for x in Path(path).read_text(encoding="utf-8").splitlines() if x.strip()] \
+        if Path(path).exists() else []
+
+
+def purge_held(plan, apply):
+    """Deletes the held files the thin manifest lists, each once hold_days have passed since its move (or at once
+    with a pinned regeneration receipt), after checking it is a regular file inside the holding folder, reached
+    through no link, with its recorded hash. Nothing is walked; emptied folders are removed bottom-up."""
+    root = Path(plan["root"])
+    receipt = plan["thin"].get("regeneration_receipt")
+    if receipt:
+        check_pin(receipt, "the regeneration receipt")
+    hold_root = Path(os.path.realpath(root / "_hold-thin"))
+    done = {r["to"] for r in manifest_rows(root / "PURGE-MANIFEST.jsonl")}
+    cutoff = time.time() - plan["thin"]["hold_days"] * 86400
+    out = {"files": 0, "bytes": 0, "deleted": apply, "receipt": bool(receipt)}
+    parents = set()
+    for row in manifest_rows(root / "THIN-MANIFEST.jsonl"):
+        if row["to"] in done or (not receipt and row["moved_at"] > cutoff):
+            continue
+        p = Path(row["to"])
+        # Every folder between the holding root and the file, and the file itself.
+        between = [q for q in [p, *p.parents] if hold_root in Path(os.path.realpath(q)).parents]
+        if not p.exists() or any(is_link(q) for q in between) or not p.is_file() or \
+                hold_root not in Path(os.path.realpath(p)).parents or sha(p) != row["sha256"]:
+            raise SystemExit(f"stop: held file {p} is missing, linked, outside the holding folder or changed")
+        out["files"] += 1
+        out["bytes"] += row["bytes"]
+        if apply:
+            p.unlink()
+            parents.update(between[1:])
+            with open(root / "PURGE-MANIFEST.jsonl", "a", encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps({"to": row["to"], "bytes": row["bytes"], "sha256": row["sha256"],
+                                    "purged_at": time.time(), "receipt": receipt}) + "\n")
+    for d in sorted(parents, key=lambda q: len(q.parts), reverse=True):
+        try:
+            if not is_link(d):
+                d.rmdir()
+        except OSError:
+            pass
+    return out
+
+
 # ---------------------------------------------------------------- run
 
 def held(plan, name):
-    """True when the chain has reached the hold and the lead has not cleared it."""
-    root = Path(plan["root"])
-    return completed(plan["chains"][name]["native"]) >= plan["hold"]["update"] and \
-        not (root / plan["hold"]["cleared_file"]).exists()
+    """True when the chain's hold segment is done, the lead has not cleared the hold, and updates remain."""
+    chain, root = plan["chains"][name], Path(plan["root"])
+    total, unfinished = progress(chain)
+    return unfinished is not None and total >= HOLD and not (root / plan["hold"]["cleared_file"]).exists()
 
 
 def check(plan, name, allow_held=False):
-    """A chain's pins, throughput record and byte share; returns the bytes it still has to write."""
+    """A chain's pins and throughput record; returns the bytes its current segment still has to write."""
     chain = plan["chains"][name]
     root = Path(plan["root"])
     for key, what in (("config", "the chain config"), ("parent", "the parent"), ("base", "the base config")):
@@ -357,13 +549,14 @@ def check(plan, name, allow_held=False):
     if (root / plan["hold"]["stopped_file"]).exists():
         raise SystemExit(f"refused: Stage F is stopped ({plan['hold']['stopped_file']})")
     if held(plan, name) and not allow_held:
-        raise SystemExit(f"refused: {name} is held at update {plan['hold']['update']} for the lead's steps 1 and 2 "
-                         f"read; the lead writes {plan['hold']['cleared_file']} to continue")
-    native = chain["native"]
-    written = sum(f.stat().st_size for f in Path(native).rglob("*") if f.is_file()) if Path(native).exists() else 0
-    if written > plan["byte_budget"]["cap_bytes"] / len(plan["chains"]):
-        raise SystemExit(f"refused: {name} holds {written / 1e9:.1f} GB, past its share of the byte cap")
-    return (chain["updates"] - completed(native)) * plan["byte_budget"]["bytes_per_update"]
+        raise SystemExit(f"refused: {name} is held at update {HOLD} for the lead's steps 1 and 2 read; the lead "
+                         f"writes {plan['hold']['cleared_file']} to continue")
+    total, unfinished = progress(chain)
+    if unfinished is None:
+        raise SystemExit(f"refused: {name} has finished")
+    start, n = segments(chain["updates"])[unfinished]
+    native = segment_native(chain, unfinished)
+    return (n - (completed(native) if native.exists() else 0)) * plan["byte_budget"]["bytes_per_update"]
 
 
 def group_checks(plan, names):
@@ -374,17 +567,25 @@ def group_checks(plan, names):
         raise SystemExit("refused: only the chains of one pack group run together")
     if group is not None and sorted(names) != members:
         raise SystemExit(f"refused: pack group {group} runs all its chains together: {members}")
-    need = sum(check(plan, name, allow_held=group is not None) for name in names)
     if group is not None and all(held(plan, name) for name in names):
-        raise SystemExit(f"refused: pack group {group} is held at update {plan['hold']['update']} for the lead's "
-                         f"steps 1 and 2 read; the lead writes {plan['hold']['cleared_file']} to continue")
-    # Thinning keeps a chain's footprint far below its unthinned bytes; the reserve check counts the hold's worth.
-    need = min(need, len(names) * plan["thin"]["keep_last"] * plan["byte_budget"]["bytes_per_update"] * 2)
+        raise SystemExit(f"refused: pack group {group} is held at update {HOLD} for the lead's steps 1 and 2 read; "
+                         f"the lead writes {plan['hold']['cleared_file']} to continue")
+    need = sum(check(plan, name, allow_held=group is not None) for name in names)
+    used = tree_bytes(plan["root"])
+    if used + need > plan["byte_budget"]["cap_bytes"]:
+        raise SystemExit(f"refused: the run root holds {used / 1e9:.1f} GB; with {need / 1e9:.1f} GB more it "
+                         f"passes the {plan['byte_budget']['cap_bytes'] / 1e9:.0f} GB cap")
     free = shutil.disk_usage(Path(plan["root"])).free
     reserve = plan["hosts"][chain["host"]]["reserve_gib"] * (1 << 30)
     if free < need + reserve:
         raise SystemExit(f"refused: {free / 1e9:.1f} GB free, need {need / 1e9:.1f} GB plus the host reserve")
     return chain
+
+
+def inner_command(plan_path, name, fast_poll):
+    cmd = [sys.executable, str(Path(__file__).resolve()), "_drive", "--plan", str(Path(plan_path).resolve()),
+           "--plan-sha256", sha(plan_path), "--chain", name]
+    return cmd + (["--fast-poll"] if fast_poll else [])
 
 
 def run(args):
@@ -394,9 +595,8 @@ def run(args):
     group = chain.get("group")
     wrapper = [part.replace("{cores}", str(chain["cores"])).replace("{chain}", group or names[0])
                for part in plan["hosts"][chain["host"]]["wrapper"]]
-    plan["hosts"][chain["host"]]["wrapper"] = wrapper
     if group is None:
-        raise SystemExit(supervise(plan, names, command(plan, chain["host"], chain["config"]["path"]),
+        raise SystemExit(supervise(plan, names, wrapper + inner_command(args.plan, names[0], args.fast_poll),
                                    args.fast_poll))
     results = Path(plan["root"]) / "chains" / f"group-{group}" / "members.json"
     inner = wrapper + [sys.executable, str(Path(__file__).resolve()), "_members",
@@ -409,59 +609,92 @@ def run(args):
     raise SystemExit(supervise(plan, names, inner, args.fast_poll, results))
 
 
-def members(args):
+def checked_plan(args):
     if not Path(args.plan).is_absolute() or sha(args.plan) != args.plan_sha256:
-        raise SystemExit("refused: _members needs the launching plan's absolute path and hash")
-    plan = load_plan(args.plan)
+        raise SystemExit("refused: an internal command needs the launching plan's absolute path and hash")
+    return load_plan(args.plan)
+
+
+def members(args):
+    """Inside a pack group's claim: one `_drive` per member; each stops at the hold on its own."""
+    plan = checked_plan(args)
     names = list(dict.fromkeys(args.chain))
     chain = group_checks(plan, names)
     if chain.get("group") is None:
         raise SystemExit("refused: _members runs a pack group")
     stagep.require_claim(plan, chain["host"])
-    binary = plan["binary"]["path"]
-    exe = [sys.executable, binary] if binary.endswith(".py") else [binary]   # .py: test stand-ins only
-    procs, codes = {}, {}
+    procs = {}
     try:
         for name in names:
-            if held(plan, name):
-                codes[name] = EXIT_HOLD          # a member already at the hold waits for the others
-            else:
-                procs[name] = subprocess.Popen(exe + [plan["chains"][name]["config"]["path"]])
+            procs[name] = subprocess.Popen(inner_command(args.plan, name, args.fast_poll))
     except BaseException:
         for proc in procs.values():
             stop_tree(proc)
         raise
-    # Each member stops at the hold on its own; the others keep their cores and run on.
-    while any(proc.poll() is None for proc in procs.values()):
-        for name, proc in procs.items():
-            if proc.poll() is None and name not in codes and held(plan, name):
-                stop_tree(proc)
-                codes[name] = EXIT_HOLD
-        time.sleep(POLL_S if not args.fast_poll else 0.2)
-    for name, proc in procs.items():
-        codes.setdefault(name, proc.wait())
+    codes = {name: proc.wait() for name, proc in procs.items()}
     write(args.results, codes)
     raise SystemExit(0 if not any(codes.values()) else 1)
 
 
+def drive(args):
+    """Inside the claim: runs the chain's unfinished segments in order, thinning (and, with a regeneration
+    receipt, purging) after each; exits EXIT_HOLD at the hold, EXIT_STOP on a stop file."""
+    plan = checked_plan(args)
+    name = args.chain
+    chain, root = plan["chains"][name], Path(plan["root"])
+    stagep.require_claim(plan, chain["host"])
+    if held(plan, name):
+        raise SystemExit(EXIT_HOLD)
+    check(plan, name)
+    binary = plan["binary"]["path"]
+    exe = [sys.executable, binary] if binary.endswith(".py") else [binary]   # .py: test stand-ins only
+    full = read(chain["config"]["path"])
+    for s, (start, n) in enumerate(segments(chain["updates"])):
+        native = segment_native(chain, s)
+        if segment_done(native, n):
+            continue
+        if (root / "STOP").exists() or (root / plan["hold"]["stopped_file"]).exists():
+            raise SystemExit(EXIT_STOP)
+        if start >= HOLD and not (root / plan["hold"]["cleared_file"]).exists():
+            log(root, chain=name, event="hold", completed=start)
+            raise SystemExit(EXIT_HOLD)
+        source = full["initial_source"] if s == 0 else next_source(segment_native(chain, s - 1))
+        cfg = segment_config(full, start, n, native, source)
+        path = root / "chains" / name / "segments" / f"seg-{s:03d}.json"
+        if path.exists() and read(path) != cfg:
+            raise SystemExit(f"stop: {path} differs from the segment config derived from the pinned plan")
+        write(path, cfg)
+        moved = quarantine(native, root, name)
+        log(root, chain=name, event="segment", segment=s, first_update=start + 1, updates=n,
+            config=pin(path), source=source["checkpoint"], moved=moved)
+        code = subprocess.call(exe + [str(path)])
+        if code != 0 or not segment_done(native, n):
+            log(root, chain=name, event="segment-failed", segment=s, exit=code, completed=completed(native))
+            raise SystemExit(code or 1)
+        files, size = thin_chain(plan, name, apply=True)
+        purged = purge_held(plan, apply=True) if plan["thin"].get("regeneration_receipt") else None
+        log(root, chain=name, event="segment-done", segment=s, thinned_files=files, thinned_bytes=size,
+            purged=purged)
+    raise SystemExit(0)
+
+
 def supervise(plan, names, cmd, fast_poll, results=None):
-    """Runs the named chains; stops them at the hold (every chain, until the lead clears it), on STOP or on
-    STAGEF-STOPPED.json. Every chain is metered at 0 USD (owned hosts, ruling R5)."""
+    """Runs the named chains; STOP, STAGEF-STOPPED.json or a run root past the byte cap stops them. Every chain is
+    metered at 0 USD (owned hosts, ruling R5)."""
     root = Path(plan["root"])
     chains = {name: plan["chains"][name] for name in names}
     paths = {name: root / "chains" / name / "STATE.json" for name in names}
     states = {name: read(p) if p.exists() else {"metered_seconds": 0.0, "sessions": []} for name, p in paths.items()}
     sessions = {}
     for name, chain in chains.items():
-        done = completed(chain["native"])
-        moved = quarantine(chain["native"], root, name)
-        log(root, chain=name, event="start", completed=done, moved=moved, cmd=cmd)
-        sessions[name] = {"started": time.time(), "completed_at_start": done, "moved": moved}
+        done, _ = progress(chain)
+        log(root, chain=name, event="start", completed=done, cmd=cmd)
+        sessions[name] = {"started": time.time(), "completed_at_start": done}
     if results is not None:
         Path(results).unlink(missing_ok=True)
     proc = subprocess.Popen(cmd)
     outcome = None
-    last = time.time()
+    last = last_bytes = time.time()
     while proc.poll() is None:
         time.sleep(POLL_S if not fast_poll else 0.2)
         now = time.time()
@@ -471,156 +704,95 @@ def supervise(plan, names, cmd, fast_poll, results=None):
         last = now
         if (root / "STOP").exists() or (root / plan["hold"]["stopped_file"]).exists():
             outcome = "stop"
-        elif results is None and held(plan, names[0]):
-            outcome = "hold"                 # one chain: stopped here; a pack group's members stop in _members
+        elif fast_poll or now - last_bytes >= BYTES_CHECK_S:
+            last_bytes = now
+            if tree_bytes(root) > plan["byte_budget"]["cap_bytes"]:
+                outcome = "bytes"
         if outcome:
             stop_tree(proc)
             break
     code = proc.wait()
     member = read(results) if results is not None and Path(results).exists() else {}
     codes = {name: member.get(name, code) for name in names}
-    if outcome is None and results is not None and all(codes[n] == EXIT_HOLD for n in names):
+    if outcome is None and all(c == EXIT_HOLD for c in codes.values()):
         outcome = "hold"
     for name, chain in chains.items():
-        native = chain["native"]
         states[name]["metered_seconds"] += time.time() - last
+        done, unfinished = progress(chain)
         session = sessions[name]
-        session.update(ended=time.time(), exit=codes[name], outcome=outcome, completed=completed(native))
+        session.update(ended=time.time(), exit=codes[name], outcome=outcome, completed=done)
+        if outcome in ("stop", "bytes") and unfinished is not None:
+            session["moved_after"] = quarantine(segment_native(chain, unfinished), root, name)
         states[name]["sessions"].append(session)
         write(paths[name], states[name])
-        log(root, chain=name, event="end", exit=codes[name], outcome=outcome, completed=session["completed"],
-            usd=0.0)
-        if outcome or codes[name] == EXIT_HOLD:
-            session["moved_after"] = quarantine(native, root, name)
-            write(paths[name], states[name])
-        elif codes[name] == 0 and Path(native, "completion.json").exists()                 and completed(native) == chain["updates"]:
+        log(root, chain=name, event="end", exit=codes[name], outcome=outcome, completed=done, usd=0.0)
+        if outcome is None and codes[name] == 0 and unfinished is None:
+            last_native = segment_native(chain, len(segments(chain["updates"])) - 1)
             write(root / "chains" / name / "DONE.json",
-                  {"chain": name, "arm": chain["arm"], "completed_updates": session["completed"], "metered_usd": 0.0,
-                   "completion": pin(Path(native, "completion.json"))})
-    if outcome == "stop":
+                  {"chain": name, "arm": chain["arm"], "completed_updates": done, "metered_usd": 0.0,
+                   "segments": len(segments(chain["updates"])),
+                   "final_completion": pin(last_native / "completion.json"),
+                   "final_checkpoint": next_source(last_native)["checkpoint"]})
+    if outcome in ("stop", "bytes"):
         return EXIT_STOP
     if outcome == "hold":
         return EXIT_HOLD
     return next((c for c in [code, *codes.values()] if c != 0), 0)
 
 
-# ---------------------------------------------------------------- storage (ruling R6)
+# ---------------------------------------------------------------- segment check (the regeneration receipt)
 
-def keep_set(plan, chain, done):
-    """1-based updates whose bulk stays: multiples of keep_every, the hold, U, and the last keep_last completed."""
-    t = plan["thin"]
-    keep = {u for u in range(t["keep_every"], chain["updates"] + 1, t["keep_every"])}
-    keep |= {plan["hold"]["update"], chain["updates"]}
-    keep |= set(range(max(1, done - t["keep_last"] + 1), done + 1))
-    return keep
+def segcheck(args):
+    """On this host, inside its claim wrapper: the first two updates of the r2 pair-1 chain of the arm run once as
+    one native run and once as two one-update segments; the after states must be equal and the trajectories equal
+    apart from path and timing fields (qual.compare's rule). The record is the regeneration receipt for thinning."""
+    plan = load_plan(args.plan)
+    name = f"r2-p1-{args.arm}"
+    chain = plan["chains"][name]
+    full = read(chain["config"]["path"])
+    out = Path(plan["root"]) / "segcheck" / f"{args.host}-{args.arm}-{time.strftime('%Y%m%dT%H%M%S')}"
+    wrapper = [part.replace("{cores}", str(chain["cores"])).replace("{chain}", "segcheck")
+               for part in plan["hosts"][args.host]["wrapper"]]
+    binary = plan["binary"]["path"]
+    exe = [sys.executable, binary] if binary.endswith(".py") else [binary]
 
+    def go(cfg, label):
+        path = out / f"{label}.json"
+        write(path, cfg)
+        return subprocess.call(wrapper + exe + [str(path)])
 
-def bulk_files(iteration):
-    """An iteration's uncited bulk, each with the hash its own records pin: trajectories (pinned by collection.json)
-    and the update checkpoint (pinned by complete.json's output identity). Record files are never listed."""
-    complete = read(iteration / "complete.json")
-    attempt = iteration / [p for p in re.split(r"[\\/]", complete["update"]["path"]) if p.startswith("attempt-")][0]
-    collection = read(attempt / "collect" / Path(re.split(r"[\\/]", complete["collection"]["path"])[-1]))
-    out = []
-    for p in collection.get("trajectories", []):
-        out.append((attempt / "collect" / re.split(r"[\\/]", p["path"])[-1], p["sha256"]))
-    out.append((attempt / "update" / "checkpoint.json", complete["output_identity"]["checkpoint_sha256"]))
-    return out
-
-
-def is_link(path):
-    p = Path(path)
-    return p.is_symlink() or (hasattr(p, "is_junction") and p.is_junction())
-
-
-def thin_once(plan, apply):
-    root = Path(plan["root"])
-    report, moved_bytes = {}, 0
-    for name, chain in plan["chains"].items():
-        native = Path(chain["native"])
-        if not (native / "iterations").exists() or is_link(native) or is_link(native / "iterations"):
-            continue
-        done = completed(native)
-        keep = keep_set(plan, chain, done)
-        hold_dir = root / "_hold-thin" / time.strftime("%Y%m%d") / name
-        rows = []
-        for it in sorted(p for p in (native / "iterations").iterdir() if p.is_dir() and not is_link(p)):
-            if not (it / "complete.json").exists() or int(it.name) + 1 in keep:
-                continue
-            for path, digest in bulk_files(it):
-                if not path.exists():
-                    continue
-                if is_link(path):
-                    raise SystemExit(f"refused: {path} is a link")
-                if sha(path) != digest:
-                    raise SystemExit(f"stop: {path} does not match the hash its records pin; nothing more is moved")
-                size = path.stat().st_size
-                dest = hold_dir / path.relative_to(native)
-                rows.append({"chain": name, "from": path.as_posix(), "to": dest.as_posix(), "bytes": size,
-                             "sha256": digest})
-                if apply:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(path, dest)           # same volume: a rename, nothing copied
-                    with open(root / "THIN-MANIFEST.jsonl", "a", encoding="utf-8", newline="\n") as f:
-                        f.write(json.dumps(dict(rows[-1], at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))) + "\n")
-                moved_bytes += size
-        report[name] = {"completed": done, "files": len(rows), "bytes": sum(r["bytes"] for r in rows)}
-    return {"apply": apply, "chains": report, "bytes": moved_bytes}
+    codes = [go(segment_config(full, 0, 2, out / "whole" / "native", full["initial_source"]), "whole"),
+             go(segment_config(full, 0, 1, out / "seg-a" / "native", full["initial_source"]), "seg-a")]
+    codes.append(go(segment_config(full, 1, 1, out / "seg-b" / "native", next_source(out / "seg-a" / "native")),
+                    "seg-b"))
+    whole = list(qual.iterations(out / "whole" / "native"))
+    split = list(qual.iterations(out / "seg-a" / "native")) + list(qual.iterations(out / "seg-b" / "native"))
+    states = ([u["after_state_sha256"] for _, u, _ in whole], [u["after_state_sha256"] for _, u, _ in split])
+    trajectories = len(whole) == len(split) and all(
+        [qual.strip(read(p["path"]), qual.PATH_KEYS) for p in a["trajectories"]] ==
+        [qual.strip(read(p["path"]), qual.PATH_KEYS) for p in b["trajectories"]]
+        for (_, _, a), (_, _, b) in zip(whole, split))
+    record = {"schema": "ex1-stagef-segcheck/v1", "host": args.host, "hostname": socket.gethostname(),
+              "binary_sha256": plan["binary"]["sha256"], "chain": name, "arm": args.arm, "exits": codes,
+              "states_whole": states[0], "states_segmented": states[1],
+              "pass": not any(codes) and len(whole) == 2 and states[0] == states[1] and trajectories,
+              "trajectories_equal_apart_from_paths": trajectories,
+              "regeneration_recipe": "pinned binary by hash, the plan's full chain config, and segment_config from "
+                                     "the nearest kept checkpoint (every segment's last update) forward"}
+    write(args.out, record)
+    print(json.dumps(record, indent=1))
+    if not record["pass"]:
+        raise SystemExit("segment check failed")
 
 
 def thin(args):
     plan = load_plan(args.plan)
-    while True:
-        print(json.dumps(thin_once(plan, args.apply)))
-        if not args.loop:
-            return
-        if (Path(plan["root"]) / "STOP").exists():
-            return
-        time.sleep(args.loop)
+    print(json.dumps({name: dict(zip(("files", "bytes"), thin_chain(plan, name, args.apply)))
+                      for name in plan["chains"]}))
 
 
 def purge(args):
-    """Deletes holding folders older than hold_days, or every holding folder when the plan pins a regeneration
-    receipt (ARTIFACT-LAW clause 6). Junction-safe: links are never followed or deleted through."""
-    plan = load_plan(args.plan)
-    receipt = plan["thin"].get("regeneration_receipt")
-    if receipt:
-        check_pin(receipt, "the regeneration receipt")
-    base = Path(plan["root"]) / "_hold-thin"
-    cutoff = time.time() - plan["thin"]["hold_days"] * 86400
-    out = []
-    for day in sorted(p for p in base.iterdir() if p.is_dir() and not is_link(p)) if base.exists() else []:
-        try:
-            stamp = time.mktime(time.strptime(day.name, "%Y%m%d"))
-        except ValueError:
-            continue
-        if not receipt and stamp > cutoff:
-            continue
-        files = size = 0
-        for dirpath, dirnames, filenames in os.walk(day, topdown=False, followlinks=False):
-            for f in filenames:
-                p = Path(dirpath) / f
-                if is_link(p):
-                    continue
-                size += p.stat().st_size
-                files += 1
-                if args.apply:
-                    p.unlink()
-            for d in dirnames:
-                p = Path(dirpath) / d
-                if args.apply and not is_link(p):
-                    try:
-                        p.rmdir()
-                    except OSError:
-                        pass
-        if args.apply:
-            try:
-                day.rmdir()
-            except OSError:
-                pass
-        out.append({"folder": day.as_posix(), "files": files, "bytes": size, "deleted": args.apply})
-    print(json.dumps({"receipt": bool(receipt), "folders": out}))
-    return out
+    print(json.dumps(purge_held(load_plan(args.plan), args.apply)))
 
 
 def status(args):
@@ -628,13 +800,11 @@ def status(args):
     root = Path(plan["root"])
     out = {}
     for name, chain in plan["chains"].items():
-        native = Path(chain["native"])
-        done = completed(native)
+        done, unfinished = progress(chain)
         out[name] = {"arm": chain["arm"], "host": chain["host"], "completed": done, "of": chain["updates"],
-                     "held": done >= plan["hold"]["update"] and not (root / plan["hold"]["cleared_file"]).exists(),
-                     "done": (root / "chains" / name / "DONE.json").exists(),
-                     "bytes": sum(f.stat().st_size for f in native.rglob("*") if f.is_file()) if native.exists()
-                     else 0}
+                     "segment": unfinished, "held": held(plan, name),
+                     "done": (root / "chains" / name / "DONE.json").exists()}
+    out["run_root_bytes"] = tree_bytes(root)
     print(json.dumps(out, indent=1))
     return out
 
@@ -657,20 +827,29 @@ def main(argv=None):
     t.add_argument("--pack", type=int, default=1)
     t.add_argument("--repeats", type=int, default=None)
     t.add_argument("--stagger", type=float)
+    sc = sub.add_parser("segcheck")
+    sc.add_argument("--plan", required=True)
+    sc.add_argument("--host", required=True)
+    sc.add_argument("--arm", required=True, choices=ARMS)
+    sc.add_argument("--out", required=True)
     r = sub.add_parser("run")
     r.add_argument("--plan", required=True)
     r.add_argument("--chain", required=True, action="append", choices=sorted(CHAINS))
     r.add_argument("--fast-poll", action="store_true", help=argparse.SUPPRESS)
     m = sub.add_parser("_members")
     m.add_argument("--plan", required=True)
-    m.add_argument("--results", required=True)
     m.add_argument("--plan-sha256", required=True)
+    m.add_argument("--results", required=True)
     m.add_argument("--chain", required=True, action="append", choices=sorted(CHAINS))
     m.add_argument("--fast-poll", action="store_true")
+    d = sub.add_parser("_drive")
+    d.add_argument("--plan", required=True)
+    d.add_argument("--plan-sha256", required=True)
+    d.add_argument("--chain", required=True, choices=sorted(CHAINS))
+    d.add_argument("--fast-poll", action="store_true")
     th = sub.add_parser("thin")
     th.add_argument("--plan", required=True)
     th.add_argument("--apply", action="store_true")
-    th.add_argument("--loop", type=float, default=0.0, help="repeat every this many seconds until STOP")
     pg = sub.add_parser("purge")
     pg.add_argument("--plan", required=True)
     pg.add_argument("--apply", action="store_true")
@@ -684,8 +863,8 @@ def main(argv=None):
             ap.error("--repeats and --stagger are for --pack 2 or more")
         if args.repeats is None:
             args.repeats = 1 if args.pack == 1 else 3
-    {"plan": make_plan, "throughput": throughput, "run": run, "_members": members, "thin": thin, "purge": purge,
-     "status": status}[args.cmd](args)
+    {"plan": make_plan, "throughput": throughput, "segcheck": segcheck, "run": run, "_members": members,
+     "_drive": drive, "thin": thin, "purge": purge, "status": status}[args.cmd](args)
 
 
 if __name__ == "__main__":

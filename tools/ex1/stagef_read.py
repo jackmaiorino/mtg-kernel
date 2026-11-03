@@ -107,8 +107,9 @@ def mc_seed(tag, lineage, cell):
     return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "little")
 
 
-def paired(rows, keys):
-    """{(lineage, pair, case): {"x": row, "o": row}}, refusing duplicates and unpaired rows."""
+def paired(rows, keys, expected=None):
+    """{key: {"x": row, "o": row}}, refusing duplicates, unpaired rows and, when the scheduled keys are given, any
+    scheduled case without rows or any row outside the schedule."""
     out = defaultdict(dict)
     for r in rows:
         k = tuple(r[key] for key in keys)
@@ -118,16 +119,31 @@ def paired(rows, keys):
     missing = [k for k, v in out.items() if set(v) != {"x", "o"}]
     if missing:
         raise SystemExit(f"stop: {len(missing)} cases are not played by both arms, e.g. {missing[0]}")
+    if expected is not None:
+        absent, extra = expected - set(out), set(out) - expected
+        if absent or extra:
+            raise SystemExit(f"stop: {len(absent)} scheduled cases have no rows and {len(extra)} rows are not "
+                             f"scheduled, e.g. {sorted(absent or extra)[0]}")
     return out
 
 
-def primary(rows, label="combo_resolved"):
+def scheduled_primary():
+    return {(lin, i, c["case"]) for lin in LINEAGES for i in PAIRS for c in primary_cases(lin, i)}
+
+
+def scheduled_transfer():
+    return {(lin, i, c["case"], cell) for lin in LINEAGES for i in PAIRS for c in transfer_cases(lin, i)
+            for cell in CELLS if CELL_DECK[cell] == c["own"]}
+
+
+def primary(rows, label="combo_resolved", expected=None):
     """Section 6 primary: per lineage, discordant case pairs pooled over its two chain pairs; failed replays are
     excluded (primary) and bounded (O counts as completed, X as not); chain consistency per pair."""
-    pairs = paired(rows, ("lineage", "pair", "case"))
+    pairs = paired(rows, ("lineage", "pair", "case"), scheduled_primary() if expected is None else expected)
     out = {}
     for lin in LINEAGES:
-        res = {"primary": {"b": 0, "c": 0, "excluded": 0}, "sensitivity": {"b": 0, "c": 0}, "chains": {}}
+        res = {"primary": {"b": 0, "c": 0, "excluded": 0}, "sensitivity": {"b": 0, "c": 0}, "chains": {},
+               "failed_replays": {"x": 0, "o": 0}}
         for i in PAIRS:
             cx = co = cx_s = co_s = n = 0
             for (l2, p2, _), v in pairs.items():
@@ -135,6 +151,8 @@ def primary(rows, label="combo_resolved"):
                     continue
                 n += 1
                 x, o = v["x"], v["o"]
+                res["failed_replays"]["x"] += not x["replay_ok"]
+                res["failed_replays"]["o"] += not o["replay_ok"]
                 xs = x[label] if x["replay_ok"] else False
                 os_ = o[label] if o["replay_ok"] else True
                 res["sensitivity"]["b"] += xs and not os_
@@ -195,8 +213,9 @@ def conditional_rate(units, arm):
     return (sum(u[arm]["missed"] for u in units) / opp) if opp else None
 
 
-def transfer(rows, permutations=PERMUTATIONS, bootstraps=BOOTSTRAPS):
-    pairs = paired(rows, ("lineage", "pair", "case", "cell"))
+def transfer(rows, permutations=PERMUTATIONS, bootstraps=BOOTSTRAPS, expected=None):
+    pairs = paired(rows, ("lineage", "pair", "case", "cell"),
+                   scheduled_transfer() if expected is None else expected)
     cells = {}
     for cell in CELLS:
         per = {}
