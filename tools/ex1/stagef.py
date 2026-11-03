@@ -46,10 +46,13 @@ STAGEF-STOPPED.json, or a STOP file, stops everything. An interrupted iteration 
 
 Storage (ruling R6; ARTIFACT-LAW clauses 3, 4 and 6). After each segment ends, every finished segment's uncited bulk
 (episode trajectories, and update checkpoints except the segment's last) moves into `_hold-thin` on the same
-volume, each file first checked against the hash its records pin, with a THIN-MANIFEST.jsonl row. Record files
+volume, each file first checked against the hash its records pin, with a row in the chain's own
+thin/THIN-MANIFEST-<chain>.jsonl. Record files
 (complete, collection, update, ex1 and ledger JSON) never move, so every segment's last checkpoint (updates 300, 400,
-..., U) stays. `purge` deletes held files listed in the manifest once hold_days have passed since each move, or at
-once when the plan pins a regeneration receipt; it never walks a tree and never follows a link.
+..., U) stays. `purge` deletes held files listed in the manifests once hold_days have passed since each move, or at
+once when the plan pins passing segment checks for both arms; it never walks a tree, never follows a link, and runs
+one at a time. Before every segment a driver checks storage admission: the run root's bytes plus every unfinished
+chain's remaining segment bytes stay within the cap and the volume reserve; otherwise it exits EXIT_ROOM.
 """
 import argparse
 import json
@@ -98,6 +101,7 @@ BYTES_CHECK_S = 600
 POLL_S = 30
 EXIT_STOP = 5
 EXIT_HOLD = 6
+EXIT_ROOM = 7
 HOLD_CLEARED = "HOLD-300-CLEARED.json"
 STOPPED = "STAGEF-STOPPED.json"
 # The O throughput update: the qualification's hook-off run off-o (update 100 of ex1-qual-det-r2, hook off), whose
@@ -233,11 +237,11 @@ def make_plan(args):
             "byte_budget": {"bytes_per_update": BYTES_PER_UPDATE,
                             "projected_bytes_unthinned": BYTES_PER_UPDATE * updates * len(CHAINS),
                             "cap_bytes": int(args.byte_cap)},
-            "thin": dict(THIN, regeneration_receipt=pin(args.regeneration_receipt)
-                         if args.regeneration_receipt else None),
+            "thin": dict(THIN, regeneration_receipts=[pin(r) for r in args.regeneration_receipt or []]),
             "hosts": {h: {"wrapper": wrappers.get(h, []), "reserve_gib": max(RESERVE_GIB, reserves.get(h, 0.0))}
                       for h in hosts},
             "chains": chains, "allotted_usd": 0.0}
+    valid_receipts(plan)
     write(args.out, plan)
     print(json.dumps({"plan": Path(args.out).as_posix(), "updates": updates, "b_train_usd": b, "hosts": hosts}))
 
@@ -478,12 +482,59 @@ def thin_chain(plan, name, apply):
                 size += path.stat().st_size
                 if apply:
                     dest.parent.mkdir(parents=True, exist_ok=True)
+                    thin_manifest(root, name).parent.mkdir(parents=True, exist_ok=True)
                     os.replace(path, dest)           # same volume: a rename
-                    with open(root / "THIN-MANIFEST.jsonl", "a", encoding="utf-8", newline="\n") as f:
+                    with open(thin_manifest(root, name), "a", encoding="utf-8", newline="\n") as f:
                         f.write(json.dumps({"chain": name, "from": path.as_posix(), "to": dest.as_posix(),
                                             "bytes": dest.stat().st_size, "sha256": digest,
                                             "moved_at": time.time()}) + "\n")
     return files, size
+
+
+def thin_manifest(root, name):
+    """Each chain's driver appends only to its own manifest, so concurrent drivers never share a file."""
+    return Path(root) / "thin" / f"THIN-MANIFEST-{name}.jsonl"
+
+
+def thin_rows(root):
+    return [r for name in CHAINS for r in manifest_rows(thin_manifest(root, name))]
+
+
+def valid_receipts(plan):
+    """The pinned segment-check records, each passing for this plan's binary, together covering both arms."""
+    receipts = plan["thin"].get("regeneration_receipts") or []
+    arms = set()
+    for r in receipts:
+        check_pin(r, "a regeneration receipt")
+        rec = read(r["path"])
+        if rec.get("schema") != "ex1-stagef-segcheck/v1" or rec.get("pass") is not True or \
+                rec.get("binary_sha256") != plan["binary"]["sha256"]:
+            raise SystemExit(f"refused: {r['path']} is not a passing segment check for this binary")
+        arms.add(rec["arm"])
+    if receipts and arms != set(ARMS):
+        raise SystemExit(f"refused: the regeneration receipts cover arms {sorted(arms)}, not both")
+    return bool(receipts)
+
+
+def lock(path, stale_s=3600):
+    """An exclusive lock file; None when another process holds it (a lock older than stale_s is broken)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, json.dumps({"pid": os.getpid(), "at": time.time()}).encode())
+            os.close(fd)
+            return path
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > stale_s:
+                    path.unlink()
+                    continue
+            except FileNotFoundError:
+                continue
+            return None
+    return None
 
 
 def manifest_rows(path):
@@ -492,42 +543,56 @@ def manifest_rows(path):
 
 
 def purge_held(plan, apply):
-    """Deletes the held files the thin manifest lists, each once hold_days have passed since its move (or at once
-    with a pinned regeneration receipt), after checking it is a regular file inside the holding folder, reached
-    through no link, with its recorded hash. Nothing is walked; emptied folders are removed bottom-up."""
+    """Deletes the held files the thin manifests list, each once hold_days have passed since its move (or at once
+    when the plan pins passing segment checks for both arms), after checking that neither the holding folder nor any
+    folder between it and the file is a link, that the file resolves inside the holding folder, and that it still
+    has its recorded hash. Nothing is walked; emptied folders are removed bottom-up. One purger at a time (a lock);
+    a second caller returns without deleting."""
     root = Path(plan["root"])
-    receipt = plan["thin"].get("regeneration_receipt")
-    if receipt:
-        check_pin(receipt, "the regeneration receipt")
-    hold_root = Path(os.path.realpath(root / "_hold-thin"))
-    done = {r["to"] for r in manifest_rows(root / "PURGE-MANIFEST.jsonl")}
-    cutoff = time.time() - plan["thin"]["hold_days"] * 86400
-    out = {"files": 0, "bytes": 0, "deleted": apply, "receipt": bool(receipt)}
-    parents = set()
-    for row in manifest_rows(root / "THIN-MANIFEST.jsonl"):
-        if row["to"] in done or (not receipt and row["moved_at"] > cutoff):
-            continue
-        p = Path(row["to"])
-        # Every folder between the holding root and the file, and the file itself.
-        between = [q for q in [p, *p.parents] if hold_root in Path(os.path.realpath(q)).parents]
-        if not p.exists() or any(is_link(q) for q in between) or not p.is_file() or \
-                hold_root not in Path(os.path.realpath(p)).parents or sha(p) != row["sha256"]:
-            raise SystemExit(f"stop: held file {p} is missing, linked, outside the holding folder or changed")
-        out["files"] += 1
-        out["bytes"] += row["bytes"]
-        if apply:
-            p.unlink()
-            parents.update(between[1:])
-            with open(root / "PURGE-MANIFEST.jsonl", "a", encoding="utf-8", newline="\n") as f:
-                f.write(json.dumps({"to": row["to"], "bytes": row["bytes"], "sha256": row["sha256"],
-                                    "purged_at": time.time(), "receipt": receipt}) + "\n")
-    for d in sorted(parents, key=lambda q: len(q.parts), reverse=True):
-        try:
-            if not is_link(d):
-                d.rmdir()
-        except OSError:
-            pass
-    return out
+    receipt = valid_receipts(plan)
+    held_lock = lock(root / "thin" / "PURGE.lock") if apply else None
+    if apply and held_lock is None:
+        return {"files": 0, "bytes": 0, "deleted": False, "busy": True}
+    try:
+        hold = root / "_hold-thin"
+        if is_link(hold):
+            raise SystemExit(f"stop: {hold} is a link")
+        real_hold = Path(os.path.realpath(hold))
+        done = {r["to"] for r in manifest_rows(root / "thin" / "PURGE-MANIFEST.jsonl")}
+        cutoff = time.time() - plan["thin"]["hold_days"] * 86400
+        out = {"files": 0, "bytes": 0, "deleted": apply, "receipt": receipt}
+        parents = set()
+        for row in thin_rows(root):
+            if row["to"] in done or (not receipt and row["moved_at"] > cutoff):
+                continue
+            p = Path(row["to"])
+            try:
+                rel = p.relative_to(hold)
+            except ValueError:
+                raise SystemExit(f"stop: held file {p} is not under {hold}")
+            # Lexically, every folder from the holding folder down to the file, and the file.
+            between = [hold.joinpath(*rel.parts[:k]) for k in range(1, len(rel.parts) + 1)]
+            if not p.exists() or any(is_link(q) for q in between) or not p.is_file() or \
+                    real_hold not in Path(os.path.realpath(p)).parents or sha(p) != row["sha256"]:
+                raise SystemExit(f"stop: held file {p} is missing, linked, outside the holding folder or changed")
+            out["files"] += 1
+            out["bytes"] += row["bytes"]
+            if apply:
+                p.unlink()
+                parents.update(between[:-1])
+                with open(root / "thin" / "PURGE-MANIFEST.jsonl", "a", encoding="utf-8", newline="\n") as f:
+                    f.write(json.dumps({"to": row["to"], "bytes": row["bytes"], "sha256": row["sha256"],
+                                        "purged_at": time.time(), "receipt": receipt}) + "\n")
+        for d in sorted(parents, key=lambda q: len(q.parts), reverse=True):
+            try:
+                if not is_link(d):
+                    d.rmdir()
+            except OSError:
+                pass
+        return out
+    finally:
+        if held_lock is not None:
+            held_lock.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------- run
@@ -570,16 +635,34 @@ def group_checks(plan, names):
     if group is not None and all(held(plan, name) for name in names):
         raise SystemExit(f"refused: pack group {group} is held at update {HOLD} for the lead's steps 1 and 2 read; "
                          f"the lead writes {plan['hold']['cleared_file']} to continue")
-    need = sum(check(plan, name, allow_held=group is not None) for name in names)
+    for name in names:
+        check(plan, name, allow_held=group is not None)
+    reason = room(plan)
+    if reason:
+        raise SystemExit(f"refused: {reason}")
+    return chain
+
+
+def room(plan):
+    """Storage admission for any segment start: the run root's bytes plus every unfinished chain's remaining bytes in
+    its current segment (an upper bound on what concurrent drivers can still write before their next check) stay
+    within the cap, and the volume keeps that much plus its reserve free. Returns a reason, or None."""
+    need = 0
+    for chain in plan["chains"].values():
+        _, unfinished = progress(chain)
+        if unfinished is not None:
+            _, n = segments(chain["updates"])[unfinished]
+            native = segment_native(chain, unfinished)
+            need += (n - (completed(native) if native.exists() else 0)) * plan["byte_budget"]["bytes_per_update"]
     used = tree_bytes(plan["root"])
     if used + need > plan["byte_budget"]["cap_bytes"]:
-        raise SystemExit(f"refused: the run root holds {used / 1e9:.1f} GB; with {need / 1e9:.1f} GB more it "
-                         f"passes the {plan['byte_budget']['cap_bytes'] / 1e9:.0f} GB cap")
+        return (f"the run root holds {used / 1e9:.1f} GB and unfinished segments may add {need / 1e9:.1f} GB, past "
+                f"the {plan['byte_budget']['cap_bytes'] / 1e9:.0f} GB cap")
     free = shutil.disk_usage(Path(plan["root"])).free
-    reserve = plan["hosts"][chain["host"]]["reserve_gib"] * (1 << 30)
+    reserve = max(h["reserve_gib"] for h in plan["hosts"].values()) * (1 << 30)
     if free < need + reserve:
-        raise SystemExit(f"refused: {free / 1e9:.1f} GB free, need {need / 1e9:.1f} GB plus the host reserve")
-    return chain
+        return f"{free / 1e9:.1f} GB free, need {need / 1e9:.1f} GB plus the {reserve / 2**30:.0f} GiB reserve"
+    return None
 
 
 def inner_command(plan_path, name, fast_poll):
@@ -658,6 +741,10 @@ def drive(args):
         if start >= HOLD and not (root / plan["hold"]["cleared_file"]).exists():
             log(root, chain=name, event="hold", completed=start)
             raise SystemExit(EXIT_HOLD)
+        reason = room(plan)
+        if reason:
+            log(root, chain=name, event="no-room", segment=s, reason=reason)
+            raise SystemExit(EXIT_ROOM)
         source = full["initial_source"] if s == 0 else next_source(segment_native(chain, s - 1))
         cfg = segment_config(full, start, n, native, source)
         path = root / "chains" / name / "segments" / f"seg-{s:03d}.json"
@@ -672,7 +759,7 @@ def drive(args):
             log(root, chain=name, event="segment-failed", segment=s, exit=code, completed=completed(native))
             raise SystemExit(code or 1)
         files, size = thin_chain(plan, name, apply=True)
-        purged = purge_held(plan, apply=True) if plan["thin"].get("regeneration_receipt") else None
+        purged = purge_held(plan, apply=True) if plan["thin"].get("regeneration_receipts") else None
         log(root, chain=name, event="segment-done", segment=s, thinned_files=files, thinned_bytes=size,
             purged=purged)
     raise SystemExit(0)
@@ -706,7 +793,8 @@ def supervise(plan, names, cmd, fast_poll, results=None):
             outcome = "stop"
         elif fast_poll or now - last_bytes >= BYTES_CHECK_S:
             last_bytes = now
-            if tree_bytes(root) > plan["byte_budget"]["cap_bytes"]:
+            reserve = max(h["reserve_gib"] for h in plan["hosts"].values()) * (1 << 30)
+            if tree_bytes(root) > plan["byte_budget"]["cap_bytes"] or shutil.disk_usage(root).free < reserve:
                 outcome = "bytes"
         if outcome:
             stop_tree(proc)
@@ -716,6 +804,8 @@ def supervise(plan, names, cmd, fast_poll, results=None):
     codes = {name: member.get(name, code) for name in names}
     if outcome is None and all(c == EXIT_HOLD for c in codes.values()):
         outcome = "hold"
+    if outcome is None and any(c == EXIT_ROOM for c in codes.values()):
+        outcome = "room"
     for name, chain in chains.items():
         states[name]["metered_seconds"] += time.time() - last
         done, unfinished = progress(chain)
@@ -735,6 +825,8 @@ def supervise(plan, names, cmd, fast_poll, results=None):
                    "final_checkpoint": next_source(last_native)["checkpoint"]})
     if outcome in ("stop", "bytes"):
         return EXIT_STOP
+    if outcome == "room":
+        return EXIT_ROOM
     if outcome == "hold":
         return EXIT_HOLD
     return next((c for c in [code, *codes.values()] if c != 0), 0)
@@ -819,7 +911,7 @@ def main(argv=None):
     for flag in ("--parent", "--base", "--place", "--wrapper", "--reserve"):
         p.add_argument(flag, action="append")
     p.add_argument("--byte-cap", type=float, default=BYTE_CAP)
-    p.add_argument("--regeneration-receipt")
+    p.add_argument("--regeneration-receipt", action="append", help="a passing segcheck record; one per arm")
     t = sub.add_parser("throughput")
     t.add_argument("--plan", required=True)
     t.add_argument("--host", required=True)

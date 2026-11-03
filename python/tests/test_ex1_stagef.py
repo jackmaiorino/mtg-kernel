@@ -122,12 +122,22 @@ class StageFTests(unittest.TestCase):
                                     "spend": [{"item": "G(i)", "usd": 200.0 - usd}]}))
         return path
 
-    def make(self, places=None, b=40.0, namespace="ex1-stagef-test", receipt=None, cap=None):
+    def receipts(self, **changes):
+        out = []
+        for arm in ("x", "o"):
+            path = self.t / f"SEGCHECK-{arm}.json"
+            rec = {"schema": "ex1-stagef-segcheck/v1", "pass": True, "binary_sha256": sha(self.binary), "arm": arm}
+            rec.update(changes)
+            path.write_text(json.dumps(rec))
+            out.append(path)
+        return out
+
+    def make(self, places=None, b=40.0, namespace="ex1-stagef-test", receipts=(), cap=None):
         places = places or {name: "desk:2" for name in stagef.CHAINS}
         argv = ["plan", "--qualification", str(self.qualification), "--calibration", str(self.calibration),
                 "--binary", str(self.binary), "--root", self.root.as_posix(), "--out", str(self.plan),
                 "--budget", str(self.budget(b)), "--o-timing", str(self.timing), "--namespace", namespace]
-        if receipt:
+        for receipt in receipts:
             argv += ["--regeneration-receipt", str(receipt)]
         if cap:
             argv += ["--byte-cap", str(cap)]
@@ -272,7 +282,7 @@ class StageFTests(unittest.TestCase):
         self.make(cap=1e5)
         self.record("desk", "o")
         (self.root / "bulk.bin").write_bytes(b"x" * 200_000)
-        with self.assertRaisesRegex(SystemExit, "passes the 0 GB cap"):
+        with self.assertRaisesRegex(SystemExit, "past the 0 GB cap"):
             stagef.main(["run", "--plan", str(self.plan), "--chain", "r1-p1-o", "--fast-poll"])
 
     # ---------------------------------------------------------------- storage
@@ -284,7 +294,7 @@ class StageFTests(unittest.TestCase):
         self.assertEqual(self.run_chain("r1-p1-o"), 0)
         chain = plan["chains"]["r1-p1-o"]
         updates = plan["extent"]["updates"]
-        rows = stagef.manifest_rows(self.root / "THIN-MANIFEST.jsonl")
+        rows = stagef.thin_rows(self.root)
         # Every trajectory, and every checkpoint but each segment's last.
         self.assertEqual(len(rows), 2 * updates - len(stagef.segments(updates)))
         for s, (_, n) in enumerate(stagef.segments(updates)):
@@ -305,18 +315,56 @@ class StageFTests(unittest.TestCase):
             out = stagef.purge_held(stagef.load_plan(self.plan), apply=True)
         self.assertEqual(out["files"], len(rows))
         self.assertFalse(any(Path(r["to"]).exists() for r in rows))
-        self.assertEqual(len(stagef.manifest_rows(self.root / "PURGE-MANIFEST.jsonl")), len(rows))
+        self.assertEqual(len(stagef.manifest_rows(self.root / "thin" / "PURGE-MANIFEST.jsonl")), len(rows))
 
-    def test_a_regeneration_receipt_purges_after_each_segment(self):
-        receipt = self.t / "REGEN.json"
-        receipt.write_text("{}")
-        plan = self.make(receipt=receipt)
+    def test_passing_segment_checks_for_both_arms_purge_after_each_segment(self):
+        plan = self.make(receipts=self.receipts())
         self.record("desk", "o")
         self.assertEqual(self.run_chain("r2-p2-o"), stagef.EXIT_HOLD)
-        rows = stagef.manifest_rows(self.root / "THIN-MANIFEST.jsonl")
+        rows = stagef.thin_rows(self.root)
         self.assertEqual(len(rows), 300 + 299)
         self.assertFalse(any(Path(r["to"]).exists() for r in rows))
-        self.assertEqual(plan["thin"]["regeneration_receipt"]["sha256"], sha(receipt))
+        self.assertEqual(len(plan["thin"]["regeneration_receipts"]), 2)
+
+    def test_a_failed_or_partial_segment_check_is_refused(self):
+        with self.assertRaisesRegex(SystemExit, "not a passing segment check"):
+            self.make(receipts=self.receipts(**{"pass": False}))
+        with self.assertRaisesRegex(SystemExit, "cover arms"):
+            self.make(receipts=self.receipts()[:1])
+        with self.assertRaisesRegex(SystemExit, "not a passing segment check"):
+            self.make(receipts=self.receipts(binary_sha256="0" * 64))
+
+    def test_purge_refuses_a_linked_holding_folder_and_runs_one_at_a_time(self):
+        self.make()
+        self.record("desk", "o")
+        self.run_chain("r1-p1-o")
+        rows = stagef.thin_rows(self.root)
+        later = rows[-1]["moved_at"] + 7 * 86400 + 1
+        lock = self.root / "thin" / "PURGE.lock"
+        lock.write_text("{}")
+        os.utime(lock, (later, later))                    # held now, at the mocked clock
+        with mock.patch.object(stagef.time, "time", return_value=later):
+            self.assertTrue(stagef.purge_held(stagef.load_plan(self.plan), apply=True).get("busy"))
+        lock.unlink()
+        hold = self.root / "_hold-thin"
+        outside = self.t / "outside"
+        hold.rename(outside)
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(outside), str(hold))
+        else:
+            os.symlink(outside, hold)
+        with mock.patch.object(stagef.time, "time", return_value=later):
+            with self.assertRaisesRegex(SystemExit, "is a link"):
+                stagef.purge_held(stagef.load_plan(self.plan), apply=True)
+        self.assertTrue(all((outside / Path(r["to"]).relative_to(hold)).exists() for r in rows))
+
+    def test_room_counts_every_unfinished_chains_segment(self):
+        plan = self.make()
+        plan["byte_budget"]["cap_bytes"] = 8 * 300 * stagef.BYTES_PER_UPDATE + stagef.tree_bytes(self.root) + 10
+        self.assertIsNone(stagef.room(plan))
+        (self.root / "bulk.bin").write_bytes(b"x" * 20)
+        self.assertIn("past the", stagef.room(plan))
 
     def test_a_changed_kept_checkpoint_stops_the_next_segment(self):
         plan = self.make()
@@ -332,7 +380,7 @@ class StageFTests(unittest.TestCase):
         plan = self.make()
         self.record("desk", "o")
         self.run_chain("r1-p1-o")
-        row = stagef.manifest_rows(self.root / "THIN-MANIFEST.jsonl")[0]
+        row = stagef.thin_rows(self.root)[0]
         Path(row["to"]).replace(row["from"])
         Path(row["from"]).write_text("tampered")
         with self.assertRaisesRegex(SystemExit, "differs from the hash"):
