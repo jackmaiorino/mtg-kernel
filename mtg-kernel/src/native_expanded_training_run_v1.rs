@@ -3626,7 +3626,79 @@ mod tests {
             crate::expanded_deck_training_v1::arm_crash_point_for_test_v1();
             let error = run_native_expanded_training_v1(&crashed, None).unwrap_err();
             assert!(error.contains("crash point"), "{error}");
+            // Every file of the interrupted attempt, recursively, with its bytes.
+            let inventory = |dir: &Path| -> std::collections::BTreeMap<String, Vec<u8>> {
+                let mut out = std::collections::BTreeMap::new();
+                let mut stack = vec![dir.to_path_buf()];
+                while let Some(next) = stack.pop() {
+                    for entry in fs::read_dir(&next).unwrap() {
+                        let path = entry.unwrap().path();
+                        if path.is_dir() {
+                            stack.push(path);
+                        } else {
+                            let rel = path
+                                .strip_prefix(dir)
+                                .unwrap()
+                                .to_string_lossy()
+                                .replace(std::path::MAIN_SEPARATOR, "/");
+                            out.insert(rel, fs::read(&path).unwrap());
+                        }
+                    }
+                }
+                out
+            };
+            let interrupted = crashed
+                .output_directory
+                .join("iterations")
+                .join("000000")
+                .join("attempt-000000");
+            let before = inventory(&interrupted);
             let resumed = run_native_expanded_training_v1(&crashed, None).unwrap();
+            assert_eq!(
+                before,
+                inventory(&interrupted),
+                "{label}: the resume changed the interrupted attempt"
+            );
+            let names: Vec<&str> = before.keys().map(String::as_str).collect();
+            assert!(
+                names.iter().all(|name| [
+                    "collect-command.json",
+                    "update-input.json",
+                    "update-command.json",
+                    "update/checkpoint.json",
+                    "collect/collection.json"
+                ]
+                .contains(name)
+                    || (name.starts_with("collect/episode-") && name.ends_with(".json"))),
+                "{label}: {names:?}"
+            );
+            for required in [
+                "collect-command.json",
+                "update-input.json",
+                "update-command.json",
+                "update/checkpoint.json",
+                "collect/collection.json",
+            ] {
+                assert!(before.contains_key(required), "{label}: {required} missing");
+            }
+            let after = inventory(
+                &crashed
+                    .output_directory
+                    .join("iterations")
+                    .join("000000")
+                    .join("attempt-000001"),
+            );
+            assert_eq!(
+                after.keys().map(String::as_str).collect::<Vec<_>>(),
+                vec![
+                    "collect-command.json",
+                    "update-command.json",
+                    "update-input.json",
+                    "update/checkpoint.json",
+                    "update/update.json"
+                ],
+                "{label}"
+            );
             assert_eq!(resumed["complete"], true);
             let states = |result: &Value| {
                 (0..2)
