@@ -683,7 +683,8 @@ pub(super) fn names_another_file_v1(checkpoint: &[u8]) -> Result<bool, String> {
     }
     #[cfg(test)]
     PROBES_FOR_TEST_V1.with(|probes| probes.set(probes.get() + 1));
-    let probe: ArchiveProbeV1 = serde_json::from_slice(checkpoint).map_err(err)?;
+    let view = super::checkpoint_container_v1::metadata_view_v1(checkpoint)?;
+    let probe: ArchiveProbeV1 = serde_json::from_slice(view).map_err(err)?;
     Ok(probe.archive_distillation.is_some())
 }
 
@@ -1187,6 +1188,10 @@ fn converted_checkpoint_bytes_v1(
     converted_contract: &str,
     runtime_weight: &[f32],
 ) -> Result<Vec<u8>, String> {
+    ensure(
+        !super::checkpoint_container_v1::is_container_v1(checkpoint),
+        "the no-state-digest conversion reads only a v1 JSON checkpoint; export the container first",
+    )?;
     let mut value: Value = serde_json::from_slice(checkpoint).map_err(err)?;
     let source_state = value
         .get("state_sha256")

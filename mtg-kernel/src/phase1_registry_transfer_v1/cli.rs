@@ -147,6 +147,12 @@ pub fn run_registry_transfer_cli_v1(
         "registry transfer CLI requires an absolute output_directory",
     )?;
     let checkpoint_bytes = read_bounded(&request.source_checkpoint)?;
+    require(
+        !crate::expanded_deck_training_v1::checkpoint_container_v1::is_container_v1(
+            &checkpoint_bytes,
+        ),
+        "registry transfer reads only a v1 JSON checkpoint; export the container first",
+    )?;
     let source_registry_bytes = read_bounded(&request.source_registry)?;
     let probe: CheckpointScalarProbeV1 =
         serde_json::from_slice(&checkpoint_bytes).map_err(|e| format!("source checkpoint: {e}"))?;

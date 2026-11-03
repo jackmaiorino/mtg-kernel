@@ -114,6 +114,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
             update_backward_execution: UpdateBackwardExecutionV1::FixedPartition4,
             loss_selection: gae,
             training_math: TrainingMathV1::PlatformLibm,
+            record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
             output_directory: root.join(format!("update-{label}")),
         })
         .unwrap();
