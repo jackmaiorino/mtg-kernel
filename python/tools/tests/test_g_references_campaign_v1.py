@@ -1238,10 +1238,11 @@ class DriverTests(unittest.TestCase):
         order = []
         real = driver.accounted_bytes_serial
         with patch.object(driver, "accounted_bytes_serial", side_effect=lambda c: order.append("walk") or real(c)):
-            driver.accounted_bytes(self.campaign, publish=lambda logical: order.append(("publish", logical)))
-            driver.accounted_bytes(self.campaign, publish=lambda logical: order.append(("publish", logical)))
+            driver.accounted_bytes(self.campaign, publish=lambda logical, at: order.append(("publish", logical, at)))
+            driver.accounted_bytes(self.campaign, publish=lambda logical, at: order.append(("publish", logical, at)))
         self.assertEqual([item if item == "walk" else item[0] for item in order], ["walk", "publish", "walk", "publish"])
         self.assertEqual(order[1][1], self.full_walk())
+        self.assertLessEqual(order[1][2], order[3][2])  # each turn's own start: published walks stay in order
 
     def test_a_latch_is_never_undone_by_a_later_agreeing_walk(self):
         self.walking_campaign()

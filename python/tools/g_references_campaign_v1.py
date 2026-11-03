@@ -861,9 +861,10 @@ def accounted_bytes(campaign: Campaign, publish=None) -> int:
     one at a time (WALK_SERIAL), each with its ``publish``, so no walk returns or publishes a total after a later
     walk found a mismatch."""
     with WALK_SERIAL:
+        started = time.time()  # the measurement's own start, inside its turn: published walks stay in order
         logical = accounted_bytes_serial(campaign)
         if publish is not None:
-            publish(logical)
+            publish(logical, started)
         return logical
 
 
@@ -918,11 +919,11 @@ def walk_volume(campaign: Campaign) -> None:
     result, started, started_unix = {}, time.monotonic(), time.time()
     record = volume(campaign)
 
-    def publish(logical):  # in order with the other walks of this process (WALK_SERIAL)
-        record.update(logical=logical, started=started_unix, walked=time.time(), finished=0)
+    def publish(logical, measured):  # in order with the other walks of this process (WALK_SERIAL)
+        record.update(logical=logical, started=measured, walked=time.time(), finished=0)
         try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
             Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
-            native_dispatch.publish_walk(record["shared"], logical, started_unix, record["walked"], "driver",
+            native_dispatch.publish_walk(record["shared"], logical, measured, record["walked"], "driver",
                                          len(SCRATCH_INFLIGHT))  # the caller holds SCRATCH_LOCK
         except OSError:
             pass  # only a shortcut: the background walker publishes too
@@ -1000,9 +1001,9 @@ def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
         if not in_flight or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
             continue
         started = time.time()
-        def publish(logical):  # in order with the other walks of this process (WALK_SERIAL)
+        def publish(logical, measured):  # in order with the other walks of this process (WALK_SERIAL)
             Path(shared).parent.mkdir(parents=True, exist_ok=True)
-            native_dispatch.publish_walk(shared, logical, started, time.time(), "driver-background", in_flight)
+            native_dispatch.publish_walk(shared, logical, measured, time.time(), "driver-background", in_flight)
         try:
             logical = accounted_bytes(campaign, publish)
         except Exception as error:  # the dispatchers walk for themselves once the record is stale
