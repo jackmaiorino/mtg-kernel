@@ -22,7 +22,7 @@ CARDS = json.loads((REPO / "data" / "cards_v1.json").read_text(encoding="utf-8")
 NEUTRAL = json.loads(json.dumps(MANIFEST))
 NEUTRAL["engine"]["rules_snapshot_id"] += ":neutral-v2"
 WRAPPER = {"buffered_completion_proposals": True, "bot_reads_completion_proposals": True,
-           "bot_completion_mapping": rr.MAPPING}
+           "bot_completion_mapping": rr.MAPPING, "bot_stepwise_sampler": "sampled-wide-v1"}
 NO_DELVE = {"training": [], "board": []}
 
 
@@ -76,15 +76,19 @@ class ExceptionTests(unittest.TestCase):
     def test_no_exception_when_nothing_differs(self):
         out = board_runtime(cfg=training_config(), manifest=MANIFEST, h=None, s0=None,
                             wrapper={"buffered_completion_proposals": False, "bot_reads_completion_proposals": False,
-                                     "bot_completion_mapping": None})
+                                     "bot_completion_mapping": None, "bot_stepwise_sampler": "sampled-wide-v1"})
         self.assertEqual(out["raw_failures"], [])
         self.assertEqual(out["accepted_exceptions"], [])
 
     def test_delve_and_wrapper_detection(self):
         angler = next(i for i, c in enumerate(CARDS) if c["name"] == "Gurmag Angler")
         self.assertEqual(rr.delve_cards(CARDS, [0, angler]), ["Gurmag Angler"])
-        bot = f'PROPOSAL_SCHEMA = "{rr.PROPOSALS}"\nPROPOSAL_MAPPING = "{rr.MAPPING}"\n'
+        bot = f'PROPOSAL_SCHEMA = "{rr.PROPOSALS}"\nPROPOSAL_MAPPING = "{rr.MAPPING}"\nSAMPLED = "sampled-wide-v1"\n'
         self.assertEqual(rr.selection_facts(f'PROPOSALS = "{rr.PROPOSALS}"\n', bot), WRAPPER)
+        unknown = rr.selection_facts("x = 1\n", "y = 2\n")  # an unknown deployment is never equal to training
+        out = board_runtime(wrapper=unknown)
+        self.assertIn("selection_equal", out["raw_failures"])
+        self.assertIn("buffered-completion-selection", [e["exception"] for e in out["refused_exceptions"]])
         comment_only = f'# PROPOSALS = "{rr.PROPOSALS}"\nx = "{rr.PROPOSALS}"\n'
         self.assertFalse(rr.selection_facts(comment_only, bot)["buffered_completion_proposals"])
         other = rr.selection_facts(f'PROPOSALS = "{rr.PROPOSALS}"\n', 'PROPOSAL_MAPPING = "argmax"\n')
