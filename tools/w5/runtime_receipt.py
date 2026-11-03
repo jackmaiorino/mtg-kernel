@@ -57,6 +57,7 @@ MAPPING = "deterministic-completion-logprob/v1"
 AMENDMENT_MARKERS = ("## Amendment A1: runtime parity", "### A1 correction")
 AMENDMENT_PATH = "LANES/lead/w5/RULINGS-r0.md"
 BOARD_V2 = "pauper-ladder-v2"
+STEPWISE = "sampled-wide-v1"
 EXCEPTIONS = {
     "spellbench-neutral-choices": "neutral_choices_equal",
     "graveyard-order-profile": "training_rules_profile_is_default",
@@ -121,7 +122,8 @@ def selection_facts(wrapper_source: str, bot_source: str) -> dict:
     wrapper, bot = module_constants(wrapper_source), module_constants(bot_source)
     return {"buffered_completion_proposals": wrapper.get("PROPOSALS") == PROPOSALS,
             "bot_reads_completion_proposals": bot.get("PROPOSAL_SCHEMA") == PROPOSALS,
-            "bot_completion_mapping": bot.get("PROPOSAL_MAPPING")}
+            "bot_completion_mapping": bot.get("PROPOSAL_MAPPING"),
+            "bot_stepwise_sampler": bot.get("SAMPLED")}
 
 
 def evaluate(raw: dict, training_profile: dict, h_runtimes: list[str], s0_profile: dict, board_manifest: dict,
@@ -129,7 +131,9 @@ def evaluate(raw: dict, training_profile: dict, h_runtimes: list[str], s0_profil
     """Raw checks (as computed) plus A1's three exceptions, each with its conditions."""
     checks = dict(raw["checks"])
     training_runtimes = set(training_profile)
-    checks["selection_equal"] = not selection["buffered_completion_proposals"]
+    # Equal only for a known training-style deployment: no buffered groups and the stepwise sampler training uses.
+    checks["selection_equal"] = (not selection["buffered_completion_proposals"]
+                                 and selection.get("bot_stepwise_sampler") == STEPWISE)
     checks["h_panel_runtime_equals_training"] = bool(h_runtimes) and set(h_runtimes) == training_runtimes
     checks["s0_runtime_equals_training"] = bool(s0_profile) and set(s0_profile) == training_runtimes
     conditions = {
@@ -265,7 +269,8 @@ def main(argv=None) -> int:
                        "wrapper": {"path": str(args.wrapper), "sha256": wrapper_sha},
                        "scorer": {"path": str(args.scorer), "sha256": scorer_sha,
                                   "binding": "recorded only: the board run records no scorer hash"},
-                       "bot": {"path": str(args.bot), "sha256": sha256_bytes(bot_raw)},
+                       "bot": {"path": str(args.bot), "sha256": sha256_bytes(bot_raw),
+                               "binding": "recorded only: the board run records no bot hash"},
                        "board_engine": manifest.get("engine"), "board_engine_files": manifest.get("engine_files")},
         "board_snapshot": {"path": str(args.board_snapshot), "manifest_sha256": sha256_bytes(snapshot_raw),
                            "run_manifest_sha256": sha256_bytes(manifest_raw)},
