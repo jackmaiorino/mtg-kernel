@@ -3,6 +3,7 @@ failures; the recorded fields. The end-to-end receipt runs on Spellbench's publi
 snapshot when SPELLBENCH_ROOT is set."""
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -20,7 +21,8 @@ from test_runtime_parity import (BOARD_CONFIG, BOARD_POOL, BRIDGE_OK, CARD_NAMES
 CARDS = json.loads((REPO / "data" / "cards_v1.json").read_text(encoding="utf-8"))["cards"]
 NEUTRAL = json.loads(json.dumps(MANIFEST))
 NEUTRAL["engine"]["rules_snapshot_id"] += ":neutral-v2"
-WRAPPER = {"buffered_completion_proposals": True, "completion_mapping": rr.MAPPING}
+WRAPPER = {"buffered_completion_proposals": True, "bot_reads_completion_proposals": True,
+           "bot_completion_mapping": rr.MAPPING}
 NO_DELVE = {"training": [], "board": []}
 
 
@@ -34,7 +36,7 @@ def board_runtime(cfg=None, manifest=NEUTRAL, wrapper=WRAPPER, delve=NO_DELVE, c
     cfg = cfg or training_config(runtime_rules="resolution-boundary-v1")
     profile = rr.runtime_profile([cfg])
     s0_cfg = training_config(runtime_rules=s0) if s0 else training_config()
-    return rr.evaluate(raw_for(cfg, manifest, board_config), profile, [{"runtime_rules": h}],
+    return rr.evaluate(raw_for(cfg, manifest, board_config), profile, [rr.plan_runtime({"runtime_rules": h})],
                        rr.runtime_profile([s0_cfg]), manifest, wrapper, delve, census_ok)
 
 
@@ -52,8 +54,7 @@ class ExceptionTests(unittest.TestCase):
         cases = {
             "spellbench-neutral-choices": board_runtime(census_ok=False),
             "graveyard-order-profile": board_runtime(delve={"training": ["Gurmag Angler"], "board": []}),
-            "buffered-completion-selection": board_runtime(wrapper={"buffered_completion_proposals": True,
-                                                                    "completion_mapping": None}),
+            "buffered-completion-selection": board_runtime(wrapper=dict(WRAPPER, bot_completion_mapping="argmax")),
         }
         for name, out in cases.items():
             self.assertEqual([e["exception"] for e in out["refused_exceptions"]], [name], name)
@@ -74,15 +75,38 @@ class ExceptionTests(unittest.TestCase):
 
     def test_no_exception_when_nothing_differs(self):
         out = board_runtime(cfg=training_config(), manifest=MANIFEST, h=None, s0=None,
-                            wrapper={"buffered_completion_proposals": False, "completion_mapping": None})
+                            wrapper={"buffered_completion_proposals": False, "bot_reads_completion_proposals": False,
+                                     "bot_completion_mapping": None})
         self.assertEqual(out["raw_failures"], [])
         self.assertEqual(out["accepted_exceptions"], [])
 
     def test_delve_and_wrapper_detection(self):
         angler = next(i for i, c in enumerate(CARDS) if c["name"] == "Gurmag Angler")
         self.assertEqual(rr.delve_cards(CARDS, [0, angler]), ["Gurmag Angler"])
-        self.assertEqual(rr.wrapper_selection(f'X = "{rr.PROPOSALS}"; M = "{rr.MAPPING}"'), WRAPPER)
-        self.assertFalse(rr.wrapper_selection("plain")["buffered_completion_proposals"])
+        bot = f'PROPOSAL_SCHEMA = "{rr.PROPOSALS}"\nPROPOSAL_MAPPING = "{rr.MAPPING}"\n'
+        self.assertEqual(rr.selection_facts(f'PROPOSALS = "{rr.PROPOSALS}"\n', bot), WRAPPER)
+        comment_only = f'# PROPOSALS = "{rr.PROPOSALS}"\nx = "{rr.PROPOSALS}"\n'
+        self.assertFalse(rr.selection_facts(comment_only, bot)["buffered_completion_proposals"])
+        other = rr.selection_facts(f'PROPOSALS = "{rr.PROPOSALS}"\n', 'PROPOSAL_MAPPING = "argmax"\n')
+        self.assertNotEqual(other["bot_completion_mapping"], rr.MAPPING)
+
+    def test_h_runtimes_come_from_every_pinned_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            request = tmp / "req.json"
+            request.write_text(json.dumps({"matches": [{"config": {"runtime_rules": "resolution-boundary-v1"}},
+                                                       {"config": {}}]}))
+            plan = tmp / "plan.json"
+            plan.write_text(json.dumps({"runtime_rules": "resolution-boundary-v1", "requests": [
+                {"request": {"path": str(request), "sha256": rr.sha256_bytes(request.read_bytes())}}]}))
+            self.assertEqual(rr.h_plan_runtimes(plan), ["resolution-boundary-v1", "resolution-boundary-v1", "default"])
+            plan.write_text(json.dumps({"runtime_rules": "resolution-boundary-v1", "requests": [
+                {"request": {"path": str(request), "sha256": "0" * 64}}]}))
+            with self.assertRaises(rr.ReceiptError):
+                rr.h_plan_runtimes(plan)
+            plan.write_text(json.dumps({"runtime_rules": "resolution-boundary-v1", "requests": []}))
+            with self.assertRaises(rr.ReceiptError):
+                rr.h_plan_runtimes(plan)
 
 
 @unittest.skipUnless(os.environ.get("SPELLBENCH_ROOT"), "SPELLBENCH_ROOT not set")
@@ -97,19 +121,31 @@ class EndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             files = {}
+            request = tmp / "h-request.json"
+            request.write_text(json.dumps({"matches": [{"config": {"runtime_rules": "resolution-boundary-v1"}}]}))
             for name, value in (("cfg.json", training_config(runtime_rules="resolution-boundary-v1")),
                                 ("s0.json", training_config(runtime_rules="resolution-boundary-v1")),
-                                ("h.json", {"runtime_rules": "resolution-boundary-v1", "seed_namespace": "x"})):
+                                ("h.json", {"runtime_rules": "resolution-boundary-v1", "seed_namespace": "x",
+                                            "requests": [{"request": {"path": str(request),
+                                                                      "sha256": rr.sha256_bytes(request.read_bytes())}}]})):
                 files[name] = tmp / name
                 files[name].write_text(json.dumps(value))
-            amendment = tmp / "RULINGS-r0.md"
+            collab = tmp / "collab"
+            amendment = collab / rr.AMENDMENT_PATH
+            amendment.parent.mkdir(parents=True)
             amendment.write_text("## Amendment A1: runtime parity\n\n### A1 correction\n")
+            for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a1"]):
+                subprocess.run(["git", "-C", str(collab), *cmd], check=True, capture_output=True)
+            commit = subprocess.run(["git", "-C", str(collab), "rev-parse", "HEAD"], capture_output=True,
+                                    text=True).stdout.strip()
             census = tmp / "census.json"
             census.write_text("{}")
             out = tmp / "receipt.json"
             code = rr.main(["--training-config", str(files["cfg.json"]), "--board-run", str(run),
                             "--board-snapshot", str(snap), "--repo", str(REPO), "--amendment", str(amendment),
-                            "--amendment-commit", "21d5ded1", "--census", str(census),
+                            "--amendment-commit", commit, "--census", str(census),
+                            "--collab-repo", str(collab),
+                            "--bot", str(sb / "integrations" / "mtg_kernel" / "kernel_flat_bot.py"),
                             "--h-plan", str(files["h.json"]), "--s0-config", str(files["s0.json"]),
                             "--engine-binary", sys.executable,
                             "--wrapper", str(sb / "integrations" / "mtg_kernel" / "kernel_engine_v2.py"),
@@ -122,7 +158,8 @@ class EndToEndTests(unittest.TestCase):
                          ["buffered-completion-selection", "graveyard-order-profile"])
         self.assertEqual([e["exception"] for e in receipt["refused_exceptions"]], ["spellbench-neutral-choices"])
         self.assertTrue(receipt["bindings"]["run_is_a_snapshot_source"])
-        self.assertFalse(receipt["bindings"]["engine_binary_in_board_engine_files"])
+        self.assertFalse(receipt["bindings"]["engine_binary_is_the_board_bridge"])
+        self.assertFalse(receipt["bindings"]["board_is_v2"])  # a v1 receipt is informative only
         self.assertEqual(receipt["exception_evidence"]["delve_cards"], {"training": [], "board": []})
         for key in ("amendment", "runtimes", "configs", "identities", "board_snapshot", "limitation"):
             self.assertIn(key, receipt)
