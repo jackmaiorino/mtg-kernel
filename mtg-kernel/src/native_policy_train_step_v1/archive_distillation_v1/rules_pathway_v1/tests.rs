@@ -63,6 +63,7 @@ fn input<'a>(
         denominator: 1,
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: vec![ExternalAuxiliaryRowV1 {
             encoded: encoded_decision_view_v3(tensor),
             target,

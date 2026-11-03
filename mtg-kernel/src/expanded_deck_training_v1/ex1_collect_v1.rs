@@ -21,6 +21,14 @@
 //!
 //! The record is a sidecar beside the trajectory, whose bytes the hook never
 //! changes.
+//!
+//! **W5 (`w5-xact-v1`, collab LANES/lead/W5-DESIGN.md v1.3 section 3):** with
+//! `w5` set, placement is one SHA-256 drawn index per learner seat-episode
+//! over W1-eligible decisions (`w5_xact_v1`), at most one search per episode;
+//! at a root with a target the played action is drawn from q, which the
+//! trajectory records as `selected` (the learner's own draw is kept in the
+//! sidecar). Burst rows are EX1's: the student acts. Without `w5` nothing
+//! here changes.
 
 use super::*;
 use crate::ex1_v1::{
@@ -32,6 +40,11 @@ use crate::regret_census_v1::stage4a::{
     ex1_node_covers_v1, ex1_self_target_v1, Ex1LookupV1, Ex1NodeV1, Ex1SearcherV1,
 };
 use crate::rl_session::FastActorDecisionV1;
+use crate::w5_xact_v1::{
+    w5_eligible_v1, w5_placement_hash_v1, w5_placement_index_v1, w5_played_action_v1,
+    W5_BUDGET_MAX_V1, W5_KEY_MEMO_MIB_MAX_V1, W5_PLACEMENT_MAX_V1, W5_XACT_VERSION_V1,
+};
+use sha2::Digest;
 use std::collections::BTreeMap;
 
 pub const EX1_COLLECT_SCHEMA_V1: &str = "ex1-collect-episode/v1";
@@ -48,6 +61,37 @@ pub struct Ex1CollectOptionsV1 {
     /// The global update index of this collection.
     pub update: u64,
     pub budget: u64,
+    /// W5's recipe; omitted for EX1, so every EX1 command keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w5: Option<W5CollectOptionsV1>,
+}
+
+/// W5's collection options: the recipe identifier, `w5-xact-v1`, and the
+/// search's exact key memo limit in MiB (0: off). The memo is exact (keys,
+/// trees, selection and statistics are unchanged; only time is), so it is a
+/// recorded cost setting, not a recipe constant.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct W5CollectOptionsV1 {
+    pub recipe: String,
+    pub key_memo_mib: u64,
+    /// Stage 0b capture mode (W5 design section 6.1): at the placed decision
+    /// the hook records the candidate searches and the Q_ref rollouts instead
+    /// of searching once and acting; the learner plays its own draw
+    /// throughout. Omitted in training.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_0b: Option<W5CaptureOptionsV1>,
+}
+
+/// Stage 0b's capture: every (budget, search seed) candidate search and
+/// `rollouts` SELF continuations per Q_ref action (the union of the
+/// candidates' supported sets and the policy's argmax).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct W5CaptureOptionsV1 {
+    pub budgets: Vec<u64>,
+    pub search_seeds: Vec<u64>,
+    pub rollouts: u64,
 }
 
 impl Ex1CollectOptionsV1 {
@@ -56,10 +100,41 @@ impl Ex1CollectOptionsV1 {
             !self.run.is_empty() && self.run.len() <= 256,
             "ex1 run id empty or too long",
         )?;
-        ensure(
-            self.budget == EX1_BUDGET_V1,
-            "ex1 search budget differs from the frozen B = 64k",
-        )
+        match &self.w5 {
+            None => ensure(
+                self.budget == EX1_BUDGET_V1,
+                "ex1 search budget differs from the frozen B = 64k",
+            ),
+            Some(w5) => {
+                ensure(
+                    w5.recipe == W5_XACT_VERSION_V1,
+                    "w5 collection names an unknown recipe",
+                )?;
+                ensure(
+                    w5.key_memo_mib <= W5_KEY_MEMO_MIB_MAX_V1,
+                    "w5 key memo limit above 4096 MiB",
+                )?;
+                if let Some(capture) = &w5.capture_0b {
+                    ensure(
+                        !capture.budgets.is_empty()
+                            && capture.budgets.len() <= 8
+                            && capture
+                                .budgets
+                                .iter()
+                                .all(|&b| b > 0 && b <= W5_BUDGET_MAX_V1)
+                            && !capture.search_seeds.is_empty()
+                            && capture.search_seeds.len() <= 8
+                            && capture.rollouts > 0
+                            && capture.rollouts <= 4096,
+                        "w5 0b capture: 1 to 8 budgets and seeds, 1 to 4096 rollouts",
+                    )?;
+                }
+                ensure(
+                    self.budget > 0 && self.budget <= W5_BUDGET_MAX_V1,
+                    "w5 search budget outside 1..=2^20",
+                )
+            }
+        }
     }
 }
 
@@ -76,6 +151,30 @@ fn turn_key_v1(session: &FastActorSessionV1) -> TurnKeyV1 {
     )
 }
 
+/// W5's per seat-episode placement state.
+struct W5PlacementV1 {
+    slot: u64,
+    hash: u64,
+    /// The 1-based eligible index to search.
+    index: u64,
+    eligible: u64,
+    searched: bool,
+    /// Searches attempted, roots with a target (the search played), roots
+    /// without one.
+    attempted: u64,
+    acted: u64,
+    root_no_target: u64,
+}
+
+impl W5PlacementV1 {
+    fn json(&self) -> Value {
+        json!({"slot":self.slot,"placement_hash":format!("{:016x}",self.hash),
+            "placement_index":self.index,"placement_max":W5_PLACEMENT_MAX_V1,
+            "eligible_decisions":self.eligible,"reached":self.eligible >= self.index,
+            "attempted":self.attempted,"acted":self.acted,"root_no_target":self.root_no_target})
+    }
+}
+
 /// What one learner decision brought to the select step.
 pub(super) struct Ex1PendingV1 {
     stratum: Ex1StratumV1,
@@ -88,6 +187,8 @@ pub(super) struct Ex1PendingV1 {
     looked_up: bool,
     self_target: Option<usize>,
     turn: TurnKeyV1,
+    /// Stage 0b: the placement hash of the decision to capture.
+    capture_hash: Option<u64>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -126,6 +227,10 @@ pub(super) struct Ex1EpisodeHookV1 {
     searches: Vec<Value>,
     rows: Vec<Value>,
     offers: Vec<Value>,
+    w5: Option<W5PlacementV1>,
+    /// Stage 0b capture mode: its options, the rollout policy and the record.
+    capture: Option<(W5CaptureOptionsV1, FrozenPlayPolicyV1)>,
+    captured: Option<Value>,
 }
 
 impl Ex1EpisodeHookV1 {
@@ -133,9 +238,10 @@ impl Ex1EpisodeHookV1 {
         options: &Ex1CollectOptionsV1,
         learner: &FrozenPlayPolicyV1,
         episode: &ExpandedEpisodeV1,
+        slot: usize,
     ) -> Result<Self, String> {
         options.validate_v1()?;
-        Self::with_any_budget_v1(options, learner, episode)
+        Self::with_any_budget_v1(options, learner, episode, slot)
     }
 
     /// Tests only: a hook at a budget other than the frozen B.
@@ -144,20 +250,46 @@ impl Ex1EpisodeHookV1 {
         options: &Ex1CollectOptionsV1,
         learner: &FrozenPlayPolicyV1,
         episode: &ExpandedEpisodeV1,
+        slot: usize,
     ) -> Result<Self, String> {
-        Self::with_any_budget_v1(options, learner, episode)
+        Self::with_any_budget_v1(options, learner, episode, slot)
     }
 
     fn with_any_budget_v1(
         options: &Ex1CollectOptionsV1,
         learner: &FrozenPlayPolicyV1,
         episode: &ExpandedEpisodeV1,
+        slot: usize,
     ) -> Result<Self, String> {
+        let w5 = options.w5.as_ref().map(|_| {
+            let hash =
+                w5_placement_hash_v1(&options.run, options.update, episode.seed, slot as u64);
+            W5PlacementV1 {
+                slot: slot as u64,
+                hash,
+                index: w5_placement_index_v1(hash),
+                eligible: 0,
+                searched: false,
+                attempted: 0,
+                acted: 0,
+                root_no_target: 0,
+            }
+        });
         Ok(Self {
             options: options.clone(),
             seed: episode.seed,
             learner_seat: episode.learner_seat,
-            searcher: Ex1SearcherV1::new(learner, PlayerId(episode.learner_seat))?,
+            searcher: match options.w5.as_ref().map(|w5| w5.key_memo_mib) {
+                // W5 runs the search with its recorded exact key memo; EX1's
+                // searches keep the process default, unchanged.
+                Some(mib) if mib > 0 => {
+                    Ex1SearcherV1::new(learner, PlayerId(episode.learner_seat))?
+                        .with_key_memo_v1((mib as usize) << 20)
+                }
+                Some(_) => Ex1SearcherV1::new(learner, PlayerId(episode.learner_seat))?
+                    .with_key_memo_off_v1(),
+                None => Ex1SearcherV1::new(learner, PlayerId(episode.learner_seat))?,
+            },
             burst_turn: None,
             counts: Ex1StratumV1::ALL
                 .iter()
@@ -166,6 +298,14 @@ impl Ex1EpisodeHookV1 {
             searches: Vec::new(),
             rows: Vec::new(),
             offers: Vec::new(),
+            w5,
+            capture: options
+                .w5
+                .as_ref()
+                .and_then(|w5| w5.capture_0b.clone())
+                .map(|capture| Ok::<_, String>((capture, learner.fork_for_collection_v3()?)))
+                .transpose()?,
+            captured: None,
         })
     }
 
@@ -182,11 +322,10 @@ impl Ex1EpisodeHookV1 {
         session: &FastActorSessionV1,
         d: FastActorDecisionV1,
     ) -> Result<Ex1PendingV1, String> {
-        let stratum = ex1_stratum_v1(
-            &session
-                .diagnostic_current_action_semantics()
-                .ok_or("ex1: no live menu at a decision")?,
-        );
+        let menu = session
+            .diagnostic_current_action_semantics()
+            .ok_or("ex1: no live menu at a decision")?;
+        let stratum = ex1_stratum_v1(&menu);
         let turn = turn_key_v1(session);
         if self.burst_turn.is_some_and(|t| t != turn) {
             self.searcher.clear();
@@ -201,10 +340,52 @@ impl Ex1EpisodeHookV1 {
             self.seed,
             d.physical_decision_id,
         );
-        if ex1_placement_v1(run, update, seed, decision, stratum) {
+        // EX1: a per-decision stratum draw. W5: the episode's k-th
+        // W1-eligible decision, once.
+        let trigger = match self.w5.as_mut() {
+            None => ex1_placement_v1(run, update, seed, decision, stratum)
+                .then(|| ex1_hash_u64_v1("ex1/placement", run, update, seed, decision)),
+            Some(w5) => {
+                let eligible = w5_eligible_v1(&menu);
+                w5.eligible += u64::from(eligible);
+                let fire = eligible && !w5.searched && w5.eligible == w5.index;
+                if fire {
+                    w5.searched = true;
+                    w5.attempted += 1;
+                }
+                fire.then_some(w5.hash)
+            }
+        };
+        if let (Some(hash), true) = (trigger, self.capture.is_some()) {
+            // Stage 0b: the captures run at the live row, after the learner's
+            // logits are known (`after_select_v1`).
+            counts.triggers += 1;
+            return Ok(Ex1PendingV1 {
+                stratum,
+                kind: Some("capture"),
+                node: None,
+                matched: None,
+                looked_up: false,
+                self_target,
+                turn,
+                capture_hash: Some(hash),
+            });
+        }
+        if self.capture.is_some() {
+            return Ok(Ex1PendingV1 {
+                stratum,
+                kind: None,
+                node: None,
+                matched: None,
+                looked_up: false,
+                self_target,
+                turn,
+                capture_hash: None,
+            });
+        }
+        if let Some(hash) = trigger {
             counts.triggers += 1;
             counts.retriggers += u64::from(self.burst_turn.is_some());
-            let hash = ex1_hash_u64_v1("ex1/placement", run, update, seed, decision);
             let (mut record, ok) = self.searcher.search(
                 session,
                 self.options.budget,
@@ -217,6 +398,9 @@ impl Ex1EpisodeHookV1 {
             record["turn"] = json!(turn.0);
             record["active_player"] = json!(turn.1);
             record["uniform"] = json!(ex1_uniform_v1(hash));
+            if let Some(w5) = &self.w5 {
+                record["eligible_index"] = json!(w5.index);
+            }
             // A search whose tree lacks its own root counts as failed too.
             let root = if ok {
                 match self.searcher.lookup(session, d)? {
@@ -241,6 +425,7 @@ impl Ex1EpisodeHookV1 {
                     looked_up: false,
                     self_target,
                     turn,
+                    capture_hash: None,
                 });
             };
             self.burst_turn = Some(turn);
@@ -252,6 +437,7 @@ impl Ex1EpisodeHookV1 {
                 looked_up: true,
                 self_target,
                 turn,
+                capture_hash: None,
             });
         }
         if self.burst_turn.is_none() {
@@ -263,6 +449,7 @@ impl Ex1EpisodeHookV1 {
                 looked_up: false,
                 self_target,
                 turn,
+                capture_hash: None,
             });
         }
         counts.burst_lookups += 1;
@@ -283,37 +470,67 @@ impl Ex1EpisodeHookV1 {
             looked_up: true,
             self_target,
             turn,
+            capture_hash: None,
         })
     }
 
     /// The target at the live row from the deployed logits, then the cursor
-    /// follows the learner's own sampled action.
+    /// follows the played action. Returns `Some(action)` when the search
+    /// plays (a W5 root with a target, q's draw); otherwise the learner's own
+    /// sampled action plays and this returns `None`.
     pub(super) fn after_select_v1(
         &mut self,
         pending: Ex1PendingV1,
+        session: &FastActorSessionV1,
         d: FastActorDecisionV1,
         logit_bits: &[u32],
         selected: u32,
-    ) -> Result<(), String> {
+    ) -> Result<Option<u32>, String> {
+        if let Some(hash) = pending.capture_hash {
+            self.captured = Some(self.capture_0b_v1(session, d, logit_bits, hash)?);
+            return Ok(None);
+        }
         let counts = self
             .counts
             .get_mut(&pending.stratum)
             .expect("every stratum");
         let mut row_index = None;
+        let mut played = selected;
+        let mut search_played = false;
         if let (Some(kind), Some(node)) = (pending.kind, &pending.node) {
-            match ex1_target_v1(logit_bits, &node.counts)? {
+            let target = ex1_target_v1(logit_bits, &node.counts)?;
+            if let (Some(w5), "root", Err(_)) = (self.w5.as_mut(), kind, &target) {
+                w5.root_no_target += 1;
+            }
+            match target {
                 Err(reason) => match reason {
                     crate::ex1_v1::Ex1NoTargetV1::Support => counts.no_target_support += 1,
                     crate::ex1_v1::Ex1NoTargetV1::Mass => counts.no_target_mass += 1,
                 },
                 Ok(target) => {
+                    let acted = match self.w5.as_mut() {
+                        Some(w5) if kind == "root" => {
+                            w5.acted += 1;
+                            played = u32::try_from(w5_played_action_v1(
+                                &target.target.probabilities,
+                                &self.options.run,
+                                self.options.update,
+                                self.seed,
+                                w5.slot,
+                            )?)
+                            .map_err(|e| e.to_string())?;
+                            true
+                        }
+                        _ => false,
+                    };
+                    search_played = acted;
                     if kind == "root" {
                         counts.root_rows += 1;
                     } else {
                         counts.burst_rows += 1;
                     }
                     row_index = Some(self.rows.len());
-                    let row = row_json_v1(
+                    let mut row = row_json_v1(
                         kind,
                         pending.stratum,
                         &self.options,
@@ -322,9 +539,13 @@ impl Ex1EpisodeHookV1 {
                         pending.turn,
                         node,
                         &target,
-                        selected,
+                        played,
                         pending.self_target,
                     );
+                    if self.w5.is_some() {
+                        row["acted"] = json!(acted);
+                        row["policy_selected"] = json!(selected);
+                    }
                     self.rows.push(row);
                 }
             }
@@ -339,14 +560,14 @@ impl Ex1EpisodeHookV1 {
                 json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"turn":pending.turn.0,"active_player":pending.turn.1,
                 "self_index":index,"p_self":p.probabilities[index],
-                "chosen":selected as usize == index,"searched":pending.kind,"row":row_index,
+                "chosen":played as usize == index,"searched":pending.kind,"row":row_index,
                 "tree":pending.matched.as_ref().map(|node| offer_tree_json_v1(node, index))}),
             );
         }
         if pending.looked_up {
-            self.searcher.advance(selected);
+            self.searcher.advance(played);
         }
-        Ok(())
+        Ok(search_played.then_some(played))
     }
 
     /// The attempt's record.
@@ -356,11 +577,145 @@ impl Ex1EpisodeHookV1 {
             .iter()
             .map(|(s, c)| (s.as_str().to_string(), c.json()))
             .collect();
-        json!({"schema":EX1_COLLECT_SCHEMA_V1,"options":self.options,"episode_id":episode.id,
+        let mut record = json!({"schema":EX1_COLLECT_SCHEMA_V1,"options":self.options,"episode_id":episode.id,
             "seed":self.seed,"learner_seat":self.learner_seat,
             "learner_deck":episode.selected[usize::from(self.learner_seat)].label,
             "natural":natural,"strata":strata,"searches":self.searches,"rows":self.rows,
-            "offers":self.offers})
+            "offers":self.offers});
+        if let Some(w5) = &self.w5 {
+            record["w5"] = w5.json();
+        }
+        if self.capture.is_some() {
+            record["capture_0b"] = self.captured.unwrap_or(json!({"reached":false}));
+        }
+        record
+    }
+
+    /// Stage 0b at the placed decision: each candidate search's root counts
+    /// and CPU, then `rollouts` SELF continuations of every Q_ref action from
+    /// the live state (forked policy streams, so the episode's own sampling
+    /// never moves). Each continuation's seeds are drawn from
+    /// `SHA256(json(["w5/0b/qref", chain, update, seed, slot]))`, the action
+    /// and the rollout index, independent of every search seed. A
+    /// continuation that ends non-naturally scores as a draw (counted).
+    fn capture_0b_v1(
+        &mut self,
+        session: &FastActorSessionV1,
+        d: FastActorDecisionV1,
+        logit_bits: &[u32],
+        hash: u64,
+    ) -> Result<Value, String> {
+        let (capture, rollout_policy) = self.capture.as_mut().expect("capture mode");
+        let slot = self.w5.as_ref().map_or(0, |w5| w5.slot);
+        let mut candidates = Vec::new();
+        let mut actions = std::collections::BTreeSet::new();
+        for &budget in &capture.budgets {
+            for &search_seed in &capture.search_seeds {
+                let seed_root = format!("w5/0b/{hash:016x}/{}/b{budget}/s{search_seed}", d.step);
+                let started = crate::regret_census_v1::stage4a::process_cpu::seconds()?;
+                let (record, ok) = self.searcher.search(session, budget, seed_root.clone())?;
+                let cpu_s = crate::regret_census_v1::stage4a::process_cpu::seconds()? - started;
+                let node = if ok {
+                    match self.searcher.lookup(session, d)? {
+                        Ex1LookupV1::Node(node) => Some(node),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                self.searcher.clear();
+                let mut candidate = json!({"budget":budget,"search_seed":search_seed,
+                    "seed_root":seed_root,"status":if node.is_some() {"ok"} else {"failed"},
+                    "cpu_s":cpu_s,"search":record});
+                if let Some(node) = node {
+                    let n: Vec<u64> = node.counts.iter().map(|c| c.n).collect();
+                    for (a, &count) in n.iter().enumerate() {
+                        if count >= crate::ex1_v1::EX1_SUPPORT_MIN_V1 {
+                            actions.insert(a);
+                        }
+                    }
+                    candidate["n"] = json!(n);
+                    candidate["wins"] =
+                        json!(node.counts.iter().map(|c| c.wins).collect::<Vec<_>>());
+                    candidate["draws"] =
+                        json!(node.counts.iter().map(|c| c.draws).collect::<Vec<_>>());
+                    if let Ok(target) = ex1_target_v1(logit_bits, &node.counts)? {
+                        candidate["q_bits"] = json!(target
+                            .target
+                            .probabilities
+                            .iter()
+                            .map(|x| x.to_bits())
+                            .collect::<Vec<_>>());
+                    }
+                }
+                candidates.push(candidate);
+            }
+        }
+        // The policy's argmax on its binary64 softmax (the consumer's
+        // `ex1-target-v1` mirror), ties to the lowest index.
+        let z: Vec<f64> = logit_bits
+            .iter()
+            .map(|&b| f64::from(f32::from_bits(b)))
+            .collect();
+        let p = line_b_softmax_v1(&z).map_err(|e| format!("w5 capture: {e}"))?;
+        let argmax = (0..p.probabilities.len()).fold(0, |best, a| {
+            if p.probabilities[a] > p.probabilities[best] {
+                a
+            } else {
+                best
+            }
+        });
+        actions.insert(argmax);
+        let actions: Vec<usize> = actions.into_iter().collect();
+        let focal = self.learner_seat;
+        let (run, update, seed) = (self.options.run.clone(), self.options.update, self.seed);
+        let qref_root = format!("w5/0b/qref/{hash:016x}/{}", d.step);
+        let (mut wins, mut draws, mut n, mut nonnatural) = (vec![], vec![], vec![], vec![]);
+        for &action in &actions {
+            let (mut w, mut dr, mut nn) = (0_u64, 0_u64, 0_u64);
+            for r in 0..capture.rollouts {
+                let text = json!(["w5/0b/qref", run, update, seed, slot, action, r]).to_string();
+                let digest = sha2::Sha256::digest(text.as_bytes());
+                let mut first = [0_u8; 8];
+                first.copy_from_slice(&digest[..8]);
+                let mut s = session.clone();
+                s.step(d.episode_id, d.step, action as u32).map_err(err)?;
+                rollout_policy.reset_sampling_v1(
+                    crate::paired_bo1_harness_v1::paired_policy_seeds_v1(u64::from_le_bytes(first)),
+                );
+                loop {
+                    match s.current_response() {
+                        FastActorResponseV1::Terminal(t) => {
+                            if t.terminal_classification != TerminalClassificationV1::Natural {
+                                nn += 1;
+                                dr += 1;
+                            } else {
+                                match t.winner {
+                                    Some(winner) if seat(winner) == focal => w += 1,
+                                    Some(_) => {}
+                                    None => dr += 1,
+                                }
+                            }
+                            break;
+                        }
+                        FastActorResponseV1::Decision(next) => {
+                            let a = rollout_policy.select_fast_session_v1(&s)?;
+                            s.step(next.episode_id, next.step, a).map_err(err)?;
+                        }
+                    }
+                }
+            }
+            wins.push(w);
+            draws.push(dr);
+            n.push(capture.rollouts);
+            nonnatural.push(nn);
+        }
+        Ok(
+            json!({"reached":true,"step":d.step,"physical_decision_id":d.physical_decision_id,
+            "policy":{"logit_bits":logit_bits},"candidates":candidates,
+            "qref":{"rollouts":capture.rollouts,"seed_root":qref_root,"actions":actions,
+                "wins":wins,"draws":draws,"n":n},"qref_nonnatural":nonnatural}),
+        )
     }
 }
 

@@ -166,6 +166,7 @@ fn wide_refuses_external_auxiliary() {
         denominator: 1,
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: vec![archive_distillation_v1::ExternalAuxiliaryRowV1 {
             encoded: encoded_decision_view_v3(&fixture.tensor),
             target: &target,

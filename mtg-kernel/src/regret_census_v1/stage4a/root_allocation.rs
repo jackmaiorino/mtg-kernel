@@ -19,6 +19,10 @@ pub(crate) struct SearchOptions {
     pub(crate) cpu_seconds: Option<f64>,
     /// Attempted simulations, including rejected samples, for exact replay.
     pub(crate) work_limit: Option<u64>,
+    /// An explicit exact key memo for this search (W5's recorded setting):
+    /// `Some(Some(bytes))` on with that limit and no counters, `Some(None)`
+    /// off; `None` keeps the process default (`arms::key_memo_use`).
+    pub(crate) key_memo: Option<Option<usize>>,
     /// Opt-in value-leaf search (`value_leaf.rs`); None keeps E unchanged.
     pub(crate) value_leaf: Option<super::value_leaf::ValueLeafV1>,
 }

@@ -1311,13 +1311,21 @@ impl Roles {
         // stops on CPU time keeps both default memos off (cheaper steps
         // would fit more simulations); only an explicit request turns them on.
         let cpu_limited = options.cpu_seconds.is_some();
-        let memo_use = key_memo_for_search(key_memo_use(), cpu_limited);
+        // An explicit memo (W5's recorded setting) is quiet and ignores the
+        // environment; it never applies to a search that stops on CPU time.
+        let explicit = options.key_memo.filter(|_| !cpu_limited);
+        let memo_use = match explicit {
+            Some(Some(_)) => KeyMemoUse::Quiet,
+            Some(None) => KeyMemoUse::Off,
+            None => key_memo_for_search(key_memo_use(), cpu_limited),
+        };
         let _digest_memo_default =
             cpu_limited.then(crate::native_flat_tensorizer_v2::suppress_default_digest_memo_v1);
-        let mut memo = match memo_use {
-            KeyMemoUse::Off => None,
-            KeyMemoUse::Quiet => Some(KeyMemo::quiet()),
-            KeyMemoUse::Reported => Some(KeyMemo::new()),
+        let mut memo = match (explicit, memo_use) {
+            (Some(Some(bytes)), _) => Some(KeyMemo::with_max_bytes(bytes)),
+            (_, KeyMemoUse::Off) => None,
+            (_, KeyMemoUse::Quiet) => Some(KeyMemo::quiet()),
+            (_, KeyMemoUse::Reported) => Some(KeyMemo::new()),
         };
         let inference_cache = match self.search_inference_cache() {
             Ok(cache) => cache,

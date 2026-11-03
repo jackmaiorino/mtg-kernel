@@ -15,9 +15,19 @@
 //! At most 128 rows enter (the lowest `ex1/rowcap` keys; dropped rows are
 //! counted). An update with no rows takes the inactive auxiliary path, bit
 //! identical to ordinary, and step telemetry runs at every update.
+//!
+//! **W5 (`w5-xact-v1`, collab LANES/lead/W5-DESIGN.md v1.3 section 3):** with
+//! `w5` set, every root row is one the search played. Its played action must
+//! recompute from q and the episode's acting hash, and its policy gradient
+//! is masked (every such row, kept or dropped by the row cap; the policy term
+//! is normalized over the unmasked groups). Burst rows keep their policy
+//! gradient. The paired Adam-step comparison runs on one update in 16 (and
+//! on updates with no rows, where it is the inactive path).
 
 use super::archive_distillation_v1::view_v1;
-use super::ex1_collect_v1::{Ex1CollectOptionsV1, EX1_BUDGET_V1, EX1_USEFUL_LIFT_V1};
+use super::ex1_collect_v1::{
+    Ex1CollectOptionsV1, W5CollectOptionsV1, EX1_BUDGET_V1, EX1_USEFUL_LIFT_V1,
+};
 use super::search_targets_v1::SearchTargetCapV1;
 use super::*;
 use crate::ex1_v1::{
@@ -30,9 +40,23 @@ use crate::native_policy_train_step_v1::{
     training_forward_v1, ExternalAuxiliaryInputV1, ExternalAuxiliaryRowV1,
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+use crate::w5_xact_v1::{
+    w5_played_action_v1, w5_telemetry_update_v1, W5_PLACEMENT_MAX_V1, W5_TELEMETRY_STRIDE_V1,
+    W5_XACT_VERSION_V1,
+};
 use std::collections::BTreeMap;
 
 pub const EX1_METHOD_V1: &str = "ex1-search-in-training-v1-20261029";
+
+/// W5's update options: the recipe and the run's frozen search budget B.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct W5UpdateOptionsV1 {
+    pub recipe: String,
+    pub budget: u64,
+    /// The search's exact key memo limit in MiB (0: off).
+    pub key_memo_mib: u64,
+}
 
 /// One update's EX1 options.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -46,6 +70,9 @@ pub struct Ex1UpdateOptionsV1 {
     /// This update's collection receipt (`collection.json`), which pins the
     /// hook's per-episode records.
     pub collection: PinnedFileV1,
+    /// W5's recipe; omitted for EX1, so every EX1 command keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w5: Option<W5UpdateOptionsV1>,
 }
 
 impl Ex1UpdateOptionsV1 {
@@ -64,13 +91,54 @@ impl Ex1UpdateOptionsV1 {
                 "ex1 cap ratio must be positive and finite",
             )?;
         }
+        if let Some(w5) = &self.w5 {
+            self.collect_options_v1().validate_v1()?;
+            ensure(
+                w5.recipe == W5_XACT_VERSION_V1,
+                "w5 update names an unknown recipe",
+            )?;
+        }
         Ok(())
+    }
+
+    /// The collection options this update's collection must carry.
+    pub fn collect_options_v1(&self) -> Ex1CollectOptionsV1 {
+        Ex1CollectOptionsV1 {
+            run: self.run.clone(),
+            update: self.update,
+            budget: self.w5.as_ref().map_or(EX1_BUDGET_V1, |w5| w5.budget),
+            w5: self.w5.as_ref().map(|w5| W5CollectOptionsV1 {
+                recipe: w5.recipe.clone(),
+                key_memo_mib: w5.key_memo_mib,
+                capture_0b: None,
+            }),
+        }
+    }
+
+    /// Whether this update runs the paired Adam-step comparison: every EX1
+    /// update; one W5 update in 16.
+    pub fn step_telemetry_v1(&self) -> bool {
+        self.w5.is_none() || w5_telemetry_update_v1(self.update)
     }
 }
 
 /// The run-level identity a continuation must preserve: every frozen
 /// constant, the target's identifier, the dose and the cap.
 pub fn continuation_identity(options: &Ex1UpdateOptionsV1) -> Value {
+    if let Some(w5) = &options.w5 {
+        return json!({"method":W5_XACT_VERSION_V1,"target":EX1_TARGET_VERSION_V1,
+            "support_min":EX1_SUPPORT_MIN_V1,"temperature_bits":EX1_TEMPERATURE_V1.to_bits(),
+            "mass_floor_bits":EX1_MASS_FLOOR_V1.to_bits(),"divergence":EX1_DIVERGENCE_V1,
+            "row_cap":EX1_ROW_CAP_V1,"denominator":EX1_DENOMINATOR_V1,"budget":w5.budget,
+            "rollout":"SELF","search":crate::regret_census_v1::stage4a::ex1_search_identity_v1(),
+            "eligibility":"w1-two-non-mana-candidates","placement":"w5/placement",
+            "placement_max":W5_PLACEMENT_MAX_V1,"acting":"w5/act inverse-cdf of q",
+            "key_memo_mib":w5.key_memo_mib,
+            "policy_gradient":"masked at played roots","telemetry_stride":W5_TELEMETRY_STRIDE_V1,
+            "run":options.run,"coefficient_bits":options.coefficient.to_bits(),
+            "cap":options.cap.kappa_v1().map_or(json!({"mode":"off"}),
+                |kappa| json!({"mode":"ratio","kappa_bits":kappa.to_bits()}))});
+    }
     json!({"method":EX1_METHOD_V1,"target":EX1_TARGET_VERSION_V1,
         "support_min":EX1_SUPPORT_MIN_V1,"temperature_bits":EX1_TEMPERATURE_V1.to_bits(),
         "mass_floor_bits":EX1_MASS_FLOOR_V1.to_bits(),"divergence":EX1_DIVERGENCE_V1,
@@ -84,17 +152,30 @@ pub fn continuation_identity(options: &Ex1UpdateOptionsV1) -> Value {
 }
 
 /// A checkpoint's saved EX1 identity must equal this run's; a checkpoint
-/// without one continues only an ordinary run.
+/// without one continues only an ordinary run. A W5 checkpoint also names
+/// its next global update, which the continuing update must be.
 pub(super) fn check_continuation_v1(
     saved: Option<&Value>,
     options: Option<&Ex1UpdateOptionsV1>,
 ) -> Result<(), String> {
     match (saved, options) {
         (None, _) => Ok(()),
-        (Some(saved), options) => ensure(
-            options.map(continuation_identity).as_ref() == saved.get("continuation"),
-            "ex1 continuation must preserve the target, constants, dose and cap",
-        ),
+        (Some(saved), options) => {
+            ensure(
+                options.map(continuation_identity).as_ref() == saved.get("continuation"),
+                "ex1 continuation must preserve the target, constants, dose and cap",
+            )?;
+            let saved_w5 = saved["continuation"]["method"] == W5_XACT_VERSION_V1;
+            match (saved.get("w5_next_update"), options) {
+                (None, _) if saved_w5 => Err("a w5 checkpoint lacks its next global update".into()),
+                (None, _) => Ok(()),
+                (Some(next), Some(options)) => ensure(
+                    next == &json!(options.update),
+                    "w5 continuation must take the checkpoint's next global update",
+                ),
+                (Some(_), None) => Err("a w5 checkpoint continues only its chain".into()),
+            }
+        }
     }
 }
 
@@ -139,11 +220,7 @@ pub(super) fn ex1_teach_v1(
     options.validate_v1()?;
     let collection: Value =
         serde_json::from_slice(&read_pinned_bytes(&options.collection)?).map_err(err)?;
-    let expected = Ex1CollectOptionsV1 {
-        run: options.run.clone(),
-        update: options.update,
-        budget: EX1_BUDGET_V1,
-    };
+    let expected = options.collect_options_v1();
     ensure(
         collection["ex1"]["options"] == json!(expected),
         "ex1 collection belongs to another run, update or budget",
@@ -165,6 +242,10 @@ pub(super) fn ex1_teach_v1(
     let (mut searches, mut failed, mut discarded_searches, mut offers) = (0u64, 0u64, 0u64, 0u64);
     let mut search_wall = 0.0_f64;
     let mut episode_records = Vec::with_capacity(episodes.len());
+    // W5: the substeps the search played, `(slot, step)`, whose policy
+    // gradient is masked.
+    let mut pg_masked = Vec::new();
+    let mut w5_totals: BTreeMap<String, u64> = BTreeMap::new();
     for (slot, (pin, trajectory)) in sidecars.iter().zip(episodes).enumerate() {
         let record: Value = serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
         let attempts = record["attempts"]
@@ -189,6 +270,50 @@ pub(super) fn ex1_teach_v1(
             search_wall += search["wall"].as_f64().unwrap_or(0.0);
         }
         offers += last["offers"].as_array().map_or(0, |o| o.len() as u64);
+        ensure(
+            options.w5.is_some() || trajectory.search_played.is_none(),
+            "an ex1 trajectory names search-played rows",
+        )?;
+        if options.w5.is_some() {
+            let placement = last["w5"]
+                .as_object()
+                .ok_or("w5 record lacks its placement")?;
+            ensure(
+                placement.get("slot") == Some(&json!(slot)),
+                "w5 placement belongs to another slot",
+            )?;
+            // Every row the search played, and only those, is a root row
+            // of the record with the learner's own draw beside it.
+            let mut acted: Vec<(u64, Value)> = last["rows"]
+                .as_array()
+                .ok_or("ex1 rows missing")?
+                .iter()
+                .filter(|row| row["kind"] == "root")
+                .map(|row| {
+                    (
+                        row["step"].as_u64().unwrap_or(u64::MAX),
+                        row["policy_selected"].clone(),
+                    )
+                })
+                .collect();
+            acted.sort_by_key(|(step, _)| *step);
+            let played: Vec<(u64, Value)> = trajectory
+                .search_played
+                .iter()
+                .flatten()
+                .map(|row| (row.step, json!(row.policy_selected)))
+                .collect();
+            ensure(
+                acted == played,
+                "w5 trajectory's search-played rows differ from the record's roots",
+            )?;
+            for key in ["attempted", "acted", "root_no_target"] {
+                *w5_totals.entry(key.into()).or_default() +=
+                    placement.get(key).and_then(Value::as_u64).unwrap_or(0);
+            }
+            *w5_totals.entry("reached".into()).or_default() +=
+                u64::from(placement.get("reached") == Some(&json!(true)));
+        }
         for (stratum, counts) in last["strata"].as_object().ok_or("ex1 strata missing")? {
             let total = strata.entry(stratum.clone()).or_default();
             for (key, value) in counts.as_object().ok_or("ex1 stratum counts")? {
@@ -224,6 +349,27 @@ pub(super) fn ex1_teach_v1(
                 row["q_bits"] == json!(q_bits),
                 "ex1 target differs from the one computed at the live row",
             )?;
+            if options.w5.is_some() {
+                let root = row["kind"] == "root";
+                ensure(
+                    row["acted"] == json!(root),
+                    "w5 row: only a root is played by the search",
+                )?;
+                if root {
+                    let played = w5_played_action_v1(
+                        &target.target.probabilities,
+                        &options.run,
+                        options.update,
+                        trajectory.episode.seed,
+                        slot as u64,
+                    )?;
+                    ensure(
+                        decision.selected as usize == played,
+                        "w5 root's played action differs from q's draw",
+                    )?;
+                    pg_masked.push(json!({"slot":slot,"step":step}));
+                }
+            }
             let tensor = decision.tensor.tensor();
             let (logits, _) =
                 training_forward_v1(model, generation, &parameters, view_v1(&tensor, generation))
@@ -268,29 +414,38 @@ pub(super) fn ex1_teach_v1(
         })
         .collect();
     rows.truncate(EX1_ROW_CAP_V1);
-    let receipt = json!({"method":EX1_METHOD_V1,"collection":options.collection,
+    let mut receipt = json!({"method":EX1_METHOD_V1,"collection":options.collection,
         "episodes":episode_records,"strata":strata,"searches":searches,"searches_failed":failed,
         "discarded_attempt_searches":discarded_searches,"search_wall_seconds":search_wall,
         "self_target_offers":offers,"rows_eligible":eligible,"rows":rows.len(),
         "rows_dropped":dropped.len(),"dropped":dropped,"row_cap_binds":eligible > EX1_ROW_CAP_V1,
         "denominator":EX1_DENOMINATOR_V1,"coefficient":options.coefficient,
         "coefficient_bits":options.coefficient.to_bits()});
+    if let Some(w5) = &options.w5 {
+        receipt["method"] = json!(W5_XACT_VERSION_V1);
+        receipt["w5"] = json!({"budget":w5.budget,"placements":w5_totals,"pg_masked":pg_masked,
+            "step_telemetry":options.step_telemetry_v1()});
+    }
     Ok((receipt, rows))
 }
 
 /// The off-batch auxiliary input over the kept rows: forward KL, the fixed
-/// denominator, the run's cap and step telemetry at every update.
+/// denominator, the run's cap and step telemetry (every EX1 update; one W5
+/// update in 16, and any W5 update with no rows). `policy_mask` is W5's
+/// masked `(group, substep)` list, empty for EX1.
 pub(super) fn ex1_auxiliary_input_v1<'a>(
     rows: &'a [Ex1TaughtRowV1],
     options: &Ex1UpdateOptionsV1,
     generation: FreshLineageGenerationV1,
+    policy_mask: Vec<(usize, usize)>,
 ) -> ExternalAuxiliaryInputV1<'a> {
     ExternalAuxiliaryInputV1 {
         direction: EX1_DIVERGENCE_V1,
         coefficient: options.coefficient,
         denominator: EX1_DENOMINATOR_V1,
         cap: options.cap.kappa_v1(),
-        step_telemetry: true,
+        step_telemetry: options.step_telemetry_v1() || rows.is_empty(),
+        policy_mask,
         rows: rows
             .iter()
             .map(|row| ExternalAuxiliaryRowV1 {
@@ -365,6 +520,7 @@ mod tests {
                 path: PathBuf::from(format!("collection-{update}.json")),
                 sha256: String::new(),
             },
+            w5: None,
         }
     }
 
@@ -403,5 +559,53 @@ mod tests {
         assert!(options(1.0, SearchTargetCapV1::Ratio { kappa: 0.0 }, 0)
             .validate_v1()
             .is_err());
+    }
+
+    /// W5's identity binds its own method, budget and constants, so an EX1
+    /// checkpoint never continues as W5 (or the reverse); its collection
+    /// options carry the recipe and B; telemetry runs on one update in 16.
+    #[test]
+    fn w5_identity_budget_and_telemetry_stride() {
+        let capped = SearchTargetCapV1::Ratio { kappa: 2.0 };
+        let w5 = |update: u64, budget: u64| Ex1UpdateOptionsV1 {
+            w5: Some(W5UpdateOptionsV1 {
+                recipe: W5_XACT_VERSION_V1.into(),
+                budget,
+                key_memo_mib: 512,
+            }),
+            ..options(1.0, capped, update)
+        };
+        let identity = continuation_identity(&w5(5, 16_000));
+        assert_eq!(identity["method"], W5_XACT_VERSION_V1);
+        assert_eq!(identity["target"], "ex1-target-v1");
+        assert_eq!(identity["budget"], 16_000);
+        assert_eq!(identity["placement_max"], 128);
+        assert_eq!(identity, continuation_identity(&w5(6, 16_000)));
+        assert_ne!(identity, continuation_identity(&w5(6, 64_000)));
+        let saved = json!({"continuation":identity});
+        assert!(check_continuation_v1(Some(&saved), Some(&options(1.0, capped, 6))).is_err());
+        // The saved cursor binds the next global update.
+        let cursor = json!({"continuation":identity.clone(),"w5_next_update":6});
+        assert!(check_continuation_v1(Some(&saved), Some(&w5(6, 16_000))).is_err());
+        assert!(check_continuation_v1(Some(&cursor), Some(&w5(6, 16_000))).is_ok());
+        assert!(check_continuation_v1(Some(&cursor), Some(&w5(7, 16_000))).is_err());
+        assert!(check_continuation_v1(Some(&cursor), Some(&w5(5, 16_000))).is_err());
+        assert!(check_continuation_v1(Some(&cursor), None).is_err());
+        let collect = w5(5, 16_000).collect_options_v1();
+        assert_eq!(collect.budget, 16_000);
+        assert_eq!(collect.w5.as_ref().unwrap().recipe, W5_XACT_VERSION_V1);
+        assert!(w5(5, 16_000).validate_v1().is_ok());
+        assert!(w5(5, 0).validate_v1().is_err());
+        let mut unknown = w5(5, 16_000);
+        unknown.w5.as_mut().unwrap().recipe = "w5-other".into();
+        assert!(unknown.validate_v1().is_err());
+        assert!(w5(32, 16_000).step_telemetry_v1());
+        assert!(!w5(33, 16_000).step_telemetry_v1());
+        assert!(options(1.0, capped, 33).step_telemetry_v1());
+        // EX1 options keep their serialized bytes.
+        assert!(serde_json::to_value(options(1.0, capped, 3))
+            .unwrap()
+            .get("w5")
+            .is_none());
     }
 }
