@@ -299,13 +299,51 @@ RECOVER_EDITS = (
      '''    for name in ("retained", "checkpoints", "exposure", "doses", "qualification"):'''),
     ('''out, members = control / "results.tar.gz", {}''',
      '''out, members, unreadable = control / "results.tar.gz", {}, []'''),
-    ('''        data = path.read_bytes()  # one read for both the archive and its SHA256''',
-     '''        try:
+    # The walk itself: os.walk (no symlinked folders followed, as rglob on the Pod's Python 3.12) reports a folder
+    # it cannot list; a path whose metadata or bytes cannot be read is listed; the selection rules are unchanged.
+    ('''    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root)
+        recent = since is None or top and len(rel.parts) == 1 or path.stat().st_mtime >= since
+        if (path.is_symlink() or not path.is_file() or any(part in skip for part in rel.parts)
+                or path.name.endswith((".tar.gz", ".partial")) or not recent):
+            continue
+        data = path.read_bytes()  # one read for both the archive and its SHA256
+        name = prefix + "/" + rel.as_posix()
+        info = tarfile.TarInfo(name)
+        info.size, info.mtime, info.mode = len(data), int(path.stat().st_mtime), 0o644''',
+     '''    def failed(path, error):
+        rel = pathlib.Path(path).relative_to(root).as_posix()
+        unreadable.append({"path": prefix if rel == "." else prefix + "/" + rel, "errno": error.errno,
+                           "error": error.strerror or str(error)})
+    try:
+        if not root.is_dir():
+            return
+    except OSError as error:
+        failed(root, error)
+        return
+    paths = []
+    for folder, dirs, files in os.walk(root, onerror=lambda error: failed(error.filename, error)):
+        dirs.sort()
+        paths += [pathlib.Path(folder) / name for name in files]
+    for path in sorted(paths):
+        rel = path.relative_to(root)
+        name = prefix + "/" + rel.as_posix()
+        try:
+            if (path.is_symlink() or not path.is_file() or any(part in skip for part in rel.parts)
+                    or path.name.endswith((".tar.gz", ".partial"))):
+                continue
+            stat = path.stat()
+            if not (since is None or top and len(rel.parts) == 1 or stat.st_mtime >= since):
+                continue
             data = path.read_bytes()  # one read for both the archive and its SHA256
         except OSError as error:
-            unreadable.append({"path": prefix + "/" + rel.as_posix(), "errno": error.errno,
-                               "error": error.strerror or str(error)})
-            continue'''),
+            failed(path, error)
+            continue
+        info = tarfile.TarInfo(name)
+        info.size, info.mtime, info.mode = len(data), int(stat.st_mtime), 0o644'''),
+    ('''import io, pathlib, tarfile, time''', '''import io, os, pathlib, tarfile, time'''),
     ('''"since_epoch": since}))''', '''"since_epoch": since, "unreadable": unreadable}))'''),
 )
 POD_RECOVER = cloud.POD_RECOVER
@@ -331,19 +369,31 @@ limit, skip_dirs = ARGS["file_limit_bytes"], set(ARGS["skip_dirs"])
 out, members, left_out, skipped_dirs, unreadable = control / "results.tar.gz", {}, [], [], []
 def failed(prefix, root, path, error):
     try:
-        name = prefix + "/" + pathlib.Path(path).relative_to(root).as_posix()
+        rel = pathlib.Path(path).relative_to(root).as_posix()
+        name = prefix if rel == "." else prefix + "/" + rel
     except ValueError:
         name = str(path)
     unreadable.append({"path": name, "errno": error.errno, "error": error.strerror or str(error)})
+def walked(prefix, root, path):
+    """A folder the walk enters: not a symlink, and one whose metadata cannot be read is listed and left."""
+    try:
+        return not path.is_symlink()
+    except OSError as error:
+        failed(prefix, root, path, error)
+        return False
 def tree(tar, root, prefix, since=None, top=False, skip=frozenset()):
-    if not root.is_dir():
+    try:
+        if not root.is_dir():
+            return
+    except OSError as error:
+        failed(prefix, root, root, error)
         return
     for folder, dirs, files in os.walk(root, onerror=lambda error: failed(prefix, root, error.filename, error)):
         here = pathlib.Path(folder)
         for name in sorted(dirs):
             if name in skip:
                 skipped_dirs.append(prefix + "/" + (here / name).relative_to(root).as_posix())
-        dirs[:] = sorted(name for name in dirs if name not in skip and not (here / name).is_symlink())
+        dirs[:] = sorted(name for name in dirs if name not in skip and walked(prefix, root, here / name))
         for name in sorted(files):
             path = here / name
             rel = path.relative_to(root)
