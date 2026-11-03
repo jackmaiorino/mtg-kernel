@@ -45,7 +45,7 @@ from pathlib import Path
 SCHEMA = "w5-runtime-parity/v1"
 BRIDGE_FILES = ("mtg-kernel/src/agent_bridge_v1.rs", "mtg-kernel/src/agent_bridge_flat_v4.rs")
 RULES_CALL = re.compile(r"\bset_runtime_rules_v1\s*\(")
-RAW_STRING = re.compile(r'b?r(#*)"')
+RAW_STRING = re.compile(r'[bc]?r(#*)"')
 
 
 class ParityError(Exception):
@@ -144,7 +144,7 @@ def strip_rust(source: str) -> str:
                     depth, i = depth - 1, i + 2
                 else:
                     i += 1
-        elif source[i] in "rb" and (i == 0 or not (source[i - 1].isalnum() or source[i - 1] == "_")) \
+        elif source[i] in "rbc" and (i == 0 or not (source[i - 1].isalnum() or source[i - 1] == "_")) \
                 and RAW_STRING.match(source, i):
             raw = RAW_STRING.match(source, i)
             hashes = raw.group(1)
