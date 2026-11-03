@@ -466,6 +466,9 @@ pub(crate) mod vector_tanh_v1;
 pub mod gameplay_checkpoint_reconstruction_v1;
 #[allow(dead_code)]
 pub(crate) mod native_policy_value_net_v1;
+// Native S, the W5 XS arm's object transformer (forward, backward, Adam,
+// checkpoint) and its receipt tools. Opt-in: nothing else calls it yet.
+pub mod s_transformer_v1;
 #[cfg(feature = "saved-input-scalar-diagnostic")]
 pub mod saved_input_scalar_diagnostic;
 // Shared cfg(test) helper: gates tests that read machine-local sealed

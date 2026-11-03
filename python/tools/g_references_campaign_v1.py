@@ -64,6 +64,7 @@ import sys
 import threading
 import time
 
+import checkpoint_container_v1
 import g_references_v1 as g
 import host_reservation_v1 as reservations
 import native_expanded_dispatch_v1 as native_dispatch
@@ -1320,12 +1321,12 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
             raise RuntimeError("retained checkpoint copy differs")
         entry["final_checkpoint"] = {"path": str(kept), "sha256": update["checkpoint"]["sha256"]}
         entry["final_adam_step"] = update["adam_step"]
-        entry["final_state_sha256"] = json.loads(kept.read_bytes())["state_sha256"]
+        entry["final_state_sha256"] = checkpoint_container_v1.read_document(kept)["state_sha256"]
         entry["checkpoint_state"] = "kept"
         campaign.save_state(run, state)
     if block == 1 and "embedding_gate" not in entry:
         gate = collector.embedding_gate(fresh_embedding(campaign.raw["play_imports"][run]),
-                                        json.loads(Path(entry["final_checkpoint"]["path"]).read_bytes()),
+                                        checkpoint_container_v1.read_document(entry["final_checkpoint"]["path"]),
                                         g.ndb.load_decks(Path(campaign.raw["decks"])))
         entry["embedding_gate"] = write_json(campaign.exposure / f"{run}-b001-embedding-gate.json", gate)
         entry["embedding_gate_pass"] = gate["pass"]

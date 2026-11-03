@@ -50,6 +50,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import checkpoint_container_v1
 import host_reservation_v1 as reservations
 import native_expanded_dispatch_v1 as native_dispatch
 import nine_deck_baseline_v1 as ndb
@@ -604,9 +605,10 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
         campaign.save_state(run, state)
         touch(campaign)
     if block == 1 and "embedding_gate_pass" not in entry:
-        gate = collector.embedding_gate(json.loads(Path(campaign.raw["t1_source"]["checkpoint"]["path"]).read_bytes()),
-                                        json.loads(Path(entry["final_checkpoint"]["path"]).read_bytes()),
-                                        ndb.load_decks(Path(campaign.raw["decks"])))
+        gate = collector.embedding_gate(
+            checkpoint_container_v1.read_document(campaign.raw["t1_source"]["checkpoint"]["path"]),
+            checkpoint_container_v1.read_document(entry["final_checkpoint"]["path"]),
+            ndb.load_decks(Path(campaign.raw["decks"])))
         entry["embedding_gate"] = write_json(campaign.exposure / f"{run}-b01-embedding-gate.json", gate)
         entry["embedding_gate_pass"] = gate["pass"]
         campaign.save_state(run, state)

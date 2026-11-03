@@ -118,49 +118,7 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
 /// fields dropped, and candidate lists and menu rows sorted (the wire
 /// re-sorts the engine's native-id order).
 fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<serde_json::Value> {
-    fn rename(v: &mut serde_json::Value, ids: Option<&BTreeMap<u64, u64>>) {
-        match v {
-            serde_json::Value::Object(m) => {
-                m.retain(|k, _| {
-                    !k.contains("hash")
-                        && !matches!(
-                            k.as_str(),
-                            "zone_change_count" | "physical_decision_id" | "step_index"
-                        )
-                });
-                for (k, x) in m.iter_mut() {
-                    if k == "arena_id" {
-                        if let (Some(n), Some(ids)) = (x.as_u64(), ids) {
-                            *x = ids
-                                .get(&n)
-                                .map_or(serde_json::json!(format!("unmapped:{n}")), |c| {
-                                    serde_json::json!(c)
-                                });
-                        }
-                        continue;
-                    }
-                    rename(x, ids);
-                }
-                if let Some(serde_json::Value::Array(xs)) = m.get_mut("legal_targets") {
-                    xs.sort_by_key(|x| x.to_string());
-                }
-            }
-            serde_json::Value::Array(xs) => {
-                xs.iter_mut().for_each(|x| rename(x, ids));
-                // Lists of objects the engine keeps in native-id order
-                // (known hand cards, candidates) compare as sets.
-                let objects = !xs.is_empty()
-                    && xs.iter().all(|x| {
-                        x.as_object()
-                            .is_some_and(|m| m.contains_key("stable") || m.contains_key("arena_id"))
-                    });
-                if objects {
-                    xs.sort_by_key(|x| x.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
+    use super::order::canonical_rename_v1 as rename;
     let FastActorResponseV1::Decision(d) = s.current_response() else {
         return None;
     };

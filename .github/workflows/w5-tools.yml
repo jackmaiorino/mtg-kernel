@@ -71,10 +71,12 @@ jobs:
           lscpu | head -20
       - name: Acceptance (pause, filler, resume, restart, OOM)
         run: sudo python3 tools/w5/tests/cgroup_acceptance.py --receipt w5box-acceptance.json
+      - name: Occupancy acceptance (faults, refill, node freeze and thaw)
+        run: sudo python3 tools/w5/tests/occupancy_acceptance.py --receipt w5box-occupancy.json
       - name: Keep the receipt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: w5box-acceptance
-          path: w5box-acceptance.json
+          path: w5box-*.json
           if-no-files-found: ignore

@@ -14,6 +14,7 @@
 //! the bridge's stderr when the game ends, never into a decision.
 
 use crate::ids::PlayerId;
+use crate::infoset_v1::order::{canonical_ids_v1, imported_ids_v1, live_rows_v1, row_keys_v1};
 use crate::infoset_v1::{
     export_v1, ExportErrorV1, ExportInputV1, ExportOptionsV1, PayloadV1, RefusalTallyV1,
     INFOSET_SCHEMA_V1,
@@ -22,6 +23,7 @@ use crate::rl::{ActionSemanticV1, PlayerSeatV1};
 use crate::rl_session::{FastActorSessionV1, RlSessionDecisionV1};
 use crate::runtime_decks::runtime_deck_by_id;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 /// The extension key and its command-line flag.
 pub const SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1: &str = "x_kernel_infoset_v1";
@@ -39,6 +41,13 @@ pub(crate) struct InfosetBridgeV1 {
     pub(crate) tally: [RefusalTallyV1; 2],
     /// Whether the game-end receipt was written.
     pub(crate) receipt_written: bool,
+    /// The canonical id map of the last exported decision, with that
+    /// decision's step: private previews of a buffered group rooted there
+    /// key their rows with it (design 7).
+    pub(crate) root_ids: Option<(u64, BTreeMap<u64, u64>)>,
+    /// Exported decisions whose menus the canonical keys could not pair
+    /// one to one with the import's, per seat (engine-side receipt).
+    pub(crate) order_map_missing: [u64; 2],
 }
 
 fn seat(p: PlayerSeatV1) -> PlayerId {
@@ -68,6 +77,7 @@ pub(crate) fn infoset_extension_v1(
     state: &mut InfosetBridgeV1,
 ) -> Result<(), String> {
     state.pending = None;
+    state.root_ids = None;
     if !eligible_v1(decision) {
         return Ok(());
     }
@@ -89,11 +99,34 @@ pub(crate) fn infoset_extension_v1(
         },
         ExportOptionsV1::default(),
     );
-    let tally = &mut state.tally[viewer.index()];
+    let seat_index = viewer.index();
     let value = match exported {
         Ok(export) => match PayloadV1::new(&export, fast, viewer, index) {
             Some(payload) => {
-                tally.record(&Ok(()));
+                state.tally[seat_index].record(&Ok(()));
+                // The order map (design 4 and 7): the entrant's pick is an
+                // index into the imported session's menu, which lists the
+                // candidates in canonical-id order; `live_rows[i]` is the
+                // lockstep row (the `x_kernel_flat_v4` row) of imported row
+                // i, paired by canonical key. Null when the keys do not
+                // pair the menus one to one: the entrant then answers with
+                // its policy. `row_keys` keys the lockstep rows, for a
+                // buffered group's completions.
+                let ids = canonical_ids_v1(&export);
+                let lockstep_keys = row_keys_v1(fast, Some(&ids));
+                let imported_ids = imported_ids_v1(&payload.handles);
+                let imported_keys = payload
+                    .import()
+                    .ok()
+                    .and_then(|s| row_keys_v1(&s, Some(&imported_ids)));
+                let live_rows = match (&lockstep_keys, &imported_keys) {
+                    (Some(a), Some(b)) => live_rows_v1(a, b),
+                    _ => None,
+                };
+                if live_rows.is_none() {
+                    state.order_map_missing[seat_index] += 1;
+                }
+                state.root_ids = Some((decision.step, ids));
                 // JSON text, like `x_kernel_v5`: the canonical state carries
                 // u64 values (the RNG state, hashes) beyond the wire's 2^53
                 // integer bound.
@@ -101,6 +134,8 @@ pub(crate) fn infoset_extension_v1(
                     "schema": INFOSET_SCHEMA_V1,
                     "payload_json": String::from_utf8(payload.to_bytes())
                         .map_err(|_| "engine_contract_failure:infoset payload".to_string())?,
+                    "live_rows": live_rows,
+                    "row_keys": lockstep_keys,
                 })
             }
             None => {
@@ -109,13 +144,13 @@ pub(crate) fn infoset_extension_v1(
                     code: crate::infoset_v1::RefusalCodeV1::R2,
                     detail: "surface mid-scan".into(),
                 };
-                tally.record(&Err(refused));
+                state.tally[seat_index].record(&Err(refused));
                 json!({"schema": INFOSET_SCHEMA_V1, "refusal": "R2"})
             }
         },
         Err(error @ ExportErrorV1::Refused { .. }) => {
             let code = error.code_name();
-            tally.record(&Err(error.clone()));
+            state.tally[seat_index].record(&Err(error.clone()));
             json!({"schema": INFOSET_SCHEMA_V1, "refusal": code})
         }
         Err(ExportErrorV1::Fault { code, detail }) => {
@@ -142,6 +177,22 @@ pub(crate) fn receipt_v1(game_id: &str, state: &InfosetBridgeV1) -> String {
         "game_id": game_id,
         "eligible": state.eligible,
         "tally": [&state.tally[0], &state.tally[1]],
+        "order_map_missing": state.order_map_missing,
     })
     .to_string()
+}
+
+/// The canonical keys of a private preview's rows, when the group's root
+/// decision (at `root_step`) carried a payload: the rows of a buffered
+/// group's later native points, keyed with the root export's id map.
+pub(crate) fn preview_row_keys_v1(
+    state: &InfosetBridgeV1,
+    root_step: u64,
+    fast: &FastActorSessionV1,
+) -> Option<Value> {
+    let (step, ids) = state.root_ids.as_ref()?;
+    if *step != root_step {
+        return None;
+    }
+    Some(json!({"schema": INFOSET_SCHEMA_V1, "row_keys": row_keys_v1(fast, Some(ids))}))
 }

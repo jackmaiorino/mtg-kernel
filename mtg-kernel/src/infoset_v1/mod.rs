@@ -19,6 +19,7 @@
 
 pub(crate) mod export;
 pub(crate) mod ledger;
+pub(crate) mod order;
 pub(crate) mod payload;
 pub(crate) mod pins;
 pub(crate) mod projection;

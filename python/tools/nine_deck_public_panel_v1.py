@@ -42,6 +42,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import checkpoint_container_v1
 import host_reservation_v1 as reservations
 import nine_deck_baseline_v1 as ndb
 
@@ -331,7 +332,7 @@ def public_checkpoint_metadata(source):
     # Fresh ordinary import descriptors have these real loader dependencies.
     # Their checkpoints and parameter objects are opaque identity bytes.
     check_request_pins([imported[key] for key in ("initialization", "parameters") if key in imported])
-    initial_age = (json.loads(checked(parent["checkpoint"]).read_bytes())["adam_step"]
+    initial_age = (checkpoint_container_v1.read_document(checked(parent["checkpoint"]))["adam_step"]
                    if parent.get("checkpoint") is not None else 0)
     ppo = config.get("ppo")
     steps = checkpoint["next_update"] * (ppo["epochs"]*ppo["minibatches"] if ppo is not None else 1)
@@ -633,7 +634,7 @@ def candidate_layout(source: dict) -> str:
                       play_import=config["source"]["play_import"]["sha256"],
                       parameters=[(row["name"], row["shape"]) for row in optimizer["parameters"]])
         return sha256_bytes(json.dumps(layout, sort_keys=True).encode())
-    checkpoint = json.loads(checked(source["checkpoint"]).read_text(encoding="utf-8"))
+    checkpoint = checkpoint_container_v1.read_document(checked(source["checkpoint"]))
     layout = {key: checkpoint[key] for key in ("schema", "source_import", "feature_contract_digest",
                                                "feature_encoding_digest", "card_db_hash")}
     layout["parameters"] = [(row["name"], row["shape"]) for row in checkpoint["parameters"]]
