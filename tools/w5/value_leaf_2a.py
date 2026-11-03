@@ -6,13 +6,13 @@ Inputs:
 - the Stage 0b capture records (`stage0b.py`, `w5-0b-capture/v1`): the panel states, the policy, the frozen
   s4a candidates and Q_ref;
 - value-leaf capture records (`w5-2a-vl-capture/v1`, JSON lines in DIR/vl-*.jsonl), one per panel state:
-  {"schema", "episode", "game", "host_class", "binary_sha256",
+  {"schema", "episode", "game", "host_class", "binary_sha256", "key_memo": "on", "key_memo_limit_bytes",
    "configs": [{"horizon": "h0"|"t0"|"t1", "n_sims": N, "search_seed": 0|1, "seed_root", "status": "ok"|"failed",
                 "cpu_s", "primary_sha256", and when ok "n": [...], "value_units": [...], "draws": [...]}],
-   "comparator": [{"budget": B, "search_seed": 0|1, "cpu_s", "key_memo": "on"}],
+   "comparator": [{"budget": B, "search_seed": 0|1, "cpu_s", "key_memo": "on", "key_memo_limit_bytes"}],
    "qref_extra": {"rollouts": 128, "seed_root", "actions": [...], "n": [...], "wins": [...], "draws": [...]}}
-  `comparator` re-measures the frozen s4a recipe's cost with the same key memo as the value-leaf searches, same
-  host and binary class (ruling 2). `qref_extra` covers only actions outside the 0b Q_ref; an action in both keeps
+  `comparator` re-measures the frozen s4a recipe's cost with the same key memo and limit as the value-leaf
+  searches, same host and binary class (ruling 2). Configs must be exactly the frozen horizons x N grid. `qref_extra` covers only actions outside the 0b Q_ref; an action in both keeps
   its frozen 0b value (ruling 8).
 
 Rule (ruling 5, frozen here):
@@ -21,18 +21,22 @@ Rule (ruling 5, frozen here):
 - Selection (selection half only): q from `vl-target-v1` (ex1-target-v1 with Q-hat = value units / (n x 2^20));
   G and c per config as in Stage 0b; eligible iff G's bootstrap 10th percentile > 0 (seed tag "w5/2a/select-boot");
   the selected config maximizes G/c at 4 significant figures, ties to the smaller N, then horizon order h0, t0, t1.
-  `select` writes a lock; `confirm` refuses without it and recomputes it.
+  `select` reads only identity fields (episode, game, placement, reached) of confirmation-half records and writes a
+  lock; `confirm` checks the lock's hash and that a recomputation equals it field for field, then uses it.
 - Confirmation (confirmation half): pass iff (a) G_vl's 10th percentile > 0, (b) G_vl/c_vl >= 3 G_s/c_s and
   G_vl >= 0.5 G_s at point estimates, and (c) the binding interval clause: the paired state-bootstrap 10th
   percentile of (G_vl/c_vl)/(G_s/c_s) > 1 (seed tag "w5/2a/boot"). A nonpositive comparator G makes the
-  multiplier claim inconclusive. Paired intervals are reported for G_vl/c_vl - 3 G_s/c_s and G_vl - 0.5 G_s.
-- Class (ruling 3): a read is binding only in the node class (`--binding-class`, default linux-zen5-9950x);
-  any other class is labelled a development read. `crossclass` compares primary hashes of the same searches
-  run in two classes.
+  multiplier claim inconclusive; a bootstrap replicate whose comparator gain is not positive counts as -inf in the
+  ratio. Paired intervals (floor-index percentiles) are reported for G_vl/c_vl - 3 G_s/c_s and G_vl - 0.5 G_s, and
+  both s4a budgets' confirmation-half G/c at Stage 0b's capture costs as a disclosure.
+- Class (ruling 3): a read is binding only when every record of both halves is in the node class
+  (linux-zen5-9950x) with one binary and one memo limit; anything else is labelled a development read.
+  `crossclass` compares primary hashes of named searches run in two classes (every one must be present and ok).
 
-  value_leaf_2a.py select  --captures 0B_DIR --vl VL_DIR --parent-sha256 H --budget B --lock LOCK.json
+  value_leaf_2a.py select  --captures 0B_DIR --vl VL_DIR --parent-sha256 H --budget B --grid 128,512
+                           --horizons h0,t0 --lock LOCK.json
   value_leaf_2a.py confirm --captures 0B_DIR --vl VL_DIR --parent-sha256 H --budget B --lock LOCK.json [--out F]
-  value_leaf_2a.py crossclass --vl VL_DIR --other OTHER_VL_DIR
+  value_leaf_2a.py crossclass --vl VL_DIR --other OTHER_VL_DIR --episodes 3,17,40
 """
 from __future__ import annotations
 
@@ -67,11 +71,6 @@ def config_key(c: dict) -> str:
     return f"{c['horizon']}-n{c['n_sims']}"
 
 
-def config_order(key: str) -> tuple:
-    horizon, n = key.split("-n")
-    return int(n), HORIZONS.index(horizon)
-
-
 def vl_target(logit_bits, n, units):
     """ex1-target-v1 with Q-hat = value units / (n x 2^20): the complete target, or ("no_target", reason)."""
     k = len(logit_bits)
@@ -98,48 +97,63 @@ def vl_target(logit_bits, n, units):
     return {"q": q, "log_q": logq, "p": p, "mass": mass, "support": support, "qhat": qh}
 
 
-def validate_vl(vl: dict, panel_record: dict, budget: int) -> None:
+def finite_cost(x) -> bool:
+    return type(x) in (int, float) and math.isfinite(x) and x >= 0
+
+
+def validate_vl(vl: dict, panel_record: dict, budget: int, grid: tuple, horizons: tuple) -> None:
     where = f"value-leaf episode {vl.get('episode')}"
     require(vl.get("schema") == VL_SCHEMA, f"{where}: wrong schema")
     require(vl.get("episode") == panel_record["episode"] and vl.get("game") == panel_record["game"],
             f"{where}: does not match its panel state")
     require(isinstance(vl.get("host_class"), str) and vl["host_class"], f"{where}: host class")
+    require(isinstance(vl.get("binary_sha256"), str) and len(vl["binary_sha256"]) == 64, f"{where}: binary hash")
+    require(vl.get("key_memo") == "on" and s0.is_count(vl.get("key_memo_limit_bytes")) and vl["key_memo_limit_bytes"] > 0,
+            f"{where}: value-leaf key memo must be on with its limit")
     width = len(panel_record["policy"]["logit_bits"])
     keys = set()
     for c in vl["configs"]:
-        require(c.get("horizon") in HORIZONS and s0.is_count(c.get("n_sims")) and c["n_sims"] > 0,
-                f"{where}: config")
-        require(c.get("search_seed") in s0.SEEDS and isinstance(c.get("seed_root"), str), f"{where}: seed")
+        require(c.get("horizon") in horizons and c.get("n_sims") in grid, f"{where}: config outside the frozen grid")
+        require(c.get("search_seed") in s0.SEEDS and isinstance(c.get("seed_root"), str) and c["seed_root"],
+                f"{where}: seed")
         require(c.get("status") in ("ok", "failed"), f"{where}: status")
-        cpu = c.get("cpu_s")
-        require(type(cpu) in (int, float) and math.isfinite(cpu) and cpu >= 0, f"{where}: CPU")
+        require(finite_cost(c.get("cpu_s")), f"{where}: CPU")
         if c["status"] == "ok":
             n, u, d = c["n"], c["value_units"], c["draws"]
             require(len(n) == len(u) == len(d) == width, f"{where}: widths")
             require(all(s0.is_count(x) for x in n + u + d), f"{where}: counts")
             require(all(ui <= ni * UNIT and di <= ni for ni, ui, di in zip(n, u, d)), f"{where}: sums exceed visits")
-        keys.add((config_key(c), c["search_seed"]))
-    require(len(keys) == len(vl["configs"]), f"{where}: duplicate config")
-    configs = {k for k, _ in keys}
-    require(keys == {(k, s) for k in configs for s in s0.SEEDS}, f"{where}: every config needs seeds 0 and 1")
-    comp = {(c.get("budget"), c.get("search_seed")) for c in vl["comparator"]}
-    require(comp == {(budget, s) for s in s0.SEEDS} and len(comp) == len(vl["comparator"]),
-            f"{where}: comparator must be budget {budget} at seeds 0 and 1")
-    require(all(c.get("key_memo") == "on" for c in vl["comparator"]), f"{where}: comparator key memo must be on")
-    extra = vl.get("qref_extra") or {"actions": [], "n": [], "wins": [], "draws": [], "rollouts": s0.ROLLOUTS}
-    s0.check_counts(extra["n"], extra["wins"], extra["draws"], len(extra["actions"]), f"{where} extra Q_ref")
+        keys.add((c["horizon"], c["n_sims"], c["search_seed"]))
+    require(len(keys) == len(vl["configs"]) and keys == {(h, n, s) for h in horizons for n in grid for s in s0.SEEDS},
+            f"{where}: configs must be exactly the frozen horizons x grid at seeds 0 and 1")
+    comp = vl["comparator"]
+    require({(c.get("budget"), c.get("search_seed")) for c in comp} == {(budget, s) for s in s0.SEEDS}
+            and len(comp) == len(s0.SEEDS), f"{where}: comparator must be budget {budget} at seeds 0 and 1")
+    for c in comp:
+        require(finite_cost(c.get("cpu_s")), f"{where}: comparator CPU")
+        require(c.get("key_memo") == "on" and c.get("key_memo_limit_bytes") == vl["key_memo_limit_bytes"],
+                f"{where}: the comparator must run the same key memo and limit as the value-leaf searches")
+    extra = vl.get("qref_extra")
+    require(isinstance(extra, dict), f"{where}: qref_extra required (empty actions allowed)")
+    actions = extra.get("actions")
+    require(isinstance(actions, list) and all(type(a) is int and 0 <= a < width for a in actions)
+            and len(set(actions)) == len(actions), f"{where}: extra Q_ref actions must be distinct legal indices")
+    s0.check_counts(extra.get("n"), extra.get("wins"), extra.get("draws"), len(actions), f"{where} extra Q_ref")
     require(extra.get("rollouts") == s0.ROLLOUTS and all(x == s0.ROLLOUTS for x in extra["n"]),
             f"{where}: extra Q_ref needs {s0.ROLLOUTS} rollouts per action")
-    frozen = set(panel_record["qref"]["actions"])
-    require(not frozen & set(extra["actions"]), f"{where}: an action with a frozen 0b Q_ref is re-measured")
-    roots = {c["seed_root"] for c in vl["configs"]} | {panel_record["qref"]["seed_root"]}
-    require(not extra["actions"] or extra.get("seed_root") not in roots, f"{where}: extra Q_ref seeds not independent")
+    require(not set(panel_record["qref"]["actions"]) & set(actions),
+            f"{where}: an action with a frozen 0b Q_ref is re-measured")
+    if actions:
+        roots = ({c["seed_root"] for c in vl["configs"]} | {panel_record["qref"]["seed_root"]}
+                 | {c["seed_root"] for c in panel_record["candidates"]})
+        require(isinstance(extra.get("seed_root"), str) and extra["seed_root"] and extra["seed_root"] not in roots,
+                f"{where}: extra Q_ref seeds must be independent (a distinct, nonempty seed root)")
 
 
 def reference(panel_record: dict, vl: dict) -> dict:
     out = {}
-    for src in (panel_record["qref"], vl.get("qref_extra") or {"actions": []}):
-        for a, w, d, n in zip(src["actions"], src.get("wins", []), src.get("draws", []), src.get("n", [])):
+    for src in (panel_record["qref"], vl["qref_extra"]):
+        for a, w, d, n in zip(src["actions"], src["wins"], src["draws"], src["n"]):
             out[a] = (w + 0.5 * d) / n
     return out
 
@@ -149,8 +163,7 @@ def state_row(panel_record: dict, vl: dict, budget: int) -> dict:
     bits = panel_record["policy"]["logit_bits"]
     p = s0.policy(panel_record)
     ref = reference(panel_record, vl)
-    row = {}
-    by = {}
+    row, by = {}, {}
     for c in vl["configs"]:
         by.setdefault(config_key(c), {})[c["search_seed"]] = c
     for key, seeds in by.items():
@@ -158,10 +171,7 @@ def state_row(panel_record: dict, vl: dict, budget: int) -> dict:
         for seed in s0.SEEDS:
             c = seeds[seed]
             cpu.append(float(c["cpu_s"]))
-            if c["status"] != "ok":
-                gains.append(0.0)
-                continue
-            t = vl_target(bits, c["n"], c["value_units"])
+            t = vl_target(bits, c["n"], c["value_units"]) if c["status"] == "ok" else ("no_target", "failed")
             if isinstance(t, tuple):
                 gains.append(0.0)
                 continue
@@ -172,10 +182,35 @@ def state_row(panel_record: dict, vl: dict, budget: int) -> dict:
                     g += (t["q"][a] - p[a]) * ref[a]
             gains.append(g)
         row[key] = {"gain": (gains[0] + gains[1]) / 2, "cpu_s": cpu}
-    s4a = s0.state_gains(panel_record, (budget,))[budget]
-    row["s4a"] = {"gain": s4a["gain"], "cpu_s": [float(c["cpu_s"]) for c in
-                                                 sorted(vl["comparator"], key=lambda c: c["search_seed"])]}
+    gains = s0.state_gains(panel_record, s0.BUDGETS)
+    row["s4a"] = {"gain": gains[budget]["gain"],
+                  "cpu_s": [float(c["cpu_s"]) for c in sorted(vl["comparator"], key=lambda c: c["search_seed"])]}
+    for b in s0.BUDGETS:  # disclosure only: Stage 0b's capture costs (its own memo setting), both budgets
+        row[f"s4a_{b}_0b"] = {"gain": gains[b]["gain"], "cpu_s": gains[b]["cpu_s"]}
     return row
+
+
+def panel_identities(records: list[dict], namespace: str = s0.PANEL_NAMESPACE, source_sha256: str = "") -> list[dict]:
+    """The Stage 0b panel (first 300 reached states, one per game) from identity fields only: episode, game,
+    chain, checkpoint, placement and `reached`. No candidate, Q_ref or policy field is read here."""
+    panel, games = [], set()
+    for expected, r in enumerate(records):
+        where = f"episode {r.get('episode')}"
+        require(r.get("schema") == s0.CAPTURE_SCHEMA and r.get("episode") == expected, f"episode gap at {expected}")
+        require(r.get("chain") == namespace and r.get("source_checkpoint_sha256") == source_sha256,
+                f"{where}: namespace or checkpoint")
+        require(all(s0.is_count(r.get(k)) for k in ("update", "seed", "slot", "k")) and type(r.get("reached")) is bool
+                and isinstance(r.get("game"), str), f"{where}: identity fields")
+        require(r["k"] == s0.placement_index(r["chain"], r["update"], r["seed"], r["slot"]),
+                f"{where}: k differs from the placement hash")
+        if not r["reached"]:
+            continue
+        require(r["game"] not in games, f"game {r['game']} gives two states")
+        games.add(r["game"])
+        panel.append(r)
+        if len(panel) == s0.PANEL:
+            return panel
+    raise StageError(f"only {len(panel)} reached states; the panel needs {s0.PANEL}")
 
 
 def halves(panel: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -197,16 +232,16 @@ def load_vl(directory: Path) -> dict:
     return out
 
 
-def rows_for(states: list[dict], vl: dict, budget: int) -> tuple[list[dict], set]:
-    rows, classes = [], set()
+def rows_for(states: list[dict], vl: dict, parent_sha256: str, budget: int, grid: tuple, horizons: tuple):
+    rows, provenance = [], set()
     for r in states:
+        s0.validate_record(r, s0.PANEL_NAMESPACE, parent_sha256, s0.BUDGETS)
         require(r["episode"] in vl, f"episode {r['episode']}: no value-leaf record")
-        validate_vl(vl[r["episode"]], r, budget)
-        classes.add(vl[r["episode"]]["host_class"])
-        rows.append(state_row(r, vl[r["episode"]], budget))
-    keys = {k for row in rows for k in row}
-    require(all(set(row) == keys for row in rows), "every state needs the same configs")
-    return rows, classes
+        v = vl[r["episode"]]
+        validate_vl(v, r, budget, grid, horizons)
+        provenance.add((v["host_class"], v["binary_sha256"], v["key_memo_limit_bytes"]))
+        rows.append(state_row(r, v, budget))
+    return rows, provenance
 
 
 def mean(xs):
@@ -220,11 +255,13 @@ def resample(n: int, seed: int, replicates: int):
 
 
 def summarize(rows: list[dict], key: str) -> dict:
-    return {"G": mean([r[key]["gain"] for r in rows]), "c": mean([c for r in rows for c in r[key]["cpu_s"]])}
+    cpu = [c for r in rows for c in r[key]["cpu_s"]]
+    require(sum(cpu) > 0, f"{key}: no positive search CPU recorded")
+    return {"G": mean([r[key]["gain"] for r in rows]), "c": mean(cpu)}
 
 
-def select_rows(rows: list[dict], replicates: int) -> dict:
-    configs = sorted((k for k in rows[0] if k != "s4a"), key=config_order)
+def select_rows(rows: list[dict], grid: tuple, horizons: tuple, replicates: int) -> dict:
+    configs = [f"{h}-n{n}" for n in grid for h in horizons]
     boots = {k: [] for k in configs}
     for idx in resample(len(rows), s0.tag_seed(SELECT_BOOT_TAG), replicates):
         for k in configs:
@@ -239,41 +276,52 @@ def select_rows(rows: list[dict], replicates: int) -> dict:
     eligible = [k for k in configs if summary[k]["eligible"]]
     if not eligible:
         return {"selected": None, "summary": summary, "reason": "no value-leaf config has G's 10th percentile > 0"}
-    best = max(eligible, key=lambda k: (float(summary[k]["ratio_4sf"]), [-x for x in config_order(k)]))
+    # Configs are listed by N, then horizon order: the first maximum is the tie rule (smaller N, then h0, t0, t1).
+    best = max(eligible, key=lambda k: (float(summary[k]["ratio_4sf"]), -configs.index(k)))
     return {"selected": best, "summary": summary}
 
 
-def panel_and_vl(args) -> tuple[list[dict], dict]:
-    records = s0.load_records(args.captures)
-    panel = s0.draw_panel(records, s0.PANEL, s0.PANEL_NAMESPACE, args.parent_sha256)
-    return panel, load_vl(args.vl)
-
-
-def select(panel: list[dict], vl: dict, budget: int, replicates: int = s0.REPLICATES) -> dict:
-    """Selection on the selection half only; the confirmation half's records are not read."""
-    sel_half, _ = halves(panel)
-    rows, classes = rows_for(sel_half, vl, budget)
-    out = select_rows(rows, replicates)
+def select(records: list[dict], vl: dict, parent_sha256: str, budget: int, grid: tuple, horizons: tuple,
+           replicates: int = s0.REPLICATES) -> dict:
+    """The lock. Reads the selection half's records only; of the confirmation half, identity fields alone."""
+    require(budget in s0.BUDGETS, "budget must be Stage 0b's frozen B")
+    grid, horizons = tuple(sorted(set(grid))), tuple(h for h in HORIZONS if h in set(horizons))
+    require(len(grid) >= 1 and all(type(n) is int and n > 0 for n in grid) and horizons, "frozen grid and horizons")
+    sel_half, _ = halves(panel_identities(records, source_sha256=parent_sha256))
+    rows, provenance = rows_for(sel_half, vl, parent_sha256, budget, grid, horizons)
+    out = select_rows(rows, grid, horizons, replicates)
     ids = [[r["episode"], r["game"]] for r in sel_half]
-    out.update({"schema": LOCK_SCHEMA, "budget": budget, "replicates": replicates, "host_classes": sorted(classes),
+    out.update({"schema": LOCK_SCHEMA, "budget": budget, "grid": list(grid), "horizons": list(horizons),
+                "replicates": replicates, "provenance": sorted(list(p) for p in provenance),
                 "selection_half_sha256": hashlib.sha256(json.dumps(ids).encode()).hexdigest()})
-    body = json.dumps(out, sort_keys=True)
-    out["lock_sha256"] = hashlib.sha256(body.encode()).hexdigest()
+    out["lock_sha256"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode()).hexdigest()
     return out
 
 
-def confirm(panel: list[dict], vl: dict, budget: int, lock: dict, binding_class: str = BINDING_CLASS,
+def interval(xs: list[float]) -> dict:
+    xs = sorted(xs)
+    lo = s0.lower_index(len(xs))
+    return {"p2.5": xs[int(0.025 * (len(xs) - 1))], "p10": xs[lo], "p90": xs[len(xs) - 1 - lo],
+            "p97.5": xs[int(0.975 * (len(xs) - 1))]}
+
+
+def confirm(records: list[dict], vl: dict, parent_sha256: str, budget: int, lock: dict,
             replicates: int = s0.REPLICATES) -> dict:
-    require(lock.get("schema") == LOCK_SCHEMA and lock.get("budget") == budget, "not a lock for this budget")
-    again = select(panel, vl, budget, lock["replicates"])
-    require(again["lock_sha256"] == lock["lock_sha256"], "the lock does not match the selection half's records")
-    key = lock["selected"]
-    result = {"schema": RESULT_SCHEMA, "budget": budget, "selected": key, "lock_sha256": lock["lock_sha256"]}
+    require(isinstance(lock, dict) and lock.get("schema") == LOCK_SCHEMA, "not a 2a lock")
+    body = {k: v for k, v in lock.items() if k != "lock_sha256"}
+    require(hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest() == lock.get("lock_sha256"),
+            "the lock's body does not match its hash")
+    again = select(records, vl, parent_sha256, budget, tuple(lock["grid"]), tuple(lock["horizons"]),
+                   lock["replicates"])
+    require(json.dumps(again, sort_keys=True) == json.dumps(lock, sort_keys=True),
+            "the lock does not match the selection half's records")
+    key = again["selected"]
+    result = {"schema": RESULT_SCHEMA, "budget": budget, "selected": key, "lock_sha256": again["lock_sha256"]}
     if key is None:
-        result.update(verdict="fail", reason=lock["reason"])
+        result.update(verdict="fail", reason=again["reason"])
         return result
-    _, conf_half = halves(panel)
-    rows, classes = rows_for(conf_half, vl, budget)
+    _, conf_half = halves(panel_identities(records, source_sha256=parent_sha256))
+    rows, provenance = rows_for(conf_half, vl, parent_sha256, budget, tuple(lock["grid"]), tuple(lock["horizons"]))
     v, s = summarize(rows, key), summarize(rows, "s4a")
     eff_v, eff_s = v["G"] / v["c"], s["G"] / s["c"]
     ratios, d_eff, d_gain, g_v = [], [], [], []
@@ -285,48 +333,56 @@ def confirm(panel: list[dict], vl: dict, budget: int, lock: dict, binding_class:
         g_v.append(gv)
         d_eff.append(gv / cv - EFFICIENCY_MULTIPLE * gs / cs)
         d_gain.append(gv - GAIN_FRACTION * gs)
+        # A replicate whose comparator gain is not positive has no defined ratio: it counts as -inf (a failing
+        # replicate), so it can never help the binding clause.
         ratios.append((gv / cv) / (gs / cs) if gs > 0 else -math.inf)
     lo = s0.lower_index(replicates)
-
-    def interval(xs):
-        xs = sorted(xs)
-        return {"p2.5": xs[int(0.025 * (len(xs) - 1))], "p10": xs[lo], "p90": xs[len(xs) - 1 - lo],
-                "p97.5": xs[int(0.975 * (len(xs) - 1))]}
-
     comparator_positive = s["G"] > 0
     clauses = {"g_vl_lower_10pct_positive": sorted(g_v)[lo] > 0,
                "efficiency_point": comparator_positive and eff_v >= EFFICIENCY_MULTIPLE * eff_s,
                "gain_point": v["G"] >= GAIN_FRACTION * s["G"],
                "binding_ratio_lower_10pct_above_1": comparator_positive and sorted(ratios)[lo] > 1}
-    if not comparator_positive:
-        verdict = "inconclusive"
-    else:
-        verdict = "pass" if all(clauses.values()) else "fail"
-    binding = classes == {binding_class}
+    verdict = "inconclusive" if not comparator_positive else ("pass" if all(clauses.values()) else "fail")
+    selection_prov = {tuple(p) for p in lock["provenance"]}
+    all_prov = selection_prov | provenance
+    binding = {p[0] for p in all_prov} == {BINDING_CLASS} and len({(p[1], p[2]) for p in all_prov}) == 1
+    disclosure = {str(b): summarize(rows, f"s4a_{b}_0b") for b in s0.BUDGETS}
+    for d in disclosure.values():
+        d["efficiency"] = d["G"] / d["c"]
     result.update({"vl": v, "s4a": s, "efficiency_vl": eff_v, "efficiency_s4a": eff_s,
                    "comparator_positive": comparator_positive, "clauses": clauses, "verdict": verdict,
                    "interval_efficiency_minus_3x": interval(d_eff), "interval_gain_minus_half": interval(d_gain),
                    "interval_efficiency_ratio": interval(ratios) if comparator_positive else None,
-                   "host_classes": sorted(classes), "binding": binding,
-                   "label": "binding read" if binding else "development read (not binding: host class)",
+                   "s4a_both_budgets_0b_cost_disclosure": disclosure,
+                   "provenance": sorted(list(p) for p in all_prov), "binding": binding,
+                   "label": "binding read" if binding else "development read (not binding: host class or binary)",
                    "law": "development measure on terminal rollout outcomes of b512's continuation; "
                           "no rating, panel score or CP7 read"})
     return result
 
 
-def crossclass(vl_a: dict, vl_b: dict) -> dict:
-    """Primary-hash agreement of the same searches (episode, config, seed) run in two host classes."""
+def crossclass(vl_a: dict, vl_b: dict, episodes: list[int]) -> dict:
+    """Primary-hash agreement of the same searches (every config and seed of each named episode) in two host
+    classes. Every named search must be present and successful in both."""
+    require(episodes, "name the sampled episodes")
     same, differ = 0, []
-    for ep in sorted(set(vl_a) & set(vl_b)):
-        a = {(config_key(c), c["search_seed"]): c.get("primary_sha256") for c in vl_a[ep]["configs"]}
-        b = {(config_key(c), c["search_seed"]): c.get("primary_sha256") for c in vl_b[ep]["configs"]}
-        for k in sorted(set(a) & set(b)):
-            if a[k] is not None and a[k] == b[k]:
+    for ep in episodes:
+        require(ep in vl_a and ep in vl_b, f"episode {ep}: missing in one class")
+        a, b = vl_a[ep], vl_b[ep]
+        require(a["game"] == b["game"], f"episode {ep}: different states")
+        require(a["host_class"] != b["host_class"], f"episode {ep}: both records are in class {a['host_class']}")
+        ka = {(c["horizon"], c["n_sims"], c["search_seed"]): c for c in a["configs"]}
+        kb = {(c["horizon"], c["n_sims"], c["search_seed"]): c for c in b["configs"]}
+        require(set(ka) == set(kb), f"episode {ep}: different searches")
+        for k in sorted(ka):
+            x, y = ka[k], kb[k]
+            require(x["status"] == y["status"] == "ok" and x["seed_root"] == y["seed_root"],
+                    f"episode {ep} {k}: both searches must succeed on the same seed root")
+            if x.get("primary_sha256") and x.get("primary_sha256") == y.get("primary_sha256"):
                 same += 1
             else:
-                differ.append([ep, k[0], k[1]])
-    total = same + len(differ)
-    return {"compared": total, "equal": same, "differ": differ, "all_equal": total > 0 and not differ}
+                differ.append([ep, *k])
+    return {"compared": same + len(differ), "equal": same, "differ": differ, "all_equal": not differ}
 
 
 def main(argv=None) -> int:
@@ -339,25 +395,27 @@ def main(argv=None) -> int:
         p.add_argument("--parent-sha256", required=True)
         p.add_argument("--budget", type=int, required=True, choices=s0.BUDGETS, help="Stage 0b's frozen B")
         p.add_argument("--lock", type=Path, required=True)
-        if name == "confirm":
-            p.add_argument("--binding-class", default=BINDING_CLASS)
+        if name == "select":
+            p.add_argument("--grid", required=True, help="the frozen N grid, e.g. 128,512")
+            p.add_argument("--horizons", required=True, help="the frozen horizons, e.g. h0,t0")
+        else:
             p.add_argument("--out", type=Path)
     p = sub.add_parser("crossclass")
     p.add_argument("--vl", type=Path, required=True)
     p.add_argument("--other", type=Path, required=True)
+    p.add_argument("--episodes", required=True, help="the sampled episodes, e.g. 3,17,40")
     args = parser.parse_args(argv)
     try:
         if args.command == "crossclass":
-            result = crossclass(load_vl(args.vl), load_vl(args.other))
+            result = crossclass(load_vl(args.vl), load_vl(args.other), [int(x) for x in args.episodes.split(",")])
         elif args.command == "select":
             require(not args.lock.exists(), "the lock exists; selection is already locked")
-            panel, vl = panel_and_vl(args)
-            result = select(panel, vl, args.budget)
+            result = select(s0.load_records(args.captures), load_vl(args.vl), args.parent_sha256, args.budget,
+                            tuple(int(x) for x in args.grid.split(",")), tuple(args.horizons.split(",")))
             args.lock.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
         else:
-            panel, vl = panel_and_vl(args)
             lock = json.loads(args.lock.read_text(encoding="utf-8"))
-            result = confirm(panel, vl, args.budget, lock, args.binding_class)
+            result = confirm(s0.load_records(args.captures), load_vl(args.vl), args.parent_sha256, args.budget, lock)
             if args.out:
                 args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
     except StageError as exc:
