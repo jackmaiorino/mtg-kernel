@@ -32,8 +32,8 @@ if exp(lower 90% t bound of the mean contrast) > 1.03 and the exact sign-flip gu
 p <= 0.025 (and the 6.2 correspondence receipt, pinned in the spec, passed).
 
 Contamination (frozen). A block is contaminated when, over its span, the artifact disk (E:) averages more than 50%
-busy, the run disk (D:) averages more than 60 MB/s of reads (or, in comparison, more than twice the calibration
-baseline), another host_slots claim or a timed hold overlaps the pool cores, or more than 10% of the sampler's rows
+busy, the run disk (D:) averages more than 60 MB/s of reads (or, in comparison, more than twice the larger of the
+calibration baseline and a 10 MB/s floor: amendment 1, docs/checkpoint_v2_acceptance_amendment_1.md), another host_slots claim or a timed hold overlaps the pool cores, or more than 10% of the sampler's rows
 are missing. The claim check polls `host_slots status` every 15 s; a block with a poll gap over 60 s counts as
 contaminated, because overlap could not be excluded.
 
@@ -102,6 +102,9 @@ E_BUSY_MAX = 50.0
 D_READ_MAX = 60e6
 MISSING_MAX = 0.10
 RELATIVE_FACTOR = 2.0
+# Amendment 1 (docs/checkpoint_v2_acceptance_amendment_1.md): the relative rule's baseline is at least 10 MB/s, so
+# page-cache misses of the measurement's own inputs cannot void comparison blocks.
+D_READ_BASELINE_FLOOR = 10e6
 MARGIN = math.log(1.03)
 PRECISION = math.log(1.05)
 CALIBRATION_COUPLES = 4
@@ -796,6 +799,11 @@ def claim_stats(polls, start, end):
             'own_claim_lost': any(p[1] is not None and not p[2] for p in polls)}
 
 
+def relative_read_threshold(baseline):
+    """Twice the larger of the calibration baseline and the amendment 1 floor."""
+    return RELATIVE_FACTOR * max(baseline, D_READ_BASELINE_FLOOR)
+
+
 def block_contamination(stats, claims, baseline, interval_ok=True, artifact_disk=True):
     reasons = []
     if stats['missing_fraction'] > MISSING_MAX:
@@ -804,8 +812,11 @@ def block_contamination(stats, claims, baseline, interval_ok=True, artifact_disk
         reasons.append(f'artifact disk {stats["e_busy_mean"]:.1f}% busy')
     if stats['d_read_mean'] is not None and stats['d_read_mean'] > D_READ_MAX:
         reasons.append(f'run disk reads {stats["d_read_mean"] / 1e6:.1f} MB/s')
-    if baseline is not None and stats['d_read_mean'] is not None and stats['d_read_mean'] > RELATIVE_FACTOR * baseline:
-        reasons.append(f'run disk reads {stats["d_read_mean"] / 1e6:.1f} MB/s over twice the baseline')
+    if baseline is not None and stats['d_read_mean'] is not None:
+        threshold = relative_read_threshold(baseline)
+        if stats['d_read_mean'] > threshold:
+            reasons.append(f'run disk reads {stats["d_read_mean"] / 1e6:.1f} MB/s over the relative threshold '
+                           f'{threshold / 1e6:.1f} MB/s')
     if claims['overlap']:
         reasons.append('another claim overlapped the pool')
     if claims['max_gap'] > CLAIM_GAP_MAX:
@@ -1202,7 +1213,7 @@ class Measurement:
                                         'declared_peak_bytes': self.group_bytes() * 1.2 + 1e9},
                         'constants': {k: globals()[k] for k in (
                             'RUNS', 'UPDATES', 'STAGGER_SECONDS', 'E_BUSY_MAX', 'D_READ_MAX', 'MISSING_MAX',
-                            'RELATIVE_FACTOR', 'CALIBRATION_COUPLES', 'N_MIN', 'N_MAX', 'MAX_DISCARDS',
+                            'RELATIVE_FACTOR', 'D_READ_BASELINE_FLOOR', 'CALIBRATION_COUPLES', 'N_MIN', 'N_MAX', 'MAX_DISCARDS',
                             'MAX_WARMUPS', 'GUARD_ALPHA', 'SAMPLE_INTERVAL', 'CLAIM_POLL_SECONDS',
                             'CLAIM_GAP_MAX')}}
             write_json(self.manifest_path, manifest)
