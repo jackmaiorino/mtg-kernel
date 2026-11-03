@@ -777,7 +777,10 @@ fn named_generation(v: &Value) -> Option<u64> {
 pub(crate) fn pick_copy(name: &str, bounced: bool) -> IntentV1 {
     let d = u64::from(id(name));
     IntentV1::Take(
-        format!("pick a {} {name}", if bounced { "bounced" } else { "fresh" }),
+        format!(
+            "pick a {} {name}",
+            if bounced { "bounced" } else { "fresh" }
+        ),
         Box::new(move |v| {
             matches!(
                 kind(v),
