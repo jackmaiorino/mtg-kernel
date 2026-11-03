@@ -5530,8 +5530,30 @@ fn execute_update_inner_v1(
             "searches_failed":receipt["searches_failed"],"cap":exposure["cap"],
             "adam_steps":exposure["adam_steps"],"teacher_seconds":teacher_seconds});
     }
+    #[cfg(test)]
+    if take_crash_point_for_test_v1() {
+        return Err("crash point: the checkpoint is published, update.json is not".into());
+    }
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Bookkeeping design 2.3's crash point, for tests: the next update on
+    /// this thread stops after its checkpoint's publication and readback and
+    /// before `update.json`.
+    static CRASH_POINT_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn arm_crash_point_for_test_v1() {
+    CRASH_POINT_FOR_TEST_V1.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+fn take_crash_point_for_test_v1() -> bool {
+    CRASH_POINT_FOR_TEST_V1.with(|flag| flag.replace(false))
 }
 
 fn seat(p: PlayerSeatV1) -> u8 {
