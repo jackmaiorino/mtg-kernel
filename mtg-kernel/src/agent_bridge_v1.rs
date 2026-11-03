@@ -3519,6 +3519,48 @@ mod tests {
                         Some(r) => r.iter().map(|x| x.as_u64().unwrap() as u32).collect(),
                         None => {
                             missing_maps += 1;
+                            // Diagnostics: the two menus' canonical forms.
+                            let lists = lockstep.deck_ids_v1().clone().map(|id| {
+                                crate::runtime_decks::runtime_deck_by_id(&id)
+                                    .unwrap()
+                                    .card_ids
+                                    .to_vec()
+                            });
+                            let st = lockstep.game_state();
+                            if let Ok(export) = crate::infoset_v1::export_v1(
+                                &crate::infoset_v1::ExportInputV1 {
+                                    state: st,
+                                    journal: st.observation_journal.notes(),
+                                    viewer: payload_viewer(&payload),
+                                    decklists: [&lists[0], &lists[1]],
+                                },
+                                crate::infoset_v1::ExportOptionsV1::default(),
+                            ) {
+                                let ids = crate::infoset_v1::order::canonical_ids_v1(&export);
+                                let forms = |s: &crate::rl_session::FastActorSessionV1,
+                                             ids: Option<&std::collections::BTreeMap<u64, u64>>| {
+                                    let crate::rl_session::FastActorResponseV1::Decision(d) =
+                                        s.current_response()
+                                    else {
+                                        return vec![];
+                                    };
+                                    let (_, menu) = s.actor_visible_decision_v4(d).unwrap();
+                                    menu.iter()
+                                        .map(|m| {
+                                            let mut v = serde_json::to_value(m).unwrap();
+                                            crate::infoset_v1::order::canonical_rename_v1(&mut v, ids);
+                                            v.to_string()
+                                        })
+                                        .collect::<Vec<_>>()
+                                };
+                                eprintln!(
+                                    "{deck}: no order map
+lockstep {:#?}
+imported {:#?}",
+                                    forms(lockstep, Some(&ids)),
+                                    forms(&imported, None)
+                                );
+                            }
                             line = server.handle_line(&flat_v4_step(
                                 &response,
                                 rows_of(&response)[0],
