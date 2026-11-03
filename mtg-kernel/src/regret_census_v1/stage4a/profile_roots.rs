@@ -85,8 +85,11 @@ pub(super) fn profile_case(
             model: sh.spec.lineage.clone(),
             root: format!("{}/search-profile/{label}", src.search_root),
         };
+        // Opt-in value-leaf search: N attempted simulations under a guard of
+        // N x 512 transitions instead of the transition budget.
+        let value_leaf = value_leaf_env()?;
         let limits = Limits {
-            select_cap: budget,
+            select_cap: value_leaf.map_or(budget, |(_, n)| n * VL_GUARD_PER_SIMULATION),
             ..sh.limits
         };
         let mut ctx = guide_ctx(&root, focal, opp, &seeds, &sh.prior, limits)?;
@@ -99,8 +102,24 @@ pub(super) fn profile_case(
         let _ = crate::search_profile_v1::digest::take_json();
         let started = Instant::now();
         let mut records = Vec::new();
-        let (sel, tree) =
-            roles.select_e_diagnosed(&ctx, None, 1, Some(&mut records), None, Some(&mut diag));
+        let (sel, tree) = match value_leaf {
+            None => {
+                roles.select_e_diagnosed(&ctx, None, 1, Some(&mut records), None, Some(&mut diag))
+            }
+            Some((vl, n)) => roles.select_e_options(
+                &ctx,
+                None,
+                1,
+                Some(&mut records),
+                None,
+                Some(&mut diag),
+                &super::root_allocation::SearchOptions {
+                    work_limit: Some(n),
+                    value_leaf: Some(vl),
+                    ..super::root_allocation::SearchOptions::default()
+                },
+            ),
+        };
         let wall = started.elapsed().as_secs_f64();
         let digest_memo = crate::native_flat_tensorizer_v2::take_digest_memo_counts_v1()
             .map(|(hits, misses)| json!({"hits":hits,"misses":misses}));
@@ -160,6 +179,26 @@ fn root_teacher(
         }
         Found::Miss => json!({"root_found":false,"supported":false,"played_live":played}),
     })
+}
+
+/// The value-leaf guard: transitions allowed per attempted simulation.
+const VL_GUARD_PER_SIMULATION: u64 = 512;
+
+/// `S4A_VALUE_LEAF=h0|t0` with `S4A_VL_SIMS=N` selects the value-leaf search
+/// (`value_leaf.rs`); both unset keeps the formal E search.
+fn value_leaf_env() -> Result<Option<(super::value_leaf::ValueLeafV1, u64)>, String> {
+    match (std::env::var("S4A_VALUE_LEAF"), std::env::var("S4A_VL_SIMS")) {
+        (Err(_), Err(_)) => Ok(None),
+        (Ok(h), Ok(n)) => {
+            let horizon = super::value_leaf::Horizon::parse(&h)?;
+            let n: u64 = n.parse().map_err(|_| "S4A_VL_SIMS must be a count")?;
+            if n == 0 || n > 1 << 24 {
+                return Err("S4A_VL_SIMS must be in 1..=16777216".into());
+            }
+            Ok(Some((super::value_leaf::ValueLeafV1 { horizon }, n)))
+        }
+        _ => Err("set both S4A_VALUE_LEAF and S4A_VL_SIMS, or neither".into()),
+    }
 }
 
 /// Value-leaf cost split (W5 Stage 2a M4-lite; descriptive, never read by the

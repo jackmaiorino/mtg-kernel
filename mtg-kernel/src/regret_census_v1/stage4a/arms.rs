@@ -70,6 +70,14 @@ impl Limits {
     }
 }
 
+/// How one E simulation ended: a game ending, or a value leaf
+/// (`s4a-vl-v1`) with its units and the raw value-head output.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum SimEnd {
+    Game(End),
+    Leaf { units: u32, raw: f32 },
+}
+
 /// Per-worker policy instances; each role has its own sampling stream.
 pub(crate) struct Roles {
     pub(crate) focal: FrozenPlayPolicyV1,
@@ -815,7 +823,8 @@ impl Roles {
         mut allocator: Option<&mut RootAllocator>,
         mut sharing: Option<&mut Sharing>,
         sharing_cursor: &mut SharingCursor,
-    ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
+        value_leaf: Option<super::value_leaf::ValueLeafV1>,
+    ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, SimEnd), PlayErr> {
         let capturing = capture
             .as_deref()
             .is_some_and(|c| !c.keys.is_empty() || c.all_up_to > 0 || !c.snapshot_sims.is_empty());
@@ -865,7 +874,7 @@ impl Roles {
             if let Some(end) = terminal(&s, ctx.focal) {
                 drop(span);
                 sup.finish(rec);
-                return Ok((path, new, end));
+                return Ok((path, new, SimEnd::Game(end)));
             }
             let d = decision(&s).expect("decision");
             drop(span);
@@ -896,6 +905,19 @@ impl Roles {
                         }
                         if turn >= t0.saturating_add(2) {
                             rec.leaf_t1.get_or_insert(at);
+                        }
+                        // Value leaf (`s4a-vl-v1`): stop here and score the
+                        // focal player's actor-visible view with the
+                        // searching network (no sampling draw).
+                        if value_leaf.is_some_and(|vl| vl.horizon.reached(t0, turn)) {
+                            let raw = self
+                                .scorer
+                                .score_fast_session_v1(&s)
+                                .map_err(PlayErr::Fault)?
+                                .value;
+                            let units = super::value_leaf::units(raw).map_err(PlayErr::Fault)?;
+                            sup.finish(rec);
+                            return Ok((path, new, SimEnd::Leaf { units, raw }));
                         }
                     }
                     // Trace only: where this choice comes from.
@@ -968,6 +990,9 @@ impl Roles {
                                 let perm = keyer.perm(&st, ctx.seeds)?;
                                 let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
                                 node.skip = keyer.skipped(&st);
+                                if value_leaf.is_some() {
+                                    node.vsum = vec![0; node.n.len()];
+                                }
                                 if let Some(m) = ctx.bestline {
                                     let k = node.n.len();
                                     node.bl = Some(Box::new(super::tree::BestLine::new(k, m)));
@@ -1207,6 +1232,39 @@ impl Roles {
                 Tree::default(),
             );
         }
+        if options.value_leaf.is_some()
+            && (options.sharing
+                || options.allocation != RootAllocation::Uct
+                || ctx.bestline.is_some()
+                || ctx.interchange
+                || retain > 1
+                || trace.is_some()
+                || capture.is_some()
+                || options.cpu_seconds.is_some())
+        {
+            return (
+                Selection {
+                    incomplete: true,
+                    faults: vec![
+                        "the value-leaf search runs with UCT, the mean backup, one-node expansion and no trace, capture, sharing, merging or CPU stop".into(),
+                    ],
+                    ..Selection::default()
+                },
+                Tree::default(),
+            );
+        }
+        if options.value_leaf.is_some() {
+            if let Err(e) = crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1() {
+                return (
+                    Selection {
+                        incomplete: true,
+                        faults: vec![format!("value leaf: floating-point environment: {e:?}")],
+                        ..Selection::default()
+                    },
+                    Tree::default(),
+                );
+            }
+        }
         if ctx.bestline.is_some() && (options.sharing || options.allocation != RootAllocation::Uct)
         {
             return (
@@ -1271,6 +1329,7 @@ impl Roles {
         let mut tree = Tree::default();
         let mut meter = Meter::new(ctx.limits.select_cap);
         let mut c = Counters::default();
+        let mut vl_census = super::value_leaf::Census::default();
         let mut i = 0u64;
         loop {
             if options.work_limit.is_some_and(|limit| i >= limit) {
@@ -1352,7 +1411,35 @@ impl Roles {
                 allocator.as_mut(),
                 sharing.as_mut(),
                 &mut sharing_cursor,
+                options.value_leaf,
             );
+            // A value leaf is backed up here; game endings take the formal
+            // path below (with value units in a value-leaf search).
+            let (r, leaf) = match r {
+                Ok((path, new, SimEnd::Leaf { units, raw })) => {
+                    (Ok((path, new, None)), Some((units, raw)))
+                }
+                Ok((path, new, SimEnd::Game(end))) => (Ok((path, new, Some(end))), None),
+                Err(e) => (Err(e), None),
+            };
+            if let Some((units, raw)) = leaf {
+                rec.transitions = meter.spent - spent0;
+                rec.policy_calls = c.inference - calls0;
+                rec.outcome = SimRecord::VALUE_LEAF;
+                if let Some(v) = records.as_deref_mut() {
+                    v.push(rec);
+                }
+                let Ok((path, new, _)) = r else {
+                    unreachable!("a value leaf is an Ok simulation")
+                };
+                let _span =
+                    crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
+                vl_census.leaf(raw, units);
+                tree.backup_value(&path, new, units, None);
+                sel.completed += 1;
+                continue;
+            }
+            let r = r.map(|(path, new, end)| (path, new, end.expect("a game ending")));
             if let Some(cap) = capture.as_deref_mut() {
                 cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
             }
@@ -1399,7 +1486,13 @@ impl Roles {
                     if let Some(log) = diag.path_log.as_mut() {
                         log.natural(index, &path, &new, win, &rec);
                     }
-                    tree.backup_observed(&path, new, win, draw, rec.rollout_choices == 0);
+                    if options.value_leaf.is_some() {
+                        vl_census.natural += 1;
+                        let units = super::value_leaf::natural_units(win, draw);
+                        tree.backup_value(&path, new, units, Some((win, draw)));
+                    } else {
+                        tree.backup_observed(&path, new, win, draw, rec.rollout_choices == 0);
+                    }
                     if let Some(sharing) = sharing.as_mut() {
                         sharing.backup(&sharing_cursor, index, win);
                     }
@@ -1437,6 +1530,14 @@ impl Roles {
             }
         }
         sel.extra = json!({"tree":tree_stats(&tree)});
+        if let Some(vl) = &options.value_leaf {
+            let mut v = vl.json();
+            v["census"] = vl_census.json();
+            v["root"] = super::value_leaf::root_edges(&tree)
+                .as_ref()
+                .map_or(Value::Null, super::value_leaf::edges_json);
+            sel.extra["value_leaf"] = v;
+        }
         if let Some(sharing) = sharing.as_ref() {
             sel.extra["sharing"] = sharing.json();
         }
@@ -2048,6 +2149,8 @@ pub(crate) struct SimRecord {
 
 impl SimRecord {
     pub(crate) const REJECTED: u8 = 6;
+    /// A value-leaf simulation (`s4a-vl-v1`) that stopped at its leaf.
+    pub(crate) const VALUE_LEAF: u8 = 7;
 
     /// Mutually exclusive (transitions, calls) buckets: the tree prefix
     /// (before the first expansion, or before the first choice past the
