@@ -290,10 +290,28 @@ def verified_package(directory):
 
 # ---------------------------------------------------------------- the lease
 
-POD_RECOVER = cloud.POD_RECOVER.replace(
-    '''    for name in ("retained", "checkpoints", "exposure"):''',
-    '''    for name in ("retained", "checkpoints", "exposure", "doses", "qualification"):''')
-assert POD_RECOVER != cloud.POD_RECOVER
+# A file the volume cannot serve does not end a recovery: it is listed under "unreadable" (path, errno) and the
+# walk goes on. On lease 20261103-1211 one read in the qualification folder failed with ENXIO (errno 6, the network
+# volume's MooseFS client's error for a chunk with no readable copy) and the whole recovery ended with nothing
+# brought home, the run's own events included.
+RECOVER_EDITS = (
+    ('''    for name in ("retained", "checkpoints", "exposure"):''',
+     '''    for name in ("retained", "checkpoints", "exposure", "doses", "qualification"):'''),
+    ('''out, members = control / "results.tar.gz", {}''',
+     '''out, members, unreadable = control / "results.tar.gz", {}, []'''),
+    ('''        data = path.read_bytes()  # one read for both the archive and its SHA256''',
+     '''        try:
+            data = path.read_bytes()  # one read for both the archive and its SHA256
+        except OSError as error:
+            unreadable.append({"path": prefix + "/" + rel.as_posix(), "errno": error.errno,
+                               "error": error.strerror or str(error)})
+            continue'''),
+    ('''"since_epoch": since}))''', '''"since_epoch": since, "unreadable": unreadable}))'''),
+)
+POD_RECOVER = cloud.POD_RECOVER
+for _old, _new in RECOVER_EDITS:
+    assert POD_RECOVER.count(_old) == 1, _old
+    POD_RECOVER = POD_RECOVER.replace(_old, _new)
 
 # A qualification lease's recovery brings home the records that decide the qualification, not the campaign's
 # bulk: on lease 20261101-2302 the full recovery (every block's checkpoints and retained trees, the whole
@@ -310,11 +328,17 @@ import hashlib, io, os, pathlib, tarfile, time
 control, campaign = pathlib.Path(ARGS["control"]), pathlib.Path(ARGS["campaign"])
 since = ARGS["since"] if ARGS["since"] is not None else time.time()
 limit, skip_dirs = ARGS["file_limit_bytes"], set(ARGS["skip_dirs"])
-out, members, left_out, skipped_dirs = control / "results.tar.gz", {}, [], []
+out, members, left_out, skipped_dirs, unreadable = control / "results.tar.gz", {}, [], [], []
+def failed(prefix, root, path, error):
+    try:
+        name = prefix + "/" + pathlib.Path(path).relative_to(root).as_posix()
+    except ValueError:
+        name = str(path)
+    unreadable.append({"path": name, "errno": error.errno, "error": error.strerror or str(error)})
 def tree(tar, root, prefix, since=None, top=False, skip=frozenset()):
     if not root.is_dir():
         return
-    for folder, dirs, files in os.walk(root):
+    for folder, dirs, files in os.walk(root, onerror=lambda error: failed(prefix, root, error.filename, error)):
         here = pathlib.Path(folder)
         for name in sorted(dirs):
             if name in skip:
@@ -323,16 +347,20 @@ def tree(tar, root, prefix, since=None, top=False, skip=frozenset()):
         for name in sorted(files):
             path = here / name
             rel = path.relative_to(root)
-            if path.is_symlink() or not path.is_file() or name.endswith((".tar.gz", ".partial")):
-                continue
-            stat = path.stat()
-            if not (since is None or top and len(rel.parts) == 1 or stat.st_mtime >= since):
-                continue
             member = prefix + "/" + rel.as_posix()
-            if stat.st_size > limit:
-                left_out.append({"path": member, "bytes": stat.st_size})
+            try:
+                if path.is_symlink() or not path.is_file() or name.endswith((".tar.gz", ".partial")):
+                    continue
+                stat = path.stat()
+                if not (since is None or top and len(rel.parts) == 1 or stat.st_mtime >= since):
+                    continue
+                if stat.st_size > limit:
+                    left_out.append({"path": member, "bytes": stat.st_size})
+                    continue
+                data = path.read_bytes()  # one read for both the archive and its SHA256
+            except OSError as error:  # the volume cannot serve it: listed, and the walk goes on
+                failed(prefix, root, path, error)
                 continue
-            data = path.read_bytes()  # one read for both the archive and its SHA256
             info = tarfile.TarInfo(member)
             info.size, info.mtime, info.mode = len(data), int(stat.st_mtime), 0o644
             tar.addfile(info, io.BytesIO(data))
@@ -350,7 +378,8 @@ with tarfile.open(out, "w:gz", compresslevel=1) as tar:
     info.size = len(listing)
     tar.addfile(info, io.BytesIO(listing))
 print(json.dumps({"sha256": digest(out), "bytes": out.stat().st_size, "files": len(members), "since_epoch": since,
-                  "scope": "qualification", "left_out_over_limit": left_out, "skipped_dirs": sorted(skipped_dirs)}))
+                  "scope": "qualification", "left_out_over_limit": left_out, "skipped_dirs": sorted(skipped_dirs),
+                  "unreadable": unreadable}))
 '''
 
 
@@ -721,6 +750,9 @@ class Cycle(cloud.Cycle):
         require(present == set(listed) | {"RECOVERED.json"} and len(listed) == packed["files"] and
                 all(sha(recovered / name) == digest for name, digest in listed.items()), "recovered files differ")
         write(self.control / "recovery.json", {**packed, "archive": pin(target)})
+        if packed.get("unreadable"):  # recovered, with the files the volume could not serve named
+            self.result["recovery_unreadable"] = [item["path"] for item in packed["unreadable"]][:50]
+            self.result["recovery_unreadable_count"] = len(packed["unreadable"])
         runs = {}
         for run in self.manifest["runs"]:
             path = recovered / "campaign/state" / (run + ".json")
