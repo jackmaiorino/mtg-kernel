@@ -64,11 +64,13 @@ from __future__ import annotations
 
 import argparse
 import copy
+from fractions import Fraction
 import hashlib
 import itertools
 import json
 import math
 import os
+import re
 import secrets
 import shutil
 import statistics
@@ -232,11 +234,10 @@ def choose_n(s: float):
 
 def sign_flip_p(d) -> float:
     """Exact one-sided sign-flip p: 2^-n x #{e in {-1, +1}^n : sum e_i d_i >= sum d_i}, ties counted."""
-    total = sum(d)
-    scale = max([abs(x) for x in d] + [1.0])
-    tol = 1e-12 * scale * len(d)
-    hits = sum(1 for signs in itertools.product((1, -1), repeat=len(d))
-               if sum(e * x for e, x in zip(signs, d)) >= total - tol)
+    exact = [Fraction(x) for x in d]  # exact binary values: no rounding makes distinct sums ties, or ties distinct
+    total = sum(exact)
+    hits = sum(1 for signs in itertools.product((1, -1), repeat=len(exact))
+               if sum(e * x for e, x in zip(signs, exact)) >= total)
     return hits / 2 ** len(d)
 
 
@@ -468,6 +469,16 @@ def stage_input(path, sha, directory) -> str:
     return target.resolve().as_posix()
 
 
+CORRESPONDENCE_CASES = ('A', 'B', 'conv', 'V7', 'V8')
+
+
+def correspondence_passed(path) -> bool:
+    """Design 6.2's receipt (checkpoint_correspondence_v1 summary): overall ok and every gated case true (V4 cases A
+    and B, converted opponents, FlatV7 and FlatV8)."""
+    doc = read_json(path)
+    return doc.get('ok') is True and all(doc.get(case) is True for case in CORRESPONDENCE_CASES)
+
+
 def prepare(spec_path, root, validation=False):
     spec_path, root = Path(spec_path), Path(root)
     spec = read_json(spec_path)
@@ -488,8 +499,10 @@ def prepare(spec_path, root, validation=False):
         require('correspondence_receipt' in spec, 'the measurement pins the passed 6.2 correspondence receipt')
     require(updates >= 2, 'a segment needs at least 2 updates')
     require(len({s['run'] for s in starts}) == len(starts), 'run names are unique')
+    passed = None
     if 'correspondence_receipt' in spec:
-        check_pin(spec['correspondence_receipt'], '6.2 correspondence receipt')
+        passed = correspondence_passed(check_pin(spec['correspondence_receipt'], '6.2 correspondence receipt'))
+        require(validation or passed, 'the 6.2 correspondence receipt does not record a pass for every gated case')
     bases, inputs = {}, {}
     for name, entry in spec['bases'].items():
         base = read_json(check_pin(entry, f'base {name}'))
@@ -532,7 +545,8 @@ def prepare(spec_path, root, validation=False):
         'schema': SCHEMA, 'prepared_at': now_iso(), 'host': os.environ.get('COMPUTERNAME', ''),
         'validation': bool(validation), 'spec': pin(spec_path), 'harness': pin(__file__),
         'checkpoint_reader': pin(checkpoint_reader.__file__), 'binary': pin(binary), 'converter': pin(converter),
-        'correspondence_receipt': spec.get('correspondence_receipt'), 'updates': updates,
+        'correspondence_receipt': spec.get('correspondence_receipt'), 'correspondence_passed': passed,
+        'updates': updates,
         'collection_workers': workers, 'segment_offset': offset, 'runs': [s['run'] for s in starts],
         'configs': configs, 'conversions': conversions, 'inputs': inputs,
     }
@@ -600,15 +614,39 @@ class Samples:
             return [r for r in self.rows if start <= r[0] < end]
 
 
-def window_stats(rows, start, end, interval):
-    # A sampler at a fixed interval places floor(span / interval) or one fewer rows in a half-open span, depending
-    # on its phase; one row of phase allowance keeps a perfect sampler at 0% missing.
-    expected = max(1, int((end - start) // interval) - 1)
-    present = len(rows)
-    d = [r[1] for r in rows if r[1] is not None]
-    e = [r[2] for r in rows if r[2] is not None]
-    return {'rows': present, 'expected_rows': expected, 'missing_fraction': max(0.0, 1.0 - present / expected),
-            'd_read_mean': statistics.fmean(d) if d else None, 'e_busy_mean': statistics.fmean(e) if e else None}
+def _finite(x):
+    return x is not None and math.isfinite(x)
+
+
+def valid_rows(rows, artifact_disk=True):
+    """Rows whose required counters (run-disk reads, and artifact-disk busy when there is one) are finite."""
+    return [r for r in rows if _finite(r[1]) and (not artifact_disk or _finite(r[2]))]
+
+
+def window_stats(rows, start, end, interval, artifact_disk=True):
+    """Counter means over a span. Only rows with every required counter count as present; the expected count is
+    round(span / interval), so a sampler on schedule misses at most one row by phase."""
+    expected = max(1, round((end - start) / interval))
+    good = valid_rows(rows, artifact_disk)
+    d = [r[1] for r in good]
+    e = [r[2] for r in good if _finite(r[2])]
+    return {'rows': len(good), 'all_rows': len(rows), 'expected_rows': expected,
+            'missing_fraction': max(0.0, 1.0 - len(good) / expected),
+            'd_read_mean': statistics.fmean(d) if d else None, 'e_busy_mean': statistics.fmean(e) if e else None,
+            'd_read_max': max(d) if d else None, 'e_busy_max': max(e) if e else None}
+
+
+def start_window_failures(stats, artifact_disk=True):
+    """Design 7.2's start precondition on a trailing window: the sampler present (at most 10% of rows missing) and
+    every observation under the limits (E: under 50% busy, D: reads under 60 MB/s)."""
+    failing = []
+    if stats['missing_fraction'] > MISSING_MAX:
+        failing.append(f'{stats["missing_fraction"]:.0%} of sampler rows missing')
+    if artifact_disk and stats['e_busy_max'] is not None and stats['e_busy_max'] >= E_BUSY_MAX:
+        failing.append(f'artifact disk reached {stats["e_busy_max"]:.0f}% busy')
+    if stats['d_read_max'] is not None and stats['d_read_max'] >= D_READ_MAX:
+        failing.append(f'run disk reads reached {stats["d_read_max"] / 1e6:.0f} MB/s')
+    return failing
 
 
 class Sampler(threading.Thread):
@@ -686,6 +724,14 @@ def ancestor_pids() -> set[int]:
     return out
 
 
+def own_claim(status, own_pids):
+    """This measurement's claim (held by this process or an ancestor) as (id, cores); None when there is none."""
+    for c in status.get('claims', []):
+        if c.get('pid') in own_pids:
+            return c.get('id'), set(c.get('cores') or [])
+    return None
+
+
 def foreign_claims(status, pool, own_pids):
     """Claims and timed holds overlapping the pool cores that are not this measurement's own."""
     foreign = []
@@ -701,26 +747,32 @@ def foreign_claims(status, pool, own_pids):
 
 
 class ClaimWatch(threading.Thread):
-    def __init__(self, host_slots, pool, own_pids, log_path):
+    def __init__(self, host_slots, pool, own_pids, own_id, log_path):
         super().__init__(daemon=True)
-        self.host_slots, self.pool, self.own = host_slots, pool, own_pids
+        self.host_slots, self.pool, self.own, self.own_id = host_slots, pool, own_pids, own_id
         self.log_path = Path(log_path)
-        self.polls = []  # (epoch, foreign list or None when the poll failed)
+        self.polls = []  # (epoch, foreign list or None when the poll failed, own claim intact)
         self.lock = threading.Lock()
         self.stopping = threading.Event()
 
     def poll_once(self):
         at = time.time()
+        foreign, intact = None, True
         try:
             out = subprocess.run([sys.executable, '-B', self.host_slots, 'status'], capture_output=True, text=True,
                                  timeout=60)
-            foreign = foreign_claims(json.loads(out.stdout), self.pool, self.own) if out.returncode == 0 else None
+            if out.returncode == 0:
+                status = json.loads(out.stdout)
+                foreign = foreign_claims(status, self.pool, self.own)
+                mine = own_claim(status, self.own)
+                intact = mine is not None and mine[0] == self.own_id and self.pool <= mine[1]
         except Exception:  # noqa: BLE001 - a failed poll is a gap
             foreign = None
         with self.lock:
-            self.polls.append((at, foreign))
-        if foreign is None or foreign:
-            append_jsonl(self.log_path, {'at': at, 'foreign': foreign, 'failed': foreign is None})
+            self.polls.append((at, foreign, intact))
+        if foreign is None or foreign or not intact:
+            append_jsonl(self.log_path, {'at': at, 'foreign': foreign, 'failed': foreign is None,
+                                         'own_claim_intact': intact})
 
     def run(self):
         while not self.stopping.is_set():
@@ -733,12 +785,13 @@ class ClaimWatch(threading.Thread):
 
 
 def claim_stats(polls, start, end):
-    ok = sorted(at for at, f in polls if f is not None)
+    ok = sorted(p[0] for p in polls if p[1] is not None)
     edges = [start] + ok + [end]
     gap = max(b - a for a, b in zip(edges, edges[1:])) if end > start else 0.0
-    foreign = [f for _, f in polls if f]
-    return {'polls': len(polls), 'failed_polls': sum(1 for _, f in polls if f is None), 'max_gap': gap,
-            'foreign': foreign[:3], 'overlap': bool(foreign)}
+    foreign = [p[1] for p in polls if p[1]]
+    return {'polls': len(polls), 'failed_polls': sum(1 for p in polls if p[1] is None), 'max_gap': gap,
+            'foreign': foreign[:3], 'overlap': bool(foreign),
+            'own_claim_lost': any(p[1] is not None and not p[2] for p in polls)}
 
 
 def block_contamination(stats, claims, baseline, interval_ok=True, artifact_disk=True):
@@ -755,6 +808,8 @@ def block_contamination(stats, claims, baseline, interval_ok=True, artifact_disk
         reasons.append('another claim overlapped the pool')
     if claims['max_gap'] > CLAIM_GAP_MAX:
         reasons.append(f'claim polls left a {claims["max_gap"]:.0f} s gap')
+    if claims.get('own_claim_lost'):
+        reasons.append('the measurement lost its own claim')
     return reasons
 
 
@@ -851,17 +906,23 @@ def measure_block(block_dir, runs, updates, arm_format):
 def prune_group(group_dir, runs, updates, log_path):
     """Delete episode files and every checkpoint except the group's last per run; keep receipts and logs.
 
-    Per update attempt: the trajectories its collection.json lists (every file under collect/ when an interrupted
-    attempt has no collection.json) and update/checkpoint.json. The kept checkpoint is the last update's of the
-    group's last block, when that block completed."""
+    Per update attempt: the trajectories a published collection.json lists, and update/checkpoint.json. Nothing
+    else under collect/ is touched (an interrupted collection keeps its files, receipts and ledgers included). The
+    kept checkpoint per run is the latest one a complete.json published in the group (a partial block counts)."""
     blocks = sorted(p for p in group_dir.iterdir() if p.is_dir())
     deleted, freed = 0, 0
-    for bi, block in enumerate(blocks):
+    keep = set()
+    for run in runs:
+        for block in reversed(blocks):
+            last = _latest_published(block / run / 'native')
+            if last is not None:
+                keep.add(last)
+                break
+    for block in blocks:
         for run in runs:
             native = block / run / 'native'
             if not native.is_dir():
                 continue
-            keep = _kept(native, updates) if bi == len(blocks) - 1 else set()
             doomed = []
             for attempt in native.glob('iterations/*/attempt-*'):
                 collection = attempt / 'collect' / 'collection.json'
@@ -870,8 +931,6 @@ def prune_group(group_dir, runs, updates, log_path):
                         doomed += [Path(t['path']) for t in read_json(collection).get('trajectories', [])]
                     except (OSError, ValueError, KeyError, TypeError):
                         pass
-                else:
-                    doomed += [p for p in (attempt / 'collect').rglob('*') if p.is_file()]
                 doomed.append(attempt / 'update' / 'checkpoint.json')
             root = native.resolve()
             for path in sorted({p.resolve() for p in doomed}):
@@ -885,28 +944,45 @@ def prune_group(group_dir, runs, updates, log_path):
     return row
 
 
-def _kept(native, updates):
-    completes = sorted(native.glob('iterations/*/complete.json'))
-    if len(completes) != updates:
-        return set()
-    try:
-        last = read_json(read_json(completes[-1])['update']['path'])['checkpoint']['path']
-    except (OSError, ValueError, KeyError):
-        return set()
-    return {Path(last).resolve().as_posix()}
+def _latest_published(native):
+    """The checkpoint of the run's latest complete.json, resolved; None when no update completed."""
+    for complete in sorted(native.glob('iterations/*/complete.json'), reverse=True):
+        try:
+            return Path(read_json(read_json(complete)['update']['path'])['checkpoint']['path']).resolve().as_posix()
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
 
 
 def tree_bytes(path):
     return sum(p.stat().st_size for p in Path(path).rglob('*') if p.is_file())
 
 
+def tree_manifest(path):
+    path = Path(path)
+    return sorted((p.relative_to(path).as_posix(), p.stat().st_size) for p in path.rglob('*') if p.is_file())
+
+
 def move_retained(src, dest_root, log_path):
+    """Copy to a staging name, verify every file and size, rename into place, then delete the source. Restartable:
+    a staging copy left by an interruption is discarded; a complete destination with its source still present is
+    verified and the source removed."""
+    src = Path(src)
     dest = Path(dest_root) / src.name
-    require(not dest.exists(), f'{dest} exists')
+    staging = dest.with_name(dest.name + '.partial')
     dest.parent.mkdir(parents=True, exist_ok=True)
-    size = tree_bytes(src)
-    shutil.move(str(src), str(dest))
-    row = {'at': now_iso(), 'from': src.as_posix(), 'to': dest.as_posix(), 'bytes': size}
+    if dest.exists():
+        require(src.exists() and tree_manifest(src) == tree_manifest(dest), f'{dest} exists and differs from {src}')
+    else:
+        if staging.exists():
+            shutil.rmtree(staging)
+        append_jsonl(log_path, {'at': now_iso(), 'phase': 'intent', 'from': src.as_posix(), 'to': dest.as_posix()})
+        shutil.copytree(src, staging)
+        require(tree_manifest(src) == tree_manifest(staging), f'the copy of {src} is incomplete')
+        os.replace(staging, dest)
+    size = tree_bytes(dest)
+    shutil.rmtree(src)
+    row = {'at': now_iso(), 'phase': 'moved', 'from': src.as_posix(), 'to': dest.as_posix(), 'bytes': size}
     append_jsonl(log_path, row)
     return row
 
@@ -951,14 +1027,20 @@ class Measurement:
     def precondition(self):
         now = time.time()
         start = now - self.precondition_seconds
-        stats = window_stats(self.samples.window(start, now), start, now, self.samples.interval)
+        artifact = bool(self.args.artifact_disk)
+        stats = window_stats(self.samples.window(start, now), start, now, self.samples.interval, artifact)
         claims = claim_stats(self.claims.window(start, now), start, now)
+        require(not claims['own_claim_lost'], 'the measurement lost its own claim')
         free = shutil.disk_usage(self.dir).free
         need = self.group_bytes() + self.args.keep_free_gib * 2 ** 30
         failing = []
         if time.time() - self.started < self.precondition_seconds:
             failing.append('the sampler has not covered the window yet')
-        failing += block_contamination(stats, claims, None, artifact_disk=bool(self.args.artifact_disk))
+        failing += start_window_failures(stats, artifact)
+        if claims['overlap']:
+            failing.append('another claim overlapped the pool')
+        if claims['max_gap'] > CLAIM_GAP_MAX:
+            failing.append(f'claim polls left a {claims["max_gap"]:.0f} s gap')
         if free < need:
             failing.append(f'free {free / 2 ** 30:.1f} GiB < {need / 2 ** 30:.1f} GiB')
         return failing, stats, claims
@@ -972,9 +1054,10 @@ class Measurement:
             if not failing:
                 self.event('precondition-met', window=stats, claims=claims)
                 return
-            if failing != last:
+            kinds = [re.sub(r'[0-9.]+', '#', f) for f in failing]
+            if kinds != last:
                 self.event('precondition-waiting', failing=failing)
-                last = failing
+                last = kinds
             time.sleep(1.0)
 
     def run_group(self, state, group):
@@ -1002,10 +1085,14 @@ class Measurement:
             except Refused as error:
                 failure = f'block {pos}: {error}'
                 break
-            stats = window_stats(self.samples.window(start, end), start, end, self.samples.interval)
+            artifact = bool(self.args.artifact_disk)
+            stats = window_stats(self.samples.window(start, end), start, end, self.samples.interval, artifact)
             claims = claim_stats(self.claims.window(start, end), start, end)
+            if claims['own_claim_lost']:
+                failure = f'block {pos}: the measurement lost its own claim'
+                break
             baseline = state['calibration']['d_read_baseline'] if group['phase'] == 'comparison' else None
-            reasons = block_contamination(stats, claims, baseline, artifact_disk=bool(self.args.artifact_disk))
+            reasons = block_contamination(stats, claims, baseline, artifact_disk=artifact)
             block = {'position': pos, 'label': label, 'format': fmt, 'start': start, 'end': end,
                      'throughput': measured['throughput'], 'walls': measured['walls'],
                      'cpu_per_update_mean': measured['cpu_per_update_mean'], 'counters': stats, 'claims': claims,
@@ -1017,11 +1104,10 @@ class Measurement:
                 bad = sorted(r for r in self.runs if reference.get(r) != measured['after_states'].get(r))
                 blocks.append(block)
                 write_json(group_dir / 'GROUP.json', dict(group, blocks=blocks))
-                self.retain(group_dir, state, final=True)
                 state['in_group'] = None
                 finish(state, 'void', 'after_state_sha256 differs between blocks: a defect, not noise', runs=bad,
                        group=index, block=pos)
-                self.save(state)
+                self.retain_after(state, group_dir)
                 return
             blocks.append(block)
             self.event('block', group=name, position=pos, label=label, format=fmt,
@@ -1033,24 +1119,33 @@ class Measurement:
             self.event('group-failed', group=name, failure=failure)
             interrupted(state)
             state.setdefault('failures', []).append({'group': index, 'failure': failure})
-            self.retain(group_dir, state, final=True)
-            self.save(state)
+            self.retain_after(state, group_dir)
             return
         state['in_group'] = None
         record_group(state, group)
-        self.save(state)
-        self.retain(group_dir, state, final=state['outcome'] is not None)
+        self.retain_after(state, group_dir)
 
-    def retain(self, group_dir, state, final):
-        prune = prune_group(group_dir, self.runs, self.updates, self.dir / 'PRUNES.jsonl')
-        self.event('pruned', **prune)
-        if final or not couple_open(state):
-            for path in sorted((self.dir / 'groups').iterdir()):
+    def retain_after(self, state, group_dir):
+        """Persist the pending retention with the group's outcome in one write, then prune, move and settle. A
+        restart finds the pending retention and completes it before scheduling anything else."""
+        state['pending_retention'] = Path(group_dir).as_posix()
+        self.save(state)
+        self.retain(state)
+
+    def retain(self, state):
+        group_dir = Path(state['pending_retention'])
+        final = state['outcome'] is not None
+        if group_dir.is_dir():
+            prune = prune_group(group_dir, self.runs, self.updates, self.dir / 'PRUNES.jsonl')
+            self.event('pruned', **prune)
+        if (final or not couple_open(state)) and (self.dir / 'groups').is_dir():
+            for path in sorted(p for p in (self.dir / 'groups').iterdir() if p.is_dir()):
                 move_retained(path, self.artifact_root / 'groups', self.dir / 'MOVES.jsonl')
         if not final:
-            settle_end = time.time() + self.settle_seconds
             self.event('settle', seconds=self.settle_seconds)
-            time.sleep(max(0.0, settle_end - time.time()))
+            time.sleep(self.settle_seconds)
+        state['pending_retention'] = None
+        self.save(state)
 
     def calibration_record(self, state):
         cal = state['calibration']
@@ -1079,10 +1174,10 @@ class Measurement:
     def execute(self):
         self.dir.mkdir(parents=True, exist_ok=True)
         if self.manifest_path.exists():
+            require(not (self.dir / 'RESULT.json').exists(), f'attempt {self.attempt} already has its RESULT.json')
             manifest = read_json(self.manifest_path)
             state = read_json(self.state_path)
-            require(state['outcome'] is None, f'attempt {self.attempt} already ended: {state["outcome"]}')
-            self.event('resumed')
+            self.event('resumed', outcome=state['outcome'])
         else:
             bits = [secrets.randbits(1) for _ in range(ORDER_BITS)]
             manifest = {'schema': SCHEMA, 'attempt': self.attempt, 'started_at': now_iso(),
@@ -1105,14 +1200,15 @@ class Measurement:
             state = new_state(bits)
             self.save(state)
             self.event('attempt-start', bits_pinned=True)
+        if state.get('pending_retention'):
+            self.event('retention-resumed', group=state['pending_retention'])
+            self.retain(state)
         if state['in_group'] is not None:
             group_dir = Path(state['in_group']['dir'])
             self.event('interrupted', group=state['in_group'])
             interrupted(state)
-            self.save(state)
-            if group_dir.exists():
-                self.retain(group_dir, state, final=True)
-        elif couple_open(state):
+            self.retain_after(state, group_dir)
+        elif state['outcome'] is None and couple_open(state):
             finish(state, 'inconclusive', 'interrupted between the two groups of a couple')
             self.save(state)
         if state['outcome'] is None:
@@ -1126,17 +1222,17 @@ class Measurement:
         own_pids = ancestor_pids()
         status = json.loads(subprocess.run([sys.executable, '-B', self.args.host_slots, 'status'], capture_output=True,
                                            text=True, timeout=120, check=True).stdout)
-        own = set()
-        for c in status.get('claims', []):
-            if c.get('pid') in own_pids:
-                own |= set(c.get('cores') or [])
+        mine = own_claim(status, own_pids)
+        require(mine is not None, 'this process runs inside no host_slots claim')
+        own = mine[1]
         if self.pool is None:
             require(own, '--pool own: this process runs inside no host_slots claim')
             self.pool = own
         require(self.pool <= own, f'the pool {sorted(self.pool)} is not inside the claim this measurement runs in '
                                   f'{sorted(own)}')
         self.event('pool', pool=sorted(self.pool), own_claim_cores=sorted(own))
-        claims = ClaimWatch(self.args.host_slots, self.pool, own_pids, self.dir / 'CLAIMS.jsonl')
+        mine = own_claim(status, own_pids)
+        claims = ClaimWatch(self.args.host_slots, self.pool, own_pids, mine[0], self.dir / 'CLAIMS.jsonl')
         return sampler, claims
 
     def measure(self, state):
@@ -1170,9 +1266,26 @@ class Measurement:
                   'calibration': state['calibration'], 'decision': state['decision'],
                   'groups_run': state['groups_run'], 'order_bits_used': state['next_bit'],
                   'correspondence_receipt': self.prepared.get('correspondence_receipt'),
+                  'correspondence_passed': self.prepared.get('correspondence_passed', False),
+                  'v2_becomes_default': (not self.validation and (state['outcome'] or {}).get('outcome') == 'accept'
+                                         and self.prepared.get('correspondence_passed') is True),
                   'manifest': pin(self.manifest_path), 'state': pin(self.state_path)}
         write_json(self.dir / 'RESULT.json', result)
         self.event('result', outcome=state['outcome'])
+
+
+def formal_placement(args):
+    """The measurement's frozen placement: pool 0-19, run root on D:, artifact root on E:, both disks sampled, the
+    frozen precondition and settle times. Anything else is validation only."""
+    require(args.precondition_seconds == PRECONDITION_SECONDS and args.settle_seconds == SETTLE_SECONDS,
+            'the measurement uses the frozen precondition and settle times')
+    require(parse_cores(args.pool) == parse_cores(POOL_CORES) if args.pool != 'own' else False,
+            f'the measurement uses the pool {POOL_CORES}')
+    require(args.run_disk == RUN_DISK and args.artifact_disk == ARTIFACT_DISK,
+            f'the measurement samples run disk {RUN_DISK}: and artifact disk {ARTIFACT_DISK}:')
+    require(Path(args.root).resolve().drive.upper() == f'{RUN_DISK}:', f'the run root is on {RUN_DISK}:')
+    require(Path(args.artifact_root).resolve().drive.upper() == f'{ARTIFACT_DISK}:',
+            f'the artifact root is on {ARTIFACT_DISK}:')
 
 
 def attempt_allowed(root, attempt):
@@ -1217,8 +1330,7 @@ def main(argv=None):
             prepared = read_json(Path(args.root) / 'prepared' / 'PREPARED.json')
             check_pin(prepared['harness'], 'harness (prepared by another version)')
             if not prepared['validation']:
-                require(args.precondition_seconds == PRECONDITION_SECONDS and args.settle_seconds == SETTLE_SECONDS,
-                        'the measurement uses the frozen precondition and settle times')
+                formal_placement(args)
                 attempt_allowed(args.root, args.attempt)
             state = Measurement(args.root, args.attempt, args, prepared).execute()
             print(json.dumps(state['outcome']))

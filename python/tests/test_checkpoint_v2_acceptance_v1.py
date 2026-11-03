@@ -44,6 +44,10 @@ class StatisticsTests(unittest.TestCase):
         self.assertEqual(acc.sign_flip_p([0.1, 0.2, 0.3, 0.4, 0.5]), 1 / 32)
         self.assertGreater(acc.sign_flip_p([0.1, 0.2, 0.3, 0.4, 0.5]), acc.GUARD_ALPHA)
 
+    def test_sign_flip_is_exact_for_tiny_values(self):
+        self.assertEqual(acc.sign_flip_p([1e-13] * 6), 1 / 64)
+        self.assertEqual(acc.sign_flip_p([1e-13, -1e-13]), 3 / 4)
+
     def test_sign_flip_counts_ties(self):
         self.assertEqual(acc.sign_flip_p([0.0] * 6), 1.0)
         self.assertEqual(acc.sign_flip_p([0.5] * 6), 1 / 64)
@@ -267,6 +271,79 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(len(cfg2['iterations']), 4)
 
 
+class RetentionTests(unittest.TestCase):
+    def make_run(self, native, updates, complete=None):
+        complete = updates if complete is None else complete
+        for i in range(updates):
+            att = native / 'iterations' / f'{i:06d}' / 'attempt-000000'
+            (att / 'collect').mkdir(parents=True)
+            (att / 'update').mkdir(parents=True)
+            (att / 'update' / 'checkpoint.json').write_text('c' * 100)
+            (att / 'collect' / 'non-natural.json').write_text('{}')
+            if i >= complete:
+                (att / 'collect' / 'episode-x.json').write_text('e')
+                continue
+            traj = att / 'collect' / 'episode-0.json'
+            traj.write_text('e' * 100)
+            (att / 'collect' / 'collection.json').write_text(json.dumps({'trajectories': [{'path': str(traj)}]}))
+            (att / 'update' / 'update.json').write_text(json.dumps(
+                {'checkpoint': {'path': str(att / 'update' / 'checkpoint.json')}}))
+            (native / 'iterations' / f'{i:06d}' / 'complete.json').write_text(json.dumps(
+                {'update': {'path': str(att / 'update' / 'update.json')}}))
+
+    def test_partial_group_keeps_latest_published_and_receipts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = Path(tmp) / 'g000'
+            self.make_run(g / 'b1-A-v1' / 'r' / 'native', 3)
+            self.make_run(g / 'b2-B-v1' / 'r' / 'native', 3, complete=1)
+            acc.prune_group(g, ['r'], 3, Path(tmp) / 'p.jsonl')
+            kept = sorted(p.relative_to(g).as_posix() for p in g.rglob('checkpoint.json'))
+            self.assertEqual(kept, ['b2-B-v1/r/native/iterations/000000/attempt-000000/update/checkpoint.json'])
+            self.assertEqual(len(list(g.rglob('non-natural.json'))), 6)
+            self.assertEqual(len(list(g.rglob('episode-x.json'))), 2)
+            self.assertEqual(list(g.rglob('episode-0.json')), [])
+
+    def test_move_is_restartable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            src = tmp / 'hot' / 'g000'
+            (src / 'a').mkdir(parents=True)
+            (src / 'a' / 'f.json').write_text('x' * 10)
+            dest_root = tmp / 'art'
+            staging = dest_root / 'g000.partial'
+            staging.mkdir(parents=True)
+            (staging / 'junk').write_text('j')
+            acc.move_retained(src, dest_root, tmp / 'm.jsonl')
+            self.assertFalse(src.exists())
+            self.assertFalse(staging.exists())
+            self.assertEqual(acc.tree_manifest(dest_root / 'g000'), [('a/f.json', 10)])
+            src2 = tmp / 'hot' / 'g001'
+            (src2 / 'a').mkdir(parents=True)
+            (src2 / 'a' / 'f.json').write_text('y')
+            import shutil
+            shutil.copytree(src2, dest_root / 'g001')
+            acc.move_retained(src2, dest_root, tmp / 'm.jsonl')
+            self.assertFalse(src2.exists())
+
+    def test_correspondence_and_formal_placement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'summary.json'
+            path.write_text(json.dumps({'ok': True, 'A': True, 'B': True, 'conv': True, 'V7': True, 'V8': True}))
+            self.assertTrue(acc.correspondence_passed(path))
+            path.write_text(json.dumps({'ok': True, 'A': True, 'B': True, 'conv': True, 'V7': True}))
+            self.assertFalse(acc.correspondence_passed(path))
+            path.write_text('{}')
+            self.assertFalse(acc.correspondence_passed(path))
+        args = argparse.Namespace(precondition_seconds=acc.PRECONDITION_SECONDS, settle_seconds=acc.SETTLE_SECONDS,
+                                  pool='0-19', run_disk='D', artifact_disk='E', root='D:/x', artifact_root='E:/y')
+        for change in ({'artifact_disk': ''}, {'pool': '0-15'}, {'pool': 'own'}, {'settle_seconds': 1.0},
+                       {'artifact_root': 'D:/y'}):
+            with self.assertRaises(acc.Refused):
+                acc.formal_placement(argparse.Namespace(**dict(vars(args), **change)))
+        if os.name == 'nt':
+            acc.formal_placement(args)
+
+
 class CountersTests(unittest.TestCase):
     HEADER = ['(PDH-CSV 4.0)', r'\\H\PhysicalDisk(0 C:)\% Idle Time', r'\\H\PhysicalDisk(1 E:)\% Idle Time',
               r'\\H\PhysicalDisk(2 D:)\% Idle Time', r'\\H\PhysicalDisk(_Total)\% Idle Time',
@@ -286,7 +363,7 @@ class CountersTests(unittest.TestCase):
     def test_contamination(self):
         rows = [(t, 10e6, 10.0) for t in range(0, 100, 5)]
         stats = acc.window_stats(rows, 0, 100, 5)
-        claims = acc.claim_stats([(t, []) for t in range(0, 100, 15)], 0, 100)
+        claims = acc.claim_stats([(t, [], True) for t in range(0, 100, 15)], 0, 100)
         self.assertEqual(acc.block_contamination(stats, claims, None), [])
         self.assertEqual(len(acc.block_contamination(stats, claims, 4e6)), 1)
         sparse = acc.window_stats(rows[:17], 0, 100, 5)
@@ -296,10 +373,42 @@ class CountersTests(unittest.TestCase):
         self.assertEqual(acc.block_contamination(busy, claims, None, artifact_disk=False), [])
         reads = acc.window_stats([(t, 61e6, 0.0) for t in range(0, 100, 5)], 0, 100, 5)
         self.assertTrue(acc.block_contamination(reads, claims, None))
-        gap = acc.claim_stats([(0, []), (90, [])], 0, 100)
+        gap = acc.claim_stats([(0, [], True), (90, [], True)], 0, 100)
         self.assertTrue(acc.block_contamination(stats, gap, None))
-        overlap = acc.claim_stats([(t, [{'lane': 'x'}] if t == 30 else []) for t in range(0, 100, 15)], 0, 100)
+        overlap = acc.claim_stats([(t, [{'lane': 'x'}] if t == 30 else [], True) for t in range(0, 100, 15)], 0, 100)
         self.assertTrue(acc.block_contamination(stats, overlap, None))
+
+    def test_missing_counters_and_start_window(self):
+        rows = [(t, None, None) for t in range(0, 100, 5)]
+        stats = acc.window_stats(rows, 0, 100, 5)
+        self.assertEqual(stats['missing_fraction'], 1.0)
+        self.assertTrue(acc.block_contamination(stats, acc.claim_stats([(0, [], True)], 0, 50), None))
+        no_e = acc.window_stats([(t, 1e6, None) for t in range(0, 100, 5)], 0, 100, 5)
+        self.assertEqual(no_e['missing_fraction'], 1.0)
+        self.assertEqual(acc.window_stats([(t, 1e6, None) for t in range(0, 100, 5)], 0, 100, 5,
+                                          artifact_disk=False)['missing_fraction'], 0.0)
+        self.assertAlmostEqual(acc.window_stats([(t, 1e6, 1.0) for t in range(22)], 0, 125, 5)['missing_fraction'],
+                               0.12)
+        spike = [(t, 1e6, 1.0) for t in range(0, 600, 5)]
+        spike[-1] = (595, 1e6, 100.0)
+        stats = acc.window_stats(spike, 0, 600, 5)
+        self.assertEqual(acc.block_contamination(stats, acc.claim_stats([(0, [], True)], 0, 50), None), [])
+        self.assertTrue(acc.start_window_failures(stats))
+        self.assertEqual(acc.start_window_failures(stats, artifact_disk=False), [])
+        reads = [(t, 1e6, 1.0) for t in range(0, 600, 5)]
+        reads[3] = (15, 61e6, 1.0)
+        self.assertTrue(acc.start_window_failures(acc.window_stats(reads, 0, 600, 5)))
+
+    def test_own_claim(self):
+        status = {'claims': [{'id': 'm', 'pid': 7, 'cores': list(range(20))}, {'id': 'x', 'pid': 8, 'cores': [21]}]}
+        self.assertEqual(acc.own_claim(status, {7}), ('m', set(range(20))))
+        self.assertIsNone(acc.own_claim(status, {9}))
+        lost = acc.claim_stats([(0, [], True), (15, [], False)], 0, 30)
+        self.assertTrue(lost['own_claim_lost'])
+        self.assertIn('the measurement lost its own claim', acc.block_contamination(
+            acc.window_stats([(t, 1.0, 1.0) for t in range(30)], 0, 30, 1), lost, None))
+        failed_poll = acc.claim_stats([(0, None, True), (15, [], True)], 0, 30)
+        self.assertFalse(failed_poll['own_claim_lost'])
 
     def test_foreign_claims(self):
         status = {'claims': [{'pid': 1, 'cores': [0, 1]}, {'pid': 2, 'cores': [20, 21]},
@@ -364,7 +473,7 @@ class FakeWatch:
         return True
 
     def window(self, start, end):
-        return [(start + k, []) for k in range(max(1, int(end - start)))]
+        return [(start + k, [], True) for k in range(max(1, int(end - start)))]
 
 
 class FakeMeasurement(acc.Measurement):
@@ -449,6 +558,34 @@ class EndToEndTests(unittest.TestCase):
             state = m.execute()
         self.assertEqual(state['outcome']['outcome'], 'inconclusive')
         self.assertIn('calibration', state['outcome']['reason'])
+
+    def test_terminal_state_without_result_is_published(self):
+        m = FakeMeasurement(self.root / 'm', 1, self.args, self.prepared)
+        m.dir.mkdir(parents=True)
+        state = acc.new_state([1] * 64)
+        acc.finish(state, 'inconclusive', 'test')
+        acc.write_json(m.manifest_path, {'schema': acc.SCHEMA})
+        acc.write_json(m.state_path, state)
+        out = m.execute()
+        self.assertEqual(out['outcome']['reason'], 'test')
+        self.assertTrue((m.dir / 'RESULT.json').exists())
+        with self.assertRaises(acc.Refused):
+            FakeMeasurement(self.root / 'm', 1, self.args, self.prepared).execute()
+
+    def test_pending_retention_is_completed_on_restart(self):
+        m = FakeMeasurement(self.root / 'm', 1, self.args, self.prepared)
+        g = m.dir / 'groups' / 'g000-warmup-ABBA'
+        (g / 'b1-A-v1').mkdir(parents=True)
+        state = acc.new_state([1] * 64)
+        acc.record_group(state, group('warmup', 'ABBA', None, {'A': 1.0, 'B': 1.0}))
+        state['pending_retention'] = g.as_posix()
+        acc.write_json(m.manifest_path, {'schema': acc.SCHEMA})
+        acc.write_json(m.state_path, state)
+        acc.finish(state, 'inconclusive', 'stop here')
+        acc.write_json(m.state_path, state)
+        m.execute()
+        self.assertTrue((self.root / 'art' / 'attempt-001' / 'groups' / 'g000-warmup-ABBA').is_dir())
+        self.assertFalse(g.exists())
 
     def test_second_attempt_only_after_inconclusive(self):
         with self.assertRaises(acc.Refused):
