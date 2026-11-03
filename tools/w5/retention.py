@@ -5,6 +5,7 @@ manifest (schema `w5-chain/v1`):
 
   {"schema": "w5-chain/v1", "chain": "w5/chain1", "arm": "X" | "C", "launched_unix": 1.0e9,
    "x_cap_seconds": 907200.0,  (optional; the X cap frozen at Stage 0, default 10.5 days)
+   "snapshot_dir": "/abs/dir",  (optional; default <manifest stem>-snapshots beside the manifest)
    "segments": [{"config": "/abs/seg-000.json", "offset": 0}, ...]}
 
 `offset` is the global update index of the segment's first iteration. Boundary b is the state after b updates
@@ -17,16 +18,21 @@ Rules (frozen in the design):
   complete (a live segment resumes from its own checkpoints and the next segment's source).
 - Trajectories: kept for the most recent 64 complete segments (rolling).
 - Projection (C chain): R-hat(t) = CPU(t) + rate(last 24 h, or since launch) x (7 days - t).
-- Snapshots (X chain): from the first update whose ledger passes 0.85 R-hat, every update's checkpoint is kept
-  while R_i is open, if (measured checkpoint bytes) x (projected updates between 0.85 and 1.10 R-hat) fits 30 GB.
-  (A kept checkpoint is the full state; weights-only stripping is not implemented.)
+- Snapshots (X chain): from the first update whose ledger passes 0.85 R-hat, every update keeps a weights-only
+  snapshot while R_i is open, if (measured snapshot bytes) x (projected updates between 0.85 and 1.10 R-hat) fits
+  30 GB. A snapshot (`checkpoint_container_v1 weights-snapshot`) is the parameters alone, about a third of a full
+  state; it is cut from the full checkpoint before that checkpoint is pruned, and checked against the recorded
+  after-state hash. For play it is materialized (`checkpoint_container_v1 materialize`): the same parameters with
+  zero moments. It never resumes training.
 - Pause at 1.10 R-hat while C runs. When C ends, R_i is its final ledger; X's endpoint is the first boundary whose
   ledger is at or past R_i. If X paused below R_i, it resumes with `stop_at_usec = R_i`.
-- Selection: the endpoint's checkpoint if kept, else a replay from the nearest kept full state at or before it,
-  which must reproduce every recorded hash. Then a PRUNE manifest lists every non-selected full state and snapshot.
+- Selection: the endpoint's checkpoint if kept, else its weights-only snapshot, else a replay from the nearest
+  kept full state at or before it, which must reproduce every recorded hash. Then a PRUNE manifest lists every
+  non-selected full state and snapshot, by kind.
 
 Commands:
   retention.py index CHAIN.json                    per-update index (cached in INDEX next to the manifest)
+  retention.py snapshot CHAIN.json BINARY --from B  weights-only snapshots of every unpruned checkpoint from B
   retention.py plan CHAIN.json [--snapshot-from B]  rolling prune plan (checkpoints, trajectories) as JSON
   retention.py apply PLAN.json [--hold DIR]         delete (or move to a same-volume hold folder) and log
   retention.py project C_CHAIN.json [--now T]      R-hat and the C chain's rate
@@ -35,14 +41,13 @@ Commands:
   retention.py replay-config X_CHAIN.json SPEC.json OUT.json OUTPUT_DIR
   retention.py verify-replay SPEC.json REPLAY_OUTPUT_DIR
   retention.py prune-manifest CHAIN.json SELECTED_BOUNDARY OUT.json
-  retention.py guard --cap-bytes N [--next-bytes M] ROOT [ROOT ...]
+  retention.py guard --cap-bytes N [--next-bytes M] [--chain CHAIN.json ...] ROOT [ROOT ...]
 """
 import argparse
 import hashlib
 import json
 import os
-import shutil
-import statistics
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -147,11 +152,71 @@ def keeps_full_state(arm, boundary, latest):
     return boundary % C_LONG_STRIDE == 0 or boundary > latest - C_RECENT
 
 
-def plan(chain_path, snapshot_from=None):
-    """Rolling prune plan. A checkpoint is pruned when its boundary keeps no full state, it is not a snapshot
-    (boundary at or past `snapshot_from`), its segment and the next segment are complete, and it is not the
-    latest. Trajectories of complete segments older than the 64 most recent are pruned."""
+def snapshot_dir(chain_path, chain):
+    path = Path(chain_path)
+    return Path(chain.get('snapshot_dir') or path.with_name(path.stem + '-snapshots'))
+
+
+def snapshot_index_path(chain_path):
+    return Path(chain_path).with_suffix('.snapshots.jsonl')
+
+
+def snapshots(chain_path):
+    """Weights-only snapshots by boundary (the last record of a boundary wins; files must still exist)."""
+    path = snapshot_index_path(chain_path)
+    out = {}
+    if path.exists():
+        for line in path.read_text(encoding='utf-8').splitlines():
+            if line:
+                rec = json.loads(line)
+                out[rec['boundary']] = rec
+    return {b: r for b, r in out.items() if Path(r['path']).exists()}
+
+
+def snapshot(chain_path, binary, snapshot_from):
+    """Cuts a weights-only snapshot of every unpruned checkpoint at or past `snapshot_from` that keeps no full
+    state and has none yet (the binary verifies the checkpoint against its pin). Each snapshot must have been
+    cut from the recorded after-state."""
     chain, records = index(chain_path)
+    latest = records[-1]['boundary'] if records else 0
+    have = snapshots(chain_path)
+    directory = snapshot_dir(chain_path, chain)
+    directory.mkdir(parents=True, exist_ok=True)
+    made = []
+    for rec in records:
+        b = rec['boundary']
+        if b < snapshot_from or b in have or keeps_full_state(chain['arm'], b, latest):
+            continue
+        if not Path(rec['checkpoint']['path']).exists():
+            continue
+        out = directory / f'b{b:09d}.weights'
+        if out.exists():
+            raise SystemExit(f'stop: {out} exists without an index record')
+        run = subprocess.run([binary, 'weights-snapshot', '--input', rec['checkpoint']['path'], '--sha256',
+                              rec['checkpoint']['sha256'], '--output', out.resolve().as_posix()],
+                             capture_output=True, text=True)
+        if run.returncode != 0:
+            raise SystemExit(f'stop: weights snapshot of boundary {b} failed: {run.stderr.strip()[-400:]}')
+        receipt = json.loads(run.stdout)
+        if receipt['cut_from_state_sha256'] != rec['after_state_sha256']:
+            raise SystemExit(f'stop: the snapshot of boundary {b} was cut from another state')
+        entry = {'boundary': b, 'path': Path(receipt['output']['path']).as_posix(),
+                 'sha256': receipt['output']['sha256'], 'bytes': receipt['snapshot_bytes'],
+                 'cut_from_state_sha256': receipt['cut_from_state_sha256'],
+                 'parameters_sha256': receipt['parameters_sha256']}
+        with open(snapshot_index_path(chain_path), 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry) + '\n')
+        made.append(entry)
+    return made
+
+
+def plan(chain_path, snapshot_from=None):
+    """Rolling prune plan. A checkpoint is pruned when its boundary keeps no full state, its segment and the next
+    segment are complete, it is not the latest, and, inside the snapshot window (boundary at or past
+    `snapshot_from`), its weights-only snapshot exists. Trajectories of complete segments older than the 64 most
+    recent are pruned."""
+    chain, records = index(chain_path)
+    have = snapshots(chain_path)
     latest = records[-1]['boundary'] if records else 0
     segs = chain['segments']
     complete = [segment_complete(s) for s in segs]
@@ -160,7 +225,7 @@ def plan(chain_path, snapshot_from=None):
         s = rec['segment']
         if keeps_full_state(chain['arm'], rec['boundary'], latest) or rec['boundary'] == latest:
             continue
-        if snapshot_from is not None and rec['boundary'] >= snapshot_from:
+        if snapshot_from is not None and rec['boundary'] >= snapshot_from and rec['boundary'] not in have:
             continue
         if not (complete[s] and s + 1 < len(segs) and complete[s + 1]):
             continue
@@ -229,9 +294,10 @@ def first_at_or_past(records, r_usec):
 
 
 def decide(x_chain, x_records, c_chain, c_records, c_ended, x_running_s=None, now=None,
-           checkpoint_bytes=None):
-    """The pair's next action for X: run, snapshot (keep every checkpoint from now), pause, resume_to (R_i),
-    select, or stop_under_budget (X cap). Ledger values only; never R-hat for recoverability."""
+           snapshot_bytes=None):
+    """The pair's next action for X: run, snapshot (cut a weights-only snapshot of every update from now),
+    pause, resume_to (R_i), select, or stop_under_budget (X cap). `snapshot_bytes` is the measured size of one
+    weights-only snapshot. Ledger values only; never R-hat for recoverability."""
     x_ledger = x_records[-1]['ledger_usec'] if x_records else 0
     x_cap = float(x_chain.get('x_cap_seconds', X_CAP_SECONDS))
     out = {'x_ledger_usec': x_ledger, 'x_boundary': x_records[-1]['boundary'] if x_records else 0,
@@ -256,9 +322,9 @@ def decide(x_chain, x_records, c_chain, c_records, c_ended, x_running_s=None, no
         recent = x_records[-65:]
         per_update = ((recent[-1]['ledger_usec'] - recent[0]['ledger_usec']) / (len(recent) - 1)
                       if len(recent) > 1 else None)
-        if per_update and checkpoint_bytes:
+        if per_update and snapshot_bytes:
             projected = (PAUSE_AT - SNAPSHOT_TRIGGER) * rhat / per_update
-            fits = checkpoint_bytes * projected <= SNAPSHOT_CAP_BYTES
+            fits = snapshot_bytes * projected <= SNAPSHOT_CAP_BYTES
         else:
             projected, fits = None, False
         return dict(out, action='snapshot' if fits else 'run', snapshot_window_updates=projected,
@@ -266,9 +332,10 @@ def decide(x_chain, x_records, c_chain, c_records, c_ended, x_running_s=None, no
     return dict(out, action='run')
 
 
-def select(chain, records, r_usec):
-    """The endpoint (first boundary at or past R) and, unless its checkpoint is still on disk, the replay spec
-    from the nearest kept full state at or before it."""
+def select(chain, records, r_usec, weights=None):
+    """The endpoint (first boundary at or past R): its checkpoint if still on disk, else its weights-only snapshot
+    (`weights`: boundary to snapshot record), else the replay spec from the nearest kept full state at or before
+    it."""
     hit = first_at_or_past(records, r_usec)
     if not hit:
         raise SystemExit('stop: no boundary reaches R yet')
@@ -276,6 +343,10 @@ def select(chain, records, r_usec):
     by_boundary = {r['boundary']: r for r in records}
     if Path(hit['checkpoint']['path']).exists() and sha(hit['checkpoint']['path']) == hit['checkpoint']['sha256']:
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'], 'replay': None}
+    snap = (weights or {}).get(endpoint)
+    if snap and sha(snap['path']) == snap['sha256'] and snap['cut_from_state_sha256'] == hit['after_state_sha256']:
+        return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'],
+                'weights_snapshot': {k: snap[k] for k in ('path', 'sha256', 'parameters_sha256')}, 'replay': None}
     start = None
     for b in range(endpoint - 1, -1, -1):
         if b == 0:
@@ -356,11 +427,13 @@ def verify_replay(spec, replay_root):
             'endpoint_checkpoint': checkpoint if ok else None}
 
 
-def prune_manifest(chain, records, selected_boundary, replay_receipt=None):
-    """ARTIFACT-LAW PRUNE manifest after the pair's endpoint is fixed: every checkpoint on disk except the
-    selected one; receipts (complete.json, update.json, ledgers) are kept. A selected boundary rebuilt by replay
-    is kept through its verified replay receipt (the replayed checkpoint, outside the chain's trees)."""
+def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weights=None):
+    """ARTIFACT-LAW PRUNE manifest after the pair's endpoint is fixed: every full state and every weights-only
+    snapshot on disk except the selected endpoint's; receipts (complete.json, update.json, ledgers, the snapshot
+    index) are kept. The endpoint is kept as its full state when one is on disk, else its weights-only snapshot,
+    else its verified replay (the replayed checkpoint, outside the chain's trees)."""
     prune, keep = [], []
+    weights = weights or {}
     if replay_receipt is not None:
         if not (replay_receipt.get('equal') and replay_receipt.get('endpoint_boundary') == selected_boundary
                 and replay_receipt.get('endpoint_checkpoint')):
@@ -371,21 +444,34 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None):
             raise SystemExit("stop: the replayed endpoint's state is not this chain's recorded state")
         if not Path(pin['path']).exists() or sha(pin['path']) != pin['sha256']:
             raise SystemExit('stop: the replayed checkpoint differs from its pin')
-        keep.append({'boundary': selected_boundary, 'path': Path(pin['path']).as_posix(), 'sha256': pin['sha256'],
-                     'bytes': Path(pin['path']).stat().st_size, 'replayed': True})
+        keep.append({'boundary': selected_boundary, 'kind': 'full', 'path': Path(pin['path']).as_posix(),
+                     'sha256': pin['sha256'], 'bytes': Path(pin['path']).stat().st_size, 'replayed': True})
     for rec in records:
         path = Path(rec['checkpoint']['path'])
         if not path.exists():
             continue
-        item = {'boundary': rec['boundary'], 'path': path.as_posix(), 'sha256': rec['checkpoint']['sha256'],
-                'bytes': path.stat().st_size}
-        (keep if rec['boundary'] == selected_boundary else prune).append(item)
+        item = {'boundary': rec['boundary'], 'kind': 'full', 'path': path.as_posix(),
+                'sha256': rec['checkpoint']['sha256'], 'bytes': path.stat().st_size}
+        (keep if rec['boundary'] == selected_boundary and not keep else prune).append(item)
+    for b, snap in sorted(weights.items()):
+        item = {'boundary': b, 'kind': 'weights', 'path': snap['path'], 'sha256': snap['sha256'],
+                'bytes': Path(snap['path']).stat().st_size}
+        if b == selected_boundary and not keep:
+            record = next((r for r in records if r['boundary'] == b), None)
+            if record is None or snap['cut_from_state_sha256'] != record['after_state_sha256'] or \
+                    sha(snap['path']) != snap['sha256']:
+                raise SystemExit("stop: the selected snapshot is not this chain's recorded endpoint")
+            keep.append(item)
+        else:
+            prune.append(item)
     if not keep and selected_boundary != 0:
-        raise SystemExit('stop: the selected checkpoint is not on disk (replay it first)')
+        raise SystemExit('stop: the selected endpoint is not on disk (replay it first)')
+    by_kind = {k: sum(p['bytes'] for p in prune if p['kind'] == k) for k in ('full', 'weights')}
     return {'schema': 'artifact-prune-manifest/v1', 'lane': 'w5', 'chain': chain['chain'], 'arm': chain['arm'],
             'reason': 'W5 section 2.2: the pair endpoint is fixed; non-selected full states and snapshots pruned',
-            'keep': {'selected_checkpoint': keep, 'receipts': 'every complete.json, update.json and ledger'},
-            'prune': prune, 'prune_bytes': sum(p['bytes'] for p in prune)}
+            'keep': {'selected_checkpoint': keep,
+                     'receipts': 'every complete.json, update.json, ledger and the snapshot index'},
+            'prune': prune, 'prune_bytes': sum(p['bytes'] for p in prune), 'prune_bytes_by_kind': by_kind}
 
 
 def tree_bytes(root):
@@ -399,17 +485,36 @@ def tree_bytes(root):
     return total
 
 
-def guard(roots, cap_bytes, next_bytes=0):
-    """The per-node byte guard: refuses (exit 1) when the W5 trees plus the next segment would pass the cap."""
+def under(path, roots):
+    path = Path(path).resolve()
+    return any(path == Path(r).resolve() or Path(r).resolve() in path.parents for r in roots)
+
+
+def guard(roots, cap_bytes, next_bytes=0, chains=()):
+    """The per-node byte guard: refuses (exit 1) when the W5 trees plus the next segment would pass the cap. For
+    each chain manifest given, its full states and weights-only snapshots on disk are reported by kind, and every
+    one of them must lie under a guarded root (a snapshot directory outside the roots would escape the cap)."""
     used = sum(tree_bytes(r) for r in roots)
+    kinds, escaped = [], []
+    for chain_path in chains:
+        chain, records = index(chain_path)
+        full = [Path(r['checkpoint']['path']) for r in records if Path(r['checkpoint']['path']).exists()]
+        weights = [Path(s['path']) for s in snapshots(chain_path).values()]
+        escaped += [p.as_posix() for p in full + weights if not under(p, roots)]
+        kinds.append({'chain': chain['chain'], 'full_state_bytes': sum(p.stat().st_size for p in full),
+                      'full_states': len(full), 'weights_bytes': sum(p.stat().st_size for p in weights),
+                      'weights_snapshots': len(weights)})
     return {'schema': 'w5-byte-guard/v1', 'roots': [Path(r).as_posix() for r in roots], 'used_bytes': used,
-            'next_bytes': next_bytes, 'cap_bytes': cap_bytes, 'ok': used + next_bytes <= cap_bytes}
+            'next_bytes': next_bytes, 'cap_bytes': cap_bytes, 'by_chain': kinds, 'outside_roots': escaped[:20],
+            'ok': used + next_bytes <= cap_bytes and not escaped}
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
     p = sub.add_parser('index'); p.add_argument('chain')
+    p = sub.add_parser('snapshot'); p.add_argument('chain'); p.add_argument('binary')
+    p.add_argument('--from', dest='snapshot_from', type=int, required=True)
     p = sub.add_parser('plan'); p.add_argument('chain'); p.add_argument('--snapshot-from', type=int)
     p = sub.add_parser('apply'); p.add_argument('plan'); p.add_argument('--log', required=True); p.add_argument('--hold')
     p = sub.add_parser('project'); p.add_argument('chain'); p.add_argument('--now', type=float)
@@ -424,10 +529,14 @@ def main(argv=None):
     p.add_argument('--replay-receipt')
     p = sub.add_parser('guard'); p.add_argument('roots', nargs='+'); p.add_argument('--cap-bytes', type=int, required=True)
     p.add_argument('--next-bytes', type=int, default=0)
+    p.add_argument('--chain', dest='chains', action='append', default=[])
     a = ap.parse_args(argv)
     if a.cmd == 'index':
         _, records = index(a.chain)
         out = {'updates': len(records), 'latest_boundary': records[-1]['boundary'] if records else 0}
+    elif a.cmd == 'snapshot':
+        made = snapshot(a.chain, a.binary, a.snapshot_from)
+        out = {'snapshots': len(made), 'bytes': sum(m['bytes'] for m in made)}
     elif a.cmd == 'plan':
         out = plan(a.chain, a.snapshot_from)
     elif a.cmd == 'apply':
@@ -438,13 +547,21 @@ def main(argv=None):
     elif a.cmd == 'decide':
         x_chain, x_records = index(a.x_chain)
         c_chain, c_records = index(a.c_chain)
-        sizes = [Path(r['checkpoint']['path']).stat().st_size for r in x_records[-1:]
-                 if Path(r['checkpoint']['path']).exists()]
-        out = decide(x_chain, x_records, c_chain, c_records, a.c_ended, a.x_running_seconds, a.now,
-                     sizes[0] if sizes else None)
+        # A measured snapshot when one exists; otherwise a third of the latest full state (parameters and two
+        # moment lists of equal size), labelled as an estimate.
+        made = snapshots(a.x_chain)
+        if made:
+            size, measured = max(s['bytes'] for s in made.values()), True
+        else:
+            full = [Path(r['checkpoint']['path']).stat().st_size for r in x_records[-1:]
+                    if Path(r['checkpoint']['path']).exists()]
+            size, measured = (full[0] // 3 if full else None), False
+        out = decide(x_chain, x_records, c_chain, c_records, a.c_ended, a.x_running_seconds, a.now, size)
+        out['snapshot_bytes'] = size
+        out['snapshot_bytes_measured'] = measured
     elif a.cmd == 'select':
         chain, records = index(a.chain)
-        out = select(chain, records, a.r_usec)
+        out = select(chain, records, a.r_usec, snapshots(a.chain))
     elif a.cmd == 'replay-config':
         chain = load_chain(a.chain)
         write(a.out, replay_config(chain, read(a.spec), a.output_dir))
@@ -453,10 +570,11 @@ def main(argv=None):
         out = verify_replay(read(a.spec), a.replay_root)
     elif a.cmd == 'prune-manifest':
         chain, records = index(a.chain)
-        out = prune_manifest(chain, records, a.boundary, read(a.replay_receipt) if a.replay_receipt else None)
+        out = prune_manifest(chain, records, a.boundary, read(a.replay_receipt) if a.replay_receipt else None,
+                             snapshots(a.chain))
         write(a.out, out)
     else:
-        out = guard(a.roots, a.cap_bytes, a.next_bytes)
+        out = guard(a.roots, a.cap_bytes, a.next_bytes, a.chains)
     print(json.dumps(out, indent=1))
     ok = out.get('ok', True) and out.get('equal', True)
     return 0 if ok else 1

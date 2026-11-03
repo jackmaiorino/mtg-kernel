@@ -4,7 +4,13 @@
 //! ```text
 //! checkpoint_container_v1 convert --source SOURCE.json --output OUT
 //! checkpoint_container_v1 export --input CONTAINER --sha256 HEX --output OUT.json
+//! checkpoint_container_v1 weights-snapshot --input CHECKPOINT --sha256 HEX --output OUT
+//! checkpoint_container_v1 materialize --template SOURCE.json --input SNAPSHOT --sha256 HEX --output OUT.json
 //! ```
+//!
+//! `weights-snapshot` and `materialize` are W5's weights-only snapshots
+//! (`weights_snapshot_v1`): the parameters alone, and a playable checkpoint
+//! with zero moments rebuilt from them against a same-lineage template.
 //!
 //! `SOURCE.json` is the model source (`ExpandedModelSourceV1`) whose
 //! `checkpoint` pin is the v1 checkpoint to convert, as a run config names
@@ -17,11 +23,12 @@
 mtg_kernel::fast_global_allocator!();
 
 use mtg_kernel::expanded_deck_training_v1::{
-    convert_checkpoint_v1_to_v2, export_checkpoint_v2_to_v1, ExpandedModelSourceV1, PinnedFileV1,
+    convert_checkpoint_v1_to_v2, export_checkpoint_v2_to_v1, materialize_weights_snapshot_v1,
+    weights_snapshot_v1, ExpandedModelSourceV1, PinnedFileV1,
 };
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: checkpoint_container_v1 convert --source SOURCE.json --output FRESH_ABSOLUTE_PATH | export --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH";
+const USAGE: &str = "usage: checkpoint_container_v1 convert --source SOURCE.json --output FRESH_ABSOLUTE_PATH | export --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | weights-snapshot --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | materialize --template SOURCE.json --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH";
 
 fn flags_v1(rest: &[String], names: &[&str]) -> Option<Vec<String>> {
     if rest.len() != 2 * names.len() {
@@ -57,6 +64,30 @@ fn run_v1(args: &[String]) -> Option<Result<String, String>> {
                 sha256: values[1].clone(),
             };
             export_checkpoint_v2_to_v1(&pin, &PathBuf::from(&values[2]))
+        }
+        "weights-snapshot" => {
+            let values = flags_v1(rest, &["--input", "--sha256", "--output"])?;
+            let pin = PinnedFileV1 {
+                path: PathBuf::from(&values[0]),
+                sha256: values[1].clone(),
+            };
+            weights_snapshot_v1(&pin, &PathBuf::from(&values[2]))
+        }
+        "materialize" => {
+            let values = flags_v1(rest, &["--template", "--input", "--sha256", "--output"])?;
+            let pin = PinnedFileV1 {
+                path: PathBuf::from(&values[1]),
+                sha256: values[2].clone(),
+            };
+            std::fs::read(&values[0])
+                .map_err(|e| e.to_string())
+                .and_then(|text| {
+                    serde_json::from_slice::<ExpandedModelSourceV1>(&text)
+                        .map_err(|e| e.to_string())
+                })
+                .and_then(|template| {
+                    materialize_weights_snapshot_v1(&template, &pin, &PathBuf::from(&values[3]))
+                })
         }
         _ => return None,
     };
