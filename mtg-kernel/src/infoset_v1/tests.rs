@@ -756,6 +756,7 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
             let mut imported = payload.import().expect("a combat payload imports");
             let imported_ids = super::order::imported_ids_v1(&payload.handles);
             let mut live = s.clone();
+            let root_turn_step = (s.game_state().turn, s.game_state().step);
             let inclusion = |x: &FastActorSessionV1| {
                 x.diagnostic_current_action_semantics()
                     .unwrap_or_default()
@@ -776,9 +777,16 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
                 else {
                     panic!("{decks:?}: a scan point left the decision sequence");
                 };
+                // The same declaration: the viewer's inclusion points in the
+                // root's turn and combat step (afterwards the worlds' hidden
+                // cards may lead them apart).
+                let same = |x: &FastActorSessionV1, actor: PlayerSeatV1| {
+                    let st = x.game_state();
+                    seat(actor) == v && inclusion(x) && (st.turn, st.step) == root_turn_step
+                };
                 let (in_live, in_imported) = (
-                    seat(d.acting_player) == v && inclusion(&live),
-                    seat(e.acting_player) == v && inclusion(&imported),
+                    same(&live, d.acting_player),
+                    same(&imported, e.acting_player),
                 );
                 if in_live != in_imported {
                     let forms = |x: &FastActorSessionV1| {
