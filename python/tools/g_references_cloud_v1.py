@@ -193,6 +193,8 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
             campaign[key] = item
     require(spec["mode"] == "qualification" or "placement_record" in campaign,
             "production needs the placement record on the volume")
+    if spec["mode"] == "production":  # the qualification folder: production never writes it (incremental walks)
+        campaign["static_roots"] = [str(base / "campaign" / "qualification")]
     # Files a lease copies home after its recovery (a block-2 checkpoint for Jack's PC's qualification items 4
     # and 5): campaign-relative paths, each fetched and checked against its SHA256 on the Pod.
     exports = spec.get("exports", [])
