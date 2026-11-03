@@ -549,6 +549,9 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(manifest['calibration']['d_read_baseline'], 5e6)
         groups = sorted((self.root / 'art' / 'attempt-001' / 'groups').iterdir())
         self.assertEqual(len(groups), 21)
+        self.assertTrue(all(g.is_dir() for g in groups))
+        manifests = sorted((self.root / 'art' / 'attempt-001' / 'groups-manifests').iterdir())
+        self.assertEqual([m.name for m in manifests], [g.name + '.json' for g in groups])
         self.assertFalse((self.root / 'm' / 'attempt-001' / 'groups').exists() and
                          any((self.root / 'm' / 'attempt-001' / 'groups').iterdir()))
         last = groups[-1]

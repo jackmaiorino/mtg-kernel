@@ -968,12 +968,12 @@ def tree_manifest(path):
 def move_retained(src, dest_root, log_path):
     """Copy to a staging name, verify every file and size, record the verified manifest beside the destination,
     rename into place, then delete the source. Restartable at every step: a staging copy is discarded and redone;
-    a published destination is checked against its recorded manifest and whatever remains of the source is
-    deleted."""
+    a published destination is checked against its recorded manifest (kept in a sibling `<root>-manifests`
+    folder, never among the moved trees) and whatever remains of the source is deleted."""
     src = Path(src)
     dest = Path(dest_root) / src.name
     staging = dest.with_name(dest.name + '.partial')
-    sidecar = dest.with_name(dest.name + '.manifest.json')
+    sidecar = dest.parent.with_name(dest.parent.name + '-manifests') / f'{dest.name}.json'
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         require(sidecar.is_file() and [tuple(x) for x in read_json(sidecar)['files']] == tree_manifest(dest),
@@ -1175,8 +1175,9 @@ class Measurement:
     def _group_record(self, index):
         for parent in (self.dir / 'groups', self.artifact_root / 'groups'):
             if parent.is_dir():
-                for path in parent.glob(f'g{index:03d}-*'):
-                    return path / 'GROUP.json'
+                for path in sorted(parent.glob(f'g{index:03d}-*')):
+                    if path.is_dir():
+                        return path / 'GROUP.json'
         raise Refused(f'group {index} has no record')
 
     def execute(self):
