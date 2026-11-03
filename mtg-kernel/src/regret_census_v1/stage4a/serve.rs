@@ -56,7 +56,7 @@ pub(crate) fn tree_root_v1(root_id: &str, k: u64) -> String {
 /// next search, or None for a policy answer (allowance-limited).
 #[allow(
     dead_code,
-    reason = "the entrant bot calls it once the bridge port lands"
+    reason = "the rule's reference implementation; the Spellbench entrant applies it"
 )]
 pub(crate) fn spend_v1(
     budget: u64,
@@ -321,6 +321,8 @@ struct TreeRequestV1 {
     tree: u64,
     units: u64,
     payload: PayloadV1,
+    #[serde(default)]
+    path: Vec<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -330,6 +332,85 @@ struct SearchRequestV1 {
     budget: u64,
     a_units: u64,
     payload: PayloadV1,
+    /// Live indices applied to the imported root before the search: a
+    /// buffered group's later native points (design 7's walk on the local
+    /// state). Empty for the payload's own decision.
+    #[serde(default)]
+    path: Vec<u32>,
+}
+
+/// Design 7's local state at a native point of a buffered group: the
+/// imported root stepped along `path`. Answers the point's canonical row
+/// keys, eligibility and V4 tensor (for a policy answer); no search.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PointRequestV1 {
+    op: String,
+    payload: PayloadV1,
+    #[serde(default)]
+    path: Vec<u32>,
+}
+
+/// The imported payload stepped along `path` (live indices). Every step
+/// must be a decision of the payload's viewer within its menu.
+pub(crate) fn import_at_v1(
+    payload: &PayloadV1,
+    path: &[u32],
+) -> Result<FastActorSessionV1, String> {
+    let mut s = payload.import()?;
+    for (i, &a) in path.iter().enumerate() {
+        let d = decision(&s).ok_or_else(|| format!("path step {i}: terminal"))?;
+        if super::play::acting(&d).0 != payload.viewer {
+            return Err(format!("path step {i}: not the viewer's decision"));
+        }
+        if a >= d.legal_action_count {
+            return Err(format!("path step {i}: index {a} outside the menu"));
+        }
+        s.step(d.episode_id, d.step, a)
+            .map_err(|e| format!("path step {i}: {}", e.message))?;
+    }
+    Ok(s)
+}
+
+/// Section 5's eligibility on a session: at least two candidates, at least
+/// two of them not mana abilities.
+fn eligible_session_v1(s: &FastActorSessionV1) -> bool {
+    let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+    let non_mana = sem
+        .iter()
+        .filter(|a| !matches!(a, crate::rl::ActionSemanticV1::ActivateManaAbility { .. }))
+        .count();
+    sem.len() >= 2 && non_mana >= 2
+}
+
+/// The point answer: whether the local state is still at a decision of the
+/// viewer (otherwise the group's native points are exhausted), its row keys,
+/// eligibility and the `x_kernel_flat_v4` value whose rows are the local
+/// state's own indices.
+fn point_v1(req: &PointRequestV1) -> Result<Value, String> {
+    if req.op != "point" {
+        return Err(format!("unknown op {}", req.op));
+    }
+    let s = import_at_v1(&req.payload, &req.path)?;
+    let Some(d) = decision(&s) else {
+        return Ok(json!({"viewer_decision": false}));
+    };
+    if super::play::acting(&d).0 != req.payload.viewer {
+        return Ok(json!({"viewer_decision": false}));
+    }
+    let ids = crate::infoset_v1::order::imported_ids_v1(&req.payload.handles);
+    let keys =
+        crate::infoset_v1::order::row_keys_v1(&s, Some(&ids)).ok_or("the point has no V4 menu")?;
+    let mut scratch = crate::agent_bridge_flat_v4_encode::FlatV4EncodeScratchV1::default();
+    let encoded = crate::agent_bridge_flat_v4_encode::encode_flat_v4_tensor_v1(&s, &mut scratch)
+        .map_err(|e| format!("encode: {e:?}"))?;
+    let rows: Vec<u32> = (0..d.legal_action_count).collect();
+    let flat = crate::agent_bridge_flat_v4_encode::flat_v4_extension_value_v1(&encoded, &rows)
+        .map_err(|e| format!("encode: {e:?}"))?;
+    Ok(
+        json!({"viewer_decision": true, "keys": keys, "eligible": eligible_session_v1(&s),
+        "flat": flat}),
+    )
 }
 
 fn host_name() -> String {
@@ -356,7 +437,7 @@ pub(super) fn run_worker(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
         let answer = (|| -> Result<Value, String> {
             let req: TreeRequestV1 =
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
-            let root = req.payload.import()?;
+            let root = import_at_v1(&req.payload, &req.path)?;
             let r = search_tree_v1(
                 policy,
                 &root,
@@ -448,18 +529,34 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
         let mut dispatched: u64 = 0;
         let mut identity: (Value, u64) = (Value::Null, 0);
         let answer = (|| -> Result<Value, String> {
+            if serde_json::from_str::<Value>(&line)
+                .map_err(|e| format!("request: {e}"))?
+                .get("op")
+                .is_some()
+            {
+                let req: PointRequestV1 =
+                    serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
+                return Ok(json!({"ok": true, "point": point_v1(&req)?,
+                    "wall_seconds": started.elapsed().as_secs_f64()}));
+            }
             let req: SearchRequestV1 =
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
             identity = (json!(req.root_id), req.a_units);
             // The receipt names the payload by the digest import recomputes.
-            let root = req.payload.import()?;
+            let root = import_at_v1(&req.payload, &req.path)?;
+            let viewer_decision =
+                decision(&root).is_some_and(|d| super::play::acting(&d).0 == req.payload.viewer);
+            if !viewer_decision {
+                return Err("the searched point is not the viewer's decision".into());
+            }
             let menu = menu_sha256(&root)?;
             let width = decision(&root)
                 .ok_or("the root is terminal")?
                 .legal_action_count as usize;
             for (t, w) in workers.iter_mut().enumerate() {
                 let tree_req = json!({"root_id": req.root_id, "tree": t,
-                    "units": partition_v1(req.budget, t as u64, k), "payload": req.payload});
+                    "units": partition_v1(req.budget, t as u64, k), "payload": req.payload,
+                    "path": req.path});
                 dispatched += partition_v1(req.budget, t as u64, k);
                 writeln!(w.stdin, "{tree_req}").map_err(|e| format!("{FATAL}worker {t}: {e}"))?;
                 w.stdin
@@ -608,6 +705,112 @@ mod tests {
         );
         assert!(tried > 0);
         assert_eq!(ok, tried, "the sampler accepts imported payloads");
+    }
+
+    /// Design 7's local walk: a point request answers the imported root's
+    /// own keys, eligibility and a V4 value with one row per local index;
+    /// a path steps the viewer's own decisions and refuses anything else.
+    #[test]
+    fn point_requests_and_paths_walk_the_imported_root() {
+        use crate::infoset_v1::{export_v1, ExportInputV1, ExportOptionsV1};
+        use crate::rl_session::FastActorResponseV1;
+        let decks = ["CawGates", "Faeries"];
+        let mut s = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+            4,
+            4,
+            2_000,
+            20_000,
+            decks.map(str::to_string),
+        )
+        .expect("reset");
+        let lists = decks.map(|d| {
+            RUNTIME_DECKS
+                .iter()
+                .find(|x| x.id == d)
+                .expect("deck")
+                .card_ids
+                .to_vec()
+        });
+        let mut rng = crate::state::SplitMix64::seed(4);
+        let (mut points, mut stepped) = (0u32, 0u32);
+        for step in 0..200u64 {
+            let FastActorResponseV1::Decision(d) = s.current_response() else {
+                break;
+            };
+            let viewer = super::super::play::acting(&d);
+            let st = s.game_state();
+            let payload = if eligible_session_v1(&s) {
+                export_v1(
+                    &ExportInputV1 {
+                        state: st,
+                        journal: st.observation_journal.notes(),
+                        viewer,
+                        decklists: [&lists[0], &lists[1]],
+                    },
+                    ExportOptionsV1::default(),
+                )
+                .ok()
+                .and_then(|x| PayloadV1::new(&x, &s, viewer, step))
+            } else {
+                None
+            };
+            if let Some(payload) = payload {
+                let req = |path: Vec<u32>| PointRequestV1 {
+                    op: "point".into(),
+                    payload: payload.clone(),
+                    path,
+                };
+                let root = point_v1(&req(vec![])).expect("point");
+                let imported = payload.import().expect("imports");
+                assert_eq!(root["viewer_decision"], json!(true));
+                assert_eq!(root["eligible"], json!(true));
+                assert_eq!(
+                    root["keys"],
+                    json!(crate::infoset_v1::order::row_keys_v1(
+                        &imported,
+                        Some(&crate::infoset_v1::order::imported_ids_v1(&payload.handles))
+                    )
+                    .unwrap())
+                );
+                let width = d.legal_action_count as usize;
+                assert_eq!(
+                    root["flat"]["row_candidate_ids"].as_array().unwrap().len(),
+                    width
+                );
+                points += 1;
+                // Out of the menu: refused.
+                assert!(import_at_v1(&payload, &[d.legal_action_count]).is_err());
+                // One step: the local state equals the imported root stepped
+                // directly, and a second step is taken only on the viewer's
+                // own decision.
+                let mut direct = payload.import().unwrap();
+                let FastActorResponseV1::Decision(e) = direct.current_response() else {
+                    panic!()
+                };
+                direct.step(e.episode_id, e.step, 0).unwrap();
+                let walked = import_at_v1(&payload, &[0]).expect("one step");
+                assert_eq!(
+                    serde_json::to_value(walked.game_state()).unwrap(),
+                    serde_json::to_value(direct.game_state()).unwrap()
+                );
+                match decision(&walked) {
+                    Some(n) if super::super::play::acting(&n).0 == payload.viewer => {
+                        assert!(import_at_v1(&payload, &[0, 0]).is_ok());
+                        stepped += 1;
+                    }
+                    Some(_) => {
+                        assert!(import_at_v1(&payload, &[0, 0]).is_err());
+                        let p = point_v1(&req(vec![0])).unwrap();
+                        assert_eq!(p["viewer_decision"], json!(false));
+                    }
+                    None => {}
+                }
+            }
+            let a = (rng.next_u64() % u64::from(d.legal_action_count)) as u32;
+            s.step(d.episode_id, d.step, a).expect("step");
+        }
+        eprintln!("point requests: {points} roots, {stepped} with a second viewer point");
+        assert!(points > 0);
     }
 
     fn c(n: u64, wins: u64, draws: u64) -> CountsV1 {

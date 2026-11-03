@@ -120,11 +120,13 @@ mod loaded_source_cache_v1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
+pub mod weights_snapshot_v1;
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
 };
+pub use weights_snapshot_v1::{materialize_weights_snapshot_v1, weights_snapshot_v1};
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
@@ -5616,8 +5618,30 @@ fn execute_update_inner_v1(
             "searches_failed":receipt["searches_failed"],"cap":exposure["cap"],
             "adam_steps":exposure["adam_steps"],"teacher_seconds":teacher_seconds});
     }
+    #[cfg(test)]
+    if take_crash_point_for_test_v1() {
+        return Err("crash point: the checkpoint is published, update.json is not".into());
+    }
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Bookkeeping design 2.3's crash point, for tests: the next update on
+    /// this thread stops after its checkpoint's publication and readback and
+    /// before `update.json`.
+    static CRASH_POINT_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn arm_crash_point_for_test_v1() {
+    CRASH_POINT_FOR_TEST_V1.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+fn take_crash_point_for_test_v1() -> bool {
+    CRASH_POINT_FOR_TEST_V1.with(|flag| flag.replace(false))
 }
 
 fn seat(p: PlayerSeatV1) -> u8 {
