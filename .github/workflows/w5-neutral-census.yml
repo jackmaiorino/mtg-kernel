@@ -1,0 +1,40 @@
+name: W5 neutral-choice census
+
+# Measurement only (W5 runtime parity memo): the board bridge with and without Spellbench neutral choices.
+
+on:
+  pull_request:
+    paths: ['tools/w5/neutral_census.py', '.github/workflows/w5-neutral-census.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    name: W5 neutral-choice census
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Install pinned Rust
+        run: |
+          channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --no-self-update
+      - name: Restore compiled Python environment
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: python-env
+      - name: Build the bridge
+        run: cargo build --release --locked --bin agent_bridge_v1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Census (8 board decks, 64 ordered pairs, 2 seeds, both modes)
+        run: python tools/w5/neutral_census.py --binary target/release/agent_bridge_v1 --out w5-neutral-census.json --seeds 2
+      - name: Keep the result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: w5-neutral-census
+          path: w5-neutral-census.json
+          if-no-files-found: ignore
