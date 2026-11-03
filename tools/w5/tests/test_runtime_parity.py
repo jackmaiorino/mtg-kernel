@@ -128,6 +128,8 @@ class CompareTests(unittest.TestCase):
         self.assertFalse(calls("// session.set_runtime_rules_v1(x)"))
         self.assertFalse(calls("/* a block\n session.set_runtime_rules_v1(x)\n */ let y = 1;"))
         self.assertFalse(calls('let s = "set_runtime_rules_v1(";'))
+        self.assertTrue(calls('let s = br#"""#; session.set_runtime_rules_v1(x); let _ = "";'))
+        self.assertFalse(calls('let s = br"set_runtime_rules_v1(";'))
         self.assertTrue(calls("    session.set_runtime_rules_v1(rules)?;"))
         self.assertTrue(calls("session /* rules */ .set_runtime_rules_v1(rules)?;"))
         self.assertTrue(calls('/* outer /* inner */ " */ session.set_runtime_rules_v1(x); let _ = "";'))
