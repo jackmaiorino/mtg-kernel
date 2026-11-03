@@ -612,11 +612,18 @@ class NodeLog:
     def append(self, record: dict) -> dict:
         """Append under the caller's lock; a torn tail is cut and recorded first."""
         data = self.path.read_bytes() if self.path.exists() else b""
-        if data and not data.endswith(b"\n"):
+        if data and not data.endswith(b"\n"):  # the cut log and its repair record land in one atomic rename
             cut = data.rfind(b"\n") + 1
-            with open(self.path, "r+b") as handle:
-                handle.truncate(cut)
-            self._write({"event": "torn-tail-repaired", "bytes": len(data) - cut})
+            kept = data[:cut]
+            lines = kept.split(b"\n")[:-1]
+            repair = dict({"event": "torn-tail-repaired", "bytes": len(data) - cut}, log=OCCUPANCY_SCHEMA,
+                          prev_sha256=sha256_bytes(lines[-1]) if lines else None, unix=round(time.time(), 3))
+            tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+            with open(tmp, "wb") as handle:
+                handle.write(kept + canonical(repair) + b"\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self.path)
         return self._write(record)
 
     def _write(self, record: dict) -> dict:
@@ -769,13 +776,14 @@ class Supervisor:
         if self.chain_cg.exists():
             self.chain_cg.rmdir()
         if self.filler_cg.exists():  # left by a dead supervisor: it held the box until this chain runs again
-            self.filler_cg.kill()
-            require(self.filler_cg.wait_empty(SETTLE_SECONDS), "A leftover filler did not die")
-            self.filler_cg.rmdir()
             with self.node.locked():
                 self.node.append({"event": "outage-start", "id": f"{self.chain}/recovery/{time.time_ns()}",
                                   "box_slot": self.slot["slot"], "chain": self.chain, "reason": "recovery",
                                   "affected": node_chains(self.state_root)})
+            enforce_node(self.plan, self.node, "recovery")
+            self.filler_cg.kill()
+            require(self.filler_cg.wait_empty(SETTLE_SECONDS), "A leftover filler did not die")
+            self.filler_cg.rmdir()
         self.paused_path.unlink(missing_ok=True)
         if self.owner_path.exists():
             self.owner_path.unlink()
@@ -1037,19 +1045,25 @@ class Supervisor:
                 records, torn = self.node.read()
                 state = NodeLog.state(records, torn)
                 own = state["open_outages"].get(self.slot["slot"])
-                own_recovery = own is not None and own.get("reason") == "recovery"
-                others = {k: v for k, v in state["open_outages"].items() if k != self.slot["slot"] or not own_recovery}
-                clear = (not others and not state["open_faults"] and state["operator_freeze"] is None
+                blocking_outages = {k: v for k, v in state["open_outages"].items()
+                                    if k != self.slot["slot"] and v.get("reason") != "recovery"}
+                blocking_faults = {k for k in state["open_faults"] if k != self.slot["slot"]}
+                clear = (not blocking_outages and not blocking_faults and state["operator_freeze"] is None
                          and not state["torn_tail"] and state["torn_hold"] is None)
                 if clear:
                     self.pid = spawn_into(self.chain_cg, argv, self.env(manifest_path), instance_dir / "chain.log",
                                           self.spec.get("cwd"))
-                    if own_recovery:  # the running chain occupies its box again
-                        self.node.append({"event": "restored", "outage_id": own["id"], "box_slot": self.slot["slot"],
-                                          "chain": self.chain, "how": "chain-restart"})
                     break
             self.ledger.append({"event": "start-held", "instance": self.instance, "reason": "node not clear"})
             time.sleep(LIVE_EVERY_SECONDS)
+        if own is not None:  # this box's open outage closes once the restarted chain is verified to occupy it
+            time.sleep(1.0)
+            in_box = self.pid in {int(x) for x in self.chain_cg.read("cgroup.procs").split()}
+            alive = in_box  # an exited process leaves the cgroup; the main loop reaps it with its status
+            with self.node.locked():
+                self.node.append({"event": "restored" if alive and in_box else "restore-failed",
+                                  "outage_id": own["id"], "box_slot": self.slot["slot"], "chain": self.chain,
+                                  "how": "chain-restart", "verification": {"alive": alive, "pid_in_chain_cgroup": in_box}})
         enforce_node(self.plan, self.node, "start")
         started = time.monotonic()
         stop = {"flag": False}
