@@ -573,4 +573,62 @@ mod tests {
         let pool = names(&[1, 1, 2, 5, 5, 5]);
         assert_eq!(f.allocate(&pool, 4, &by_id), Ok(vec![5]));
     }
+
+    fn m_of(f: &SurvivorTreeV1, k: &[u16]) -> Option<i64> {
+        let k = names(k);
+        f.nodes().into_iter().find(|n| n.k == k).map(|n| n.m)
+    }
+
+    /// Draw-back amendment, Sol r3's case: two put-backs of three tracked
+    /// cards, then both drawn back: (T, 2), then (T, 3).
+    #[test]
+    fn draw_backs_undo_put_backs_in_order() {
+        let mut f = SurvivorTreeV1::default();
+        let first = f.unidentified_departure(&[1, 2, 3], true);
+        let second = f.unidentified_departure(&[], true);
+        assert_eq!(m_of(&f, &[1, 2, 3]), Some(1));
+        assert!(f.undo_departure(&second));
+        assert_eq!(m_of(&f, &[1, 2, 3]), Some(2));
+        assert!(f.undo_departure(&first));
+        assert_eq!(m_of(&f, &[1, 2, 3]), Some(3));
+        let pool = names(&[1, 2, 3, 4]);
+        assert_eq!(f.allocate(&pool, 4, &by_id), Ok(vec![1, 2, 3]));
+    }
+
+    /// Sol r2's case: an old node plus newly tracked D and E, one put-back,
+    /// one draw-back: the {D, E} child is restored to 2.
+    #[test]
+    fn draw_back_restores_the_tracked_subset_child() {
+        let mut f = SurvivorTreeV1::default();
+        f.unidentified_departure(&[1, 2, 3], false);
+        assert_eq!(m_of(&f, &[1, 2, 3]), Some(2));
+        let record = f.unidentified_departure(&[4, 5], true);
+        assert!(f.undo_departure(&record));
+        assert_eq!(m_of(&f, &[4, 5]), Some(2));
+        assert_eq!(m_of(&f, &[1, 2, 3]), Some(2));
+    }
+
+    /// Sol r4's case: a node the put-back took to 0 stays dormant and keeps
+    /// receiving updates, so the undo gives no false bound.
+    #[test]
+    fn dormant_nodes_keep_their_updates() {
+        let mut f = SurvivorTreeV1::default();
+        let record = f.unidentified_departure(&[1, 2], true);
+        assert_eq!(f.len(), 1, "(K, 1) active");
+        f.identified_departure(1);
+        f.identified_departure(2);
+        assert!(f.undo_departure(&record));
+        // Both names left identified: nothing may be required of the hand.
+        let pool = names(&[1, 2, 3]);
+        assert_eq!(f.allocate(&pool, 3, &by_id), Ok(vec![]));
+    }
+
+    /// A cleared tree cannot be restored: the caller latches R8.
+    #[test]
+    fn undo_after_a_clear_fails() {
+        let mut f = SurvivorTreeV1::default();
+        let record = f.unidentified_departure(&[1, 2, 3], true);
+        f.clear();
+        assert!(!f.undo_departure(&record));
+    }
 }
