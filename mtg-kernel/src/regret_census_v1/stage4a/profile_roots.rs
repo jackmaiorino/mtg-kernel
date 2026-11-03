@@ -218,17 +218,17 @@ fn vl_split(records: &[super::arms::SimRecord]) -> Value {
         .collect();
     let n = accepted.len().max(1) as f64;
     let mean =
-        |f: &dyn Fn(&SimRecord) -> u64| accepted.iter().map(|r| f(*r)).sum::<u64>() as f64 / n;
+        |f: &dyn Fn(&SimRecord) -> u64| accepted.iter().map(|r| f(r)).sum::<u64>() as f64 / n;
     let prefix = |r: &SimRecord| r.expansion.or(r.depth_limit);
     let point = |get: fn(&SimRecord) -> Option<Snap>| {
-        let reached: Vec<Snap> = accepted.iter().filter_map(|r| get(*r)).collect();
+        let reached: Vec<Snap> = accepted.iter().filter_map(|r| get(r)).collect();
         let m = reached.len().max(1) as f64;
         json!({"reached":reached.len(),
             "mean_transitions":reached.iter().map(|x| x.transitions).sum::<u64>() as f64 / m,
             "mean_calls":reached.iter().map(|x| x.calls).sum::<u64>() as f64 / m})
     };
     json!({"schema":"w5-vl-split/v1","accepted":accepted.len(),
-        "anchored":accepted.iter().filter(|r| prefix(**r).is_some()).count(),
+        "anchored":accepted.iter().filter(|r| prefix(r).is_some()).count(),
         "mean_transitions":mean(&|r| r.transitions),"mean_calls":mean(&|r| r.policy_calls),
         "prefix":{"mean_transitions":mean(&|r| prefix(r).map_or(r.transitions, |x| x.transitions)),
             "mean_calls":mean(&|r| prefix(r).map_or(r.policy_calls, |x| x.calls))},
