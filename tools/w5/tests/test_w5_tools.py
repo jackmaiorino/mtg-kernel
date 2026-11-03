@@ -137,7 +137,7 @@ class RetentionTests(unittest.TestCase):
             rate = 1000 / 60.0
             self.assertAlmostEqual(proj['rate_usec_per_s'], rate)
             self.assertAlmostEqual(proj['r_hat_usec'], 128_000 + rate * (7 * 86400 - 128 * 60))
-            d = retention.decide(x_chain, x_rec, c_chain, c_rec, c_ended=False, checkpoint_bytes=15 * 10**6)
+            d = retention.decide(x_chain, x_rec, c_chain, c_rec, c_ended=False, snapshot_bytes=15 * 10**6)
             self.assertEqual(d['action'], 'run')
             # Late in the week: X at 1.12 R-hat pauses; at 0.9 it snapshots when the window fits 30 GB.
             now = c_chain['launched_unix'] + 7 * 86400
@@ -145,10 +145,10 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual(d['action'], 'pause')
             x_low = [dict(r, ledger_usec=int(r['ledger_usec'] * 0.9 * 128_000 / 153_600)) for r in x_rec]
             d = retention.decide(x_chain, x_low, c_chain, c_rec, c_ended=False, now=now,
-                                 checkpoint_bytes=15 * 10**6)
+                                 snapshot_bytes=15 * 10**6)
             self.assertEqual(d['action'], 'snapshot')
             d = retention.decide(x_chain, x_low, c_chain, c_rec, c_ended=False, now=now,
-                                 checkpoint_bytes=15 * 10**9)
+                                 snapshot_bytes=15 * 10**9)
             self.assertEqual(d['action'], 'run')
             self.assertFalse(d['snapshot_fits'])
             # C ended: R_i = its final ledger; X past it selects, X short resumes to it.
@@ -227,6 +227,96 @@ class RetentionTests(unittest.TestCase):
                                                                                                'sha256': 'y'}}}}
             with self.assertRaises(SystemExit):
                 retention.replay_config(retention.load_chain(chain_path), spec, Path(tmp) / 'r')
+
+    def fake_snapshots(self, wrong=None):
+        """Stands in for `checkpoint_container_v1 weights-snapshot`: writes a small file and its receipt."""
+        def run(args, capture_output, text):
+            out = Path(args[args.index('--output') + 1])
+            out.write_bytes(b'w' * 10)
+            b = int(out.stem[1:])
+            receipt = {'output': {'path': out.as_posix(), 'sha256': retention.sha(out)}, 'snapshot_bytes': 10,
+                       'cut_from_state_sha256': 'other' if b == wrong else f'h{b}',
+                       'parameters_sha256': f'p{b}'}
+            return type('R', (), {'returncode': 0, 'stdout': json.dumps(receipt), 'stderr': ''})()
+        return run
+
+    def test_weights_snapshots_replace_full_states_in_the_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=3, per_segment=64)
+            real = retention.subprocess.run
+            retention.subprocess.run = self.fake_snapshots()
+            try:
+                made = retention.snapshot(chain_path, 'binary', 100)
+            finally:
+                retention.subprocess.run = real
+            boundaries = [m['boundary'] for m in made]
+            self.assertEqual(boundaries, [b for b in range(100, 193) if b % 64])
+            have = retention.snapshots(chain_path)
+            doc = retention.plan(chain_path, snapshot_from=100)
+            pruned = {c['boundary'] for c in doc['checkpoints']}
+            # Inside the window a full state goes once its snapshot exists; the live tail keeps its full states.
+            self.assertTrue(set(range(100, 128)) <= pruned)
+            self.assertFalse(pruned & set(range(129, 193)))
+            retention.apply(doc, Path(tmp) / 'log.jsonl')
+            chain, records = retention.index(chain_path)
+            spec = retention.select(chain, records, 100_500, have)
+            self.assertIsNone(spec['replay'])
+            self.assertEqual(spec['weights_snapshot']['parameters_sha256'], 'p101')
+            manifest = retention.prune_manifest(chain, records, 101, weights=have)
+            self.assertEqual([(k['boundary'], k['kind']) for k in manifest['keep']['selected_checkpoint']],
+                             [(101, 'weights')])
+            kinds = {p['kind'] for p in manifest['prune']}
+            self.assertEqual(kinds, {'full', 'weights'})
+            self.assertNotIn(101, [p['boundary'] for p in manifest['prune'] if p['kind'] == 'weights'])
+            self.assertEqual(set(manifest['prune_bytes_by_kind']), {'full', 'weights'})
+            self.assertEqual(manifest['prune_bytes_by_kind']['weights'], 10 * (len(have) - 1))
+            # A damaged full state at the endpoint is not kept; its verified snapshot is.
+            full150 = next(r for r in records if r['boundary'] == 150)['checkpoint']['path']
+            Path(full150).write_text('damaged')
+            manifest = retention.prune_manifest(chain, records, 150, weights=have)
+            self.assertEqual([(k['boundary'], k['kind']) for k in manifest['keep']['selected_checkpoint']],
+                             [(150, 'weights')])
+            self.assertIn((150, 'full'), [(p['boundary'], p['kind']) for p in manifest['prune']])
+            # A snapshot that no longer matches its index never authorizes a prune: a fresh chain, where
+            # boundary 110 (segment 1, followed by a complete segment) is eligible until its snapshot changes.
+            chain2 = make_chain(Path(tmp) / 'second', 'X', segments=3, per_segment=64)
+            real = retention.subprocess.run
+            retention.subprocess.run = self.fake_snapshots()
+            try:
+                retention.snapshot(chain2, 'binary', 100)
+            finally:
+                retention.subprocess.run = real
+            self.assertIn(110, {c['boundary'] for c in retention.plan(chain2, snapshot_from=100)['checkpoints']})
+            Path(retention.snapshots(chain2)[110]['path']).write_bytes(b'x' * 10)
+            self.assertNotIn(110, {c['boundary'] for c in retention.plan(chain2, snapshot_from=100)['checkpoints']})
+            # The guard reports both kinds and refuses a snapshot directory outside its roots.
+            ok = retention.guard([tmp], 10**12, chains=[chain_path])
+            self.assertTrue(ok['ok'])
+            self.assertEqual(ok['by_chain'][0]['weights_snapshots'], len(have))
+            self.assertGreater(ok['by_chain'][0]['full_state_bytes'], 0)
+            outside = retention.guard([Path(tmp) / 'X-seg000'], 10**12, chains=[chain_path])
+            self.assertFalse(outside['ok'])
+
+    def test_the_guard_checks_destinations_before_files_exist(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as elsewhere:
+            chain_path = make_chain(tmp, 'X', segments=1, per_segment=2)
+            doc = json.loads(Path(chain_path).read_text())
+            doc['snapshot_dir'] = elsewhere
+            Path(chain_path).write_text(json.dumps(doc))
+            out = retention.guard([tmp], 10**12, chains=[chain_path])
+            self.assertFalse(out['ok'])
+            self.assertIn(Path(elsewhere).as_posix(), [Path(p).as_posix() for p in out['outside_roots']])
+
+    def test_a_snapshot_cut_from_another_state_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=2, per_segment=64)
+            real = retention.subprocess.run
+            retention.subprocess.run = self.fake_snapshots(wrong=70)
+            try:
+                with self.assertRaises(SystemExit):
+                    retention.snapshot(chain_path, 'binary', 65)
+            finally:
+                retention.subprocess.run = real
 
     def test_guard(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -308,6 +398,62 @@ class Capture0bTests(unittest.TestCase):
         self.assertEqual(records[0]['source_checkpoint_sha256'], self.source['checkpoint']['sha256'])
         self.assertFalse(records[1]['reached'])
         self.assertNotIn('candidates', records[1])
+
+    def _sidecars(self, out_dir, value_leaf, extra_action=False, moved=False):
+        command = capture0b.read(sorted((out_dir / 'jobs').glob('u*.json'))[0])
+        out = Path(command['output_directory'])
+        out.mkdir(parents=True)
+        actions = [0, 1]
+        capture = {'reached': True, 'step': 7, 'policy': {'logit_bits': [1, 2, 3]},
+                   'candidates': [{'budget': b, 'search_seed': s, 'seed_root': f'r{b}{s}', 'status': 'ok',
+                                   'cpu_s': 1.5 + s, 'n': [8, 8, 0], 'wins': [1, 2 + moved, 0], 'draws': [0, 0, 0],
+                                   'search': {'big': True}} for b in (16000, 64000) for s in (0, 1)],
+                   'qref': {'rollouts': 128, 'seed_root': 'q', 'actions': actions, 'wins': [1, 2, 3][:len(actions)],
+                            'draws': [0] * len(actions), 'n': [128] * len(actions)}, 'qref_nonnatural': [0, 0]}
+        if value_leaf:
+            capture['qref_extra'] = {'rollouts': 128, 'seed_root': 'q2a', 'actions': [2] if extra_action else [],
+                                     'wins': [3] if extra_action else [], 'draws': [0] if extra_action else [],
+                                     'n': [128] if extra_action else [], 'nonnatural': [0] if extra_action else []}
+            capture['value_leaf'] = [{'horizon': h, 'n_sims': n, 'search_seed': s, 'seed_root': f'v{h}{n}{s}',
+                                      'status': 'ok', 'cpu_s': 0.25, 'primary_sha256': 'a' * 64,
+                                      'n': [4, 0, 8], 'value_units': [1 << 19, 0, 8 << 20], 'draws': [0, 0, 0],
+                                      'search': {}} for h in ('h0', 't0') for n in (128, 512) for s in (0, 1)]
+        sidecar = out / 'ex1-0000.json'
+        sidecar.write_text(json.dumps({'slot': 0, 'attempts': [
+            {'natural': True, 'episode_id': 'g0', 'seed': 10, 'options': {'run': 'w5/0b', 'update': 0},
+             'w5': {'placement_index': 5}, 'capture_0b': capture}]}))
+        (out / 'collection.json').write_text(json.dumps({'ex1': {'episodes': [{'path': sidecar.as_posix()}]}}))
+
+    def test_value_leaf_jobs_convert_and_parity(self):
+        vl = {'horizons': ['h0', 't0'], 'sims': [128, 512], 'search_seeds': [0, 1]}
+        made = capture0b.jobs(self.base, {'source': self.source}, self.root / 'vl', updates=1, value_leaf=vl)
+        self.assertEqual(capture0b.read(made[0])['ex1']['w5']['capture_0b']['value_leaf'], vl)
+        self._sidecars(self.root / 'vl', True, extra_action=True)
+        records = capture0b.convert_vl(self.root / 'vl', 16000, 'dev-windows-haleyspc', 'b' * 64)
+        self.assertEqual(len(records), 1)
+        r = records[0]
+        self.assertEqual((r['schema'], r['episode'], r['game'], r['key_memo_limit_bytes']),
+                         ('w5-2a-vl-capture/v1', 0, 'g0', 512 << 20))
+        self.assertEqual(len(r['configs']), 8)
+        self.assertNotIn('search', r['configs'][0])
+        self.assertEqual([c['search_seed'] for c in r['comparator']], [0, 1])
+        self.assertTrue(all(c['budget'] == 16000 and c['key_memo'] == 'on' for c in r['comparator']))
+        self.assertEqual((r['qref_extra']['actions'], r['qref_extra']['seed_root']), ([2], 'q2a'))
+        self.assertNotIn('nonnatural', r['qref_extra'])
+        # Parity: the same jobs without value-leaf searches give the same 0b record; a moved count is caught.
+        capture0b.jobs(self.base, {'source': self.source}, self.root / 'plain', updates=1)
+        self._sidecars(self.root / 'plain', False)
+        self.assertTrue(capture0b.parity(self.root / 'plain', self.root / 'vl')['equal'])
+        capture0b.jobs(self.base, {'source': self.source}, self.root / 'moved', updates=1)
+        self._sidecars(self.root / 'moved', False, moved=True)
+        self.assertEqual(capture0b.parity(self.root / 'moved', self.root / 'vl')['differ'], [0])
+        # A run whose jobs are not the other's first jobs is not a parity pair.
+        capture0b.jobs(self.base, {'source': self.source}, self.root / 'late', updates=1, first_update=1)
+        self._sidecars(self.root / 'late', False)
+        self.assertFalse(capture0b.parity(self.root / 'late', self.root / 'vl')['equal'])
+        with self.assertRaises(SystemExit):  # 0b-only jobs have no value-leaf records
+            capture0b.convert_vl(self.root / 'plain', 16000, 'x', 'b' * 64)
+
 
 if __name__ == '__main__':
     unittest.main()

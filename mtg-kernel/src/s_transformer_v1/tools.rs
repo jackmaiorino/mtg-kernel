@@ -691,8 +691,19 @@ pub fn bench_v1(seed: u64, count: usize, reps: usize) -> Result<Value, String> {
         "ratio_s_to_net8_portable": s_us / net8_us[0],
         "ratio_s_to_net8_platform": s_us / net8_us[1],
         "s_learner_forward_backward_us": learner_us,
+        // W5 amendment A2: the speed bar is read on the Linux nodes against
+        // the net-8 math the C arm runs, and re-timed at Stage 0.
+        "c_arm_net8_math": {
+            "math": "platform-libm",
+            "ratio_s_to_c_arm_net8": s_us / net8_us[1],
+            "evidence": C_ARM_MATH_EVIDENCE_V1,
+            "bar": "at most 20x on the Linux node class; hosted-runner times are indicative only",
+        },
     }))
 }
+
+/// Why the C arm's net-8 runs the platform libm (W5 amendment A2, item 2).
+const C_ARM_MATH_EVIDENCE_V1: &str = "C continues from b512 (oh2-r2s1-b512, checkpoint 8a52be51, state 662aad1a) with its Adam state. That checkpoint has no training_math field, which is the platform-libm default, and bind_training_math_v1 refuses a command whose math differs from its checkpoint's. So the C arm's pinned binary runs net-8 with glibc's libm on the Linux nodes, and its fixed opponents run under the same command math (bind_opponent_math_v1).";
 
 fn avx2_v1() -> bool {
     #[cfg(target_arch = "x86_64")]

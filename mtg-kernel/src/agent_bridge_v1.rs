@@ -30,7 +30,8 @@ use crate::agent_bridge_flat_v4_encode::{
 };
 pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::agent_bridge_infoset_v1::{
-    infoset_extension_v1, write_receipt_v1, InfosetBridgeV1, SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
+    infoset_extension_v1, preview_row_keys_v1, write_receipt_v1, InfosetBridgeV1,
+    SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
 };
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
@@ -690,6 +691,18 @@ impl SpellbenchBridgeServerV1 {
             Err(_) => return reject("private view failed encoding"),
         };
         let support = private_v2_support(game);
+        // Design 7: when the group's root carried a payload, the preview's
+        // rows carry canonical keys under the root export's id map, so the
+        // entrant can match its local walk against each completion.
+        let keys = match (
+            self.game.as_ref().and_then(|g| g.infoset.as_ref()),
+            game.flat_v4.as_ref(),
+        ) {
+            (Some(infoset), Some(lockstep)) => {
+                preview_row_keys_v1(infoset, expected_step, lockstep.fast_session())
+            }
+            _ => None,
+        };
         let answer = match copy.session_response_to_wire(
             request_id,
             game_id,
@@ -698,7 +711,10 @@ impl SpellbenchBridgeServerV1 {
             extension,
             Some(support),
         ) {
-            WireResponseV1::Decision(view) => {
+            WireResponseV1::Decision(mut view) => {
+                if let Some(keys) = keys {
+                    view["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = keys;
+                }
                 json!({"response_type": "private_preview", "protocol": SPELLBENCH_PROTOCOL_V1,
                 "request_id": request_id, "view": view})
             }
@@ -3368,6 +3384,135 @@ mod tests {
         )
     }
 
+    /// Design 7's composition keys: at a buffered group's root with a
+    /// payload, each private preview's `row_keys` (lockstep rows, keyed with
+    /// the root export's map) equal the keys of the entrant's local state,
+    /// the imported root stepped by the same choices, and the two menus pair
+    /// one to one. Walks every preview prefix of the first candidate's
+    /// trajectory up to four native points deep.
+    #[test]
+    fn infoset_v1_preview_keys_match_the_local_walk() {
+        let mut checked = 0u64;
+        let mut groups = 0u64;
+        for (deck, seed) in [
+            ("CawGates", 5_u64),
+            ("Faeries", 7),
+            ("CawGates", 11),
+            ("Faeries", 12),
+            ("Spy", 3),
+            ("Wildfire", 6),
+        ] {
+            let mut server = SpellbenchBridgeServerV1::with_options(
+                SpellbenchEngineIdentityV1::with_source_revision(None),
+                SpellbenchBridgeOptionsV1 {
+                    x_kernel_flat_v4: true,
+                    private_v2_support: true,
+                    x_kernel_infoset_v1: true,
+                },
+            );
+            let mut line =
+                server.handle_line(&flat_v4_reset(&format!("p-{deck}-{seed}"), deck, seed));
+            let mut rng = crate::state::SplitMix64::seed(seed);
+            for _ in 0..500 {
+                let response: Value = serde_json::from_str(&line).unwrap();
+                if response["response_type"] != "decision" {
+                    break;
+                }
+                let extension = &response["extensions"]["x_kernel_infoset_v1"];
+                // Only an unfinished blocker or arrangement declaration's root
+                // has private previews; everything else refuses them.
+                let support = &response["extensions"]["x_kernel_v2_support"];
+                let buffered_root = support["at_block_root"] == json!(true)
+                    || matches!(
+                        support["choice"]["purpose"].as_str(),
+                        Some(
+                            "scry"
+                                | "look_select"
+                                | "look"
+                                | "reveal_partition"
+                                | "mill"
+                                | "put_on_top"
+                                | "discard_order"
+                        )
+                    );
+                if let (true, Some(text), Some(live_rows)) = (
+                    buffered_root,
+                    extension["payload_json"].as_str(),
+                    extension["live_rows"].as_array(),
+                ) {
+                    let payload =
+                        crate::infoset_v1::PayloadV1::from_bytes(text.as_bytes()).unwrap();
+                    let ids = crate::infoset_v1::order::imported_ids_v1(&payload.handles);
+                    let live_rows: Vec<usize> = live_rows
+                        .iter()
+                        .map(|x| x.as_u64().unwrap() as usize)
+                        .collect();
+                    let rows = rows_of(&response);
+                    // Follow imported row 0 at every point: the lockstep
+                    // candidate is found through each point's own pairing.
+                    let mut local = payload.import().unwrap();
+                    let mut prefix: Vec<u64> = vec![];
+                    let mut pairing = live_rows.clone();
+                    let mut lockstep_rows = rows.clone();
+                    let mut opened = false;
+                    for _depth in 0..4 {
+                        prefix.push(lockstep_rows[pairing[0]]);
+                        let preview = json!({"protocol": SPELLBENCH_PROTOCOL_V1,
+                            "request_type": "preview_steps", "request_id": format!("pv-{}-{}", response["step"], prefix.len()),
+                            "game_id": response["game_id"], "expected_step": response["step"],
+                            "candidate_ids": prefix})
+                        .to_string();
+                        let answer: Value =
+                            serde_json::from_str(&server.handle_line(&preview)).unwrap();
+                        if answer["response_type"] == "private_complete" {
+                            break;
+                        }
+                        assert_eq!(
+                            answer["response_type"], "private_preview",
+                            "{deck}: preview of a buffered group failed: {answer}"
+                        );
+                        if !opened {
+                            opened = true;
+                            groups += 1;
+                        }
+                        let view = &answer["view"];
+                        let keys: Vec<String> = serde_json::from_value(
+                            view["extensions"]["x_kernel_infoset_v1"]["row_keys"].clone(),
+                        )
+                        .expect("a preview of a payload root carries row keys");
+                        let crate::rl_session::FastActorResponseV1::Decision(e) =
+                            local.current_response()
+                        else {
+                            panic!("{deck}: the local root is not a decision")
+                        };
+                        local.step(e.episode_id, e.step, 0).unwrap();
+                        let local_keys = crate::infoset_v1::order::row_keys_v1(&local, Some(&ids))
+                            .expect("local keys");
+                        pairing = crate::infoset_v1::order::live_rows_v1(&keys, &local_keys)
+                            .map(|r| r.into_iter().map(|x| x as usize).collect())
+                            .unwrap_or_else(|| {
+                                panic!("{deck}: preview and local keys differ: {keys:?} vs {local_keys:?}")
+                            });
+                        lockstep_rows = rows_of(view);
+                        checked += 1;
+                    }
+                }
+                let rows = rows_of(&response);
+                let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
+                line = server.handle_line(&flat_v4_step(&response, pick));
+            }
+        }
+        eprintln!("preview keys: {checked} preview points in {groups} buffered groups");
+        assert!(
+            checked > 0,
+            "no buffered group with a payload was previewed"
+        );
+        assert!(
+            checked > groups,
+            "no group was previewed past its first native point"
+        );
+    }
+
     /// W1 bridge wiring: with `x_kernel_infoset_v1` on, every eligible
     /// decision (two candidates, two of them not mana abilities) carries a
     /// payload or a refusal code and no other decision carries either; each
@@ -3387,6 +3532,10 @@ mod tests {
         let mut refusals: std::collections::BTreeMap<String, u64> = Default::default();
         let mut eligible_total = 0;
         let mut longest = 0;
+        let (mut mapped, mut missing_maps) = (0u64, 0u64);
+        fn payload_viewer(p: &crate::infoset_v1::PayloadV1) -> crate::ids::PlayerId {
+            crate::ids::PlayerId(p.viewer)
+        }
         for (deck, seed) in [("CawGates", 5_u64), ("Wildfire", 6), ("Faeries", 7)] {
             let mut server = infoset_server();
             let mut line =
@@ -3492,6 +3641,107 @@ mod tests {
                         k
                     };
                     assert_eq!(kinds(lockstep), kinds(&imported), "{deck}: candidate kinds");
+                    // The order map pairs each imported row with the lockstep
+                    // row of the same action: the actions agree once ids are
+                    // renamed to canonical arena indices, and stepping both
+                    // rows reaches equal canonical menus.
+                    let rows: Vec<u32> = match extension["live_rows"].as_array() {
+                        Some(r) => r.iter().map(|x| x.as_u64().unwrap() as u32).collect(),
+                        None => {
+                            missing_maps += 1;
+                            // Diagnostics: the two menus' canonical forms.
+                            let lists = lockstep.deck_ids_v1().clone().map(|id| {
+                                crate::runtime_decks::runtime_deck_by_id(&id)
+                                    .unwrap()
+                                    .card_ids
+                                    .to_vec()
+                            });
+                            let st = lockstep.game_state();
+                            if let Ok(export) = crate::infoset_v1::export_v1(
+                                &crate::infoset_v1::ExportInputV1 {
+                                    state: st,
+                                    journal: st.observation_journal.notes(),
+                                    viewer: payload_viewer(&payload),
+                                    decklists: [&lists[0], &lists[1]],
+                                },
+                                crate::infoset_v1::ExportOptionsV1::default(),
+                            ) {
+                                let ids = crate::infoset_v1::order::canonical_ids_v1(&export);
+                                let forms = |s: &crate::rl_session::FastActorSessionV1,
+                                             ids: Option<&std::collections::BTreeMap<u64, u64>>| {
+                                    let crate::rl_session::FastActorResponseV1::Decision(d) =
+                                        s.current_response()
+                                    else {
+                                        return vec![];
+                                    };
+                                    let (_, menu) = s.actor_visible_decision_v4(d).unwrap();
+                                    menu.iter()
+                                        .map(|m| {
+                                            let mut v = serde_json::to_value(m).unwrap();
+                                            crate::infoset_v1::order::canonical_rename_v1(&mut v, ids);
+                                            v.to_string()
+                                        })
+                                        .collect::<Vec<_>>()
+                                };
+                                eprintln!(
+                                    "{deck}: no order map
+lockstep {:#?}
+imported {:#?}",
+                                    forms(lockstep, Some(&ids)),
+                                    forms(
+                                        &imported,
+                                        Some(&crate::infoset_v1::order::imported_ids_v1(
+                                            &payload.handles
+                                        ))
+                                    )
+                                );
+                            }
+                            line =
+                                server.handle_line(&flat_v4_step(&response, rows_of(&response)[0]));
+                            payloads += 1;
+                            continue;
+                        }
+                    };
+                    let keys: Vec<String> =
+                        serde_json::from_value(extension["row_keys"].clone()).expect("row keys");
+                    assert_eq!(rows.len(), keys.len(), "{deck}: one key per lockstep row");
+                    let lists = lockstep.deck_ids_v1().clone().map(|id| {
+                        crate::runtime_decks::runtime_deck_by_id(&id)
+                            .unwrap()
+                            .card_ids
+                            .to_vec()
+                    });
+                    let st = lockstep.game_state();
+                    let export = crate::infoset_v1::export_v1(
+                        &crate::infoset_v1::ExportInputV1 {
+                            state: st,
+                            journal: st.observation_journal.notes(),
+                            viewer: payload_viewer(&payload),
+                            decklists: [&lists[0], &lists[1]],
+                        },
+                        crate::infoset_v1::ExportOptionsV1::default(),
+                    )
+                    .expect("the export repeats");
+                    let ids = crate::infoset_v1::order::canonical_ids_v1(&export);
+                    let imported_ids = crate::infoset_v1::order::imported_ids_v1(&payload.handles);
+                    let semantic = |s: &crate::rl_session::FastActorSessionV1,
+                                    row: usize,
+                                    ids: Option<&std::collections::BTreeMap<u64, u64>>| {
+                        let mut v = serde_json::to_value(
+                            &s.diagnostic_current_action_semantics().unwrap()[row],
+                        )
+                        .unwrap();
+                        crate::infoset_v1::order::canonical_rename_v1(&mut v, ids);
+                        v
+                    };
+                    for (i, &r) in rows.iter().enumerate() {
+                        assert_eq!(
+                            semantic(lockstep, r as usize, Some(&ids)),
+                            semantic(&imported, i, Some(&imported_ids)),
+                            "{deck}: imported row {i} and lockstep row {r} are one action"
+                        );
+                    }
+                    mapped += 1;
                     payloads += 1;
                 }
                 let rows = rows_of(&response);
@@ -3500,8 +3750,9 @@ mod tests {
             }
         }
         eprintln!(
-            "bridge infoset: {eligible_total} eligible, {payloads} payloads, refusals {refusals:#?}, longest line {longest} bytes"
+            "bridge infoset: {eligible_total} eligible, {payloads} payloads ({mapped} with an order map, {missing_maps} without), refusals {refusals:#?}, longest line {longest} bytes"
         );
+        assert_eq!(missing_maps, 0, "every payload carries an order map");
         assert!(payloads > 0);
         assert!(longest < SPELLBENCH_MAX_LINE_BYTES_V1);
         // R5 is a ledger bug, never an expected refusal.

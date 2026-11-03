@@ -119,11 +119,13 @@ mod loaded_source_cache_v1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
+pub mod weights_snapshot_v1;
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
 };
+pub use weights_snapshot_v1::{materialize_weights_snapshot_v1, weights_snapshot_v1};
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
@@ -5530,8 +5532,30 @@ fn execute_update_inner_v1(
             "searches_failed":receipt["searches_failed"],"cap":exposure["cap"],
             "adam_steps":exposure["adam_steps"],"teacher_seconds":teacher_seconds});
     }
+    #[cfg(test)]
+    if take_crash_point_for_test_v1() {
+        return Err("crash point: the checkpoint is published, update.json is not".into());
+    }
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Bookkeeping design 2.3's crash point, for tests: the next update on
+    /// this thread stops after its checkpoint's publication and readback and
+    /// before `update.json`.
+    static CRASH_POINT_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn arm_crash_point_for_test_v1() {
+    CRASH_POINT_FOR_TEST_V1.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+fn take_crash_point_for_test_v1() -> bool {
+    CRASH_POINT_FOR_TEST_V1.with(|flag| flag.replace(false))
 }
 
 fn seat(p: PlayerSeatV1) -> u8 {
@@ -8546,6 +8570,7 @@ pub(crate) mod tests {
                         budgets: vec![300, 600],
                         search_seeds: vec![0, 1],
                         rollouts: 4,
+                        value_leaf: None,
                     }),
                 }),
             };
@@ -8612,6 +8637,129 @@ pub(crate) mod tests {
             }
         }
         assert!(reached > 0, "no slot reached its placed decision");
+    }
+
+    /// W5 Stage 2a capture: adding the value-leaf searches leaves the episode,
+    /// the Stage 0b candidates and every shared Q_ref value unchanged (parity),
+    /// records every horizon x count x seed search with its primary hash, and
+    /// extends Q_ref to the value-leaf supported actions.
+    #[test]
+    fn w5_capture_2a_value_leaf_keeps_the_0b_record_and_extends_qref() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-capture", 2_026_110_202, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let options = |value_leaf: Option<ex1_collect_v1::W5ValueLeafCaptureV1>| {
+            ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "w5/0b".into(),
+                update: 0,
+                budget: 600,
+                w5: Some(ex1_collect_v1::W5CollectOptionsV1 {
+                    recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                    key_memo_mib: 64,
+                    capture_0b: Some(ex1_collect_v1::W5CaptureOptionsV1 {
+                        budgets: vec![300],
+                        search_seeds: vec![0],
+                        rollouts: 2,
+                        value_leaf,
+                    }),
+                }),
+            }
+        };
+        let vl = ex1_collect_v1::W5ValueLeafCaptureV1 {
+            horizons: vec!["h0".into(), "t0".into()],
+            sims: vec![12],
+            search_seeds: vec![0, 1],
+        };
+        let mut bad = vl.clone();
+        bad.horizons = vec!["t1".into()];
+        assert!(options(Some(bad)).validate_v1().is_err());
+        let mut done = false;
+        for slot in 0..48_usize {
+            let mut records = Vec::new();
+            for value_leaf in [None, Some(vl.clone())] {
+                let options = options(value_leaf);
+                options.validate_v1().unwrap();
+                let mut hook =
+                    ex1_collect_v1::Ex1EpisodeHookV1::new(&options, &policy, &episode, slot)
+                        .unwrap();
+                let hooked = collect_episode_hooked_v1(
+                    &mut policy,
+                    &learner,
+                    None,
+                    &episode,
+                    Some(&mut hook),
+                )
+                .unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&plain).unwrap(),
+                    serde_json::to_vec(&hooked).unwrap(),
+                    "slot {slot}: capture changed the episode"
+                );
+                records.push(hook.finish_v1(&episode, true)["capture_0b"].clone());
+            }
+            let (a, b) = (&records[0], &records[1]);
+            assert_eq!(a["reached"], b["reached"]);
+            if a["reached"] != true {
+                continue;
+            }
+            assert!(a.get("value_leaf").is_none());
+            assert_eq!((&a["step"], &a["policy"]), (&b["step"], &b["policy"]));
+            let strip = |c: &Value| {
+                let mut c = c.clone();
+                for x in c.as_array_mut().unwrap() {
+                    x.as_object_mut().unwrap().remove("cpu_s");
+                    x["search"].as_object_mut().unwrap().remove("wall");
+                }
+                c
+            };
+            assert_eq!(strip(&a["candidates"]), strip(&b["candidates"]));
+            let qref = |r: &Value| -> std::collections::BTreeMap<u64, (u64, u64)> {
+                let q = &r["qref"];
+                let actions: Vec<u64> = serde_json::from_value(q["actions"].clone()).unwrap();
+                let wins: Vec<u64> = serde_json::from_value(q["wins"].clone()).unwrap();
+                let draws: Vec<u64> = serde_json::from_value(q["draws"].clone()).unwrap();
+                (0..actions.len())
+                    .map(|i| (actions[i], (wins[i], draws[i])))
+                    .collect()
+            };
+            assert_eq!(a["qref"], b["qref"], "the 0b Q_ref moved");
+            let mut qb = qref(b);
+            let extra = json!({"qref": b["qref_extra"].clone()});
+            for (action, value) in qref(&extra) {
+                assert!(
+                    qb.insert(action, value).is_none(),
+                    "extra repeats a 0b action"
+                );
+            }
+            assert_ne!(b["qref_extra"]["seed_root"], b["qref"]["seed_root"]);
+            let rows = b["value_leaf"].as_array().unwrap();
+            assert_eq!(rows.len(), 4);
+            let width = b["policy"]["logit_bits"].as_array().unwrap().len();
+            let roots: std::collections::BTreeSet<&str> = rows
+                .iter()
+                .map(|r| r["seed_root"].as_str().unwrap())
+                .collect();
+            assert_eq!(roots.len(), 4);
+            for r in rows {
+                assert_eq!(r["primary_sha256"].as_str().unwrap().len(), 64);
+                if r["status"] != "ok" {
+                    continue;
+                }
+                let n: Vec<u64> = serde_json::from_value(r["n"].clone()).unwrap();
+                let units: Vec<u64> = serde_json::from_value(r["value_units"].clone()).unwrap();
+                assert_eq!((n.len(), units.len()), (width, width));
+                assert!(n.iter().zip(&units).all(|(&n, &u)| u <= n << 20));
+                for (action, &count) in n.iter().enumerate() {
+                    if count >= 8 {
+                        assert!(qb.contains_key(&(action as u64)));
+                    }
+                }
+            }
+            done = true;
+            break;
+        }
+        assert!(done, "no slot reached its placed decision");
     }
 
     #[test]
