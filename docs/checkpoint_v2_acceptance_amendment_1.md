@@ -1,6 +1,6 @@
 # Checkpoint v2 acceptance (design 7.2): amendment 1, a floor under the relative read baseline
 
-Status: pre-run amendment to design revision 10, section 7.2 (container PR #468, harness PR #508). No full-scale block has run. The only data cited are the reduced-scale validation receipts from the second host and the run disk's specification.
+Status: pre-run amendment to design revision 10, section 7.2 (container PR #468, harness PR #508). No full-scale block has run. The only data cited are the reduced-scale validation I/O counters from the second host, the run disk's specification and the design's byte budget.
 
 ## The rule as frozen
 
@@ -31,10 +31,14 @@ A cold-read calibration (evicting the inputs, or reading fresh copies, before ev
 
 ## Why 10 MB/s
 
-- **Above the measurement's own variation, with margin.** The largest clean block mean on the second host was 1.80 MB/s at 4 runs. Scaling linearly to 16 runs gives about 7.2 MB/s, which is conservative because each run's inputs are shared. The 20 MB/s threshold is about 2.8 times that.
-- **Small against the device.** The production run disk is a Samsung 870 EVO 1 TB (SATA), rated at 560 MB/s sequential read. 20 MB/s is 3.6% of the rated read rate, and a third of the absolute cap. Foreign reads large enough to compete for the disk are still caught well below the cap.
-- **Small against the measurement's own traffic.** Design 7.2's byte budget is about 16.4 GB written per block, about 150 MB/s over a block of about 110 s. 20 MB/s of reads is about one eighth of that.
+10 MB/s is a chosen, fixed engineering floor, not a validated full-scale bound. The context for the choice:
+
+- **The measurement's own variation.** The largest clean block mean on the second host was 1.80 MB/s at 4 runs. A rough linear extrapolation to 16 runs, under comparable cache conditions, gives about 7.2 MB/s. Cache pressure on another host with a larger working set could make misses grow faster than linearly, so this is context, not a bound. The 20 MB/s threshold is about 2.8 times the extrapolation.
+- **The device.** The production run disk is a Samsung 870 EVO 1 TB (SATA), rated at 560 MB/s sequential read. 20 MB/s is 3.6% of that rate and a third of the absolute cap. The sequential rating does not bound interference from mixed or random I/O.
+- **The measurement's own traffic.** Design 7.2's byte budget is about 16.4 GB written per block, about 150 MB/s over a block of about 110 s. 20 MB/s of reads is about one eighth of that.
+
+**The tradeoff, stated plainly.** The amendment tolerates more unidentified reads than the frozen rule. That can include foreign interference below 20 MB/s that the frozen rule would have caught (when it was not already firing on the measurement's own cache misses). The absolute cap, the E: rule and the claim rule still apply. Comparison couples are still never replaced, and any contaminated comparison block still ends the attempt, so the floor adds no way to select which contrasts are tested.
 
 ## Effect on the decision
 
-The amendment changes only which comparison blocks count as contaminated. It reads no contrast and no comparison data, and it is fixed before any full-scale block runs.
+The amendment changes only which comparison blocks count as contaminated. The floor uses reduced-scale I/O counters, including the comparison-block counters of validation run 2. No throughput contrast or adoption outcome was used. It is fixed before any full-scale block runs.
