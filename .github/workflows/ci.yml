@@ -112,6 +112,12 @@ jobs:
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # Three concurrent rustc processes, not four: the whole-crate test
+      # target checks at about 9 GB, and with three more targets beside it
+      # the Limited Clippy step peaked within 50 MB of the runner's 16 GB
+      # and was killed (PR #486). Lints are unchanged.
+      CARGO_BUILD_JOBS: "3"
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
