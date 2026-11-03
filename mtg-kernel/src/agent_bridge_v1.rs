@@ -3506,6 +3506,119 @@ mod tests {
         assert!(longest < SPELLBENCH_MAX_LINE_BYTES_V1);
     }
 
+    /// Diagnosis of R5 ("hand physical facts differ from native rows") on
+    /// the bridge path: every case's object-level difference between V's
+    /// projected hand facts and the engine's own knowledge rows, with the
+    /// events and notes naming those objects.
+    #[test]
+    fn infoset_r5_cases_on_the_bridge() {
+        let mut cases = Vec::new();
+        for (deck, seed) in [("CawGates", 5_u64), ("Wildfire", 6), ("Faeries", 7)] {
+            let mut server = infoset_server();
+            let mut line =
+                server.handle_line(&flat_v4_reset(&format!("r5-{deck}-{seed}"), deck, seed));
+            let mut rng = crate::state::SplitMix64::seed(seed);
+            for step in 0..400 {
+                let response: Value = serde_json::from_str(&line).unwrap();
+                if response["response_type"] != "decision" {
+                    break;
+                }
+                if response["extensions"]["x_kernel_infoset_v1"]["refusal"] == "R5" {
+                    let game = server.game.as_ref().unwrap();
+                    let st = game.flat_v4.as_ref().unwrap().fast_session().game_state();
+                    let v = if response["acting_seat"] == "p0" {
+                        crate::ids::PlayerId::P0
+                    } else {
+                        crate::ids::PlayerId::P1
+                    };
+                    let p = crate::infoset_v1::projection::project_v1(
+                        st,
+                        st.observation_journal.notes(),
+                        v,
+                    );
+                    let projected: std::collections::BTreeSet<(u32, u32)> = p
+                        .hand_facts
+                        .iter()
+                        .filter_map(|f| f.native)
+                        .map(|id| (id.0, st.objects.get(id).zone_change_count))
+                        .collect();
+                    let native: std::collections::BTreeSet<(u32, u32)> = st
+                        .known_hand_cards(v, v.opponent())
+                        .iter()
+                        .map(|k| (k.object.0, k.zone_change_count))
+                        .collect();
+                    let describe = |(id, g): &(u32, u32)| {
+                        let o = st.objects.get(crate::ids::ObjectId(*id));
+                        let events: Vec<String> = st
+                            .engine
+                            .event_history
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, e)| {
+                                serde_json::to_string(e)
+                                    .unwrap_or_default()
+                                    .contains(&format!("\"{id}\""))
+                                    || serde_json::to_value(e).is_ok_and(|x| {
+                                        x.to_string().contains(&format!(":{id},"))
+                                            || x.to_string().contains(&format!(":{id}}}"))
+                                    })
+                            })
+                            .map(|(i, e)| {
+                                format!("{i}:{}", serde_json::to_string(e).unwrap_or_default())
+                                    .chars()
+                                    .take(220)
+                                    .collect()
+                            })
+                            .collect();
+                        let notes: Vec<String> = st
+                            .observation_journal
+                            .notes()
+                            .iter()
+                            .filter(|n| {
+                                serde_json::to_value(&n.kind).is_ok_and(|x| {
+                                    x.to_string().contains(&format!(":{id},"))
+                                        || x.to_string().contains(&format!(":{id}}}"))
+                                        || x.to_string().contains(&format!("[{id},"))
+                                })
+                            })
+                            .map(|n| {
+                                format!(
+                                    "@{}:{}",
+                                    n.history_len,
+                                    serde_json::to_string(&n.kind).unwrap_or_default()
+                                )
+                                .chars()
+                                .take(220)
+                                .collect()
+                            })
+                            .collect();
+                        format!(
+                            "object {id} gen {g} {} {:?} now gen {}; events {events:?}; notes {notes:?}",
+                            o.name, o.zone, o.zone_change_count
+                        )
+                    };
+                    cases.push(format!(
+                        "{deck} seed {seed} step {step} viewer {v:?}: projected only {:?}; native only {:?}",
+                        projected.difference(&native).map(describe).collect::<Vec<_>>(),
+                        native.difference(&projected).map(describe).collect::<Vec<_>>()
+                    ));
+                }
+                let rows = rows_of(&response);
+                let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
+                line = server.handle_line(&flat_v4_step(&response, pick));
+            }
+        }
+        eprintln!(
+            "R5 cases on the bridge: {}
+{}",
+            cases.len(),
+            cases.join(
+                "
+"
+            )
+        );
+    }
+
     #[test]
     fn flat_v4_whole_games_carry_the_extension_on_every_decision_of_every_deck() {
         for deck in [
