@@ -50,6 +50,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -216,18 +217,16 @@ def probe_snapshot_bytes(records, binary):
     if binary is None:
         return None
     for rec in reversed(records):
-        if Path(rec['checkpoint']['path']).exists():
-            out = Path(rec['checkpoint']['path']).with_name('probe.weights')
-            out.unlink(missing_ok=True)
-            try:
-                run = subprocess.run([binary, 'weights-snapshot', '--input', rec['checkpoint']['path'], '--sha256',
-                                      rec['checkpoint']['sha256'], '--output', out.resolve().as_posix()],
-                                     capture_output=True, text=True)
-                if run.returncode != 0:
-                    raise SystemExit(f'stop: the probe snapshot failed: {run.stderr.strip()[-400:]}')
+        path = Path(rec['checkpoint']['path'])
+        if not path.exists() or sha(path) != rec['checkpoint']['sha256']:
+            continue
+        with tempfile.TemporaryDirectory(dir=path.parent) as tmp:
+            out = Path(tmp).resolve() / 'probe.weights'
+            run = subprocess.run([binary, 'weights-snapshot', '--input', path.as_posix(), '--sha256',
+                                  rec['checkpoint']['sha256'], '--output', out.as_posix()],
+                                 capture_output=True, text=True)
+            if run.returncode == 0:
                 return json.loads(run.stdout)['snapshot_bytes']
-            finally:
-                out.unlink(missing_ok=True)
     return None
 
 
@@ -582,11 +581,13 @@ def main(argv=None):
         # A measured snapshot: one already cut, or a probe cut from the latest checkpoint and deleted. Without
         # either the window is not admitted (the endpoint is rebuilt by replay).
         made = snapshots(a.x_chain)
-        if made:
-            size, measured = max(s['bytes'] for s in made.values()), True
-        else:
-            size, measured = probe_snapshot_bytes(x_records, a.binary), a.binary is not None
+        size, measured = (max(s['bytes'] for s in made.values()), True) if made else (None, False)
         out = decide(x_chain, x_records, c_chain, c_records, a.c_ended, a.x_running_seconds, a.now, size)
+        if size is None and out['action'] == 'run' and 'snapshot_fits' in out and a.binary:
+            # Only the snapshot admission needs a size: probe now, then decide again.
+            size = probe_snapshot_bytes(x_records, a.binary)
+            measured = size is not None
+            out = decide(x_chain, x_records, c_chain, c_records, a.c_ended, a.x_running_seconds, a.now, size)
         out['snapshot_bytes'] = size
         out['snapshot_bytes_measured'] = measured
     elif a.cmd == 'select':

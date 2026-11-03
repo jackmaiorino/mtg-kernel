@@ -277,9 +277,18 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual([(k['boundary'], k['kind']) for k in manifest['keep']['selected_checkpoint']],
                              [(150, 'weights')])
             self.assertIn((150, 'full'), [(p['boundary'], p['kind']) for p in manifest['prune']])
-            # A snapshot that no longer matches its index never authorizes a prune.
-            Path(have[160]['path']).write_bytes(b'x' * 10)
-            self.assertNotIn(160, {c['boundary'] for c in retention.plan(chain_path, snapshot_from=100)['checkpoints']})
+            # A snapshot that no longer matches its index never authorizes a prune: a fresh chain, where
+            # boundary 110 (segment 1, followed by a complete segment) is eligible until its snapshot changes.
+            chain2 = make_chain(Path(tmp) / 'second', 'X', segments=3, per_segment=64)
+            real = retention.subprocess.run
+            retention.subprocess.run = self.fake_snapshots()
+            try:
+                retention.snapshot(chain2, 'binary', 100)
+            finally:
+                retention.subprocess.run = real
+            self.assertIn(110, {c['boundary'] for c in retention.plan(chain2, snapshot_from=100)['checkpoints']})
+            Path(retention.snapshots(chain2)[110]['path']).write_bytes(b'x' * 10)
+            self.assertNotIn(110, {c['boundary'] for c in retention.plan(chain2, snapshot_from=100)['checkpoints']})
             # The guard reports both kinds and refuses a snapshot directory outside its roots.
             ok = retention.guard([tmp], 10**12, chains=[chain_path])
             self.assertTrue(ok['ok'])
