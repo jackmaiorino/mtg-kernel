@@ -683,16 +683,20 @@ impl Ex1EpisodeHookV1 {
                 candidates.push(candidate);
             }
         }
-        // Stage 2a: the value-leaf searches at the same decision (after the
-        // candidates, before Q_ref, so Q_ref covers their supported actions).
+        // Stage 2a: the value-leaf searches at the same decision. Their
+        // supported actions outside the 0b Q_ref set get their own
+        // continuations (`qref_extra`, tag `w5/2a/qref`), so the 0b record is
+        // unchanged.
         let mut value_leaf = Vec::new();
+        let mut vl_actions = std::collections::BTreeSet::new();
         if let Some(vl) = capture.value_leaf.clone() {
             for label in &vl.horizons {
                 let horizon = crate::regret_census_v1::stage4a::value_leaf::Horizon::parse(label)?;
                 for &sims in &vl.sims {
                     for &search_seed in &vl.search_seeds {
+                        let step = d.step;
                         let seed_root =
-                            format!("w5/2a/{hash:016x}/{}/{label}/n{sims}/s{search_seed}", d.step);
+                            format!("w5/2a/{hash:016x}/{step}/{label}/n{sims}/s{search_seed}");
                         let started = crate::regret_census_v1::stage4a::process_cpu::seconds()?;
                         let (record, root) = self.searcher.value_leaf_search(
                             session,
@@ -708,7 +712,7 @@ impl Ex1EpisodeHookV1 {
                         if let Some(root) = root {
                             for (a, &(n, _, _)) in root.iter().enumerate() {
                                 if n >= crate::ex1_v1::EX1_SUPPORT_MIN_V1 {
-                                    actions.insert(a);
+                                    vl_actions.insert(a);
                                 }
                             }
                             row["n"] = json!(root.iter().map(|x| x.0).collect::<Vec<_>>());
@@ -735,56 +739,68 @@ impl Ex1EpisodeHookV1 {
             }
         });
         actions.insert(argmax);
+        let extra: Vec<usize> = vl_actions.difference(&actions).copied().collect();
         let actions: Vec<usize> = actions.into_iter().collect();
         let focal = self.learner_seat;
         let (run, update, seed) = (self.options.run.clone(), self.options.update, self.seed);
+        let rollouts = capture.rollouts;
         let qref_root = format!("w5/0b/qref/{hash:016x}/{}", d.step);
-        let (mut wins, mut draws, mut n, mut nonnatural) = (vec![], vec![], vec![], vec![]);
-        for &action in &actions {
-            let (mut w, mut dr, mut nn) = (0_u64, 0_u64, 0_u64);
-            for r in 0..capture.rollouts {
-                let text = json!(["w5/0b/qref", run, update, seed, slot, action, r]).to_string();
-                let digest = sha2::Sha256::digest(text.as_bytes());
-                let mut first = [0_u8; 8];
-                first.copy_from_slice(&digest[..8]);
-                let mut s = session.clone();
-                s.step(d.episode_id, d.step, action as u32).map_err(err)?;
-                rollout_policy.reset_sampling_v1(
-                    crate::paired_bo1_harness_v1::paired_policy_seeds_v1(u64::from_le_bytes(first)),
-                );
-                loop {
-                    match s.current_response() {
-                        FastActorResponseV1::Terminal(t) => {
-                            if t.terminal_classification != TerminalClassificationV1::Natural {
-                                nn += 1;
-                                dr += 1;
-                            } else {
-                                match t.winner {
-                                    Some(winner) if seat(winner) == focal => w += 1,
-                                    Some(_) => {}
-                                    None => dr += 1,
+        let mut continuations = |tag: &str, actions: &[usize]| -> Result<[Vec<u64>; 4], String> {
+            let (mut wins, mut draws, mut n, mut nonnatural) = (vec![], vec![], vec![], vec![]);
+            for &action in actions {
+                let (mut w, mut dr, mut nn) = (0_u64, 0_u64, 0_u64);
+                for r in 0..rollouts {
+                    let text = json!([tag, run, update, seed, slot, action, r]).to_string();
+                    let digest = sha2::Sha256::digest(text.as_bytes());
+                    let mut first = [0_u8; 8];
+                    first.copy_from_slice(&digest[..8]);
+                    let mut s = session.clone();
+                    s.step(d.episode_id, d.step, action as u32).map_err(err)?;
+                    rollout_policy.reset_sampling_v1(
+                        crate::paired_bo1_harness_v1::paired_policy_seeds_v1(u64::from_le_bytes(
+                            first,
+                        )),
+                    );
+                    loop {
+                        match s.current_response() {
+                            FastActorResponseV1::Terminal(t) => {
+                                if t.terminal_classification != TerminalClassificationV1::Natural {
+                                    nn += 1;
+                                    dr += 1;
+                                } else {
+                                    match t.winner {
+                                        Some(winner) if seat(winner) == focal => w += 1,
+                                        Some(_) => {}
+                                        None => dr += 1,
+                                    }
                                 }
+                                break;
                             }
-                            break;
-                        }
-                        FastActorResponseV1::Decision(next) => {
-                            let a = rollout_policy.select_fast_session_v1(&s)?;
-                            s.step(next.episode_id, next.step, a).map_err(err)?;
+                            FastActorResponseV1::Decision(next) => {
+                                let a = rollout_policy.select_fast_session_v1(&s)?;
+                                s.step(next.episode_id, next.step, a).map_err(err)?;
+                            }
                         }
                     }
                 }
+                wins.push(w);
+                draws.push(dr);
+                n.push(rollouts);
+                nonnatural.push(nn);
             }
-            wins.push(w);
-            draws.push(dr);
-            n.push(capture.rollouts);
-            nonnatural.push(nn);
-        }
+            Ok([wins, draws, n, nonnatural])
+        };
+        let [wins, draws, n, nonnatural] = continuations("w5/0b/qref", &actions)?;
         let mut out = json!({"reached":true,"step":d.step,"physical_decision_id":d.physical_decision_id,
             "policy":{"logit_bits":logit_bits},"candidates":candidates,
-            "qref":{"rollouts":capture.rollouts,"seed_root":qref_root,"actions":actions,
+            "qref":{"rollouts":rollouts,"seed_root":qref_root,"actions":actions,
                 "wins":wins,"draws":draws,"n":n},"qref_nonnatural":nonnatural});
         if capture.value_leaf.is_some() {
+            let [wins, draws, n, nonnatural] = continuations("w5/2a/qref", &extra)?;
             out["value_leaf"] = json!(value_leaf);
+            out["qref_extra"] = json!({"rollouts":rollouts,
+                "seed_root":format!("w5/2a/qref/{hash:016x}/{}", d.step),"actions":extra,
+                "wins":wins,"draws":draws,"n":n,"nonnatural":nonnatural});
         }
         Ok(out)
     }

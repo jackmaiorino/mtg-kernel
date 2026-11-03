@@ -8697,10 +8697,13 @@ pub(crate) mod tests {
                 let draws: Vec<u64> = serde_json::from_value(q["draws"].clone()).unwrap();
                 (0..actions.len()).map(|i| (actions[i], (wins[i], draws[i]))).collect()
             };
-            let (qa, qb) = (qref(a), qref(b));
-            for (action, value) in &qa {
-                assert_eq!(qb.get(action), Some(value), "shared Q_ref action {action} moved");
+            assert_eq!(a["qref"], b["qref"], "the 0b Q_ref moved");
+            let mut qb = qref(b);
+            let extra = json!({"qref": b["qref_extra"].clone()});
+            for (action, value) in qref(&extra) {
+                assert!(qb.insert(action, value).is_none(), "extra repeats a 0b action");
             }
+            assert_ne!(b["qref_extra"]["seed_root"], b["qref"]["seed_root"]);
             let rows = b["value_leaf"].as_array().unwrap();
             assert_eq!(rows.len(), 4);
             let width = b["policy"]["logit_bits"].as_array().unwrap().len();

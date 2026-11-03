@@ -313,7 +313,7 @@ class Capture0bTests(unittest.TestCase):
         command = capture0b.read(sorted((out_dir / 'jobs').glob('u*.json'))[0])
         out = Path(command['output_directory'])
         out.mkdir(parents=True)
-        actions = [0, 1, 2] if extra_action else [0, 1]
+        actions = [0, 1]
         capture = {'reached': True, 'step': 7, 'policy': {'logit_bits': [1, 2, 3]},
                    'candidates': [{'budget': b, 'search_seed': s, 'seed_root': f'r{b}{s}', 'status': 'ok',
                                    'cpu_s': 1.5 + s, 'n': [8, 8, 0], 'wins': [1, 2 + moved, 0], 'draws': [0, 0, 0],
@@ -321,6 +321,9 @@ class Capture0bTests(unittest.TestCase):
                    'qref': {'rollouts': 128, 'seed_root': 'q', 'actions': actions, 'wins': [1, 2, 3][:len(actions)],
                             'draws': [0] * len(actions), 'n': [128] * len(actions)}, 'qref_nonnatural': [0, 0]}
         if value_leaf:
+            capture['qref_extra'] = {'rollouts': 128, 'seed_root': 'q2a', 'actions': [2] if extra_action else [],
+                                     'wins': [3] if extra_action else [], 'draws': [0] if extra_action else [],
+                                     'n': [128] if extra_action else [], 'nonnatural': [0] if extra_action else []}
             capture['value_leaf'] = [{'horizon': h, 'n_sims': n, 'search_seed': s, 'seed_root': f'v{h}{n}{s}',
                                       'status': 'ok', 'cpu_s': 0.25, 'primary_sha256': 'a' * 64,
                                       'n': [4, 0, 8], 'value_units': [1 << 19, 0, 8 << 20], 'draws': [0, 0, 0],
@@ -345,6 +348,8 @@ class Capture0bTests(unittest.TestCase):
         self.assertNotIn('search', r['configs'][0])
         self.assertEqual([c['search_seed'] for c in r['comparator']], [0, 1])
         self.assertTrue(all(c['budget'] == 16000 and c['key_memo'] == 'on' for c in r['comparator']))
+        self.assertEqual((r['qref_extra']['actions'], r['qref_extra']['seed_root']), ([2], 'q2a'))
+        self.assertNotIn('nonnatural', r['qref_extra'])
         # Parity: the same jobs without value-leaf searches give the same 0b record; a moved count is caught.
         capture0b.jobs(self.base, {'source': self.source}, self.root / 'plain', updates=1)
         self._sidecars(self.root / 'plain', False)
@@ -352,6 +357,10 @@ class Capture0bTests(unittest.TestCase):
         capture0b.jobs(self.base, {'source': self.source}, self.root / 'moved', updates=1)
         self._sidecars(self.root / 'moved', False, moved=True)
         self.assertEqual(capture0b.parity(self.root / 'moved', self.root / 'vl')['differ'], [0])
+        # A run whose jobs are not the other's first jobs is not a parity pair.
+        capture0b.jobs(self.base, {'source': self.source}, self.root / 'late', updates=1, first_update=1)
+        self._sidecars(self.root / 'late', False)
+        self.assertFalse(capture0b.parity(self.root / 'late', self.root / 'vl')['equal'])
         with self.assertRaises(SystemExit):  # 0b-only jobs have no value-leaf records
             capture0b.convert_vl(self.root / 'plain', 16000, 'x', 'b' * 64)
 

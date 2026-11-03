@@ -191,35 +191,42 @@ def convert_vl(out_dir, budget, host_class, binary_sha256):
         comparator = [{'budget': c['budget'], 'search_seed': c['search_seed'], 'cpu_s': c['cpu_s'],
                        'key_memo': 'on', 'key_memo_limit_bytes': limit}
                       for c in capture['candidates'] if c['budget'] == budget]
+        extra = capture['qref_extra']
         records.append({'schema': VL_SCHEMA, 'episode': ordinal, 'game': last['episode_id'],
                         'host_class': host_class, 'binary_sha256': binary_sha256, 'key_memo': 'on',
                         'key_memo_limit_bytes': limit, 'configs': configs, 'comparator': comparator,
-                        'qref_extra': {'rollouts': capture['qref']['rollouts'], 'seed_root': '',
-                                       'actions': [], 'n': [], 'wins': [], 'draws': []}})
+                        'qref_extra': {k: extra[k] for k in ('rollouts', 'seed_root', 'actions', 'n', 'wins',
+                                                             'draws')}})
     return records
 
 
 def parity(dir_a, dir_b):
-    """0b parity of two capture runs over the same jobs: DIR_A without value-leaf searches, DIR_B with them. Every
-    DIR_A Q_ref action must appear in DIR_B with the same counts (DIR_B may add value-leaf supported actions)."""
+    """0b parity of two capture runs over the same jobs: DIR_A without value-leaf searches, DIR_B with them. DIR_A's
+    jobs must be DIR_B's first jobs (same episodes), every DIR_A episode must be in DIR_B, and each must have the
+    same game, step, policy, candidates (CPU aside) and Q_ref (actions, counts, denominators, rollouts)."""
+    ja = [read(j) for j in read(Path(dir_a) / 'jobs' / 'manifest.json')['jobs']]
+    jb = [read(j) for j in read(Path(dir_b) / 'jobs' / 'manifest.json')['jobs']]
+    same_jobs = bool(ja) and len(ja) <= len(jb) and all(
+        x['episodes'] == y['episodes'] and x['ex1']['run'] == y['ex1']['run']
+        and x['ex1']['update'] == y['ex1']['update'] for x, y in zip(ja, jb))
     a = {r['episode']: r for r in convert(dir_a)}
     b = {r['episode']: r for r in convert(dir_b)}
-    shared = sorted(set(a) & set(b))
+    missing = sorted(set(a) - set(b))
     differ = []
-    for e in shared:
+
+    def strip(cs):
+        return [{k: v for k, v in c.items() if k != 'cpu_s'} for c in cs]
+    for e in sorted(set(a) & set(b)):
         x, y = a[e], b[e]
         same = (x['game'], x['reached']) == (y['game'], y['reached'])
         if same and x['reached']:
-            strip = lambda cs: [{k: v for k, v in c.items() if k != 'cpu_s'} for c in cs]  # noqa: E731
-            qx = dict(zip(x['qref']['actions'], zip(x['qref']['wins'], x['qref']['draws'])))
-            qy = dict(zip(y['qref']['actions'], zip(y['qref']['wins'], y['qref']['draws'])))
             same = (x['step'] == y['step'] and x['policy'] == y['policy']
-                    and strip(x['candidates']) == strip(y['candidates'])
-                    and all(qy.get(k) == v for k, v in qx.items()))
+                    and strip(x['candidates']) == strip(y['candidates']) and x['qref'] == y['qref'])
         if not same:
             differ.append(e)
-    return {'episodes': len(shared), 'reached': sum(a[e]['reached'] for e in shared), 'differ': differ,
-            'equal': not differ and bool(shared)}
+    return {'jobs': len(ja), 'same_jobs': same_jobs, 'episodes': len(a), 'missing': missing,
+            'reached': sum(r['reached'] for r in a.values()), 'differ': differ,
+            'equal': same_jobs and bool(a) and not missing and not differ}
 
 
 def main(argv=None):
