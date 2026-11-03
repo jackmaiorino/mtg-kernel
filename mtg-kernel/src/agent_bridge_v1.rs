@@ -3384,6 +3384,110 @@ mod tests {
         )
     }
 
+    /// Design 7's composition keys: at a buffered group's root with a
+    /// payload, each private preview's `row_keys` (lockstep rows, keyed with
+    /// the root export's map) equal the keys of the entrant's local state,
+    /// the imported root stepped by the same choices, and the two menus pair
+    /// one to one. Walks every preview prefix of the first candidate's
+    /// trajectory up to four native points deep.
+    #[test]
+    fn infoset_v1_preview_keys_match_the_local_walk() {
+        let mut checked = 0u64;
+        let mut groups = 0u64;
+        for (deck, seed) in [
+            ("CawGates", 5_u64),
+            ("Faeries", 7),
+            ("CawGates", 11),
+            ("Faeries", 12),
+            ("Spy", 3),
+            ("Wildfire", 6),
+        ] {
+            let mut server = SpellbenchBridgeServerV1::with_options(
+                SpellbenchEngineIdentityV1::with_source_revision(None),
+                SpellbenchBridgeOptionsV1 {
+                    x_kernel_flat_v4: true,
+                    private_v2_support: true,
+                    x_kernel_infoset_v1: true,
+                },
+            );
+            let mut line =
+                server.handle_line(&flat_v4_reset(&format!("p-{deck}-{seed}"), deck, seed));
+            let mut rng = crate::state::SplitMix64::seed(seed);
+            for _ in 0..500 {
+                let response: Value = serde_json::from_str(&line).unwrap();
+                if response["response_type"] != "decision" {
+                    break;
+                }
+                let extension = &response["extensions"]["x_kernel_infoset_v1"];
+                if let (Some(text), Some(live_rows)) = (
+                    extension["payload_json"].as_str(),
+                    extension["live_rows"].as_array(),
+                ) {
+                    let payload =
+                        crate::infoset_v1::PayloadV1::from_bytes(text.as_bytes()).unwrap();
+                    let ids = crate::infoset_v1::order::imported_ids_v1(&payload.handles);
+                    let live_rows: Vec<usize> = live_rows
+                        .iter()
+                        .map(|x| x.as_u64().unwrap() as usize)
+                        .collect();
+                    let rows = rows_of(&response);
+                    // Follow imported row 0 at every point: the lockstep
+                    // candidate is found through each point's own pairing.
+                    let mut local = payload.import().unwrap();
+                    let mut prefix: Vec<u64> = vec![];
+                    let mut pairing = live_rows.clone();
+                    let mut lockstep_rows = rows.clone();
+                    let mut opened = false;
+                    for _depth in 0..4 {
+                        prefix.push(lockstep_rows[pairing[0]]);
+                        let preview = json!({"protocol": SPELLBENCH_PROTOCOL_V1,
+                            "request_type": "preview_steps", "request_id": "pv",
+                            "game_id": response["game_id"], "expected_step": response["step"],
+                            "candidate_ids": prefix})
+                        .to_string();
+                        let answer: Value =
+                            serde_json::from_str(&server.handle_line(&preview)).unwrap();
+                        if answer["response_type"] != "private_preview" {
+                            break;
+                        }
+                        if !opened {
+                            opened = true;
+                            groups += 1;
+                        }
+                        let view = &answer["view"];
+                        let keys: Vec<String> = serde_json::from_value(
+                            view["extensions"]["x_kernel_infoset_v1"]["row_keys"].clone(),
+                        )
+                        .expect("a preview of a payload root carries row keys");
+                        let crate::rl_session::FastActorResponseV1::Decision(e) =
+                            local.current_response()
+                        else {
+                            panic!("{deck}: the local root is not a decision")
+                        };
+                        local.step(e.episode_id, e.step, 0).unwrap();
+                        let local_keys = crate::infoset_v1::order::row_keys_v1(&local, Some(&ids))
+                            .expect("local keys");
+                        pairing = crate::infoset_v1::order::live_rows_v1(&keys, &local_keys)
+                            .map(|r| r.into_iter().map(|x| x as usize).collect())
+                            .unwrap_or_else(|| {
+                                panic!("{deck}: preview and local keys differ: {keys:?} vs {local_keys:?}")
+                            });
+                        lockstep_rows = rows_of(view);
+                        checked += 1;
+                    }
+                }
+                let rows = rows_of(&response);
+                let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
+                line = server.handle_line(&flat_v4_step(&response, pick));
+            }
+        }
+        eprintln!("preview keys: {checked} preview points in {groups} buffered groups");
+        assert!(
+            checked > 0,
+            "no buffered group with a payload was previewed"
+        );
+    }
+
     /// W1 bridge wiring: with `x_kernel_infoset_v1` on, every eligible
     /// decision (two candidates, two of them not mana abilities) carries a
     /// payload or a refusal code and no other decision carries either; each
