@@ -1043,8 +1043,9 @@ class Supervisor:
         self.state.mkdir(parents=True, exist_ok=True)
         locks = [flock(self.state / "supervisor.lock", f"Chain {self.chain}"),
                  flock(self.state_root / f"box{self.slot['slot']}.lock", f"Box {self.slot['slot']}")]
-        prepare_root(self.root, self.layout, self.plan["isolation"])
-        prepare_box(self.root, self.slot)
+        with self.node.locked():  # concurrent supervisors create the shared root one at a time
+            prepare_root(self.root, self.layout, self.plan["isolation"])
+            prepare_box(self.root, self.slot)
         self.recover()
         summary = self.ledger.summary()
         if summary["unresolved_lower_bounds"]:
