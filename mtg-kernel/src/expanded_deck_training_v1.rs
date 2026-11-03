@@ -4425,6 +4425,13 @@ fn execute_update_inner_v1(
         )?;
     }
     let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    // Rows the search played are authenticated and masked only by a W5
+    // update; every other update refuses them.
+    ensure(
+        ex1.as_ref().is_some_and(|options| options.w5.is_some())
+            || episodes.iter().all(|t| t.search_played.is_none()),
+        "search-played rows need a w5 update",
+    )?;
     for episode in &episodes {
         validate_trajectory(episode)?;
         ensure(

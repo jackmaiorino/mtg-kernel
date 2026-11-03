@@ -366,6 +366,11 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None):
                 and replay_receipt.get('endpoint_checkpoint')):
             raise SystemExit('stop: the replay receipt is not a verified replay of the selected boundary')
         pin = replay_receipt['endpoint_checkpoint']
+        record = next((r for r in records if r['boundary'] == selected_boundary), None)
+        if record is None or replay_receipt.get('endpoint_after_state_sha256') != record['after_state_sha256']:
+            raise SystemExit("stop: the replayed endpoint's state is not this chain's recorded state")
+        if not Path(pin['path']).exists() or sha(pin['path']) != pin['sha256']:
+            raise SystemExit('stop: the replayed checkpoint differs from its pin')
         keep.append({'boundary': selected_boundary, 'path': Path(pin['path']).as_posix(), 'sha256': pin['sha256'],
                      'bytes': Path(pin['path']).stat().st_size, 'replayed': True})
     for rec in records:

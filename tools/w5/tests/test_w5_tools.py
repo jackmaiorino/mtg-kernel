@@ -195,6 +195,9 @@ class RetentionTests(unittest.TestCase):
             manifest = retention.prune_manifest(chain, records, 101, verified)
             self.assertEqual([k['boundary'] for k in manifest['keep']['selected_checkpoint']], [101])
             self.assertTrue(manifest['keep']['selected_checkpoint'][0]['replayed'])
+            # Another state at the same boundary is refused.
+            with self.assertRaises(SystemExit):
+                retention.prune_manifest(chain, records, 101, dict(verified, endpoint_after_state_sha256='other'))
             (root / 'iterations' / '000005' / 'u.json').write_text(json.dumps({'after_state_sha256': 'bad'}))
             receipt = retention.verify_replay(spec, root)
             self.assertFalse(receipt['equal'])

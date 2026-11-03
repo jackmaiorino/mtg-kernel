@@ -164,7 +164,9 @@ pub(super) fn check_continuation_v1(
                 options.map(continuation_identity).as_ref() == saved.get("continuation"),
                 "ex1 continuation must preserve the target, constants, dose and cap",
             )?;
+            let saved_w5 = saved["continuation"]["method"] == W5_XACT_VERSION_V1;
             match (saved.get("w5_next_update"), options) {
+                (None, _) if saved_w5 => Err("a w5 checkpoint lacks its next global update".into()),
                 (None, _) => Ok(()),
                 (Some(next), Some(options)) => ensure(
                     next == &json!(options.update),
@@ -582,7 +584,8 @@ mod tests {
         let saved = json!({"continuation":identity});
         assert!(check_continuation_v1(Some(&saved), Some(&options(1.0, capped, 6))).is_err());
         // The saved cursor binds the next global update.
-        let cursor = json!({"continuation":identity,"w5_next_update":6});
+        let cursor = json!({"continuation":identity.clone(),"w5_next_update":6});
+        assert!(check_continuation_v1(Some(&saved), Some(&w5(6, 16_000))).is_err());
         assert!(check_continuation_v1(Some(&cursor), Some(&w5(6, 16_000))).is_ok());
         assert!(check_continuation_v1(Some(&cursor), Some(&w5(7, 16_000))).is_err());
         assert!(check_continuation_v1(Some(&cursor), Some(&w5(5, 16_000))).is_err());
