@@ -3590,6 +3590,191 @@ mod tests {
             .is_none());
     }
 
+    /// Bookkeeping design 2.3, the crash point, in both record formats: an
+    /// update interrupted after its checkpoint's publication and before
+    /// `update.json` resumes in a new attempt that reuses the original
+    /// collection and reaches the uninterrupted run's states. The inventory
+    /// of both attempts is exactly the frozen one: the interrupted attempt
+    /// holds its collection, both commands, its update input and an update
+    /// directory with the published checkpoint and no `update.json`, whose
+    /// bytes equal the resumed attempt's checkpoint; the resumed attempt's
+    /// collection directory stays unused, its update input pins the original
+    /// collection and its update command differs only in the output
+    /// directory.
+    #[test]
+    fn a_crash_after_the_checkpoint_resumes_in_a_new_attempt_with_the_same_states() {
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        };
+        for format in [
+            crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
+            crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V2,
+        ] {
+            let label = format!("crash-point-{format:?}");
+            let mut plain = real_two_iteration_config_v1(
+                &format!("{label}-plain"),
+                gae,
+                ExpandedUpdateBackendV1::Cpu,
+            );
+            plain.record_format = format;
+            let mut crashed =
+                real_two_iteration_config_v1(&label, gae, ExpandedUpdateBackendV1::Cpu);
+            crashed.record_format = format;
+            let reference = run_native_expanded_training_v1(&plain, None).unwrap();
+            crate::expanded_deck_training_v1::arm_crash_point_for_test_v1();
+            let error = run_native_expanded_training_v1(&crashed, None).unwrap_err();
+            assert!(error.contains("crash point"), "{error}");
+            // Every file of the interrupted attempt, recursively, with its bytes.
+            let inventory = |dir: &Path| -> std::collections::BTreeMap<String, Vec<u8>> {
+                let mut out = std::collections::BTreeMap::new();
+                let mut stack = vec![dir.to_path_buf()];
+                while let Some(next) = stack.pop() {
+                    for entry in fs::read_dir(&next).unwrap() {
+                        let path = entry.unwrap().path();
+                        if path.is_dir() {
+                            stack.push(path);
+                        } else {
+                            let rel = path
+                                .strip_prefix(dir)
+                                .unwrap()
+                                .to_string_lossy()
+                                .replace(std::path::MAIN_SEPARATOR, "/");
+                            out.insert(rel, fs::read(&path).unwrap());
+                        }
+                    }
+                }
+                out
+            };
+            let interrupted = crashed
+                .output_directory
+                .join("iterations")
+                .join("000000")
+                .join("attempt-000000");
+            let before = inventory(&interrupted);
+            let resumed = run_native_expanded_training_v1(&crashed, None).unwrap();
+            assert_eq!(
+                before,
+                inventory(&interrupted),
+                "{label}: the resume changed the interrupted attempt"
+            );
+            let names: Vec<&str> = before.keys().map(String::as_str).collect();
+            assert!(
+                names.iter().all(|name| [
+                    "collect-command.json",
+                    "update-input.json",
+                    "update-command.json",
+                    "update/checkpoint.json",
+                    "collect/collection.json"
+                ]
+                .contains(name)
+                    || (name.starts_with("collect/episode-") && name.ends_with(".json"))),
+                "{label}: {names:?}"
+            );
+            for required in [
+                "collect-command.json",
+                "update-input.json",
+                "update-command.json",
+                "update/checkpoint.json",
+                "collect/collection.json",
+            ] {
+                assert!(before.contains_key(required), "{label}: {required} missing");
+            }
+            let after = inventory(
+                &crashed
+                    .output_directory
+                    .join("iterations")
+                    .join("000000")
+                    .join("attempt-000001"),
+            );
+            assert_eq!(
+                after.keys().map(String::as_str).collect::<Vec<_>>(),
+                vec![
+                    "collect-command.json",
+                    "update-command.json",
+                    "update-input.json",
+                    "update/checkpoint.json",
+                    "update/update.json"
+                ],
+                "{label}"
+            );
+            assert_eq!(resumed["complete"], true);
+            let states = |result: &Value| {
+                (0..2)
+                    .map(|i| {
+                        let update: PinnedFileV1 = serde_json::from_value(
+                            iteration_receipt_v1(result, i)["update"].clone(),
+                        )
+                        .unwrap();
+                        read_pin(&update).unwrap()["after_state_sha256"].clone()
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(states(&reference), states(&resumed), "{label}");
+            let iteration = crashed.output_directory.join("iterations").join("000000");
+            let names = |dir: &Path| {
+                let mut out: Vec<String> = fs::read_dir(dir)
+                    .unwrap()
+                    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect();
+                out.sort();
+                out
+            };
+            assert_eq!(
+                names(&iteration),
+                vec!["attempt-000000", "attempt-000001", "complete.json"]
+            );
+            let first = iteration.join("attempt-000000");
+            let second = iteration.join("attempt-000001");
+            assert_eq!(
+                names(&first),
+                vec![
+                    "collect",
+                    "collect-command.json",
+                    "update",
+                    "update-command.json",
+                    "update-input.json"
+                ]
+            );
+            assert!(!first.join("update/update.json").exists());
+            assert!(first.join("update/checkpoint.json").exists());
+            assert_eq!(
+                fs::read(first.join("update/checkpoint.json")).unwrap(),
+                fs::read(second.join("update/checkpoint.json")).unwrap(),
+                "{label}: the update is deterministic"
+            );
+            assert!(first.join("collect/collection.json").exists());
+            assert!(!second.join("collect").exists() || names(&second.join("collect")).is_empty());
+            let read = |path: PathBuf| -> Value {
+                serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+            };
+            let original = read(second.join("update-input.json"))["collection"]["path"]
+                .as_str()
+                .map(PathBuf::from)
+                .unwrap();
+            assert_eq!(
+                original.canonicalize().unwrap(),
+                first
+                    .join("collect")
+                    .join("collection.json")
+                    .canonicalize()
+                    .unwrap()
+            );
+            let mut a = read(first.join("update-command.json"));
+            let mut b = read(second.join("update-command.json"));
+            a["output_directory"] = Value::Null;
+            b["output_directory"] = Value::Null;
+            assert_eq!(a, b, "{label}: commands differ beyond the output directory");
+            assert_ne!(
+                read(first.join("collect-command.json"))["output_directory"],
+                read(second.join("collect-command.json"))["output_directory"]
+            );
+            let log = fs::read_to_string(crashed.output_directory.join("restarts.log")).unwrap();
+            assert!(log.contains("iteration 0: restart incomplete phase in attempt 1"));
+        }
+    }
+
     /// TP1 Stage B's ledger: with `record_process_cpu`, every iteration
     /// receipt records the driver's own process CPU at its boundary,
     /// nondecreasing; without it receipts are unchanged.
