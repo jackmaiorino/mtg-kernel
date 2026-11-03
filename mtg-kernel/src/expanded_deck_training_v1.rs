@@ -388,7 +388,7 @@ pub struct ExpandedModelSourceV1 {
     /// the FlatV4 shell S plays on, and `checkpoint` pins an S checkpoint
     /// record. Omitted when absent, so every existing source keeps its bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub s_learner: Option<s_learner_v1::SLearnerSourceV1>,
+    pub s_learner: Option<Box<s_learner_v1::SLearnerSourceV1>>,
 }
 
 /// Inference identity after exact current-feature model/optimizer validation.
@@ -1848,6 +1848,10 @@ pub(crate) fn validate_ordinary_source_descriptor_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(), String> {
     ensure(
+        source.s_learner.is_none(),
+        s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
+    ensure(
         source.checkpoint.is_some(),
         "ordinary parent checkpoint is required",
     )?;
@@ -1980,6 +1984,10 @@ pub fn inspect_fresh_initialization_v1(
     source: &ExpandedModelSourceV1,
     output_directory: &Path,
 ) -> Result<Value, String> {
+    ensure(
+        source.s_learner.is_none(),
+        s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
     ensure(
         source.checkpoint.is_none(),
         "fresh inspection cannot restore a checkpoint",

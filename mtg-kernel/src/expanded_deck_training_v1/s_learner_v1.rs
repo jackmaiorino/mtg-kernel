@@ -4,7 +4,7 @@
 //! place of net-8.
 //!
 //! **Source.** The play import and feature transfer load the plain FlatV4
-//! shell (an ordinary or fresh-initialization import): its encoder,
+//! shell (a fresh-initialization import, as every FlatV4 lineage's): its encoder,
 //! tensorizer, samplers and RNG streams are used unchanged, and S is
 //! installed on it (`install_s_model_v1`), so every forward of the learner
 //! is S's. `s_learner.initial` pins S's starting train state (S0 for XS).
@@ -125,7 +125,7 @@ pub(super) struct LoadedSV1 {
 fn s_member_v1(source: &ExpandedModelSourceV1) -> Result<&SLearnerSourceV1, String> {
     let member = source
         .s_learner
-        .as_ref()
+        .as_deref()
         .ok_or("the source has no S learner")?;
     ensure(
         member.schema == S_LEARNER_SOURCE_SCHEMA_V1,
@@ -151,9 +151,9 @@ pub(super) fn load_s_v1(
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     let schema = probe.get("schema").and_then(Value::as_str);
     ensure(
-        schema.is_none() || schema == Some(super::fresh_initialization_source::SOURCE_SCHEMA),
-        "an S learner's shell is an ordinary or fresh-initialization import; transfer, \
-         registry-evolution, BO3 and no-state-digest imports are refused",
+        schema == Some(super::fresh_initialization_source::SOURCE_SCHEMA),
+        "an S learner's shell is a fresh-initialization (FlatV4) import; ordinary V3, \
+         transfer, registry-evolution, BO3 and no-state-digest imports are refused",
     )?;
     let mut policy = super::load_ordinary_policy_v1(source, &bytes)?;
     ensure(
@@ -253,6 +253,39 @@ pub(super) fn load_update_inference_v1(
 ) -> Result<ExpandedInferenceIdentityV1, String> {
     let loaded = load_s_v1(source, Some(inputs))?;
     Ok(s_identity_v1(source, &loaded.policy, &loaded.state))
+}
+
+/// The run driver's recovery check of an S checkpoint's GAE settings: the
+/// record must carry exactly the run's gamma, lambda and zero entropy. A
+/// net-8 source passes unchanged.
+pub(crate) fn validate_update_loss_v1(
+    source: &ExpandedModelSourceV1,
+    loss_selection: &ExpandedLossSelectionV1,
+) -> Result<(), String> {
+    if source.s_learner.is_none() {
+        return Ok(());
+    }
+    let pin = source
+        .checkpoint
+        .as_ref()
+        .ok_or("an S update requires its checkpoint")?;
+    let record: SLearnerCheckpointV1 =
+        serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+    let ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma,
+        lambda,
+        entropy_coefficient,
+    } = loss_selection
+    else {
+        return Err("an S learner trains only the GAE loss (gae_advantage_value/v1)".into());
+    };
+    ensure(
+        record.gamma_bits == gamma.to_bits()
+            && record.gae_lambda_bits == lambda.to_bits()
+            && entropy_coefficient.to_bits() == 0
+            && record.entropy_coefficient_bits == 0,
+        "S checkpoint GAE settings differ from the run's",
+    )
 }
 
 /// Binds the command's math: a checkpoint must record it.

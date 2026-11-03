@@ -1281,6 +1281,7 @@ fn validate_update(
     ex1: Option<(&Ex1RunOptionsV1, usize, &PinnedFileV1)>,
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
+    loss_selection: &ExpandedLossSelectionV1,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     check(
@@ -1324,6 +1325,8 @@ fn validate_update(
     };
     let after =
         load_expanded_update_inference_v1(&next, trajectories, learning_rate, value_coefficient)?;
+    // An S checkpoint also binds the run's GAE settings (`s_learner_v1`).
+    crate::expanded_deck_training_v1::s_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
     check(
         after.adam_step
             == before
@@ -1810,6 +1813,7 @@ pub fn run_native_expanded_training_v1(
                 config.ex1.as_ref().map(|o| (o, index, &collection)),
                 config.training_math,
                 input_contract.as_ref(),
+                &config.loss_selection,
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -1928,6 +1932,7 @@ pub fn run_native_expanded_training_v1(
                         .map(|o| (o, index, &referenced_collection)),
                     config.training_math,
                     input_contract.as_ref(),
+                    &config.loss_selection,
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -2049,6 +2054,7 @@ pub fn run_native_expanded_training_v1(
             config.ex1.as_ref().map(|o| (o, index, &collection)),
             config.training_math,
             input_contract.as_ref(),
+            &config.loss_selection,
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,

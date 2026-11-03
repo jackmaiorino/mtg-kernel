@@ -76,24 +76,28 @@ fn net8_source(root: &Path) -> ExpandedModelSourceV1 {
 /// moments and step, which the fresh start must drop.
 fn s_source(root: &Path, shell: &ExpandedModelSourceV1) -> ExpandedModelSourceV1 {
     let model = SModelV1::init_pilot_scheme_v1(SMALL_V1, 20_261_103).unwrap();
-    let total = model.values_v1().len();
+    let mut grad = vec![1.0e-3f32; model.values_v1().len()];
+    for range in model.layout_v1().gauge_ranges_v1() {
+        grad[range].fill(0.0);
+    }
     let mut state = STrainStateV1::fresh_optimizer_v1(model);
-    let grad = vec![0.0f32; total];
-    // One step with a zero gradient keeps every value and moment at +0 but
-    // advances the step, so the start's reset is visible.
+    // One step with a nonzero gradient moves the parameters and leaves
+    // nonzero moments and step 1, so the start's reset is visible.
     state.adam_step_with_gradient_v1(&grad, 1.0e-4).unwrap();
     assert_eq!(state.adam_step_v1(), 1);
+    assert!(state.first_moments_v1().iter().any(|m| *m != 0.0));
+    assert!(state.second_moments_v1().iter().any(|m| *m != 0.0));
     let bytes = encode_checkpoint_v1(&state);
     let path = root.join("s0.bin");
     fs::write(&path, &bytes).unwrap();
     ExpandedModelSourceV1 {
-        s_learner: Some(SLearnerSourceV1 {
+        s_learner: Some(Box::new(SLearnerSourceV1 {
             schema: S_LEARNER_SOURCE_SCHEMA_V1.into(),
             initial: PinnedFileV1 {
                 path,
                 sha256: sha(&bytes),
             },
-        }),
+        })),
         ..shell.clone()
     }
 }
@@ -188,10 +192,10 @@ fn a_source_without_s_learner_keeps_its_wire_bytes() {
     assert!(source.s_learner.is_none());
     assert_eq!(serde_json::to_string(&source).unwrap(), legacy);
     let with = ExpandedModelSourceV1 {
-        s_learner: Some(SLearnerSourceV1 {
+        s_learner: Some(Box::new(SLearnerSourceV1 {
             schema: S_LEARNER_SOURCE_SCHEMA_V1.into(),
             initial: source.play_import.clone(),
-        }),
+        })),
         ..source.clone()
     };
     let text = serde_json::to_string(&with).unwrap();
@@ -239,8 +243,26 @@ fn s_learner_end_to_end_v1() {
         identity.model.weights_sha256,
         initial.model_v1().parameter_sha256_v1()
     );
-    assert_eq!(policy.feature_identity_v1(), FRESH_FEATURE_IDENTITY_V4);
+    assert!(policy.feature_identity_v1() == FRESH_FEATURE_IDENTITY_V4);
     drop(policy);
+    let loaded = load_s_v1(&s, None).unwrap();
+    assert_eq!(loaded.state.adam_step_v1(), 0);
+    assert_eq!(
+        loaded.state.model_v1().values_v1(),
+        initial.model_v1().values_v1()
+    );
+    assert!(loaded
+        .state
+        .first_moments_v1()
+        .iter()
+        .all(|m| m.to_bits() == 0));
+    assert!(loaded
+        .state
+        .second_moments_v1()
+        .iter()
+        .all(|m| m.to_bits() == 0));
+    assert!(initial.first_moments_v1().iter().any(|m| *m != 0.0));
+    drop(loaded);
 
     let collection = collect(
         &s,
@@ -304,6 +326,41 @@ fn s_learner_end_to_end_v1() {
         ..expectation
     };
     assert!(load_update_inference_v1(&next, &wrong).is_err());
+    // The recovery check binds the run's GAE settings exactly.
+    validate_update_loss_v1(&next, &gae()).unwrap();
+    for loss in [
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 0.99,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        },
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.95,
+            entropy_coefficient: 0.0,
+        },
+        ExpandedLossSelectionV1::TerminalReinforceValueV3,
+    ] {
+        assert!(validate_update_loss_v1(&next, &loss).is_err());
+    }
+    validate_update_loss_v1(&net8, &ExpandedLossSelectionV1::TerminalReinforceValueV3).unwrap();
+    // A continuation with other GAE settings is refused.
+    assert!(update(
+        &next,
+        Vec::from([PinnedFileV1 {
+            path: root.join("missing.json"),
+            sha256: "0".repeat(64),
+        }]),
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 0.99,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        },
+        CheckpointRecordFormatV1::V1,
+        root.join("other-gamma"),
+    )
+    .unwrap_err()
+    .contains("gamma and lambda"));
     // The same update again reproduces the same state.
     let again = update(
         &s,
@@ -442,6 +499,19 @@ fn s_learner_refusals_v1() {
     let mut unknown = s.clone();
     unknown.s_learner.as_mut().unwrap().schema = "w5-s-learner/v0".into();
     assert!(load_inference_v1(&unknown).is_err());
+    // Net-8 entry points that do not go through the initializer.
+    assert_eq!(
+        super::super::inspect_fresh_initialization_v1(&s, &root.join("inspect")).unwrap_err(),
+        S_LEARNER_NET8_REFUSAL_V1
+    );
+    let with_checkpoint = ExpandedModelSourceV1 {
+        checkpoint: Some(s.s_learner.as_ref().unwrap().initial.clone()),
+        ..s.clone()
+    };
+    assert_eq!(
+        super::super::validate_ordinary_source_descriptor_v1(&with_checkpoint).unwrap_err(),
+        S_LEARNER_NET8_REFUSAL_V1
+    );
     // Collection options.
     assert!(collection_learner_v1(
         &s,
