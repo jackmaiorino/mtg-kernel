@@ -98,7 +98,9 @@ def vl_target(logit_bits, n, units):
 
 
 def finite_cost(x) -> bool:
-    return type(x) in (int, float) and math.isfinite(x) and x >= 0
+    """A search's CPU: finite and positive (every attempted search, failed or not, costs CPU), so no bootstrap
+    replicate can have a zero cost denominator."""
+    return type(x) in (int, float) and math.isfinite(x) and x > 0
 
 
 def validate_vl(vl: dict, panel_record: dict, budget: int, grid: tuple, horizons: tuple) -> None:
@@ -361,10 +363,12 @@ def confirm(records: list[dict], vl: dict, parent_sha256: str, budget: int, lock
     return result
 
 
-def crossclass(vl_a: dict, vl_b: dict, episodes: list[int]) -> dict:
-    """Primary-hash agreement of the same searches (every config and seed of each named episode) in two host
-    classes. Every named search must be present and successful in both."""
+def crossclass(vl_a: dict, vl_b: dict, episodes: list[int], grid: tuple, horizons: tuple) -> dict:
+    """Primary-hash agreement of the same searches (every frozen config at seeds 0 and 1 of each named episode)
+    in two host classes. Every named search must be present and successful in both."""
     require(episodes, "name the sampled episodes")
+    expected = {(h, n, s) for h in horizons for n in grid for s in s0.SEEDS}
+    require(expected, "frozen grid and horizons")
     same, differ = 0, []
     for ep in episodes:
         require(ep in vl_a and ep in vl_b, f"episode {ep}: missing in one class")
@@ -373,7 +377,7 @@ def crossclass(vl_a: dict, vl_b: dict, episodes: list[int]) -> dict:
         require(a["host_class"] != b["host_class"], f"episode {ep}: both records are in class {a['host_class']}")
         ka = {(c["horizon"], c["n_sims"], c["search_seed"]): c for c in a["configs"]}
         kb = {(c["horizon"], c["n_sims"], c["search_seed"]): c for c in b["configs"]}
-        require(set(ka) == set(kb), f"episode {ep}: different searches")
+        require(set(ka) == set(kb) == expected, f"episode {ep}: searches differ from the frozen grid at both seeds")
         for k in sorted(ka):
             x, y = ka[k], kb[k]
             require(x["status"] == y["status"] == "ok" and x["seed_root"] == y["seed_root"],
@@ -404,10 +408,13 @@ def main(argv=None) -> int:
     p.add_argument("--vl", type=Path, required=True)
     p.add_argument("--other", type=Path, required=True)
     p.add_argument("--episodes", required=True, help="the sampled episodes, e.g. 3,17,40")
+    p.add_argument("--grid", required=True, help="the frozen N grid, e.g. 128,512")
+    p.add_argument("--horizons", required=True, help="the frozen horizons, e.g. h0,t0")
     args = parser.parse_args(argv)
     try:
         if args.command == "crossclass":
-            result = crossclass(load_vl(args.vl), load_vl(args.other), [int(x) for x in args.episodes.split(",")])
+            result = crossclass(load_vl(args.vl), load_vl(args.other), [int(x) for x in args.episodes.split(",")],
+                                tuple(int(x) for x in args.grid.split(",")), tuple(args.horizons.split(",")))
         elif args.command == "select":
             require(not args.lock.exists(), "the lock exists; selection is already locked")
             result = select(s0.load_records(args.captures), load_vl(args.vl), args.parent_sha256, args.budget,

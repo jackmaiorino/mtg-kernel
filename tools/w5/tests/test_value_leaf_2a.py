@@ -173,6 +173,9 @@ class RuleTests(unittest.TestCase):
         bad = vl_record(rec)
         bad["comparator"][0]["cpu_s"] = -1.0
         cases.append(bad)
+        bad = vl_record(rec)
+        bad["configs"][0]["cpu_s"] = 0.0
+        cases.append(bad)
         for bad in cases:
             with self.assertRaises(s0.StageError):
                 vl.validate_vl(bad, rec, B, GRID, HOR)
@@ -181,16 +184,20 @@ class RuleTests(unittest.TestCase):
         eps = [r["episode"] for r in self.panel[:5]]
         node = {e: vl_record(r, tag="") for e, r in ((r["episode"], r) for r in self.panel[:5])}
         dev = {e: vl_record(r, host_class="dev-windows-haleyspc") for e, r in ((r["episode"], r) for r in self.panel[:5])}
-        self.assertTrue(vl.crossclass(node, dev, eps)["all_equal"])
+        self.assertTrue(vl.crossclass(node, dev, eps, GRID, HOR)["all_equal"])
         dev2 = {e: vl_record(r, host_class="dev-windows-haleyspc", tag="z") for e, r in
                 ((r["episode"], r) for r in self.panel[:5])}
-        res = vl.crossclass(node, dev2, eps)
+        res = vl.crossclass(node, dev2, eps, GRID, HOR)
         self.assertFalse(res["all_equal"])
         self.assertEqual(res["compared"], 5 * len(GRID) * len(HOR) * 2)
         with self.assertRaises(s0.StageError):  # same class on both sides
-            vl.crossclass(node, node, eps)
+            vl.crossclass(node, node, eps, GRID, HOR)
         with self.assertRaises(s0.StageError):  # a named episode missing
-            vl.crossclass(node, {e: v for e, v in dev.items() if e != eps[0]}, eps)
+            vl.crossclass(node, {e: v for e, v in dev.items() if e != eps[0]}, eps, GRID, HOR)
+        # The same search missing on both sides is still a gap in the frozen grid.
+        thin = lambda d: {e: dict(v, configs=[c for c in v["configs"] if c["search_seed"] == 0]) for e, v in d.items()}
+        with self.assertRaises(s0.StageError):
+            vl.crossclass(thin(node), thin(dev), eps, GRID, HOR)
 
     def test_cli_round_trip(self):
         with tempfile.TemporaryDirectory() as d:
