@@ -309,5 +309,52 @@ class Capture0bTests(unittest.TestCase):
         self.assertFalse(records[1]['reached'])
         self.assertNotIn('candidates', records[1])
 
+    def _sidecars(self, out_dir, value_leaf, extra_action=False, moved=False):
+        command = capture0b.read(sorted((out_dir / 'jobs').glob('u*.json'))[0])
+        out = Path(command['output_directory'])
+        out.mkdir(parents=True)
+        actions = [0, 1, 2] if extra_action else [0, 1]
+        capture = {'reached': True, 'step': 7, 'policy': {'logit_bits': [1, 2, 3]},
+                   'candidates': [{'budget': b, 'search_seed': s, 'seed_root': f'r{b}{s}', 'status': 'ok',
+                                   'cpu_s': 1.5 + s, 'n': [8, 8, 0], 'wins': [1, 2 + moved, 0], 'draws': [0, 0, 0],
+                                   'search': {'big': True}} for b in (16000, 64000) for s in (0, 1)],
+                   'qref': {'rollouts': 128, 'seed_root': 'q', 'actions': actions, 'wins': [1, 2, 3][:len(actions)],
+                            'draws': [0] * len(actions), 'n': [128] * len(actions)}, 'qref_nonnatural': [0, 0]}
+        if value_leaf:
+            capture['value_leaf'] = [{'horizon': h, 'n_sims': n, 'search_seed': s, 'seed_root': f'v{h}{n}{s}',
+                                      'status': 'ok', 'cpu_s': 0.25, 'primary_sha256': 'a' * 64,
+                                      'n': [4, 0, 8], 'value_units': [1 << 19, 0, 8 << 20], 'draws': [0, 0, 0],
+                                      'search': {}} for h in ('h0', 't0') for n in (128, 512) for s in (0, 1)]
+        sidecar = out / 'ex1-0000.json'
+        sidecar.write_text(json.dumps({'slot': 0, 'attempts': [
+            {'natural': True, 'episode_id': 'g0', 'seed': 10, 'options': {'run': 'w5/0b', 'update': 0},
+             'w5': {'placement_index': 5}, 'capture_0b': capture}]}))
+        (out / 'collection.json').write_text(json.dumps({'ex1': {'episodes': [{'path': sidecar.as_posix()}]}}))
+
+    def test_value_leaf_jobs_convert_and_parity(self):
+        vl = {'horizons': ['h0', 't0'], 'sims': [128, 512], 'search_seeds': [0, 1]}
+        made = capture0b.jobs(self.base, {'source': self.source}, self.root / 'vl', updates=1, value_leaf=vl)
+        self.assertEqual(capture0b.read(made[0])['ex1']['w5']['capture_0b']['value_leaf'], vl)
+        self._sidecars(self.root / 'vl', True, extra_action=True)
+        records = capture0b.convert_vl(self.root / 'vl', 16000, 'dev-windows-haleyspc', 'b' * 64)
+        self.assertEqual(len(records), 1)
+        r = records[0]
+        self.assertEqual((r['schema'], r['episode'], r['game'], r['key_memo_limit_bytes']),
+                         ('w5-2a-vl-capture/v1', 0, 'g0', 512 << 20))
+        self.assertEqual(len(r['configs']), 8)
+        self.assertNotIn('search', r['configs'][0])
+        self.assertEqual([c['search_seed'] for c in r['comparator']], [0, 1])
+        self.assertTrue(all(c['budget'] == 16000 and c['key_memo'] == 'on' for c in r['comparator']))
+        # Parity: the same jobs without value-leaf searches give the same 0b record; a moved count is caught.
+        capture0b.jobs(self.base, {'source': self.source}, self.root / 'plain', updates=1)
+        self._sidecars(self.root / 'plain', False)
+        self.assertTrue(capture0b.parity(self.root / 'plain', self.root / 'vl')['equal'])
+        capture0b.jobs(self.base, {'source': self.source}, self.root / 'moved', updates=1)
+        self._sidecars(self.root / 'moved', False, moved=True)
+        self.assertEqual(capture0b.parity(self.root / 'moved', self.root / 'vl')['differ'], [0])
+        with self.assertRaises(SystemExit):  # 0b-only jobs have no value-leaf records
+            capture0b.convert_vl(self.root / 'plain', 16000, 'x', 'b' * 64)
+
+
 if __name__ == '__main__':
     unittest.main()

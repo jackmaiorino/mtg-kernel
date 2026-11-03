@@ -92,6 +92,21 @@ pub struct W5CaptureOptionsV1 {
     pub budgets: Vec<u64>,
     pub search_seeds: Vec<u64>,
     pub rollouts: u64,
+    /// W5 Stage 2a (VALUE-LEAF-DESIGN.md section 12): the value-leaf searches
+    /// at the same placed decision, whose supported actions join Q_ref.
+    /// Omitted: the Stage 0b record is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_leaf: Option<W5ValueLeafCaptureV1>,
+}
+
+/// Stage 2a's value-leaf candidates: every horizon x simulation count x
+/// search seed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct W5ValueLeafCaptureV1 {
+    pub horizons: Vec<String>,
+    pub sims: Vec<u64>,
+    pub search_seeds: Vec<u64>,
 }
 
 impl Ex1CollectOptionsV1 {
@@ -128,6 +143,23 @@ impl Ex1CollectOptionsV1 {
                             && capture.rollouts <= 4096,
                         "w5 0b capture: 1 to 8 budgets and seeds, 1 to 4096 rollouts",
                     )?;
+                    if let Some(vl) = &capture.value_leaf {
+                        ensure(
+                            !vl.horizons.is_empty()
+                                && vl.horizons.len() <= 2
+                                && vl.horizons.iter().all(|h| {
+                                    crate::regret_census_v1::stage4a::value_leaf::Horizon::parse(h)
+                                        .is_ok()
+                                })
+                                && !vl.sims.is_empty()
+                                && vl.sims.len() <= 4
+                                && vl.sims.iter().all(|&n| n > 0 && n <= 65_536)
+                                && !vl.search_seeds.is_empty()
+                                && vl.search_seeds.len() <= 4,
+                            "w5 2a capture: 1 or 2 horizons (h0, t0), 1 to 4 simulation counts \
+                             in 1..=65536, 1 to 4 seeds",
+                        )?;
+                    }
                 }
                 ensure(
                     self.budget > 0 && self.budget <= W5_BUDGET_MAX_V1,
@@ -651,6 +683,43 @@ impl Ex1EpisodeHookV1 {
                 candidates.push(candidate);
             }
         }
+        // Stage 2a: the value-leaf searches at the same decision (after the
+        // candidates, before Q_ref, so Q_ref covers their supported actions).
+        let mut value_leaf = Vec::new();
+        if let Some(vl) = capture.value_leaf.clone() {
+            for label in &vl.horizons {
+                let horizon = crate::regret_census_v1::stage4a::value_leaf::Horizon::parse(label)?;
+                for &sims in &vl.sims {
+                    for &search_seed in &vl.search_seeds {
+                        let seed_root =
+                            format!("w5/2a/{hash:016x}/{}/{label}/n{sims}/s{search_seed}", d.step);
+                        let started = crate::regret_census_v1::stage4a::process_cpu::seconds()?;
+                        let (record, root) = self.searcher.value_leaf_search(
+                            session,
+                            horizon,
+                            sims,
+                            seed_root.clone(),
+                        )?;
+                        let cpu_s =
+                            crate::regret_census_v1::stage4a::process_cpu::seconds()? - started;
+                        let mut row = json!({"horizon":label,"n_sims":sims,"search_seed":search_seed,
+                            "seed_root":seed_root,"status":if root.is_some() {"ok"} else {"failed"},
+                            "cpu_s":cpu_s,"primary_sha256":record["primary_sha256"],"search":record});
+                        if let Some(root) = root {
+                            for (a, &(n, _, _)) in root.iter().enumerate() {
+                                if n >= crate::ex1_v1::EX1_SUPPORT_MIN_V1 {
+                                    actions.insert(a);
+                                }
+                            }
+                            row["n"] = json!(root.iter().map(|x| x.0).collect::<Vec<_>>());
+                            row["value_units"] = json!(root.iter().map(|x| x.1).collect::<Vec<_>>());
+                            row["draws"] = json!(root.iter().map(|x| x.2).collect::<Vec<_>>());
+                        }
+                        value_leaf.push(row);
+                    }
+                }
+            }
+        }
         // The policy's argmax on its binary64 softmax (the consumer's
         // `ex1-target-v1` mirror), ties to the lowest index.
         let z: Vec<f64> = logit_bits
@@ -710,12 +779,14 @@ impl Ex1EpisodeHookV1 {
             n.push(capture.rollouts);
             nonnatural.push(nn);
         }
-        Ok(
-            json!({"reached":true,"step":d.step,"physical_decision_id":d.physical_decision_id,
+        let mut out = json!({"reached":true,"step":d.step,"physical_decision_id":d.physical_decision_id,
             "policy":{"logit_bits":logit_bits},"candidates":candidates,
             "qref":{"rollouts":capture.rollouts,"seed_root":qref_root,"actions":actions,
-                "wins":wins,"draws":draws,"n":n},"qref_nonnatural":nonnatural}),
-        )
+                "wins":wins,"draws":draws,"n":n},"qref_nonnatural":nonnatural});
+        if capture.value_leaf.is_some() {
+            out["value_leaf"] = json!(value_leaf);
+        }
+        Ok(out)
     }
 }
 
