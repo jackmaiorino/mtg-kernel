@@ -3504,6 +3504,11 @@ mod tests {
         );
         assert!(payloads > 0);
         assert!(longest < SPELLBENCH_MAX_LINE_BYTES_V1);
+        // R5 is a ledger bug, never an expected refusal.
+        assert!(
+            !refusals.keys().any(|k| k.starts_with("R5")),
+            "R5 refusals: {refusals:?}"
+        );
     }
 
     #[test]
