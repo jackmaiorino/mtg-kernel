@@ -192,21 +192,26 @@ class GuardTests(unittest.TestCase):
 
 
 class NodeStateTests(unittest.TestCase):
-    def test_repeated_faults_clears_and_operator_freeze(self):
-        log = [{"event": "fault", "box_slot": 1, "unix": 1}]
-        self.assertTrue(w5box.NodeLog.state(log)["frozen"])
-        log += [{"event": "escalate", "box_slot": 1}, {"event": "clear", "box_slot": 1}]
-        state = w5box.NodeLog.state(log)
-        self.assertFalse(state["frozen"])
-        self.assertEqual(state["escalated"], [])
-        log += [{"event": "fault", "box_slot": 1, "unix": 2}, {"event": "fault", "box_slot": 3, "unix": 3},
-                {"event": "clear", "box_slot": 1}]
-        state = w5box.NodeLog.state(log)
-        self.assertEqual(sorted(state["open_faults"]), [3])
-        log += [{"event": "clear", "box_slot": 3}, {"event": "node-freeze", "reason": "x"}]
-        self.assertTrue(w5box.NodeLog.state(log)["frozen"])
+    def test_outages_faults_restorations_and_operator_freeze(self):
+        state = w5box.NodeLog.state
+        log = [{"event": "outage-start", "id": "o1", "box_slot": 1, "unix": 1}]
+        self.assertTrue(state(log)["frozen"])  # frozen from the first loss of occupancy, before any fault
+        log += [{"event": "fault", "outage_id": "o1", "box_slot": 1}, {"event": "escalate", "outage_id": "o1"},
+                {"event": "refill-failed", "outage_id": "o1", "box_slot": 1}]
+        self.assertTrue(state(log)["frozen"])
+        log += [{"event": "restored", "outage_id": "o1", "box_slot": 1}]
+        st = state(log)
+        self.assertFalse(st["frozen"])
+        self.assertEqual(st["escalated"], ["o1"])
+        log += [{"event": "outage-start", "id": "o2", "box_slot": 1, "unix": 2},
+                {"event": "outage-start", "id": "o3", "box_slot": 3, "unix": 3},
+                {"event": "restored", "outage_id": "o2", "box_slot": 1}]
+        self.assertEqual(sorted(state(log)["open_outages"]), [3])
+        log += [{"event": "restored", "outage_id": "o3", "box_slot": 3}, {"event": "node-freeze", "reason": "x"}]
+        self.assertTrue(state(log)["frozen"])
         log += [{"event": "node-thaw", "reason": "x"}]
-        self.assertFalse(w5box.NodeLog.state(log)["frozen"])
+        self.assertFalse(state(log)["frozen"])
+        self.assertTrue(state(log, torn=True)["frozen"])  # a torn tail keeps the node frozen
 
 
 if __name__ == "__main__":

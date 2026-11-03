@@ -41,14 +41,17 @@ surviving cgroup (with its OOM counters). If the cgroup is gone (a reboot), the 
 last durable live reading and the pause value as a lower bound, and `run` refuses to continue that chain until
 an operator accepts the gap (`--accept-lower-bound REASON`), the chain-failure decision being the lead's.
 
-**Occupancy (amendment A1's default).** A paused chain's box must hold the frozen filler. Every filler exit and
-restart is a node outage event; after FILLER_RESTARTS failed restarts the box has an open occupancy fault. The node
-log (`<state_root>/occupancy.jsonl`, hash-chained, appended under a node lock) carries every outage, fault, clear,
-escalation and operator freeze or thaw, with the chains affected. While any fault is open, or an operator freeze
-holds, every supervisor on the node freezes its measured chain (paused chains stay paused) and thaws it when the
-node is clear. `w5box.py refill` starts a new filler in the faulted box and clears the fault only after verifying
-it: alive, in the box's cgroup and cpuset, and burning CPU. An open fault escalates (`ESCALATE.json`) after 2 hours,
-or at once when the plan's `stage` is `1b`.
+**Occupancy (amendment A1's default).** A paused chain's box must hold the frozen filler. The node log
+(`<state_root>/occupancy.jsonl`, hash-chained) carries every outage (from the filler's exit to a verified
+replacement), fault, refill, escalation and operator freeze or thaw, with the chains affected; all appends and all
+enforcement run under one node lock. The moment a filler exits the outage opens and the node is not clear: every
+measured chain cgroup on the node is frozen, by whichever supervisor or operator command enforces next, so it does
+not depend on any one supervisor being alive. Restarts (up to FILLER_RESTARTS) close the outage only once verified
+(alive, the process in the box's filler cgroup and cpuset, burning CPU); otherwise the box faults. `w5box.py refill`
+empties the filler cgroup, starts and verifies a new filler, and only then records the restoration. Unpaused chains
+thaw when no outage, fault, operator freeze or torn log tail remains. A new chain instance does not start while the
+node is not clear. Escalation (`ESCALATE.json`): any outage open for 2 hours, or a fault at once in Stage 1b. Each
+chain copies every node event into its ledger exactly once (a durable watermark).
 
 **Guard (COMPUTE-POLICY item 5).** `run` refuses before any spawn unless the plan's pins hold (host class, the
 complete detected box layout, binary and config hashes, `argv[0]` is the pinned binary and the config is in
@@ -71,6 +74,7 @@ Linux with cgroup v2 only; `run` needs write access to the cgroup root (root, or
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -573,40 +577,85 @@ def flock(path: Path, what: str):
 
 
 class NodeLog:
-    """The node's occupancy log: every supervisor and operator appends under one node lock."""
+    """The node's occupancy log (hash-chained JSON lines). Every append and every enforcement decision runs under
+    one node lock, so a fault can never interleave with a thaw. A torn tail (a crash mid-append) freezes the node
+    until the next append repairs it."""
 
     def __init__(self, state_root: Path):
-        self.ledger = Ledger(Path(state_root) / "occupancy.jsonl")
+        self.path = Path(state_root) / "occupancy.jsonl"
         self.lock_path = Path(state_root) / "occupancy.lock"
 
-    def append(self, record: dict) -> dict:
+    @contextlib.contextmanager
+    def locked(self):
         import fcntl
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.lock_path, "w") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
-            return self.ledger.append(dict(record, log=OCCUPANCY_SCHEMA))
+            yield
 
-    def records(self) -> list[dict]:
-        return self.ledger.records()
+    def read(self) -> tuple[list[dict], bool]:
+        """Complete records (hash chain checked) and whether a torn tail follows them. Call under the lock."""
+        if not self.path.exists():
+            return [], False
+        data = self.path.read_bytes()
+        torn = bool(data) and not data.endswith(b"\n")
+        lines = data.split(b"\n")[:-1] if data else []
+        records, prev = [], None
+        for number, raw in enumerate(lines, 1):
+            record = json.loads(raw)
+            if record.get("prev_sha256") != prev:
+                raise ValueError(f"{self.path}: line {number} breaks the hash chain")
+            prev = sha256_bytes(raw)
+            records.append(record)
+        return records, torn
+
+    def append(self, record: dict) -> dict:
+        """Append under the caller's lock; a torn tail is cut and recorded first."""
+        data = self.path.read_bytes() if self.path.exists() else b""
+        if data and not data.endswith(b"\n"):
+            cut = data.rfind(b"\n") + 1
+            with open(self.path, "r+b") as handle:
+                handle.truncate(cut)
+            self._write({"event": "torn-tail-repaired", "bytes": len(data) - cut})
+        return self._write(record)
+
+    def _write(self, record: dict) -> dict:
+        data = self.path.read_bytes() if self.path.exists() else b""
+        lines = data.split(b"\n")[:-1] if data else []
+        prev = sha256_bytes(lines[-1]) if lines else None
+        record = dict(record, log=OCCUPANCY_SCHEMA, prev_sha256=prev, unix=round(time.time(), 3))
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path, "ab") as handle:
+            handle.write(canonical(record) + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        return record
 
     @staticmethod
-    def state(records: list[dict]) -> dict:
-        """Open faults by box, the operator freeze and the escalations, from the whole log."""
-        faults, escalated, operator = {}, set(), None
+    def state(records: list[dict], torn: bool = False) -> dict:
+        """Open outages and faults by box, escalations, the operator freeze, the last enforcement."""
+        outages, faults, escalated, operator, enforced = {}, {}, set(), None, None
         for r in records:
-            if r["event"] == "fault":
+            event = r["event"]
+            if event == "outage-start":
+                outages.setdefault(r["box_slot"], r)
+            elif event == "fault":
                 faults[r["box_slot"]] = r
-            elif r["event"] == "clear":
+            elif event == "restored":
+                outages.pop(r["box_slot"], None)
                 faults.pop(r["box_slot"], None)
-                escalated.discard(r["box_slot"])
-            elif r["event"] == "escalate":
-                escalated.add(r["box_slot"])
-            elif r["event"] == "node-freeze":
+            elif event == "escalate":
+                escalated.add(r["outage_id"])
+            elif event == "node-freeze":
                 operator = r
-            elif r["event"] == "node-thaw":
+            elif event == "node-thaw":
                 operator = None
-        return {"open_faults": faults, "escalated": sorted(escalated), "operator_freeze": operator,
-                "frozen": bool(faults) or operator is not None}
+            elif event == "enforced":
+                enforced = r
+        return {"open_outages": outages, "open_faults": faults, "escalated": sorted(escalated),
+                "operator_freeze": operator, "torn_tail": torn,
+                "frozen": bool(outages) or bool(faults) or operator is not None or torn,
+                "enforced_frozen": None if enforced is None else enforced["frozen"]}
 
 
 def node_chains(state_root: Path) -> list[dict]:
@@ -618,6 +667,44 @@ def node_chains(state_root: Path) -> list[dict]:
         except (OSError, ValueError):
             continue
     return out
+
+
+def enforce_node(plan: dict, node: NodeLog, reason: str) -> dict:
+    """Under the node lock: freeze every measured chain cgroup on the node while the node is not clear, thaw the
+    unpaused ones when it is, and escalate overdue outages. Any supervisor or operator command may run it, so
+    enforcement does not depend on a particular supervisor being alive."""
+    state_root, cgroup_root = Path(plan["state_root"]), Path(plan["cgroup_root"])
+    with node.locked():
+        records, torn = node.read()
+        state = NodeLog.state(records, torn)
+        changed = []
+        for box in sorted(cgroup_root.glob("box*")):
+            chain_cg = Cgroup(box / "chain")
+            if not chain_cg.exists() or not chain_cg.populated():
+                continue
+            owner_path = state_root / f"{box.name}.owner.json"
+            owner = json.loads(owner_path.read_text()) if owner_path.exists() else None
+            paused = owner is not None and (state_root / owner["chain"] / "paused.json").exists()
+            want = state["frozen"] or paused or owner is None
+            if chain_cg.frozen() != want:
+                chain_cg.freeze(want)
+                changed.append({"box": box.name, "chain": None if owner is None else owner["chain"], "frozen": want})
+        if state["enforced_frozen"] != state["frozen"] or changed:
+            node.append({"event": "enforced", "frozen": state["frozen"], "reason": reason, "changed": changed,
+                         "open_outages": sorted(state["open_outages"]), "open_faults": sorted(state["open_faults"]),
+                         "operator_freeze": state["operator_freeze"] is not None})
+        for slot, outage in state["open_outages"].items():
+            if outage["id"] in state["escalated"]:
+                continue
+            fault = state["open_faults"].get(slot)
+            stage_1b = plan.get("stage") == "1b" and fault is not None
+            if stage_1b or time.time() - outage["unix"] >= ESCALATE_SECONDS:
+                escalation = {"event": "escalate", "box_slot": slot, "outage_id": outage["id"],
+                              "outage_unix": outage["unix"], "stage": plan.get("stage"),
+                              "deadline": "immediate (Stage 1b fault)" if stage_1b else "2 hours"}
+                node.append(escalation)
+                write_json_atomic(state_root / "ESCALATE.json", escalation, durable=True)
+        return state
 
 
 class Supervisor:
@@ -642,12 +729,10 @@ class Supervisor:
         self.owner_path = self.state_root / f"box{self.slot['slot']}.owner.json"
         self.ledger_source = self.state / "ledger-source.json"
         self.node = NodeLog(self.state_root)
-        self.escalate_path = self.state_root / "ESCALATE.json"
+        self.watermark_path = self.state / "node-watermark.json"
+        self.paused_path = self.state / "paused.json"
         self.instance = self.base = self.pid = self.filler_pid = None
         self.paused_seq = self.paused_usec = None
-        self.filler_exits = 0
-        self.node_seen = 0
-        self.node_frozen = False
 
     # --- recovery of an instance whose supervisor died
     def recover(self) -> None:
@@ -679,10 +764,14 @@ class Supervisor:
                                 "recovered": how, "lower_bound": lower})
         if self.chain_cg.exists():
             self.chain_cg.rmdir()
-        if self.filler_cg.exists():  # left by a dead supervisor of this box's (now closed) chain
+        if self.filler_cg.exists():  # left by a dead supervisor: it held the box until this chain runs again
             self.filler_cg.kill()
             require(self.filler_cg.wait_empty(SETTLE_SECONDS), "A leftover filler did not die")
             self.filler_cg.rmdir()
+            with self.node.locked():
+                self.node.append({"event": "filler-replaced-by-chain", "box_slot": self.slot["slot"],
+                                  "chain": self.chain})
+        self.paused_path.unlink(missing_ok=True)
         if self.owner_path.exists():
             self.owner_path.unlink()
 
@@ -744,6 +833,8 @@ class Supervisor:
                                      instance_dir / f"filler-{self.paused_seq}-{self.filler_exits}.log")
 
     def pause(self, request: dict, instance_dir: Path) -> None:
+        # The paused mark comes first, so node enforcement never thaws a chain that is pausing.
+        write_json_atomic(self.paused_path, {"instance": self.instance, "seq": int(request["seq"])}, durable=True)
         self.chain_cg.freeze(True)
         self.paused_usec = self.chain_cg.usage_usec()
         self.paused_seq = int(request["seq"])
@@ -784,49 +875,19 @@ class Supervisor:
         write_json_atomic(self.control / f"resume.{self.instance}.{self.paused_seq}.json",
                           {"instance": self.instance, "seq": self.paused_seq, "payload": payload,
                            "ledger_usec": self.base + now}, durable=True)
-        if not self.node_frozen:  # a node occupancy freeze outlasts the pause
-            self.chain_cg.freeze(False)
+        with self.node.locked():  # the resumed chain itself now occupies its box
+            records, torn = self.node.read()
+            state = NodeLog.state(records, torn)
+            outage = state["open_outages"].get(self.slot["slot"])
+            if outage is not None:
+                self.node.append({"event": "restored", "outage_id": outage["id"], "box_slot": self.slot["slot"],
+                                  "chain": self.chain, "how": "chain-resumed"})
+        self.paused_path.unlink(missing_ok=True)
         self.paused_seq = self.paused_usec = None
+        enforce_node(self.plan, self.node, "resume")  # thaws only if the node is clear
 
-    def watch_filler(self, instance_dir: Path) -> None:
-        """A filler must occupy the box for the whole pause: restart it, then declare an occupancy fault."""
-        done, status = os.waitpid(self.filler_pid, os.WNOHANG)
-        if done != self.filler_pid:
-            return
-        self.filler_pid = None
-        self.filler_exits += 1
-        code = os.waitstatus_to_exitcode(status)
-        self.ledger.append({"event": "filler-exited", "instance": self.instance, "seq": self.paused_seq,
-                            "exit": code, "exits": self.filler_exits})
-        self.node.append({"event": "outage-start", "box_slot": self.slot["slot"], "chain": self.chain,
-                          "instance": self.instance, "seq": self.paused_seq, "exit": code,
-                          "exits": self.filler_exits, "affected": node_chains(self.state_root)})
-        self.filler_cg.kill()  # the exited root's descendants go before any replacement starts
-        require(self.filler_cg.wait_empty(SETTLE_SECONDS), "The exited filler's processes did not die")
-        if self.filler_exits <= FILLER_RESTARTS:
-            self.spawn_filler(instance_dir)
-            self.node.append({"event": "outage-end", "box_slot": self.slot["slot"], "chain": self.chain,
-                              "how": "restart", "exits": self.filler_exits})
-            return
-        self.node.append({"event": "fault", "box_slot": self.slot["slot"], "chain": self.chain,
-                          "instance": self.instance, "seq": self.paused_seq, "exits": self.filler_exits,
-                          "affected": node_chains(self.state_root),
-                          "meaning": "box occupancy is not the frozen filler's; the node's measured chains freeze"})
-
-    def refill(self, instance_dir: Path) -> None:
-        """Operator refill of a faulted box: a new filler, verified before the fault clears."""
-        state = NodeLog.state(self.node.records())
-        if self.slot["slot"] not in state["open_faults"] or self.paused_seq is None:
-            self.ledger.append({"event": "refill-refused", "instance": self.instance,
-                                "reason": "no open fault in this box, or the chain is not paused"})
-            return
-        if self.filler_cg.exists():
-            self.filler_cg.kill()
-            self.filler_cg.wait_empty(SETTLE_SECONDS)
-        else:
-            make_leaf(self.box, "filler", int(self.plan["filler"]["memory_max_bytes"]))
-        self.filler_exits = 0
-        self.spawn_filler(instance_dir)
+    def verify_filler(self) -> dict:
+        """A new filler is alive, its process is in the box's filler cgroup and cpuset, and it burns CPU."""
         before = self.filler_cg.usage_usec()
         deadline = time.monotonic() + REFILL_VERIFY_SECONDS
         while time.monotonic() < deadline:
@@ -835,50 +896,101 @@ class Supervisor:
             if done == self.filler_pid:
                 self.filler_pid = None
                 break
+        procs = {int(x) for x in self.filler_cg.read("cgroup.procs").split()}
         burned = self.filler_cg.usage_usec() - before
-        verification = {"alive": self.filler_pid is not None, "in_box_cgroup": self.filler_cg.populated(),
-                        "cpuset": parse_cpu_list(self.filler_cg.read("cpuset.cpus.effective")) == self.slot["cpus"],
-                        "burned_usec": burned, "burning": burned >= REFILL_MIN_CPU_USEC}
-        ok = all(v for k, v in verification.items() if k != "burned_usec")
-        if not ok:
-            self.filler_cg.kill()
-            self.filler_cg.wait_empty(SETTLE_SECONDS)
-            if self.filler_pid is not None:
+        checks = {"alive": self.filler_pid is not None, "pid_in_filler_cgroup": self.filler_pid in procs,
+                  "cpuset": parse_cpu_list(self.filler_cg.read("cpuset.cpus.effective")) == self.slot["cpus"],
+                  "burning": burned >= REFILL_MIN_CPU_USEC}
+        return dict(checks, ok=all(checks.values()), burned_usec=burned)
+
+    def clear_filler(self) -> bool:
+        """Kill whatever is in the filler cgroup and confirm it is empty (no mixed old and new processes)."""
+        self.filler_cg.kill()
+        empty = self.filler_cg.wait_empty(SETTLE_SECONDS)
+        if self.filler_pid is not None:
+            try:
                 os.waitpid(self.filler_pid, 0)
-                self.filler_pid = None
-        self.node.append({"event": "clear" if ok else "refill-failed", "box_slot": self.slot["slot"],
-                          "chain": self.chain, "verification": verification})
-        if ok:
-            self.node.append({"event": "outage-end", "box_slot": self.slot["slot"], "chain": self.chain,
-                              "how": "refill"})
+            except ChildProcessError:
+                pass
+            self.filler_pid = None
+        return empty
+
+    def restart_filler(self, instance_dir: Path) -> dict | None:
+        """One verified replacement; None if the cgroup could not be emptied."""
+        if not self.clear_filler():
+            return None
+        self.spawn_filler(instance_dir)
+        verification = self.verify_filler()
+        if not verification["ok"]:
+            self.clear_filler()
+        return verification
+
+    def watch_filler(self, instance_dir: Path) -> None:
+        """Occupancy is lost the moment the filler exits: the outage opens (the node freezes at once), restarts
+        are verified, and the outage closes only on a verified replacement; else the box faults."""
+        done, status = os.waitpid(self.filler_pid, os.WNOHANG)
+        if done != self.filler_pid:
+            return
+        self.filler_pid = None
+        code = os.waitstatus_to_exitcode(status)
+        outage_id = f"{self.chain}/{self.instance}/{self.paused_seq}/{time.time_ns()}"
+        with self.node.locked():
+            self.node.append({"event": "outage-start", "id": outage_id, "box_slot": self.slot["slot"],
+                              "chain": self.chain, "instance": self.instance, "seq": self.paused_seq, "exit": code,
+                              "affected": node_chains(self.state_root)})
+        enforce_node(self.plan, self.node, "outage")
+        attempts = []
+        for _ in range(FILLER_RESTARTS):
+            verification = self.restart_filler(instance_dir)
+            attempts.append(verification)
+            if verification is not None and verification["ok"]:
+                with self.node.locked():
+                    self.node.append({"event": "restored", "outage_id": outage_id, "box_slot": self.slot["slot"],
+                                      "chain": self.chain, "how": "restart", "attempts": attempts})
+                enforce_node(self.plan, self.node, "restored")
+                return
+        with self.node.locked():
+            self.node.append({"event": "fault", "outage_id": outage_id, "box_slot": self.slot["slot"],
+                              "chain": self.chain, "instance": self.instance, "seq": self.paused_seq,
+                              "attempts": attempts, "affected": node_chains(self.state_root),
+                              "meaning": "box occupancy is not the frozen filler's; the node's chains stay frozen"})
+        enforce_node(self.plan, self.node, "fault")
+
+    def refill(self, instance_dir: Path) -> None:
+        """Operator refill of a faulted box: an emptied cgroup, a new filler, verification, then the clear."""
+        with self.node.locked():
+            records, torn = self.node.read()
+        state = NodeLog.state(records, torn)
+        fault = state["open_faults"].get(self.slot["slot"])
+        if fault is None or self.paused_seq is None:
+            self.ledger.append({"event": "refill-refused", "instance": self.instance,
+                                "reason": "no open fault in this box, or the chain is not paused"})
+            return
+        if not self.filler_cg.exists():
+            make_leaf(self.box, "filler", int(self.plan["filler"]["memory_max_bytes"]))
+        verification = self.restart_filler(instance_dir)
+        with self.node.locked():
+            if verification is not None and verification["ok"]:
+                self.node.append({"event": "restored", "outage_id": fault["outage_id"], "box_slot": self.slot["slot"],
+                                  "chain": self.chain, "how": "refill", "verification": verification})
+            else:
+                self.node.append({"event": "refill-failed", "outage_id": fault["outage_id"],
+                                  "box_slot": self.slot["slot"], "chain": self.chain, "verification": verification})
+        enforce_node(self.plan, self.node, "refill")
 
     def follow_node(self) -> None:
-        """Record every new node event in this chain's ledger; freeze or thaw with the node; escalate."""
-        records = self.node.records()
-        for record in records[self.node_seen:]:
-            self.ledger.append({"event": "node-event", "instance": self.instance, "node": record})
-        self.node_seen = len(records)
-        state = NodeLog.state(records)
-        if state["frozen"] and not self.node_frozen:
-            self.node_frozen = True
-            if self.paused_seq is None:
-                self.chain_cg.freeze(True)
-            self.ledger.append({"event": "occupancy-freeze", "instance": self.instance,
-                                "usage_usec": self.chain_cg.usage_usec()})
-        elif not state["frozen"] and self.node_frozen:
-            self.node_frozen = False
-            if self.paused_seq is None:
-                self.chain_cg.freeze(False)
-            self.ledger.append({"event": "occupancy-thaw", "instance": self.instance,
-                                "usage_usec": self.chain_cg.usage_usec()})
-        fault = state["open_faults"].get(self.slot["slot"])
-        if fault is not None and self.slot["slot"] not in state["escalated"] and (
-                self.plan.get("stage") == "1b" or time.time() - fault["unix"] >= ESCALATE_SECONDS):
-            escalation = {"event": "escalate", "box_slot": self.slot["slot"], "chain": self.chain,
-                          "fault_unix": fault["unix"], "stage": self.plan.get("stage"),
-                          "deadline": "immediate (Stage 1b)" if self.plan.get("stage") == "1b" else "2 hours"}
-            self.node.append(escalation)
-            write_json_atomic(self.escalate_path, escalation, durable=True)
+        """Copy new node events into this chain's ledger exactly once (a durable watermark survives restarts),
+        then enforce the node state."""
+        with self.node.locked():
+            records, _ = self.node.read()
+        mark = json.loads(self.watermark_path.read_text()) if self.watermark_path.exists() else {"count": 0}
+        if mark["count"] > len(records):
+            raise RuntimeError("node log is shorter than this chain's watermark")
+        for index in range(mark["count"], len(records)):
+            self.ledger.append({"event": "node-event", "instance": self.instance, "index": index,
+                                "node": records[index]})
+            write_json_atomic(self.watermark_path, {"count": index + 1}, durable=True)
+        enforce_node(self.plan, self.node, "follow")
 
     # --- the run
     def run(self) -> int:
@@ -910,6 +1022,13 @@ class Supervisor:
         self.ledger.append({"event": "open", "instance": self.instance, "base_usec": self.base,
                             "cgroup": str(self.chain_cg.path), "cgroup_inode": self.chain_cg.inode(),
                             "manifest_sha256": sha256_file(manifest_path)})
+        while True:  # no measured execution starts while the node is not clear
+            with self.node.locked():
+                records, torn = self.node.read()
+            if not NodeLog.state(records, torn)["frozen"]:
+                break
+            self.ledger.append({"event": "start-held", "instance": self.instance, "reason": "node not clear"})
+            time.sleep(LIVE_EVERY_SECONDS)
         started = time.monotonic()
         self.pid = spawn_into(self.chain_cg, argv, self.env(manifest_path), instance_dir / "chain.log",
                               self.spec.get("cwd"))
@@ -960,8 +1079,9 @@ class Supervisor:
                                                                "base_usec": self.base, "unix": time.time()},
                                   durable=True)
             time.sleep(POLL_SECONDS)
-        if self.paused_seq is not None or self.node_frozen:  # the chain died while paused or frozen (a kill)
+        if self.paused_seq is not None or self.chain_cg.frozen():  # the chain died while paused or frozen (a kill)
             self.stop_filler()
+            self.paused_path.unlink(missing_ok=True)
             self.chain_cg.freeze(False)
         if not self.chain_cg.wait_empty(SETTLE_SECONDS):  # orphans outlived the chain's root process
             reason = reason or "orphans-killed"
@@ -1081,13 +1201,15 @@ def main(argv=None) -> int:
             plan, _ = load_plan(args.plan)
             node = NodeLog(Path(plan["state_root"]))
             if args.command != "occupancy":
-                node.append({"event": args.command, "by": "operator", "reason": args.reason,
-                             "affected": node_chains(Path(plan["state_root"]))})
-            records = node.records()
-            state = NodeLog.state(records)
-            outages = [r for r in records if r["event"] in ("outage-start", "outage-end", "fault", "clear",
-                                                            "refill-failed", "escalate")]
-            print(json.dumps(dict(state, outages=outages), indent=2))
+                with node.locked():
+                    node.append({"event": args.command, "by": "operator", "reason": args.reason,
+                                 "affected": node_chains(Path(plan["state_root"]))})
+            state = enforce_node(plan, node, args.command)
+            with node.locked():
+                records, _ = node.read()
+            outages = [r for r in records if r["event"] in ("outage-start", "restored", "fault", "refill-failed",
+                                                            "escalate", "filler-replaced-by-chain")]
+            print(json.dumps(dict(state, outages=outages), indent=2, default=str))
             return 0
         plan, _ = load_plan(args.plan)
         spec = chain_spec(plan, args.chain)

@@ -1,14 +1,15 @@
 """E10 occupancy acceptance (amendment A1's default) on a real cgroup v2 host (run as root; CI runs it).
 
-Two boxes. Chain `a` burns in box 0; chain `b` pauses in box 1, whose filler is made to die:
-- fault 1: the filler dies FILLER_RESTARTS + 1 times (each exit and restart is an outage event), the box faults,
-  the node freezes `a` (its CPU stays constant) and escalates at once (plan stage 1b);
-- `refill` (after the filler is repaired) verifies the new filler and clears the fault; `a` thaws and burns again;
-- fault 2: the healthy filler is killed and dies again on restart: a second fault, freeze and escalation, then a
-  second verified refill and clear (repeated fault and clear events);
+Two boxes. Chain `a` burns in box 0; chain `b` pauses in box 1, whose filler is made to die (a marker file):
+- cycle 1: the filler dies; the outage opens and `a` freezes at once; verified restarts fail; the box faults and
+  escalates at once (plan stage 1b); a refill while the filler is still broken fails and changes nothing; a refill
+  after the repair is verified, restores the box and `a` thaws and burns;
+- cycle 2: the healthy filler is killed and dies again on restart: a second outage, fault, escalation and refill;
+- cycle 3: the healthy filler is killed and its restart is verified: the outage closes by restart, `a` thaws;
 - an operator `node-freeze` and `node-thaw` freeze and thaw `a`;
 - `b` resumes and both chains finish normally.
-Writes a JSON receipt.
+Checks the event counts, the affected chains, exactly-once copying of node events into `a`'s ledger, the
+escalation file, and that the node ends clear. Writes a JSON receipt.
 
   sudo python3 occupancy_acceptance.py --receipt OUT.json
 """
@@ -77,11 +78,12 @@ def main() -> int:
     a_cg = w5box.Cgroup(cgroup_root / "box0" / "chain")
     b_filler = w5box.Cgroup(cgroup_root / "box1" / "filler")
 
-    def node_events(kind):
-        return [r for r in node.records() if r["event"] == kind] if node.ledger.path.exists() else []
-
-    def a_events(kind):
-        return [r for r in led_a.records() if r["event"] == kind] if led_a.path.exists() else []
+    def events(kind):
+        if not node.path.exists():
+            return []
+        with node.locked():
+            records, _ = node.read()
+        return [r for r in records if r["event"] == kind]
 
     def frozen_steady(seconds=1.5):
         first = a_cg.usage_usec()
@@ -89,6 +91,7 @@ def main() -> int:
         return a_cg.frozen() and a_cg.usage_usec() == first
 
     def burning(seconds=1.5):
+        wait_for(lambda: not a_cg.frozen(), 30, "a thawed")
         first = a_cg.usage_usec()
         time.sleep(seconds)
         return not a_cg.frozen() and a_cg.usage_usec() > first
@@ -102,46 +105,53 @@ def main() -> int:
             if cycle == 2:
                 die.write_text("broken")
                 b_filler.kill()  # the healthy filler crashes; its restarts die again
-            wait_for(lambda: len(node_events("fault")) == cycle, 120, f"fault {cycle}")
-            wait_for(lambda: len(a_events("occupancy-freeze")) == cycle, 30, f"freeze {cycle}")
-            checks[f"fault{cycle}_freezes_neighbour"] = frozen_steady()
-            checks[f"fault{cycle}_escalates_in_stage_1b"] = len(node_events("escalate")) == cycle
+            wait_for(lambda: len(events("outage-start")) == cycle, 120, f"outage {cycle}")
+            wait_for(lambda: a_cg.frozen(), 30, f"freeze at outage {cycle}")
+            wait_for(lambda: len(events("fault")) == cycle, 120, f"fault {cycle}")
+            checks[f"cycle{cycle}_neighbour_frozen"] = frozen_steady()
+            checks[f"cycle{cycle}_escalates_in_stage_1b"] = len(events("escalate")) == cycle
+            if cycle == 1:  # a refill before the repair is refused by its own verification
+                launcher("refill", *common, "--chain", "b")
+                wait_for(lambda: len(events("refill-failed")) == 1, 60, "failed refill")
+                checks["failed_refill_keeps_freeze"] = frozen_steady() and len(events("restored")) == 0
             die.unlink()
             launcher("refill", *common, "--chain", "b")
-            wait_for(lambda: len(node_events("clear")) == cycle, 60, f"clear {cycle}")
-            wait_for(lambda: len(a_events("occupancy-thaw")) == cycle, 30, f"thaw {cycle}")
-            checks[f"clear{cycle}_thaws_neighbour"] = burning()
-            checks[f"clear{cycle}_refill_verified"] = all(
-                v for k, v in node_events("clear")[-1]["verification"].items() if k != "burned_usec")
+            wait_for(lambda: len(events("restored")) == cycle, 60, f"restored {cycle}")
+            checks[f"cycle{cycle}_refill_verified"] = events("restored")[-1]["verification"]["ok"]
+            checks[f"cycle{cycle}_neighbour_thaws"] = burning()
+        b_filler.kill()  # cycle 3: a verified restart closes the outage
+        wait_for(lambda: len(events("outage-start")) == 3, 60, "outage 3")
+        wait_for(lambda: len(events("restored")) == 3, 60, "restored by restart")
+        checks["cycle3_restored_by_verified_restart"] = (events("restored")[-1]["how"] == "restart"
+                                                         and events("restored")[-1]["attempts"][-1]["ok"])
+        checks["cycle3_neighbour_thaws"] = burning()
         launcher("node-freeze", *common, "--reason", "acceptance")
-        wait_for(lambda: len(a_events("occupancy-freeze")) == 3, 30, "operator freeze")
         checks["operator_freeze"] = frozen_steady()
         launcher("node-thaw", *common, "--reason", "acceptance")
-        wait_for(lambda: len(a_events("occupancy-thaw")) == 3, 30, "operator thaw")
         checks["operator_thaw"] = burning()
         launcher("resume", *common, "--chain", "b", "--payload", "{}")
         checks["chains_finish"] = sup_a.wait(timeout=300) == 0 and sup_b.wait(timeout=300) == 0
-        records = node.records()
+        with node.locked():
+            records, torn = node.read()
         starts = [r for r in records if r["event"] == "outage-start"]
-        ends = [r for r in records if r["event"] == "outage-end"]
-        seen = [r for r in led_a.records() if r["event"] == "node-event"]
-        checks["every_outage_recorded"] = (len(starts) == 2 * (w5box.FILLER_RESTARTS + 1)
-                                           and len(ends) == 2 * w5box.FILLER_RESTARTS + 2)
-        checks["outages_name_affected_chains"] = all(
-            {o["chain"] for o in r["affected"]} == {"a", "b"} for r in starts)
-        checks["neighbour_ledger_records_every_node_event"] = len(seen) == len(records)
+        restored = [r for r in records if r["event"] == "restored"]
+        checks["event_counts"] = (len(starts) == 3 and len(restored) == 3 and len(events("fault")) == 2
+                                  and len(events("refill-failed")) == 1 and len(events("escalate")) == 2
+                                  and [r["how"] for r in restored] == ["refill", "refill", "restart"])
+        checks["outages_name_affected_chains"] = all({o["chain"] for o in r["affected"]} == {"a", "b"}
+                                                     for r in starts)
+        copied = [r["index"] for r in led_a.records() if r["event"] == "node-event"]
+        checks["node_events_copied_exactly_once"] = copied == list(range(len(copied))) and len(copied) <= len(records)
         checks["escalation_file"] = (work / "state" / "ESCALATE.json").exists()
-        state = w5box.NodeLog.state(records)
-        checks["node_clear_at_end"] = not state["frozen"]
-        checks["ledgers_close_cleanly"] = (led_a.summary()["open"] is None and led_b.summary()["open"] is None)
-        receipt.update({"node_events": [r["event"] for r in records], "outage_starts": len(starts),
-                        "outage_ends": len(ends), "clears": node_events("clear")})
+        checks["node_clear_at_end"] = not w5box.NodeLog.state(records, torn)["frozen"]
+        checks["ledgers_close_cleanly"] = led_a.summary()["open"] is None and led_b.summary()["open"] is None
+        receipt.update({"node_events": [r["event"] for r in records], "restored": restored})
     finally:
         for box in ("box0", "box1"):
             for leaf in ("chain", "filler"):
                 cg = w5box.Cgroup(cgroup_root / box / leaf)
                 if cg.exists():
-                    cg.freeze(False)
+                    cg.write("cgroup.freeze", 0)
                     cg.kill()
                     cg.wait_empty(10)
                     cg.rmdir()
