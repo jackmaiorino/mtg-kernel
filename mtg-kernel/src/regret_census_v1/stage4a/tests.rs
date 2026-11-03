@@ -1891,7 +1891,7 @@ fn s4a_bank_and_b1_root_specs_refuse_an_opening() {
 /// EX1's selection settings (legacy keys, FPU urgency) and `n` attempted
 /// simulations under a transition guard of `cap`.
 fn value_leaf_search(
-    session: &FastActorSessionV1,
+    session: &crate::rl_session::FastActorSessionV1,
     prior: &world::DeckPrior,
     seed_root: &str,
     horizon: value_leaf::Horizon,
@@ -1947,7 +1947,7 @@ fn value_leaf_primary(sel: &arms::Selection) -> serde_json::Value {
         "value_leaf":sel.extra["value_leaf"]})
 }
 
-fn value_leaf_root() -> (FastActorSessionV1, world::DeckPrior) {
+fn value_leaf_root() -> (crate::rl_session::FastActorSessionV1, world::DeckPrior) {
     let cfg = test_cfg();
     let game = spy_index() as u64 + 9 * 3;
     let setup = game_setup(&cfg, 1, game);
