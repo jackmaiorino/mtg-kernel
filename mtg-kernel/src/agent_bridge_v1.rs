@@ -28,6 +28,10 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v4_tensor_v1, flat_v4_extension_value_v1, FlatV4EncodeScratchV1,
     SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
 };
+pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
+use crate::agent_bridge_infoset_v1::{
+    infoset_extension_v1, write_receipt_v1, InfosetBridgeV1, SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
+};
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
 use crate::mana::ManaColor;
@@ -81,6 +85,10 @@ pub const SPELLBENCH_FLAG_V2_SUPPORT: &str = "--private-v2-support";
 pub struct SpellbenchBridgeOptionsV1 {
     /// Run the lockstep training-mode copy and attach `x_kernel_flat_v4`.
     pub x_kernel_flat_v4: bool,
+    /// Attach `x_kernel_infoset_v1` (the W1 entrant's canonical state) at
+    /// eligible decisions. Runs on the lockstep copy, so it takes effect only
+    /// with `x_kernel_flat_v4` (the command-line flag sets both).
+    pub x_kernel_infoset_v1: bool,
     /// Private wrapper metadata. Never forwarded to an agent as an extension.
     /// It observes stack instance IDs without changing the frozen RL schema.
     pub private_v2_support: bool,
@@ -268,6 +276,8 @@ struct SpellbenchBridgeGameV1 {
     /// arena already sent in private support; the next production decision
     /// sends what follows.
     history_cursor: (usize, usize, usize),
+    /// The producer's per-game state, when `x_kernel_infoset_v1` is on.
+    infoset: Option<InfosetBridgeV1>,
     #[cfg(test)]
     force_flat_v4_encode_error: bool,
     /// Test hook: the action id handed to the session on the next step, so
@@ -463,6 +473,9 @@ impl SpellbenchBridgeServerV1 {
                 if self.options.x_kernel_flat_v4 {
                     extensions.push(SPELLBENCH_EXTENSION_KERNEL_FLAT_V4);
                 }
+                if self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1 {
+                    extensions.push(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1);
+                }
                 json!({
                     "response_type": "hello_ok",
                     "protocol": SPELLBENCH_PROTOCOL_V1,
@@ -580,6 +593,8 @@ impl SpellbenchBridgeServerV1 {
                 flat_v4_scratch: FlatV4EncodeScratchV1::default(),
                 private_block_root_step: game.private_block_root_step,
                 history_cursor: game.history_cursor,
+                // A private preview carries no payload.
+                infoset: None,
                 #[cfg(test)]
                 force_flat_v4_encode_error: game.force_flat_v4_encode_error,
                 #[cfg(test)]
@@ -823,6 +838,8 @@ impl SpellbenchBridgeServerV1 {
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
+            infoset: (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
+                .then(InfosetBridgeV1::default),
             #[cfg(test)]
             force_flat_v4_encode_error: false,
             #[cfg(test)]
@@ -832,7 +849,7 @@ impl SpellbenchBridgeServerV1 {
             Some(reason) => Err(reason),
             None => flat_v4_extension_v1(&mut game, &response),
         };
-        let wire = match flat_v4 {
+        let mut wire = match flat_v4 {
             Ok(flat_v4) => {
                 let support = self
                     .options
@@ -846,6 +863,7 @@ impl SpellbenchBridgeServerV1 {
                 self.halted_terminal_value(request_id, game_id, counts, &reason),
             ),
         };
+        finish_infoset_v1(&mut game, &mut wire);
         game.terminal_sent = matches!(wire, WireResponseV1::Terminal(_));
         self.used_game_ids.insert(game_id.to_string());
         self.private_preview = None;
@@ -985,10 +1003,11 @@ impl SpellbenchBridgeServerV1 {
                     .options
                     .private_v2_support
                     .then(|| private_v2_support_with_history(game));
-                let wire = self.session_response_to_wire(
+                let mut wire = self.session_response_to_wire(
                     request_id, game_id, response, counts, flat_v4, support,
                 );
                 let game = self.game.as_mut().expect("active game");
+                finish_infoset_v1(game, &mut wire);
                 if matches!(wire, WireResponseV1::Terminal(_)) {
                     game.terminal_sent = true;
                 }
@@ -1061,6 +1080,9 @@ impl SpellbenchBridgeServerV1 {
         let value = self.halted_terminal_value(request_id, &game_id, counts, reason);
         if let Some(game) = self.game.as_mut() {
             game.terminal_sent = true;
+            if let Some(infoset) = game.infoset.as_mut() {
+                write_receipt_v1(&game_id, infoset);
+            }
         }
         value
     }
@@ -1092,6 +1114,23 @@ impl SpellbenchBridgeServerV1 {
 enum WireResponseV1 {
     Decision(Value),
     Terminal(Value),
+}
+
+/// Attaches the pending `x_kernel_infoset_v1` extension to a decision; at a
+/// terminal, writes the engine-side receipt (per-seat tallies by predicate)
+/// to stderr, never to a seat.
+fn finish_infoset_v1(game: &mut SpellbenchBridgeGameV1, wire: &mut WireResponseV1) {
+    let Some(infoset) = game.infoset.as_mut() else {
+        return;
+    };
+    match wire {
+        WireResponseV1::Decision(value) => {
+            if let Some(extension) = infoset.pending.take() {
+                value["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = extension;
+            }
+        }
+        WireResponseV1::Terminal(_) => write_receipt_v1(&game.game_id, infoset),
+    }
 }
 
 /// A terminal the raw session itself classifies `halted`.
@@ -1135,8 +1174,12 @@ fn flat_v4_extension_v1(
         flat_v4,
         flat_v4_rows,
         flat_v4_scratch,
+        infoset,
         ..
     } = game;
+    if let Some(infoset) = infoset.as_mut() {
+        infoset.pending = None;
+    }
     let Some(lockstep) = flat_v4.as_ref() else {
         return Ok(None);
     };
@@ -1160,6 +1203,9 @@ fn flat_v4_extension_v1(
         .map_err(|error| error.halt_reason())?;
     let value = flat_v4_extension_value_v1(&encoded, &rows).map_err(|error| error.halt_reason())?;
     *flat_v4_rows = rows;
+    if let Some(infoset) = infoset.as_mut() {
+        infoset_extension_v1(lockstep.fast_session(), decision, infoset)?;
+    }
     Ok(Some(value))
 }
 
@@ -2440,6 +2486,7 @@ mod tests {
             SpellbenchBridgeOptionsV1 {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
+                x_kernel_infoset_v1: false,
             },
         );
         let reset = reset_line("reset", "g-private", 7);
@@ -2474,6 +2521,7 @@ mod tests {
             SpellbenchBridgeOptionsV1 {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
+                x_kernel_infoset_v1: false,
             },
         );
         let mut decision = parse_line(&server.handle_line(&reset_line("reset", "g-history", 7)));
@@ -2544,6 +2592,7 @@ mod tests {
             SpellbenchBridgeOptionsV1 {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
+                x_kernel_infoset_v1: false,
             },
         );
         let first = parse_line(&server.handle_line(&reset_line("reset", "g-private", 7)));
@@ -3308,6 +3357,155 @@ mod tests {
         assert_eq!(on["extensions"], json!(["x_kernel_v5", "x_kernel_flat_v4"]));
     }
 
+    fn infoset_server() -> SpellbenchBridgeServerV1 {
+        SpellbenchBridgeServerV1::with_options(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+            SpellbenchBridgeOptionsV1 {
+                x_kernel_flat_v4: true,
+                x_kernel_infoset_v1: true,
+                ..SpellbenchBridgeOptionsV1::default()
+            },
+        )
+    }
+
+    /// W1 bridge wiring: with `x_kernel_infoset_v1` on, every eligible
+    /// decision (two candidates, two of them not mana abilities) carries a
+    /// payload or a refusal code and no other decision carries either; each
+    /// payload imports into a session whose decision matches the bridge's
+    /// lockstep copy; refusal tallies stay engine-side.
+    #[test]
+    fn infoset_v1_rides_every_eligible_decision_and_imports() {
+        let hello =
+            json!({"request_type": "hello", "protocol": "spellbench/v1", "request_id": "h-1"})
+                .to_string();
+        let on: Value = serde_json::from_str(&infoset_server().handle_line(&hello)).unwrap();
+        assert_eq!(
+            on["extensions"],
+            json!(["x_kernel_v5", "x_kernel_flat_v4", "x_kernel_infoset_v1"])
+        );
+        let mut payloads = 0;
+        let mut refusals: std::collections::BTreeMap<String, u64> = Default::default();
+        let mut eligible_total = 0;
+        let mut longest = 0;
+        for (deck, seed) in [("CawGates", 5_u64), ("Wildfire", 6), ("Faeries", 7)] {
+            let mut server = infoset_server();
+            let mut line =
+                server.handle_line(&flat_v4_reset(&format!("i-{deck}-{seed}"), deck, seed));
+            let mut rng = crate::state::SplitMix64::seed(seed);
+            for _ in 0..400 {
+                longest = longest.max(line.len());
+                let response: Value = serde_json::from_str(&line).unwrap();
+                if response["response_type"] != "decision" {
+                    let reason = response["reason"].as_str().unwrap_or("");
+                    assert!(!reason.contains("infoset"), "{deck}: {reason}");
+                    break;
+                }
+                let game = server.game.as_ref().unwrap();
+                let lockstep = game.flat_v4.as_ref().unwrap().fast_session();
+                let legal: Vec<crate::rl::LegalActionV5> = serde_json::from_str(
+                    response["extensions"]["x_kernel_v5"]["legal_actions_json"]
+                        .as_str()
+                        .unwrap(),
+                )
+                .unwrap();
+                let non_mana = legal
+                    .iter()
+                    .filter(|a| !matches!(a.semantic, ActionSemanticV1::ActivateManaAbility { .. }))
+                    .count();
+                let eligible = legal.len() >= 2 && non_mana >= 2;
+                fn wire_safe(v: &Value) -> bool {
+                    match v {
+                        Value::Number(n) => match (n.as_u64(), n.as_i64()) {
+                            (Some(x), _) => x <= 1 << 53,
+                            (None, Some(x)) => x.unsigned_abs() <= 1 << 53,
+                            _ => true,
+                        },
+                        Value::Array(xs) => xs.iter().all(wire_safe),
+                        Value::Object(m) => m.values().all(wire_safe),
+                        _ => true,
+                    }
+                }
+                let extension = &response["extensions"]["x_kernel_infoset_v1"];
+                eligible_total += u64::from(eligible);
+                assert!(wire_safe(extension), "{deck}: integers within 2^53");
+                assert_eq!(
+                    !extension.is_null(),
+                    eligible,
+                    "{deck}: presence follows eligibility"
+                );
+                if let Some(code) = extension["refusal"].as_str() {
+                    // The refusal's detail, recomputed on the lockstep copy
+                    // (diagnostics; the wire carries the code only).
+                    let lists = lockstep.deck_ids_v1().clone().map(|id| {
+                        crate::runtime_decks::runtime_deck_by_id(&id)
+                            .unwrap()
+                            .card_ids
+                            .to_vec()
+                    });
+                    let st = lockstep.game_state();
+                    let viewer = if response["acting_seat"] == "p0" {
+                        crate::ids::PlayerId::P0
+                    } else {
+                        crate::ids::PlayerId::P1
+                    };
+                    let detail = match crate::infoset_v1::export_v1(
+                        &crate::infoset_v1::ExportInputV1 {
+                            state: st,
+                            journal: st.observation_journal.notes(),
+                            viewer,
+                            decklists: [&lists[0], &lists[1]],
+                        },
+                        crate::infoset_v1::ExportOptionsV1::default(),
+                    ) {
+                        Err(crate::infoset_v1::ExportErrorV1::Refused { detail, .. }) => detail,
+                        _ => "surface mid-scan".to_string(),
+                    };
+                    let detail: String = detail.chars().take(60).collect();
+                    *refusals.entry(format!("{code}: {detail}")).or_default() += 1;
+                } else if eligible {
+                    let payload = crate::infoset_v1::PayloadV1::from_bytes(
+                        extension["payload_json"].as_str().unwrap().as_bytes(),
+                    )
+                    .unwrap();
+                    let imported = payload.import().expect("the payload imports");
+                    let (
+                        crate::rl_session::FastActorResponseV1::Decision(a),
+                        crate::rl_session::FastActorResponseV1::Decision(b),
+                    ) = (lockstep.current_response(), imported.current_response())
+                    else {
+                        panic!("{deck}: the imported payload is not at a decision");
+                    };
+                    assert_eq!(
+                        (a.acting_player, a.legal_action_count),
+                        (b.acting_player, b.legal_action_count),
+                        "{deck}: the imported decision matches the lockstep copy"
+                    );
+                    // The candidates by kind (ids are canonical in the import).
+                    let kinds = |s: &crate::rl_session::FastActorSessionV1| {
+                        let mut k: Vec<String> = s
+                            .diagnostic_current_action_semantics()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|x| serde_json::to_value(x).unwrap()["action_kind"].to_string())
+                            .collect();
+                        k.sort();
+                        k
+                    };
+                    assert_eq!(kinds(lockstep), kinds(&imported), "{deck}: candidate kinds");
+                    payloads += 1;
+                }
+                let rows = rows_of(&response);
+                let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
+                line = server.handle_line(&flat_v4_step(&response, pick));
+            }
+        }
+        eprintln!(
+            "bridge infoset: {eligible_total} eligible, {payloads} payloads, refusals {refusals:#?}, longest line {longest} bytes"
+        );
+        assert!(payloads > 0);
+        assert!(longest < SPELLBENCH_MAX_LINE_BYTES_V1);
+    }
+
     #[test]
     fn flat_v4_whole_games_carry_the_extension_on_every_decision_of_every_deck() {
         for deck in [
@@ -3575,6 +3773,7 @@ mod tests {
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
+            infoset: None,
             force_flat_v4_encode_error: false,
             force_session_action_id: None,
         };
@@ -3721,6 +3920,7 @@ mod tests {
                     SpellbenchBridgeOptionsV1 {
                         x_kernel_flat_v4: true,
                         private_v2_support: true,
+                        x_kernel_infoset_v1: false,
                     },
                 );
                 let game_id = format!("v4-audit-{deck}-{game}");

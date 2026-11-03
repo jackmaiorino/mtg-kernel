@@ -427,6 +427,7 @@ def checkpoint_identity(item: dict) -> dict:
 
 
 IDENTITY_KEYS = ("state_sha256", "adam_step", "content_sha256")
+RECORD_NAME = "QUALIFICATION-RECORD.json"  # ``record``'s output in the qualification folder
 
 # The block identity the qualification items judge (G(i) lead rulings of 2026-11-01, QUALIFICATION-RESTART.md
 # "Investigation outcome"; mtg-kernel#475). Episode files embed absolute paths and path-derived SHA256s (the
@@ -487,6 +488,36 @@ def compare(campaign: driver.Campaign, run: str, block: int, straight: dict) -> 
     interrupted = len(attempts) > 1 and attempts[0]["outcome"] == "interrupted"
     return {"straight": straight, "rerun": rerun, "attempts": attempts, "interrupted": interrupted,
             "identical": judged_equal(straight, rerun), "rule": JUDGED_RULE}
+
+
+RECORD_HEARTBEAT_SECONDS, RECORD_HEARTBEAT_LIMIT_SECONDS = 30, 1800
+
+
+def record_after(campaign_path: Path, plan_path: Path, out: Path, log, touch=None) -> None:
+    """Items 2 and 7 and the run's measurements (``record``) from the volume itself, beside RESULT.json, so a
+    qualification lease brings them home with its folder; a failure here is an event, the verdicts stand. Its
+    walks of the network volume are mostly I/O wait, so, as for the driver's volume walk, the step runs in a
+    helper thread while this one records the work in progress (``touch``) for at most
+    RECORD_HEARTBEAT_LIMIT_SECONDS: a hung step still goes idle."""
+    result, started = {}, time.monotonic()
+
+    def work():
+        try:
+            result["pin"] = record(campaign_path, plan_path, out / RECORD_NAME)
+        except Exception as error:  # noqa: BLE001 - reported below
+            result["error"] = error
+    thread = threading.Thread(target=work, name="record", daemon=True)
+    thread.start()
+    while thread.is_alive():
+        thread.join(RECORD_HEARTBEAT_SECONDS)
+        if touch and thread.is_alive() and time.monotonic() - started < RECORD_HEARTBEAT_LIMIT_SECONDS:
+            touch()
+    if "error" in result:
+        error = result["error"]
+        log(kind="record-error", error_type=type(error).__name__, error=str(error)[-4000:])
+        return
+    log(kind="record", record=result["pin"], passed=read(out / RECORD_NAME)["pass"],
+        seconds=round(time.monotonic() - started, 1))
 
 
 def legacy_stage(value: dict) -> bool:
@@ -641,6 +672,8 @@ def run(campaign_path: Path, plan_path: Path) -> int:
         log(kind="done", passed=passed, legacy_stages=legacy)
         write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed,
                                          "rule": JUDGED_RULE, "legacy_stages": legacy})
+        record_after(campaign_path, plan_path, out, log,
+                     touch=campaign.lease.touch if campaign.lease else None)
         return 0 if passed else 1
     except BaseException as error:  # the supervisor discards stderr: the reason goes in the events
         log(kind="error", error_type=type(error).__name__, error=str(error)[-4000:])

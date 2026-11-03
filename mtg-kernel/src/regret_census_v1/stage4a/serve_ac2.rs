@@ -127,6 +127,9 @@ pub(super) fn run(
     )
     .map_err(|e| e.message)?;
     let mut player = policy.fork_for_collection_v3()?;
+    // The game's own moves (both seats: the loaded policy) sample from
+    // seeded streams; the searched trees seed their roles themselves.
+    player.reset_sampling_v1([game_seed, game_seed ^ 0x5eed_ac20_0000_0000]);
     let mut own_index = [0u64; 2];
     let (mut checked, mut failures) = (0u64, 0u64);
     while checked < wanted {
@@ -293,12 +296,22 @@ fn check_root(
     let pool_vs_serial = pooled_digests == digests(&imported_trees)
         && pooled["search"]["pick"] == json!(serial_merge.pick);
     let k1_vs_single = single_pool == single.digest;
+    // Identity of empty trees proves nothing: every tree must have searched.
+    let searched = imported_trees
+        .iter()
+        .chain(std::iter::once(&single))
+        .all(|t| t.transitions > 0 && t.edges.is_some());
     Ok(
         json!({"kind": "root", "root_id": root_id, "payload_sha256": payload.sha256,
         "direct_vs_import": direct_vs_import, "pool_vs_serial": pool_vs_serial,
         "k1_pool_vs_single": k1_vs_single,
-        "equal": direct_vs_import && pool_vs_serial && k1_vs_single,
+        "searched": searched,
+        "equal": direct_vs_import && pool_vs_serial && k1_vs_single && searched,
         "pick": serial_merge.pick, "stage": serial_merge.stage, "units": serial_merge.units,
-        "tree_digests": digests(&imported_trees)}),
+        "tree_digests": digests(&imported_trees),
+        "trees": imported_trees.iter().map(|t| json!({"tree": t.tree, "units_budget": t.units_budget,
+            "transitions": t.transitions, "rooted": t.edges.is_some(), "incomplete": t.incomplete,
+            "cap_reached": t.cap_reached, "faults": t.faults, "wall_seconds": t.wall_seconds}))
+            .collect::<Vec<_>>()}),
     )
 }

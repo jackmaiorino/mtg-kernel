@@ -844,6 +844,10 @@ pub(crate) struct Node {
     pub(crate) skip: Vec<bool>,
     /// Best-line values (`BestLine`); None under the formal mean backup.
     pub(crate) bl: Option<Box<BestLine>>,
+    /// Value-leaf sums per edge in `value_leaf::UNIT`s (`s4a-vl-v1`): one
+    /// entry per edge in a value-leaf search, empty otherwise. When present,
+    /// edge means, selection and the frozen choice read these sums.
+    pub(crate) vsum: Vec<u64>,
 }
 
 /// Opt-in best-line backup (collab LANES/bestline-step0-20261013; proposal
@@ -960,6 +964,7 @@ impl Node {
             depth,
             skip: Vec::new(),
             bl: None,
+            vsum: Vec::new(),
         }
     }
 
@@ -975,8 +980,15 @@ impl Node {
     fn value(&self, a: usize) -> f64 {
         match &self.bl {
             Some(b) => b.q[a],
+            None if !self.vsum.is_empty() => self.value_mean(a, self.n[a] as f64),
             None => self.wins[a] as f64 / self.n[a] as f64,
         }
+    }
+
+    /// A value-leaf edge mean (`s4a-vl-v1`): the edge's value units over
+    /// `n` full units.
+    fn value_mean(&self, a: usize, n: f64) -> f64 {
+        self.vsum[a] as f64 / (n * super::value_leaf::UNIT as f64)
     }
 
     fn skipped(&self, a: usize) -> bool {
@@ -1040,8 +1052,11 @@ impl Node {
         // An edge's mean, or its best-line value when that backup is on and
         // the counts are the node's own (borrowed evidence has no values).
         let best_line = self.bl.as_deref().filter(|_| own);
+        // Value-leaf sums are the node's own; borrowed evidence has none.
+        let value_leaf = own && !self.vsum.is_empty();
         let mean = |a: usize, n: f64| match best_line {
             Some(b) => b.q[a],
+            None if value_leaf => self.value_mean(a, n),
             None => wins[a] as f64 / n,
         };
         if let Some(u) = urgency {
@@ -1164,6 +1179,33 @@ impl Tree {
             n.draws[*a] += u64::from(draw);
         }
         self.best_line_backup(path, win, world_only);
+    }
+
+    /// Backs up one value-leaf simulation (`s4a-vl-v1`): `units` (a leaf
+    /// value, or a natural ending's exact units) over the path, inserting its
+    /// new node. `natural` carries a natural ending's (win, draw) so the win
+    /// and draw tallies stay exact. Every path node is a value-leaf node.
+    pub(crate) fn backup_value(
+        &mut self,
+        path: &[(Key, usize)],
+        new: Vec<(Key, Node)>,
+        units: u32,
+        natural: Option<(bool, bool)>,
+    ) {
+        for (k, n) in new {
+            self.nodes.insert(k, n);
+        }
+        for (k, a) in path {
+            let n = self.nodes.get_mut(k).expect("path node exists");
+            debug_assert_eq!(n.vsum.len(), n.n.len(), "value-leaf node");
+            n.visits += 1;
+            n.n[*a] += 1;
+            n.vsum[*a] += u64::from(units);
+            if let Some((win, draw)) = natural {
+                n.wins[*a] += u64::from(win);
+                n.draws[*a] += u64::from(draw);
+            }
+        }
     }
 
     /// Best-line values along a backed-up path, bottom up: only the path's
@@ -1308,6 +1350,12 @@ impl Tree {
             for (a, b) in n.n.iter().zip(&n.wins) {
                 h.update(a.to_le_bytes());
                 h.update(b.to_le_bytes());
+            }
+            // Value-leaf nodes also bind their value sums and draws; formal
+            // nodes (no value sums) keep the original byte stream.
+            for (v, d) in n.vsum.iter().zip(&n.draws) {
+                h.update(v.to_le_bytes());
+                h.update(d.to_le_bytes());
             }
         }
         h.finalize().iter().map(|b| format!("{b:02x}")).collect()

@@ -70,6 +70,14 @@ impl Limits {
     }
 }
 
+/// How one E simulation ended: a game ending, or a value leaf
+/// (`s4a-vl-v1`) with its units and the raw value-head output.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum SimEnd {
+    Game(End),
+    Leaf { units: u32, raw: f32 },
+}
+
 /// Per-worker policy instances; each role has its own sampling stream.
 pub(crate) struct Roles {
     pub(crate) focal: FrozenPlayPolicyV1,
@@ -815,7 +823,8 @@ impl Roles {
         mut allocator: Option<&mut RootAllocator>,
         mut sharing: Option<&mut Sharing>,
         sharing_cursor: &mut SharingCursor,
-    ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
+        value_leaf: Option<super::value_leaf::ValueLeafV1>,
+    ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, SimEnd), PlayErr> {
         let capturing = capture
             .as_deref()
             .is_some_and(|c| !c.keys.is_empty() || c.all_up_to > 0 || !c.snapshot_sims.is_empty());
@@ -858,6 +867,8 @@ impl Roles {
             calls: c.inference - calls0,
         };
         let mut in_tree = true;
+        // Set at the expansion: record the anchor turn once its edge is applied.
+        let mut anchor_pending = false;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
         loop {
@@ -865,7 +876,7 @@ impl Roles {
             if let Some(end) = terminal(&s, ctx.focal) {
                 drop(span);
                 sup.finish(rec);
-                return Ok((path, new, end));
+                return Ok((path, new, SimEnd::Game(end)));
             }
             let d = decision(&s).expect("decision");
             drop(span);
@@ -882,6 +893,35 @@ impl Roles {
                     // choice past the depth limit when nothing expanded.
                     if in_tree && depth > MAX_DEPTH && rec.depth_limit.is_none() {
                         rec.depth_limit = Some(snap(depth, meter, c));
+                        rec.anchor_turn = Some(s.game_state().turn);
+                    }
+                    // Accounting only (value-leaf cost split): the first
+                    // focal choice at or after the anchor, in a later turn,
+                    // and two or more turns later.
+                    if let Some(t0) = rec.anchor_turn.filter(|_| !in_tree || depth > MAX_DEPTH) {
+                        let turn = s.game_state().turn;
+                        let at = snap(depth, meter, c);
+                        rec.leaf_h0.get_or_insert(at);
+                        if turn > t0 {
+                            rec.leaf_t0.get_or_insert(at);
+                        }
+                        if turn >= t0.saturating_add(2) {
+                            rec.leaf_t1.get_or_insert(at);
+                        }
+                        // Value leaf (`s4a-vl-v1`): stop here and score the
+                        // focal player's actor-visible view with the
+                        // searching network (no sampling draw).
+                        if value_leaf.is_some_and(|vl| vl.horizon.reached(t0, turn)) {
+                            c.inference += 1;
+                            let raw = self
+                                .scorer
+                                .score_fast_session_v1(&s)
+                                .map_err(PlayErr::Fault)?
+                                .value;
+                            let units = super::value_leaf::units(raw).map_err(PlayErr::Fault)?;
+                            sup.finish(rec);
+                            return Ok((path, new, SimEnd::Leaf { units, raw }));
+                        }
                     }
                     // Trace only: where this choice comes from.
                     let mut src = if in_tree {
@@ -953,6 +993,9 @@ impl Roles {
                                 let perm = keyer.perm(&st, ctx.seeds)?;
                                 let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
                                 node.skip = keyer.skipped(&st);
+                                if value_leaf.is_some() {
+                                    node.vsum = vec![0; node.n.len()];
+                                }
                                 if let Some(m) = ctx.bestline {
                                     let k = node.n.len();
                                     node.bl = Some(Box::new(super::tree::BestLine::new(k, m)));
@@ -979,6 +1022,9 @@ impl Roles {
                                 // Boundary: before the expanded choice's
                                 // action is applied.
                                 rec.expansion = Some(snap(depth, meter, c));
+                                // The anchor turn is read after this edge is
+                                // applied (below).
+                                anchor_pending = true;
                                 (e, cn.edges[e].clone())
                             }
                         };
@@ -1078,6 +1124,10 @@ impl Roles {
                 v.before(&s, d, a, inference);
             }
             apply(&mut s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
+            if anchor_pending {
+                rec.anchor_turn = Some(s.game_state().turn);
+                anchor_pending = false;
+            }
             #[cfg(feature = "viewer-recording-v1")]
             if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
                 v.after(&s, suffix.last);
@@ -1191,6 +1241,39 @@ impl Roles {
                 Tree::default(),
             );
         }
+        if options.value_leaf.is_some()
+            && (options.sharing
+                || options.allocation != RootAllocation::Uct
+                || ctx.bestline.is_some()
+                || ctx.interchange
+                || retain > 1
+                || trace.is_some()
+                || capture.is_some()
+                || options.cpu_seconds.is_some())
+        {
+            return (
+                Selection {
+                    incomplete: true,
+                    faults: vec![
+                        "the value-leaf search runs with UCT, the mean backup, one-node expansion and no trace, capture, sharing, merging or CPU stop".into(),
+                    ],
+                    ..Selection::default()
+                },
+                Tree::default(),
+            );
+        }
+        if options.value_leaf.is_some() {
+            if let Err(e) = crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1() {
+                return (
+                    Selection {
+                        incomplete: true,
+                        faults: vec![format!("value leaf: floating-point environment: {e:?}")],
+                        ..Selection::default()
+                    },
+                    Tree::default(),
+                );
+            }
+        }
         if ctx.bestline.is_some() && (options.sharing || options.allocation != RootAllocation::Uct)
         {
             return (
@@ -1263,6 +1346,7 @@ impl Roles {
         let mut tree = Tree::default();
         let mut meter = Meter::new(ctx.limits.select_cap);
         let mut c = Counters::default();
+        let mut vl_census = super::value_leaf::Census::default();
         let mut i = 0u64;
         loop {
             if options.work_limit.is_some_and(|limit| i >= limit) {
@@ -1344,7 +1428,36 @@ impl Roles {
                 allocator.as_mut(),
                 sharing.as_mut(),
                 &mut sharing_cursor,
+                options.value_leaf,
             );
+            // A value leaf is backed up here; game endings take the formal
+            // path below (with value units in a value-leaf search).
+            let (r, leaf) = match r {
+                Ok((path, new, SimEnd::Leaf { units, raw })) => {
+                    (Ok((path, new, None)), Some((units, raw)))
+                }
+                Ok((path, new, SimEnd::Game(end))) => (Ok((path, new, Some(end))), None),
+                Err(e) => (Err(e), None),
+            };
+            if let Some((units, raw)) = leaf {
+                let Ok((path, new, _)) = r else {
+                    unreachable!("a value leaf is an Ok simulation")
+                };
+                rec.transitions = meter.spent - spent0;
+                rec.policy_calls = c.inference - calls0;
+                rec.outcome = SimRecord::VALUE_LEAF;
+                rec.new_nodes = new.len();
+                if let Some(v) = records.as_deref_mut() {
+                    v.push(rec);
+                }
+                let _span =
+                    crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
+                vl_census.leaf(raw, units);
+                tree.backup_value(&path, new, units, None);
+                sel.completed += 1;
+                continue;
+            }
+            let r = r.map(|(path, new, end)| (path, new, end.expect("a game ending")));
             if let Some(cap) = capture.as_deref_mut() {
                 cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
             }
@@ -1391,7 +1504,13 @@ impl Roles {
                     if let Some(log) = diag.path_log.as_mut() {
                         log.natural(index, &path, &new, win, &rec);
                     }
-                    tree.backup_observed(&path, new, win, draw, rec.rollout_choices == 0);
+                    if options.value_leaf.is_some() {
+                        vl_census.natural += 1;
+                        let units = super::value_leaf::natural_units(win, draw);
+                        tree.backup_value(&path, new, units, Some((win, draw)));
+                    } else {
+                        tree.backup_observed(&path, new, win, draw, rec.rollout_choices == 0);
+                    }
                     if let Some(sharing) = sharing.as_mut() {
                         sharing.backup(&sharing_cursor, index, win);
                     }
@@ -1429,6 +1548,18 @@ impl Roles {
             }
         }
         sel.extra = json!({"tree":tree_stats(&tree)});
+        if let Some(vl) = &options.value_leaf {
+            let mut v = vl.json();
+            v["census"] = vl_census.json();
+            // `completed_natural` counts leaf and natural backups alike in a
+            // value-leaf search; the census separates them, and
+            // `inference_calls` includes one forward per leaf.
+            v["completed_counts_leaves"] = json!(true);
+            v["root"] = super::value_leaf::root_edges(&tree)
+                .as_ref()
+                .map_or(Value::Null, super::value_leaf::edges_json);
+            sel.extra["value_leaf"] = v;
+        }
         if let Some(sharing) = sharing.as_ref() {
             sel.extra["sharing"] = sharing.json();
         }
@@ -2027,10 +2158,21 @@ pub(crate) struct SimRecord {
     /// Focal nonforced choices the rollout policy made (after the tree path,
     /// past the depth limit, or on retained tail nodes).
     pub(crate) rollout_choices: u32,
+    /// Engine turn at the end of the tree prefix (the expansion, or the
+    /// first choice past the depth limit). Accounting only.
+    pub(crate) anchor_turn: Option<u32>,
+    /// The first focal nonforced choice at or after the anchor (a value leaf
+    /// at H = 0), in a later engine turn (T0), and two or more turns later
+    /// (T1). Recorded before that choice's policy call. Accounting only.
+    pub(crate) leaf_h0: Option<Snap>,
+    pub(crate) leaf_t0: Option<Snap>,
+    pub(crate) leaf_t1: Option<Snap>,
 }
 
 impl SimRecord {
     pub(crate) const REJECTED: u8 = 6;
+    /// A value-leaf simulation (`s4a-vl-v1`) that stopped at its leaf.
+    pub(crate) const VALUE_LEAF: u8 = 7;
 
     /// Mutually exclusive (transitions, calls) buckets: the tree prefix
     /// (before the first expansion, or before the first choice past the
