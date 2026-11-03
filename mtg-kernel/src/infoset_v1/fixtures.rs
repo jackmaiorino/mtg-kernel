@@ -798,9 +798,9 @@ pub(crate) fn pick_copy(name: &str, bounced: bool) -> IntentV1 {
 /// them with a battlefield history (its span began on the stack). CawGates
 /// then Brainstorms and puts back `put_back`, and the tracker keeps two
 /// Hawk count facts. P exports two `known_name` Hawks in every variant;
-/// mutant L8 binds the facts to the first two true remaining Hawks, which
-/// include the bounced copy (exported generation above 1) only when two
-/// fresh Hawks were put back.
+/// mutant L8 binds the facts to true remaining Hawks with `C:` handles, so
+/// its bytes show whether the bounced copy (exported generation above 1)
+/// is among them.
 pub(crate) fn l8_bound_copies(put_back: L8PutBackV1) -> ScriptV1 {
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let live = new_game(["CawGates", "Faeries"], 72, o);
@@ -1332,10 +1332,11 @@ fn w_pin_engine_fixtures() {
 /// L8 (count-fact binding) witnesses: compared decisions where the correct
 /// producer exports equal bytes in both worlds and mutant L8 differs. The
 /// bounced Hawk's span began on the stack, so L8's `C:` binding exports its
-/// generation above 1, while a fresh Hawk exports 1. Putting back two
-/// fresh Hawks makes L8 bind the bounced copy; putting back the bounced
-/// Hawk and a fresh one makes it bind two fresh copies, as in the base
-/// world (the control: binding alone is invisible between equal copies).
+/// generation above 1, while a fresh Hawk exports 1. The witness pair puts
+/// back no Hawk in one world and the bounced Hawk and a fresh one in the
+/// other, so L8's bound copies differ in history; the control pair puts
+/// back two fresh Hawks, so the bounced copy stays in both worlds and L8
+/// must not differ (binding alone is invisible between equal copies).
 #[test]
 fn l8_bound_copies_engine_fixture() {
     let v = PlayerId::P1;
@@ -1367,8 +1368,8 @@ fn l8_bound_copies_engine_fixture() {
         }
         n
     };
-    let two_fresh = exporting_witnesses(&records[1]);
-    let control = exporting_witnesses(&records[2]);
+    let control = exporting_witnesses(&records[1]);
+    let bounced_out = exporting_witnesses(&records[2]);
     let known: Vec<&Vec<String>> = records[0]
         .iter()
         .filter(|r| r.known.len() == 2)
@@ -1376,15 +1377,15 @@ fn l8_bound_copies_engine_fixture() {
         .take(1)
         .collect();
     eprintln!(
-        "l8-bound-copies: L8 witnesses with P exporting: two fresh put back {two_fresh}, bounced and fresh put back {control}; P's known_name survivors {known:?}"
+        "l8-bound-copies: L8 witnesses with P exporting: bounced and fresh put back {bounced_out}, two fresh put back (control) {control}; P's known_name survivors {known:?}"
     );
     assert!(
         reports.iter().all(|r| r.compared > 0),
         "both pairs compare decisions: {reports:?}"
     );
     assert!(
-        two_fresh >= 5,
-        "L8 has at least 5 witnesses with P exporting (design 13): {two_fresh}"
+        bounced_out >= 5,
+        "L8 has at least 5 witnesses with P exporting (design 13): {bounced_out}"
     );
     assert_eq!(
         control, 0,
