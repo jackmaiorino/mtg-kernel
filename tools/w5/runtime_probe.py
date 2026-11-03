@@ -195,8 +195,11 @@ def read(args) -> dict:
             by_pair.setdefault(pair, []).append((slots[0] + slots[1]) / 2)
         else:
             unscored += 1
-    board = {p["pair"]: (p["slots"][0]["score"] + p["slots"][1]["score"]) / 2 for p in doc["board_pairs"]
-             if None not in (p["slots"][0]["score"], p["slots"][1]["score"])}
+    board = {}
+    for p in doc["board_pairs"]:  # plan.json carries the slot keys as strings
+        scores = [p["slots"][str(k)]["score"] for k in (0, 1)]
+        if None not in scores:
+            board[p["pair"]] = sum(scores) / 2
     pairs = sorted(set(board) & set(by_pair))
     t_mean = [sum(by_pair[p]) / len(by_pair[p]) for p in pairs]
     b_val = [board[p] for p in pairs]
