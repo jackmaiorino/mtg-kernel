@@ -800,8 +800,11 @@ impl WalkV1<'_> {
         }
         let tracked = self.objs[id.0 as usize].tracked;
         if is_public(to) || named {
-            // Identified as it leaves: drop that fact, else one fact with
-            // its name.
+            // Identified as it leaves: drop its own fact, else one count fact
+            // with its name. A fact bound to another copy stays: V tells the
+            // copies apart by their public object ids, and the departure of
+            // a different object does not end that copy's span (6.1). The
+            // engine's own knowledge rows keep it too (R5 compares them).
             let pos = self
                 .hand
                 .iter()
@@ -810,8 +813,7 @@ impl WalkV1<'_> {
                     self.hand
                         .iter()
                         .position(|f| f.native.is_none() && f.card_def == card_def)
-                })
-                .or_else(|| self.hand.iter().position(|f| f.card_def == card_def));
+                });
             if let Some(pos) = pos {
                 self.hand.remove(pos);
             }

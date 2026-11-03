@@ -639,3 +639,62 @@ fn a_reveal_never_links_the_unidentified_draw_before_it() {
         "revealing A or B must export the same bytes"
     );
 }
+
+/// R5 regression (bridge, Wildfire seed 6): the opponent's hand holds a
+/// revealed copy A and an unrevealed copy B of one card; B leaves publicly.
+/// V's fact about A stays (B is a different public object), as the engine's
+/// own knowledge rows do, so the export is not refused R5 and A keeps its
+/// `C:` handle.
+#[test]
+fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let viewer = PlayerId::P0;
+    let opp = viewer.opponent();
+    for seed in 50..200u64 {
+        let live = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+            seed,
+            seed,
+            2_000,
+            20_000,
+            ["Wildfire".to_string(), "Wildfire".to_string()],
+        )
+        .expect("reset");
+        let base = live.game_state().clone();
+        let hand = base.players[opp.index()].hand.clone();
+        let Some((a, b)) = hand.iter().enumerate().find_map(|(i, &a)| {
+            hand[i + 1..]
+                .iter()
+                .find(|&&b| base.objects.get(b).card_def == base.objects.get(a).card_def)
+                .map(|&b| (a, b))
+        }) else {
+            continue;
+        };
+        let lists = decklists(&live);
+        let mut st = base.clone();
+        st.reveal_hand_card(viewer, opp, a).expect("reveal");
+        propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Graveyard));
+        assert!(
+            st.known_hand_cards(viewer, opp)
+                .iter()
+                .any(|k| k.object == a),
+            "the engine still knows the revealed copy"
+        );
+        let x = export_v1(
+            &ExportInputV1 {
+                state: &st,
+                journal: st.observation_journal.notes(),
+                viewer,
+                decklists: [&lists[0], &lists[1]],
+            },
+            ExportOptionsV1::default(),
+        )
+        .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
+        assert!(
+            x.tracked_natives.contains(&a),
+            "the revealed copy stays tracked"
+        );
+        return;
+    }
+    panic!("no seed deals the opponent two copies of one card");
+}
