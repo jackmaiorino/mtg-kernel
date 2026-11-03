@@ -867,6 +867,8 @@ impl Roles {
             calls: c.inference - calls0,
         };
         let mut in_tree = true;
+        // Set at the expansion: record the anchor turn once its edge is applied.
+        let mut anchor_pending = false;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
         loop {
@@ -910,6 +912,7 @@ impl Roles {
                         // focal player's actor-visible view with the
                         // searching network (no sampling draw).
                         if value_leaf.is_some_and(|vl| vl.horizon.reached(t0, turn)) {
+                            c.inference += 1;
                             let raw = self
                                 .scorer
                                 .score_fast_session_v1(&s)
@@ -1019,7 +1022,9 @@ impl Roles {
                                 // Boundary: before the expanded choice's
                                 // action is applied.
                                 rec.expansion = Some(snap(depth, meter, c));
-                                rec.anchor_turn = Some(s.game_state().turn);
+                                // The anchor turn is read after this edge is
+                                // applied (below).
+                                anchor_pending = true;
                                 (e, cn.edges[e].clone())
                             }
                         };
@@ -1119,6 +1124,10 @@ impl Roles {
                 v.before(&s, d, a, inference);
             }
             apply(&mut s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
+            if anchor_pending {
+                rec.anchor_turn = Some(s.game_state().turn);
+                anchor_pending = false;
+            }
             #[cfg(feature = "viewer-recording-v1")]
             if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
                 v.after(&s, suffix.last);
@@ -1423,15 +1432,16 @@ impl Roles {
                 Err(e) => (Err(e), None),
             };
             if let Some((units, raw)) = leaf {
-                rec.transitions = meter.spent - spent0;
-                rec.policy_calls = c.inference - calls0;
-                rec.outcome = SimRecord::VALUE_LEAF;
-                if let Some(v) = records.as_deref_mut() {
-                    v.push(rec);
-                }
                 let Ok((path, new, _)) = r else {
                     unreachable!("a value leaf is an Ok simulation")
                 };
+                rec.transitions = meter.spent - spent0;
+                rec.policy_calls = c.inference - calls0;
+                rec.outcome = SimRecord::VALUE_LEAF;
+                rec.new_nodes = new.len();
+                if let Some(v) = records.as_deref_mut() {
+                    v.push(rec);
+                }
                 let _span =
                     crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
                 vl_census.leaf(raw, units);
@@ -1533,6 +1543,10 @@ impl Roles {
         if let Some(vl) = &options.value_leaf {
             let mut v = vl.json();
             v["census"] = vl_census.json();
+            // `completed_natural` counts leaf and natural backups alike in a
+            // value-leaf search; the census separates them, and
+            // `inference_calls` includes one forward per leaf.
+            v["completed_counts_leaves"] = json!(true);
             v["root"] = super::value_leaf::root_edges(&tree)
                 .as_ref()
                 .map_or(Value::Null, super::value_leaf::edges_json);

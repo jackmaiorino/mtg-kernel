@@ -1977,6 +1977,12 @@ fn value_leaf_search_repeats_exactly() {
         assert!(!a.incomplete && a.faults.is_empty(), "{:?}", a.faults);
         assert_eq!(value_leaf_primary(&a), value_leaf_primary(&b));
         assert_eq!(value_leaf::root_edges(&ta), value_leaf::root_edges(&tb));
+        // Every node's counts and value sums replay exactly.
+        assert_eq!(ta.nodes.len(), tb.nodes.len());
+        for (k, n) in &ta.nodes {
+            let m = &tb.nodes[k];
+            assert_eq!((&n.n, &n.wins, &n.draws, &n.vsum), (&m.n, &m.wins, &m.draws, &m.vsum));
+        }
         let census = &a.extra["value_leaf"]["census"];
         let leaves = census["leaves"].as_u64().unwrap();
         let natural = census["natural"].as_u64().unwrap();
@@ -1985,8 +1991,12 @@ fn value_leaf_search_repeats_exactly() {
         // Every stored node keeps one value sum per edge; the root's visits
         // equal the backed-up simulations, and no edge exceeds its visits.
         let edges = value_leaf::root_edges(&ta).expect("a value-leaf root");
-        assert_eq!(edges.iter().map(|e| e.1).sum::<u64>(), a.completed);
-        assert!(edges.iter().all(|e| e.2 <= e.1 * value_leaf::UNIT));
+        assert_eq!(edges.iter().map(|e| e.n).sum::<u64>(), a.completed);
+        assert!(edges.iter().all(|e| e.units <= e.n * value_leaf::UNIT));
+        // Leaf units are the backed-up leaf values: the root's sums are at
+        // least the leaf census's share routed through it (all of it here).
+        let root_units: u64 = edges.iter().map(|e| e.units).sum();
+        assert!(root_units >= census["leaf_units"].as_u64().unwrap());
         assert!(ta.nodes.values().all(|n| n.vsum.len() == n.n.len()));
     }
     // The formal search is untouched by the option's existence.
@@ -2073,7 +2083,7 @@ fn value_leaf_root_parallel_merge_is_order_and_thread_independent() {
     let mut reversed = serial.clone();
     reversed.reverse();
     assert_eq!(merged, value_leaf::merge(&reversed).unwrap());
-    assert_eq!(merged.iter().map(|e| e.1).sum::<u64>(), serial.iter().flatten().map(|e| e.1).sum::<u64>());
+    assert_eq!(merged.iter().map(|e| e.n).sum::<u64>(), serial.iter().flatten().map(|e| e.n).sum::<u64>());
     assert_eq!(value_leaf::pick_v2(&merged), value_leaf::pick_v2(&value_leaf::merge(&concurrent).unwrap()));
 }
 

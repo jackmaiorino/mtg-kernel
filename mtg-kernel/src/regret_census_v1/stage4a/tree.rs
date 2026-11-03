@@ -1351,6 +1351,12 @@ impl Tree {
                 h.update(a.to_le_bytes());
                 h.update(b.to_le_bytes());
             }
+            // Value-leaf nodes also bind their value sums and draws; formal
+            // nodes (no value sums) keep the original byte stream.
+            for (v, d) in n.vsum.iter().zip(&n.draws) {
+                h.update(v.to_le_bytes());
+                h.update(d.to_le_bytes());
+            }
         }
         h.finalize().iter().map(|b| format!("{b:02x}")).collect()
     }

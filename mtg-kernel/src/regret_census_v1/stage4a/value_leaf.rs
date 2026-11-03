@@ -125,9 +125,19 @@ impl Census {
     }
 }
 
-/// The root's edge statistics in canonical edge order: (canonical edge,
-/// visits, value units, natural draws).
-pub(crate) type RootEdges = Vec<(Vec<u8>, u64, u64, u64)>;
+/// One root edge: canonical bytes, live menu index, visits, value units and
+/// natural draws.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RootEdge {
+    pub(crate) edge: Vec<u8>,
+    pub(crate) live: u32,
+    pub(crate) n: u64,
+    pub(crate) units: u64,
+    pub(crate) draws: u64,
+}
+
+/// The root's edges in canonical edge order.
+pub(crate) type RootEdges = Vec<RootEdge>;
 
 /// The root node of a value-leaf tree (the depth-1 node with the zero parent).
 pub(crate) fn root(tree: &Tree) -> Option<&Node> {
@@ -143,62 +153,81 @@ pub(crate) fn root_edges(tree: &Tree) -> Option<RootEdges> {
     if r.vsum.len() != r.n.len() {
         return None;
     }
-    Some(
-        (0..r.n.len())
-            .map(|a| (r.canon.edges[a].clone(), r.n[a], r.vsum[a], r.draws[a]))
-            .collect(),
-    )
+    (0..r.n.len())
+        .map(|a| {
+            let live = super::tree::live_index(&r.canon, &r.canon.edges[a]).ok()?;
+            Some(RootEdge {
+                edge: r.canon.edges[a].clone(),
+                live,
+                n: r.n[a],
+                units: r.vsum[a],
+                draws: r.draws[a],
+            })
+        })
+        .collect()
 }
 
 /// Root-parallel merge: integer sums in tree order. Every tree must show the
-/// same canonical root edges; a tree that differs is refused, never merged.
+/// same canonical root edges and live menu map; a tree that differs is
+/// refused, never merged. (Prototype: production callers come with the K-tree
+/// driver.)
+#[cfg(test)]
 pub(crate) fn merge(trees: &[RootEdges]) -> Result<RootEdges, String> {
     let first = trees.first().ok_or("merge of no trees")?;
-    let mut out: RootEdges = first.iter().map(|(e, _, _, _)| (e.clone(), 0, 0, 0)).collect();
+    let mut out: RootEdges = first
+        .iter()
+        .map(|e| RootEdge {
+            n: 0,
+            units: 0,
+            draws: 0,
+            ..e.clone()
+        })
+        .collect();
     for (k, t) in trees.iter().enumerate() {
-        if t.len() != out.len() || t.iter().zip(&out).any(|(a, b)| a.0 != b.0) {
+        if t.len() != out.len() || t.iter().zip(&out).any(|(a, b)| a.edge != b.edge || a.live != b.live) {
             return Err(format!("tree {k}: root edges differ"));
         }
         for (o, x) in out.iter_mut().zip(t) {
-            o.1 += x.1;
-            o.2 += x.2;
-            o.3 += x.3;
+            o.n += x.n;
+            o.units += x.units;
+            o.draws += x.draws;
         }
     }
     Ok(out)
 }
 
 /// `pick-v2` on merged root edges: most visits, then the higher mean value
-/// (exact: S1 x n2 against S2 x n1 in u128), then the lowest canonical edge
-/// index. None when no edge was visited.
+/// (exact: S1 x n2 against S2 x n1 in u128), then the lowest live menu index.
+/// Returns the chosen position in `edges`; None when no edge was visited.
+#[cfg(test)]
 pub(crate) fn pick_v2(edges: &RootEdges) -> Option<usize> {
+    let key = |e: &RootEdge| (e.n, e.units, e.live);
+    let better = |e: &RootEdge, f: &RootEdge| {
+        let (en, es, el) = key(e);
+        let (fn_, fs, fl) = key(f);
+        en > fn_
+            || (en == fn_
+                && (u128::from(es) * u128::from(fn_) > u128::from(fs) * u128::from(en)
+                    || (u128::from(es) * u128::from(fn_) == u128::from(fs) * u128::from(en) && el < fl)))
+    };
     let mut best: Option<usize> = None;
     for (i, e) in edges.iter().enumerate() {
-        if e.1 == 0 {
+        if e.n == 0 {
             continue;
         }
-        best = Some(match best {
-            None => i,
-            Some(b) => {
-                let f = &edges[b];
-                let better = e.1 > f.1
-                    || (e.1 == f.1 && u128::from(e.2) * u128::from(f.1) > u128::from(f.2) * u128::from(e.1));
-                if better {
-                    i
-                } else {
-                    b
-                }
-            }
-        });
+        if best.is_none_or(|b| better(e, &edges[b])) {
+            best = Some(i);
+        }
     }
     best
 }
 
 /// Q-hat per root edge (value units over visits); None for unvisited edges.
+#[cfg(test)]
 pub(crate) fn q_hat(edges: &RootEdges) -> Vec<Option<f64>> {
     edges
         .iter()
-        .map(|e| (e.1 > 0).then(|| e.2 as f64 / (e.1 as f64 * UNIT as f64)))
+        .map(|e| (e.n > 0).then(|| e.units as f64 / (e.n as f64 * UNIT as f64)))
         .collect()
 }
 
@@ -211,7 +240,7 @@ pub(crate) fn edges_json(edges: &RootEdges) -> Value {
     Value::Array(
         edges
             .iter()
-            .map(|(e, n, s, d)| json!({"edge_sha256":hex(e),"n":n,"value_units":s,"draws":d}))
+            .map(|e| json!({"edge_sha256":hex(&e.edge),"live":e.live,"n":e.n,"value_units":e.units,"draws":e.draws}))
             .collect(),
     )
 }
@@ -251,30 +280,73 @@ mod tests {
         assert!(Horizon::parse("t1").is_err());
     }
 
-    fn edges(rows: &[(u8, u64, u64)]) -> RootEdges {
-        rows.iter().map(|&(e, n, s)| (vec![e], n, s, 0)).collect()
+    /// Root edges from (canonical byte, live index, visits, units).
+    fn edges(rows: &[(u8, u32, u64, u64)]) -> RootEdges {
+        rows.iter()
+            .map(|&(e, live, n, units)| RootEdge {
+                edge: vec![e],
+                live,
+                n,
+                units,
+                draws: 0,
+            })
+            .collect()
     }
 
     #[test]
     fn merge_sums_in_order_and_refuses_different_roots() {
-        let a = edges(&[(0, 3, 10), (1, 5, 20)]);
-        let b = edges(&[(0, 4, 1), (1, 0, 0)]);
-        assert_eq!(merge(&[a.clone(), b.clone()]).unwrap(), edges(&[(0, 7, 11), (1, 5, 20)]));
+        let a = edges(&[(0, 1, 3, 10), (1, 0, 5, 20)]);
+        let b = edges(&[(0, 1, 4, 1), (1, 0, 0, 0)]);
+        assert_eq!(merge(&[a.clone(), b.clone()]).unwrap(), edges(&[(0, 1, 7, 11), (1, 0, 5, 20)]));
         // Order of summation cannot change an integer sum.
         assert_eq!(merge(&[a.clone(), b.clone()]), merge(&[b, a.clone()]));
-        assert!(merge(&[a, edges(&[(0, 1, 1), (2, 1, 1)])]).is_err());
+        assert!(merge(&[a.clone(), edges(&[(0, 1, 1, 1), (2, 0, 1, 1)])]).is_err());
+        // A different live map is a different root.
+        assert!(merge(&[a, edges(&[(0, 0, 1, 1), (1, 1, 1, 1)])]).is_err());
     }
 
     #[test]
     fn pick_v2_visits_then_exact_mean_then_index() {
         // Most visits wins.
-        assert_eq!(pick_v2(&edges(&[(0, 3, 3 * UNIT), (1, 5, 0)])), Some(1));
+        assert_eq!(pick_v2(&edges(&[(0, 0, 3, 3 * UNIT), (1, 1, 5, 0)])), Some(1));
         // Equal visits: higher mean.
-        assert_eq!(pick_v2(&edges(&[(0, 4, 1), (1, 4, 2)])), Some(1));
-        // Full tie: lowest index.
-        assert_eq!(pick_v2(&edges(&[(0, 4, 2), (1, 4, 2)])), Some(0));
+        assert_eq!(pick_v2(&edges(&[(0, 0, 4, 1), (1, 1, 4, 2)])), Some(1));
+        // Full tie: the lowest live index, not the canonical position.
+        assert_eq!(pick_v2(&edges(&[(0, 1, 4, 2), (1, 0, 4, 2)])), Some(1));
+        assert_eq!(pick_v2(&edges(&[(0, 0, 4, 2), (1, 1, 4, 2)])), Some(0));
         // Unvisited edges never win.
-        assert_eq!(pick_v2(&edges(&[(0, 0, 0), (1, 0, 0)])), None);
-        assert_eq!(q_hat(&edges(&[(0, 2, UNIT), (1, 0, 0)])), vec![Some(0.5), None]);
+        assert_eq!(pick_v2(&edges(&[(0, 0, 0, 0), (1, 1, 0, 0)])), None);
+        assert_eq!(q_hat(&edges(&[(0, 0, 2, UNIT), (1, 1, 0, 0)])), vec![Some(0.5), None]);
+    }
+
+    /// Exact backups: leaf and natural units, visit counts, win and draw
+    /// tallies on every path node.
+    #[test]
+    fn backup_value_is_exact_on_every_path_node() {
+        use super::super::tree::{Canon, Node, Tree};
+        let node = |k: usize| {
+            let canon = Canon {
+                obs: vec![],
+                menu: (0..k).map(|i| vec![i as u8]).collect(),
+                edges: (0..k).map(|i| vec![i as u8]).collect(),
+            };
+            let mut n = Node::with_perm([0; 32], vec![], canon, 1, (0..k).collect());
+            n.vsum = vec![0; k];
+            n
+        };
+        let (r, c) = ([1u8; 32], [2u8; 32]);
+        let mut t = Tree::default();
+        t.backup_value(&[(r, 1)], vec![(r, node(2))], 700_000, None);
+        t.backup_value(&[(r, 1), (c, 0)], vec![(c, node(3))], natural_units(true, false), Some((true, false)));
+        t.backup_value(&[(r, 0)], vec![], natural_units(false, true), Some((false, true)));
+        t.backup_value(&[(r, 1), (c, 2)], vec![], natural_units(false, false), Some((false, false)));
+        let root = &t.nodes[&r];
+        assert_eq!((root.visits, root.n.clone()), (4, vec![1, 3]));
+        assert_eq!(root.vsum, vec![UNIT / 2, 700_000 + UNIT]);
+        assert_eq!((root.wins.clone(), root.draws.clone()), (vec![0, 1], vec![1, 0]));
+        let child = &t.nodes[&c];
+        assert_eq!((child.visits, child.n.clone()), (2, vec![1, 0, 1]));
+        assert_eq!(child.vsum, vec![UNIT, 0, 0]);
+        assert_eq!((child.wins.clone(), child.draws.clone()), (vec![1, 0, 0], vec![0, 0, 0]));
     }
 }
