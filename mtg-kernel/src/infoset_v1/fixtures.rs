@@ -1349,12 +1349,18 @@ fn l8_bound_copies_engine_fixture() {
     .map(|p| record(l8_bound_copies(*p), v, 30))
     .collect();
     let (records, reports) = pairs("l8-bound-copies", runs);
-    // Witnesses where P exports (not merely refuses alike) in both worlds.
-    let exporting_witnesses = |b: &[AtV1]| -> u64 {
-        let mut n = 0;
+    // Compared decisions after the Brainstorm (P exports two `known_name`
+    // Hawks, equal bytes, in both worlds), split by whether L8 differs:
+    // (witnesses, agreeing samples).
+    let hawks = vec!["Squadron Hawk".to_string(); 2];
+    let after_brainstorm = |b: &[AtV1]| -> (u64, u64) {
+        let (mut differ, mut agree) = (0, 0);
         for (x, y) in records[0].iter().zip(b) {
             if x.view != y.view {
                 break;
+            }
+            if !(x.p.is_ok() && x.p == y.p && x.known == hawks && y.known == hawks) {
+                continue;
             }
             let l8 = |r: &AtV1| {
                 r.mutants
@@ -1362,22 +1368,19 @@ fn l8_bound_copies_engine_fixture() {
                     .find(|(m, _)| *m == MutantV1::L8)
                     .map(|(_, o)| o.clone())
             };
-            if x.p.is_ok() && x.p == y.p && l8(x) != l8(y) {
-                n += 1;
+            if l8(x) != l8(y) {
+                differ += 1;
+            } else {
+                agree += 1;
             }
         }
-        n
+        (differ, agree)
     };
-    let control = exporting_witnesses(&records[1]);
-    let bounced_out = exporting_witnesses(&records[2]);
-    let known: Vec<&Vec<String>> = records[0]
-        .iter()
-        .filter(|r| r.known.len() == 2)
-        .map(|r| &r.known)
-        .take(1)
-        .collect();
+    let (control, control_samples) = after_brainstorm(&records[1]);
+    let (bounced_out, _) = after_brainstorm(&records[2]);
     eprintln!(
-        "l8-bound-copies: L8 witnesses with P exporting: bounced and fresh put back {bounced_out}, two fresh put back (control) {control}; P's known_name survivors {known:?}"
+        "l8-bound-copies: L8 witnesses with P exporting two known_name Hawks: bounced and fresh put back {bounced_out}; two fresh put back (control) {control} of {}",
+        control + control_samples
     );
     assert!(
         reports.iter().all(|r| r.compared > 0),
@@ -1386,6 +1389,10 @@ fn l8_bound_copies_engine_fixture() {
     assert!(
         bounced_out >= 5,
         "L8 has at least 5 witnesses with P exporting (design 13): {bounced_out}"
+    );
+    assert!(
+        control_samples >= 5,
+        "the control compares at least 5 post-Brainstorm decisions: {control_samples}"
     );
     assert_eq!(
         control, 0,
