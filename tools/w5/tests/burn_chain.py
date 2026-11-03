@@ -56,6 +56,9 @@ def main(argv) -> int:
         report(Path(opts["out"]), "worker")
         return 0
     if mode == "filler":
+        if opts.get("die-if") and Path(opts["die-if"]).exists():  # a broken filler (the occupancy test)
+            time.sleep(0.3)
+            return 1
         for _ in range(int(opts.get("workers", 2)) - 1):
             if os.fork() == 0:
                 break
