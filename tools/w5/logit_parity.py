@@ -212,9 +212,10 @@ def dump(binary: Path, source: Path, pins: list[Path], jobs: Path, out: Path, co
     if command:
         require(os.path.realpath(command[0]) == os.path.realpath(binary),
                 "--command must run the pinned --binary")
-        for arg in command[1:]:  # every file the command names (scripts, adapters) is pinned in the receipt
-            if Path(arg).is_file():
-                command_files[arg] = sha256_file(arg)
+        for arg in command[1:]:  # every file the command names (scripts, adapters, --flag=PATH) is pinned
+            for part in (arg, arg.split("=", 1)[-1]):
+                if part and Path(part).is_file():
+                    command_files[part] = sha256_file(part)
     out.mkdir(parents=True, exist_ok=True)
     rows, tensors = out / "rows.jsonl", out / "tensors.bin"
     require(not rows.exists() and not tensors.exists(), f"{out} already holds a dump")

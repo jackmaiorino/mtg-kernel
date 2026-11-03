@@ -123,6 +123,7 @@ def plan(endpoint_path: Path, panel_path: Path, parity_path: Path, out: Path) ->
                                               "panel_def_sha256": sha256_file(panel_path),
                                               "parity_sha256": sha256_file(parity_path)}})
     look = {"schema": LOOK_SCHEMA, "look_id": look_id, "endpoint": endpoint, "panel_def": panel,
+            "panel_def_sha256": sha256_file(panel_path),
             "parity": {"path": str(parity_path), "sha256": sha256_file(parity_path),
                        "max_abs_logit_diff": parity["max_abs_logit_diff"], "states": parity["states"]},
             "host_class": this_host, "plan": {"path": str(out / "plan.json"),
@@ -167,7 +168,8 @@ def rows(look_path: Path) -> dict:
     receipt = {"schema": "w5-h-look-receipt/v1", "look_id": look["look_id"],
                "look_sha256": sha256_file(look_path), "rows": {"path": str(out), "sha256": sha256_file(out)},
                "host_class": look["host_class"], "training_host_class": look["endpoint"]["training_host_class"],
-               "evaluator_sha256": look["panel_def"]["evaluator"]["sha256"], "parity": look["parity"]}
+               "evaluator_sha256": look["panel_def"]["evaluator"]["sha256"], "parity": look["parity"],
+               "panel_def_sha256": look["panel_def_sha256"]}
     (root / "look-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8", newline="\n")
     return receipt
 
