@@ -201,14 +201,12 @@ def main(argv=None) -> int:
         missing = [m for m in AMENDMENT_MARKERS if m not in amendment_text]
         if missing:
             raise ReceiptError(f"the amendment file lacks {missing}")
-        # Compare git blobs: the file is hashed through the checkout's own conversion for that path (autocrlf on
-        # Windows), so a CRLF working copy of the committed LF file matches and any content change does not.
-        committed = subprocess.run(["git", "-C", str(args.collab_repo), "rev-parse",
-                                    f"{args.amendment_commit}:{AMENDMENT_PATH}"], capture_output=True, text=True)
-        supplied_blob = subprocess.run(["git", "-C", str(args.collab_repo), "hash-object", "--stdin",
-                                        f"--path={AMENDMENT_PATH}"], input=amendment, capture_output=True)
-        if (committed.returncode != 0 or supplied_blob.returncode != 0
-                or committed.stdout.strip() != supplied_blob.stdout.decode().strip()):
+        # The committed bytes against the supplied bytes, line endings normalized explicitly (a CRLF working copy
+        # of the committed LF file matches); no checkout filter takes part.
+        committed = subprocess.run(["git", "-C", str(args.collab_repo), "show",
+                                    f"{args.amendment_commit}:{AMENDMENT_PATH}"], capture_output=True)
+        if committed.returncode != 0 or (committed.stdout.replace(b"\r\n", b"\n")
+                                         != amendment.replace(b"\r\n", b"\n")):
             raise ReceiptError(f"the amendment file is not {AMENDMENT_PATH} at commit {args.amendment_commit}")
         census_sha = sha256_bytes(args.census.read_bytes())
         configs = [json.loads(p.read_bytes()) for p in args.training_config]
