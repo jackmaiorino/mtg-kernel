@@ -141,22 +141,36 @@ class EndToEndTests(unittest.TestCase):
             amendment = collab / rr.AMENDMENT_PATH
             amendment.parent.mkdir(parents=True)
             amendment.write_text("## Amendment A1: runtime parity\n\n### A1 correction\n")
-            for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a1"]):
+            for cmd in (["init", "-q"], ["config", "core.autocrlf", "true"], ["add", "-A"],
+                        ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a1"]):
                 subprocess.run(["git", "-C", str(collab), *cmd], check=True, capture_output=True)
             commit = subprocess.run(["git", "-C", str(collab), "rev-parse", "HEAD"], capture_output=True,
                                     text=True).stdout.strip()
             census = tmp / "census.json"
             census.write_text("{}")
             out = tmp / "receipt.json"
-            code = rr.main(["--training-config", str(files["cfg.json"]), "--board-run", str(run),
-                            "--board-snapshot", str(snap), "--repo", str(REPO), "--amendment", str(amendment),
-                            "--amendment-commit", commit, "--census", str(census),
-                            "--collab-repo", str(collab),
-                            "--bot", str(sb / "integrations" / "mtg_kernel" / "kernel_flat_bot.py"),
-                            "--h-plan", str(files["h.json"]), "--s0-config", str(files["s0.json"]),
-                            "--engine-binary", sys.executable,
-                            "--wrapper", str(sb / "integrations" / "mtg_kernel" / "kernel_engine_v2.py"),
-                            "--scorer", sys.executable, "--out", str(out)])
+
+            def run_receipt(amendment_file):
+                return rr.main(["--training-config", str(files["cfg.json"]), "--board-run", str(run),
+                                "--board-snapshot", str(snap), "--repo", str(REPO), "--amendment", str(amendment_file),
+                                "--amendment-commit", commit, "--census", str(census),
+                                "--collab-repo", str(collab),
+                                "--bot", str(sb / "integrations" / "mtg_kernel" / "kernel_flat_bot.py"),
+                                "--h-plan", str(files["h.json"]), "--s0-config", str(files["s0.json"]),
+                                "--engine-binary", sys.executable,
+                                "--wrapper", str(sb / "integrations" / "mtg_kernel" / "kernel_engine_v2.py"),
+                                "--scorer", sys.executable, "--out", str(out)])
+
+            # a CRLF copy of the committed file is the same amendment; changed content is not
+            crlf = tmp / "crlf.md"
+            crlf.write_bytes("## Amendment A1: runtime parity\n\n### A1 correction\n".replace("\n", "\r\n").encode())
+            altered = tmp / "altered.md"
+            altered.write_bytes(b"## Amendment A1: runtime parity\n\n### A1 correction\nextra\n")
+            self.assertEqual(run_receipt(altered), 1)
+            self.assertFalse(out.exists())
+            self.assertEqual(run_receipt(crlf), 1)
+            self.assertTrue(out.exists())
+            code = run_receipt(amendment)
             receipt = json.loads(out.read_text())
         self.assertEqual(code, 1)  # stand-in census and binaries: bindings and the neutral exception refuse
         self.assertEqual(receipt["raw_failures"], ["neutral_choices_equal", "selection_equal",
