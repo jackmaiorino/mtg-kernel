@@ -28,6 +28,13 @@ across pauses, filler runs, resumes, restarts and the stage transition.
   freezes the chain cgroup, records the frozen value and starts the filler. `resume` freezes and kills the
   filler, writes `resume.<instance>.<n>.json` (with the operator's payload, e.g. R_i) and thaws the chain.
 - `W5_BOX_SLOT`, `W5_BOX_CPUS`, `W5_HOST_CLASS`, `W5_CHAIN`, `W5_MANIFEST`: identity for receipts.
+- `<state_root>/<chain>/ledger-source.json` (`W5_LEDGER_SOURCE`; `{ledger_source}` in an argv template): the E2
+  trainer's `chain_ledger.source` (`w5-chain-ledger-source/v1`: `closed_usec`, `instance`, `cpu_stat`, and
+  `stop_at_usec` once a resume names R_i), rewritten durably at instance open and before a resume thaws.
+- A controller pause (`w5box.py pause --now`, the 1.10 R-hat rule run outside the trainer) freezes the chain at
+  once: a frozen cgroup is transparent to its processes, and the trainer stops at `stop_at_usec` after the resume.
+- The chain and filler environments are a fixed base (`PATH`, `LANG`) plus the plan's `env`, never the
+  supervisor's, so the throughput binding covers them.
 
 **Recovery.** A supervisor that dies leaves its instance open. The next `run` closes it exactly from the
 surviving cgroup (with its OOM counters). If the cgroup is gone (a reboot), the ledger records the larger of the
@@ -76,6 +83,8 @@ SETTLE_SECONDS = 60.0
 FREEZE_SECONDS = 30.0
 QUALIFICATION_MAX_WALL = 8 * 86400
 UNQUALIFIED_MAX_WALL = 6 * 3600
+BASE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
+LEDGER_SOURCE_SCHEMA = "w5-chain-ledger-source/v1"
 FILLER_RESTARTS = 3
 EXIT_OOM = 3
 EXIT_REFUSED = 2
@@ -111,7 +120,7 @@ def canonical(value) -> bytes:
 
 def write_json_atomic(path: Path, value, durable: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
         if durable:
@@ -439,6 +448,8 @@ def load_plan(path) -> tuple[dict, str]:
     for key in ("host_class", "layout", "cgroup_root", "state_root", "isolation", "chains", "filler"):
         require(key in plan, f"Plan lacks {key}")
     require(plan["isolation"] in ("partition-root", "none"), "Isolation must be partition-root or none")
+    for key in ("cgroup_root", "state_root"):
+        require(Path(plan[key]).is_absolute(), f"Plan {key} must be an absolute path")
     return plan, sha256_bytes(raw)
 
 
@@ -455,8 +466,9 @@ LAYOUT_KEYS = ("schema", "cores_per_box", "offbox_cores_per_domain", "threads_pe
 
 
 def chain_argv(spec: dict, chain: str, state: Path) -> list[str]:
-    """The chain's argv from its arm-level template (`{chain}`, `{seed_root}`, `{state}`)."""
-    return [a.format(chain=chain, seed_root=spec["seed_root"], state=str(state)) for a in spec["argv"]]
+    """The chain's argv from its arm-level template (`{chain}`, `{seed_root}`, `{state}`, `{ledger_source}`)."""
+    return [a.format(chain=chain, seed_root=spec["seed_root"], state=str(state),
+                     ledger_source=str(Path(state) / "ledger-source.json")) for a in spec["argv"]]
 
 
 def filler_argv(filler: dict, seed_root: str, slot: int, seq: int) -> list[str]:
@@ -565,6 +577,7 @@ class Supervisor:
         self.chain_cg = Cgroup(self.box.path / "chain")
         self.filler_cg = Cgroup(self.box.path / "filler")
         self.owner_path = self.state_root / f"box{self.slot['slot']}.owner.json"
+        self.ledger_source = self.state / "ledger-source.json"
         self.fault_path = self.state_root / "OCCUPANCY-FAULT.json"
         self.instance = self.base = self.pid = self.filler_pid = None
         self.paused_seq = self.paused_usec = None
@@ -631,21 +644,37 @@ class Supervisor:
                 "started_unix": round(time.time(), 3)}
 
     def env(self, manifest_path: Path) -> dict:
-        env = dict(os.environ)
+        """Nothing inherited from the supervisor: a fixed base plus the plan's (bound) environment."""
+        env = dict(BASE_ENV)
         env.update(self.plan.get("env", {}))
         env.update({"W5_LEDGER_CGROUP": str(self.chain_cg.path), "W5_LEDGER_BASE_USEC": str(self.base),
                     "W5_LEDGER_INSTANCE": str(self.instance), "W5_CONTROL_DIR": str(self.control),
                     "W5_BOX_SLOT": str(self.slot["slot"]), "W5_BOX_CPUS": format_cpu_list(self.slot["cpus"]),
                     "W5_HOST_CLASS": self.detected_class, "W5_CHAIN": self.chain,
-                    "W5_MANIFEST": str(manifest_path)})
+                    "W5_MANIFEST": str(manifest_path), "W5_LEDGER_SOURCE": str(self.ledger_source)})
         return env
+
+    def write_ledger_source(self, stop_at_usec: int | None) -> None:
+        """The trainer's `chain_ledger.source` (E2, `w5-chain-ledger-source/v1`): re-read at every update."""
+        source = {"schema": LEDGER_SOURCE_SCHEMA, "closed_usec": self.base, "instance": self.instance,
+                  "cpu_stat": str(self.chain_cg.path / "cpu.stat")}
+        if stop_at_usec is not None:
+            source["stop_at_usec"] = int(stop_at_usec)
+        write_json_atomic(self.ledger_source, source, durable=True)
+
+    def last_stop_at(self) -> int | None:
+        stops = [r["payload"]["stop_at_usec"] for r in self.ledger.records()  # the latest set or clear
+                 if r["event"] == "resume" and isinstance(r.get("payload"), dict) and "stop_at_usec" in r["payload"]]
+        return stops[-1] if stops else None
 
     # --- pause, filler, resume
     def spawn_filler(self, instance_dir: Path) -> None:
         filler = self.plan["filler"]
         seed_root = self.filler_seed_root()
         argv = filler_argv(filler, seed_root, self.slot["slot"], self.paused_seq)
-        env = dict(os.environ, W5_FILLER_SEED_ROOT=seed_root, W5_BOX_SLOT=str(self.slot["slot"]))
+        env = dict(BASE_ENV)
+        env.update(self.plan.get("env", {}))
+        env.update({"W5_FILLER_SEED_ROOT": seed_root, "W5_BOX_SLOT": str(self.slot["slot"])})
         self.filler_pid = spawn_into(self.filler_cg, argv, env,
                                      instance_dir / f"filler-{self.paused_seq}-{self.filler_exits}.log")
 
@@ -677,7 +706,12 @@ class Supervisor:
 
     def resume(self, payload: dict) -> None:
         require(self.paused_seq is not None, "Chain is not paused")
+        stop_at = payload.get("stop_at_usec")
+        require(stop_at is None or (type(stop_at) is int and 0 < stop_at < 1 << 64),
+                "stop_at_usec must be a positive u64 (or null to clear it)")
         filler_usec = self.stop_filler()
+        if "stop_at_usec" in payload:  # null clears an earlier threshold
+            self.write_ledger_source(stop_at)
         now = self.chain_cg.usage_usec()
         self.ledger.append({"event": "resume", "instance": self.instance, "seq": self.paused_seq,
                             "usage_usec": now, "unchanged_since_pause": now == self.paused_usec,
@@ -699,6 +733,8 @@ class Supervisor:
         self.ledger.append({"event": "filler-exited", "instance": self.instance, "seq": self.paused_seq,
                             "exit": code, "exits": self.filler_exits})
         if self.filler_exits <= FILLER_RESTARTS:
+            self.filler_cg.kill()  # the exited root's descendants go before a replacement starts
+            require(self.filler_cg.wait_empty(SETTLE_SECONDS), "The exited filler's processes did not die")
             self.spawn_filler(instance_dir)
             return
         fault = {"box_slot": self.slot["slot"], "chain": self.chain, "instance": self.instance,
@@ -733,6 +769,7 @@ class Supervisor:
         manifest_path = instance_dir / "manifest.json"
         write_json_atomic(manifest_path, self.manifest(argv), durable=True)
         write_json_atomic(self.owner_path, {"chain": self.chain, "instance": self.instance}, durable=True)
+        self.write_ledger_source(self.last_stop_at())
         self.ledger.append({"event": "open", "instance": self.instance, "base_usec": self.base,
                             "cgroup": str(self.chain_cg.path), "cgroup_inode": self.chain_cg.inode(),
                             "manifest_sha256": sha256_file(manifest_path)})
@@ -748,9 +785,17 @@ class Supervisor:
                 status, ru = wstatus, ru_now
                 break
             request_path = self.control / "pause.request"
-            if self.paused_seq is None and request_path.exists():
+            if self.paused_seq is None and (self.control / "pause.now").exists():
+                accepted = sorted(int(x.name.split(".")[2])
+                                  for x in self.control.glob(f"pause.{self.instance}.*.accepted"))
+                now_request = dict(json.loads((self.control / "pause.now").read_text()), instance=self.instance,
+                                   seq=accepted[-1] + 1 if accepted else 0, at="controller")
+                os.replace(self.control / "pause.now", request_path)
+                self.pause(now_request, instance_dir)
+            elif self.paused_seq is None and request_path.exists():
                 request = json.loads(request_path.read_text())
-                if request.get("instance") == self.instance and isinstance(request.get("seq"), int):
+                if (request.get("instance") == self.instance and type(request.get("seq")) is int and not
+                        (self.control / f"pause.{self.instance}.{request['seq']}.accepted").exists()):
                     self.pause(request, instance_dir)
                 else:
                     os.replace(request_path, self.control / f"pause.rejected.{time.time_ns()}")
@@ -869,6 +914,8 @@ def main(argv=None) -> int:
         p.add_argument("--chain", required=True)
         if name in ("pause", "resume"):
             p.add_argument("--payload", default=None)
+        if name == "pause":
+            p.add_argument("--now", action="store_true", help="freeze immediately (the controller's 1.10 R-hat pause)")
     args = parser.parse_args(argv)
     try:
         if args.command == "layout":
@@ -883,8 +930,8 @@ def main(argv=None) -> int:
             return 0
         if args.command == "run":
             return guarded_supervisor(args).run()
-        if args.command == "pause":  # an intent: the trainer pauses at its next update boundary
-            return request(args, "pause.intent")
+        if args.command == "pause":  # --now: freeze at once; else an intent the trainer takes at a boundary
+            return request(args, "pause.now" if args.now else "pause.intent")
         if args.command in ("resume", "kill"):
             return request(args, f"{args.command}.request")
         plan, _ = load_plan(args.plan)

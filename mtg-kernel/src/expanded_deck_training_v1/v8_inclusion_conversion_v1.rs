@@ -136,7 +136,7 @@ pub(crate) fn write_v8_checkpoint_v1(
 ) -> Result<WrittenV8CheckpointV1, String> {
     ensure(!output.exists(), "the V8 conversion output already exists")?;
     let parent_bytes = read_pinned_bytes(parent)?;
-    let saved: ExpandedCheckpointV1 = serde_json::from_slice(&parent_bytes).map_err(err)?;
+    let saved = super::checkpoint_container_v1::parse_checkpoint_v1(&parent_bytes)?;
     admit_parent_v1(&saved)?;
     let snapshot = parent_snapshot_v1(&saved)?;
     let converted = convert_net8_snapshot_to_v8_v1(&snapshot, TORCH_DEFAULT_UNIFORM_V1, seed)

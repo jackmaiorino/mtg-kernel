@@ -184,6 +184,11 @@ class GuardTests(unittest.TestCase):
             path.write_text(json.dumps({"schema": "other"}))
             with self.assertRaises(w5box.Refusal):
                 w5box.load_plan(path)
+            relative = {"schema": w5box.PLAN_SCHEMA, "host_class": "x", "layout": {}, "cgroup_root": "/sys/fs/cgroup/w5",
+                        "state_root": "state", "isolation": "none", "chains": {}, "filler": {}}
+            path.write_text(json.dumps(relative))
+            with self.assertRaises(w5box.Refusal):  # the trainer's ledger source path must not depend on its cwd
+                w5box.load_plan(path)
 
 
 if __name__ == "__main__":
