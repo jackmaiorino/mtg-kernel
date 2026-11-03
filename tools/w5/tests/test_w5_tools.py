@@ -137,7 +137,7 @@ class RetentionTests(unittest.TestCase):
             rate = 1000 / 60.0
             self.assertAlmostEqual(proj['rate_usec_per_s'], rate)
             self.assertAlmostEqual(proj['r_hat_usec'], 128_000 + rate * (7 * 86400 - 128 * 60))
-            d = retention.decide(x_chain, x_rec, c_chain, c_rec, c_ended=False, checkpoint_bytes=15 * 10**6)
+            d = retention.decide(x_chain, x_rec, c_chain, c_rec, c_ended=False, snapshot_bytes=15 * 10**6)
             self.assertEqual(d['action'], 'run')
             # Late in the week: X at 1.12 R-hat pauses; at 0.9 it snapshots when the window fits 30 GB.
             now = c_chain['launched_unix'] + 7 * 86400
@@ -145,10 +145,10 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual(d['action'], 'pause')
             x_low = [dict(r, ledger_usec=int(r['ledger_usec'] * 0.9 * 128_000 / 153_600)) for r in x_rec]
             d = retention.decide(x_chain, x_low, c_chain, c_rec, c_ended=False, now=now,
-                                 checkpoint_bytes=15 * 10**6)
+                                 snapshot_bytes=15 * 10**6)
             self.assertEqual(d['action'], 'snapshot')
             d = retention.decide(x_chain, x_low, c_chain, c_rec, c_ended=False, now=now,
-                                 checkpoint_bytes=15 * 10**9)
+                                 snapshot_bytes=15 * 10**9)
             self.assertEqual(d['action'], 'run')
             self.assertFalse(d['snapshot_fits'])
             # C ended: R_i = its final ledger; X past it selects, X short resumes to it.
@@ -227,6 +227,96 @@ class RetentionTests(unittest.TestCase):
                                                                                                'sha256': 'y'}}}}
             with self.assertRaises(SystemExit):
                 retention.replay_config(retention.load_chain(chain_path), spec, Path(tmp) / 'r')
+
+    def fake_snapshots(self, wrong=None):
+        """Stands in for `checkpoint_container_v1 weights-snapshot`: writes a small file and its receipt."""
+        def run(args, capture_output, text):
+            out = Path(args[args.index('--output') + 1])
+            out.write_bytes(b'w' * 10)
+            b = int(out.stem[1:])
+            receipt = {'output': {'path': out.as_posix(), 'sha256': retention.sha(out)}, 'snapshot_bytes': 10,
+                       'cut_from_state_sha256': 'other' if b == wrong else f'h{b}',
+                       'parameters_sha256': f'p{b}'}
+            return type('R', (), {'returncode': 0, 'stdout': json.dumps(receipt), 'stderr': ''})()
+        return run
+
+    def test_weights_snapshots_replace_full_states_in_the_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=3, per_segment=64)
+            real = retention.subprocess.run
+            retention.subprocess.run = self.fake_snapshots()
+            try:
+                made = retention.snapshot(chain_path, 'binary', 100)
+            finally:
+                retention.subprocess.run = real
+            boundaries = [m['boundary'] for m in made]
+            self.assertEqual(boundaries, [b for b in range(100, 193) if b % 64])
+            have = retention.snapshots(chain_path)
+            doc = retention.plan(chain_path, snapshot_from=100)
+            pruned = {c['boundary'] for c in doc['checkpoints']}
+            # Inside the window a full state goes once its snapshot exists; the live tail keeps its full states.
+            self.assertTrue(set(range(100, 128)) <= pruned)
+            self.assertFalse(pruned & set(range(129, 193)))
+            retention.apply(doc, Path(tmp) / 'log.jsonl')
+            chain, records = retention.index(chain_path)
+            spec = retention.select(chain, records, 100_500, have)
+            self.assertIsNone(spec['replay'])
+            self.assertEqual(spec['weights_snapshot']['parameters_sha256'], 'p101')
+            manifest = retention.prune_manifest(chain, records, 101, weights=have)
+            self.assertEqual([(k['boundary'], k['kind']) for k in manifest['keep']['selected_checkpoint']],
+                             [(101, 'weights')])
+            kinds = {p['kind'] for p in manifest['prune']}
+            self.assertEqual(kinds, {'full', 'weights'})
+            self.assertNotIn(101, [p['boundary'] for p in manifest['prune'] if p['kind'] == 'weights'])
+            self.assertEqual(set(manifest['prune_bytes_by_kind']), {'full', 'weights'})
+            self.assertEqual(manifest['prune_bytes_by_kind']['weights'], 10 * (len(have) - 1))
+            # A damaged full state at the endpoint is not kept; its verified snapshot is.
+            full150 = next(r for r in records if r['boundary'] == 150)['checkpoint']['path']
+            Path(full150).write_text('damaged')
+            manifest = retention.prune_manifest(chain, records, 150, weights=have)
+            self.assertEqual([(k['boundary'], k['kind']) for k in manifest['keep']['selected_checkpoint']],
+                             [(150, 'weights')])
+            self.assertIn((150, 'full'), [(p['boundary'], p['kind']) for p in manifest['prune']])
+            # A snapshot that no longer matches its index never authorizes a prune: a fresh chain, where
+            # boundary 110 (segment 1, followed by a complete segment) is eligible until its snapshot changes.
+            chain2 = make_chain(Path(tmp) / 'second', 'X', segments=3, per_segment=64)
+            real = retention.subprocess.run
+            retention.subprocess.run = self.fake_snapshots()
+            try:
+                retention.snapshot(chain2, 'binary', 100)
+            finally:
+                retention.subprocess.run = real
+            self.assertIn(110, {c['boundary'] for c in retention.plan(chain2, snapshot_from=100)['checkpoints']})
+            Path(retention.snapshots(chain2)[110]['path']).write_bytes(b'x' * 10)
+            self.assertNotIn(110, {c['boundary'] for c in retention.plan(chain2, snapshot_from=100)['checkpoints']})
+            # The guard reports both kinds and refuses a snapshot directory outside its roots.
+            ok = retention.guard([tmp], 10**12, chains=[chain_path])
+            self.assertTrue(ok['ok'])
+            self.assertEqual(ok['by_chain'][0]['weights_snapshots'], len(have))
+            self.assertGreater(ok['by_chain'][0]['full_state_bytes'], 0)
+            outside = retention.guard([Path(tmp) / 'X-seg000'], 10**12, chains=[chain_path])
+            self.assertFalse(outside['ok'])
+
+    def test_the_guard_checks_destinations_before_files_exist(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as elsewhere:
+            chain_path = make_chain(tmp, 'X', segments=1, per_segment=2)
+            doc = json.loads(Path(chain_path).read_text())
+            doc['snapshot_dir'] = elsewhere
+            Path(chain_path).write_text(json.dumps(doc))
+            out = retention.guard([tmp], 10**12, chains=[chain_path])
+            self.assertFalse(out['ok'])
+            self.assertIn(Path(elsewhere).as_posix(), [Path(p).as_posix() for p in out['outside_roots']])
+
+    def test_a_snapshot_cut_from_another_state_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=2, per_segment=64)
+            real = retention.subprocess.run
+            retention.subprocess.run = self.fake_snapshots(wrong=70)
+            try:
+                with self.assertRaises(SystemExit):
+                    retention.snapshot(chain_path, 'binary', 65)
+            finally:
+                retention.subprocess.run = real
 
     def test_guard(self):
         with tempfile.TemporaryDirectory() as tmp:
