@@ -6,15 +6,21 @@ autograd, every batch's RT1 GAE loss terms, the per-tensor gradient and one Adam
 native float32 results against E3's bars: each loss term relative error at most 1e-4, per-tensor gradient relative
 L2 error at most 1e-3, and per-tensor Adam parameter-change relative L2 error at most 1e-3.
 
-`design_bars` reads E3's bars literally: loss terms, gradients, and the change of the stored float32 parameters after
-one Adam step from a fresh optimizer (zero moments, step 1, as XS starts native RL). `passed` is that verdict.
-`arithmetic_checks` isolates the implementation from float32 representation: the same loss and gradient bars, and
-the update one Adam step adds (before the parameter's own float32 rounding) from a warmed optimizer state (S's
-moments after a few native updates, shared by both sides). Diagnostics explain any gap between the two: the floor
-float32 storage alone sets on the stored change (at lr 1e-4 a parameter near 1 holds its change to about 6e-4 of
-it), and the fresh step without near-zero gradient elements (the first step moves every parameter by about the
-learning rate in the direction of its gradient's sign, so an element within float32 rounding of zero can step the
-other way than in float64). The exit status is nonzero only when `arithmetic_checks` fails.
+The Adam bar is read in two parts (W5 amendment A2, collab LANES/lead/w5/RULINGS-r0.md). `passed`, and the exit
+status, require all four of:
+- loss terms within 1e-4;
+- per-tensor gradients within 1e-3;
+- (a) the update one Adam step adds, before the parameter's own float32 rounding, from a warmed optimizer state (S's
+  moments after a few native updates, shared by both sides), within 1e-3;
+- (b) the change of the stored float32 parameters after one Adam step from a fresh optimizer (zero moments, step 1,
+  as XS starts native RL), within 1e-3 after excluding the elements whose float64 reference gradient is at or below
+  the declared float32 noise floor: 1e-4 of the tensor's float64 gradient RMS. That is ten times the largest
+  per-tensor gradient error the parity has measured (7.9e-6 relative L2). The first step moves every parameter by
+  about the learning rate in the direction of its gradient's sign, so an element within float32 noise of zero can
+  step the other way than in float64.
+The receipt states the floor and reports the excluded and opposite-sign counts, and keeps the literal number (the
+fresh step's stored change over every element) beside the two parts. Diagnostics: the floor float32 storage alone
+sets on a stored change (at lr 1e-4 a parameter near 1 holds its change to about 6e-4 of it).
 
 `compare-logits A B --receipt R [--bar 1e-5]` compares two `logits-dump` files (for example Linux and Windows builds
 on the same states): maximum absolute logit and value difference at most the bar, and the same argmax except where
@@ -47,6 +53,13 @@ OBJ, EDGE, ACT, REF, STATE, GROUPS = 98, 41, 195, 25, 219, 20
 STATE_KEEP = STATE - 96
 BARS = {"loss_relative": 1e-4, "gradient_relative_l2": 1e-3, "adam_change_relative_l2": 1e-3}
 RELATIVE_BARS = {"loss_relative": 1e-4, "gradient_relative_l2": 1e-3, "adam_update_relative_l2": 1e-3}
+# W5 amendment A2: the bars `passed` reads.
+A2_BARS = {"loss_relative": 1e-4, "gradient_relative_l2": 1e-3, "adam_a_warmed_update_relative_l2": 1e-3,
+           "adam_b_fresh_stored_change_above_noise_floor_relative_l2": 1e-3}
+# The declared float32 noise floor of a reference gradient element, as a fraction of its tensor's float64 gradient RMS.
+NOISE_FLOOR_FRACTION = 1e-4
+# Parameters whose gradient S defines as exactly zero (softmax shift invariance); accepted by A2 item 3.
+ZERO_GRADIENT_SETS = ["policy.2.bias", "the key third [d, 2d) of every blocks.<i>.qkv.bias"]
 LOGIT_BAR = 1e-5
 F64 = torch.float64
 
@@ -234,7 +247,8 @@ def parity(args) -> int:
     if native.size != per * len(batches["batches"]):
         raise SystemExit("native.bin length does not match the batches")
     worst = {"loss": {}, "gradient": {}, "adam": {}, "fresh": {}, "fresh_far": {}, "stored": {}, "floor": {},
-             "fresh_stored": {}, "fresh_floor": {}}
+             "fresh_stored": {}, "fresh_floor": {}, "fresh_stored_far": {}}
+    opposite_kept = 0
     fresh_near_zero = fresh_sign_flips = 0
     rows = []
     b1, b2, eps = 0.9, 0.999, 1e-8
@@ -297,17 +311,19 @@ def parity(args) -> int:
             floor = rel_l2((base + delta_ref).astype(np.float32).astype(np.float64) - base, delta_ref)
             worst["stored"][name] = max(worst["stored"].get(name, 0.0), stored)
             worst["floor"][name] = max(worst["floor"].get(name, 0.0), floor)
-            # One Adam step from zero moments (step 1): a sign-like map of the gradient, reported with how much
-            # of its error sits on elements whose gradient is near zero (|g| at most 1e-4 of the tensor's RMS).
+            # One Adam step from zero moments (step 1): a sign-like map of the gradient. Elements whose reference
+            # gradient is at or below the noise floor are excluded from part (b).
             m = (1 - b1) * g
             v = (1 - b2) * g * g
             delta_ref = -(lr / (1 - b1)) * m / (np.sqrt(v) / math.sqrt(1 - b2) + eps)
             delta_nat = nat_fresh[off:off + size]
             worst["fresh"][name] = max(worst["fresh"].get(name, 0.0), rel_l2(delta_nat, delta_ref))
             rms = float(np.sqrt(np.mean(g * g))) if size else 0.0
-            far = np.abs(g) > 1e-4 * rms
+            far = np.abs(g) > NOISE_FLOOR_FRACTION * rms
             fresh_near_zero += int(np.count_nonzero(~far & (g != 0)))
-            fresh_sign_flips += int(np.count_nonzero(np.sign(nat_grad[off:off + size]) != np.sign(g)))
+            opposite = np.sign(nat_grad[off:off + size]) != np.sign(g)
+            fresh_sign_flips += int(np.count_nonzero(opposite))
+            opposite_kept += int(np.count_nonzero(opposite & far))
             worst["fresh_far"][name] = max(worst["fresh_far"].get(name, 0.0),
                                            rel_l2(delta_nat[far], delta_ref[far]) if far.any() else 0.0)
             # The literal bar: the stored float32 parameters after the fresh step (Rust adds the f32 update to the
@@ -315,6 +331,8 @@ def parity(args) -> int:
             base32 = base.astype(np.float32)
             stored_fresh = (base32 + nat_fresh[off:off + size].astype(np.float32)).astype(np.float64) - base
             worst["fresh_stored"][name] = max(worst["fresh_stored"].get(name, 0.0), rel_l2(stored_fresh, delta_ref))
+            worst["fresh_stored_far"][name] = max(worst["fresh_stored_far"].get(name, 0.0),
+                                                  rel_l2(stored_fresh[far], delta_ref[far]) if far.any() else 0.0)
             fresh_floor = rel_l2((base + delta_ref).astype(np.float32).astype(np.float64) - base, delta_ref)
             worst["fresh_floor"][name] = max(worst["fresh_floor"].get(name, 0.0), fresh_floor)
         rows.append(row)
@@ -323,7 +341,14 @@ def parity(args) -> int:
         "gradient_relative_l2": max(worst["gradient"].values()),
         "adam_change_relative_l2": max(worst["fresh_stored"].values()),
     }
-    passed = all(maxima[k] <= BARS[k] for k in BARS)
+    literal_passed = all(maxima[k] <= BARS[k] for k in BARS)
+    a2 = {
+        "loss_relative": maxima["loss_relative"],
+        "gradient_relative_l2": maxima["gradient_relative_l2"],
+        "adam_a_warmed_update_relative_l2": max(worst["adam"].values()),
+        "adam_b_fresh_stored_change_above_noise_floor_relative_l2": max(worst["fresh_stored_far"].values()),
+    }
+    passed = all(a2[k] <= A2_BARS[k] for k in A2_BARS)
     arithmetic = {
         "loss_relative": maxima["loss_relative"],
         "gradient_relative_l2": maxima["gradient_relative_l2"],
@@ -346,8 +371,22 @@ def parity(args) -> int:
     receipt = {
         "schema": "s-parity-receipt-v1",
         "passed": passed,
-        "design_bars": {"bars": BARS, "maxima": maxima, "passed": passed,
-                        "adam": "stored float32 parameters after one Adam step from a fresh optimizer"},
+        "rule": "W5 amendment A2 (collab LANES/lead/w5/RULINGS-r0.md): the Adam bar in two parts, (a) and (b)",
+        "bars": A2_BARS,
+        "a2_maxima": a2,
+        "noise_floor": {
+            "definition": "an element is excluded from part (b) when |float64 reference gradient| is at or below "
+                          "this fraction of its tensor's float64 gradient RMS",
+            "fraction_of_tensor_rms": NOISE_FLOOR_FRACTION,
+            "excluded_elements": fresh_near_zero,
+            "opposite_sign_elements": fresh_sign_flips,
+            "opposite_sign_elements_above_floor": opposite_kept,
+        },
+        "literal_fresh_stored_change_relative_l2": maxima["adam_change_relative_l2"],
+        "zero_gradient_parameter_sets": ZERO_GRADIENT_SETS,
+        "design_bars": {"bars": BARS, "maxima": maxima, "passed": literal_passed,
+                        "adam": "stored float32 parameters after one Adam step from a fresh optimizer, every element "
+                                "(the literal reading, reported beside the A2 parts)"},
         "arithmetic_checks": {"bars": RELATIVE_BARS, "maxima": arithmetic, "passed": arithmetic_passed,
                               "adam": "update before storage, one step from the warmed optimizer state"},
         "maxima": maxima,
@@ -376,7 +415,8 @@ def parity(args) -> int:
         "per_batch": rows,
     }
     Path(args.receipt).write_text(json.dumps(receipt, indent=1, sort_keys=True))
-    summary = {k: receipt[k] for k in ("passed", "maxima", "worst_gradient_tensor", "worst_adam_tensor", "batches",
+    summary = {k: receipt[k] for k in ("passed", "bars", "a2_maxima", "noise_floor",
+                                       "literal_fresh_stored_change_relative_l2", "worst_gradient_tensor", "batches",
                                        "decisions")}
     summary["arithmetic_checks"] = receipt["arithmetic_checks"]
     summary["fresh_step"] = {k: v for k, v in fresh.items() if not k.startswith("per_tensor")}
@@ -384,8 +424,8 @@ def parity(args) -> int:
                                           if not k.startswith("per_tensor")}
     print(json.dumps(summary, indent=1))
     if not passed:
-        print("E3 design bars: NOT MET (see design_bars and the diagnostics)", file=sys.stderr)
-    return 0 if arithmetic_passed else 1
+        print("E3 parity bars (W5 amendment A2): NOT MET", file=sys.stderr)
+    return 0 if passed else 1
 
 
 def read_logits(path: Path):
