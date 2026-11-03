@@ -677,6 +677,7 @@ class Cycle(cloud.Cycle):
 
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""
+        self.exports_pending()
         if not self.remote_ready:
             return
         boundary = self.release_boundary(time.time())
@@ -727,6 +728,13 @@ class Cycle(cloud.Cycle):
         self.result["recovered"] = True
         self.export(left)
 
+    def exports_pending(self) -> None:
+        """Before the recovery: the package's exports are recorded as not fetched, so a skipped or failed
+        recovery leaves its reason beside them; a completed export replaces it."""
+        if (getattr(self, "manifest", None) or {}).get("exports"):
+            write(self.control / "exports.json", {"files": {}, "error": "not fetched: the recovery did not complete"},
+                  replace=True)
+
     def export(self, left) -> None:
         """Copy the package's exports home (control/exports), each checked against its SHA256 on the Pod;
         what time or the Pod does not allow is recorded, never retried past the recovery deadline."""
@@ -736,16 +744,17 @@ class Cycle(cloud.Cycle):
         record = {"files": {}}
         try:
             require(left() > 60, "too little time before the guards' release")
-            listed = self.pod.run(POD_EXPORTS, {"paths": paths}, timeout=max(1, min(120, left())), read_only=True)
+            # One attempt (no read-only retries): its timeout is what remains of the recovery deadline.
+            listed = self.pod.run(POD_EXPORTS, {"paths": paths}, timeout=max(1, min(120, left() - 30)))
             folder = self.control / "exports"
             folder.mkdir(exist_ok=True)
-            for path in paths:
+            for index, path in enumerate(paths):
                 found = listed.get(path)
                 if found is None:
                     record["files"][path] = {"error": "absent on the volume"}
                     continue
-                target = folder / safe_name(PurePosixPath(path).relative_to(self.base / "campaign").as_posix()
-                                            .replace("/", "__"))
+                # Named by its position, so two exports never share a local file (case aliases included).
+                target = folder / safe_name(f"{index:02d}-" + PurePosixPath(path).name)
                 require(left() > 30, "too little time before the guards' release")
                 self.pod.get(path, target, timeout=max(1, left() - 30))
                 require(sha(target) == found["sha256"], "exported file differs: " + path)
