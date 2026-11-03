@@ -182,6 +182,7 @@ impl Ex1RunOptionsV1 {
             w5: self.w5.as_ref().map(|w5| W5CollectOptionsV1 {
                 recipe: W5_XACT_VERSION_V1.into(),
                 key_memo_mib: w5.key_memo_mib,
+                capture_0b: None,
             }),
         }
     }

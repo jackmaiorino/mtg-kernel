@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import capture0b  # noqa: E402
 import retention  # noqa: E402
 import xact  # noqa: E402
 
@@ -234,6 +235,75 @@ class RetentionTests(unittest.TestCase):
             self.assertFalse(retention.guard([tmp], cap_bytes=2000, next_bytes=1500)['ok'])
             self.assertEqual(retention.main(['guard', tmp, '--cap-bytes', '10']), 1)
 
+
+
+class Capture0bTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        ck = root / 'b512.json'
+        ck.write_text('b512')
+        self.source = {'checkpoint': {'path': ck.as_posix(), 'sha256': retention.sha(ck)},
+                       'play_import': {'path': 'i', 'sha256': 'i'}}
+        self.parent = {'source': {'checkpoint': {'path': 'p', 'sha256': 'p'}}}
+        self.base = {'opponents': [{'id': 'parent', 'source': self.parent['source']}],
+                     'iterations': [{'episodes': [
+                         {'episode': {'id': 'x', 'seed': 1, 'learner_seat': 0}, 'opponent': {'kind': 'current'}},
+                         {'episode': {'id': 'y', 'seed': 2, 'learner_seat': 1},
+                          'opponent': {'kind': 'fixed', 'id': 'parent'}}]}],
+                     'max_non_natural_episode_fraction': 0.2}
+        self.root = root
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_jobs_resolve_opponents_and_key_the_namespace(self):
+        made = capture0b.jobs(self.base, {'source': self.source}, self.root / 'out', updates=2)
+        self.assertEqual(len(made), 2)
+        command = capture0b.read(made[1])
+        self.assertEqual(command['mode'], 'collect')
+        self.assertEqual(command['ex1']['run'], 'w5/0b')
+        self.assertEqual(command['ex1']['update'], 1)
+        self.assertEqual(command['ex1']['w5']['capture_0b'],
+                         {'budgets': [16000, 64000], 'search_seeds': [0, 1], 'rollouts': 128})
+        self.assertEqual(command['episodes'][0]['opponent'], self.source)
+        self.assertEqual(command['episodes'][1]['opponent'], self.parent['source'])
+        self.assertTrue(command['episodes'][0]['id'].startswith('w5/0b-w5/0b-u1-j0'))
+        bad = dict(self.base, iterations=[{'episodes': [{'episode': {'id': 'z', 'seed': 3, 'learner_seat': 0},
+                                                         'opponent': {'kind': 'completed_iteration', 'index': 0}}]}])
+        with self.assertRaises(SystemExit):
+            capture0b.jobs(bad, {'source': self.source}, self.root / 'bad', updates=1)
+
+    def test_convert_writes_records_in_episode_order(self):
+        made = capture0b.jobs(self.base, {'source': self.source}, self.root / 'out', updates=1)
+        command = capture0b.read(made[0])
+        out = Path(command['output_directory'])
+        out.mkdir(parents=True)
+        pins = []
+        for slot, reached in enumerate((True, False)):
+            capture = {'reached': reached}
+            if reached:
+                capture.update({'step': 7, 'policy': {'logit_bits': [1, 2]},
+                                'candidates': [{'budget': 16000, 'search_seed': 0, 'seed_root': 'r', 'status': 'ok',
+                                                'cpu_s': 1.5, 'n': [8, 8], 'wins': [1, 2], 'draws': [0, 0],
+                                                'search': {'big': True}}],
+                                'qref': {'rollouts': 128, 'seed_root': 'q', 'actions': [0, 1], 'wins': [1, 2],
+                                         'draws': [0, 0], 'n': [128, 128]}, 'qref_nonnatural': [0, 0]})
+            sidecar = out / f'ex1-{slot:04d}.json'
+            sidecar.write_text(json.dumps({'slot': slot, 'attempts': [
+                {'natural': True, 'episode_id': f'g{slot}', 'seed': 10 + slot,
+                 'options': {'run': 'w5/0b', 'update': 0}, 'w5': {'placement_index': 5 + slot},
+                 'capture_0b': capture}]}))
+            pins.append({'path': sidecar.as_posix(), 'sha256': ''})
+        (out / 'collection.json').write_text(json.dumps({'ex1': {'episodes': pins}}))
+        records = capture0b.convert(self.root / 'out')
+        self.assertEqual([r['episode'] for r in records], [0, 1])
+        self.assertEqual(records[0]['schema'], 'w5-0b-capture/v1')
+        self.assertEqual((records[0]['k'], records[0]['seed'], records[0]['game']), (5, 10, 'g0'))
+        self.assertNotIn('search', records[0]['candidates'][0])
+        self.assertEqual(records[0]['source_checkpoint_sha256'], self.source['checkpoint']['sha256'])
+        self.assertFalse(records[1]['reached'])
+        self.assertNotIn('candidates', records[1])
 
 if __name__ == '__main__':
     unittest.main()

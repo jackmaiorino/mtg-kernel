@@ -2497,11 +2497,11 @@ fn collect_episode_hooked_v1(
                 let logits = bits(&scores.logits);
                 let played = match (hook.as_deref_mut(), pending) {
                     (Some(hook), Some(pending)) => {
-                        hook.after_select_v1(pending, d, &logits, selected)?
+                        hook.after_select_v1(pending, &session, d, &logits, selected)?
                     }
                     _ => None,
                 };
-                if let Some(played) = played {
+                if played.is_some() {
                     search_played.push(SearchPlayedRowV1 {
                         step: d.step,
                         policy_selected: selected,
@@ -8243,6 +8243,7 @@ pub(crate) mod tests {
             Some(ex1_collect_v1::W5CollectOptionsV1 {
                 recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
                 key_memo_mib,
+                capture_0b: None,
             })
         };
         let w5 = w5_memo(512);
@@ -8373,6 +8374,90 @@ pub(crate) mod tests {
             }
         }
         assert!(acted_rows > 0, "no slot reached a root with a target");
+    }
+
+    /// W5 Stage 0b capture mode: at the placed decision the hook records
+    /// every candidate search and the Q_ref continuations, and the learner
+    /// plays its own draw throughout (the trajectory equals the unhooked one).
+    #[test]
+    fn w5_capture_0b_records_candidates_and_qref_without_touching_the_episode() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-capture", 2_026_110_202, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let mut reached = 0;
+        for slot in 0..48_usize {
+            let options = ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "w5/0b".into(),
+                update: 0,
+                budget: 600,
+                w5: Some(ex1_collect_v1::W5CollectOptionsV1 {
+                    recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                    key_memo_mib: 64,
+                    capture_0b: Some(ex1_collect_v1::W5CaptureOptionsV1 {
+                        budgets: vec![300, 600],
+                        search_seeds: vec![0, 1],
+                        rollouts: 4,
+                    }),
+                }),
+            };
+            options.validate_v1().unwrap();
+            let mut hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::new(&options, &policy, &episode, slot).unwrap();
+            let hooked =
+                collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
+                    .unwrap();
+            assert_eq!(
+                serde_json::to_vec(&plain).unwrap(),
+                serde_json::to_vec(&hooked).unwrap(),
+                "slot {slot}: capture changed the episode"
+            );
+            let record = hook.finish_v1(&episode, true);
+            let capture = &record["capture_0b"];
+            assert_eq!(capture["reached"], record["w5"]["reached"]);
+            assert!(record["rows"].as_array().unwrap().is_empty());
+            if capture["reached"] != true {
+                continue;
+            }
+            reached += 1;
+            let candidates = capture["candidates"].as_array().unwrap();
+            assert_eq!(candidates.len(), 4);
+            let roots: std::collections::BTreeSet<&str> = candidates
+                .iter()
+                .map(|c| c["seed_root"].as_str().unwrap())
+                .collect();
+            assert_eq!(roots.len(), 4);
+            assert!(!roots.contains(capture["qref"]["seed_root"].as_str().unwrap()));
+            let d = hooked
+                .decisions
+                .iter()
+                .find(|d| json!(d.step) == capture["step"])
+                .unwrap();
+            assert_eq!(capture["policy"]["logit_bits"], json!(d.logits));
+            let actions: Vec<usize> =
+                serde_json::from_value(capture["qref"]["actions"].clone()).unwrap();
+            let logits: Vec<f32> = d.logits.iter().map(|&b| f32::from_bits(b)).collect();
+            let argmax =
+                (0..logits.len()).fold(0, |b, a| if logits[a] > logits[b] { a } else { b });
+            assert!(actions.contains(&argmax));
+            for c in candidates.iter().filter(|c| c["status"] == "ok") {
+                let n: Vec<u64> = serde_json::from_value(c["n"].clone()).unwrap();
+                for (a, &count) in n.iter().enumerate() {
+                    if count >= 8 {
+                        assert!(actions.contains(&a));
+                    }
+                }
+            }
+            let n: Vec<u64> = serde_json::from_value(capture["qref"]["n"].clone()).unwrap();
+            let wins: Vec<u64> = serde_json::from_value(capture["qref"]["wins"].clone()).unwrap();
+            let draws: Vec<u64> = serde_json::from_value(capture["qref"]["draws"].clone()).unwrap();
+            assert!(n.iter().all(|&x| x == 4));
+            assert!((0..n.len()).all(|i| wins[i] + draws[i] <= n[i]));
+            if reached >= 1 {
+                break;
+            }
+        }
+        assert!(reached > 0, "no slot reached its placed decision");
     }
 
     #[test]
