@@ -190,6 +190,9 @@ struct WalkV1<'a> {
     /// left (a hand fact or a survivor node): drawing such a card back can
     /// tell V more than the tree keeps.
     put_backs_on_top: [Vec<bool>; 2],
+    /// Per owner: a scry or reorder touched the put-back cards since the
+    /// last shuffle, so draws no longer retire their markers in order.
+    put_backs_scrambled: [bool; 2],
     top_draws: Vec<(usize, PlayerId)>,
     r8_latch: bool,
     item: usize,
@@ -234,6 +237,7 @@ pub(crate) fn project_v1(
         arrivals: Vec::new(),
         reorders: Vec::new(),
         put_backs_on_top: [Vec::new(), Vec::new()],
+        put_backs_scrambled: [false, false],
         top_draws: Vec::new(),
         r8_latch: false,
         item: 0,
@@ -554,7 +558,9 @@ impl WalkV1<'_> {
                     // ones, so only a shuffle clears the count (conservative).
                     let stack = &mut self.put_backs_on_top[player.index()];
                     let informative = stack.iter().any(|x| *x);
-                    stack.pop();
+                    if !self.put_backs_scrambled[player.index()] {
+                        stack.pop();
+                    }
                     if informative && *player == self.opp() {
                         self.r8_latch = true;
                     }
@@ -660,6 +666,7 @@ impl WalkV1<'_> {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
                 self.reorders.push((self.item, *owner));
                 self.put_backs_on_top[owner.index()].clear();
+                self.put_backs_scrambled[owner.index()] = false;
                 self.library[owner.index()].clear();
                 self.settle(&[]);
             }
@@ -691,6 +698,9 @@ impl WalkV1<'_> {
                 self.reorders.push((self.item, *owner));
                 // Put-back cards stay among the top cards: no reset; their
                 // positions are no longer certain (R8 latch).
+                if !self.put_backs_on_top[owner.index()].is_empty() {
+                    self.put_backs_scrambled[owner.index()] = true;
+                }
                 if *owner == self.opp() && self.put_backs_on_top[owner.index()].iter().any(|x| *x) {
                     self.r8_latch = true;
                 }
@@ -713,6 +723,9 @@ impl WalkV1<'_> {
                 self.reorders.push((self.item, *owner));
                 // Put-back cards stay among the top cards: no reset; their
                 // positions are no longer certain (R8 latch).
+                if !self.put_backs_on_top[owner.index()].is_empty() {
+                    self.put_backs_scrambled[owner.index()] = true;
+                }
                 if *owner == self.opp() && self.put_backs_on_top[owner.index()].iter().any(|x| *x) {
                     self.r8_latch = true;
                 }
