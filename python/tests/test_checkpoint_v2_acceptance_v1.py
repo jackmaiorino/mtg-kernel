@@ -474,6 +474,21 @@ class CountersTests(unittest.TestCase):
             with self.assertRaises(acc.Refused):
                 m.wait_for_start()
         self.assertNotIn('precondition-met', events)
+        # Sol round 4: claim polls taken during the wait count; losing the own claim there refuses admission.
+        clock = {'t': 1200.0}
+        m.sampler = FakeWatch()
+        m.claims = SimpleNamespace(
+            window=lambda start, end: [(t, [], t < 1230) for t in range(int(start), int(end) + 1, 15)],
+            is_alive=lambda: True)
+
+        def slow_catchup(end):
+            m.samples.add(end, 1e6, 1.0)
+            clock['t'] = 1260.0
+            return {'waited': 60.0, 'caught_up': True}
+        m.wait_for_sampler = slow_catchup
+        with mock.patch.object(acc.time, 'time', side_effect=lambda: clock['t']),                 mock.patch.object(acc.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 ** 12)):
+            with self.assertRaises(acc.Refused):
+                m.precondition()
 
     def test_contamination(self):
         rows = [(t, 10e6, 10.0) for t in range(0, 100, 5)]

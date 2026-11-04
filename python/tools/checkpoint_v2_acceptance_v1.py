@@ -1080,7 +1080,8 @@ class Measurement:
         # in transit could carry disk load the window has not seen.
         now = time.time()
         catchup = self.wait_for_sampler(now)
-        failing, stats, claims = self._precondition_at(now)
+        # Claim polls are checked through the moment of admission, including those taken during the wait.
+        failing, stats, claims = self._precondition_at(now, claims_end=time.time())
         if not catchup['caught_up']:
             failing.append("the sampler did not deliver the window's rows")
         # A sampler that failed or died during the wait (even after its last row arrived) does not admit a group;
@@ -1089,11 +1090,12 @@ class Measurement:
             failing.append('the sampler stopped during the start wait')
         return failing, stats, claims
 
-    def _precondition_at(self, now):
+    def _precondition_at(self, now, claims_end=None):
         start = now - self.precondition_seconds
+        claims_end = now if claims_end is None else max(now, claims_end)
         artifact = bool(self.args.artifact_disk)
         stats = window_stats(self.samples.window(start, now), start, now, self.samples.interval, artifact)
-        claims = claim_stats(self.claims.window(start, now), start, now)
+        claims = claim_stats(self.claims.window(start, claims_end), start, claims_end)
         require(not claims['own_claim_lost'], 'the measurement lost its own claim')
         free = shutil.disk_usage(self.dir).free
         need = self.group_bytes() + self.args.keep_free_gib * 2 ** 30
