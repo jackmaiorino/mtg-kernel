@@ -182,6 +182,137 @@ pub(crate) fn contract_pins(state: &GameState) -> Vec<ObjectId> {
     out
 }
 
+/// Amendment 43.5 (lead ruling 8): whether a waiting stack item's
+/// resolution reads none of its paid-cost objects. Fail closed: only an
+/// activated ability whose whole effect is one generic op that never
+/// consults the paid-cost record (in `effect.rs` only
+/// `GainLifeEqualToPaidCostManaValue` and
+/// `DealDamageToTargetEqualToChosenCostCreaturePower` read it), with no
+/// captured last-known power, no payment by its own source, no grant and
+/// no catalog-owned payment record (`fixed_source_damage_v3`).
+fn paid_costs_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
+    use crate::effect::EffectOp;
+    let source = item.v4.ability_source_contract.map(|c| c.source);
+    item.kind == crate::state::StackItemKind::ActivatedAbility
+        && source == Some(item.source)
+        && item.v4.granted_by.is_none()
+        && item.v4.cauldron_grant.0.is_none()
+        && matches!(
+            item.inline_effect,
+            Some(
+                EffectOp::GainLife { .. }
+                    | EffectOp::DamageAllCreatures { .. }
+                    | EffectOp::DealDamage { .. }
+            )
+        )
+        && item
+            .v4
+            .paid_cost_refs
+            .iter()
+            .all(|p| p.power_lki.is_none() && p.object != item.source)
+        && !crate::fixed_source_damage_v3::tracked(state, item)
+}
+
+/// Amendment 43.5: the paid-cost records (object, epoch) whose live
+/// references may become 6.9 tombstones for viewer `v`. Every live
+/// occurrence of the record (anywhere outside the event history and the
+/// history-like records) must sit in a waiting stack item whose resolution
+/// reads none of its paid objects ([`paid_costs_unread_v1`]), with the
+/// payment public to V. Any other occurrence (a pending resolution's
+/// context, a pending trigger, a nested record) keeps R1.
+pub(crate) fn unread_paid_costs_v1(
+    state: &GameState,
+    tagged: &Value,
+    v: PlayerId,
+) -> BTreeSet<(ObjectId, u32)> {
+    type OccurrenceV1 = (String, Option<ObjectId>, Option<u64>);
+    fn scan(value: &Value, path: &str, out: &mut Vec<OccurrenceV1>) {
+        match value {
+            Value::Object(m) => {
+                for (k, x) in m {
+                    let at = format!("{path}.{k}");
+                    if k == "paid_cost_refs" {
+                        for e in x.as_array().into_iter().flatten() {
+                            out.push((
+                                at.clone(),
+                                super::rewrite::parse_tag(&e["object"]),
+                                e["zone_change_count"].as_u64(),
+                            ));
+                        }
+                    }
+                    scan(x, &at, out);
+                }
+            }
+            Value::Array(xs) => {
+                for (i, x) in xs.iter().enumerate() {
+                    scan(x, &format!("{path}.{i}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut occurrences = Vec::new();
+    if let Some(map) = tagged.as_object() {
+        for (k, x) in map {
+            if HISTORY_RECORDS_V1.contains(&k.as_str()) {
+                continue;
+            }
+            if k == "engine" {
+                for (ek, ex) in x.as_object().into_iter().flatten() {
+                    if ek != "event_history" && ek != "event_log" {
+                        scan(ex, &format!("engine.{ek}"), &mut occurrences);
+                    }
+                }
+                continue;
+            }
+            scan(x, k, &mut occurrences);
+        }
+    }
+    let bit = 1u8 << v.index();
+    let unread_at = |path: &str, object: ObjectId, g: u64| -> bool {
+        let Some(i) = path
+            .strip_prefix("stack.")
+            .and_then(|rest| rest.strip_suffix(".v4.paid_cost_refs"))
+            .and_then(|i| i.parse::<usize>().ok())
+        else {
+            return false;
+        };
+        state.stack.get(i).is_some_and(|item| {
+            paid_costs_unread_v1(state, item)
+                && item.v4.paid_cost_refs.iter().any(|p| {
+                    p.object == object
+                        && u64::from(p.zone_change_count) == g
+                        && p.visible_to_mask & bit != 0
+                })
+        })
+    };
+    let mut keys: BTreeMap<(ObjectId, u32), bool> = BTreeMap::new();
+    for (path, object, g) in occurrences {
+        // A record the scan cannot read: nothing becomes a tombstone.
+        let (Some(object), Some(g)) = (object, g.and_then(|g| u32::try_from(g).ok())) else {
+            return BTreeSet::new();
+        };
+        let ok = unread_at(&path, object, u64::from(g));
+        *keys.entry((object, g)).or_insert(true) &= ok;
+    }
+    keys.into_iter()
+        .filter_map(|(k, ok)| ok.then_some(k))
+        .collect()
+}
+
+/// The number of history-like records `rewrite_state` numbers (the
+/// transient event log's entries, then one per history record present):
+/// amendment 43.5's paid-cost tombstones are numbered after them.
+fn record_count_v1(tagged: &Value) -> usize {
+    let log = tagged["engine"]["event_log"].as_array().map_or(0, Vec::len);
+    let records = tagged.as_object().map_or(0, |m| {
+        m.keys()
+            .filter(|k| HISTORY_RECORDS_V1.contains(&k.as_str()))
+            .count()
+    });
+    log + records
+}
+
 /// An unknown hidden slot (step 3).
 #[derive(Clone, Copy, Debug)]
 struct SlotV1 {
@@ -508,10 +639,26 @@ pub(crate) fn export_v1(
         .enumerate()
         .map(|(i, s)| (s.native, i))
         .collect();
+    // Amendment 43.5 (lead ruling 8): a paid-cost reference to an object
+    // that has since left V's tracking (no handle, no pin) becomes a 6.9
+    // tombstone instead of an R1 refusal, when no pending resolution reads
+    // the paid object and V saw the payment (V observed the paid epoch).
+    // The record keeps its own fields; only the object becomes `H:`, at
+    // generation 0. Otherwise R1 stays.
+    let unread_paid = unread_paid_costs_v1(state, &tagged, v);
+    let paid_tomb = |r: &RefV1| -> bool {
+        r.class == ClassV1::Live
+            && r.paid_cost
+            && !projection.tracked(r.object)
+            && !pinned_untracked.contains(&r.object)
+            && matches!(r.generations.as_slice(), [g]
+                if projection.span_of(r.object, *g).is_some()
+                    && unread_paid.contains(&(r.object, *g)))
+    };
 
     // R1b first (a name-level, public-event predicate), then R1 and R2.
     for (r, region) in &refs {
-        if *region != "live" {
+        if *region != "live" || paid_tomb(r) {
             continue;
         }
         for &g in &r.generations {
@@ -555,7 +702,7 @@ pub(crate) fn export_v1(
         if *region != "live" || projection.tracked(r.object) {
             continue;
         }
-        if pinned_untracked.contains(&r.object) {
+        if pinned_untracked.contains(&r.object) || paid_tomb(r) {
             continue;
         }
         // A live physical reference to an object V does not track: the
@@ -574,7 +721,7 @@ pub(crate) fn export_v1(
     // spans, the names and zones V saw and V's own decision points only.
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
-        if *region != "live" {
+        if *region != "live" || paid_tomb(r) {
             continue;
         }
         let Some(track) = projection.objects.get(r.object.0 as usize) else {
@@ -942,8 +1089,8 @@ pub(crate) fn export_v1(
         // epochs map on the same path, so they count toward p0 too.
         let raw_l4 =
             is(MutantV1::L4) && r.class != ClassV1::Live && !pinned_untracked.contains(&r.object);
-        let counts =
-            (*region == "live") || (new_id.contains_key(&r.object) && (linkable(r) || raw_l4));
+        let counts = (*region == "live" && !paid_tomb(r))
+            || (new_id.contains_key(&r.object) && (linkable(r) || raw_l4));
         if counts {
             for &g in &r.generations {
                 let e = p0.entry(r.object).or_insert(g);
@@ -1015,9 +1162,25 @@ pub(crate) fn export_v1(
     };
     let mut timestamps: BTreeSet<u64> = BTreeSet::new();
     let pinned_set: BTreeSet<ObjectId> = pinned_untracked.iter().copied().collect();
+    // Amendment 43.5's tombstones are `H:<e>:<k>`: e numbers past every
+    // event and history-like record, k counts them in walk order.
+    let paid_e = (state.engine.event_history.len() + record_count_v1(&tagged)) as u32;
+    let mut paid_k = 0u32;
     {
         let mut resolve = |r: RefV1| -> Result<ResolvedV1, ExportErrorV1> {
             let o = r.object;
+            if paid_tomb(&r) {
+                let def = state.objects.get(o).card_def;
+                let id = tomb_base + tombstones.len() as u32;
+                tombstones.push(template(state.objects.get(o).owner, def, Zone::Command, 0));
+                handles.push(HandleV1::H {
+                    e: paid_e,
+                    j: paid_k,
+                    named: true,
+                });
+                paid_k += 1;
+                return Ok(Some((id, vec![0; r.generations.len()])));
+            }
             let raw_history = is(MutantV1::L4) && r.class != ClassV1::Live;
             if let Some(&id) = new_id.get(&o) {
                 let pin = pinned_set.contains(&o);

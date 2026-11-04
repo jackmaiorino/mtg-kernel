@@ -32,6 +32,8 @@ mod fixtures;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]
+mod paidcost;
+#[cfg(test)]
 mod realize;
 #[cfg(test)]
 mod samename;
