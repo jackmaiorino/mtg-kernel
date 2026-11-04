@@ -219,11 +219,59 @@ pub(crate) fn infoset_extension_v1(
             subclass,
         } => {
             state.tally[seat_index].record_refusal(&error, subclass);
+            log_refusal_v1(fast, viewer, decision.step, &error, subclass);
             value
         }
     };
     state.pending = Some(value);
     Ok(())
+}
+
+/// The environment variable naming a directory for engine-side refusal
+/// diagnostics (`refusals-<pid>.jsonl`): one line per refusal with the
+/// export's free-text detail and, for R1, the live references that name
+/// untracked objects. Diagnostics only; nothing reaches the wire.
+pub(crate) const REFUSAL_LOG_ENV_V1: &str = "W1_INFOSET_REFUSAL_LOG";
+
+fn log_refusal_v1(
+    fast: &FastActorSessionV1,
+    viewer: PlayerId,
+    step: u64,
+    error: &ExportErrorV1,
+    subclass: &str,
+) {
+    let Some(dir) = std::env::var_os(REFUSAL_LOG_ENV_V1).filter(|d| !d.is_empty()) else {
+        return;
+    };
+    let detail = match error {
+        ExportErrorV1::Refused { detail, .. } | ExportErrorV1::Fault { detail, .. } => detail,
+    };
+    let mut line = json!({"step": step, "viewer": viewer.0, "turn": fast.game_state().turn,
+                          "code": error.code_name(), "subclass": subclass, "detail": detail});
+    if error.code_name() == "R1" {
+        let lists = fast.deck_ids_v1().clone().map(|id| {
+            runtime_deck_by_id(&id)
+                .map(|d| d.card_ids.to_vec())
+                .unwrap_or_default()
+        });
+        let game = fast.game_state();
+        line["diagnostics"] =
+            crate::infoset_v1::export::refusal_diagnostics_v1(&ExportInputV1 {
+                state: game,
+                journal: game.observation_journal.notes(),
+                viewer,
+                decklists: [&lists[0], &lists[1]],
+            });
+    }
+    let path = std::path::Path::new(&dir).join(format!("refusals-{}.jsonl", std::process::id()));
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write as _;
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 /// The wire subclass of an export refusal: R3 names whose plan is pending

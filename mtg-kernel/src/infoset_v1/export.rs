@@ -1227,6 +1227,74 @@ pub(crate) fn export_v1(
     })
 }
 
+/// Diagnostics only (the bridge's `W1_INFOSET_REFUSAL_LOG`, never on the
+/// wire): every live reference to an object V does not track, with the
+/// object's true card, owner, zone and generation, V's last span of it, and
+/// the JSON paths of the state where the reference sits. Reads S freely; it
+/// explains a refusal after the fact and feeds nothing back.
+pub(crate) fn refusal_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
+    let state = input.state;
+    let projection = project_v1(state, input.journal, input.viewer);
+    let tagged = tagged_value(state);
+    let mut refs: Vec<(RefV1, &'static str)> = Vec::new();
+    {
+        let mut record = |r: RefV1, region: &'static str| refs.push((r, region));
+        if collect_refs(&tagged, &mut record).is_err() {
+            return json!({"error": "collect pass refused"});
+        }
+    }
+    let pins = contract_pins(state);
+    fn paths(v: &Value, tag: &str, at: String, out: &mut Vec<String>) {
+        match v {
+            Value::String(s) if s == tag => out.push(at),
+            Value::Array(xs) => {
+                for (i, x) in xs.iter().enumerate() {
+                    paths(x, tag, format!("{at}[{i}]"), out);
+                }
+            }
+            Value::Object(m) => {
+                for (k, x) in m {
+                    if k == tag {
+                        out.push(format!("{at}.<key>"));
+                    }
+                    paths(x, tag, format!("{at}.{k}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (r, region) in &refs {
+        if *region != "live" || projection.tracked(r.object) || !seen.insert(r.object) {
+            continue;
+        }
+        let o = state.objects.get(r.object);
+        let tag = format!("{}{}", crate::ids::OBJECT_ID_TAG_PREFIX_V1, r.object.0);
+        let mut at = Vec::new();
+        paths(&tagged, &tag, "state".into(), &mut at);
+        at.retain(|p| !p.starts_with("state.engine.event_history") && !p.starts_with("state.objects"));
+        at.truncate(12);
+        let span = projection.last_span(r.object).map(|s| {
+            json!({"start_item": s.start_item, "start_gen": s.start_gen,
+                   "end": s.end.map(|e| json!({"item": e.item, "zone": format!("{:?}", e.zone),
+                                               "last_gen": e.last_gen, "split": e.split}))})
+        });
+        out.push(json!({
+            "object": r.object.0,
+            "card": card_name(o.card_def),
+            "owner": o.owner.0,
+            "zone": format!("{:?}", o.zone),
+            "generation": o.zone_change_count,
+            "ref_generations": r.generations,
+            "pinned": pins.contains(&r.object),
+            "last_span": span,
+            "paths": at,
+        }));
+    }
+    json!({"viewer": input.viewer.0, "items": projection.items, "untracked_live_refs": out})
+}
+
 /// Collect pass: every reference with its region.
 fn collect_refs(
     tagged: &Value,
