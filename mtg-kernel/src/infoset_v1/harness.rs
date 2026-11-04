@@ -317,6 +317,32 @@ pub(crate) struct PairReportV1 {
     /// Compared decisions where P agrees across the worlds and M's export
     /// departs from P's in at least one of them (a witness needs one).
     pub departs: BTreeMap<String, u64>,
+    /// Diagnostics: the first decision where P differs, and each mutant's
+    /// first departure (step and the outcomes' heads).
+    pub notes: Vec<String>,
+}
+
+/// A short, comparable head of an outcome for diagnostics.
+fn head(o: &Result<Vec<u8>, String>) -> String {
+    match o {
+        Err(e) => format!("Err({e})"),
+        Ok(b) => {
+            let text = String::from_utf8_lossy(b);
+            let v: Option<serde_json::Value> = serde_json::from_slice(b).ok();
+            match v {
+                Some(v) if v.get("payload_json").is_some() => format!(
+                    "payload sha {} map {} keys {}",
+                    &format!(
+                        "{:x}",
+                        sha2::Sha256::digest(v["payload_json"].to_string().as_bytes())
+                    )[..12],
+                    v["order_map"],
+                    v["row_keys_sorted"].as_array().map_or(0, |a| a.len())
+                ),
+                _ => text.chars().take(60).collect(),
+            }
+        }
+    }
 }
 
 pub(crate) fn outcome(r: &Result<InfosetV1, ExportErrorV1>) -> Result<Vec<u8>, String> {
@@ -470,6 +496,14 @@ pub(crate) fn compare_worlds_with(
                 *report.p_refusals.entry(code.clone()).or_default() += 1;
             }
             if p != p2 {
+                if report.p_differs == 0 {
+                    report.notes.push(format!(
+                        "P differs at decision {}: {} vs {}",
+                        report.compared,
+                        head(&p),
+                        head(&p2)
+                    ));
+                }
                 report.p_differs += 1;
             } else {
                 let plain = ExportOptionsV1::default();
@@ -487,7 +521,18 @@ pub(crate) fn compare_worlds_with(
                         *report.witnesses.entry(format!("{m:?}")).or_default() += 1;
                     }
                     if ms != ps || mt != pt {
-                        *report.departs.entry(format!("{m:?}")).or_default() += 1;
+                        let n = report.departs.entry(format!("{m:?}")).or_default();
+                        if *n == 0 {
+                            report.notes.push(format!(
+                                "{m:?} departs at decision {}: P {} / {}; M {} / {}",
+                                report.compared,
+                                head(&ps),
+                                head(&pt),
+                                head(&ms),
+                                head(&mt)
+                            ));
+                        }
+                        *n += 1;
                     }
                 }
             }
@@ -870,6 +915,7 @@ fn l13_over_the_ac1_engine_families() {
     let mutants = [MutantV1::L13];
     let (mut compared, mut witnesses, mut departs) = (0u64, 0u64, 0u64);
     let (mut p_differs, mut p_equal) = (0u64, 0u64);
+    let mut notes: Vec<String> = Vec::new();
     for (decks, seed) in [
         (["CawGates", "Faeries"], 11u64),
         (["Wildfire", "Burn"], 12),
@@ -887,7 +933,10 @@ fn l13_over_the_ac1_engine_families() {
                 reports.extend(f_slot(&game, viewer, at, &mutants));
             }
             reports.extend(f_choice(&game, viewer, &mutants, 3, 2, 40).0);
-            for r in &reports {
+            for (i, r) in reports.iter().enumerate() {
+                for note in &r.notes {
+                    notes.push(format!("{decks:?} seed {seed} {viewer:?} pair {i}: {note}"));
+                }
                 compared += r.compared;
                 p_differs += r.p_differs;
                 p_equal += r.compared - r.p_differs;
@@ -900,6 +949,9 @@ fn l13_over_the_ac1_engine_families() {
         "L13 over the AC1 engine families: compared {compared} ({p_equal} with P equal across the worlds), witnesses {witnesses}, decisions where L13 departs from P {departs}"
     );
     assert!(compared > 0);
+    for note in &notes {
+        eprintln!("L13 diagnostics: {note}");
+    }
     // Vacuity is read only where P agrees (mutants are evaluated there).
     assert_eq!(p_differs, 0, "the correct producer differs across worlds");
     assert!(p_equal > 0, "no decision with P equal across the worlds");
