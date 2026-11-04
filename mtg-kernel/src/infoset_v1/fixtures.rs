@@ -1451,17 +1451,20 @@ fn l8_control_difference_bytes() {
             if mx == my {
                 continue;
             }
-            let parse = |o: &Result<Vec<u8>, String>| -> serde_json::Value {
-                match o {
-                    Ok(b) => serde_json::from_slice(b).unwrap_or(serde_json::Value::Null),
-                    Err(e) => serde_json::json!({ "refused": e }),
-                }
-            };
+            // The first differing byte of the two exports, with context.
+            let (bx, by) = (mx.clone().unwrap_or_default(), my.clone().unwrap_or_default());
+            let at = bx.iter().zip(&by).position(|(u, v)| u != v).unwrap_or(bx.len().min(by.len()));
+            let window = |b: &[u8]| String::from_utf8_lossy(&b[at.saturating_sub(160)..(at + 160).min(b.len())]).to_string();
             eprintln!(
-                "L8 control seed {seed} script step {} (former view equal {}): {:?}",
+                "L8 control seed {seed} script step {} (former view equal {}): lengths {} / {}, first difference at byte {at}:
+  W  ...{}...
+  W' ...{}...",
                 x.step,
                 x.view == y.view,
-                super::tests::diffs(&parse(&mx), &parse(&my), String::new(), 12)
+                bx.len(),
+                by.len(),
+                window(&bx),
+                window(&by)
             );
             shown += 1;
             if shown >= 2 {
