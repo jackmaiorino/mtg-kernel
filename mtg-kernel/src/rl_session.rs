@@ -5370,6 +5370,7 @@ impl FastActorSessionV1 {
     /// mode are public and come from `template`; the episode id and the
     /// environment revision are constants, and both decision counters are
     /// the viewer's own decision index (design 6.8).
+    #[cfg(test)]
     pub(crate) fn import_infoset_v1(
         template: &FastActorSessionV1,
         state: crate::state::GameState,

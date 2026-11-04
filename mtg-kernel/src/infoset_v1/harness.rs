@@ -393,7 +393,7 @@ pub(crate) fn deliverable_outcome(
     let x = x.expect("outcome passed");
     let context = s.payload_surface_context_v1(&super::order::canonical_ids_v1(&x));
     match context {
-        Some(c) if c.discard.as_ref().map_or(true, |d| d.player == viewer) => Ok(bytes),
+        Some(c) if c.discard.as_ref().is_none_or(|d| d.player == viewer) => Ok(bytes),
         _ => Err("R2:surface".into()),
     }
 }
