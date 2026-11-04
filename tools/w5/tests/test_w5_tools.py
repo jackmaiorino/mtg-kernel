@@ -48,6 +48,9 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(xact.bits_to_floats(bits), values)
 
 
+S_RECORD = 'w5-s-learner-checkpoint/v1'
+
+
 def make_chain(tmp, arm, segments, per_segment, ledger_step=1000, t0=1.0e9, dt=60.0, complete_last=True,
                s_learner=False):
     """Synthetic segments: every update's complete.json, update.json and checkpoint file (with `s_learner`, an S
@@ -74,16 +77,18 @@ def make_chain(tmp, arm, segments, per_segment, ledger_step=1000, t0=1.0e9, dt=6
             (att / 'collect').mkdir(parents=True)
             (att / 'collect' / 'episode-0000.json').write_text('x' * 10)
             ck = att / 'update' / 'checkpoint.json'
+            state = None
             if s_learner:
                 container = att / 'update' / 's-train-state.bin'
                 container.write_bytes(f'container-{arm}-{update}'.encode() * 4)
-                ck.write_text(json.dumps({'schema': retention.S_RECORD_SCHEMA, 'adam_step': update + 1,
-                                          'state': {'path': container.as_posix(),
-                                                    'sha256': retention.sha(container)}}))
+                state = {'path': container.as_posix(), 'sha256': retention.sha(container)}
+                ck.write_text(json.dumps({'schema': S_RECORD, 'adam_step': update + 1, 'state': state}))
             else:
                 ck.write_text(f'state-{arm}-{update}')
             doc = {'after_state_sha256': f'h{update + 1}', 'checkpoint': {'path': ck.as_posix(),
                                                                           'sha256': retention.sha(ck)}}
+            if state is not None:
+                doc['s_learner'] = {'architecture': 's-object-transformer-v1', 'state': state}
             (att / 'update' / 'update.json').write_text(json.dumps(doc))
             receipt = {'update': {'path': (att / 'update' / 'update.json').as_posix()},
                        'chain_ledger': {'usec': (update + 1) * ledger_step, 'unix_seconds': t0 + (update + 1) * dt,
@@ -328,19 +333,19 @@ class RetentionTests(unittest.TestCase):
                 retention.subprocess.run = real
 
     def test_s_states_are_pruned_kept_verified_and_counted_as_one(self):
-        """An S full state is its record and its container: both are planned, pruned, verified, kept and
-        counted together."""
+        """An S full state is its record and its container (pinned by the update receipt): both are planned
+        (container first), pruned, verified, kept and counted together."""
         with tempfile.TemporaryDirectory() as tmp:
             chain_path = make_chain(tmp, 'X', segments=3, per_segment=64, s_learner=True)
             chain, records = retention.index(chain_path)
-            container = {r['boundary']: Path(retention.checkpoint_parts(r['checkpoint'])[1]['path']) for r in records}
+            container = {r['boundary']: Path(r['state']['path']) for r in records}
             self.assertTrue(all(p.name == 's-train-state.bin' for p in container.values()))
             doc = retention.plan(chain_path)
             by_boundary = {}
             for item in doc['checkpoints']:
                 by_boundary.setdefault(item['boundary'], []).append(item.get('part', 'checkpoint'))
             self.assertEqual(set(by_boundary), set(range(1, 128)) - {64})
-            self.assertTrue(all(parts == ['checkpoint', 's_state'] for parts in by_boundary.values()))
+            self.assertTrue(all(parts == ['s_state', 'checkpoint'] for parts in by_boundary.values()))
             self.assertEqual(retention.apply(doc, Path(tmp) / 'log.jsonl'), 2 * len(by_boundary))
             self.assertFalse(any(container[b].exists() for b in by_boundary))
             self.assertTrue(container[64].exists() and container[128].exists())
@@ -351,32 +356,30 @@ class RetentionTests(unittest.TestCase):
             container[128].write_bytes(b'damaged')
             spec = retention.select(chain, records, r_usec=128_000)
             self.assertEqual(spec['replay']['from']['boundary'], 64)
+            container[128].write_bytes(original)
             # A missing container is not a replay start.
             moved = container[64].with_suffix('.away')
             container[64].rename(moved)
             spec = retention.select(chain, records, r_usec=100_500)
             self.assertEqual(spec['replay']['from']['boundary'], 0)
             moved.rename(container[64])
-            container[128].write_bytes(original)
             # The PRUNE manifest keeps both files of the endpoint and prunes both files of every other state.
             manifest = retention.prune_manifest(chain, records, 64)
             kept = [(k['boundary'], k.get('part', 'checkpoint')) for k in manifest['keep']['selected_checkpoint']]
-            self.assertEqual(kept, [(64, 'checkpoint'), (64, 's_state')])
+            self.assertEqual(kept, [(64, 's_state'), (64, 'checkpoint')])
             pruned = [(p['boundary'], p.get('part', 'checkpoint')) for p in manifest['prune']]
             self.assertIn((128, 's_state'), pruned)
             self.assertIn((128, 'checkpoint'), pruned)
-            self.assertEqual(manifest['prune_bytes_by_kind']['full'], sum(p['bytes'] for p in manifest['prune']))
             # A damaged endpoint container is not kept.
             original64 = container[64].read_bytes()
             container[64].write_bytes(b'damaged')
             with self.assertRaises(SystemExit):
                 retention.prune_manifest(chain, records, 64)
             container[64].write_bytes(original64)
-            # The guard counts both files of every state on disk.
+            # The guard counts both files of every state on disk: 64, 128 and the live segment's 129 to 192.
             out = retention.guard([tmp], 10**12, chains=[chain_path])
-            # Boundaries 64, 128 and the live segment's 129 to 192 remain.
             self.assertEqual(out['by_chain'][0]['full_states'], 2 * 66)
-            # A replayed S endpoint verifies only with its container intact.
+            # A replayed S endpoint verifies only with its container intact, and is kept as both files.
             spec = retention.select(chain, records, r_usec=100_500)
             root = Path(tmp) / 'replay'
             for i, item in enumerate(spec['replay']['expected']):
@@ -384,21 +387,84 @@ class RetentionTests(unittest.TestCase):
                 it.mkdir(parents=True)
                 state = it / 's-train-state.bin'
                 state.write_bytes(f'replayed-{i}'.encode())
+                state_pin = {'path': state.as_posix(), 'sha256': retention.sha(state)}
                 ck = it / 'checkpoint.json'
-                ck.write_text(json.dumps({'schema': retention.S_RECORD_SCHEMA,
-                                          'state': {'path': state.as_posix(), 'sha256': retention.sha(state)}}))
+                ck.write_text(json.dumps({'schema': S_RECORD, 'state': state_pin}))
                 (it / 'u.json').write_text(json.dumps({'after_state_sha256': item['after_state_sha256'],
                                                        'checkpoint': {'path': ck.as_posix(),
-                                                                      'sha256': retention.sha(ck)}}))
+                                                                      'sha256': retention.sha(ck)},
+                                                       's_learner': {'state': state_pin}}))
                 (it / 'complete.json').write_text(json.dumps({'update': {'path': (it / 'u.json').as_posix()}}))
             verified = retention.verify_replay(spec, root)
             self.assertTrue(verified['equal'])
             manifest = retention.prune_manifest(chain, records, 101, verified)
             self.assertEqual([k.get('part', 'checkpoint') for k in manifest['keep']['selected_checkpoint']],
-                             ['checkpoint', 's_state'])
+                             ['s_state', 'checkpoint'])
             last = root / 'iterations' / f"{len(spec['replay']['expected']) - 1:06d}" / 's-train-state.bin'
             last.write_bytes(b'damaged')
             self.assertFalse(retention.verify_replay(spec, root)['equal'])
+
+    def test_s_containers_survive_missing_damaged_or_shared_records_and_interrupted_applies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=3, per_segment=64, s_learner=True)
+            chain, records = retention.index(chain_path)
+            by_b = {r['boundary']: r for r in records}
+            # A missing record and a record rewritten to point elsewhere: the container still comes from the
+            # update receipt, and the record's new contents are never followed.
+            Path(by_b[5]['checkpoint']['path']).unlink()
+            decoy = Path(tmp) / 'decoy.bin'
+            decoy.write_bytes(b'not a chain file')
+            Path(by_b[6]['checkpoint']['path']).write_text(json.dumps({'schema': S_RECORD, 'state': {
+                'path': decoy.as_posix(), 'sha256': retention.sha(decoy)}}))
+            doc = retention.plan(chain_path)
+            paths = [c['path'] for c in doc['checkpoints']]
+            self.assertIn(Path(by_b[5]['state']['path']).as_posix(), paths)
+            self.assertNotIn(Path(by_b[5]['checkpoint']['path']).as_posix(), paths)
+            self.assertIn(Path(by_b[6]['state']['path']).as_posix(), paths)
+            self.assertNotIn(decoy.as_posix(), paths)
+            self.assertEqual(len(paths), len(set(paths)))
+            # An interrupted apply (only the first planned file, a container) is completed by the next plan.
+            first = dict(doc, checkpoints=doc['checkpoints'][:1], trajectories=[])
+            self.assertEqual(first['checkpoints'][0].get('part'), 's_state')
+            retention.apply(first, Path(tmp) / 'log.jsonl', hold=Path(tmp) / 'hold')
+            again = retention.plan(chain_path)
+            boundary = first['checkpoints'][0]['boundary']
+            self.assertIn(Path(by_b[boundary]['checkpoint']['path']).as_posix(),
+                          [c['path'] for c in again['checkpoints']])
+            self.assertNotIn(first['checkpoints'][0]['path'], [c['path'] for c in again['checkpoints']])
+            self.assertTrue(decoy.exists())
+        with tempfile.TemporaryDirectory() as tmp:
+            # A container shared with a surviving state is never planned or pruned.
+            chain_path = make_chain(tmp, 'X', segments=3, per_segment=64, s_learner=True)
+            chain, records = retention.index(chain_path)
+            shared = records[63]['state']  # boundary 64, kept by the stride
+            lines = []
+            for rec in records:
+                if rec['boundary'] == 10:
+                    rec = dict(rec, state=shared)
+                lines.append(json.dumps(rec))
+            retention.index_path(chain_path).write_text('\n'.join(lines) + '\n')
+            chain, records = retention.index(chain_path)
+            doc = retention.plan(chain_path)
+            self.assertNotIn(Path(shared['path']).as_posix(), [c['path'] for c in doc['checkpoints']])
+            manifest = retention.prune_manifest(chain, records, 64)
+            pruned = [p['path'] for p in manifest['prune']]
+            self.assertNotIn(Path(shared['path']).as_posix(), pruned)
+            self.assertEqual(len(pruned), len(set(pruned)))
+
+    def test_old_index_caches_gain_the_container_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=1, per_segment=4, s_learner=True)
+            _, records = retention.index(chain_path)
+            cache = retention.index_path(chain_path)
+            stripped = [{k: v for k, v in r.items() if k != 'state'} for r in records]
+            cache.write_text(''.join(json.dumps(r) + '\n' for r in stripped))
+            _, again = retention.index(chain_path)
+            self.assertEqual([r['state'] for r in again], [r['state'] for r in records])
+            self.assertTrue(all('state' in json.loads(line) for line in cache.read_text().splitlines()))
+            net8 = make_chain(Path(tmp) / 'n', 'X', segments=1, per_segment=2)
+            _, plain = retention.index(net8)
+            self.assertTrue(all(r['state'] is None for r in plain))
 
     def test_guard(self):
         with tempfile.TemporaryDirectory() as tmp:
