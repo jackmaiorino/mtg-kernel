@@ -810,6 +810,22 @@ fn s_weights_snapshot_v1() {
     assert_eq!(receipt["adam_step"], 1);
     let snapshot: PinnedFileV1 = serde_json::from_value(receipt["output"].clone()).unwrap();
     let record: SLearnerCheckpointV1 = read_pinned(&full).unwrap();
+    // The S container document Python tools read (`checkpoint_container_v1 s-document`).
+    let document = super::super::s_container_document_v1(&record.state).unwrap();
+    assert_eq!(document["config"], json!(SMALL_V1));
+    assert_eq!(document["adam_step"], json!(record.adam_step));
+    assert_eq!(document["state_sha256"], json!(record.state_sha256));
+    assert_eq!(document["architecture"], json!(record.architecture));
+    let layout = SModelV1::init_pilot_scheme_v1(SMALL_V1, 1).unwrap();
+    assert_eq!(
+        document["parameters"].as_array().unwrap().len(),
+        layout.layout_v1().tensors.len()
+    );
+    assert_eq!(document["parameters"][0]["name"], "ref_bias");
+    let initial_document =
+        super::super::s_container_document_v1(&s.s_learner.as_ref().unwrap().initial).unwrap();
+    assert_eq!(initial_document["parameters"], document["parameters"]);
+    assert!(super::super::s_container_document_v1(&full).is_err());
     let full_bytes =
         fs::metadata(&full.path).unwrap().len() + fs::metadata(&record.state.path).unwrap().len();
     let snapshot_bytes = fs::metadata(&snapshot.path).unwrap().len();

@@ -126,7 +126,9 @@ pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
 };
-pub use weights_snapshot_v1::{materialize_weights_snapshot_v1, weights_snapshot_v1};
+pub use weights_snapshot_v1::{
+    materialize_weights_snapshot_v1, s_container_document_v1, weights_snapshot_v1,
+};
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;

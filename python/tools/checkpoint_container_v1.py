@@ -6,7 +6,9 @@ A checkpoint file is either v1 JSON (starts with `{`) or a container (starts wit
 
 - `export_v1(path)`: the checkpoint's v1 JSON bytes;
 - `read_document(path)`: the checkpoint as a dict, exactly as `json.loads` of its v1 JSON;
-- `has_moments(path)`: whether the Adam moment lists are present and non-empty.
+- `has_moments(path)`: whether the Adam moment lists are present and non-empty;
+- `read_s_document(path)`: a native S train-state container's document (config, step, hashes, parameter names
+  and shapes), through the binary's `s-document` mode.
 
 A container is never parsed in Python. Its validation (canonical form, schema, section layout) is the Rust
 loader's, so every container read goes through the Rust exporter, the `checkpoint_container_v1` binary named by the
@@ -51,6 +53,23 @@ def export_v1(path) -> bytes:
 def read_document(path) -> dict:
     """The checkpoint as `json.loads` of its v1 JSON, for either format."""
     return json.loads(export_v1(path))
+
+
+def read_s_document(path) -> dict:
+    """A native S train-state container's document, decoded and verified by the Rust binary."""
+    path = Path(path)
+    data = path.read_bytes()
+    if not is_container(data):
+        raise ValueError(f'{path} is not an S train-state container')
+    binary = os.environ.get(BINARY_ENV)
+    if not binary:
+        raise RuntimeError(f'{path} is an S container; set {BINARY_ENV} to the checkpoint_container_v1 binary to '
+                           'read it')
+    result = subprocess.run([binary, 's-document', '--input', str(path.resolve()), '--sha256',
+                             hashlib.sha256(data).hexdigest()], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError(f'{path}: {result.stderr.strip()}')
+    return json.loads(result.stdout)
 
 
 def has_moments(path) -> bool:

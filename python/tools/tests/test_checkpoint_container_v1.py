@@ -41,6 +41,35 @@ class CheckpointContainerTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     cc.has_moments(path)
 
+    def test_an_s_document_is_read_only_through_the_binary_s_document_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 's-train-state.bin'
+            path.write_bytes(cc.MAGIC + b'S container')
+            with mock.patch.dict(os.environ, {cc.BINARY_ENV: ''}):
+                with self.assertRaises(RuntimeError):
+                    cc.read_s_document(path)
+            record = Path(tmp) / 'checkpoint.json'
+            record.write_text('{}')
+            with self.assertRaises(ValueError):
+                cc.read_s_document(record)
+            calls = []
+
+            def run(args, capture_output, text):
+                calls.append(args)
+                return type('R', (), {'returncode': 0, 'stdout': json.dumps({'config': {'d_model': 96}}),
+                                      'stderr': ''})()
+            with mock.patch.dict(os.environ, {cc.BINARY_ENV: 'bin'}), mock.patch.object(cc.subprocess, 'run', run):
+                self.assertEqual(cc.read_s_document(path), {'config': {'d_model': 96}})
+            import hashlib
+            self.assertEqual(calls, [['bin', 's-document', '--input', str(path.resolve()), '--sha256',
+                                      hashlib.sha256(path.read_bytes()).hexdigest()]])
+
+            def fail(args, capture_output, text):
+                return type('R', (), {'returncode': 1, 'stdout': '', 'stderr': 'not an S checkpoint container'})()
+            with mock.patch.dict(os.environ, {cc.BINARY_ENV: 'bin'}), mock.patch.object(cc.subprocess, 'run', fail):
+                with self.assertRaisesRegex(ValueError, 'not an S checkpoint container'):
+                    cc.read_s_document(path)
+
 
 if __name__ == '__main__':
     unittest.main()

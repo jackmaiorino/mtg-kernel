@@ -29,6 +29,12 @@ Rules (frozen in the design):
 - Selection: the endpoint's checkpoint if kept, else its weights-only snapshot, else a replay from the nearest
   kept full state at or before it, which must reproduce every recorded hash. Then a PRUNE manifest lists every
   non-selected full state and snapshot, by kind.
+- S learners (XS): a full state is two files, the S checkpoint record (`checkpoint.json`, schema
+  `w5-s-learner-checkpoint/v1`) and the S container it pins (`s-train-state.bin`). The container's pin comes from
+  the durable update receipt (`update.json` `s_learner.state`) into the index, never from the record, so a
+  missing or damaged record cannot hide or redirect it. Every rule above treats the pair as one state: planned
+  container first, pruned, kept, verified and counted together, never a file a surviving state uses, no path
+  twice (`checkpoint_parts`).
 
 Commands:
   retention.py index CHAIN.json                    per-update index (cached in INDEX next to the manifest)
@@ -88,6 +94,35 @@ def sha(path):
     return h.hexdigest()
 
 
+def state_pin(update_doc):
+    """The S container an update published (`update.json`'s `s_learner.state`), or None for net-8."""
+    return (update_doc.get('s_learner') or {}).get('state')
+
+
+def checkpoint_parts(pin, state=None):
+    """The files of one full train state, container first: an S update's container (`state`, from the durable
+    update receipt, never from the record) and the checkpoint itself. Each part is {'path', 'sha256', 'part'}."""
+    parts = []
+    if state is not None:
+        parts.append({'path': Path(state['path']).as_posix(), 'sha256': state['sha256'], 'part': 's_state'})
+    parts.append({'path': Path(pin['path']).as_posix(), 'sha256': pin['sha256'], 'part': 'checkpoint'})
+    return parts
+
+
+def record_parts(rec):
+    return checkpoint_parts(rec['checkpoint'], rec.get('state'))
+
+
+def state_present(pin, state=None):
+    """Every file of the state exists."""
+    return all(Path(p['path']).exists() for p in checkpoint_parts(pin, state))
+
+
+def state_intact(pin, state=None):
+    """Every file of the state exists and matches its pin."""
+    return all(Path(p['path']).exists() and sha(p['path']) == p['sha256'] for p in checkpoint_parts(pin, state))
+
+
 def load_chain(path):
     chain = read(path)
     if chain.get('schema') != 'w5-chain/v1' or chain.get('arm') not in ('X', 'C'):
@@ -118,6 +153,17 @@ def index(chain_path):
     records = []
     if cache.exists():
         records = [json.loads(line) for line in cache.read_text(encoding='utf-8').splitlines() if line]
+    if any('state' not in r for r in records):
+        # Caches written before S containers were tracked: read each record's container pin from its durable
+        # update receipt once, then rewrite the cache.
+        for rec in records:
+            if 'state' not in rec:
+                seg = chain['segments'][rec['segment']]
+                complete = Path(seg['root'], 'iterations', f"{rec['iteration']:06d}", 'complete.json')
+                rec['state'] = state_pin(read(read(complete)['update']['path']))
+        tmp = cache.with_suffix(cache.suffix + '.tmp')
+        tmp.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
+        os.replace(tmp, cache)
     known = len(records)
     new = []
     for s, seg in enumerate(chain['segments']):
@@ -133,6 +179,7 @@ def index(chain_path):
             ledger = receipt.get('chain_ledger') or {}
             new.append({'update': update, 'boundary': update + 1, 'segment': s, 'iteration': i,
                         'after_state_sha256': doc['after_state_sha256'], 'checkpoint': doc['checkpoint'],
+                        'state': state_pin(doc),
                         'ledger_usec': ledger.get('usec'), 'unix_seconds': ledger.get('unix_seconds'),
                         'instance': ledger.get('instance')})
         else:
@@ -246,6 +293,7 @@ def plan(chain_path, snapshot_from=None):
     segs = chain['segments']
     complete = [segment_complete(s) for s in segs]
     checkpoints, trajectories = [], []
+    prunable = []
     for rec in records:
         s = rec['segment']
         if keeps_full_state(chain['arm'], rec['boundary'], latest) or rec['boundary'] == latest:
@@ -254,10 +302,21 @@ def plan(chain_path, snapshot_from=None):
             continue
         if not (complete[s] and s + 1 < len(segs) and complete[s + 1]):
             continue
-        path = Path(rec['checkpoint']['path'])
-        if path.exists():
-            checkpoints.append({'boundary': rec['boundary'], 'path': path.as_posix(),
-                                'sha256': rec['checkpoint']['sha256'], 'bytes': path.stat().st_size})
+        prunable.append(rec)
+    pruned = {r['boundary'] for r in prunable}
+    surviving = {Path(p['path']).as_posix() for r in records if r['boundary'] not in pruned for p in record_parts(r)}
+    seen = set()
+    for rec in prunable:
+        for part in record_parts(rec):
+            path = Path(part['path'])
+            if part['path'] in surviving or part['path'] in seen or not path.exists():
+                continue
+            seen.add(part['path'])
+            item = {'boundary': rec['boundary'], 'path': path.as_posix(), 'sha256': part['sha256'],
+                    'bytes': path.stat().st_size}
+            if part['part'] != 'checkpoint':
+                item['part'] = part['part']
+            checkpoints.append(item)
     done = [i for i, c in enumerate(complete) if c]
     for s in done[:-TRAJECTORY_SEGMENTS] if len(done) > TRAJECTORY_SEGMENTS else []:
         for path in sorted(Path(segs[s]['root'], 'iterations').glob('*/attempt-*/collect/episode-*.json')):
@@ -367,7 +426,7 @@ def select(chain, records, r_usec, weights=None):
         raise SystemExit('stop: no boundary reaches R yet')
     endpoint = hit['boundary']
     by_boundary = {r['boundary']: r for r in records}
-    if Path(hit['checkpoint']['path']).exists() and sha(hit['checkpoint']['path']) == hit['checkpoint']['sha256']:
+    if state_intact(hit['checkpoint'], hit.get('state')):
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'], 'replay': None}
     snap = (weights or {}).get(endpoint)
     if snap and sha(snap['path']) == snap['sha256'] and snap['cut_from_state_sha256'] == hit['after_state_sha256']:
@@ -379,7 +438,7 @@ def select(chain, records, r_usec, weights=None):
             start = {'boundary': 0, 'checkpoint': None}
             break
         rec = by_boundary.get(b)
-        if rec and Path(rec['checkpoint']['path']).exists():
+        if rec and state_present(rec['checkpoint'], rec.get('state')):
             start = {'boundary': b, 'checkpoint': rec['checkpoint']}
             break
     expected = [{'boundary': b, 'after_state_sha256': by_boundary[b]['after_state_sha256']}
@@ -436,21 +495,22 @@ def replay_config(chain, spec, out_dir):
 def verify_replay(spec, replay_root):
     """Every replayed update must reproduce its recorded after-state hash."""
     expected = spec['replay']['expected']
-    got, checkpoint = [], None
+    got, checkpoint, state = [], None, None
     for i, item in enumerate(expected):
         complete = Path(replay_root, 'iterations', f'{i:06d}', 'complete.json')
         doc = read(read(complete)['update']['path']) if complete.exists() else {}
         got.append(doc.get('after_state_sha256'))
         checkpoint = doc.get('checkpoint')
+        state = state_pin(doc)
     equal = [g == e['after_state_sha256'] for g, e in zip(got, expected)]
     ok = all(equal) and len(got) == len(expected)
-    if ok and not (checkpoint and Path(checkpoint['path']).exists() and sha(checkpoint['path']) == checkpoint['sha256']):
+    if ok and not (checkpoint and state_intact(checkpoint, state)):
         ok = False
     return {'schema': 'w5-replay-receipt/v1', 'endpoint_boundary': spec['endpoint_boundary'],
             'from_boundary': spec['replay']['from']['boundary'], 'updates': len(expected),
             'equal': ok, 'first_mismatch': None if all(equal) else expected[equal.index(False)]['boundary'],
             'endpoint_after_state_sha256': got[-1] if got else None,
-            'endpoint_checkpoint': checkpoint if ok else None}
+            'endpoint_checkpoint': checkpoint if ok else None, 'endpoint_state': state if ok else None}
 
 
 def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weights=None):
@@ -468,19 +528,39 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
         record = next((r for r in records if r['boundary'] == selected_boundary), None)
         if record is None or replay_receipt.get('endpoint_after_state_sha256') != record['after_state_sha256']:
             raise SystemExit("stop: the replayed endpoint's state is not this chain's recorded state")
-        if not Path(pin['path']).exists() or sha(pin['path']) != pin['sha256']:
+        replay_state = replay_receipt.get('endpoint_state')
+        # An S chain's replayed endpoint is two files: a receipt without the container's pin (one written
+        # before containers were tracked) must be re-verified first.
+        if record.get('state') is not None and replay_state is None:
+            raise SystemExit("stop: the replay receipt lacks the S endpoint's container; rerun verify-replay")
+        if not state_intact(pin, replay_state):
             raise SystemExit('stop: the replayed checkpoint differs from its pin')
-        keep.append({'boundary': selected_boundary, 'kind': 'full', 'path': Path(pin['path']).as_posix(),
-                     'sha256': pin['sha256'], 'bytes': Path(pin['path']).stat().st_size, 'replayed': True})
+        for part in checkpoint_parts(pin, replay_state):
+            item = {'boundary': selected_boundary, 'kind': 'full', 'path': part['path'], 'sha256': part['sha256'],
+                    'bytes': Path(part['path']).stat().st_size, 'replayed': True}
+            if part['part'] != 'checkpoint':
+                item['part'] = part['part']
+            keep.append(item)
+    full_prune = []
     for rec in records:
-        path = Path(rec['checkpoint']['path'])
-        if not path.exists():
+        parts = [p for p in record_parts(rec) if Path(p['path']).exists()]
+        if not parts:
             continue
-        item = {'boundary': rec['boundary'], 'kind': 'full', 'path': path.as_posix(),
-                'sha256': rec['checkpoint']['sha256'], 'bytes': path.stat().st_size}
-        # The endpoint's full state is kept only when it still matches its pin (as selection requires).
-        intact = rec['boundary'] == selected_boundary and not keep and sha(path) == rec['checkpoint']['sha256']
-        (keep if intact else prune).append(item)
+        # The endpoint's full state is kept only when every file still matches its pin (as selection requires).
+        intact = rec['boundary'] == selected_boundary and not keep and state_intact(rec['checkpoint'],
+                                                                                    rec.get('state'))
+        for part in parts:
+            item = {'boundary': rec['boundary'], 'kind': 'full', 'path': part['path'], 'sha256': part['sha256'],
+                    'bytes': Path(part['path']).stat().st_size}
+            if part['part'] != 'checkpoint':
+                item['part'] = part['part']
+            (keep if intact else full_prune).append(item)
+    # A file the kept endpoint uses is never pruned, and no file is listed twice.
+    kept_paths, seen = {k['path'] for k in keep}, set()
+    for item in full_prune:
+        if item['path'] not in kept_paths and item['path'] not in seen:
+            seen.add(item['path'])
+            prune.append(item)
     for b, snap in sorted(weights.items()):
         item = {'boundary': b, 'kind': 'weights', 'path': snap['path'], 'sha256': snap['sha256'],
                 'bytes': Path(snap['path']).stat().st_size}
@@ -526,7 +606,7 @@ def guard(roots, cap_bytes, next_bytes=0, chains=()):
     kinds, escaped = [], []
     for chain_path in chains:
         chain, records = index(chain_path)
-        full = [Path(r['checkpoint']['path']) for r in records if Path(r['checkpoint']['path']).exists()]
+        full = sorted({Path(p['path']) for r in records for p in record_parts(r) if Path(p['path']).exists()})
         weights = [Path(s['path']) for s in snapshots(chain_path).values()]
         # Where the chain will write (segment roots and its snapshot directory), checked before anything exists.
         destinations = [Path(seg['root']) for seg in chain['segments']] + [snapshot_dir(chain_path, chain)]
