@@ -13,10 +13,27 @@
 //!   the state hash of that state, published and then loaded through the
 //!   continuation loader, which must give the snapshot's parameters bit for
 //!   bit. The policy is the endpoint's; only the optimizer state differs.
+//!
+//! **S learners** (`s_learner_v1`, XS): the input is an S checkpoint record
+//! (`w5-s-learner-checkpoint/v1`). Its snapshot is S's own parameters-only
+//! container (`s_transformer_v1::encode_weights_snapshot_v1`), which carries
+//! the record and the state hash it was cut from and which no train-state
+//! loader admits. Materialization against an S template writes an S
+//! container with the snapshot's parameters, zero moments and its Adam step
+//! beside the output (`<output name>.s-train-state.bin`), and at the output
+//! the cut record with that container, state hash and step, then loads it
+//! through the S loader, which must give exactly that state (the template
+//! binds the lineage: initial state, shell and features). Any other input
+//! kind is refused as before.
 
 use super::checkpoint_container_v1::{decode_v1, encode_v1, is_container_v1, parse_checkpoint_v1};
 use super::*;
 use crate::native_policy_train_step_v1::NativePolicyValueTrainSnapshotV1;
+use crate::s_transformer_v1::{
+    decode_checkpoint_v1, decode_weights_snapshot_v1, encode_checkpoint_v1,
+    encode_weights_snapshot_v1, STrainStateV1, S_ARCHITECTURE_V1,
+};
+use s_learner_v1::{SLearnerCheckpointV1, S_LEARNER_CHECKPOINT_SCHEMA_V1, S_LEARNER_STATE_FILE_V1};
 
 pub const WEIGHTS_SNAPSHOT_SCHEMA_PREFIX_V1: &str = "w5-weights-snapshot/v1:";
 
@@ -29,6 +46,13 @@ fn parameters_sha256_v1(parameters: &[ParameterBitsV1]) -> Result<String, String
 /// Cuts a weights-only snapshot from the pinned full checkpoint `input`.
 pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value, String> {
     let bytes = read_pinned_bytes(input)?;
+    ensure(
+        decode_weights_snapshot_v1(&bytes).is_err(),
+        "the input is already a weights snapshot",
+    )?;
+    if is_s_record_v1(&bytes) {
+        return s_weights_snapshot_v1(input, &bytes, output);
+    }
     let mut saved = parse_checkpoint_v1(&bytes)?;
     ensure(
         !saved.schema.starts_with(WEIGHTS_SNAPSHOT_SCHEMA_PREFIX_V1),
@@ -61,6 +85,129 @@ pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value,
     )
 }
 
+/// An S checkpoint record names its trajectories and scalars only (at most
+/// 1,024 trajectory pins): far below this. Larger inputs are never probed,
+/// so a net-8 checkpoint's parameter arrays are parsed once, by its own
+/// parser, as before.
+const S_RECORD_MAX_BYTES_V1: usize = 4 << 20;
+
+/// Whether `bytes` is an S checkpoint record (by its schema; the record's
+/// own parse checks the rest).
+fn is_s_record_v1(bytes: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct SchemaProbeV1 {
+        schema: String,
+    }
+    bytes.len() <= S_RECORD_MAX_BYTES_V1
+        && !is_container_v1(bytes)
+        && serde_json::from_slice::<SchemaProbeV1>(bytes)
+            .is_ok_and(|probe| probe.schema == S_LEARNER_CHECKPOINT_SCHEMA_V1)
+}
+
+/// The S record's full state, checked against the record.
+fn s_record_state_v1(bytes: &[u8]) -> Result<(SLearnerCheckpointV1, STrainStateV1, usize), String> {
+    let record: SLearnerCheckpointV1 = serde_json::from_slice(bytes).map_err(err)?;
+    ensure(
+        record.schema == S_LEARNER_CHECKPOINT_SCHEMA_V1 && record.architecture == S_ARCHITECTURE_V1,
+        "unknown S checkpoint record schema or architecture",
+    )?;
+    let container = read_pinned_bytes(&record.state)?;
+    let state = decode_checkpoint_v1(&container)?;
+    ensure(
+        state.state_sha256_v1() == record.state_sha256 && state.adam_step_v1() == record.adam_step,
+        "S checkpoint record and container differ",
+    )?;
+    Ok((record, state, container.len()))
+}
+
+/// [`weights_snapshot_v1`] for an S checkpoint record.
+fn s_weights_snapshot_v1(
+    input: &PinnedFileV1,
+    bytes: &[u8],
+    output: &Path,
+) -> Result<Value, String> {
+    let (record, state, container_bytes) = s_record_state_v1(bytes)?;
+    let record_value: Value = serde_json::from_slice(bytes).map_err(err)?;
+    let encoded = encode_weights_snapshot_v1(&state, &record_value);
+    let back = decode_weights_snapshot_v1(&encoded)?;
+    let parameters_sha256 = state.model_v1().parameter_sha256_v1();
+    ensure(
+        back.model.parameter_sha256_v1() == parameters_sha256
+            && back.cut_from_state_sha256 == record.state_sha256
+            && back.adam_step == record.adam_step
+            && back.record == record_value,
+        "the S weights snapshot does not decode to its parameters and record",
+    )?;
+    let written = publish_checkpoint_file_v1(output, &encoded)?;
+    Ok(
+        json!({"schema":"w5-weights-snapshot-receipt/v1","input":input,"output":written,
+        "learner":S_ARCHITECTURE_V1,"cut_from_state_sha256":record.state_sha256,
+        "parameters_sha256":parameters_sha256,"adam_step":record.adam_step,
+        "input_bytes":bytes.len() + container_bytes,"snapshot_bytes":encoded.len(),
+        "git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD")}),
+    )
+}
+
+/// [`materialize_weights_snapshot_v1`] for an S template.
+fn s_materialize_v1(
+    template: &ExpandedModelSourceV1,
+    snapshot: &PinnedFileV1,
+    bytes: &[u8],
+    output: &Path,
+) -> Result<Value, String> {
+    let snap = decode_weights_snapshot_v1(bytes)?;
+    let mut record: SLearnerCheckpointV1 =
+        serde_json::from_value(snap.record.clone()).map_err(err)?;
+    ensure(
+        record.schema == S_LEARNER_CHECKPOINT_SCHEMA_V1 && record.architecture == S_ARCHITECTURE_V1,
+        "the S weights snapshot carries an unknown record",
+    )?;
+    // The embedded record is the one the snapshot was cut from: its state
+    // hash and step are the snapshot's own, checked before any file exists.
+    ensure(
+        record.state_sha256 == snap.cut_from_state_sha256 && record.adam_step == snap.adam_step,
+        "the S weights snapshot's record names another state or step",
+    )?;
+    let name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("output has no file name")?;
+    let container_path = output.with_file_name(format!("{name}.{S_LEARNER_STATE_FILE_V1}"));
+    ensure(
+        output.is_absolute() && !output.exists() && !container_path.exists(),
+        "a fresh absolute output path is required",
+    )?;
+    let total = snap.model.layout_v1().total;
+    let state = STrainStateV1::from_parts_v1(
+        snap.model.clone(),
+        vec![0.0; total],
+        vec![0.0; total],
+        snap.adam_step,
+    )?;
+    let state_sha256 = state.state_sha256_v1();
+    let parameters_sha256 = snap.model.parameter_sha256_v1();
+    record.state = publish_checkpoint_file_v1(&container_path, &encode_checkpoint_v1(&state))?;
+    record.state_sha256 = state_sha256.clone();
+    record.adam_step = snap.adam_step;
+    let written = publish_checkpoint_file_v1(output, &serde_json::to_vec(&record).map_err(err)?)?;
+    let materialized = ExpandedModelSourceV1 {
+        checkpoint: Some(written.clone()),
+        ..template.clone()
+    };
+    let loaded = s_learner_v1::load_s_v1(&materialized, None)?;
+    ensure(
+        loaded.state == state && loaded.state.model_v1().parameter_sha256_v1() == parameters_sha256,
+        "the materialized S checkpoint does not load the snapshot's parameters",
+    )?;
+    Ok(
+        json!({"schema":"w5-weights-materialization/v1","snapshot":snapshot,"output":written,
+        "state":record.state,"learner":S_ARCHITECTURE_V1,"template":template,
+        "parameters_sha256":parameters_sha256,"cut_from_state_sha256":snap.cut_from_state_sha256,
+        "materialized_state_sha256":state_sha256,"moments":"zero",
+        "git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD")}),
+    )
+}
+
 /// A playable v1 checkpoint from the pinned weights snapshot: its
 /// parameters, zero moments, its original schema and the state hash of that
 /// state. `template` is a source of the same lineage (its play import and
@@ -76,6 +223,9 @@ pub fn materialize_weights_snapshot_v1(
         is_container_v1(&bytes),
         "a weights snapshot is a checkpoint container",
     )?;
+    if template.s_learner.is_some() {
+        return s_materialize_v1(template, snapshot, &bytes, output);
+    }
     let mut saved = decode_v1(&bytes)?;
     let schema = saved
         .schema

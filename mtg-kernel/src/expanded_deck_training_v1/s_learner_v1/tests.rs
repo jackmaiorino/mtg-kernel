@@ -765,3 +765,159 @@ fn s_learner_w5_v1() {
     assert!(error.contains("ex1 continuation"), "{error}");
     let _ = fs::remove_dir_all(&root);
 }
+
+/// W5 weights-only snapshots of an S checkpoint: the snapshot is under
+/// half of the full state and never loads as a train state; its
+/// materialization resumes to exactly the full checkpoint's state with zero
+/// moments (same parameters, step and policy identity, the state hash of
+/// that state); unknown kinds and mismatched templates are refused.
+#[test]
+fn s_weights_snapshot_materializes_the_full_checkpoint_parameters() {
+    on_large_stack(s_weights_snapshot_v1);
+}
+
+fn s_weights_snapshot_v1() {
+    use super::super::weights_snapshot_v1::{materialize_weights_snapshot_v1, weights_snapshot_v1};
+    let root = temp_root("snapshot");
+    let net8 = net8_source(&root);
+    let s = s_source(&root, &net8);
+    let collection = collect(
+        &s,
+        vec![episode("snap-self", 2_026_110_401, None)],
+        root.join("collect"),
+    )
+    .unwrap();
+    let trajectories: Vec<PinnedFileV1> =
+        serde_json::from_value(collection["trajectories"].clone()).unwrap();
+    let updated = update(
+        &s,
+        trajectories,
+        gae(),
+        CheckpointRecordFormatV1::V1,
+        root.join("update"),
+    )
+    .unwrap();
+    let full: PinnedFileV1 = serde_json::from_value(updated["checkpoint"].clone()).unwrap();
+    let full_source = ExpandedModelSourceV1 {
+        checkpoint: Some(full.clone()),
+        ..s.clone()
+    };
+    let receipt = weights_snapshot_v1(&full, &root.join("snapshot.bin")).unwrap();
+    assert_eq!(
+        receipt["cut_from_state_sha256"],
+        updated["after_state_sha256"]
+    );
+    assert_eq!(receipt["adam_step"], 1);
+    let snapshot: PinnedFileV1 = serde_json::from_value(receipt["output"].clone()).unwrap();
+    let record: SLearnerCheckpointV1 = read_pinned(&full).unwrap();
+    let full_bytes =
+        fs::metadata(&full.path).unwrap().len() + fs::metadata(&record.state.path).unwrap().len();
+    let snapshot_bytes = fs::metadata(&snapshot.path).unwrap().len();
+    assert!(
+        snapshot_bytes * 2 < full_bytes,
+        "snapshot {snapshot_bytes} bytes against a {full_bytes}-byte full state"
+    );
+    // Never a train state, never snapshotted again.
+    assert!(decode_checkpoint_v1(&fs::read(&snapshot.path).unwrap()).is_err());
+    let as_record = ExpandedModelSourceV1 {
+        checkpoint: Some(snapshot.clone()),
+        ..s.clone()
+    };
+    assert!(load_inference_v1(&as_record).is_err());
+    assert!(weights_snapshot_v1(&snapshot, &root.join("again.bin"))
+        .unwrap_err()
+        .contains("already a weights snapshot"));
+    // An unknown record kind is refused.
+    let unknown = root.join("unknown.json");
+    let unknown_bytes = br#"{"schema":"w5-s-learner-checkpoint/v0","state":null}"#;
+    fs::write(&unknown, unknown_bytes).unwrap();
+    assert!(weights_snapshot_v1(
+        &PinnedFileV1 {
+            path: unknown,
+            sha256: sha(unknown_bytes),
+        },
+        &root.join("unknown-snapshot.bin"),
+    )
+    .is_err());
+    // Materialized: the full checkpoint's state with zero moments.
+    let made =
+        materialize_weights_snapshot_v1(&s, &snapshot, &root.join("materialized.json")).unwrap();
+    assert_eq!(made["parameters_sha256"], receipt["parameters_sha256"]);
+    let materialized: PinnedFileV1 = serde_json::from_value(made["output"].clone()).unwrap();
+    let materialized_source = ExpandedModelSourceV1 {
+        checkpoint: Some(materialized.clone()),
+        ..s.clone()
+    };
+    let resumed = load_s_v1(&full_source, None).unwrap();
+    let total = resumed.state.model_v1().layout_v1().total;
+    let zeroed = STrainStateV1::from_parts_v1(
+        resumed.state.model_v1().clone(),
+        vec![0.0; total],
+        vec![0.0; total],
+        resumed.state.adam_step_v1(),
+    )
+    .unwrap();
+    let from_snapshot = load_s_v1(&materialized_source, None).unwrap();
+    assert_eq!(from_snapshot.state, zeroed);
+    assert_eq!(
+        made["materialized_state_sha256"],
+        json!(zeroed.state_sha256_v1())
+    );
+    assert_ne!(
+        made["materialized_state_sha256"],
+        updated["after_state_sha256"]
+    );
+    let (_, full_identity) = load_inference_v1(&full_source).unwrap();
+    let (_, made_identity) = load_inference_v1(&materialized_source).unwrap();
+    assert_eq!(made_identity.model, full_identity.model);
+    assert_eq!(made_identity.adam_step, full_identity.adam_step);
+    assert_eq!(made_identity.state_sha256, zeroed.state_sha256_v1());
+    // The materialized record is the cut record with the new state.
+    let made_record: SLearnerCheckpointV1 = read_pinned(&materialized).unwrap();
+    assert_eq!(
+        SLearnerCheckpointV1 {
+            state: record.state.clone(),
+            state_sha256: record.state_sha256.clone(),
+            ..made_record.clone()
+        },
+        record
+    );
+    // A canonical snapshot whose embedded record names another state or
+    // step is refused before any file is written.
+    let record_value: Value = read_pinned(&full).unwrap();
+    for (index, field, value) in [
+        (0, "state_sha256", json!("0".repeat(64))),
+        (1, "adam_step", json!(7)),
+    ] {
+        let mut wrong = record_value.clone();
+        wrong[field] = value;
+        let bytes = crate::s_transformer_v1::encode_weights_snapshot_v1(&resumed.state, &wrong);
+        let path = root.join(format!("inconsistent-{index}.bin"));
+        fs::write(&path, &bytes).unwrap();
+        let output = root.join(format!("inconsistent-{index}.json"));
+        let error = materialize_weights_snapshot_v1(
+            &s,
+            &PinnedFileV1 {
+                path,
+                sha256: sha(&bytes),
+            },
+            &output,
+        )
+        .unwrap_err();
+        assert!(error.contains("another state or step"), "{error}");
+        assert!(!output.exists());
+        assert!(!root
+            .join(format!(
+                "inconsistent-{index}.json.{S_LEARNER_STATE_FILE_V1}"
+            ))
+            .exists());
+    }
+    // A fresh output is required; a net-8 template refuses the S snapshot.
+    assert!(
+        materialize_weights_snapshot_v1(&s, &snapshot, &root.join("materialized.json")).is_err()
+    );
+    assert!(
+        materialize_weights_snapshot_v1(&net8, &snapshot, &root.join("net8-made.json")).is_err()
+    );
+    let _ = fs::remove_dir_all(&root);
+}
