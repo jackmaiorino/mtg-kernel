@@ -254,6 +254,12 @@ pub struct FrozenPlayPolicyV1 {
     /// this policy (collection, replay checks, search priors and rollouts)
     /// is S's. None unless `install_s_model_v1` sets it; forks keep it.
     s_model: Option<std::sync::Arc<crate::s_transformer_v1::SModelV1>>,
+    /// A search role of an S policy (`fork_for_search_v1`): the V4
+    /// tensorization skips the state digest, whose 96 features S never reads
+    /// (`s_transformer_v1::STATE_KEEP_V1`), so S's outputs are unchanged.
+    /// Search roles record no tensor; collection and replay keep the digest.
+    /// Forks keep it.
+    s_state_digest_off: bool,
 }
 
 /// An installed no-state-digest input contract (`no_state_digest_v1`).
@@ -578,6 +584,7 @@ impl FrozenPlayPolicyV1 {
             input_contract: None,
             no_digest_check: None,
             s_model: None,
+            s_state_digest_off: false,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -632,6 +639,7 @@ impl FrozenPlayPolicyV1 {
             input_contract: None,
             no_digest_check: None,
             s_model: None,
+            s_state_digest_off: false,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -727,6 +735,7 @@ impl FrozenPlayPolicyV1 {
             input_contract: None,
             no_digest_check: None,
             s_model: None,
+            s_state_digest_off: false,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -798,6 +807,7 @@ impl FrozenPlayPolicyV1 {
             input_contract: None,
             no_digest_check: None,
             s_model: None,
+            s_state_digest_off: false,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -869,6 +879,7 @@ impl FrozenPlayPolicyV1 {
             input_contract: None,
             no_digest_check: None,
             s_model: None,
+            s_state_digest_off: false,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -952,6 +963,7 @@ impl FrozenPlayPolicyV1 {
             input_contract: None,
             no_digest_check: None,
             s_model: None,
+            s_state_digest_off: false,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1140,6 +1152,7 @@ impl FrozenPlayPolicyV1 {
             input_contract: None,
             no_digest_check: None,
             s_model: None,
+            s_state_digest_off: false,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1191,6 +1204,21 @@ impl FrozenPlayPolicyV1 {
         &self.identity
     }
 
+    /// A fork for a search role: [`Self::fork_for_collection_v3`], and for an
+    /// S policy without the state digest (`s_state_digest_off`). The search
+    /// reads only S's logits and value, which the digest never reaches.
+    pub(crate) fn fork_for_search_v1(&self) -> Result<Self, String> {
+        let mut fork = self.fork_for_collection_v3()?;
+        fork.s_state_digest_off = self.s_model.is_some() && s_search_digest_skip_v1();
+        Ok(fork)
+    }
+
+    /// Whether this policy's V4 tensorization skips the state digest.
+    #[cfg(test)]
+    pub(crate) fn s_state_digest_off_v1(&self) -> bool {
+        self.s_state_digest_off
+    }
+
     /// A private CPU collector with the same installed weights and ancestry.
     /// Encoders, tensors, samplers and RNG streams start fresh, rather than
     /// sharing mutable inference state or carrying a previous episode forward.
@@ -1219,6 +1247,7 @@ impl FrozenPlayPolicyV1 {
             input_contract: self.input_contract.clone(),
             no_digest_check: self.no_digest_check.clone(),
             s_model: self.s_model.clone(),
+            s_state_digest_off: self.s_state_digest_off,
             training_math: self.training_math,
             inference_cache: self.inference_cache.clone(),
             inference_key: Vec::new(),
@@ -2547,7 +2576,9 @@ impl FrozenPlayPolicyV1 {
             .fresh_successor
             .as_mut()
             .ok_or("native S requires the V4 scorer")?;
-        fresh.tensorizer.set_state_digest_v1(true);
+        fresh
+            .tensorizer
+            .set_state_digest_v1(!self.s_state_digest_off);
         fresh
             .tensorizer
             .fill(
@@ -2904,6 +2935,24 @@ fn cached_forward_v1(
         logits: output.logits.to_vec(),
         value: output.value,
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only: whether this thread's search forks skip S's state digest
+    /// (on, as in production), so a test can run both paths and compare.
+    pub(crate) static S_SEARCH_DIGEST_SKIP_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+fn s_search_digest_skip_v1() -> bool {
+    #[cfg(test)]
+    {
+        S_SEARCH_DIGEST_SKIP_V1.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
 }
 
 /// [`cached_forward_v1`] for native S: the same key (namespace = S's

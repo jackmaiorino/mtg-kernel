@@ -937,3 +937,260 @@ fn s_weights_snapshot_v1() {
     );
     let _ = fs::remove_dir_all(&root);
 }
+
+/// S search roles skip the state digest, whose features S never reads: the
+/// W5 collection (trajectories, search records but their wall times) and the
+/// update after it are byte for byte those of the path with the digest on.
+#[test]
+fn s_search_without_the_state_digest_gives_the_same_records() {
+    on_large_stack(s_search_digest_skip_v1);
+}
+
+fn s_search_digest_skip_v1() {
+    use crate::sideboard_play_policy_v1::S_SEARCH_DIGEST_SKIP_V1;
+    let root = temp_root("digest-skip");
+    let net8 = net8_source(&root);
+    let s = s_source(&root, &net8);
+    let (policy, _) = load_inference_v1(&s).unwrap();
+    assert!(policy.fork_for_search_v1().unwrap().s_state_digest_off_v1());
+    assert!(!policy
+        .fork_for_collection_v3()
+        .unwrap()
+        .s_state_digest_off_v1());
+    assert!(!policy.s_state_digest_off_v1());
+    let (net8_policy, _) = initialize_any_math_v1(&net8).unwrap();
+    assert!(!net8_policy
+        .fork_for_search_v1()
+        .unwrap()
+        .s_state_digest_off_v1());
+    // A chain id whose placements fall early in all four episodes, so the
+    // searches reach their roots and teach rows.
+    let seeds = [
+        2_026_110_311u64,
+        2_026_110_312,
+        2_026_110_313,
+        2_026_110_314,
+    ];
+    let chain =
+        (0..1_000_000)
+            .map(|k| format!("w5/skip-{k}"))
+            .find(|chain| {
+                seeds.iter().enumerate().all(|(slot, &seed)| {
+                    crate::w5_xact_v1::w5_placement_index_v1(
+                        crate::w5_xact_v1::w5_placement_hash_v1(chain, 0, seed, slot as u64),
+                    ) <= 16
+                })
+            })
+            .unwrap();
+    let run = |skip: bool, label: &str| {
+        S_SEARCH_DIGEST_SKIP_V1.with(|flag| flag.set(skip));
+        let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: s.clone(),
+            episodes: seeds
+                .iter()
+                .enumerate()
+                .map(|(slot, &seed)| {
+                    let opponent = (slot % 2 == 1).then(|| net8.clone());
+                    episode(&format!("skip-{slot}"), seed, opponent)
+                })
+                .collect(),
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
+            ex1: Some(super::super::ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: chain.clone(),
+                update: 0,
+                budget: 8_000,
+                w5: Some(super::super::ex1_collect_v1::W5CollectOptionsV1 {
+                    recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                    key_memo_mib: 512,
+                    capture_0b: None,
+                }),
+            }),
+            output_directory: root.join(format!("collect-{label}")),
+        })
+        .unwrap();
+        S_SEARCH_DIGEST_SKIP_V1.with(|flag| flag.set(true));
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(collection["trajectories"].clone()).unwrap();
+        let hashes: Vec<String> = trajectories.iter().map(|p| p.sha256.clone()).collect();
+        let sidecars: Vec<PinnedFileV1> =
+            serde_json::from_value(collection["ex1"]["episodes"].clone()).unwrap();
+        let records: Vec<Value> = sidecars
+            .iter()
+            .map(|pin| {
+                let mut record: Value = read_pinned(pin).unwrap();
+                for attempt in record["attempts"].as_array_mut().unwrap() {
+                    for search in attempt["searches"].as_array_mut().unwrap() {
+                        search["wall"] = Value::Null;
+                    }
+                }
+                record
+            })
+            .collect();
+        // Successful searches only, so the comparison covers delivered targets.
+        let searched: usize = records
+            .iter()
+            .flat_map(|r| r["attempts"].as_array().unwrap().iter())
+            .flat_map(|a| a["searches"].as_array().unwrap().iter())
+            .inspect(|search| assert_eq!(search["failed"], false, "a search failed"))
+            .count();
+        let ex1 = super::super::ex1_update_v1::Ex1UpdateOptionsV1 {
+            run: chain.clone(),
+            update: 0,
+            coefficient: 1.0,
+            cap: super::super::search_targets_v1::SearchTargetCapV1::Ratio { kappa: 2.0 },
+            collection: PinnedFileV1 {
+                path: root
+                    .join(format!("collect-{label}"))
+                    .join("collection.json"),
+                sha256: sha(&fs::read(
+                    root.join(format!("collect-{label}"))
+                        .join("collection.json"),
+                )
+                .unwrap()),
+            },
+            w5: Some(super::super::ex1_update_v1::W5UpdateOptionsV1 {
+                recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                budget: 8_000,
+                key_memo_mib: 512,
+            }),
+        };
+        let updated = execute_v1(ExpandedTrainingCommandV1::Ex1Update {
+            source: s.clone(),
+            trajectories,
+            learning_rate: 1.0e-3,
+            value_coefficient: 0.5,
+            loss_selection: gae(),
+            ex1,
+            output_directory: root.join(format!("update-{label}")),
+        })
+        .unwrap();
+        let ex1_pin: PinnedFileV1 =
+            serde_json::from_value(updated["ex1"]["receipt"].clone()).unwrap();
+        let mut receipt: Value = read_pinned(&ex1_pin).unwrap();
+        assert!(receipt["rows"].as_u64().unwrap() > 0, "no target row");
+        assert!(
+            !receipt["w5"]["pg_masked"].as_array().unwrap().is_empty(),
+            "no search-played row"
+        );
+        receipt["collection"] = Value::Null;
+        receipt["search_wall_seconds"] = Value::Null;
+        for episode in receipt["episodes"].as_array_mut().unwrap() {
+            episode["record"] = Value::Null;
+        }
+        (
+            hashes,
+            records,
+            searched,
+            updated["after_state_sha256"].clone(),
+            receipt,
+        )
+    };
+    let skipped = run(true, "skip");
+    let digested = run(false, "digest");
+    assert!(skipped.2 > 0, "no search ran");
+    assert_eq!(skipped.0, digested.0, "trajectories differ");
+    assert_eq!(skipped.1, digested.1, "search records differ");
+    assert_eq!(skipped.3, digested.3, "update states differ");
+    assert_eq!(skipped.4, digested.4, "ex1 update receipts differ");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// Timing receipt (ignored; run by hand on one host): S's W5 searches at
+/// 16k on fixed seeds with the state digest on and skipped, interleaved
+/// twice (on, off, on, off) against host drift (pilot-size S, random
+/// initialization); per-search walls and the records' equality.
+#[test]
+#[ignore = "timing receipt"]
+fn s_search_digest_skip_timing_receipt() {
+    on_large_stack(s_search_digest_skip_timing_v1);
+}
+
+fn s_search_digest_skip_timing_v1() {
+    use crate::sideboard_play_policy_v1::S_SEARCH_DIGEST_SKIP_V1;
+    let root = temp_root("digest-timing");
+    let net8 = net8_source(&root);
+    let model = SModelV1::init_pilot_scheme_v1(SConfigV1::s_v1(), 20_261_104).unwrap();
+    let bytes = encode_checkpoint_v1(&STrainStateV1::fresh_optimizer_v1(model));
+    let path = root.join("s-pilot.bin");
+    fs::write(&path, &bytes).unwrap();
+    let s = ExpandedModelSourceV1 {
+        s_learner: Some(Box::new(SLearnerSourceV1 {
+            schema: S_LEARNER_SOURCE_SCHEMA_V1.into(),
+            initial: PinnedFileV1 {
+                path,
+                sha256: sha(&bytes),
+            },
+        })),
+        ..net8.clone()
+    };
+    let seeds: Vec<u64> = (0..12).map(|i| 2_026_110_500 + i).collect();
+    let chain =
+        (0..1_000_000)
+            .map(|k| format!("w5/probe-{k}"))
+            .find(|chain| {
+                seeds.iter().enumerate().all(|(slot, &seed)| {
+                    crate::w5_xact_v1::w5_placement_index_v1(
+                        crate::w5_xact_v1::w5_placement_hash_v1(chain, 0, seed, slot as u64),
+                    ) <= 48
+                })
+            })
+            .unwrap();
+    let mut outputs = Vec::new();
+    for (round, skip) in [false, true, false, true].into_iter().enumerate() {
+        S_SEARCH_DIGEST_SKIP_V1.with(|flag| flag.set(skip));
+        let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: s.clone(),
+            episodes: seeds
+                .iter()
+                .map(|&seed| episode(&format!("timing-{seed}"), seed, None))
+                .collect(),
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
+            ex1: Some(super::super::ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: chain.clone(),
+                update: 0,
+                budget: 16_000,
+                w5: Some(super::super::ex1_collect_v1::W5CollectOptionsV1 {
+                    recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                    key_memo_mib: 512,
+                    capture_0b: None,
+                }),
+            }),
+            output_directory: root.join(format!("collect-{round}")),
+        })
+        .unwrap();
+        S_SEARCH_DIGEST_SKIP_V1.with(|flag| flag.set(true));
+        let trajectories: Vec<String> =
+            serde_json::from_value::<Vec<PinnedFileV1>>(collection["trajectories"].clone())
+                .unwrap()
+                .into_iter()
+                .map(|p| p.sha256)
+                .collect();
+        let sidecars: Vec<PinnedFileV1> =
+            serde_json::from_value(collection["ex1"]["episodes"].clone()).unwrap();
+        let (mut walls, mut records) = (Vec::new(), Vec::new());
+        for pin in &sidecars {
+            let mut record: Value = read_pinned(pin).unwrap();
+            for attempt in record["attempts"].as_array_mut().unwrap() {
+                for search in attempt["searches"].as_array_mut().unwrap() {
+                    walls.push(search["wall"].as_f64().unwrap());
+                    search["wall"] = Value::Null;
+                }
+            }
+            records.push(record);
+        }
+        eprintln!(
+            "TIMING {}",
+            json!({"round":round,"state_digest_skipped":skip,"budget":16_000,"walls":walls,
+                "collection_elapsed_seconds":collection["collection_elapsed_seconds"]})
+        );
+        outputs.push((trajectories, records));
+    }
+    for output in &outputs[1..] {
+        assert_eq!(&outputs[0], output, "the skip changed a record");
+    }
+    let _ = fs::remove_dir_all(&root);
+}
