@@ -309,6 +309,41 @@ fn s_learner_end_to_end_v1() {
     assert_ne!(after.model.weights_sha256, identity.model.weights_sha256);
     let record: SLearnerCheckpointV1 = read_pinned(&checkpoint).unwrap();
     assert_eq!(record.trajectories, trajectories);
+    // An ordinary record has no `ex1` member (PR A's fields exactly).
+    assert!(record.ex1.is_none());
+    let bytes = fs::read(&checkpoint.path).unwrap();
+    let document: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(document.get("ex1").is_none());
+    assert_eq!(serde_json::to_value(&record).unwrap(), document);
+    // PR A's (239cfad50) record members under the platform's libm, literally.
+    let mut keys: Vec<&str> = document
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let mut pr_a = vec![
+        "schema",
+        "architecture",
+        "initial_sha256",
+        "source_import",
+        "feature_contract_digest",
+        "feature_encoding_digest",
+        "card_db_hash",
+        "state",
+        "state_sha256",
+        "adam_step",
+        "trajectories",
+        "loss_identity",
+        "gamma_bits",
+        "gae_lambda_bits",
+        "entropy_coefficient_bits",
+        "learning_rate_bits",
+        "value_coefficient_bits",
+    ];
+    pr_a.sort_unstable();
+    keys.sort_unstable();
+    assert_eq!(keys, pr_a);
     let restored = decode_checkpoint_v1(&fs::read(&record.state.path).unwrap()).unwrap();
     assert_eq!(restored.state_sha256_v1(), after.state_sha256);
     // The run driver's continuation read binds the update's inputs.
@@ -517,20 +552,10 @@ fn s_learner_refusals_v1() {
         &s,
         TrainingMathV1::PlatformLibm,
         CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1,
-        false
     )
     .err()
     .unwrap()
     .contains("legacy sampler"));
-    assert!(collection_learner_v1(
-        &s,
-        TrainingMathV1::PlatformLibm,
-        CollectionSamplerV1::Legacy,
-        true
-    )
-    .err()
-    .unwrap()
-    .contains("EX1"));
     // Update options, refused before any input is read.
     let fake = vec![PinnedFileV1 {
         path: root.join("missing.json"),
@@ -568,5 +593,175 @@ fn s_learner_refusals_v1() {
     let mut config = run_config(&s, &net8, 1, root.join("run"));
     config.loss_selection = ExpandedLossSelectionV1::TerminalReinforceValueV3;
     assert!(config.validate_v1().unwrap_err().contains("S learner run"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A chain id whose W5 placement draws the 1-based eligible index at most
+/// 16 for every episode of [`run_config`]'s two iterations, so each episode
+/// searches early in its game (the draw is a pure hash; any id works, this
+/// one only makes the searched roots likely).
+fn early_w5_chain_v1() -> String {
+    let seeds = [
+        (0, 2_026_110_311, 0),
+        (0, 2_026_110_312, 1),
+        (1, 2_026_110_313, 0),
+        (1, 2_026_110_314, 1),
+    ];
+    (0..1_000_000)
+        .map(|k| format!("w5/s-chain-{k}"))
+        .find(|chain| {
+            seeds.iter().all(|&(update, seed, slot)| {
+                crate::w5_xact_v1::w5_placement_index_v1(crate::w5_xact_v1::w5_placement_hash_v1(
+                    chain, update, seed, slot,
+                )) <= 16
+            })
+        })
+        .expect("a chain id with early placements")
+}
+
+fn w5_options_v1(chain: &str) -> crate::native_expanded_training_run_v1::Ex1RunOptionsV1 {
+    crate::native_expanded_training_run_v1::Ex1RunOptionsV1 {
+        run: chain.into(),
+        update_offset: 0,
+        coefficient: 1.0,
+        cap: super::super::search_targets_v1::SearchTargetCapV1::Ratio { kappa: 2.0 },
+        w5: Some(crate::native_expanded_training_run_v1::W5RunOptionsV1 {
+            budget: 8_000,
+            key_memo_mib: 512,
+        }),
+    }
+}
+
+/// W5 (`w5-xact-v1`) with S as the learner through the production run
+/// path: the hook searches with S, the update takes the forward-KL rows,
+/// masks the search-played substeps' policy gradient and runs step
+/// telemetry on update 0 only; the checkpoint record carries the W5
+/// continuation and next global update; the run resumes, revalidates and
+/// replays to the same states; an ordinary continuation of the W5 lineage is
+/// refused.
+#[test]
+fn s_learner_runs_the_w5_recipe() {
+    on_large_stack(s_learner_w5_v1);
+}
+
+fn s_learner_w5_v1() {
+    let root = temp_root("w5");
+    let net8 = net8_source(&root);
+    let s = s_source(&root, &net8);
+    let chain = early_w5_chain_v1();
+    let config = |label: &str| {
+        let mut config = run_config(&s, &net8, 1, root.join(label));
+        config.ex1 = Some(w5_options_v1(&chain));
+        config.validate_v1().unwrap();
+        config
+    };
+    let first = config("run-a");
+    let partial = run_native_expanded_training_v1(&first, Some(1)).unwrap();
+    assert_eq!(partial["completed_iterations"], 1);
+    let result = run_native_expanded_training_v1(&first, None).unwrap();
+    assert_eq!(result["complete"], true);
+    assert_eq!(result["actual_identity"]["adam_step"], 2);
+    assert_eq!(
+        run_native_expanded_training_v1(&first, None).unwrap(),
+        result
+    );
+    let mut states = Vec::new();
+    let mut masked = 0;
+    let mut placements = Vec::new();
+    let mut last_checkpoint = None;
+    for i in 0..2 {
+        let pin: PinnedFileV1 = serde_json::from_value(result["iterations"][i].clone()).unwrap();
+        let receipt: Value = read_pinned(&pin).unwrap();
+        let update_pin: PinnedFileV1 = serde_json::from_value(receipt["update"].clone()).unwrap();
+        let update: Value = read_pinned(&update_pin).unwrap();
+        assert_eq!(update["s_learner"]["architecture"], S_ARCHITECTURE_V1);
+        let ex1_pin: PinnedFileV1 =
+            serde_json::from_value(update["ex1"]["receipt"].clone()).unwrap();
+        let ex1: Value = read_pinned(&ex1_pin).unwrap();
+        assert_eq!(ex1["method"], "w5-xact-v1");
+        assert_eq!(ex1["w5"]["budget"], 8_000);
+        assert_eq!(ex1["w5"]["step_telemetry"], json!(i == 0), "update {i}");
+        let exposure = &ex1["gradient_exposure"];
+        assert_eq!(exposure["learner"], S_ARCHITECTURE_V1);
+        // Every field net-8's W5 exposure records.
+        for key in [
+            "rows",
+            "denominator",
+            "coefficient",
+            "kl_before",
+            "auxiliary_loss",
+            "total_loss",
+            "gradient_components",
+            "auxiliary_head_l2",
+            "ordinary_head_l2",
+            "auxiliary_bias_residual",
+            "cap",
+            "adam_steps",
+            "movement",
+            "thresholds",
+            "pg_masked_rows",
+            "step_telemetry",
+        ] {
+            assert!(exposure.get(key).is_some(), "S exposure lacks {key}");
+        }
+        for key in [
+            "method",
+            "receipt",
+            "collection",
+            "rows",
+            "cap",
+            "adam_steps",
+        ] {
+            assert!(update["ex1"].get(key).is_some(), "S update lacks ex1.{key}");
+        }
+        let played = ex1["w5"]["pg_masked"].as_array().unwrap().len();
+        assert_eq!(exposure["pg_masked_rows"], json!(played));
+        assert_eq!(exposure["rows"], ex1["rows"]);
+        let rows = ex1["rows"].as_u64().unwrap();
+        // Telemetry: update 0, and any update with no rows.
+        assert_eq!(exposure["step_telemetry"], json!(i == 0 || rows == 0));
+        assert_eq!(exposure["adam_steps"].is_null(), !(i == 0 || rows == 0));
+        assert_eq!(exposure["cap"]["mode"], "ratio");
+        masked += played;
+        placements.push(ex1["w5"]["placements"].clone());
+        let checkpoint: PinnedFileV1 =
+            serde_json::from_value(update["checkpoint"].clone()).unwrap();
+        let record: SLearnerCheckpointV1 = read_pinned(&checkpoint).unwrap();
+        let saved = record.ex1.as_ref().unwrap();
+        assert_eq!(saved["w5_next_update"], json!(i + 1));
+        assert_eq!(saved["receipt"], json!(ex1_pin));
+        states.push(update["after_state_sha256"].clone());
+        last_checkpoint = Some(checkpoint);
+    }
+    assert!(
+        masked > 0,
+        "no update masked a search-played row: {placements:?}"
+    );
+    // The same run again reaches the same states.
+    let again = run_native_expanded_training_v1(&config("run-b"), None).unwrap();
+    for field in ["state_sha256", "model", "adam_step"] {
+        assert_eq!(
+            again["actual_identity"][field],
+            result["actual_identity"][field]
+        );
+    }
+    assert_eq!(result["actual_identity"]["state_sha256"], states[1]);
+    // The W5 lineage refuses an ordinary continuation.
+    let next = ExpandedModelSourceV1 {
+        checkpoint: last_checkpoint,
+        ..s.clone()
+    };
+    let error = update(
+        &next,
+        vec![PinnedFileV1 {
+            path: root.join("missing.json"),
+            sha256: "0".repeat(64),
+        }],
+        gae(),
+        CheckpointRecordFormatV1::V1,
+        root.join("ordinary"),
+    )
+    .unwrap_err();
+    assert!(error.contains("ex1 continuation"), "{error}");
     let _ = fs::remove_dir_all(&root);
 }

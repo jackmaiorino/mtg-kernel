@@ -187,12 +187,7 @@ pub(super) fn collect_parallel_v1(
         "output directory already exists",
     )?;
     let (policy, learner, state_hash) = if source.s_learner.is_some() {
-        super::s_learner_v1::collection_learner_v1(
-            &source,
-            training_math,
-            collection_sampler,
-            ex1.is_some(),
-        )?
+        super::s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
     } else {
         let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
         bind_training_math_v1(

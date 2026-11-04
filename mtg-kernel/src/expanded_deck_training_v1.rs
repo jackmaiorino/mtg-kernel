@@ -3903,12 +3903,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 ensure(ids.insert(&episode.id), "duplicate episode id")?;
             }
             let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
-                s_learner_v1::collection_learner_v1(
-                    &source,
-                    training_math,
-                    collection_sampler,
-                    ex1.is_some(),
-                )?
+                s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
                 let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
                 if let Some(context) = &transfer {
@@ -4388,8 +4383,8 @@ fn execute_update_inner_v1(
                 e_supported: e_supported.is_some(),
                 soft_q: soft_q.is_some(),
                 search_targets: search_targets.is_some(),
-                ex1: ex1.is_some(),
             },
+            ex1,
             training_math,
             record_format,
             started: update_started,
@@ -4969,26 +4964,7 @@ fn execute_update_inner_v1(
                     let options = ex1.as_ref().expect("teacher implies options");
                     // W5: each played root's (slot, step) as its (group,
                     // substep) in this batch.
-                    let mut policy_mask = Vec::new();
-                    if let Some(masked) = receipt["w5"]["pg_masked"].as_array() {
-                        let mut place = std::collections::BTreeMap::new();
-                        for (group, (_, slot, substeps)) in tensor_groups.iter().enumerate() {
-                            for (substep, (row, _)) in substeps.iter().enumerate() {
-                                place.insert((*slot, row.step), (group, substep));
-                            }
-                        }
-                        for entry in masked {
-                            let key = (
-                                entry["slot"].as_u64().ok_or("w5 mask lacks a slot")? as usize,
-                                entry["step"].as_u64().ok_or("w5 mask lacks a step")?,
-                            );
-                            policy_mask.push(
-                                *place
-                                    .get(&key)
-                                    .ok_or("w5 masked row is not a learner substep of the batch")?,
-                            );
-                        }
-                    }
+                    let policy_mask = ex1_update_v1::w5_policy_mask_v1(receipt, &tensor_groups)?;
                     let masked_rows = policy_mask.len();
                     let input = ex1_update_v1::ex1_auxiliary_input_v1(
                         rows,
