@@ -239,6 +239,10 @@ pub(crate) fn export_refusal_subclass_v1(error: &ExportErrorV1) -> &'static str 
             code: crate::infoset_v1::RefusalCodeV1::R3,
             ..
         } => "plan_error",
+        ExportErrorV1::Refused {
+            code: crate::infoset_v1::RefusalCodeV1::R3b,
+            ..
+        } => "own_library_search",
         _ => "export",
     }
 }

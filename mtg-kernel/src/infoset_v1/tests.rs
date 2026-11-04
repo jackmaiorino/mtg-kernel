@@ -1120,9 +1120,9 @@ fn discard_payloads_import_at_the_live_discard_point() {
     assert!(mid > 0, "a discard past its first pick exported");
 }
 
-/// G1 (fairness gate): R3 is the opponent's pending library-search plan
-/// only. At V's own pending search the export succeeds or refuses under
-/// another predicate, never R3.
+/// G1 (fairness gate) and amendment 43.2: R3 is the opponent's pending
+/// library-search plan only; V's own pending search refuses R3b
+/// (`own_library_search`), decided by the pending effect's owner.
 #[test]
 fn r3_refuses_only_the_opponents_library_search() {
     use crate::effect::library_choice_search_v2::plan_future_v3;
@@ -1146,7 +1146,11 @@ fn r3_refuses_only_the_opponents_library_search() {
                 match &x {
                     Ok(_) => own_exported += 1,
                     Err(e) => {
-                        assert_ne!(e.code_name(), "R3", "{decks:?}: V's own search refused R3");
+                        assert_eq!(
+                            e.code_name(),
+                            "R3b",
+                            "{decks:?}: V's own search refuses R3b"
+                        );
                         *own_refusals.entry(e.code_name().to_string()).or_default() += 1;
                     }
                 }

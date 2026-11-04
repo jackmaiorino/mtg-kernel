@@ -950,9 +950,10 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
 /// G9 (fairness gate): L13 over the AC1 engine families (F-deal, F-prov,
 /// F-slot and F-choice on their games). A witness is a compared decision
 /// where P agrees across the worlds and L13 does not, so L13 must depart from
-/// P in one of them. Either the families hold five witnesses, or L13 departs
-/// from P at no compared decision there and no witness can exist (vacuity,
-/// measured; the Wildfire join fixture holds its presence witness).
+/// P in one of them. Ruling 2 (c) accepts the written vacuity argument
+/// provisionally: the test asserts no witness and no cross-world P
+/// difference, and reports the departures (the Wildfire join fixture holds
+/// L13's presence witness).
 #[test]
 fn l13_over_the_ac1_engine_families() {
     let mutants = [MutantV1::L13];
@@ -998,9 +999,12 @@ fn l13_over_the_ac1_engine_families() {
     // Vacuity is read only where P agrees (mutants are evaluated there).
     assert_eq!(p_differs, 0, "the correct producer differs across worlds");
     assert!(p_equal > 0, "no decision with P equal across the worlds");
-    assert!(
-        witnesses >= 5 || departs == 0,
-        "L13 departs from P with fewer than five witnesses"
+    // Ruling 2 (c): the written vacuity argument (packet section 10.2 (c))
+    // is accepted provisionally: no witness across the worlds, departures
+    // reported (each an R1b to R1 code change, equal in both worlds).
+    assert_eq!(
+        witnesses, 0,
+        "an L13 witness contradicts the vacuity argument"
     );
 }
 

@@ -802,9 +802,9 @@ pub(crate) fn pick_copy(name: &str, bounced: bool) -> IntentV1 {
 /// mutant L8 binds the facts to true remaining Hawks with `C:` handles, so
 /// its bytes show whether the bounced copy (exported generation above 1)
 /// is among them.
-pub(crate) fn l8_bound_copies(put_back: L8PutBackV1) -> ScriptV1 {
+pub(crate) fn l8_bound_copies(put_back: L8PutBackV1, seed: u64) -> ScriptV1 {
     let (o, v) = (PlayerId::P0, PlayerId::P1);
-    let live = new_game(["CawGates", "Faeries"], 72, o);
+    let live = new_game(["CawGates", "Faeries"], seed, o);
     let mut st = live.game_state().clone();
     force_deal(
         &mut st,
@@ -1340,6 +1340,36 @@ fn w_pin_engine_fixtures() {
 /// must not differ (binding alone is invisible between equal copies).
 #[test]
 fn l8_bound_copies_engine_fixture() {
+    // Ruling 2 (c): the delivered comparison counts witnesses only at
+    // decisions the entrant receives, so the fixture runs in several game
+    // seeds (the forced deals and script are the same; later draws differ)
+    // and sums them; every seed's control must stay at 0.
+    let (mut total, mut total_control, mut total_samples) = (0u64, 0u64, 0u64);
+    for seed in [72u64, 73, 74, 75, 76, 77] {
+        let (w, c, n) = l8_bound_copies_witnesses(seed);
+        total += w;
+        total_control += c;
+        total_samples += n;
+    }
+    eprintln!(
+        "l8-bound-copies over six seeds: {total} delivered witnesses; control {total_control} of {total_samples}"
+    );
+    assert!(
+        total >= 5,
+        "L8 has at least 5 delivered witnesses (design 13): {total}"
+    );
+    assert!(
+        total_samples >= 5,
+        "the control compares at least 5 post-Brainstorm decisions: {total_samples}"
+    );
+    assert_eq!(
+        total_control, 0,
+        "binding between equal copies leaves L8's bytes unchanged"
+    );
+}
+
+/// One seed of the L8 fixture: (witnesses, control witnesses, control samples).
+fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
     let v = PlayerId::P1;
     let runs: Vec<_> = [
         L8PutBackV1::NoHawk,
@@ -1347,9 +1377,9 @@ fn l8_bound_copies_engine_fixture() {
         L8PutBackV1::BouncedAndFresh,
     ]
     .iter()
-    .map(|p| record(l8_bound_copies(*p), v, 30))
+    .map(|p| record(l8_bound_copies(*p, seed), v, 30))
     .collect();
-    let (records, reports) = pairs("l8-bound-copies", runs);
+    let (records, reports) = pairs(&format!("l8-bound-copies seed {seed}"), runs);
     // Compared decisions after the Brainstorm (P exports two `known_name`
     // Hawks, equal bytes, in both worlds), split by whether L8 differs:
     // (witnesses, agreeing samples).
@@ -1387,16 +1417,5 @@ fn l8_bound_copies_engine_fixture() {
         reports.iter().all(|r| r.compared > 0),
         "both pairs compare decisions: {reports:?}"
     );
-    assert!(
-        bounced_out >= 5,
-        "L8 has at least 5 witnesses with P exporting (design 13): {bounced_out}"
-    );
-    assert!(
-        control_samples >= 5,
-        "the control compares at least 5 post-Brainstorm decisions: {control_samples}"
-    );
-    assert_eq!(
-        control, 0,
-        "binding between equal copies leaves L8's bytes unchanged"
-    );
+    (bounced_out, control, control + control_samples)
 }

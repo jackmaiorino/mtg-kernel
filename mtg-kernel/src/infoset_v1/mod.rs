@@ -50,6 +50,9 @@ pub enum RefusalCodeV1 {
     R1b,
     R2,
     R3,
+    /// Amendment 43.2: V's own pending library search (the pending effect's
+    /// owner and chooser is V); ineligible for the entrant, not C5.
+    R3b,
     R4,
     R5,
     R6,
@@ -61,11 +64,12 @@ pub enum RefusalCodeV1 {
 }
 
 impl RefusalCodeV1 {
-    pub const ALL: [RefusalCodeV1; 10] = [
+    pub const ALL: [RefusalCodeV1; 11] = [
         Self::R1,
         Self::R1b,
         Self::R2,
         Self::R3,
+        Self::R3b,
         Self::R4,
         Self::R5,
         Self::R6,
@@ -79,6 +83,7 @@ impl RefusalCodeV1 {
             Self::R1b => "R1b",
             Self::R2 => "R2",
             Self::R3 => "R3",
+            Self::R3b => "R3b",
             Self::R4 => "R4",
             Self::R5 => "R5",
             Self::R6 => "R6",
