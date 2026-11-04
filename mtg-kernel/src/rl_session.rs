@@ -5384,6 +5384,7 @@ impl FastActorSessionV1 {
     }
 
     /// The session surface's carried context (see `SurfaceContextV1`).
+    #[cfg(test)]
     pub(crate) fn surface_context_v1(&self) -> Option<crate::policy_surface_v5::SurfaceContextV1> {
         self.surface.infoset_context_v1()
     }
@@ -5409,6 +5410,7 @@ impl FastActorSessionV1 {
     }
 
     /// Why a payload cannot carry the surface (diagnostics for R2 tallies).
+    #[cfg(test)]
     pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
         self.surface.payload_refusal_detail_v1()
     }

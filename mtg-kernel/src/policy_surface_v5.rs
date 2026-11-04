@@ -680,6 +680,7 @@ impl PolicySurfaceV5 {
     }
 
     /// Why a payload cannot carry this surface (diagnostics for R2 tallies).
+    #[cfg(test)]
     pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
         if self.hunter_order_v45.is_some() {
             return "Hunter trigger order";
