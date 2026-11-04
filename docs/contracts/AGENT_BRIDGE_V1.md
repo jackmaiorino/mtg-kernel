@@ -143,6 +143,21 @@ one object two ways, is an engine contract failure (Section 8).
 Target references map `TargetRefV1::Player` → `{"player": seat}` and
 `TargetRefV1::Object` → `{"object": <object reference>}`.
 
+### Native identity: adapter-only wire
+
+This wire carries native identity and must reach only a trusted adapter,
+never a bot. Each library is shuffled before its objects are allocated, so
+an arena id minus its seat's offset is the card's initial library position
+(its draw ordinal until the first shuffle). The arena id never changes,
+including through hidden zones; only `zone_change_count` advances. A viewer
+of `object_id` or of `x_kernel_v5` (whose `CardStableRefV1` also carries
+`card_db_id`) could therefore re-identify a card after an unseen shuffle or
+redraw, tell identical copies apart and date each card's draw. The Spellbench
+v2 adapter (`integrations/mtg_kernel/kernel_engine_v2.py`) keeps these
+identities private, mints per-viewer ids that change on every zone change,
+and never forwards `x_kernel_v5`. Its `check_engine_v2` audit fails if
+`obj-`, `arena_id` or `x_kernel_v5` appears in any bot-facing message.
+
 ## 6. Neutral candidate semantics (`ActionSemanticV1` → spec Section 6)
 
 The kernel `actor` field is dropped everywhere: the envelope's `acting_seat`
