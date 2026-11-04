@@ -116,7 +116,11 @@ pub(crate) fn lembas_paid(outlet: OutletV1, deep: bool) -> ScriptV1 {
         OutletV1::Shaman => {
             intents.push(cast("Krark-Clan Shaman"));
             intents.push(activate("Krark-Clan Shaman"));
-            intents.push(pick("Lembas"));
+            // The only artifact: without neutral choices the engine pays
+            // a single-candidate sacrifice itself.
+            if super::harness::ac1_neutral() {
+                intents.push(pick("Lembas"));
+            }
         }
     }
     intents.push(gate(
