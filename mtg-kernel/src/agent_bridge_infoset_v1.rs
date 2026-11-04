@@ -142,21 +142,23 @@ pub(crate) fn infoset_extension_v1(
                 // The live surface names objects the payload cannot carry
                 // (R2); the subclass names that surface state (amendment
                 // 43.1 part 2), so every R2 can be classified.
-                let detail = fast.payload_refusal_detail_v1();
+                let detail = fast.payload_refusal_detail_v1(viewer);
                 let refused = ExportErrorV1::Refused {
                     code: crate::infoset_v1::RefusalCodeV1::R2,
                     detail: format!("surface: {detail}"),
                 };
-                state.tally[seat_index].record(&Err(refused));
+                state.tally[seat_index].record_refusal(&refused, detail);
                 json!({"schema": INFOSET_SCHEMA_V1, "refusal": "R2", "refusal_detail": detail})
             }
         },
         Err(error @ ExportErrorV1::Refused { .. }) => {
-            // An export refusal's subclass is fixed: its code says which
-            // predicate refused (the free-text detail stays engine-side).
+            // An export refusal's subclass is fixed by its code (the free
+            // text stays engine-side): R3 says whose plan, any other code
+            // `export`.
             let code = error.code_name();
-            state.tally[seat_index].record(&Err(error.clone()));
-            json!({"schema": INFOSET_SCHEMA_V1, "refusal": code, "refusal_detail": "export"})
+            let subclass = export_refusal_subclass_v1(&error);
+            state.tally[seat_index].record_refusal(&error, subclass);
+            json!({"schema": INFOSET_SCHEMA_V1, "refusal": code, "refusal_detail": subclass})
         }
         Err(ExportErrorV1::Fault { code, detail }) => {
             return Err(format!("engine_fault:infoset:{code:?}: {detail}"));
@@ -166,12 +168,51 @@ pub(crate) fn infoset_extension_v1(
     Ok(())
 }
 
-/// Writes the engine-side receipt line to stderr once, when a game ends.
+/// The wire subclass of an export refusal: R3 names whose plan is pending
+/// (`opponent`, the design 6.7 predicate; `plan_error`, a search the planner
+/// could not read), every other code `export`.
+pub(crate) fn export_refusal_subclass_v1(error: &ExportErrorV1) -> &'static str {
+    match error {
+        ExportErrorV1::Refused {
+            code: crate::infoset_v1::RefusalCodeV1::R3,
+            detail,
+        } if detail == crate::infoset_v1::export::R3_OPPONENT_DETAIL => "opponent",
+        ExportErrorV1::Refused {
+            code: crate::infoset_v1::RefusalCodeV1::R3,
+            ..
+        } => "plan_error",
+        _ => "export",
+    }
+}
+
+/// The environment variable naming a directory for the engine-side receipt
+/// files (`<game_id>.bridge.json`), read by the availability reconciliation.
+pub(crate) const RECEIPT_DIR_ENV_V1: &str = "W1_INFOSET_RECEIPT_DIR";
+
+/// Writes the engine-side receipt line to stderr once, when a game ends, and
+/// to `$W1_INFOSET_RECEIPT_DIR/<game_id>.bridge.json` when that is set.
 pub(crate) fn write_receipt_v1(game_id: &str, state: &mut InfosetBridgeV1) {
     state.pending = None;
     if !state.receipt_written {
         state.receipt_written = true;
-        eprintln!("{}", receipt_v1(game_id, state));
+        let line = receipt_v1(game_id, state);
+        eprintln!("{line}");
+        if let Some(dir) = std::env::var_os(RECEIPT_DIR_ENV_V1).filter(|d| !d.is_empty()) {
+            let safe: String = game_id
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let path = std::path::Path::new(&dir).join(format!("{safe}.bridge.json"));
+            if let Err(e) = std::fs::write(&path, format!("{line}\n")) {
+                eprintln!("x_kernel_infoset_v1 receipt {}: {e}", path.display());
+            }
+        }
     }
 }
 

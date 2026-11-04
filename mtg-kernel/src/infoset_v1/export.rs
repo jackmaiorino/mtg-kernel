@@ -75,6 +75,14 @@ pub struct InfosetV1 {
     pub(crate) tracked_natives: Vec<ObjectId>,
 }
 
+/// R3's detail when the opponent's library-search plan is pending (design
+/// 6.7): the bridge's wire subclass `opponent`.
+pub(crate) const R3_OPPONENT_DETAIL: &str = "opponent library-search plan pending";
+/// R3's detail when a pending library search is neither the opponent's plan
+/// nor V's own readable one (fail closed: the wire subclass `plan_error`,
+/// a C5 fault on the entrant side).
+pub(crate) const R3_UNREADABLE_DETAIL: &str = "library-search plan unreadable";
+
 fn refuse(code: RefusalCodeV1, detail: impl Into<String>) -> ExportErrorV1 {
     ExportErrorV1::refuse(code, detail)
 }
@@ -390,15 +398,18 @@ pub(crate) fn export_v1(
         }
     }
     knowledge_check(state, &projection)?;
-    // R3: a pending library-search plan owned by the opponent.
-    match crate::effect::library_choice_search_v2::plan_future_v3(state, opp) {
+    // R3: a pending library-search plan owned by the opponent (design 6.7).
+    // V's own search is not R3: it exports, or refuses under its true
+    // predicate. Any other pending search the planner cannot read refuses
+    // fail closed under its own detail (counted C5 by the entrant).
+    use crate::effect::library_choice_search_v2::plan_future_v3;
+    match plan_future_v3(state, opp) {
         Ok(None) => {}
-        Ok(Some(_)) | Err(_) => {
-            return Err(refuse(
-                RefusalCodeV1::R3,
-                "opponent library-search plan pending",
-            ));
-        }
+        Ok(Some(_)) => return Err(refuse(RefusalCodeV1::R3, R3_OPPONENT_DETAIL)),
+        Err(_) => match plan_future_v3(state, v) {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => return Err(refuse(RefusalCodeV1::R3, R3_UNREADABLE_DETAIL)),
+        },
     }
 
     // Step 3: unknown slots per owner, hand then library.

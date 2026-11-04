@@ -3610,14 +3610,21 @@ mod tests {
                         },
                         crate::infoset_v1::ExportOptionsV1::default(),
                     ) {
-                        Err(crate::infoset_v1::ExportErrorV1::Refused { detail, .. }) => {
-                            assert_eq!(wire_detail, "export", "{deck}: export refusal subclass");
-                            detail
+                        Err(error @ crate::infoset_v1::ExportErrorV1::Refused { .. }) => {
+                            assert_eq!(
+                                wire_detail,
+                                crate::agent_bridge_infoset_v1::export_refusal_subclass_v1(&error),
+                                "{deck}: export refusal subclass"
+                            );
+                            match error {
+                                crate::infoset_v1::ExportErrorV1::Refused { detail, .. } => detail,
+                                _ => unreachable!(),
+                            }
                         }
                         _ => {
                             assert_eq!(
                                 wire_detail,
-                                lockstep.payload_refusal_detail_v1(),
+                                lockstep.payload_refusal_detail_v1(viewer),
                                 "{deck}: surface refusal subclass"
                             );
                             format!("surface: {wire_detail}")

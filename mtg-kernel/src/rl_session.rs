@@ -5419,8 +5419,8 @@ impl FastActorSessionV1 {
 
     /// Why a payload cannot carry the surface: the R2 subclass the bridge
     /// sends (amendment 43.1 part 2).
-    pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
-        self.surface.payload_refusal_detail_v1()
+    pub(crate) fn payload_refusal_detail_v1(&self, viewer: crate::ids::PlayerId) -> &'static str {
+        self.surface.payload_refusal_detail_v1(viewer)
     }
 
     /// A restored combat scan (amendment 43.1) admits a legal declaration.

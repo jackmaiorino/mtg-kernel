@@ -167,6 +167,10 @@ impl HandleV1 {
 pub struct RefusalTallyV1 {
     pub exported: u64,
     pub by_code: std::collections::BTreeMap<String, u64>,
+    /// Refusals by `code:subclass`, the subclass the bridge sends on the wire
+    /// (amendment 43.1 part 2); empty where no subclass was recorded.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub by_subclass: std::collections::BTreeMap<String, u64>,
 }
 
 impl RefusalTallyV1 {
@@ -175,5 +179,14 @@ impl RefusalTallyV1 {
             Ok(()) => self.exported += 1,
             Err(e) => *self.by_code.entry(e.code_name().to_string()).or_default() += 1,
         }
+    }
+
+    /// As `record` for a refusal, also counting its wire subclass.
+    pub fn record_refusal(&mut self, error: &ExportErrorV1, subclass: &str) {
+        self.record(&Err(error.clone()));
+        *self
+            .by_subclass
+            .entry(format!("{}:{subclass}", error.code_name()))
+            .or_default() += 1;
     }
 }
