@@ -333,7 +333,10 @@ pub(crate) fn outcome(r: &Result<InfosetV1, ExportErrorV1>) -> Result<Vec<u8>, S
 /// at an ineligible decision. The order map and row keys index the lockstep
 /// rows, whose order the adapter replaces by the wire's semantic order, so
 /// they are compared in that row-order-free form: each imported row's
-/// paired lockstep key, and the row keys as a sorted list. An export
+/// paired lockstep key, and the row keys as a sorted list. Keys pair only
+/// equal keys, so the map adds to the keys only which wire candidate holds
+/// each key: a function of the base wire candidate list, which every bot
+/// receives and which is not part of this extension. An export
 /// refusal of subclass `export` is `Err(code)`; any other subclass is
 /// `Err(code:subclass)`.
 pub(crate) fn p_outcome(s: &FastActorSessionV1, viewer: PlayerId) -> Result<Vec<u8>, String> {
@@ -369,6 +372,29 @@ pub(crate) fn p_outcome(s: &FastActorSessionV1, viewer: PlayerId) -> Result<Vec<
             }))
             .expect("delivered extension serializes"))
         }
+    }
+}
+
+/// A producer's outcome as the bridge would deliver it (G5): absent at an
+/// ineligible decision, a refusal by code, a payload refused by the surface
+/// as `R2:surface`, else the export bytes. Mutants and P are compared
+/// through it alike, so no witness rests on what the entrant never sees.
+pub(crate) fn deliverable_outcome(
+    s: &FastActorSessionV1,
+    viewer: PlayerId,
+    options: ExportOptionsV1,
+) -> Result<Vec<u8>, String> {
+    let semantics = s.diagnostic_current_action_semantics().unwrap_or_default();
+    if !crate::agent_bridge_infoset_v1::eligible_semantics_v1(&semantics) {
+        return Ok(b"absent".to_vec());
+    }
+    let x = export_at(s, viewer, options);
+    let bytes = outcome(&x)?;
+    let x = x.expect("outcome passed");
+    let context = s.payload_surface_context_v1(&super::order::canonical_ids_v1(&x));
+    match context {
+        Some(c) if c.discard.as_ref().map_or(true, |d| d.player == viewer) => Ok(bytes),
+        _ => Err("R2:surface".into()),
     }
 }
 
@@ -448,14 +474,14 @@ pub(crate) fn compare_worlds_with(
             } else {
                 let plain = ExportOptionsV1::default();
                 let (ps, pt) = (
-                    outcome(&export_at(&s, viewer, plain)),
-                    outcome(&export_at(&t, viewer, plain)),
+                    deliverable_outcome(&s, viewer, plain),
+                    deliverable_outcome(&t, viewer, plain),
                 );
                 for m in mutants {
                     let o = ExportOptionsV1 { mutant: Some(*m) };
                     let (ms, mt) = (
-                        outcome(&export_at(&s, viewer, o)),
-                        outcome(&export_at(&t, viewer, o)),
+                        deliverable_outcome(&s, viewer, o),
+                        deliverable_outcome(&t, viewer, o),
                     );
                     if ms != mt {
                         *report.witnesses.entry(format!("{m:?}")).or_default() += 1;
@@ -843,6 +869,7 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
 fn l13_over_the_ac1_engine_families() {
     let mutants = [MutantV1::L13];
     let (mut compared, mut witnesses, mut departs) = (0u64, 0u64, 0u64);
+    let (mut p_differs, mut p_equal) = (0u64, 0u64);
     for (decks, seed) in [
         (["CawGates", "Faeries"], 11u64),
         (["Wildfire", "Burn"], 12),
@@ -862,15 +889,20 @@ fn l13_over_the_ac1_engine_families() {
             reports.extend(f_choice(&game, viewer, &mutants, 3, 2, 40).0);
             for r in &reports {
                 compared += r.compared;
+                p_differs += r.p_differs;
+                p_equal += r.compared - r.p_differs;
                 witnesses += r.witnesses.get("L13").copied().unwrap_or(0);
                 departs += r.departs.get("L13").copied().unwrap_or(0);
             }
         }
     }
     eprintln!(
-        "L13 over the AC1 engine families: compared {compared}, witnesses {witnesses}, decisions where L13 departs from P {departs}"
+        "L13 over the AC1 engine families: compared {compared} ({p_equal} with P equal across the worlds), witnesses {witnesses}, decisions where L13 departs from P {departs}"
     );
     assert!(compared > 0);
+    // Vacuity is read only where P agrees (mutants are evaluated there).
+    assert_eq!(p_differs, 0, "the correct producer differs across worlds");
+    assert!(p_equal > 0, "no decision with P equal across the worlds");
     assert!(
         witnesses >= 5 || departs == 0,
         "L13 departs from P with fewer than five witnesses"
