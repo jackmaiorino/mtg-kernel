@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -387,6 +388,108 @@ class CountersTests(unittest.TestCase):
         acc.check_typeperf_row_width(wide, self.HEADER)
         self.assertNotIn(r'\Processor Information(_Total)\% Processor Time', acc.Sampler.COUNTERS)
 
+    def test_block_waits_for_sampler_rows(self):
+        # Rows stamped inside a block that the reader has not yet delivered are waited for, not counted missing.
+        samples = acc.Samples(interval=5)
+        for t in range(0, 50, 5):
+            samples.add(t, 1e6, 1.0)
+        m = acc.Measurement.__new__(acc.Measurement)
+        m.samples, m.sampler = samples, FakeWatch()
+
+        def late():
+            time.sleep(0.6)
+            for t in (50, 55, 60):
+                samples.add(t, 1e6, 1.0)
+        feeder = threading.Thread(target=late)
+        feeder.start()
+        catchup = m.wait_for_sampler(60)
+        feeder.join()
+        self.assertTrue(catchup['caught_up'])
+        self.assertGreater(catchup['waited'], 0.3)
+        self.assertEqual(acc.window_stats(samples.window(0, 60), 0, 60, 5)['missing_fraction'], 0.0)
+        # A dead sampler ends the wait at once; the absent rows then count as missing.
+        dead = FakeWatch()
+        dead.is_alive = lambda: False
+        m.sampler = dead
+        self.assertEqual(m.wait_for_sampler(1000)['caught_up'], False)
+
+    def test_start_waits_for_sampler_rows(self):
+        # Sol round 1: a quiet-looking window must not be admitted while loaded rows stamped inside it are in transit.
+        from types import SimpleNamespace
+        m = acc.Measurement.__new__(acc.Measurement)
+        m.validation = False
+        m.args = SimpleNamespace(artifact_disk='E', keep_free_gib=0)
+        m.started = 0
+        m.dir = Path('.')
+        m.group_bytes = lambda: 0
+        m.samples = acc.Samples(interval=5)
+        m.claims = SimpleNamespace(window=lambda start, end: [(t, [], True) for t in range(int(start), int(end), 15)],
+                                   is_alive=lambda: True)
+        m.sampler = FakeWatch()
+        for stamp in range(600, 1170, 5):
+            m.samples.add(stamp, 1e6, 1.0)
+
+        def deliver(end):
+            for stamp in range(1170, 1205, 5):
+                m.samples.add(stamp, 100e6, 100.0)
+            return {'waited': 0.0, 'caught_up': True}
+        m.wait_for_sampler = deliver
+        with mock.patch.object(acc.time, 'time', return_value=1200),                 mock.patch.object(acc.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 ** 12)):
+            failing, stats, _ = m.precondition()
+        self.assertTrue(any('busy' in f for f in failing), failing)
+        self.assertEqual(stats['rows'], 120)
+        # Sol round 2: a sampler that dies during the wait does not admit the group, and wait_for_start then stops.
+        m.samples = acc.Samples(interval=5)
+        for stamp in range(600, 1200, 5):
+            m.samples.add(stamp, 1e6, 1.0)
+        dead = FakeWatch()
+        dead.is_alive = lambda: False
+        dead.error = 'reader failed'
+
+        def die(end):
+            m.sampler = dead
+            return {'waited': 0.0, 'caught_up': False}
+        m.wait_for_sampler = die
+        events = []
+        m.event = lambda kind, **k: events.append(kind)
+        with mock.patch.object(acc.time, 'time', return_value=1200.5),                 mock.patch.object(acc.time, 'sleep'),                 mock.patch.object(acc.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 ** 12)):
+            failing, _, _ = m.precondition()
+            self.assertIn("the sampler did not deliver the window's rows", failing)
+            m.sampler = FakeWatch()
+            with self.assertRaises(acc.Refused):
+                m.wait_for_start()
+        self.assertNotIn('precondition-met', events)
+        # Sol round 3: the boundary row arrives, then the sampler dies: still no admission.
+
+        def deliver_then_die(end):
+            m.samples.add(end, 1e6, 1.0)
+            m.sampler = dead
+            return {'waited': 0.0, 'caught_up': True}
+        m.wait_for_sampler = deliver_then_die
+        with mock.patch.object(acc.time, 'time', return_value=1200.5),                 mock.patch.object(acc.time, 'sleep'),                 mock.patch.object(acc.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 ** 12)):
+            m.sampler = FakeWatch()
+            failing, _, _ = m.precondition()
+            self.assertIn('the sampler stopped during the start wait', failing)
+            m.sampler = FakeWatch()
+            with self.assertRaises(acc.Refused):
+                m.wait_for_start()
+        self.assertNotIn('precondition-met', events)
+        # Sol round 4: claim polls taken during the wait count; losing the own claim there refuses admission.
+        clock = {'t': 1200.0}
+        m.sampler = FakeWatch()
+        m.claims = SimpleNamespace(
+            window=lambda start, end: [(t, [], t < 1230) for t in range(int(start), int(end) + 1, 15)],
+            is_alive=lambda: True)
+
+        def slow_catchup(end):
+            m.samples.add(end, 1e6, 1.0)
+            clock['t'] = 1260.0
+            return {'waited': 60.0, 'caught_up': True}
+        m.wait_for_sampler = slow_catchup
+        with mock.patch.object(acc.time, 'time', side_effect=lambda: clock['t']),                 mock.patch.object(acc.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 ** 12)):
+            with self.assertRaises(acc.Refused):
+                m.precondition()
+
     def test_contamination(self):
         rows = [(t, 10e6, 10.0) for t in range(0, 100, 5)]
         stats = acc.window_stats(rows, 0, 100, 5)
@@ -516,6 +619,9 @@ class FakeSamples:
 
     def window(self, start, end):
         return [(t, 5e6, 5.0) for t in range(int(start) + 1, int(end))] or [(start, 5e6, 5.0)]
+
+    def latest(self):
+        return float('inf')
 
 
 class FakeWatch:

@@ -124,6 +124,9 @@ BYTES_PER_UPDATE = 57e6
 COLLECTION_WORKERS = 4
 MAX_ATTEMPTS = 2
 BLOCK_TIMEOUT_SECONDS = 3600.0
+# A block is scored only after the sampler has read a row stamped at or after its end (rows reach the reader late
+# under load; attempt 1 of 7.2 scored two blocks before their last rows arrived). Past this wait the missing rows count.
+SAMPLER_CATCHUP_SECONDS = 120.0
 # t(0.95, df): the 90% two-sided interval.
 T95 = {3: 2.353363, 4: 2.131847, 5: 2.015048, 6: 1.943180, 7: 1.894579, 8: 1.859548, 9: 1.833113}
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
@@ -633,6 +636,11 @@ class Samples:
         with self.lock:
             return [r for r in self.rows if start <= r[0] < end]
 
+    def latest(self):
+        """Typeperf time of the newest row read, or None before the first."""
+        with self.lock:
+            return self.rows[-1][0] if self.rows else None
+
 
 def _finite(x):
     return x is not None and math.isfinite(x)
@@ -1065,11 +1073,29 @@ class Measurement:
         return 4 * len(self.runs) * self.updates * BYTES_PER_UPDATE
 
     def precondition(self):
+        failing, stats, claims = self._precondition_at(time.time())
+        if failing:
+            return failing, stats, claims
+        # A passing window is admitted only once the sampler has delivered every row stamped inside it: rows still
+        # in transit could carry disk load the window has not seen.
         now = time.time()
+        catchup = self.wait_for_sampler(now)
+        # Claim polls are checked through the moment of admission, including those taken during the wait.
+        failing, stats, claims = self._precondition_at(now, claims_end=time.time())
+        if not catchup['caught_up']:
+            failing.append("the sampler did not deliver the window's rows")
+        # A sampler that failed or died during the wait (even after its last row arrived) does not admit a group;
+        # wait_for_start's next pass stops on it.
+        if self.sampler.error is not None or not self.sampler.is_alive():
+            failing.append('the sampler stopped during the start wait')
+        return failing, stats, claims
+
+    def _precondition_at(self, now, claims_end=None):
         start = now - self.precondition_seconds
+        claims_end = now if claims_end is None else max(now, claims_end)
         artifact = bool(self.args.artifact_disk)
         stats = window_stats(self.samples.window(start, now), start, now, self.samples.interval, artifact)
-        claims = claim_stats(self.claims.window(start, now), start, now)
+        claims = claim_stats(self.claims.window(start, claims_end), start, claims_end)
         require(not claims['own_claim_lost'], 'the measurement lost its own claim')
         free = shutil.disk_usage(self.dir).free
         need = self.group_bytes() + self.args.keep_free_gib * 2 ** 30
@@ -1100,6 +1126,20 @@ class Measurement:
                 last = kinds
             time.sleep(1.0)
 
+    def wait_for_sampler(self, end):
+        """Wait until the sampler has read a row stamped at or after `end`, so a block's window holds every row typeperf
+        took during it. Returns the seconds waited and whether the rows caught up; a dead sampler or the time limit ends
+        the wait and the absent rows then count as missing."""
+        began = time.time()
+        while True:
+            latest = self.samples.latest()
+            if latest is not None and latest >= end:
+                return {'waited': round(time.time() - began, 3), 'caught_up': True}
+            if (time.time() - began >= SAMPLER_CATCHUP_SECONDS or self.sampler.error is not None
+                    or not self.sampler.is_alive()):
+                return {'waited': round(time.time() - began, 3), 'caught_up': False}
+            time.sleep(0.25)
+
     def run_group(self, state, group):
         index = state['groups_run'] + len([w for w in state['warmups'] if w.get('interrupted')])
         group['index'] = index
@@ -1126,6 +1166,7 @@ class Measurement:
                 failure = f'block {pos}: {error}'
                 break
             artifact = bool(self.args.artifact_disk)
+            catchup = self.wait_for_sampler(end)
             stats = window_stats(self.samples.window(start, end), start, end, self.samples.interval, artifact)
             claims = claim_stats(self.claims.window(start, end), start, end)
             if claims['own_claim_lost']:
@@ -1134,7 +1175,7 @@ class Measurement:
             baseline = state['calibration']['d_read_baseline'] if group['phase'] == 'comparison' else None
             reasons = block_contamination(stats, claims, baseline, artifact_disk=artifact)
             block = {'position': pos, 'label': label, 'format': fmt, 'start': start, 'end': end,
-                     'throughput': measured['throughput'], 'walls': measured['walls'],
+                     'throughput': measured['throughput'], 'walls': measured['walls'], 'sampler_catchup': catchup,
                      'cpu_per_update_mean': measured['cpu_per_update_mean'], 'counters': stats, 'claims': claims,
                      'contaminated': bool(reasons), 'reasons': reasons, 'd_read_mean': stats['d_read_mean']}
             reference = state.get('after_states')
