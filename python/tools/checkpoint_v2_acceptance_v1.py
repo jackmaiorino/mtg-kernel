@@ -586,8 +586,11 @@ def parse_typeperf_line(line, header):
 
 
 def check_typeperf_row_width(line, header):
-    """A data row whose cell count differs from the header's cannot be mapped to columns; stop the sampler (the
-    start precondition then fails loudly) instead of counting every row as missing."""
+    """A complete data row whose cell count differs from the header's cannot be mapped to columns; stop the sampler
+    (the start precondition then fails loudly) instead of counting every row as missing. A final fragment without
+    its newline (typeperf terminated mid-write) is not a complete row and is left to parse_typeperf_line."""
+    if not line.endswith('\n'):
+        return
     line = line.strip()
     if not line.startswith('"') or line.startswith('"(PDH-CSV'):
         return

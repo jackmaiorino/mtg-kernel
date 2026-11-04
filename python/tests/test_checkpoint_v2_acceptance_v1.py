@@ -376,12 +376,15 @@ class CountersTests(unittest.TestCase):
 
     def test_typeperf_row_width(self):
         # A host's typeperf left a counter out of the header while rows kept its value: refuse, do not drop rows.
-        acc.check_typeperf_row_width('"11/03/2026 07:36:15.927","95.5","40.0","99.7","98.4","1.0","2.0","3.5"',
+        acc.check_typeperf_row_width('"11/03/2026 07:36:15.927","95.5","40.0","99.7","98.4","1.0","2.0","3.5"\n',
                                      self.HEADER)
-        acc.check_typeperf_row_width('Exiting, please wait...', self.HEADER)
+        acc.check_typeperf_row_width('Exiting, please wait...\n', self.HEADER)
+        wide = '"11/03/2026 07:36:15.927","95.5","40.0","99.7","98.4","1.0","2.0","3.5","12.0"'
         with self.assertRaises(acc.Refused):
-            acc.check_typeperf_row_width('"11/03/2026 07:36:15.927","95.5","40.0","99.7","98.4","1.0","2.0","3.5",'
-                                         '"12.0"', self.HEADER)
+            acc.check_typeperf_row_width(wide + '\n', self.HEADER)
+        # A final fragment cut by terminate (no newline) is not a complete row: no refusal.
+        acc.check_typeperf_row_width('"11/03/2026 07:36:20.9', self.HEADER)
+        acc.check_typeperf_row_width(wide, self.HEADER)
         self.assertNotIn(r'\Processor Information(_Total)\% Processor Time', acc.Sampler.COUNTERS)
 
     def test_contamination(self):
