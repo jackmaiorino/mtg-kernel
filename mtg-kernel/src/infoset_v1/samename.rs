@@ -49,7 +49,11 @@ fn shaman_items(st: &GameState) -> usize {
     let shaman = id(SHAMAN);
     st.stack
         .iter()
-        .filter(|i| st.objects.get(i.source).card_def == shaman)
+        .filter(|i| {
+            i.kind == crate::state::StackItemKind::ActivatedAbility
+                && i.v4.ability_source_contract.is_some()
+                && st.objects.get(i.source).card_def == shaman
+        })
         .count()
 }
 
@@ -153,7 +157,10 @@ fn p_after(s: &FastActorSessionV1, both: bool) -> Result<Vec<u8>, String> {
     let source = st
         .stack
         .iter()
-        .find(|i| st.objects.get(i.source).card_def == shaman)
+        .find(|i| {
+            i.kind == crate::state::StackItemKind::ActivatedAbility
+                && st.objects.get(i.source).card_def == shaman
+        })
         .map(|i| i.source)
         .expect("the waiting ability");
     let mut leave: Vec<crate::ids::ObjectId> = st.players[0]
@@ -163,6 +170,11 @@ fn p_after(s: &FastActorSessionV1, both: bool) -> Result<Vec<u8>, String> {
         .filter(|x| st.objects.get(*x).card_def == shaman && (both || *x == source))
         .collect();
     leave.sort_unstable();
+    assert_eq!(
+        leave.len(),
+        if both { 2 } else { 1 },
+        "the Shamans that leave"
+    );
     for x in leave {
         propose_and_commit(
             &mut st,
@@ -217,6 +229,16 @@ fn same_name_batch_refuses_in_both_worlds() {
     );
     let waits = [at_the_wait(0), at_the_wait(1)];
     for s in &waits {
+        let st = s.game_state();
+        let on_battlefield = st.players[0]
+            .battlefield
+            .iter()
+            .filter(|x| st.objects.get(**x).card_def == id(SHAMAN))
+            .count();
+        assert_eq!(
+            on_battlefield, 2,
+            "both Shamans are on the battlefield at the wait"
+        );
         assert!(
             export_at(s, v, ExportOptionsV1::default()).is_ok(),
             "a single waiting source exports"
