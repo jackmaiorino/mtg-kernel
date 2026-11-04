@@ -679,7 +679,11 @@ pub(crate) fn realize(
             if let Some(bytes) = export_w {
                 let x = export_at(&star.s, viewer, ExportOptionsV1::default())
                     .map_err(|e| format!("export(W*) refused: {}", e.code_name()))?;
-                if x.bytes != bytes {
+                // P's compared bytes: the export, and at a combat scan point
+                // the payload's combat record (amendment 43.1).
+                let p_star = super::harness::p_outcome(&star.s, viewer)
+                    .map_err(|e| format!("P(W*) refused: {e}"))?;
+                if p_star != bytes {
                     let w = at_step(game, d, viewer);
                     let xw = export_at(&w, viewer, ExportOptionsV1::default())
                         .map_err(|e| format!("export(W) refused: {}", e.code_name()))?;
@@ -694,7 +698,7 @@ pub(crate) fn realize(
                         ]),
                     );
                     return Err(format!(
-                        "{moves:?}: export(W*) differs from export(W) at {:?}",
+                        "{moves:?}: P(W*) differs from P(W) (export or combat record) at {:?}",
                         super::tests::diffs(&a, &b, String::new(), 4)
                     ));
                 }
@@ -795,8 +799,11 @@ pub(crate) fn realize_at(
     let x =
         export_at(&s, viewer, ExportOptionsV1 { mutant }).map_err(|e| e.code_name().to_string())?;
     let target = export_contents(&x, viewer.opponent());
-    let bytes = mutant.is_none().then_some(x.bytes.as_slice());
-    Ok(realize(game, d, viewer, &target, bytes))
+    let p = match mutant {
+        None => Some(super::harness::p_outcome(&s, viewer)?),
+        Some(_) => None,
+    };
+    Ok(realize(game, d, viewer, &target, p.as_deref()))
 }
 
 /// The counting proof for the export of `mutant` at decision step `d`
@@ -1079,7 +1086,10 @@ mod tests {
 
     #[test]
     fn realizability_on_engine_games() {
+        use crate::rl::ActionSemanticV1;
         let mut checked = 0;
+        // Amendment 43.1: combat scan roots, realized with their record.
+        let mut combat_checked = 0u32;
         let mut gaps = 0;
         let mut failures = Vec::new();
         for (decks, seed) in [
@@ -1096,15 +1106,32 @@ mod tests {
             for viewer in [PlayerId::P0, PlayerId::P1] {
                 let mut s = g.start.clone();
                 let mut k = 0;
+                let mut combat_here = 0;
                 for (i, a) in g.native.iter().enumerate() {
                     let FastActorResponseV1::Decision(d) = s.current_response() else {
                         break;
                     };
+                    let combat_root = s
+                        .diagnostic_current_action_semantics()
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|x| {
+                            matches!(
+                                x,
+                                ActionSemanticV1::ChooseAttackerInclusion { .. }
+                                    | ActionSemanticV1::ChooseBlockerInclusion { .. }
+                            )
+                        });
                     if seat(d.acting_player) == viewer && d.legal_action_count >= 2 {
                         k += 1;
-                        if k % 6 == 0 {
+                        let combat = combat_root && combat_here < 8;
+                        if k % 6 == 0 || combat {
+                            combat_here += u32::from(combat);
                             match realize_at(&game, i, viewer, None) {
-                                Ok(Ok(_)) => checked += 1,
+                                Ok(Ok(_)) => {
+                                    checked += 1;
+                                    combat_checked += u32::from(combat);
+                                }
                                 Ok(Err(e)) => {
                                     if impossible_at(&game, i, viewer, None).is_some() {
                                         gaps += 1;
@@ -1126,9 +1153,10 @@ mod tests {
             }
         }
         eprintln!(
-            "realizability on engine games: {checked} realized, {gaps} proven unrealizable, failures {failures:#?}"
+            "realizability on engine games: {checked} realized ({combat_checked} combat scan roots), {gaps} proven unrealizable, failures {failures:#?}"
         );
         assert!(checked > 0);
+        assert!(combat_checked >= 5, "combat scan roots realized");
         assert!(failures.is_empty());
         assert_eq!(gaps, 0, "P exports an unrealizable state");
     }

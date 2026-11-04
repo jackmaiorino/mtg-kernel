@@ -467,18 +467,7 @@ impl CombatContextV1 {
     /// it names.
     pub(crate) fn validate(&self, arena_len: usize) -> Result<(), String> {
         let inside = |x: &ObjectId| (x.0 as usize) < arena_len;
-        let mut ids: Vec<&ObjectId> = self.candidates.iter().chain(&self.selected).collect();
-        ids.extend(self.attacker.iter());
-        if let Some(b) = &self.blockers {
-            ids.extend(b.current_attacker.iter());
-            ids.extend(b.accumulated.iter().flat_map(|(x, y)| [x, y]));
-            ids.extend(
-                b.remaining
-                    .iter()
-                    .flat_map(|(a, xs)| std::iter::once(a).chain(xs)),
-            );
-        }
-        if !ids.into_iter().all(inside) {
+        if !self.objects().iter().all(inside) {
             return Err("combat context names an object outside the arena".into());
         }
         if self.player.0 > 1 {
@@ -493,12 +482,20 @@ impl CombatContextV1 {
         if self.candidates.is_empty()
             || self.cursor >= self.candidates.len()
             || self.selected.len() > self.cursor
-            || self
-                .selected
-                .iter()
-                .any(|x| !self.candidates[..self.cursor].contains(x))
         {
             return Err("combat context progress".into());
+        }
+        // The selection is the included candidates of the answered prefix
+        // in scan order: a distinct, ordered subsequence of it.
+        let mut from = 0;
+        for x in &self.selected {
+            match self.candidates[from..self.cursor]
+                .iter()
+                .position(|c| c == x)
+            {
+                Some(k) => from += k + 1,
+                None => return Err("combat context progress".into()),
+            }
         }
         match (self.kind, self.attacker, &self.blockers) {
             (CombatScanKindV1::Attackers, None, None) => Ok(()),
@@ -507,6 +504,106 @@ impl CombatContextV1 {
             }
             _ => Err("combat context kind".into()),
         }
+    }
+
+    /// Every object the record names.
+    fn objects(&self) -> Vec<ObjectId> {
+        let mut ids: Vec<ObjectId> = self
+            .candidates
+            .iter()
+            .chain(&self.selected)
+            .copied()
+            .collect();
+        ids.extend(self.attacker);
+        if let Some(b) = &self.blockers {
+            ids.extend(b.current_attacker);
+            ids.extend(b.accumulated.iter().flat_map(|(x, y)| [*x, *y]));
+            ids.extend(
+                b.remaining
+                    .iter()
+                    .flat_map(|(a, xs)| std::iter::once(*a).chain(xs.iter().copied())),
+            );
+        }
+        ids
+    }
+
+    /// The import's check against the imported state (amendment 43.1):
+    /// `validate`, every object a tracked (`C:`) object, and the record a
+    /// declaration the surface itself would be presenting there: the step
+    /// and the scanning player, the attacker scan's candidates exactly the
+    /// engine's eligible attackers, and for blocks the current candidates
+    /// exactly the attacker's legal blockers not yet assigned, every queued
+    /// attacker's blockers exactly its legal blockers, and every assignment
+    /// a legal block by a distinct blocker.
+    pub(crate) fn validate_in_state(
+        &self,
+        state: &GameState,
+        handles: &[String],
+    ) -> Result<(), String> {
+        use std::collections::BTreeSet;
+        self.validate(state.objects.len())?;
+        let tracked = |o: &ObjectId| {
+            handles
+                .get(o.0 as usize)
+                .is_some_and(|h| h.starts_with("C:"))
+        };
+        if !self.objects().iter().all(tracked) {
+            return Err("combat context names an untracked object".into());
+        }
+        let set = |xs: &[ObjectId]| xs.iter().copied().collect::<BTreeSet<_>>();
+        let combat = &state.engine.combat;
+        match self.kind {
+            CombatScanKindV1::Attackers => {
+                if state.step != crate::state::Step::DeclareAttackers
+                    || combat.attackers_declared
+                    || self.player != state.active_player
+                {
+                    return Err("combat context: no attacker declaration".into());
+                }
+                if set(&self.candidates) != set(&engine::eligible_attackers(state)) {
+                    return Err("combat context: candidates are not the eligible attackers".into());
+                }
+            }
+            CombatScanKindV1::Blockers => {
+                let (Some(attacker), Some(b)) = (self.attacker, &self.blockers) else {
+                    return Err("combat context kind".into());
+                };
+                if state.step != crate::state::Step::DeclareBlockers
+                    || !combat.attackers_declared
+                    || combat.blockers_declared
+                    || self.player == state.active_player
+                {
+                    return Err("combat context: no blocker declaration".into());
+                }
+                let attacking = |a: &ObjectId| combat.attackers.contains(a);
+                let legal = |a: ObjectId| set(&engine::legal_blockers_for(state, a));
+                let used: Vec<ObjectId> = b.accumulated.iter().map(|(x, _)| *x).collect();
+                if set(&used).len() != used.len()
+                    || !b
+                        .accumulated
+                        .iter()
+                        .all(|(x, a)| attacking(a) && legal(*a).contains(x))
+                {
+                    return Err("combat context: assigned blocks".into());
+                }
+                let mut current = legal(attacker);
+                current.retain(|x| !used.contains(x));
+                if !attacking(&attacker) || set(&self.candidates) != current {
+                    return Err("combat context: candidates are not the legal blockers".into());
+                }
+                let queued: Vec<ObjectId> = b.remaining.iter().map(|(a, _)| *a).collect();
+                if set(&queued).len() != queued.len()
+                    || queued.contains(&attacker)
+                    || !b
+                        .remaining
+                        .iter()
+                        .all(|(a, xs)| attacking(a) && !xs.is_empty() && set(xs) == legal(*a))
+                {
+                    return Err("combat context: queued attackers".into());
+                }
+            }
+        }
+        Ok(())
     }
 }
 

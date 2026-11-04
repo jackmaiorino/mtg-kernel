@@ -96,7 +96,7 @@ impl PayloadV1 {
             return Err("payload handles do not cover the arena".into());
         }
         if let Some(combat) = &self.surface.combat {
-            combat.validate(state.objects.len())?;
+            combat.validate_in_state(&state, &self.handles)?;
         }
         let digest = super::export::canonical_digest_v1(&state, &self.handles);
         if digest != self.state_sha256 {

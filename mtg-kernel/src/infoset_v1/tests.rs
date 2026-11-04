@@ -713,6 +713,7 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
     // candidates (several possible attackers, or several possible blockers
     // for one attacker).
     let (mut multi_attack, mut multi_block) = (0u32, 0u32);
+    let mut state_refusals = 0u32;
     for (decks, seed) in [
         (["Burn", "Burn"], 41u64),
         (["Wildfire", "Elves"], 42),
@@ -784,14 +785,61 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
                         )
                     })
             };
+            // The import's state check refuses a record the surface would
+            // not present there: a foreign or untracked candidate, the
+            // other player.
+            let state: crate::state::GameState =
+                serde_json::from_value(payload.state.clone()).expect("payload state");
+            combat
+                .validate_in_state(&state, &payload.handles)
+                .expect("the live record passes the state check");
+            let last = combat.candidates.len() - 1;
+            let swapped = |o: crate::ids::ObjectId| {
+                let mut bad = combat.clone();
+                bad.candidates[last] = o;
+                bad
+            };
+            let index = |pred: &dyn Fn(&str) -> bool| {
+                (0..payload.handles.len())
+                    .map(|n| crate::ids::ObjectId(n as u32))
+                    .find(|o| {
+                        pred(&payload.handles[o.0 as usize]) && !combat.candidates.contains(o)
+                    })
+            };
+            if last >= combat.cursor {
+                if let Some(o) = index(&|h| h.starts_with("C:")) {
+                    assert!(swapped(o)
+                        .validate_in_state(&state, &payload.handles)
+                        .is_err());
+                    state_refusals += 1;
+                }
+                if let Some(o) = index(&|h| !h.starts_with("C:")) {
+                    assert!(swapped(o)
+                        .validate_in_state(&state, &payload.handles)
+                        .is_err());
+                    state_refusals += 1;
+                }
+            }
+            let mut other = combat.clone();
+            other.player = other.player.opponent();
+            assert!(other.validate_in_state(&state, &payload.handles).is_err());
             // The rest of the declaration: every remaining inclusion point
             // (later candidates, and for blocks later attackers' scans).
-            for depth in 0..24usize {
+            let mut left = false;
+            for depth in 0..256usize {
                 // A terminal session has left the declaration (the game can
                 // end right after one, before the next decision).
                 let decision = |x: &FastActorSessionV1| match x.current_response() {
                     FastActorResponseV1::Decision(d) => Some(d),
-                    FastActorResponseV1::Terminal(_) => None,
+                    FastActorResponseV1::Terminal(t) => {
+                        assert_ne!(
+                            t.terminal_classification,
+                            crate::rl::TerminalClassificationV1::Halted,
+                            "{decks:?}: a combat walk halted: {}",
+                            t.terminal_reason
+                        );
+                        None
+                    }
                 };
                 let (d, e) = (decision(&live), decision(&imported));
                 // The same declaration: the viewer's inclusion points in the
@@ -821,6 +869,7 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
                     );
                 }
                 if !in_live {
+                    left = true;
                     break;
                 }
                 let (Some(d), Some(e)) = (d, e) else {
@@ -843,11 +892,16 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
                     .expect("live step");
                 walked += 1;
             }
+            assert!(
+                left,
+                "{decks:?}: the declaration did not end within its bound"
+            );
         });
     }
     eprintln!(
-        "combat payloads: {attack} attacker points ({multi_attack} multi-attacker roots), {block} blocker points ({multi_block} multi-blocker roots), {mid_scan} mid-scan, {walked} paired steps, {refused} refused"
+        "combat payloads: {attack} attacker points ({multi_attack} multi-attacker roots), {block} blocker points ({multi_block} multi-blocker roots), {mid_scan} mid-scan, {walked} paired steps, {refused} refused, {state_refusals} tampered records refused"
     );
+    assert!(state_refusals > 0, "tampered records reach the state check");
     assert!(
         multi_attack >= 5 && multi_block >= 5,
         "design 13: 5 multi-attacker and 5 multi-blocker witnesses"
@@ -894,6 +948,18 @@ fn combat_context_validation_fails_closed() {
         "blocker scan without a reshape"
     );
     assert!(bad(&|c| c.player = PlayerId(2)), "player");
+    let three = CombatContextV1 {
+        candidates: vec![ObjectId(3), ObjectId(5), ObjectId(7)],
+        cursor: 2,
+        selected: vec![ObjectId(3), ObjectId(5)],
+        ..ok.clone()
+    };
+    assert!(three.validate(10).is_ok());
+    for selected in [vec![3, 3], vec![5, 3]] {
+        let mut c = three.clone();
+        c.selected = selected.iter().map(|x| ObjectId(*x)).collect();
+        assert!(c.validate(10).is_err(), "selection {selected:?}");
+    }
     let renamed = ok
         .rename(|o| Some(ObjectId(o.0 + 1)))
         .expect("every object renames");
