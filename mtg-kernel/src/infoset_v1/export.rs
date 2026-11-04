@@ -850,7 +850,12 @@ pub(crate) fn export_v1(
     };
     let mut p0: HashMap<ObjectId, u32> = HashMap::new();
     for (r, region) in &refs {
-        let counts = (*region == "live") || (new_id.contains_key(&r.object) && linkable(r));
+        // Mutant L4 links raw history references to current handles; its
+        // epochs map on the same path, so they count toward p0 too.
+        let raw_l4 =
+            is(MutantV1::L4) && r.class != ClassV1::Live && !pinned_untracked.contains(&r.object);
+        let counts =
+            (*region == "live") || (new_id.contains_key(&r.object) && (linkable(r) || raw_l4));
         if counts {
             for &g in &r.generations {
                 let e = p0.entry(r.object).or_insert(g);
