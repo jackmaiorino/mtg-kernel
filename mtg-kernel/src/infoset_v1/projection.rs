@@ -58,6 +58,10 @@ pub(crate) struct SpanEndV1 {
     /// change), while the object stayed in V's sight. V still sees the object
     /// in its new zone, under a new span; it cannot link the two.
     pub split: bool,
+    /// The zone the object was in before the stream item that ended the
+    /// span (where a move it made there started). Lead ruling 7 (a): V tells
+    /// two departures apart by their origin zone.
+    pub from: Zone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -414,12 +418,14 @@ pub(crate) fn project_v1(
                 let last_gen = o.last_obs_gen;
                 let zone = o.last_obs_zone.unwrap_or(Zone::Library);
                 let item = final_item;
+                let from = o.zone.unwrap_or(Zone::Library);
                 if let Some(span) = o.spans.last_mut().filter(|s| s.end.is_none()) {
                     span.end = Some(SpanEndV1 {
                         last_gen,
                         item,
                         zone,
                         split: true,
+                        from,
                     });
                 }
                 o.spans.push(SpanV1 {
@@ -589,6 +595,11 @@ impl WalkV1<'_> {
                 o.last_obs_gen = o.moves;
                 o.last_obs_zone = o.zone;
             } else if !now && o.tracked {
+                let from = prev_zones
+                    .iter()
+                    .find(|(x, _)| *x == id)
+                    .map_or(o.zone, |(_, z)| *z)
+                    .unwrap_or(Zone::Library);
                 let o = &mut self.objs[i];
                 let last_gen = o.last_obs_gen;
                 let zone = o.last_obs_zone.unwrap_or(Zone::Library);
@@ -598,6 +609,7 @@ impl WalkV1<'_> {
                         item,
                         zone,
                         split: false,
+                        from,
                     });
                 }
             } else if now {
@@ -628,6 +640,7 @@ impl WalkV1<'_> {
                             item,
                             zone,
                             split: true,
+                            from: zone,
                         });
                     }
                     o.spans.push(SpanV1 {

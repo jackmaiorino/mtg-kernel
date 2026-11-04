@@ -256,14 +256,13 @@ fn log_refusal_v1(
                 .unwrap_or_default()
         });
         let game = fast.game_state();
-        line["diagnostics"] =
-            crate::infoset_v1::export::refusal_diagnostics_v1(&ExportInputV1 {
-                state: game,
-                journal: game.observation_journal.notes(),
-                viewer,
-                decklists: [&lists[0], &lists[1]],
-                marks: Some(&fast.infoset_marks_v1(viewer)),
-            });
+        line["diagnostics"] = crate::infoset_v1::export::refusal_diagnostics_v1(&ExportInputV1 {
+            state: game,
+            journal: game.observation_journal.notes(),
+            viewer,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&fast.infoset_marks_v1(viewer)),
+        });
     }
     let path = std::path::Path::new(&dir).join(format!("refusals-{}.jsonl", std::process::id()));
     if let Ok(mut f) = std::fs::OpenOptions::new()

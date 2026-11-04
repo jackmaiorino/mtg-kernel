@@ -102,20 +102,45 @@ pub(crate) fn same_name_batch(first: usize) -> ScriptV1 {
     script
 }
 
-/// Each V decision's refusal subclass under P, in order (None: exported).
-fn subclasses(first: usize, v: PlayerId) -> Vec<Option<&'static str>> {
+/// Each V decision's refusal subclass under P, in order (None: exported),
+/// with a diagnostic line per V decision and the script's activations.
+fn subclasses(first: usize, v: PlayerId) -> (Vec<(Option<&'static str>, usize)>, Vec<String>) {
+    let lembas = id("Lembas");
     let mut out = Vec::new();
+    let mut lines = Vec::new();
     let mut script = same_name_batch(first);
-    script.run(400, 24, &mut |s, p, _| {
+    script.run(400, 24, &mut |s, p, step| {
         if p == v {
-            out.push(
-                export_at(s, v, ExportOptionsV1::default())
-                    .err()
-                    .map(|e| crate::agent_bridge_infoset_v1::export_refusal_subclass_v1(&e)),
-            );
+            let st = s.game_state();
+            let count = |zone: &[crate::ids::ObjectId]| {
+                zone.iter()
+                    .filter(|x| st.objects.get(**x).card_def == lembas)
+                    .count()
+            };
+            let sub = export_at(s, v, ExportOptionsV1::default())
+                .err()
+                .map(|e| crate::agent_bridge_infoset_v1::export_refusal_subclass_v1(&e));
+            lines.push(format!(
+                "V decision {} (step {step}, turn {}): stack {}, Lembas battlefield {} graveyard {} library {}; P {sub:?}",
+                out.len(),
+                st.turn,
+                st.stack.len(),
+                count(&st.players[0].battlefield),
+                count(&st.players[0].graveyard),
+                count(&st.players[0].library),
+            ));
+            out.push((sub, count(&st.players[0].graveyard)));
         }
     });
-    out
+    lines.extend(
+        script
+            .trace
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.contains("activate Lembas"))
+            .map(|(i, t)| format!("step {i}: {}", t.chars().take(160).collect::<String>())),
+    );
+    (out, lines)
 }
 
 /// Lead ruling 7 (a), fixture witness: the two Lembas leave in one batch in
@@ -127,23 +152,46 @@ fn same_name_batch_refuses_in_both_worlds() {
     let v = PlayerId::P1;
     let runs: Vec<(Vec<AtV1>, ScriptV1)> = [0usize, 1]
         .iter()
-        .map(|&first| record_strict(same_name_batch(first), v, 24, &format!("fx-samename-v{first}")))
+        .map(|&first| {
+            record_strict(
+                same_name_batch(first),
+                v,
+                24,
+                &format!("fx-samename-v{first}"),
+            )
+        })
         .collect();
     let (a, b) = (&runs[0].0, &runs[1].0);
     let report: PairReportV1 = super::fixtures::compare_records(a, b);
     eprintln!("same-name batch, first copy 0 vs 1: {report:?}");
-    let (sa, sb) = (subclasses(0, v), subclasses(1, v));
-    eprintln!("refusal subclasses at V's decisions: {sa:?} / {sb:?}");
-    assert_eq!(report.p_differs, 0, "P differs across the orders: {report:?}");
-    assert!(report.compared > 0, "the pair compares decisions: {report:?}");
-    let both = sa
-        .iter()
-        .zip(&sb)
-        .take(report.compared as usize)
-        .filter(|(x, y)| **x == Some("same_name_batch") && **y == Some("same_name_batch"))
-        .count();
+    let ((sa, la), (sb, lb)) = (subclasses(0, v), subclasses(1, v));
+    eprintln!("same-name batch, first copy 0:\n{}", la.join("\n"));
+    eprintln!("same-name batch, first copy 1:\n{}", lb.join("\n"));
+    assert_eq!(
+        report.p_differs, 0,
+        "P differs across the orders: {report:?}"
+    );
     assert!(
-        both > 0,
-        "R1 same_name_batch refuses in both worlds at a compared decision: {sa:?} / {sb:?}"
+        report.compared > 0,
+        "the pair compares decisions: {report:?}"
+    );
+    // The first V decision with both Lembas in the graveyard (both left,
+    // their items waiting) refuses in both worlds, and so does every V
+    // decision while both wait there.
+    let both_gone = |x: &[(Option<&'static str>, usize)]| {
+        x.iter()
+            .position(|(_, g)| *g == 2)
+            .expect("both Lembas reach the graveyard")
+    };
+    let (ia, ib) = (both_gone(&sa), both_gone(&sb));
+    assert_eq!(ia, ib, "the worlds reach the batch at the same V decision");
+    let refused = |x: &[(Option<&'static str>, usize)]| {
+        x.iter()
+            .filter(|(_, g)| *g == 2)
+            .all(|(sub, _)| *sub == Some("same_name_batch"))
+    };
+    assert!(
+        refused(&sa) && refused(&sb),
+        "R1 same_name_batch refuses in both worlds while both Lembas wait in the graveyard: {sa:?} / {sb:?}"
     );
 }

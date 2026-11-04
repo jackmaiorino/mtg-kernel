@@ -3842,7 +3842,9 @@ mod tests {
                                     journal: st.observation_journal.notes(),
                                     viewer: payload_viewer(&payload),
                                     decklists: [&lists[0], &lists[1]],
-                                    marks: Some(&lockstep.infoset_marks_v1(payload_viewer(&payload))),
+                                    marks: Some(
+                                        &lockstep.infoset_marks_v1(payload_viewer(&payload)),
+                                    ),
                                 },
                                 crate::infoset_v1::ExportOptionsV1::default(),
                             ) {

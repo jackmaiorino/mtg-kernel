@@ -1145,7 +1145,10 @@ pub(crate) fn f_choice(
 /// Candidates of the current decision that cast a copy V tracks in the
 /// opponent's hand, grouped by the copy's definition: (definition, menu
 /// indices in menu order).
-pub(crate) fn tracked_hand_casts(s: &FastActorSessionV1, viewer: PlayerId) -> Vec<(u64, Vec<usize>)> {
+pub(crate) fn tracked_hand_casts(
+    s: &FastActorSessionV1,
+    viewer: PlayerId,
+) -> Vec<(u64, Vec<usize>)> {
     let opp = viewer.opponent();
     let state = s.game_state();
     let projection =

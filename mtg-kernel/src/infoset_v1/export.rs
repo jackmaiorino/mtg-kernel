@@ -567,11 +567,11 @@ pub(crate) fn export_v1(
     }
     // Lead ruling 7 (a): a live reference keeps its link across an unlinked
     // visible move (6.5, the Lembas table) only while V can tell which copy
-    // moved. If another object of the same name and owner also left V's
-    // sight or changed zone in the same batch of V's transcript (no V
-    // decision between the two), V cannot pair the reference with either
-    // copy: refuse, fail closed. Reads V's spans, the names V saw and V's
-    // own decision points only.
+    // moved. If another object of the same name and owner also left the
+    // same zone (changing zone in V's sight, or leaving V's sight) in the
+    // same batch of V's transcript (no V decision between the two), V cannot
+    // pair the reference with either copy: refuse, fail closed. Reads V's
+    // spans, the names and zones V saw and V's own decision points only.
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
         if *region != "live" {
@@ -593,7 +593,7 @@ pub(crate) fn export_v1(
                         && other_obj.owner == o.owner
                         && card_name(other_obj.card_def) == card_name(o.card_def)
                         && other.spans.iter().filter_map(|s| s.end).any(|e| {
-                            ProjectionV1::batch_of(&bounds, e.item) == batch
+                            e.from == end.from && ProjectionV1::batch_of(&bounds, e.item) == batch
                         })
                 });
                 if twin {
@@ -1361,7 +1361,9 @@ pub(crate) fn refusal_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
         let tag = format!("{}{}", crate::ids::OBJECT_ID_TAG_PREFIX_V1, r.object.0);
         let mut at = Vec::new();
         paths(&tagged, &tag, "state".into(), &mut at);
-        at.retain(|p| !p.starts_with("state.engine.event_history") && !p.starts_with("state.objects"));
+        at.retain(|p| {
+            !p.starts_with("state.engine.event_history") && !p.starts_with("state.objects")
+        });
         at.truncate(12);
         let span = projection.last_span(r.object).map(|s| {
             json!({"start_item": s.start_item, "start_gen": s.start_gen,

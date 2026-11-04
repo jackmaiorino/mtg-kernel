@@ -9,8 +9,8 @@ use super::fixtures::{
     ScriptV1, LEAKAGE_V1,
 };
 use super::harness::{
-    byte_window, f_cast, local_menu, record_game, seat, tracked_hand_casts, GameV1,
-    PairReportV1, ENGINE_FAMILY_GAMES,
+    byte_window, f_cast, local_menu, record_game, seat, tracked_hand_casts, GameV1, PairReportV1,
+    ENGINE_FAMILY_GAMES,
 };
 use super::tests::export_at;
 use super::*;
@@ -208,7 +208,10 @@ fn ac1_f_cast_revealed_copies() {
         reports.iter().map(|r| r.p_differs).sum::<u64>()
     );
     assert!(tried >= 1, "the fixture casts one of two revealed Hawks");
-    assert!(compared > 0, "the fixture pairs compare decisions: {reports:?}");
+    assert!(
+        compared > 0,
+        "the fixture pairs compare decisions: {reports:?}"
+    );
     assert!(
         reports.iter().all(|r| r.p_differs == 0),
         "P differs across the cast copies: {reports:?}"
