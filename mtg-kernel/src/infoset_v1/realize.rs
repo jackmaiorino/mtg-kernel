@@ -1165,7 +1165,7 @@ mod tests {
     #[test]
     fn realizability_at_discard_roots() {
         use crate::rl::ActionSemanticV1;
-        let (mut checked, mut failures) = (0u32, Vec::new());
+        let (mut checked, mut gaps, mut failures) = (0u32, 0u32, Vec::new());
         for (decks, seed) in [
             (["Wildfire", "Faeries"], 51u64),
             (["CawGates", "Burn"], 52),
@@ -1198,7 +1198,9 @@ mod tests {
                     match realize_at(&game, i, viewer, None) {
                         Ok(Ok(_)) => checked += 1,
                         Ok(Err(e)) => {
-                            if impossible_at(&game, i, viewer, None).is_none() {
+                            if impossible_at(&game, i, viewer, None).is_some() {
+                                gaps += 1;
+                            } else {
                                 failures.push(format!("{decks:?} step {i}: {e}"));
                             }
                         }
@@ -1212,8 +1214,11 @@ mod tests {
                 s.step(d.episode_id, d.step, index as u32).expect("replay");
             }
         }
-        eprintln!("realizability at discard roots: {checked} realized, failures {failures:#?}");
+        eprintln!(
+            "realizability at discard roots: {checked} realized, {gaps} proven unrealizable, failures {failures:#?}"
+        );
         assert!(failures.is_empty());
+        assert_eq!(gaps, 0, "P exports an unrealizable discard root");
         assert!(checked >= 3, "discard roots realized");
     }
 }
