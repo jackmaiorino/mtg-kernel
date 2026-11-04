@@ -47,6 +47,7 @@
 //! collection sampler, and every net-8-only command (they refuse an S
 //! source in the net-8 loader).
 
+use super::ex1_update_v1::{self, Ex1UpdateOptionsV1};
 use super::{
     compute_gae_targets_of_values_v1, ensure, err, inference_schema_v1, ordered_update_preparation,
     publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_v1,
@@ -57,12 +58,11 @@ use super::{
     UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1, MAX_BATCH_BYTES,
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
-use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
-use super::ex1_update_v1::{self, Ex1UpdateOptionsV1};
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
+use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::s_transformer_v1::{
-    decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SSubstepV1,
-    STapeV1, STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
+    decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SSubstepV1, STapeV1,
+    STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
 };
 use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayPolicyOriginV1, FRESH_FEATURE_IDENTITY_V4,
@@ -724,8 +724,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     if let Some(telemetry) = preparation_telemetry {
         result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
     }
-    if let (Some((receipt, _)), Some(options), Some(exposure)) =
-        (&ex1_teacher, &ex1, &ex1_exposure)
+    if let (Some((receipt, _)), Some(options), Some(exposure)) = (&ex1_teacher, &ex1, &ex1_exposure)
     {
         result["ex1"] = json!({"method":ex1_update_v1::EX1_METHOD_V1,"receipt":ex1_pin,
             "collection":options.collection,"rows":receipt["rows"],
@@ -754,7 +753,8 @@ fn s_movement_v1(
             .forward_v1(SInputV1::of_tensor_v1(tensor), &mut STapeV1::default())
             .map(|output| output.logits)
     };
-    let mut alone = alone.map(|model| move |tensor: &NativeFlatDecisionTensorV2| forward(model, tensor));
+    let mut alone =
+        alone.map(|model| move |tensor: &NativeFlatDecisionTensorV2| forward(model, tensor));
     ex1_update_v1::ex1_movement_with_v1(
         rows,
         &mut |tensor| forward(after, tensor),

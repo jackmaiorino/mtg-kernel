@@ -626,7 +626,10 @@ fn s_learner_w5_v1() {
     let result = run_native_expanded_training_v1(&first, None).unwrap();
     assert_eq!(result["complete"], true);
     assert_eq!(result["actual_identity"]["adam_step"], 2);
-    assert_eq!(run_native_expanded_training_v1(&first, None).unwrap(), result);
+    assert_eq!(
+        run_native_expanded_training_v1(&first, None).unwrap(),
+        result
+    );
     let mut states = Vec::new();
     let mut masked = 0;
     let mut last_checkpoint = None;
@@ -636,7 +639,8 @@ fn s_learner_w5_v1() {
         let update_pin: PinnedFileV1 = serde_json::from_value(receipt["update"].clone()).unwrap();
         let update: Value = read_pinned(&update_pin).unwrap();
         assert_eq!(update["s_learner"]["architecture"], S_ARCHITECTURE_V1);
-        let ex1_pin: PinnedFileV1 = serde_json::from_value(update["ex1"]["receipt"].clone()).unwrap();
+        let ex1_pin: PinnedFileV1 =
+            serde_json::from_value(update["ex1"]["receipt"].clone()).unwrap();
         let ex1: Value = read_pinned(&ex1_pin).unwrap();
         assert_eq!(ex1["method"], "w5-xact-v1");
         assert_eq!(ex1["w5"]["budget"], 1_500);

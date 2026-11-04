@@ -120,7 +120,10 @@ fn an_inactive_term_is_the_ordinary_update() {
     assert_eq!(step, plain_step);
     assert_eq!(result.auxiliary_loss, 0.0);
     let cap = result.cap.unwrap();
-    assert_eq!((cap["active"].clone(), cap["scale"].clone()), (json!(false), json!(1.0)));
+    assert_eq!(
+        (cap["active"].clone(), cap["scale"].clone()),
+        (json!(false), json!(1.0))
+    );
     assert_eq!(result.adam_steps.unwrap()["difference_l2"], json!(0.0));
     assert_eq!(result.ordinary_only.unwrap(), *plain.model_v1());
     assert!(result.policy_groups.is_none());
@@ -263,7 +266,9 @@ fn the_cap_scales_the_auxiliary_gradient_and_telemetry_steps_ordinary_alone() {
         .zip(&g.auxiliary)
         .map(|(o, a)| o + a * scale as f32)
         .collect();
-    expected.adam_step_with_gradient_v1(&summed, 1.0e-3).unwrap();
+    expected
+        .adam_step_with_gradient_v1(&summed, 1.0e-3)
+        .unwrap();
     assert_eq!(state, expected);
     let mut plain = start.clone();
     plain
