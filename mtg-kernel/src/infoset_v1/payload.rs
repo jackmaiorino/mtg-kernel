@@ -25,14 +25,17 @@ pub struct PayloadV1 {
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
     pub handles: Vec<String>,
-    /// The live session surface's public context (combat priority).
+    /// The live session surface's public context (combat priority, and a
+    /// live combat scan's record).
     pub surface: crate::policy_surface_v5::SurfaceContextV1,
     pub state: serde_json::Value,
 }
 
 impl PayloadV1 {
-    /// None while the live surface names objects (a combat scan or reshape
-    /// in progress): such a decision is refused (R2) by the caller.
+    /// None while the live surface names objects the payload cannot carry
+    /// (a Hunter trigger order, a discard or optional-cost reshape, or a
+    /// combat object without a canonical index): the caller refuses (R2). A
+    /// combat scan travels as the context's combat record (amendment 43.1).
     pub(crate) fn new(
         export: &InfosetV1,
         live: &FastActorSessionV1,
@@ -40,7 +43,7 @@ impl PayloadV1 {
         own_decision_index: u64,
     ) -> Option<Self> {
         let (max_physical_decisions, max_policy_steps) = live.limits_v1();
-        let surface = live.surface_context_v1()?;
+        let surface = live.payload_surface_context_v1(&super::order::canonical_ids_v1(export))?;
         let mut payload = Self {
             schema: INFOSET_SCHEMA_V1.into(),
             sha256: String::new(),
@@ -92,6 +95,9 @@ impl PayloadV1 {
         if state.objects.len() != self.handles.len() {
             return Err("payload handles do not cover the arena".into());
         }
+        if let Some(combat) = &self.surface.combat {
+            combat.validate_in_state(&state, &self.handles)?;
+        }
         let digest = super::export::canonical_digest_v1(&state, &self.handles);
         if digest != self.state_sha256 {
             return Err("payload state digest differs from its canonical bytes".into());
@@ -107,11 +113,13 @@ impl PayloadV1 {
             self.deck_ids.clone(),
         )
         .map_err(|e| format!("template session: {}", e.message))?;
-        Ok(FastActorSessionV1::import_infoset_with_surface_v1(
+        let session = FastActorSessionV1::import_infoset_with_surface_v1(
             &template,
             state,
             self.own_decision_index,
-            Some(self.surface),
-        ))
+            Some(self.surface.clone()),
+        );
+        session.validate_restored_combat_scan_v1()?;
+        Ok(session)
     }
 }

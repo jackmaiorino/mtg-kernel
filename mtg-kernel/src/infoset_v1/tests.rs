@@ -4,7 +4,7 @@
 use super::*;
 use crate::ids::PlayerId;
 use crate::rl::PlayerSeatV1;
-use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+use crate::rl_session::{FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::runtime_deck_by_id;
 use crate::state::SplitMix64;
 
@@ -697,4 +697,275 @@ fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
         return;
     }
     panic!("no seed deals the opponent two copies of one card");
+}
+
+/// Amendment 43.1: at every combat inclusion point (attackers, and blockers
+/// inside the per-attacker reshape) the payload carries the live scan, and
+/// the import presents the same point: the canonical row keys pair one to
+/// one with the live menu's, and walking both sessions through the rest of
+/// the viewer's points by paired rows keeps them paired.
+#[test]
+fn combat_scan_payloads_import_at_the_live_scan_point() {
+    use crate::rl::ActionSemanticV1;
+    let (mut attack, mut block, mut mid_scan, mut walked, mut refused) =
+        (0u32, 0u32, 0u32, 0u32, 0u32);
+    // Design 13 AC3 witnesses: declarations that open with at least two
+    // candidates (several possible attackers, or several possible blockers
+    // for one attacker).
+    let (mut multi_attack, mut multi_block) = (0u32, 0u32);
+    let mut state_refusals = 0u32;
+    for (decks, seed) in [
+        (["Burn", "Burn"], 41u64),
+        (["Wildfire", "Elves"], 42),
+        (["CawGates", "Faeries"], 43),
+        (["Affinity", "Rally"], 44),
+    ] {
+        play(decks, seed, 800, |s, v| {
+            let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+            let kind = if sem
+                .iter()
+                .any(|a| matches!(a, ActionSemanticV1::ChooseAttackerInclusion { .. }))
+            {
+                crate::policy_surface_v5::CombatScanKindV1::Attackers
+            } else if sem
+                .iter()
+                .any(|a| matches!(a, ActionSemanticV1::ChooseBlockerInclusion { .. }))
+            {
+                crate::policy_surface_v5::CombatScanKindV1::Blockers
+            } else {
+                return;
+            };
+            let Ok(x) = export_at(s, v, ExportOptionsV1::default()) else {
+                return;
+            };
+            let ids = super::order::canonical_ids_v1(&x);
+            let Some(payload) = PayloadV1::new(&x, s, v, 0) else {
+                refused += 1;
+                return;
+            };
+            let combat = payload
+                .surface
+                .combat
+                .clone()
+                .expect("a combat point's payload carries the scan");
+            assert_eq!(combat.kind, kind, "{decks:?}: scan kind");
+            let multi = combat.cursor == 0 && combat.candidates.len() >= 2;
+            match kind {
+                crate::policy_surface_v5::CombatScanKindV1::Attackers => {
+                    attack += 1;
+                    multi_attack += u32::from(multi);
+                }
+                crate::policy_surface_v5::CombatScanKindV1::Blockers => {
+                    block += 1;
+                    multi_block += u32::from(multi);
+                }
+            }
+            // AC3 at the combat root: the imported menu and view, and a
+            // random rollout to the end with zero engine faults.
+            super::harness::ac3_check(s, &x, 7)
+                .unwrap_or_else(|e| panic!("{decks:?}: AC3 at a combat root: {e}"));
+            if combat.cursor > 0 {
+                mid_scan += 1;
+            }
+            let back = PayloadV1::from_bytes(&payload.to_bytes()).expect("round trip");
+            assert_eq!(back, payload, "the payload round-trips");
+            let mut imported = payload.import().expect("a combat payload imports");
+            let imported_ids = super::order::imported_ids_v1(&payload.handles);
+            let mut live = s.clone();
+            let root_turn_step = (s.game_state().turn, s.game_state().step);
+            let inclusion = |x: &FastActorSessionV1| {
+                x.diagnostic_current_action_semantics()
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|a| {
+                        matches!(
+                            a,
+                            ActionSemanticV1::ChooseAttackerInclusion { .. }
+                                | ActionSemanticV1::ChooseBlockerInclusion { .. }
+                        )
+                    })
+            };
+            // The import's state check refuses a record the surface would
+            // not present there: a foreign or untracked candidate, the
+            // other player.
+            let state: crate::state::GameState =
+                serde_json::from_value(payload.state.clone()).expect("payload state");
+            combat
+                .validate_in_state(&state, &payload.handles)
+                .expect("the live record passes the state check");
+            let last = combat.candidates.len() - 1;
+            let swapped = |o: crate::ids::ObjectId| {
+                let mut bad = combat.clone();
+                bad.candidates[last] = o;
+                bad
+            };
+            let index = |pred: &dyn Fn(&str) -> bool| {
+                (0..payload.handles.len())
+                    .map(|n| crate::ids::ObjectId(n as u32))
+                    .find(|o| {
+                        pred(&payload.handles[o.0 as usize]) && !combat.candidates.contains(o)
+                    })
+            };
+            if last >= combat.cursor {
+                if let Some(o) = index(&|h| h.starts_with("C:")) {
+                    assert!(swapped(o)
+                        .validate_in_state(&state, &payload.handles)
+                        .is_err());
+                    state_refusals += 1;
+                }
+                if let Some(o) = index(&|h| !h.starts_with("C:")) {
+                    assert!(swapped(o)
+                        .validate_in_state(&state, &payload.handles)
+                        .is_err());
+                    state_refusals += 1;
+                }
+            }
+            let mut other = combat.clone();
+            other.player = other.player.opponent();
+            assert!(other.validate_in_state(&state, &payload.handles).is_err());
+            // The rest of the declaration: every remaining inclusion point
+            // (later candidates, and for blocks later attackers' scans).
+            let mut left = false;
+            for depth in 0..256usize {
+                // A terminal session has left the declaration (the game can
+                // end right after one, before the next decision).
+                let decision = |x: &FastActorSessionV1| match x.current_response() {
+                    FastActorResponseV1::Decision(d) => Some(d),
+                    FastActorResponseV1::Terminal(t) => {
+                        assert_ne!(
+                            t.terminal_classification,
+                            crate::rl::TerminalClassificationV1::Halted,
+                            "{decks:?}: a combat walk halted: {}",
+                            t.terminal_reason
+                        );
+                        None
+                    }
+                };
+                let (d, e) = (decision(&live), decision(&imported));
+                // The same declaration: the viewer's inclusion points in the
+                // root's turn and combat step (afterwards the worlds' hidden
+                // cards may lead them apart).
+                let same = |x: &FastActorSessionV1, d: Option<FastActorDecisionV1>| {
+                    let st = x.game_state();
+                    d.is_some_and(|d| seat(d.acting_player) == v)
+                        && inclusion(x)
+                        && (st.turn, st.step) == root_turn_step
+                };
+                let (in_live, in_imported) = (same(&live, d), same(&imported, e));
+                if in_live != in_imported {
+                    let forms = |x: &FastActorSessionV1| {
+                        x.diagnostic_current_action_semantics()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|a| serde_json::to_string(a).unwrap())
+                            .collect::<Vec<_>>()
+                    };
+                    panic!(
+                        "{decks:?}: depth {depth}: scans end apart (live {in_live}, imported {in_imported}); root combat {combat:?}; live actor {:?} menu {:?}; imported actor {:?} menu {:?}",
+                        d.map(|d| d.acting_player),
+                        forms(&live),
+                        e.map(|e| e.acting_player),
+                        forms(&imported)
+                    );
+                }
+                if !in_live {
+                    left = true;
+                    break;
+                }
+                let (Some(d), Some(e)) = (d, e) else {
+                    unreachable!("both sessions are at the viewer's inclusion point")
+                };
+                let a = super::order::row_keys_v1(&live, Some(&ids)).expect("live keys");
+                let b = super::order::row_keys_v1(&imported, Some(&imported_ids))
+                    .expect("imported keys");
+                if depth == 0 {
+                    assert_eq!(a, b, "{decks:?}: the import presents the live scan point");
+                }
+                let pairs = super::order::live_rows_v1(&a, &b).unwrap_or_else(|| {
+                    panic!("{decks:?}: depth {depth}: keys do not pair: {a:?} vs {b:?}")
+                });
+                let i = depth % b.len();
+                imported
+                    .step(e.episode_id, e.step, i as u32)
+                    .expect("imported step");
+                live.step(d.episode_id, d.step, pairs[i])
+                    .expect("live step");
+                walked += 1;
+            }
+            assert!(
+                left,
+                "{decks:?}: the declaration did not end within its bound"
+            );
+        });
+    }
+    eprintln!(
+        "combat payloads: {attack} attacker points ({multi_attack} multi-attacker roots), {block} blocker points ({multi_block} multi-blocker roots), {mid_scan} mid-scan, {walked} paired steps, {refused} refused, {state_refusals} tampered records refused"
+    );
+    assert!(state_refusals > 0, "tampered records reach the state check");
+    assert!(
+        multi_attack >= 5 && multi_block >= 5,
+        "design 13: 5 multi-attacker and 5 multi-blocker witnesses"
+    );
+    assert!(attack > 0 && block > 0, "both scan kinds exported");
+    assert!(mid_scan > 0, "a scan past its first candidate exported");
+    assert_eq!(refused, 0, "no combat point refuses");
+}
+
+#[test]
+fn combat_context_validation_fails_closed() {
+    use crate::ids::ObjectId;
+    use crate::policy_surface_v5::{CombatContextV1, CombatScanKindV1};
+    let ok = CombatContextV1 {
+        kind: CombatScanKindV1::Attackers,
+        player: PlayerId::P0,
+        attacker: None,
+        candidates: vec![ObjectId(3), ObjectId(5)],
+        cursor: 1,
+        selected: vec![ObjectId(3)],
+        blockers: None,
+    };
+    assert!(ok.validate(10).is_ok());
+    let bad = |f: &dyn Fn(&mut CombatContextV1)| {
+        let mut c = ok.clone();
+        f(&mut c);
+        c.validate(10).is_err()
+    };
+    assert!(
+        bad(&|c| c.candidates[1] = ObjectId(10)),
+        "outside the arena"
+    );
+    assert!(bad(&|c| c.cursor = 2), "exhausted scan");
+    assert!(
+        bad(&|c| c.selected = vec![ObjectId(5)]),
+        "selection past the cursor"
+    );
+    assert!(
+        bad(&|c| c.candidates[1] = ObjectId(3)),
+        "repeated candidate"
+    );
+    assert!(
+        bad(&|c| c.kind = CombatScanKindV1::Blockers),
+        "blocker scan without a reshape"
+    );
+    assert!(bad(&|c| c.player = PlayerId(2)), "player");
+    let three = CombatContextV1 {
+        candidates: vec![ObjectId(3), ObjectId(5), ObjectId(7)],
+        cursor: 2,
+        selected: vec![ObjectId(3), ObjectId(5)],
+        ..ok.clone()
+    };
+    assert!(three.validate(10).is_ok());
+    for selected in [vec![3, 3], vec![5, 3]] {
+        let mut c = three.clone();
+        c.selected = selected.iter().map(|x| ObjectId(*x)).collect();
+        assert!(c.validate(10).is_err(), "selection {selected:?}");
+    }
+    let renamed = ok
+        .rename(|o| Some(ObjectId(o.0 + 1)))
+        .expect("every object renames");
+    assert_eq!(renamed.candidates, vec![ObjectId(4), ObjectId(6)]);
+    assert!(
+        ok.rename(|o| (o.0 != 5).then_some(o)).is_none(),
+        "an unmapped object refuses"
+    );
 }

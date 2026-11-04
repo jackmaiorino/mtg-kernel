@@ -11502,7 +11502,7 @@ pub(crate) fn can_attack(state: &GameState, id: ObjectId) -> bool {
         && !obj.v4.enduring_enchantment_v1
 }
 
-fn eligible_attackers(state: &GameState) -> Vec<ObjectId> {
+pub(crate) fn eligible_attackers(state: &GameState) -> Vec<ObjectId> {
     state.players[state.active_player.index()]
         .battlefield
         .iter()
@@ -11572,7 +11572,7 @@ pub(crate) fn minimum_blockers_required(state: &GameState, attacker: ObjectId) -
     )
 }
 
-fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
+pub(crate) fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     let attacker_obj = state.objects.get(attacker);
     let defender = attacker_obj.controller.opponent();
     let defender_controls_island = state.players[defender.index()]

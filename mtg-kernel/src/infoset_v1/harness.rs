@@ -161,6 +161,31 @@ fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<
         .map(|(i, t)| (t, i as u64))
         .collect();
     rerank(&mut obs, &rank);
+    // Attachment lists name objects by bare arena id, outside the
+    // `arena_id` keys `rename` maps: map them the same way, as sets.
+    fn attachments(v: &mut serde_json::Value, ids: Option<&BTreeMap<u64, u64>>) {
+        match v {
+            serde_json::Value::Object(m) => m.iter_mut().for_each(|(k, x)| {
+                if let (true, serde_json::Value::Array(xs)) = (k == "attachments", &mut *x) {
+                    if let Some(ids) = ids {
+                        for a in xs.iter_mut() {
+                            if let Some(n) = a.as_u64() {
+                                *a = ids
+                                    .get(&n)
+                                    .map_or(serde_json::json!("hidden"), |c| serde_json::json!(c));
+                            }
+                        }
+                    }
+                    xs.sort_by_key(|a| a.to_string());
+                } else {
+                    attachments(x, ids);
+                }
+            }),
+            serde_json::Value::Array(xs) => xs.iter_mut().for_each(|x| attachments(x, ids)),
+            _ => {}
+        }
+    }
+    attachments(&mut obs, ids);
     rename(&mut obs, ids);
     let mut rows: Vec<String> = menu
         .iter()
@@ -298,6 +323,23 @@ pub(crate) fn outcome(r: &Result<InfosetV1, ExportErrorV1>) -> Result<Vec<u8>, S
     }
 }
 
+/// P's compared bytes: the export, and at a combat scan point the
+/// payload's combat record (amendment 43.1), which AC1 compares like any
+/// payload field. Other surface states compare the export alone, as before.
+pub(crate) fn p_outcome(s: &FastActorSessionV1, viewer: PlayerId) -> Result<Vec<u8>, String> {
+    let x = export_at(s, viewer, ExportOptionsV1::default());
+    let mut bytes = outcome(&x)?;
+    let x = x.expect("outcome passed");
+    if s.surface_context_v1().is_none() {
+        let ids = super::order::canonical_ids_v1(&x);
+        if let Some(combat) = s.payload_surface_context_v1(&ids).and_then(|c| c.combat) {
+            bytes.extend_from_slice(b"|combat:");
+            bytes.extend(serde_json::to_vec(&combat).expect("combat serializes"));
+        }
+    }
+    Ok(bytes)
+}
+
 /// Plays W and W' in lockstep from `w` and `w2` (equal up to the family's
 /// permutation), comparing every viewer decision while views agree.
 pub(crate) fn compare_worlds(
@@ -338,8 +380,8 @@ pub(crate) fn compare_worlds_with(
                 report.truncated = true;
                 break;
             }
-            let p = outcome(&export_at(&s, viewer, ExportOptionsV1::default()));
-            let p2 = outcome(&export_at(&t, viewer, ExportOptionsV1::default()));
+            let p = p_outcome(&s, viewer);
+            let p2 = p_outcome(&t, viewer);
             report.compared += 1;
             if let Err(code) = &p {
                 *report.p_refusals.entry(code.clone()).or_default() += 1;
@@ -523,11 +565,22 @@ pub(crate) fn ac3_check(
     export: &InfosetV1,
     seed: u64,
 ) -> Result<(), String> {
-    if live.surface_context_v1().is_none() {
-        // The surface names objects mid-scan: the payload refuses (R2).
-        return Ok(());
-    }
-    let imported = FastActorSessionV1::import_infoset_v1(live, export.state.clone(), 0);
+    // At a combat scan root the context carries the scan record (amendment
+    // 43.1), as the payload does; a surface the payload cannot carry refuses
+    // (R2) and has nothing to check.
+    let context = match live.surface_context_v1() {
+        Some(c) => c,
+        None => match live.payload_surface_context_v1(&super::order::canonical_ids_v1(export)) {
+            Some(c) => c,
+            None => return Ok(()),
+        },
+    };
+    let imported = FastActorSessionV1::import_infoset_with_surface_v1(
+        live,
+        export.state.clone(),
+        0,
+        Some(context),
+    );
     let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
         (live.current_response(), imported.current_response())
     else {
