@@ -882,6 +882,36 @@ fn s_weights_snapshot_v1() {
         },
         record
     );
+    // A canonical snapshot whose embedded record names another state or
+    // step is refused before any file is written.
+    let record_value: Value = read_pinned(&full).unwrap();
+    for (index, field, value) in [
+        (0, "state_sha256", json!("0".repeat(64))),
+        (1, "adam_step", json!(7)),
+    ] {
+        let mut wrong = record_value.clone();
+        wrong[field] = value;
+        let bytes = crate::s_transformer_v1::encode_weights_snapshot_v1(&resumed.state, &wrong);
+        let path = root.join(format!("inconsistent-{index}.bin"));
+        fs::write(&path, &bytes).unwrap();
+        let output = root.join(format!("inconsistent-{index}.json"));
+        let error = materialize_weights_snapshot_v1(
+            &s,
+            &PinnedFileV1 {
+                path,
+                sha256: sha(&bytes),
+            },
+            &output,
+        )
+        .unwrap_err();
+        assert!(error.contains("another state or step"), "{error}");
+        assert!(!output.exists());
+        assert!(!root
+            .join(format!(
+                "inconsistent-{index}.json.{S_LEARNER_STATE_FILE_V1}"
+            ))
+            .exists());
+    }
     // A fresh output is required; a net-8 template refuses the S snapshot.
     assert!(
         materialize_weights_snapshot_v1(&s, &snapshot, &root.join("materialized.json")).is_err()

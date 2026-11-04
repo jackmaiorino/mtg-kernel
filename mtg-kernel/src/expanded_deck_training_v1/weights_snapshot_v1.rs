@@ -85,6 +85,12 @@ pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value,
     )
 }
 
+/// An S checkpoint record names its trajectories and scalars only (at most
+/// 1,024 trajectory pins): far below this. Larger inputs are never probed,
+/// so a net-8 checkpoint's parameter arrays are parsed once, by its own
+/// parser, as before.
+const S_RECORD_MAX_BYTES_V1: usize = 4 << 20;
+
 /// Whether `bytes` is an S checkpoint record (by its schema; the record's
 /// own parse checks the rest).
 fn is_s_record_v1(bytes: &[u8]) -> bool {
@@ -92,7 +98,8 @@ fn is_s_record_v1(bytes: &[u8]) -> bool {
     struct SchemaProbeV1 {
         schema: String,
     }
-    !is_container_v1(bytes)
+    bytes.len() <= S_RECORD_MAX_BYTES_V1
+        && !is_container_v1(bytes)
         && serde_json::from_slice::<SchemaProbeV1>(bytes)
             .is_ok_and(|probe| probe.schema == S_LEARNER_CHECKPOINT_SCHEMA_V1)
 }
@@ -154,6 +161,12 @@ fn s_materialize_v1(
     ensure(
         record.schema == S_LEARNER_CHECKPOINT_SCHEMA_V1 && record.architecture == S_ARCHITECTURE_V1,
         "the S weights snapshot carries an unknown record",
+    )?;
+    // The embedded record is the one the snapshot was cut from: its state
+    // hash and step are the snapshot's own, checked before any file exists.
+    ensure(
+        record.state_sha256 == snap.cut_from_state_sha256 && record.adam_step == snap.adam_step,
+        "the S weights snapshot's record names another state or step",
     )?;
     let name = output
         .file_name()
