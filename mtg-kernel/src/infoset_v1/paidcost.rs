@@ -370,3 +370,40 @@ fn lembas_paid_cost_fixture_in_both_worlds() {
         );
     }
 }
+
+/// Sol round 1: with the Shaman ability waiting, an extra draw gives V a
+/// Lembas, the paid copy A or another copy B. V's records agree, so P must
+/// agree: R1b refuses in both (a later Lembas of V's may be the paid copy),
+/// before tracking decides whether the reference is a tombstone.
+#[test]
+fn drawing_the_paid_lembas_or_its_twin_exports_alike() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let s = at_the_wait(OutletV1::Shaman, false);
+    let base = s.game_state().clone();
+    let i = waiting(&base, OutletV1::Shaman).expect("the ability waits");
+    let a = paid_object(&base, i);
+    let lembas = id("Lembas");
+    let b = base.players[0]
+        .library
+        .iter()
+        .copied()
+        .find(|x| *x != a && base.objects.get(*x).card_def == lembas)
+        .expect("a second Lembas in V's library");
+    let run = |top: ObjectId| {
+        let mut st = base.clone();
+        let at = st.players[0]
+            .library
+            .iter()
+            .position(|x| *x == top)
+            .expect("in the library");
+        st.players[0].library.swap(0, at);
+        propose_and_commit(&mut st, ProposedEvent::draw(PlayerId::P0));
+        assert!(st.players[0].hand.contains(&top), "V drew the chosen copy");
+        export_state(&s, &st)
+            .map(|x| x.bytes)
+            .map_err(|e| e.code_name().to_string())
+    };
+    let (pa, pb) = (run(a), run(b));
+    assert_eq!(pa, pb, "drawing the paid Lembas or its twin exports alike");
+    assert_eq!(pa, Err("R1b".to_string()), "R1b refuses in both worlds");
+}

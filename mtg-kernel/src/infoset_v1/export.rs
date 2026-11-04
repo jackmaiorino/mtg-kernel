@@ -644,7 +644,10 @@ pub(crate) fn export_v1(
     // tombstone instead of an R1 refusal, when no pending resolution reads
     // the paid object and V saw the payment (V observed the paid epoch).
     // The record keeps its own fields; only the object becomes `H:`, at
-    // generation 0. Otherwise R1 stays.
+    // generation 0. Otherwise R1 stays. R1b still reads such a reference
+    // (Sol round 1): whether the paid copy is untracked can depend on which
+    // same-name copy V later drew, so R1b's name-level join test must
+    // refuse in both worlds before tracking decides the tombstone.
     let unread_paid = unread_paid_costs_v1(state, &tagged, v);
     let paid_tomb = |r: &RefV1| -> bool {
         r.class == ClassV1::Live
@@ -658,7 +661,7 @@ pub(crate) fn export_v1(
 
     // R1b first (a name-level, public-event predicate), then R1 and R2.
     for (r, region) in &refs {
-        if *region != "live" || paid_tomb(r) {
+        if *region != "live" {
             continue;
         }
         for &g in &r.generations {
