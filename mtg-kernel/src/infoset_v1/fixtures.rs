@@ -1234,7 +1234,8 @@ fn spy_versus_terror_engine_fixture() {
     ];
     let runs: Vec<_> = variants
         .iter()
-        .map(|pb| record(spy_versus_terror(*pb), v, 30))
+        .enumerate()
+        .map(|(i, pb)| record_strict(spy_versus_terror(*pb), v, 30, &format!("fx-spy-v{i}")))
         .collect();
     let (records, reports) = pairs("spy-versus-terror", runs);
     // After the Brainstorm, V's decisions carry the survivor node.
@@ -1290,7 +1291,8 @@ fn fable_bounce_engine_fixture() {
     let v = PlayerId::P1;
     let runs: Vec<_> = [0, 2, 1]
         .iter()
-        .map(|hawks| record(fable_bounce(*hawks), v, 30))
+        .enumerate()
+        .map(|(i, hawks)| record_strict(fable_bounce(*hawks), v, 30, &format!("fx-fable-v{i}")))
         .collect();
     let (records, reports) = pairs("fable-bounce", runs);
     let node = (vec!["Squadron Hawk".to_string(); 3], 1);
@@ -1324,7 +1326,8 @@ fn cawgates_lorien_engine_fixture() {
     // it in both worlds.
     let runs: Vec<_> = [Some("Squadron Hawk"), None]
         .iter()
-        .map(|with| record(cawgates_lorien(*with), v, 20))
+        .enumerate()
+        .map(|(i, with)| record_strict(cawgates_lorien(*with), v, 20, &format!("fx-lorien-v{i}")))
         .collect();
     let (records, reports) = pairs("cawgates-lorien", runs);
     let node = (
@@ -1378,7 +1381,8 @@ fn w_pin_engine_fixtures() {
         };
         let runs: Vec<_> = tops
             .iter()
-            .map(|t| record(w_pin(pins, *t), v, 12))
+            .enumerate()
+            .map(|(i, t)| record_strict(w_pin(pins, *t), v, 12, &format!("fx-wpin{pins}-v{i}")))
             .collect();
         let (records, reports) = pairs(&format!("w-pin-{pins}"), runs);
         // While the abilities wait after the draw, the canonical choice
