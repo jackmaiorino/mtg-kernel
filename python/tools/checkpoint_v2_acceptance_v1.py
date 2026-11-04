@@ -1073,7 +1073,16 @@ class Measurement:
         return 4 * len(self.runs) * self.updates * BYTES_PER_UPDATE
 
     def precondition(self):
+        failing, stats, claims = self._precondition_at(time.time())
+        if failing:
+            return failing, stats, claims
+        # A passing window is admitted only once the sampler has delivered every row stamped inside it: rows still
+        # in transit could carry disk load the window has not seen.
         now = time.time()
+        self.wait_for_sampler(now)
+        return self._precondition_at(now)
+
+    def _precondition_at(self, now):
         start = now - self.precondition_seconds
         artifact = bool(self.args.artifact_disk)
         stats = window_stats(self.samples.window(start, now), start, now, self.samples.interval, artifact)
