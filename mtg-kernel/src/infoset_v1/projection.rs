@@ -23,9 +23,22 @@ pub(crate) fn is_public(zone: Zone) -> bool {
 /// positions in the merged event and note stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SpanV1 {
-    /// The generation at which the span began.
+    /// The generation at which the span began: the epoch the object entered
+    /// (or was first seen in). Every new span starts this way, however V
+    /// came to follow the object (Sol review of amendment 43.3): the default
+    /// epoch baseline must not reveal whether a copy was tracked before.
     pub start_gen: u32,
+    /// The earliest generation V observed for this span: one below
+    /// `start_gen` when the span began with a move V observed (V saw the
+    /// epoch the card left). Read only to validate live references (R2);
+    /// it never makes that epoch history-linkable or sets the baseline.
+    pub cover_gen: u32,
     pub start_item: usize,
+    /// The object's position within the record where the span starts, as
+    /// presented to V (its index among the objects V identified in that
+    /// record); `u32::MAX` when V did not identify it there (ruling 3: such
+    /// a span has no V-presented position).
+    pub start_pos: u32,
     /// The event-history index from which references made inside the span
     /// may link to the object (the first event at or after `start_item`).
     pub start_event: usize,
@@ -40,6 +53,11 @@ pub(crate) struct SpanEndV1 {
     pub item: usize,
     /// The zone V last saw the object in.
     pub zone: Zone,
+    /// Amendment 43.3: the span ended at a zone change the bot-facing
+    /// transcript does not link (the adapter mints a new id on every zone
+    /// change), while the object stayed in V's sight. V still sees the object
+    /// in its new zone, under a new span; it cannot link the two.
+    pub split: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,7 +170,7 @@ impl ProjectionV1 {
     pub(crate) fn span_of(&self, id: ObjectId, g: u32) -> Option<&SpanV1> {
         let o = self.objects.get(id.0 as usize)?;
         o.spans.iter().rev().find(|s| {
-            s.start_gen <= g
+            s.cover_gen <= g
                 && match s.end {
                     Some(end) => g <= end.last_gen,
                     None => g <= o.moves,
@@ -161,6 +179,18 @@ impl ProjectionV1 {
     }
     pub(crate) fn last_span(&self, id: ObjectId) -> Option<&SpanV1> {
         self.objects.get(id.0 as usize)?.spans.last()
+    }
+    /// Where V's tracking of `id` lapsed at or after `span` (the first end
+    /// from `span` on that is not an amendment 43.3 split): the object left
+    /// V's sight there. `None` when every later boundary is a split, so the
+    /// object stayed in V's sight throughout.
+    pub(crate) fn lapse_after(&self, id: ObjectId, span: &SpanV1) -> Option<SpanEndV1> {
+        let o = self.objects.get(id.0 as usize)?;
+        o.spans
+            .iter()
+            .skip_while(|s| !std::ptr::eq(*s, span))
+            .filter_map(|s| s.end)
+            .find(|e| !e.split)
     }
     /// Whether V tracked `id` right after stream item `item`.
     pub(crate) fn tracked_after(&self, id: ObjectId, item: usize) -> bool {
@@ -329,7 +359,8 @@ pub(crate) fn project_v1(
     // Moves without committed events (an announced cast that was aborted,
     // a madness cast rolled back to the graveyard) happen in V's sight when
     // the card is public or in V's own hand: V-tracked objects found there
-    // take their native zone and epoch, and their spans continue.
+    // take their native zone and epoch, under a new span (amendment 43.3).
+    let final_item = w.item;
     for (id, object) in state.objects.iter() {
         let viewer_hand = object.owner == viewer && object.zone == Zone::Hand;
         let o = &mut w.objs[id.0 as usize];
@@ -338,6 +369,31 @@ pub(crate) fn project_v1(
             && (o.zone != Some(object.zone) || o.moves != object.zone_change_count)
             && o.moves <= object.zone_change_count
         {
+            // Amendment 43.3: an event-less zone change still re-mints the
+            // object's bot-facing id, so its span ends and a new one starts
+            // after the last record, with no V-presented position (two such
+            // objects cannot be ordered and the export refuses R2).
+            if o.moves < object.zone_change_count {
+                let last_gen = o.last_obs_gen;
+                let zone = o.last_obs_zone.unwrap_or(Zone::Library);
+                let item = final_item;
+                if let Some(span) = o.spans.last_mut().filter(|s| s.end.is_none()) {
+                    span.end = Some(SpanEndV1 {
+                        last_gen,
+                        item,
+                        zone,
+                        split: true,
+                    });
+                }
+                o.spans.push(SpanV1 {
+                    start_gen: object.zone_change_count,
+                    cover_gen: object.zone_change_count,
+                    start_item: item,
+                    start_pos: u32::MAX,
+                    start_event: state.engine.event_history.len(),
+                    end: None,
+                });
+            }
             o.zone = Some(object.zone);
             o.moves = object.zone_change_count;
             o.last_obs_gen = o.moves;
@@ -466,20 +522,29 @@ impl WalkV1<'_> {
                         }
                     }
                 }
-                // A span that begins with a move V observed includes the
-                // epoch the card left (its origin epoch is one below the
-                // epoch it entered, and V saw the move).
+                // A span that begins with a move V observed covers the epoch
+                // the card left (its origin epoch is one below the epoch it
+                // entered, and V saw the move), for live-reference checks
+                // only; the span itself starts at the entered epoch.
                 let entered_by_observed_move =
                     observed.contains(&id) && prev_zones.iter().any(|(x, _)| *x == id);
                 let o = &mut self.objs[i];
-                let start_gen = if entered_by_observed_move {
+                let start_gen = o.moves;
+                let cover_gen = if entered_by_observed_move {
                     o.moves.saturating_sub(1)
                 } else {
                     o.moves
                 };
+                let start_pos = observed
+                    .iter()
+                    .position(|x| *x == id)
+                    .map_or(u32::MAX, |p| p as u32);
+                let o = &mut self.objs[i];
                 o.spans.push(SpanV1 {
                     start_gen,
+                    cover_gen,
                     start_item: item,
+                    start_pos,
                     start_event: next_event,
                     end: None,
                 });
@@ -494,9 +559,48 @@ impl WalkV1<'_> {
                         last_gen,
                         item,
                         zone,
+                        split: false,
                     });
                 }
             } else if now {
+                // Amendment 43.3: a tracked object that changed zone in this
+                // item ends its span and starts a new one, at this record and
+                // its position in it as presented to V. The adapter mints a
+                // new id on every zone change (kernel_observation_v2.py keys
+                // ids by arena, generation and zone) and links history only
+                // to the current id, so V cannot join the two spans. The new
+                // span starts at the new epoch: nothing from before the move
+                // links to it.
+                let moves_here = prev_zones.iter().filter(|(x, _)| *x == id).count() as u32;
+                if moves_here > 0 {
+                    let first_zone = prev_zones
+                        .iter()
+                        .find(|(x, _)| *x == id)
+                        .and_then(|(_, z)| *z);
+                    let start_pos = observed
+                        .iter()
+                        .position(|x| *x == id)
+                        .map_or(u32::MAX, |p| p as u32);
+                    let o = &mut self.objs[i];
+                    let last_gen = o.moves.saturating_sub(moves_here);
+                    let zone = first_zone.unwrap_or(Zone::Library);
+                    if let Some(span) = o.spans.last_mut().filter(|s| s.end.is_none()) {
+                        span.end = Some(SpanEndV1 {
+                            last_gen,
+                            item,
+                            zone,
+                            split: true,
+                        });
+                    }
+                    o.spans.push(SpanV1 {
+                        start_gen: o.moves,
+                        cover_gen: o.moves,
+                        start_item: item,
+                        start_pos,
+                        start_event: next_event,
+                        end: None,
+                    });
+                }
                 self.objs[i].last_obs_gen = self.objs[i].moves;
                 self.objs[i].last_obs_zone = self.objs[i].zone;
             }

@@ -282,7 +282,10 @@ pub(crate) fn merge_v1(
     let mut merged = vec![CountsV1::default(); width];
     let mut excluded = Vec::new();
     let mut units = 0u64;
-    for t in trees {
+    // Tree order, whatever order the trees completed or arrived in.
+    let mut trees: Vec<&TreeResultV1> = trees.iter().collect();
+    trees.sort_by_key(|t| t.tree);
+    for &t in &trees {
         units += t.transitions;
         match &t.edges {
             Some(edges) if t.menu_sha256 == menu && edges.len() == width => {
@@ -504,6 +507,19 @@ fn spawn_worker(source: &str) -> Result<WorkerV1, String> {
     })
 }
 
+/// What a failed search request is charged (design 2: failed attempts are
+/// charged): every dispatched partition plus a_units once the request has
+/// parsed, so a failure before dispatch (import, menu) still costs a_units.
+/// An unparsed line has no identity and charges nothing here; the entrant
+/// floors every failed attempt at a_units itself.
+pub(super) fn failed_request_charge_v1(parsed: bool, dispatched: u64, a_units: u64) -> u64 {
+    if parsed {
+        dispatched + a_units
+    } else {
+        0
+    }
+}
+
 /// Pool: K persistent workers (`W1_SERVE_K`), one merged search per request.
 pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
     let k: u64 = std::env::var("W1_SERVE_K")
@@ -602,8 +618,8 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
             )
         })()
         .unwrap_or_else(|e| {
-            json!({"ok": false, "error": e, "root_id": identity.0,
-                "charge": if dispatched > 0 { dispatched + identity.1 } else { 0 }})
+            let charge = failed_request_charge_v1(!identity.0.is_null(), dispatched, identity.1);
+            json!({"ok": false, "error": e, "root_id": identity.0, "charge": charge})
         });
         writeln!(out, "{answer}").map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
@@ -621,6 +637,15 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// G4: a parsed request that fails before any worker is dispatched
+    /// (import or menu) is charged a_units; dispatched partitions add on.
+    #[test]
+    fn failed_requests_are_charged_a_units_once_parsed() {
+        assert_eq!(failed_request_charge_v1(true, 0, 306), 306);
+        assert_eq!(failed_request_charge_v1(true, 1_000, 306), 1_306);
+        assert_eq!(failed_request_charge_v1(false, 0, 306), 0);
+    }
 
     /// The entrant searches imported payloads: the search's world sampler
     /// must accept them (it rejected every world of every AC2 root with the

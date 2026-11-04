@@ -44,6 +44,11 @@ impl PayloadV1 {
     ) -> Option<Self> {
         let (max_physical_decisions, max_policy_steps) = live.limits_v1();
         let surface = live.payload_surface_context_v1(&super::order::canonical_ids_v1(export))?;
+        // A discard record carries only the viewer's own discard (the import
+        // refuses any other); refuse it here too.
+        if surface.discard.as_ref().is_some_and(|d| d.player != viewer) {
+            return None;
+        }
         let mut payload = Self {
             schema: INFOSET_SCHEMA_V1.into(),
             sha256: String::new(),

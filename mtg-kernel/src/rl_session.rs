@@ -5370,6 +5370,7 @@ impl FastActorSessionV1 {
     /// mode are public and come from `template`; the episode id and the
     /// environment revision are constants, and both decision counters are
     /// the viewer's own decision index (design 6.8).
+    #[cfg(test)]
     pub(crate) fn import_infoset_v1(
         template: &FastActorSessionV1,
         state: crate::state::GameState,
@@ -5419,8 +5420,8 @@ impl FastActorSessionV1 {
 
     /// Why a payload cannot carry the surface: the R2 subclass the bridge
     /// sends (amendment 43.1 part 2).
-    pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
-        self.surface.payload_refusal_detail_v1()
+    pub(crate) fn payload_refusal_detail_v1(&self, viewer: crate::ids::PlayerId) -> &'static str {
+        self.surface.payload_refusal_detail_v1(viewer)
     }
 
     /// A restored combat scan (amendment 43.1) admits a legal declaration.
@@ -5495,6 +5496,56 @@ impl FastActorSessionV1 {
     /// The session's (physical decision, policy step) limits.
     pub(crate) fn limits_v1(&self) -> (u64, u64) {
         (self.max_physical_decisions, self.max_policy_steps)
+    }
+}
+
+#[cfg(test)]
+impl RlEpisodeSessionV1 {
+    /// AC1 strict view (lead rulings 4 and 5): the bridge's raw session at a
+    /// flat-action session's current decision, so the harness can build the
+    /// bridge's own wire response there. The state and both counters are the
+    /// copy's; the surface is rebuilt from the copy's carried context the way
+    /// [`FastActorSessionV1::import_infoset_with_surface_v1`] rebuilds it.
+    /// The caller checks that the presented decision matches the copy's.
+    pub(crate) fn from_fast_session_for_test(fast: &FastActorSessionV1) -> Self {
+        let context = fast.surface.infoset_context_with_combat_v1();
+        let mut surface = PolicySurfaceV5::new_for_session();
+        if let Some(combat) = context.as_ref().and_then(|c| c.combat.as_ref()) {
+            surface.set_combat_context_v1(combat, 0);
+        }
+        if let Some(discard) = context.as_ref().and_then(|c| c.discard.as_ref()) {
+            if let Some((_, _, choices)) = crate::engine::pending_discard_decision_v1(&fast.state) {
+                let remaining = choices
+                    .into_iter()
+                    .filter(|x| !discard.chosen.contains(x))
+                    .collect();
+                surface.set_discard_context_v1(discard, remaining);
+            }
+        }
+        let mut session = RlEpisodeSessionV1 {
+            deck_ids: fast.deck_ids.clone(),
+            deck_hashes: fast.deck_hashes,
+            episode_id: fast.episode_id,
+            max_physical_decisions: fast.max_physical_decisions,
+            max_policy_steps: fast.max_policy_steps,
+            state: fast.state.clone(),
+            surface,
+            environment_revision: fast.environment_revision,
+            policy_step_count: fast.policy_step_count,
+            physical_decision_count: fast.physical_decision_count,
+            current: None,
+            terminal: None,
+            scan_menu: ScanMenuV1::LegalAnswersOnly,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            limited_incremental_trigger_order: false,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            limited_trigger_order: None,
+        };
+        session.advance_to_decision_or_terminal();
+        if let Some(context) = context {
+            session.surface.set_infoset_context_v1(context);
+        }
+        session
     }
 }
 

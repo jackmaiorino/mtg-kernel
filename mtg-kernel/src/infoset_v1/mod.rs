@@ -33,6 +33,8 @@ mod harness;
 mod realize;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transcript;
 
 pub(crate) use export::{export_v1, ExportInputV1, ExportOptionsV1, InfosetV1, MutantV1};
 pub(crate) use payload::PayloadV1;
@@ -50,6 +52,9 @@ pub enum RefusalCodeV1 {
     R1b,
     R2,
     R3,
+    /// Amendment 43.2: V's own pending library search (the pending effect's
+    /// owner and chooser is V); ineligible for the entrant, not C5.
+    R3b,
     R4,
     R5,
     R6,
@@ -61,11 +66,12 @@ pub enum RefusalCodeV1 {
 }
 
 impl RefusalCodeV1 {
-    pub const ALL: [RefusalCodeV1; 10] = [
+    pub const ALL: [RefusalCodeV1; 11] = [
         Self::R1,
         Self::R1b,
         Self::R2,
         Self::R3,
+        Self::R3b,
         Self::R4,
         Self::R5,
         Self::R6,
@@ -79,6 +85,7 @@ impl RefusalCodeV1 {
             Self::R1b => "R1b",
             Self::R2 => "R2",
             Self::R3 => "R3",
+            Self::R3b => "R3b",
             Self::R4 => "R4",
             Self::R5 => "R5",
             Self::R6 => "R6",
@@ -167,6 +174,10 @@ impl HandleV1 {
 pub struct RefusalTallyV1 {
     pub exported: u64,
     pub by_code: std::collections::BTreeMap<String, u64>,
+    /// Refusals by `code:subclass`, the subclass the bridge sends on the wire
+    /// (amendment 43.1 part 2); empty where no subclass was recorded.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub by_subclass: std::collections::BTreeMap<String, u64>,
 }
 
 impl RefusalTallyV1 {
@@ -175,5 +186,14 @@ impl RefusalTallyV1 {
             Ok(()) => self.exported += 1,
             Err(e) => *self.by_code.entry(e.code_name().to_string()).or_default() += 1,
         }
+    }
+
+    /// As `record` for a refusal, also counting its wire subclass.
+    pub fn record_refusal(&mut self, error: &ExportErrorV1, subclass: &str) {
+        self.record(&Err(error.clone()));
+        *self
+            .by_subclass
+            .entry(format!("{}:{subclass}", error.code_name()))
+            .or_default() += 1;
     }
 }

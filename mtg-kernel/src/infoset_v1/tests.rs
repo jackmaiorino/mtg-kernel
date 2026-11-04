@@ -1119,3 +1119,54 @@ fn discard_payloads_import_at_the_live_discard_point() {
     assert!(roots >= 5, "discard witnesses");
     assert!(mid > 0, "a discard past its first pick exported");
 }
+
+/// G1 (fairness gate) and amendment 43.2: R3 is the opponent's pending
+/// library-search plan only; V's own pending search refuses R3b
+/// (`own_library_search`), decided by the pending effect's owner.
+#[test]
+fn r3_refuses_only_the_opponents_library_search() {
+    use crate::effect::library_choice_search_v2::plan_future_v3;
+    let (mut own, mut own_exported, mut opponent) = (0u32, 0u32, 0u32);
+    let mut own_refusals: std::collections::BTreeMap<String, u32> = Default::default();
+    for (decks, seed) in [
+        (["CawGates", "Faeries"], 61u64),
+        (["CawGates", "CawGates"], 62),
+        (["Faeries", "CawGates"], 63),
+        (["CawGates", "Burn"], 64),
+        (["CawGates", "Wildfire"], 65),
+        (["Elves", "CawGates"], 66),
+    ] {
+        play(decks, seed, 1_000, |s, v| {
+            let st = s.game_state();
+            let own_plan = matches!(plan_future_v3(st, v), Ok(Some(_)));
+            let opponent_plan = matches!(plan_future_v3(st, v.opponent()), Ok(Some(_)));
+            let x = export_at(s, v, ExportOptionsV1::default());
+            if own_plan {
+                own += 1;
+                match &x {
+                    Ok(_) => own_exported += 1,
+                    Err(e) => {
+                        assert_eq!(
+                            e.code_name(),
+                            "R3b",
+                            "{decks:?}: V's own search refuses R3b"
+                        );
+                        *own_refusals.entry(e.code_name().to_string()).or_default() += 1;
+                    }
+                }
+            }
+            if opponent_plan {
+                opponent += 1;
+                assert!(
+                    matches!(&x, Err(ExportErrorV1::Refused { code: RefusalCodeV1::R3, detail })
+                        if detail == super::export::R3_OPPONENT_DETAIL),
+                    "{decks:?}: the opponent's plan refuses R3"
+                );
+            }
+        });
+    }
+    eprintln!(
+        "library searches: {own} of V's own ({own_exported} exported, refusals {own_refusals:?}), {opponent} of the opponent's"
+    );
+    assert!(own > 0, "V's own library searches witnessed");
+}

@@ -931,8 +931,13 @@ mod tests {
                         mutant: Some(MutantV1::L12),
                     },
                 );
+                // P's export bytes at this decision (the recorded P is the
+                // delivered extension, G5).
+                let p_export = export_at(&s, PlayerId::P1, ExportOptionsV1::default())
+                    .map(|x| x.bytes)
+                    .ok();
                 match &m {
-                    Ok(x) if Some(&x.bytes) == r.p.as_ref().ok() => continue,
+                    Ok(x) if Some(&x.bytes) == p_export.as_ref() => continue,
                     Err(e) => {
                         assert_eq!(e.code_name(), "R4", "L12 at step {}: {e:?}", r.step);
                         l12_r4 += 1;
@@ -999,7 +1004,10 @@ mod tests {
                     )
                     .map(|x| x.bytes)
                     .ok();
-                    if l9_bytes.as_ref() == r.p.as_ref().ok() {
+                    let p_export = export_at(&s, PlayerId::P1, ExportOptionsV1::default())
+                        .map(|x| x.bytes)
+                        .ok();
+                    if l9_bytes == p_export {
                         continue;
                     }
                     assert!(

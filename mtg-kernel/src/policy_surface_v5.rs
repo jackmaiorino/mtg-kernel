@@ -781,7 +781,7 @@ impl PolicySurfaceV5 {
     /// Why a payload cannot carry this surface: the R2 subclass the bridge
     /// sends with the refusal (amendment 43.1 part 2). A fixed name of the
     /// surface state V's own decision presents.
-    pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
+    pub(crate) fn payload_refusal_detail_v1(&self, viewer: PlayerId) -> &'static str {
         if self.hunter_order_v45.is_some() {
             return "hunter_trigger_order";
         }
@@ -790,6 +790,8 @@ impl PolicySurfaceV5 {
             "optional_cost_reshape"
         } else if p.madness_cast_reprompt_exemption.is_some() {
             "madness_reprompt"
+        } else if p.discard.as_ref().is_some_and(|d| d.player != viewer) {
+            "opponent_discard"
         } else if p.discard.is_some() {
             "discard_untracked"
         } else if self.scan.is_some() || p.blockers.is_some() {

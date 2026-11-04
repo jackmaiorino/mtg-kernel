@@ -75,6 +75,18 @@ pub struct InfosetV1 {
     pub(crate) tracked_natives: Vec<ObjectId>,
 }
 
+/// R3's detail when the opponent's library-search plan is pending (design
+/// 6.7): the bridge's wire subclass `opponent`.
+pub(crate) const R3_OPPONENT_DETAIL: &str = "opponent library-search plan pending";
+/// R3b's detail (amendment 43.2): V's own pending library search, decided
+/// by the pending effect's owner and chooser; the wire subclass
+/// `own_library_search`.
+pub(crate) const R3B_OWN_DETAIL: &str = "own library-search plan pending";
+/// R3's detail when a pending library search is neither the opponent's plan
+/// nor V's own readable one (fail closed: the wire subclass `plan_error`,
+/// a C5 fault on the entrant side).
+pub(crate) const R3_UNREADABLE_DETAIL: &str = "library-search plan unreadable";
+
 fn refuse(code: RefusalCodeV1, detail: impl Into<String>) -> ExportErrorV1 {
     ExportErrorV1::refuse(code, detail)
 }
@@ -302,66 +314,42 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
 }
 
 /// Canonical order of tracked objects (6.2 step 7).
-fn tracked_order(state: &GameState, projection: &ProjectionV1, l3: bool) -> Vec<ObjectId> {
-    let v = projection.viewer;
-    let opp = v.opponent();
-    let mut out: Vec<ObjectId> = Vec::new();
-    let mut seen = BTreeSet::new();
-    let mut push = |id: ObjectId, out: &mut Vec<ObjectId>| {
-        if projection.tracked(id) && seen.insert(id) {
-            out.push(id);
-        }
-    };
-    for p in [PlayerId::P0, PlayerId::P1] {
-        for &id in &state.players[p.index()].battlefield {
-            push(id, &mut out);
-        }
-    }
-    for p in [PlayerId::P0, PlayerId::P1] {
-        for &id in &state.players[p.index()].graveyard {
-            push(id, &mut out);
-        }
-    }
-    for &id in state.exile.iter().chain(&state.command) {
-        push(id, &mut out);
-    }
-    for item in &state.stack {
-        if state.objects.get(item.source).zone == Zone::Stack {
-            push(item.source, &mut out);
-        }
-    }
-    for &id in &state.players[v.index()].hand {
-        push(id, &mut out);
-    }
-    for f in &projection.hand_facts {
-        if let Some(id) = f.native {
-            push(id, &mut out);
-        }
-    }
-    let _ = opp;
-    for p in [PlayerId::P0, PlayerId::P1] {
-        for id in projection.library[p.index()].values() {
-            push(*id, &mut out);
-        }
-    }
-    let mut rest: Vec<(usize, u32, ObjectId)> = state
+/// The tracked objects in `C:` handle order (design 6.2 steps 2 and 7;
+/// ruling 3): by the start of their current span in V's transcript, keyed
+/// (record index, position within that record as presented to V). Nothing
+/// here reads S's zone-list, arena or id order. Two spans that start in the
+/// same record without a V-presented position cannot be ordered from V's
+/// transcript: the export refuses (R2, fail closed) rather than guess.
+fn tracked_order(
+    state: &GameState,
+    projection: &ProjectionV1,
+    l3: bool,
+) -> Result<Vec<ObjectId>, ExportErrorV1> {
+    let mut keyed: Vec<((usize, u32), ObjectId)> = state
         .objects
         .iter()
-        .filter(|(id, _)| projection.tracked(*id) && !seen.contains(id))
+        .filter(|(id, _)| projection.tracked(*id))
         .map(|(id, _)| {
-            let start = projection
+            let key = projection
                 .current_span(id)
-                .map_or(usize::MAX, |s| s.start_item);
-            (start, id.0, id)
+                .map_or((usize::MAX, u32::MAX), |s| (s.start_item, s.start_pos));
+            (key, id)
         })
         .collect();
-    rest.sort();
-    out.extend(rest.into_iter().map(|(_, _, id)| id));
     if l3 {
         // Mutant L3: raw native ids order the public objects.
+        let mut out: Vec<ObjectId> = keyed.into_iter().map(|(_, id)| id).collect();
         out.sort();
+        return Ok(out);
     }
-    out
+    keyed.sort_by_key(|(key, _)| *key);
+    if keyed.windows(2).any(|w| w[0].0 == w[1].0) {
+        return Err(refuse(
+            RefusalCodeV1::R2,
+            "two tracked objects start their spans in one record without a V-presented order",
+        ));
+    }
+    Ok(keyed.into_iter().map(|(_, id)| id).collect())
 }
 
 /// The exported state of one viewer at one decision.
@@ -390,15 +378,19 @@ pub(crate) fn export_v1(
         }
     }
     knowledge_check(state, &projection)?;
-    // R3: a pending library-search plan owned by the opponent.
-    match crate::effect::library_choice_search_v2::plan_future_v3(state, opp) {
+    // R3: a pending library-search plan owned by the opponent (design 6.7).
+    // R3b (amendment 43.2): V's own pending library search, decided by the
+    // pending effect's owner and chooser (the planner reads it for V), never
+    // inferred from another refusal. Any other pending search the planner
+    // cannot read refuses fail closed under R3's own detail (C5).
+    use crate::effect::library_choice_search_v2::plan_future_v3;
+    match plan_future_v3(state, opp) {
         Ok(None) => {}
-        Ok(Some(_)) | Err(_) => {
-            return Err(refuse(
-                RefusalCodeV1::R3,
-                "opponent library-search plan pending",
-            ));
-        }
+        Ok(Some(_)) => return Err(refuse(RefusalCodeV1::R3, R3_OPPONENT_DETAIL)),
+        Err(_) => match plan_future_v3(state, v) {
+            Ok(Some(_)) => return Err(refuse(RefusalCodeV1::R3b, R3B_OWN_DETAIL)),
+            Ok(None) | Err(_) => return Err(refuse(RefusalCodeV1::R3, R3_UNREADABLE_DETAIL)),
+        },
     }
 
     // Step 3: unknown slots per owner, hand then library.
@@ -486,7 +478,10 @@ pub(crate) fn export_v1(
                 }
                 continue;
             };
-            if let Some(end) = span.end {
+            // R1b reads where V's tracking lapsed: an amendment 43.3 split
+            // (a visible zone change the bot cannot link) is no lapse, and a
+            // live reference across one links as 6.5 maps it.
+            if let Some(end) = projection.lapse_after(r.object, span) {
                 let owner = state.objects.get(r.object).owner;
                 let def = state.objects.get(r.object).card_def;
                 let joined = if is(MutantV1::L13) {
@@ -761,7 +756,7 @@ pub(crate) fn export_v1(
         .collect();
 
     // Step 7: handles. C first, then U per owner in step-3 order, then H.
-    let mut tracked = tracked_order(state, &projection, is(MutantV1::L3));
+    let mut tracked = tracked_order(state, &projection, is(MutantV1::L3))?;
     if is(MutantV1::L8) {
         // Mutant L8's bound copies take `C:` handles (invented continuity).
         for id in &opp_hand_tracked {
@@ -804,7 +799,40 @@ pub(crate) fn export_v1(
 
     // Step 8: the canonical epoch path. p0(o) = min R(o) over live and
     // linked references, else the start of the current span.
+    // Mutant L8's bound copies keep `C:` continuity: history references made
+    // inside the copy's last span link to its handle, as if the count fact
+    // were still that physical copy.
+    let l8_bound: BTreeSet<ObjectId> = if is(MutantV1::L8) {
+        opp_hand_tracked
+            .iter()
+            .copied()
+            .filter(|id| !projection.tracked(*id))
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
     let linkable = |r: &RefV1| -> bool {
+        if l8_bound.contains(&r.object) {
+            let Some(span) = projection.last_span(r.object) else {
+                return false;
+            };
+            if !r.generations.is_empty() {
+                return r
+                    .generations
+                    .iter()
+                    .all(|&g| g >= span.start_gen && span.end.is_none_or(|end| g <= end.last_gen));
+            }
+            return match r.class {
+                ClassV1::Event(e) => {
+                    e >= span.start_event
+                        && span
+                            .end
+                            .is_none_or(|end| projection.event_items[e] < end.item)
+                }
+                ClassV1::Record(_) => false,
+                ClassV1::Live => true,
+            };
+        }
         let Some(span) = projection.current_span(r.object) else {
             return false;
         };
@@ -822,7 +850,12 @@ pub(crate) fn export_v1(
     };
     let mut p0: HashMap<ObjectId, u32> = HashMap::new();
     for (r, region) in &refs {
-        let counts = (*region == "live") || (new_id.contains_key(&r.object) && linkable(r));
+        // Mutant L4 links raw history references to current handles; its
+        // epochs map on the same path, so they count toward p0 too.
+        let raw_l4 =
+            is(MutantV1::L4) && r.class != ClassV1::Live && !pinned_untracked.contains(&r.object);
+        let counts =
+            (*region == "live") || (new_id.contains_key(&r.object) && (linkable(r) || raw_l4));
         if counts {
             for &g in &r.generations {
                 let e = p0.entry(r.object).or_insert(g);
