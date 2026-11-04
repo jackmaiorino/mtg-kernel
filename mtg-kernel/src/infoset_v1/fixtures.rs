@@ -1419,19 +1419,19 @@ fn w_pin_engine_fixtures() {
 /// Faeries; CawGates holds four tracked Hawks (three fetched, one bounced by
 /// Snap), then Brainstorms and puts back two cards, so the tracker keeps two
 /// Hawk count facts and P exports two `known_name` Hawks in every variant.
-/// Mutant L8 binds those facts to the first true remaining Hawks with `C:`
-/// handles. A bound copy exports the generation of its last span: a fetched
-/// Hawk's span began with its observed search (generation 2), the bounced
-/// Hawk's with its unlinked move back to the hand (generation 1). So:
+/// Mutant L8 binds those facts to the first true remaining Hawks, with `C:`
+/// handles and continuity: history made inside a bound copy's last span (its
+/// search, or its bounce back to the hand) links to the handle instead of a
+/// tombstone. So L8's bytes name which physical copies remain:
 /// - no Hawk put back vs two fetched Hawks put back (the witness pair): L8
-///   binds two fetched copies in W and the fetched and the bounced copy in
-///   W', so its bytes differ while P's agree;
-/// - no Hawk put back vs the bounced and a fetched Hawk put back: L8 binds two
-///   fetched copies in both worlds (reported, not required).
+///   binds the first two fetched copies in W and the third fetched and the
+///   bounced copy in W';
+/// - no Hawk put back vs the bounced and a fetched Hawk put back: L8 binds
+///   two fetched copies in both worlds, not the same two (reported).
 ///
 /// Witness bar (ruling 6): at least 5 compared decisions where L8 differs and
-/// P does not, each shown in L8's bytes to differ only in a bound Hawk's
-/// generation (and the knowledge row that carries it).
+/// P does not, each shown in L8's bytes to differ through the bound copies
+/// (`l8_mechanism`).
 #[test]
 fn l8_bound_copies_engine_fixture() {
     let (mut total, mut equal_copies, mut equal_samples) = (0u64, 0u64, 0u64);
@@ -1450,76 +1450,121 @@ fn l8_bound_copies_engine_fixture() {
     );
 }
 
-/// The paths at which two canonical exports differ (labels and state), with
-/// the first export's labels and state.
-fn export_differences(x: &[u8], y: &[u8]) -> (Vec<String>, Value, Value) {
-    fn parse(b: &[u8]) -> (Value, Value) {
+/// One side of a canonical export: its handle labels and its state.
+struct ExportSideV1 {
+    labels: Value,
+    state: Value,
+}
+
+impl ExportSideV1 {
+    fn parse(b: &[u8]) -> Self {
         let text = std::str::from_utf8(b).expect("utf-8 export");
         let mut parts = text.splitn(3, '\n');
         let _schema = parts.next();
-        let labels: Value = serde_json::from_str(parts.next().expect("labels")).expect("labels");
-        let state: Value = serde_json::from_str(parts.next().expect("state")).expect("state");
-        (labels, state)
+        let labels = serde_json::from_str(parts.next().expect("labels")).expect("labels");
+        let state = serde_json::from_str(parts.next().expect("state")).expect("state");
+        Self { labels, state }
     }
-    fn walk(a: &Value, b: &Value, path: String, out: &mut Vec<String>) {
-        match (a, b) {
-            (Value::Object(x), Value::Object(y)) => {
-                for k in x.keys().chain(y.keys()).collect::<BTreeSet<_>>() {
-                    walk(
-                        x.get(k).unwrap_or(&Value::Null),
-                        y.get(k).unwrap_or(&Value::Null),
-                        format!("{path}.{k}"),
-                        out,
-                    );
-                }
-            }
-            (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
-                for (i, (u, v)) in x.iter().zip(y).enumerate() {
-                    walk(u, v, format!("{path}[{i}]"), out);
-                }
-            }
-            _ if a != b => out.push(path),
-            _ => {}
-        }
+
+    /// Handles of `C:`-labelled Squadron Hawks in `owner`'s exported hand.
+    fn c_hawks_in_hand(&self, owner: PlayerId) -> Vec<u64> {
+        let hawk = u64::from(id("Squadron Hawk"));
+        self.state["players"][owner.index()]["hand"]
+            .as_array()
+            .map(|h| {
+                h.iter()
+                    .filter_map(Value::as_u64)
+                    .filter(|&i| {
+                        self.state["objects"]["items"][i as usize]["card_def"].as_u64()
+                            == Some(hawk)
+                            && self.labels[i as usize]
+                                .as_str()
+                                .is_some_and(|l| l.starts_with("C:"))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
-    let ((lx, sx), (ly, sy)) = (parse(x), parse(y));
-    let mut out = Vec::new();
-    walk(&lx, &ly, "labels".into(), &mut out);
-    walk(&sx, &sy, "state".into(), &mut out);
-    (out, lx, sx)
 }
 
-/// Checks that L8's two exports differ only through its bound copies: every
-/// differing path is the generation of a `C:`-handled Squadron Hawk in the
-/// opponent's exported hand, or a knowledge row's generation. Returns the
-/// paths and a byte window at the first difference.
+/// The differing leaves of two JSON values: (path, left, right).
+fn json_differences(a: &Value, b: &Value, path: String, out: &mut Vec<(String, Value, Value)>) {
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            for k in x.keys().chain(y.keys()).collect::<BTreeSet<_>>() {
+                json_differences(
+                    x.get(k).unwrap_or(&Value::Null),
+                    y.get(k).unwrap_or(&Value::Null),
+                    format!("{path}.{k}"),
+                    out,
+                );
+            }
+        }
+        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
+            for (i, (u, v)) in x.iter().zip(y).enumerate() {
+                json_differences(u, v, format!("{path}[{i}]"), out);
+            }
+        }
+        _ if a != b => out.push((path, a.clone(), b.clone())),
+        _ => {}
+    }
+}
+
+/// Checks that L8's two exports differ through its bound copies (lead ruling
+/// 6). In both worlds P exports no tracked Hawk in the opponent's hand, so
+/// the `C:` Hawks there are exactly L8's bound copies. Every differing leaf
+/// must be a handle label, an arena object that is a Hawk or a tombstone, an
+/// `engine.event_history` reference, or a knowledge row; and at least one
+/// differing history reference must name a bound copy in one world (L8's
+/// `C:` continuity links that copy's own observed history). Returns the
+/// differing paths and a byte window at the first difference.
 fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, String), String> {
-    let (paths, labels, state) = export_differences(x, y);
-    if paths.is_empty() {
+    let (sx, sy) = (ExportSideV1::parse(x), ExportSideV1::parse(y));
+    let mut diffs = Vec::new();
+    json_differences(&sx.labels, &sy.labels, "labels".into(), &mut diffs);
+    json_differences(&sx.state, &sy.state, "state".into(), &mut diffs);
+    if diffs.is_empty() {
         return Err("L8's exports are equal".into());
     }
-    let hand: Vec<u64> = state["players"][opp.index()]["hand"]
-        .as_array()
-        .map(|h| h.iter().filter_map(Value::as_u64).collect())
-        .unwrap_or_default();
+    let (bx, by) = (sx.c_hawks_in_hand(opp), sy.c_hawks_in_hand(opp));
+    if bx.is_empty() || by.is_empty() {
+        return Err("L8 binds no Hawk".into());
+    }
     let hawk = u64::from(id("Squadron Hawk"));
-    for p in &paths {
-        let bound_hawk = p
-            .strip_prefix("state.objects.items[")
-            .and_then(|r| r.strip_suffix("].zone_change_count"))
-            .and_then(|i| i.parse::<usize>().ok())
-            .is_some_and(|i| {
-                state["objects"]["items"][i]["card_def"].as_u64() == Some(hawk)
-                    && labels[i].as_str().is_some_and(|l| l.starts_with("C:"))
-                    && hand.contains(&(i as u64))
-            });
-        let knowledge_row =
-            p.starts_with("state.hand_knowledge") && p.ends_with(".zone_change_count");
-        if !(bound_hawk || knowledge_row) {
-            return Err(format!(
-                "L8's exports differ outside its bound copies at {p}"
-            ));
+    let object_ok = |side: &ExportSideV1, i: usize| {
+        let o = &side.state["objects"]["items"][i];
+        o["card_def"].as_u64() == Some(hawk) || o["zone"] == "Command"
+    };
+    let mut names_bound = false;
+    for (p, l, r) in &diffs {
+        if p.starts_with("labels[") || p.starts_with("state.hand_knowledge") {
+            continue;
         }
+        if let Some(rest) = p.strip_prefix("state.objects.items[") {
+            let i: usize = rest
+                .split(']')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .ok_or_else(|| format!("unparsed path {p}"))?;
+            if object_ok(&sx, i) && object_ok(&sy, i) {
+                continue;
+            }
+            return Err(format!("L8's exports differ in a non-Hawk object at {p}"));
+        }
+        if p.starts_with("state.engine.event_history[") {
+            if l.as_u64().is_some_and(|v| bx.contains(&v))
+                || r.as_u64().is_some_and(|v| by.contains(&v))
+            {
+                names_bound = true;
+            }
+            continue;
+        }
+        return Err(format!(
+            "L8's exports differ outside its bound copies at {p}"
+        ));
+    }
+    if !names_bound {
+        return Err("no differing history reference names a bound copy".into());
     }
     let at = x
         .iter()
@@ -1527,12 +1572,14 @@ fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, Strin
         .position(|(u, v)| u != v)
         .unwrap_or(x.len().min(y.len()));
     let window = |b: &[u8]| {
-        String::from_utf8_lossy(&b[at.saturating_sub(120)..(at + 60).min(b.len())]).to_string()
+        String::from_utf8_lossy(&b[at.saturating_sub(120)..(at + 80).min(b.len())]).to_string()
     };
+    let paths: Vec<String> = diffs.iter().map(|(p, _, _)| p.clone()).take(12).collect();
     Ok((
         paths,
         format!(
-            "first difference at byte {at}:\n  W  ...{}...\n  W' ...{}...",
+            "{} differing leaves; first difference at byte {at}:\n  W  ...{}...\n  W' ...{}...",
+            diffs.len(),
             window(x),
             window(y)
         ),

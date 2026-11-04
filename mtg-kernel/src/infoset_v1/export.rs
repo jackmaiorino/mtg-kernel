@@ -799,7 +799,40 @@ pub(crate) fn export_v1(
 
     // Step 8: the canonical epoch path. p0(o) = min R(o) over live and
     // linked references, else the start of the current span.
+    // Mutant L8's bound copies keep `C:` continuity: history references made
+    // inside the copy's last span link to its handle, as if the count fact
+    // were still that physical copy.
+    let l8_bound: BTreeSet<ObjectId> = if is(MutantV1::L8) {
+        opp_hand_tracked
+            .iter()
+            .copied()
+            .filter(|id| !projection.tracked(*id))
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
     let linkable = |r: &RefV1| -> bool {
+        if l8_bound.contains(&r.object) {
+            let Some(span) = projection.last_span(r.object) else {
+                return false;
+            };
+            if !r.generations.is_empty() {
+                return r
+                    .generations
+                    .iter()
+                    .all(|&g| g >= span.start_gen && span.end.is_none_or(|end| g <= end.last_gen));
+            }
+            return match r.class {
+                ClassV1::Event(e) => {
+                    e >= span.start_event
+                        && span
+                            .end
+                            .is_none_or(|end| projection.event_items[e] < end.item)
+                }
+                ClassV1::Record(_) => false,
+                ClassV1::Live => true,
+            };
+        }
         let Some(span) = projection.current_span(r.object) else {
             return false;
         };

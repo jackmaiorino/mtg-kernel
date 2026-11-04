@@ -23,8 +23,16 @@ pub(crate) fn is_public(zone: Zone) -> bool {
 /// positions in the merged event and note stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SpanV1 {
-    /// The generation at which the span began.
+    /// The generation at which the span began: the epoch the object entered
+    /// (or was first seen in). Every new span starts this way, however V
+    /// came to follow the object (Sol review of amendment 43.3): the default
+    /// epoch baseline must not reveal whether a copy was tracked before.
     pub start_gen: u32,
+    /// The earliest generation V observed for this span: one below
+    /// `start_gen` when the span began with a move V observed (V saw the
+    /// epoch the card left). Read only to validate live references (R2);
+    /// it never makes that epoch history-linkable or sets the baseline.
+    pub cover_gen: u32,
     pub start_item: usize,
     /// The object's position within the record where the span starts, as
     /// presented to V (its index among the objects V identified in that
@@ -162,7 +170,7 @@ impl ProjectionV1 {
     pub(crate) fn span_of(&self, id: ObjectId, g: u32) -> Option<&SpanV1> {
         let o = self.objects.get(id.0 as usize)?;
         o.spans.iter().rev().find(|s| {
-            s.start_gen <= g
+            s.cover_gen <= g
                 && match s.end {
                     Some(end) => g <= end.last_gen,
                     None => g <= o.moves,
@@ -379,6 +387,7 @@ pub(crate) fn project_v1(
                 }
                 o.spans.push(SpanV1 {
                     start_gen: object.zone_change_count,
+                    cover_gen: object.zone_change_count,
                     start_item: item,
                     start_pos: u32::MAX,
                     start_event: state.engine.event_history.len(),
@@ -513,13 +522,15 @@ impl WalkV1<'_> {
                         }
                     }
                 }
-                // A span that begins with a move V observed includes the
-                // epoch the card left (its origin epoch is one below the
-                // epoch it entered, and V saw the move).
+                // A span that begins with a move V observed covers the epoch
+                // the card left (its origin epoch is one below the epoch it
+                // entered, and V saw the move), for live-reference checks
+                // only; the span itself starts at the entered epoch.
                 let entered_by_observed_move =
                     observed.contains(&id) && prev_zones.iter().any(|(x, _)| *x == id);
                 let o = &mut self.objs[i];
-                let start_gen = if entered_by_observed_move {
+                let start_gen = o.moves;
+                let cover_gen = if entered_by_observed_move {
                     o.moves.saturating_sub(1)
                 } else {
                     o.moves
@@ -531,6 +542,7 @@ impl WalkV1<'_> {
                 let o = &mut self.objs[i];
                 o.spans.push(SpanV1 {
                     start_gen,
+                    cover_gen,
                     start_item: item,
                     start_pos,
                     start_event: next_event,
@@ -582,6 +594,7 @@ impl WalkV1<'_> {
                     }
                     o.spans.push(SpanV1 {
                         start_gen: o.moves,
+                        cover_gen: o.moves,
                         start_item: item,
                         start_pos,
                         start_event: next_event,
