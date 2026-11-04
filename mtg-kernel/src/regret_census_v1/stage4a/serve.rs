@@ -282,7 +282,10 @@ pub(crate) fn merge_v1(
     let mut merged = vec![CountsV1::default(); width];
     let mut excluded = Vec::new();
     let mut units = 0u64;
-    for t in trees {
+    // Tree order, whatever order the trees completed or arrived in.
+    let mut trees: Vec<&TreeResultV1> = trees.iter().collect();
+    trees.sort_by_key(|t| t.tree);
+    for &t in &trees {
         units += t.transitions;
         match &t.edges {
             Some(edges) if t.menu_sha256 == menu && edges.len() == width => {

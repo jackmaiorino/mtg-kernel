@@ -60,30 +60,48 @@ fn seat(p: PlayerSeatV1) -> PlayerId {
 /// Section 5: at least two candidates, at least two of them not mana
 /// abilities.
 pub(crate) fn eligible_v1(decision: &RlSessionDecisionV1) -> bool {
-    let non_mana = decision
-        .legal_actions
-        .iter()
-        .filter(|a| !matches!(a.semantic, ActionSemanticV1::ActivateManaAbility { .. }))
-        .count();
-    decision.legal_actions.len() >= 2 && non_mana >= 2
+    eligible_semantics_v1(decision.legal_actions.iter().map(|a| &a.semantic))
 }
 
-/// Runs the producer for `decision` on the lockstep session `fast` and
-/// stores the extension in `state.pending`. An Err is the halted reason
-/// (engine fault F1).
-pub(crate) fn infoset_extension_v1(
-    fast: &FastActorSessionV1,
-    decision: &RlSessionDecisionV1,
-    state: &mut InfosetBridgeV1,
-) -> Result<(), String> {
-    state.pending = None;
-    state.root_ids = None;
-    if !eligible_v1(decision) {
-        return Ok(());
+/// Design 5's eligibility on a menu's semantics: at least two candidates,
+/// at least two of them not mana abilities.
+pub(crate) fn eligible_semantics_v1<'a>(
+    semantics: impl IntoIterator<Item = &'a ActionSemanticV1>,
+) -> bool {
+    let (mut all, mut non_mana) = (0usize, 0usize);
+    for semantic in semantics {
+        all += 1;
+        non_mana += usize::from(!matches!(
+            semantic,
+            ActionSemanticV1::ActivateManaAbility { .. }
+        ));
     }
-    let viewer = seat(decision.acting_player);
-    let index = state.eligible[viewer.index()];
-    state.eligible[viewer.index()] += 1;
+    all >= 2 && non_mana >= 2
+}
+
+/// What the bridge delivers at an eligible decision of `viewer` whose
+/// viewer-local index is `index`: the wire extension and what it records.
+/// A pure function of the session (the bridge and AC1 both call it).
+pub(crate) enum DeliveredV1 {
+    Payload {
+        value: Value,
+        ids: BTreeMap<u64, u64>,
+        map_missing: bool,
+    },
+    Refused {
+        value: Value,
+        error: ExportErrorV1,
+        subclass: &'static str,
+    },
+}
+
+/// The extension `viewer` receives at the current (eligible) decision; an
+/// engine fault is an error.
+pub(crate) fn delivered_v1(
+    fast: &FastActorSessionV1,
+    viewer: PlayerId,
+    index: u64,
+) -> Result<DeliveredV1, String> {
     let lists = fast.deck_ids_v1().clone().map(|id| {
         runtime_deck_by_id(&id)
             .map(|d| d.card_ids.to_vec())
@@ -99,11 +117,9 @@ pub(crate) fn infoset_extension_v1(
         },
         ExportOptionsV1::default(),
     );
-    let seat_index = viewer.index();
-    let value = match exported {
+    Ok(match exported {
         Ok(export) => match PayloadV1::new(&export, fast, viewer, index) {
             Some(payload) => {
-                state.tally[seat_index].record(&Ok(()));
                 // The order map (design 4 and 7): the entrant's pick is an
                 // index into the imported session's menu, which lists the
                 // candidates in canonical-id order; `live_rows[i]` is the
@@ -123,45 +139,87 @@ pub(crate) fn infoset_extension_v1(
                     (Some(a), Some(b)) => live_rows_v1(a, b),
                     _ => None,
                 };
-                if live_rows.is_none() {
-                    state.order_map_missing[seat_index] += 1;
-                }
-                state.root_ids = Some((decision.step, ids));
                 // JSON text, like `x_kernel_v5`: the canonical state carries
                 // u64 values (the RNG state, hashes) beyond the wire's 2^53
                 // integer bound.
-                json!({
-                    "schema": INFOSET_SCHEMA_V1,
-                    "payload_json": String::from_utf8(payload.to_bytes())
-                        .map_err(|_| "engine_contract_failure:infoset payload".to_string())?,
-                    "live_rows": live_rows,
-                    "row_keys": lockstep_keys,
-                })
+                DeliveredV1::Payload {
+                    map_missing: live_rows.is_none(),
+                    value: json!({
+                        "schema": INFOSET_SCHEMA_V1,
+                        "payload_json": String::from_utf8(payload.to_bytes())
+                            .map_err(|_| "engine_contract_failure:infoset payload".to_string())?,
+                        "live_rows": live_rows,
+                        "row_keys": lockstep_keys,
+                    }),
+                    ids,
+                }
             }
             None => {
                 // The live surface names objects the payload cannot carry
                 // (R2); the subclass names that surface state (amendment
                 // 43.1 part 2), so every R2 can be classified.
-                let detail = fast.payload_refusal_detail_v1(viewer);
-                let refused = ExportErrorV1::Refused {
-                    code: crate::infoset_v1::RefusalCodeV1::R2,
-                    detail: format!("surface: {detail}"),
-                };
-                state.tally[seat_index].record_refusal(&refused, detail);
-                json!({"schema": INFOSET_SCHEMA_V1, "refusal": "R2", "refusal_detail": detail})
+                let subclass = fast.payload_refusal_detail_v1(viewer);
+                DeliveredV1::Refused {
+                    value: json!({"schema": INFOSET_SCHEMA_V1, "refusal": "R2", "refusal_detail": subclass}),
+                    error: ExportErrorV1::Refused {
+                        code: crate::infoset_v1::RefusalCodeV1::R2,
+                        detail: format!("surface: {subclass}"),
+                    },
+                    subclass,
+                }
             }
         },
         Err(error @ ExportErrorV1::Refused { .. }) => {
             // An export refusal's subclass is fixed by its code (the free
             // text stays engine-side): R3 says whose plan, any other code
             // `export`.
-            let code = error.code_name();
             let subclass = export_refusal_subclass_v1(&error);
-            state.tally[seat_index].record_refusal(&error, subclass);
-            json!({"schema": INFOSET_SCHEMA_V1, "refusal": code, "refusal_detail": subclass})
+            DeliveredV1::Refused {
+                value: json!({"schema": INFOSET_SCHEMA_V1, "refusal": error.code_name(), "refusal_detail": subclass}),
+                error,
+                subclass,
+            }
         }
         Err(ExportErrorV1::Fault { code, detail }) => {
             return Err(format!("engine_fault:infoset:{code:?}: {detail}"));
+        }
+    })
+}
+
+pub(crate) fn infoset_extension_v1(
+    fast: &FastActorSessionV1,
+    decision: &RlSessionDecisionV1,
+    state: &mut InfosetBridgeV1,
+) -> Result<(), String> {
+    state.pending = None;
+    state.root_ids = None;
+    if !eligible_v1(decision) {
+        return Ok(());
+    }
+    let viewer = seat(decision.acting_player);
+    let index = state.eligible[viewer.index()];
+    state.eligible[viewer.index()] += 1;
+    let seat_index = viewer.index();
+    let value = match delivered_v1(fast, viewer, index)? {
+        DeliveredV1::Payload {
+            value,
+            ids,
+            map_missing,
+        } => {
+            state.tally[seat_index].record(&Ok(()));
+            if map_missing {
+                state.order_map_missing[seat_index] += 1;
+            }
+            state.root_ids = Some((decision.step, ids));
+            value
+        }
+        DeliveredV1::Refused {
+            value,
+            error,
+            subclass,
+        } => {
+            state.tally[seat_index].record_refusal(&error, subclass);
+            value
         }
     };
     state.pending = Some(value);

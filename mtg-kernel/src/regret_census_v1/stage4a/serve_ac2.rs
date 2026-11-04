@@ -8,9 +8,20 @@
 //!   run serially in this process;
 //! - a K = 1 pool against the single-tree path at the full budget.
 //!
+//!
+//! Fairness gate G7: the direct comparator imports with the payload's own
+//! surface context (combat and discard records included), so it differs
+//! from the serialized import only by the bytes; a row passes only when the
+//! pool's merged counts, charge and pick equal the serial merge's, every
+//! tree ran exactly its partition of B, and merging the trees in reversed
+//! completion order gives the same merge. Each row names its root kind
+//! (plain, combat or discard).
+//!
 //! Environment: `W1_AC2_DECKS` (two deck ids), `W1_AC2_GAME_SEED`,
 //! `W1_AC2_DECISIONS` (eligible decisions to check), `W1_AC2_BUDGET` (B),
-//! `W1_AC2_K`, `W1_AC2_SEEDS` (comma list). Output: JSONL rows at `out=`.
+//! `W1_AC2_K`, `W1_AC2_SEEDS` (comma list), optional `W1_AC2_ONLY` (comma
+//! list of root kinds to check, the others skipped). Output: JSONL rows at
+//! `out=`.
 
 use super::play::decision;
 use super::serve::{menu_sha256, merge_v1, partition_v1, search_tree_v1, TreeResultV1};
@@ -108,6 +119,13 @@ pub(super) fn run(
     if seeds.is_empty() || wanted == 0 || k == 0 {
         return Err("W1_AC2_SEEDS, W1_AC2_DECISIONS and W1_AC2_K must be nonempty".into());
     }
+    let only: Option<Vec<String>> = std::env::var("W1_AC2_ONLY").ok().map(|v| {
+        v.split(',')
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .collect()
+    });
+    let mut kinds: std::collections::BTreeMap<&'static str, u64> = Default::default();
     let lists = [d0, d1].map(|id| {
         runtime_deck_by_id(id)
             .map(|d| d.card_ids.to_vec())
@@ -179,13 +197,30 @@ pub(super) fn run(
                         .map_err(|e| e.to_string())?;
                     }
                     Some(payload) => {
+                        let kind = if payload.surface.combat.is_some() {
+                            "combat"
+                        } else if payload.surface.discard.is_some() {
+                            "discard"
+                        } else {
+                            "plain"
+                        };
+                        if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == kind)) {
+                            let a = player.select_fast_session_v1(&s)?;
+                            s.step(d.episode_id, d.step, a)
+                                .map_err(|e| format!("game step: {e:?}"))?;
+                            continue;
+                        }
                         checked += 1;
+                        *kinds.entry(kind).or_default() += 1;
                         let bytes = payload.to_bytes();
                         let imported = PayloadV1::from_bytes(&bytes)?.import()?;
-                        let direct = FastActorSessionV1::import_infoset_v1(
+                        // The in-memory import with the payload's own surface
+                        // context: only the serialization differs.
+                        let direct = FastActorSessionV1::import_infoset_with_surface_v1(
                             &s,
                             x.state.clone(),
                             own_index[seat.index()],
+                            Some(payload.surface.clone()),
                         );
                         for &seed in &seeds {
                             let root_id = format!(
@@ -207,6 +242,8 @@ pub(super) fn run(
                             if row["equal"] != json!(true) {
                                 failures += 1;
                             }
+                            let mut row = row;
+                            row["root_kind"] = json!(kind);
                             writeln!(out, "{row}").map_err(|e| e.to_string())?;
                         }
                         out.flush().map_err(|e| e.to_string())?;
@@ -225,7 +262,7 @@ pub(super) fn run(
     writeln!(
         out,
         "{}",
-        json!({"kind": "done", "checked": checked, "failures": failures})
+        json!({"kind": "done", "checked": checked, "failures": failures, "root_kinds": kinds})
     )
     .map_err(|e| e.to_string())?;
     if failures > 0 {
@@ -293,8 +330,29 @@ fn check_root(
         .unwrap_or("")
         .to_string();
     let direct_vs_import = digests(&direct_trees) == digests(&imported_trees);
+    // The pool's whole merge: digests, pick, merged counts and charge.
     let pool_vs_serial = pooled_digests == digests(&imported_trees)
-        && pooled["search"]["pick"] == json!(serial_merge.pick);
+        && pooled["search"]["pick"] == json!(serial_merge.pick)
+        && pooled["search"]["merged"] == json!(serial_merge.merged)
+        && pooled["search"]["charge"] == json!(serial_merge.charge)
+        && pooled["search"]["units"] == json!(serial_merge.units);
+    // Every tree ran exactly its partition of B (pool and serial).
+    let pooled_budgets: Vec<u64> = pooled["trees"]
+        .as_array()
+        .ok_or("pool trees")?
+        .iter()
+        .map(|t| t["units_budget"].as_u64().unwrap_or(u64::MAX))
+        .collect();
+    let partitions: Vec<u64> = (0..k).map(|t| partition_v1(budget, t, k)).collect();
+    let per_tree_budget = pooled_budgets == partitions
+        && imported_trees
+            .iter()
+            .zip(&partitions)
+            .all(|(t, &p)| t.units_budget == p && t.transitions <= p);
+    // Completion order does not change the merge.
+    let reversed: Vec<TreeResultV1> = imported_trees.iter().rev().cloned().collect();
+    let reordered =
+        merge_v1(root_id, budget, 0, &payload.sha256, &menu, width, &reversed) == serial_merge;
     let k1_vs_single = single_pool == single.digest;
     // Identity of empty trees proves nothing: every tree must have searched.
     let searched = imported_trees
@@ -305,8 +363,9 @@ fn check_root(
         json!({"kind": "root", "root_id": root_id, "payload_sha256": payload.sha256,
         "direct_vs_import": direct_vs_import, "pool_vs_serial": pool_vs_serial,
         "k1_pool_vs_single": k1_vs_single,
-        "searched": searched,
-        "equal": direct_vs_import && pool_vs_serial && k1_vs_single && searched,
+        "searched": searched, "per_tree_budget": per_tree_budget, "reordered_merge": reordered,
+        "equal": direct_vs_import && pool_vs_serial && k1_vs_single && searched
+            && per_tree_budget && reordered,
         "pick": serial_merge.pick, "stage": serial_merge.stage, "units": serial_merge.units,
         "tree_digests": digests(&imported_trees),
         "trees": imported_trees.iter().map(|t| json!({"tree": t.tree, "units_budget": t.units_budget,
