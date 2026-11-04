@@ -57,7 +57,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub use auxiliary::{SAuxiliaryInputV1, SAuxiliaryResultV1, SAuxiliaryRowV1};
-pub use checkpoint::{decode_checkpoint_v1, encode_checkpoint_v1};
+pub use checkpoint::{
+    decode_checkpoint_v1, decode_weights_snapshot_v1, encode_checkpoint_v1,
+    encode_weights_snapshot_v1, SWeightsSnapshotV1, S_WEIGHTS_SNAPSHOT_SCHEMA_V1,
+};
 
 /// The architecture identity records carry.
 pub const S_ARCHITECTURE_V1: &str = "s-object-transformer-v1";
