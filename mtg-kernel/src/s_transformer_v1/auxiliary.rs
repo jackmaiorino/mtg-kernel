@@ -58,6 +58,15 @@ pub struct SAuxiliaryResultV1 {
     /// Auxiliary and ordinary gradient norms and dot products, whole network
     /// and by part (policy head, value head, shared).
     pub gradient_components: Value,
+    /// L2 norms over S's heads (`policy.*` and `value.*`) before the cap and
+    /// Adam, net-8's head-norm fields: the auxiliary gradient's and the
+    /// ordinary one's (gauge entries zero in both).
+    pub auxiliary_head_l2: f64,
+    pub ordinary_head_l2: f64,
+    /// The auxiliary term's own raw gradient at the policy output bias
+    /// (`policy.2.bias`, a gauge entry, zeroed before Adam): net-8's
+    /// scorer-bias residual.
+    pub auxiliary_bias_residual: f32,
     pub cap: Option<Value>,
     pub adam_steps: Option<Value>,
     /// The parameters after the ordinary-only Adam step, beside `adam_steps`.
@@ -135,6 +144,18 @@ fn part_v1(name: &str) -> &'static str {
     }
 }
 
+/// L2 over S's head tensors (`policy.*` and `value.*`).
+fn head_l2_v1(layout: &LayoutV1, values: &[f32]) -> f64 {
+    layout
+        .tensors
+        .iter()
+        .filter(|spec| part_v1(&spec.name) != "shared")
+        .flat_map(|spec| &values[spec.offset..spec.offset + spec.len])
+        .map(|&v| f64::from(v) * f64::from(v))
+        .sum::<f64>()
+        .sqrt()
+}
+
 fn components_v1(layout: &LayoutV1, auxiliary: &[f32], ordinary: &[f32]) -> Value {
     let component = |kind: &str| {
         let (mut a, mut b, mut dot) = (0.0_f64, 0.0_f64, 0.0_f64);
@@ -166,6 +187,9 @@ pub(crate) struct SGradientsV1 {
     pub(crate) divergences: Vec<Option<f64>>,
     pub(crate) auxiliary_loss: f64,
     pub(crate) mask: Option<SPolicyMaskV1>,
+    /// The auxiliary gradient at the policy output bias before the gauge
+    /// ranges were zeroed.
+    pub(crate) auxiliary_bias_residual: f32,
 }
 
 impl SModelV1 {
@@ -230,10 +254,14 @@ impl SModelV1 {
             auxiliary_loss += scale * value.divergence;
             divergences.push(Some(value.divergence));
         }
+        let auxiliary_bias_residual = auxiliary[self.layout.pol2.b];
         for range in self.layout.gauge_ranges_v1() {
             auxiliary[range].fill(0.0);
         }
-        if auxiliary.iter().any(|g| !g.is_finite()) || !auxiliary_loss.is_finite() {
+        if auxiliary.iter().any(|g| !g.is_finite())
+            || !auxiliary_loss.is_finite()
+            || !auxiliary_bias_residual.is_finite()
+        {
             return Err("S auxiliary gradient is not finite".into());
         }
         Ok(SGradientsV1 {
@@ -243,6 +271,7 @@ impl SModelV1 {
             divergences,
             auxiliary_loss,
             mask,
+            auxiliary_bias_residual,
         })
     }
 }
@@ -266,11 +295,14 @@ impl STrainStateV1 {
             divergences,
             auxiliary_loss,
             mask,
+            auxiliary_bias_residual,
         } = self
             .model
             .auxiliary_gradients_v1(groups, value_coefficient, input, work)?;
         let active = input.coefficient > 0.0 && !input.rows.is_empty();
         let gradient_components = components_v1(&self.model.layout, &auxiliary, &grad);
+        let auxiliary_head_l2 = head_l2_v1(&self.model.layout, &auxiliary);
+        let ordinary_head_l2 = head_l2_v1(&self.model.layout, &grad);
         let cap = if input.step_telemetry || input.cap.is_some() {
             let (a, b) = (l2_v1(&auxiliary), l2_v1(&grad));
             let applied = match input.cap {
@@ -331,6 +363,9 @@ impl STrainStateV1 {
                 divergences_before: divergences,
                 auxiliary_loss,
                 gradient_components,
+                auxiliary_head_l2,
+                ordinary_head_l2,
+                auxiliary_bias_residual,
                 cap,
                 adam_steps,
                 ordinary_only,

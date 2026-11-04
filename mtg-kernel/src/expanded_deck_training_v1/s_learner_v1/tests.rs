@@ -309,6 +309,12 @@ fn s_learner_end_to_end_v1() {
     assert_ne!(after.model.weights_sha256, identity.model.weights_sha256);
     let record: SLearnerCheckpointV1 = read_pinned(&checkpoint).unwrap();
     assert_eq!(record.trajectories, trajectories);
+    // An ordinary record has no `ex1` member (PR A's fields exactly).
+    assert!(record.ex1.is_none());
+    let bytes = fs::read(&checkpoint.path).unwrap();
+    let document: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(document.get("ex1").is_none());
+    assert_eq!(serde_json::to_value(&record).unwrap(), document);
     let restored = decode_checkpoint_v1(&fs::read(&record.state.path).unwrap()).unwrap();
     assert_eq!(restored.state_sha256_v1(), after.state_sha256);
     // The run driver's continuation read binds the update's inputs.
@@ -591,7 +597,7 @@ fn w5_options_v1(chain: &str) -> crate::native_expanded_training_run_v1::Ex1RunO
         coefficient: 1.0,
         cap: super::super::search_targets_v1::SearchTargetCapV1::Ratio { kappa: 2.0 },
         w5: Some(crate::native_expanded_training_run_v1::W5RunOptionsV1 {
-            budget: 1_500,
+            budget: 8_000,
             key_memo_mib: 512,
         }),
     }
@@ -632,6 +638,7 @@ fn s_learner_w5_v1() {
     );
     let mut states = Vec::new();
     let mut masked = 0;
+    let mut placements = Vec::new();
     let mut last_checkpoint = None;
     for i in 0..2 {
         let pin: PinnedFileV1 = serde_json::from_value(result["iterations"][i].clone()).unwrap();
@@ -643,10 +650,41 @@ fn s_learner_w5_v1() {
             serde_json::from_value(update["ex1"]["receipt"].clone()).unwrap();
         let ex1: Value = read_pinned(&ex1_pin).unwrap();
         assert_eq!(ex1["method"], "w5-xact-v1");
-        assert_eq!(ex1["w5"]["budget"], 1_500);
+        assert_eq!(ex1["w5"]["budget"], 8_000);
         assert_eq!(ex1["w5"]["step_telemetry"], json!(i == 0), "update {i}");
         let exposure = &ex1["gradient_exposure"];
         assert_eq!(exposure["learner"], S_ARCHITECTURE_V1);
+        // Every field net-8's W5 exposure records.
+        for key in [
+            "rows",
+            "denominator",
+            "coefficient",
+            "kl_before",
+            "auxiliary_loss",
+            "total_loss",
+            "gradient_components",
+            "auxiliary_head_l2",
+            "ordinary_head_l2",
+            "auxiliary_bias_residual",
+            "cap",
+            "adam_steps",
+            "movement",
+            "thresholds",
+            "pg_masked_rows",
+            "step_telemetry",
+        ] {
+            assert!(exposure.get(key).is_some(), "S exposure lacks {key}");
+        }
+        for key in [
+            "method",
+            "receipt",
+            "collection",
+            "rows",
+            "cap",
+            "adam_steps",
+        ] {
+            assert!(update["ex1"].get(key).is_some(), "S update lacks ex1.{key}");
+        }
         let played = ex1["w5"]["pg_masked"].as_array().unwrap().len();
         assert_eq!(exposure["pg_masked_rows"], json!(played));
         assert_eq!(exposure["rows"], ex1["rows"]);
@@ -656,6 +694,7 @@ fn s_learner_w5_v1() {
         assert_eq!(exposure["adam_steps"].is_null(), !(i == 0 || rows == 0));
         assert_eq!(exposure["cap"]["mode"], "ratio");
         masked += played;
+        placements.push(ex1["w5"]["placements"].clone());
         let checkpoint: PinnedFileV1 =
             serde_json::from_value(update["checkpoint"].clone()).unwrap();
         let record: SLearnerCheckpointV1 = read_pinned(&checkpoint).unwrap();
@@ -665,7 +704,10 @@ fn s_learner_w5_v1() {
         states.push(update["after_state_sha256"].clone());
         last_checkpoint = Some(checkpoint);
     }
-    assert!(masked > 0, "no update masked a search-played row");
+    assert!(
+        masked > 0,
+        "no update masked a search-played row: {placements:?}"
+    );
     // The same run again reaches the same states.
     let again = run_native_expanded_training_v1(&config("run-b"), None).unwrap();
     for field in ["state_sha256", "model", "adam_step"] {

@@ -97,6 +97,58 @@ fn state_v1() -> STrainStateV1 {
     STrainStateV1::fresh_optimizer_v1(SModelV1::init_parity_v1(TINY_V1, 3).unwrap())
 }
 
+/// PR A's ordinary update, pinned from PR A's own code (#507 head
+/// 239cfad50, before the mask existed): two steps of the unmasked GAE update
+/// and of the inactive auxiliary path both give PR A's loss bits and state
+/// hashes.
+#[test]
+fn the_ordinary_update_keeps_pr_a_bits() {
+    const LOSS: u32 = 0xbf20_ad7e;
+    const POLICY: u32 = 0xbf36_a3ea;
+    const VALUE: u32 = 0x3e2f_b362;
+    const STATES: [&str; 2] = [
+        "93643d2c6681d0516c0eaf579adf5d5066b1f302a21a65a68cd905ea8b3195e7",
+        "1aa90b5168f818d5b38056b5ca4ba56111cf2a801369b8d0ab33657906150901",
+    ];
+    let data = data_v1(11, 5);
+    let groups = groups_v1(&data);
+    for inactive in [false, true] {
+        let mut state = state_v1();
+        let mut hashes = Vec::new();
+        for index in 0..2 {
+            let step = if inactive {
+                state
+                    .train_step_gae_auxiliary_v1(
+                        &groups,
+                        0.5,
+                        1.0e-3,
+                        &input_v1(&[], Some(2.0), Vec::new()),
+                        &mut SWorkV1::default(),
+                    )
+                    .unwrap()
+                    .0
+            } else {
+                state
+                    .train_step_gae_v1(&groups, 0.5, 1.0e-3, &mut SWorkV1::default())
+                    .unwrap()
+            };
+            if index == 0 {
+                assert_eq!(
+                    (
+                        step.loss.loss.to_bits(),
+                        step.loss.policy_term.to_bits(),
+                        step.loss.value_term.to_bits()
+                    ),
+                    (LOSS, POLICY, VALUE),
+                    "inactive {inactive}"
+                );
+            }
+            hashes.push(step.after_state_sha256);
+        }
+        assert_eq!(hashes, STATES, "inactive {inactive}");
+    }
+}
+
 /// No rows: the update is the ordinary one bit for bit, with its receipt.
 #[test]
 fn an_inactive_term_is_the_ordinary_update() {
@@ -186,17 +238,23 @@ fn combined_gradient_matches_central_differences_under_a_mask() {
                 assert_eq!(g.auxiliary[index].to_bits(), 0, "{} gauge", spec.name);
                 continue;
             }
-            let h = 4.0e-3f32;
-            let mut plus = model.values_v1().to_vec();
-            plus[index] += h;
-            let mut minus = model.values_v1().to_vec();
-            minus[index] -= h;
-            let fd = (total_of(&plus) - total_of(&minus))
-                / (f64::from(plus[index]) - f64::from(minus[index]));
+            // Central differences at h and h / 2 and their Richardson
+            // extrapolation, which cancels the h^2 term: synthetic count
+            // features up to 20 make some input weights strongly curved.
+            let central = |h: f32| {
+                let mut plus = model.values_v1().to_vec();
+                plus[index] += h;
+                let mut minus = model.values_v1().to_vec();
+                minus[index] -= h;
+                (total_of(&plus) - total_of(&minus))
+                    / (f64::from(plus[index]) - f64::from(minus[index]))
+            };
+            let (coarse, fine) = (central(4.0e-3), central(2.0e-3));
+            let fd = (4.0 * fine - coarse) / 3.0;
             let a = f64::from(combined[index]);
             assert!(
                 (fd - a).abs() <= 3.0e-3 + 0.03 * a.abs().max(fd.abs()),
-                "{} [{}]: analytic {a}, central difference {fd}",
+                "{} [{}]: analytic {a}, extrapolated {fd} (central {coarse}, {fine})",
                 spec.name,
                 index - spec.offset
             );

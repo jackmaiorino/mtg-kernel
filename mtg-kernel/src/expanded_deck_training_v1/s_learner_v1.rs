@@ -614,6 +614,9 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                 "auxiliary_loss":auxiliary.auxiliary_loss,
                 "total_loss":f64::from(step.loss.loss) + auxiliary.auxiliary_loss,
                 "gradient_components":auxiliary.gradient_components,
+                "auxiliary_head_l2":auxiliary.auxiliary_head_l2,
+                "ordinary_head_l2":auxiliary.ordinary_head_l2,
+                "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual,
                 "cap":auxiliary.cap,"adam_steps":auxiliary.adam_steps,
                 "movement":movement,"thresholds":ex1_update_v1::ex1_thresholds_v1(),
                 "learner":S_ARCHITECTURE_V1});
