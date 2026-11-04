@@ -604,6 +604,27 @@ impl NativeExpandedTrainingRunV1 {
             "opponent roster exceeds 128 entries",
         )?;
         validate_source_paths(&self.initial_source)?;
+        // W5's native S learner (`s_learner_v1`) runs the ordinary CPU GAE
+        // update and collection only; its own update and loader refuse the
+        // rest too, this check refuses them before any work.
+        if self.initial_source.s_learner.is_some() {
+            check(
+                self.update_backend.is_cpu()
+                    && self.update_backward_execution.is_sequential()
+                    && self.record_format.is_v1()
+                    && self.collection_sampler.is_legacy()
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    ),
+                "an S learner run requires the ordinary sequential CPU GAE update, record                  format v1 and the legacy sampler, without line (b), E, SQ1, search targets or ex1",
+            )?;
+        }
         if let Some(options) = &self.e_supported {
             // The E command is the sequential CPU GAE update with full Adam and
             // the unchanged deployment sampler; nothing else may be combined.
@@ -795,7 +816,10 @@ impl NativeExpandedTrainingRunV1 {
 }
 
 fn validate_source_paths(source: &ExpandedModelSourceV1) -> Result<(), String> {
-    for pin in std::iter::once(&source.play_import).chain(source.checkpoint.iter()) {
+    for pin in std::iter::once(&source.play_import)
+        .chain(source.checkpoint.iter())
+        .chain(source.s_learner.iter().map(|member| &member.initial))
+    {
         check(
             pin.path.is_absolute()
                 && pin.sha256.len() == 64
@@ -1257,6 +1281,7 @@ fn validate_update(
     ex1: Option<(&Ex1RunOptionsV1, usize, &PinnedFileV1)>,
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
+    loss_selection: &ExpandedLossSelectionV1,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     check(
@@ -1300,6 +1325,8 @@ fn validate_update(
     };
     let after =
         load_expanded_update_inference_v1(&next, trajectories, learning_rate, value_coefficient)?;
+    // An S checkpoint also binds the run's GAE settings (`s_learner_v1`).
+    crate::expanded_deck_training_v1::s_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
     check(
         after.adam_step
             == before
@@ -1786,6 +1813,7 @@ pub fn run_native_expanded_training_v1(
                 config.ex1.as_ref().map(|o| (o, index, &collection)),
                 config.training_math,
                 input_contract.as_ref(),
+                &config.loss_selection,
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -1904,6 +1932,7 @@ pub fn run_native_expanded_training_v1(
                         .map(|o| (o, index, &referenced_collection)),
                     config.training_math,
                     input_contract.as_ref(),
+                    &config.loss_selection,
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -2025,6 +2054,7 @@ pub fn run_native_expanded_training_v1(
             config.ex1.as_ref().map(|o| (o, index, &collection)),
             config.training_math,
             input_contract.as_ref(),
+            &config.loss_selection,
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -3037,6 +3067,7 @@ mod tests {
             play_import,
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let list = |id: &str| {
             let registration =
@@ -3216,6 +3247,7 @@ mod tests {
             play_import: v7.initial_source.play_import.clone(),
             feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8),
             checkpoint: Some(converted.pin.clone()),
+            s_learner: None,
         };
         london(&mut v8);
         // The RT1 chains' parallel collection and ordered update preparation.

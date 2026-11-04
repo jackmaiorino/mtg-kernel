@@ -1825,6 +1825,7 @@ fn extraction_binds_rows_to_the_recorded_game_and_drops_any_mismatch() {
                     expected_feature_encoding_digest: String::new(),
                 },
                 checkpoint: None,
+                s_learner: None,
             })
         }),
     ];
@@ -2141,6 +2142,7 @@ fn world_v1(label: &str) -> WorldV1 {
             expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
         },
         checkpoint: None,
+        s_learner: None,
     };
     let trajectories = collect_pins(
         &parent,
@@ -2917,6 +2919,7 @@ fn retention_run_config_v1(
             expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
         },
         checkpoint: None,
+        s_learner: None,
     };
     // `real_episode` seats Spy at its seat argument.
     let scheduled = |id: &str, seed: u64, learner_seat: u8, spy_learner: bool| {

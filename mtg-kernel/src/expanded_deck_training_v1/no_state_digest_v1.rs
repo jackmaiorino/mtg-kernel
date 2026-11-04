@@ -458,6 +458,7 @@ pub(super) fn load_v1(
         play_import: import.base_play_import,
         feature_transfer: source.feature_transfer.clone(),
         checkpoint: source.checkpoint.clone(),
+        s_learner: None,
     };
     let (mut policy, mut identity) = load_expanded_inference_any_math_v1(&base)?;
     install_v1(&mut policy, &conversion, check_enabled_v1())?;
@@ -758,6 +759,7 @@ fn initialize_v1(
         play_import: import.base_play_import.clone(),
         feature_transfer: source.feature_transfer.clone(),
         checkpoint: conversion.base_checkpoint.clone(),
+        s_learner: None,
     };
     let base_bytes = read_pinned_bytes(&base.play_import)?;
     ensure(
@@ -1326,6 +1328,7 @@ pub fn convert_no_state_digest_v1(
         play_import: play_import.clone(),
         feature_transfer: source.feature_transfer.clone(),
         checkpoint: source.checkpoint.clone(),
+        s_learner: None,
     };
     let source_pin = write_pinned_v1(
         out_dir,

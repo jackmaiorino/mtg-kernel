@@ -186,30 +186,39 @@ pub(super) fn collect_parallel_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
-    let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
-    bind_training_math_v1(
-        &source,
-        transfer.as_ref(),
-        training_math,
-        &mut policy,
-        &mut state,
-    )?;
-    collection_sampler.apply_to_learner_v1(&mut policy);
-    if let Some(context) = &transfer {
-        context.validate_batch(&episodes)?;
-    }
-    let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
-    let learner = ExpandedSeatBehaviorV1 {
-        source: source.clone(),
-        identity: inference_identity_with_state_sha256_v1(
+    let (policy, learner, state_hash) = if source.s_learner.is_some() {
+        super::s_learner_v1::collection_learner_v1(
             &source,
-            &policy,
-            &state,
-            state_hash.clone(),
-        ),
+            training_math,
+            collection_sampler,
+            ex1.is_some(),
+        )?
+    } else {
+        let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+        bind_training_math_v1(
+            &source,
+            transfer.as_ref(),
+            training_math,
+            &mut policy,
+            &mut state,
+        )?;
+        collection_sampler.apply_to_learner_v1(&mut policy);
+        if let Some(context) = &transfer {
+            context.validate_batch(&episodes)?;
+        }
+        let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
+        let learner = ExpandedSeatBehaviorV1 {
+            source: source.clone(),
+            identity: inference_identity_with_state_sha256_v1(
+                &source,
+                &policy,
+                &state,
+                state_hash.clone(),
+            ),
+        };
+        (policy, learner, state_hash)
     };
     let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
-    drop(state);
     let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
     let worker_count = workers.min(episodes.len());
     let contexts = (0..worker_count)
@@ -510,6 +519,7 @@ mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -663,6 +673,7 @@ mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -768,6 +779,7 @@ mod tests {
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let mut model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -858,6 +870,7 @@ mod tests {
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let mut model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -992,6 +1005,7 @@ mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let registered =
             crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
@@ -1109,6 +1123,7 @@ mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let deck = |id: &str| {
             let registration =

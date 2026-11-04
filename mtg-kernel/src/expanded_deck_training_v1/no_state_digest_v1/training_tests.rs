@@ -82,6 +82,7 @@ fn fresh_source(root: &Path) -> ExpandedModelSourceV1 {
             expected_feature_encoding_digest: identity.feature_encoding_digest.into(),
         },
         checkpoint: None,
+        s_learner: None,
     }
 }
 

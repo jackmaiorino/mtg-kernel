@@ -34,6 +34,7 @@ fn source(checkpoint: &str) -> ExpandedModelSourceV1 {
             expected_feature_encoding_digest: "27".repeat(32),
         },
         checkpoint: Some(pin("checkpoint.json", checkpoint)),
+        s_learner: None,
     }
 }
 
