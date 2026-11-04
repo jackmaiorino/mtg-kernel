@@ -400,6 +400,10 @@ class RetentionTests(unittest.TestCase):
             manifest = retention.prune_manifest(chain, records, 101, verified)
             self.assertEqual([k.get('part', 'checkpoint') for k in manifest['keep']['selected_checkpoint']],
                              ['s_state', 'checkpoint'])
+            # A receipt without the container's pin (written before containers were tracked) is refused.
+            older = {k: v for k, v in verified.items() if k != 'endpoint_state'}
+            with self.assertRaises(SystemExit):
+                retention.prune_manifest(chain, records, 101, older)
             last = root / 'iterations' / f"{len(spec['replay']['expected']) - 1:06d}" / 's-train-state.bin'
             last.write_bytes(b'damaged')
             self.assertFalse(retention.verify_replay(spec, root)['equal'])

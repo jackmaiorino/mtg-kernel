@@ -529,6 +529,10 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
         if record is None or replay_receipt.get('endpoint_after_state_sha256') != record['after_state_sha256']:
             raise SystemExit("stop: the replayed endpoint's state is not this chain's recorded state")
         replay_state = replay_receipt.get('endpoint_state')
+        # An S chain's replayed endpoint is two files: a receipt without the container's pin (one written
+        # before containers were tracked) must be re-verified first.
+        if record.get('state') is not None and replay_state is None:
+            raise SystemExit("stop: the replay receipt lacks the S endpoint's container; rerun verify-replay")
         if not state_intact(pin, replay_state):
             raise SystemExit('stop: the replayed checkpoint differs from its pin')
         for part in checkpoint_parts(pin, replay_state):
