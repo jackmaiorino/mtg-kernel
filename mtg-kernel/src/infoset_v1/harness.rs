@@ -910,6 +910,10 @@ pub(crate) fn f_slot(
     mutants: &[MutantV1],
     tag: &str,
 ) -> Option<PairReportV1> {
+    if at >= game.actions.len() {
+        // The game ended before decision `at`.
+        return None;
+    }
     let mut s = game.start.clone();
     let mut prefix = PrefixV1::new(viewer, tag);
     for (k, chosen) in game.actions.iter().take(at).enumerate() {

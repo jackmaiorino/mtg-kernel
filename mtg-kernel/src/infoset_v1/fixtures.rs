@@ -1422,12 +1422,10 @@ fn w_pin_engine_fixtures() {
 /// Mutant L8 binds those facts to the first true remaining Hawks, with `C:`
 /// handles and continuity: history made inside a bound copy's last span (its
 /// search, or its bounce back to the hand) links to the handle instead of a
-/// tombstone. So L8's bytes name which physical copies remain:
-/// - no Hawk put back vs two fetched Hawks put back (the witness pair): L8
-///   binds the first two fetched copies in W and the third fetched and the
-///   bounced copy in W';
-/// - no Hawk put back vs the bounced and a fetched Hawk put back: L8 binds
-///   two fetched copies in both worlds, not the same two (reported).
+/// tombstone. So L8's bytes name which physical copies remain. Both pairs
+/// (no Hawk put back vs two fetched Hawks put back, and vs the bounced and a
+/// fetched Hawk put back) leave different copies bound in the two worlds,
+/// and both count.
 ///
 /// Witness bar (ruling 6): at least 5 compared decisions where L8 differs and
 /// P does not, each shown in L8's bytes to differ through the bound copies
@@ -1442,7 +1440,7 @@ fn l8_bound_copies_engine_fixture() {
         equal_samples += n;
     }
     eprintln!(
-        "l8-bound-copies over six seeds: {total} witnesses (no Hawk vs two fetched Hawks put back); bounced and fetched put back: L8 differs at {equal_copies} of {equal_samples}"
+        "l8-bound-copies over six seeds: {total} witnesses; of them on the bounced-and-fetched pair {equal_copies} of {equal_samples} compared"
     );
     assert!(
         total >= 5,
@@ -1711,12 +1709,13 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
         }
         (differ, agree)
     };
-    let (witnesses, _) = after_brainstorm(&records[1], true);
-    let (equal_differ, equal_agree) = after_brainstorm(&records[2], false);
+    let (two_fetched, _) = after_brainstorm(&records[1], true);
+    let (bounced, bounced_agree) = after_brainstorm(&records[2], true);
+    let witnesses = two_fetched + bounced;
     eprintln!(
-        "l8-bound-copies seed {seed}: witnesses (no Hawk vs two fetched put back) {witnesses}; bounced and fetched put back: L8 differs at {equal_differ} of {}",
-        equal_differ + equal_agree
+        "l8-bound-copies seed {seed}: witnesses {witnesses} (no Hawk vs two fetched put back {two_fetched}; vs the bounced and a fetched put back {bounced}, L8 equal at {bounced_agree})"
     );
+    let (equal_differ, equal_agree) = (bounced, bounced_agree);
     assert!(
         reports.iter().all(|r| r.compared > 0),
         "both pairs compare decisions: {reports:?}"
