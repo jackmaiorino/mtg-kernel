@@ -1293,7 +1293,8 @@ fn ac1_f_choice_wildfire_burn_handle_order_witness() {
 /// (`event_history[214].Sacrificed.object` C:34 vs C:19). Under 43.3 each
 /// Mountain's span ends at its unlinked move, the graveyard copies take new
 /// handles where V receives them, and the earlier references become
-/// tombstones: P must agree across the worlds.
+/// tombstones: P must agree across the worlds, while mutant L4 (raw history
+/// links) must not.
 #[test]
 fn ac1_wildfire_burn_fireblast_sacrifice_order_witness() {
     // The witness was found without neutral choices; it stays there.
@@ -1333,12 +1334,27 @@ fn ac1_wildfire_burn_fireblast_sacrifice_order_witness() {
     let (mut w, mut w2) = (s.clone(), s.clone());
     w.step(d.episode_id, d.step, a as u32).expect("W");
     w2.step(d.episode_id, d.step, b as u32).expect("W'");
-    let r = compare_worlds_with(w, w2, &game.actions[at + 1..], viewer, &[], false, 6, None);
+    let r = compare_worlds_with(
+        w,
+        w2,
+        &game.actions[at + 1..],
+        viewer,
+        &super::fixtures::LEAKAGE_V1,
+        false,
+        6,
+        None,
+    );
     eprintln!("Fireblast witness: {r:?}");
     assert!(r.compared > 0, "the witness pair compares decisions: {r:?}");
     assert_eq!(
         r.p_differs, 0,
         "P differs across the sacrifice orders: {r:?}"
+    );
+    // The raw-history mutant names the copies through their earlier spans
+    // (the tapped Mountain's Tap event), so it must tell the orders apart.
+    assert!(
+        r.witnesses.get("L4").copied().unwrap_or(0) > 0,
+        "L4 differs across the sacrifice orders: {r:?}"
     );
 }
 
