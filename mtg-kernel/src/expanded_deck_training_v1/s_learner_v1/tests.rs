@@ -963,22 +963,44 @@ fn s_search_digest_skip_v1() {
         .fork_for_search_v1()
         .unwrap()
         .s_state_digest_off_v1());
-    let chain = early_w5_chain_v1();
+    // A chain id whose placements fall early in all four episodes, so the
+    // searches reach their roots and teach rows.
+    let seeds = [
+        2_026_110_311u64,
+        2_026_110_312,
+        2_026_110_313,
+        2_026_110_314,
+    ];
+    let chain =
+        (0..1_000_000)
+            .map(|k| format!("w5/skip-{k}"))
+            .find(|chain| {
+                seeds.iter().enumerate().all(|(slot, &seed)| {
+                    crate::w5_xact_v1::w5_placement_index_v1(
+                        crate::w5_xact_v1::w5_placement_hash_v1(chain, 0, seed, slot as u64),
+                    ) <= 16
+                })
+            })
+            .unwrap();
     let run = |skip: bool, label: &str| {
         S_SEARCH_DIGEST_SKIP_V1.with(|flag| flag.set(skip));
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: s.clone(),
-            episodes: vec![
-                episode("skip-0", 2_026_110_311, None),
-                episode("skip-1", 2_026_110_312, Some(net8.clone())),
-            ],
+            episodes: seeds
+                .iter()
+                .enumerate()
+                .map(|(slot, &seed)| {
+                    let opponent = (slot % 2 == 1).then(|| net8.clone());
+                    episode(&format!("skip-{slot}"), seed, opponent)
+                })
+                .collect(),
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
             ex1: Some(super::super::ex1_collect_v1::Ex1CollectOptionsV1 {
                 run: chain.clone(),
                 update: 0,
-                budget: 1_500,
+                budget: 8_000,
                 w5: Some(super::super::ex1_collect_v1::W5CollectOptionsV1 {
                     recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
                     key_memo_mib: 512,
@@ -1006,17 +1028,13 @@ fn s_search_digest_skip_v1() {
                 record
             })
             .collect();
+        // Successful searches only, so the comparison covers delivered targets.
         let searched: usize = records
             .iter()
-            .map(|r| {
-                r["attempts"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|a| a["searches"].as_array().unwrap().len())
-                    .sum::<usize>()
-            })
-            .sum();
+            .flat_map(|r| r["attempts"].as_array().unwrap().iter())
+            .flat_map(|a| a["searches"].as_array().unwrap().iter())
+            .inspect(|search| assert_eq!(search["failed"], false, "a search failed"))
+            .count();
         let ex1 = super::super::ex1_update_v1::Ex1UpdateOptionsV1 {
             run: chain.clone(),
             update: 0,
@@ -1034,7 +1052,7 @@ fn s_search_digest_skip_v1() {
             },
             w5: Some(super::super::ex1_update_v1::W5UpdateOptionsV1 {
                 recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
-                budget: 1_500,
+                budget: 8_000,
                 key_memo_mib: 512,
             }),
         };
@@ -1051,6 +1069,11 @@ fn s_search_digest_skip_v1() {
         let ex1_pin: PinnedFileV1 =
             serde_json::from_value(updated["ex1"]["receipt"].clone()).unwrap();
         let mut receipt: Value = read_pinned(&ex1_pin).unwrap();
+        assert!(receipt["rows"].as_u64().unwrap() > 0, "no target row");
+        assert!(
+            !receipt["w5"]["pg_masked"].as_array().unwrap().is_empty(),
+            "no search-played row"
+        );
         receipt["collection"] = Value::Null;
         receipt["search_wall_seconds"] = Value::Null;
         for episode in receipt["episodes"].as_array_mut().unwrap() {

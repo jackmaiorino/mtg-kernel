@@ -301,6 +301,25 @@ pub(super) fn bank_roles(
     policy: &FrozenPlayPolicyV1,
     opponents: &[FrozenPlayPolicyV1],
 ) -> Result<Roles, String> {
+    let fork = |p: &FrozenPlayPolicyV1| p.fork_for_collection_v3();
+    Ok(Roles {
+        focal: fork(policy)?,
+        opps: opponents.iter().map(fork).collect::<Result<_, _>>()?,
+        scorer: fork(policy)?,
+        inner_focal: fork(policy)?,
+        inner_opps: opponents.iter().map(fork).collect::<Result<_, _>>()?,
+    })
+}
+
+/// [`bank_roles`] for a search with fixed work (a transition or simulation
+/// budget, never a CPU-time limit: EX1 and W5): the roles of an S policy skip
+/// the state digest S never reads (`fork_for_search_v1`), so every search
+/// output is unchanged and only its cost falls. Searches that stop on CPU
+/// time keep [`bank_roles`], since a faster role would change their work.
+pub(super) fn fixed_work_roles(
+    policy: &FrozenPlayPolicyV1,
+    opponents: &[FrozenPlayPolicyV1],
+) -> Result<Roles, String> {
     let fork = |p: &FrozenPlayPolicyV1| p.fork_for_search_v1();
     Ok(Roles {
         focal: fork(policy)?,

@@ -10,7 +10,7 @@
 //! episode (the guide's invalidate-on-failure is not inherited).
 
 use super::arms::{Limits, Roles};
-use super::bank::{bank_roles, guide_ctx};
+use super::bank::{fixed_work_roles, guide_ctx};
 use super::canon2::KeyMode;
 use super::play::decision;
 use super::refresh::{Cursor, Lookup};
@@ -67,7 +67,7 @@ impl Ex1SearcherV1 {
     pub(crate) fn new(learner: &FrozenPlayPolicyV1, focal: PlayerId) -> Result<Self, String> {
         let opponent = learner.fork_for_collection_v3()?;
         Ok(Self {
-            roles: bank_roles(learner, std::slice::from_ref(&opponent))?,
+            roles: fixed_work_roles(learner, std::slice::from_ref(&opponent))?,
             prior: DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>()),
             focal,
             cursor: None,
