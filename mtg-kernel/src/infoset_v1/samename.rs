@@ -4,8 +4,8 @@
 //! (`same_name_batch`), in both worlds.
 
 use super::fixtures::{
-    cast, force_deal, gate, id, kind, new_game, pick, play_land, record_strict, restart, AtV1,
-    IntentV1, ScriptV1,
+    cast, force_deal, id, kind, new_game, pick, play_land, record_strict, restart, AtV1, IntentV1,
+    ScriptV1,
 };
 use super::harness::PairReportV1;
 use super::tests::export_at;
@@ -55,16 +55,12 @@ fn shaman_items(st: &GameState) -> usize {
 
 /// The same-name batch fixture (Wildfire versus Faeries, off-board). V is
 /// Faeries (P1). Wildfire casts two Krark-Clan Shamans and two Ichor
-/// Wellsprings. On turn 4 it activates Shaman copy `first` (sacrificing a
-/// Wellspring); once the Wellspring's draw trigger resolved, with that
-/// ability still waiting, it activates the other Shaman. The second ability
-/// resolves first: 1 damage to each creature without flying kills both
-/// Shamans at once, one batch of V's transcript. The first ability waits
-/// with its source contract naming one of the two graveyard Shamans, and V
-/// cannot pair it with either: every V decision while it waits refuses R1
-/// `same_name_batch`. (The engine passes priority after an activation, so
-/// two sacrifices with priority held, the first design, never share a
-/// batch.)
+/// Wellsprings, then activates Shaman copy `first`, sacrificing a
+/// Wellspring. The test stops at V's first decision with that ability
+/// waiting and makes both Shamans leave the battlefield in one batch (state
+/// surgery standing for a sweeper's simultaneous deaths). Scripted sequences
+/// could not form that batch: the activating player does not keep priority,
+/// and the Shaman's own ability resolved before a second activation.
 pub(crate) fn same_name_batch(first: usize) -> ScriptV1 {
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let live = new_game(["Wildfire", "Faeries"], 75, o);
@@ -111,11 +107,6 @@ pub(crate) fn same_name_batch(first: usize) -> ScriptV1 {
             cast("Ichor Wellspring"),
             activate_copy(SHAMAN, first),
             pick("Ichor Wellspring"),
-            gate("the first Wellspring trigger resolved", |st: &GameState| {
-                st.stack.len() == 1 && shaman_items(st) == 1
-            }),
-            activate_copy(SHAMAN, 1 - first),
-            pick("Ichor Wellspring"),
         ],
     );
     script.keep(o, &["Mountain", "Swamp", SHAMAN, "Ichor Wellspring"]);
@@ -130,54 +121,76 @@ pub(crate) fn same_name_batch(first: usize) -> ScriptV1 {
     script
 }
 
-/// Each V decision's refusal subclass under P, in order (None: exported),
-/// with the number of Shamans in the graveyard and of waiting Shaman
-/// abilities, and a diagnostic line per V decision.
-type AtDecisionV1 = (Option<&'static str>, usize, usize);
-
-fn subclasses(first: usize, v: PlayerId) -> (Vec<AtDecisionV1>, Vec<String>) {
-    let shaman = id(SHAMAN);
-    let mut out = Vec::new();
-    let mut lines = Vec::new();
+/// V's first decision with Shaman copy `first`'s ability waiting.
+fn at_the_wait(first: usize) -> FastActorSessionV1 {
+    let v = PlayerId::P1;
     let mut script = same_name_batch(first);
-    script.run(400, 12, &mut |s, p, step| {
-        if p == v {
-            let st = s.game_state();
-            let count = |zone: &[crate::ids::ObjectId]| {
-                zone.iter()
-                    .filter(|x| st.objects.get(**x).card_def == shaman)
-                    .count()
-            };
-            let sub = export_at(s, v, ExportOptionsV1::default())
-                .err()
-                .map(|e| crate::agent_bridge_infoset_v1::export_refusal_subclass_v1(&e));
-            let graveyard = count(&st.players[0].graveyard);
-            lines.push(format!(
-                "V decision {} (step {step}, turn {}): stack {}, Shaman items {}, Shamans battlefield {} graveyard {graveyard}; P {sub:?}",
-                out.len(),
-                st.turn,
-                st.stack.len(),
-                shaman_items(st),
-                count(&st.players[0].battlefield),
-            ));
-            out.push((sub, graveyard, shaman_items(st)));
+    let mut found: Option<FastActorSessionV1> = None;
+    script.run(400, 4, &mut |s, p, _| {
+        if found.is_none() && p == v && shaman_items(s.game_state()) == 1 {
+            found = Some(s.clone());
         }
     });
-    lines.extend(
-        script
-            .trace
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.contains("activate Krark"))
-            .map(|(i, t)| format!("step {i}: {}", t.chars().take(160).collect::<String>())),
-    );
-    (out, lines)
+    found.unwrap_or_else(|| {
+        panic!(
+            "no V decision with the Shaman ability waiting:
+{}",
+            script.trace.join(
+                "
+"
+            )
+        )
+    })
 }
 
-/// Lead ruling 7 (a), fixture witness: the two Shamans leave in one batch
-/// with the first Shaman's ability waiting, whichever copy activated first.
-/// At V's decisions while it waits, P refuses R1 `same_name_batch` in both
-/// worlds, and P agrees across the worlds at every compared decision.
+/// P at that decision after the Shamans leave the battlefield (both, or
+/// only the source), in one batch of V's transcript.
+fn p_after(s: &FastActorSessionV1, both: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let v = PlayerId::P1;
+    let shaman = id(SHAMAN);
+    let mut st = s.game_state().clone();
+    let source = st
+        .stack
+        .iter()
+        .find(|i| st.objects.get(i.source).card_def == shaman)
+        .map(|i| i.source)
+        .expect("the waiting ability");
+    let mut leave: Vec<crate::ids::ObjectId> = st.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|x| st.objects.get(*x).card_def == shaman && (both || *x == source))
+        .collect();
+    leave.sort_unstable();
+    for x in leave {
+        propose_and_commit(
+            &mut st,
+            ProposedEvent::zone_change(x, crate::state::Zone::Graveyard),
+        );
+    }
+    st.engine.pending_triggers.clear();
+    let lists = super::tests::decklists(s);
+    let marks = s.infoset_marks_v1(v);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// Lead ruling 7 (a), fixture witness. Whichever Shaman activated, P
+/// agrees across the worlds at every compared scripted V decision; at the
+/// wait, the ability's single source keeps 6.5's link (exports); when both
+/// Shamans leave in one batch, P refuses R1 `same_name_batch` in both
+/// worlds, with equal outcomes; when only the source leaves, it exports.
 #[test]
 fn same_name_batch_refuses_in_both_worlds() {
     let v = PlayerId::P1;
@@ -187,51 +200,46 @@ fn same_name_batch_refuses_in_both_worlds() {
             record_strict(
                 same_name_batch(first),
                 v,
-                12,
+                4,
                 &format!("fx-samename-v{first}"),
             )
         })
         .collect();
-    let (a, b) = (&runs[0].0, &runs[1].0);
-    let report: PairReportV1 = super::fixtures::compare_records(a, b);
+    let report: PairReportV1 = super::fixtures::compare_records(&runs[0].0, &runs[1].0);
     eprintln!("same-name batch, first copy 0 vs 1: {report:?}");
-    let ((sa, la), (sb, lb)) = (subclasses(0, v), subclasses(1, v));
-    eprintln!("same-name batch, first copy 0:\n{}", la.join("\n"));
-    eprintln!("same-name batch, first copy 1:\n{}", lb.join("\n"));
     assert_eq!(
         report.p_differs, 0,
-        "P differs across the orders: {report:?}"
+        "P differs across the worlds: {report:?}"
     );
     assert!(
         report.compared > 0,
         "the pair compares decisions: {report:?}"
     );
-    // The V decisions with both Shamans in the graveyard and an ability
-    // still waiting: the batch happened, and each refuses in both worlds.
-    let after = |x: &[AtDecisionV1]| -> Vec<Option<&'static str>> {
-        x.iter()
-            .filter(|(_, g, items)| *g == 2 && *items > 0)
-            .map(|(sub, _, _)| *sub)
-            .collect()
-    };
-    let (ra, rb) = (after(&sa), after(&sb));
-    assert!(
-        !ra.is_empty() && ra.len() == rb.len(),
-        "both worlds reach V decisions after the batch with the ability waiting: {sa:?} / {sb:?}"
+    let waits = [at_the_wait(0), at_the_wait(1)];
+    for s in &waits {
+        assert!(
+            export_at(s, v, ExportOptionsV1::default()).is_ok(),
+            "a single waiting source exports"
+        );
+        assert!(
+            p_after(s, false).is_ok(),
+            "the source leaving alone exports"
+        );
+    }
+    let (pa, pb) = (p_after(&waits[0], true), p_after(&waits[1], true));
+    eprintln!(
+        "both Shamans leave: {:?} / {:?}",
+        pa.as_ref().map(Vec::len),
+        pb.as_ref().map(Vec::len)
     );
-    assert!(
-        ra.iter().chain(&rb).all(|s| *s == Some("same_name_batch")),
-        "R1 same_name_batch refuses in both worlds while the ability waits: {sa:?} / {sb:?}"
-    );
-    // Before the batch, the waiting ability's single source keeps 6.5's
-    // link: V decisions with one Shaman ability waiting and both Shamans on
-    // the battlefield export.
-    let before = |x: &[AtDecisionV1]| {
-        x.iter()
-            .any(|(sub, g, items)| *g == 0 && *items == 1 && sub.is_none())
+    let batch = |p: &Result<Vec<u8>, String>| {
+        p.as_ref().is_err_and(|e| {
+            e.contains("R1") && e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL)
+        })
     };
     assert!(
-        before(&sa) && before(&sb),
-        "a single waiting source exports before the batch: {sa:?} / {sb:?}"
+        batch(&pa) && batch(&pb),
+        "R1 same_name_batch in both worlds"
     );
+    assert_eq!(pa, pb, "P agrees across the worlds");
 }
