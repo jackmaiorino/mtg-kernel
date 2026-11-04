@@ -41,6 +41,7 @@
 
 #![allow(clippy::needless_range_loop)]
 
+mod auxiliary;
 mod checkpoint;
 mod kernels;
 #[cfg(test)]
@@ -55,6 +56,7 @@ use kernels::{gemm_v1, InitV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub use auxiliary::{SAuxiliaryInputV1, SAuxiliaryResultV1, SAuxiliaryRowV1};
 pub use checkpoint::{decode_checkpoint_v1, encode_checkpoint_v1};
 
 /// The architecture identity records carry.
@@ -1550,7 +1552,7 @@ pub struct SLossV1 {
     pub group_count: usize,
     pub policy_sum: f32,
     pub value_sum: f32,
-    /// `policy_sum / G`.
+    /// `policy_sum / G` (over W5's unmasked group count with a mask).
     pub policy_term: f32,
     /// `value_sum / G`.
     pub value_term: f32,
@@ -1592,7 +1594,35 @@ impl SModelV1 {
         grad: &mut [f32],
         work: &mut SWorkV1,
     ) -> Result<SLossV1, String> {
+        self.gae_loss_gradient_masked_v1(groups, value_coefficient, None, grad, work)
+    }
+
+    /// [`Self::gae_loss_gradient_v1`] with W5's policy-gradient mask
+    /// (`auxiliary::SPolicyMaskV1`): a masked substep's selected
+    /// log-probability leaves the policy term (its logit gradient is
+    /// `0 * (indicator - p)`), and the policy term is normalized over the
+    /// groups with an unmasked substep; the value term keeps the group count.
+    /// Without a mask every bit is the unmasked function's.
+    pub(crate) fn gae_loss_gradient_masked_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        mask: Option<&auxiliary::SPolicyMaskV1>,
+        grad: &mut [f32],
+        work: &mut SWorkV1,
+    ) -> Result<SLossV1, String> {
         ensure_mxcsr_v1()?;
+        if let Some(mask) = mask {
+            if mask.masked.len() != groups.len()
+                || mask
+                    .masked
+                    .iter()
+                    .zip(groups)
+                    .any(|(m, g)| m.len() != g.substeps.len())
+            {
+                return Err("S policy mask does not match the batch".into());
+            }
+        }
         if groups.is_empty() {
             return Err("S update has no groups".into());
         }
@@ -1609,10 +1639,18 @@ impl SModelV1 {
             if !group.advantage.is_finite() || !group.value_target.is_finite() {
                 return Err(format!("S group {index} has a non-finite target"));
             }
-            let d_joint = -group.advantage / group_count;
+            let masked = mask.map(|m| &m.masked[index]);
+            let d_unmasked = match mask {
+                None => -group.advantage / group_count,
+                Some(m) => -group.advantage / m.policy_count,
+            };
             let mut joint = 0.0f32;
+            // The policy term's joint log-probability over unmasked substeps.
+            let mut policy_joint: Option<f32> = None;
             let mut value_error = 0.0f32;
             for (sub, substep) in group.substeps.iter().enumerate() {
+                let is_masked = masked.is_some_and(|m| m[sub]);
+                let d_joint = if is_masked { 0.0 } else { d_unmasked };
                 self.forward_into_v1(substep.input, &mut work.tape)?;
                 let logits = work.tape.logits.clone();
                 if substep.selected >= logits.len() {
@@ -1628,6 +1666,9 @@ impl SModelV1 {
                     return Err(format!("S group {index}: non-finite log-probability"));
                 }
                 joint = if sub == 0 { selected } else { joint + selected };
+                if !is_masked {
+                    policy_joint = Some(policy_joint.map_or(selected, |j| j + selected));
+                }
                 let math = TrainingMathV1::PortableV1;
                 let dlogits = log_probabilities
                     .iter()
@@ -1653,18 +1694,30 @@ impl SModelV1 {
                     &mut work.back,
                 )?;
             }
-            policy_sum += -joint * group.advantage;
+            policy_sum += match masked {
+                None => -joint * group.advantage,
+                Some(_) => -policy_joint.unwrap_or(0.0) * group.advantage,
+            };
             value_sum += value_error * value_error;
         }
         for range in self.layout.gauge_ranges_v1() {
             grad[range].fill(0.0);
         }
-        let loss = (policy_sum + value_coefficient * value_sum) / group_count;
+        let (loss, policy_term) = match mask {
+            None => (
+                (policy_sum + value_coefficient * value_sum) / group_count,
+                policy_sum / group_count,
+            ),
+            Some(m) => (
+                policy_sum / m.policy_count + value_coefficient * value_sum / group_count,
+                policy_sum / m.policy_count,
+            ),
+        };
         let terms = SLossV1 {
             group_count: groups.len(),
             policy_sum,
             value_sum,
-            policy_term: policy_sum / group_count,
+            policy_term,
             value_term: value_sum / group_count,
             loss,
         };

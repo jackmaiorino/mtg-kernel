@@ -27,8 +27,20 @@
 //! The receipt has the net-8 update's fields, so the run driver validates and
 //! chains it unchanged.
 //!
+//! **EX1 and W5** (`Ex1Update`, `ex1_update_v1`): the collection hook runs
+//! with S as the learner (S's own search prior and SELF rollouts), and the
+//! update adds net-8's terms on S
+//! (`STrainStateV1::train_step_gae_auxiliary_v1`): the hook's rows as
+//! forward-KL auxiliary rows, `c / 128` each, authenticated against S's
+//! training forward; under W5 the search-played substeps' policy gradient
+//! masked and the policy term normalized over the unmasked groups; the cap;
+//! step telemetry (every EX1 update, one W5 update in 16, and any update
+//! with no rows). The checkpoint record carries the EX1 continuation (and
+//! W5's next global update), and the receipt and `ex1-update.json` have
+//! net-8's fields, so the run driver validates an S chain as a net-8 one.
+//!
 //! **Refused** (explicit errors): line (b), E supervision, SQ1, TP1 search
-//! targets, EX1 and the W5 hook (until the S update terms land), the CUDA
+//! targets, the CUDA
 //! backend, fixed-partition backward, the terminal and recovery losses,
 //! checkpoint record format v2, FlatV7 and FlatV8, the no-state-digest
 //! contract, registry-transfer and registry-evolution shells, the line (b)
@@ -46,9 +58,11 @@ use super::{
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
+use super::ex1_update_v1::{self, Ex1UpdateOptionsV1};
+use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::s_transformer_v1::{
-    decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SSubstepV1, STrainStateV1,
-    SWorkV1, S_ARCHITECTURE_V1,
+    decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SSubstepV1,
+    STapeV1, STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
 };
 use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayPolicyOriginV1, FRESH_FEATURE_IDENTITY_V4,
@@ -112,6 +126,11 @@ pub struct SLearnerCheckpointV1 {
     /// for the platform's libm.
     #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
     pub training_math: TrainingMathV1,
+    /// An EX1 or W5 update's continuation, collection and receipt (and W5's
+    /// next global update), as net-8's checkpoint records them; omitted for
+    /// an ordinary update.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ex1: Option<Value>,
 }
 
 /// A loaded S learner: the shell with S installed, S's train state, and the
@@ -305,16 +324,10 @@ pub(super) fn collection_learner_v1(
     source: &ExpandedModelSourceV1,
     training_math: TrainingMathV1,
     collection_sampler: CollectionSamplerV1,
-    ex1: bool,
 ) -> Result<(FrozenPlayPolicyV1, ExpandedSeatBehaviorV1, String), String> {
     ensure(
         collection_sampler.is_legacy(),
         "an S learner collects with the legacy sampler; the line (b) sampler is refused",
-    )?;
-    ensure(
-        !ex1,
-        "an S learner does not yet run the EX1 or W5 collection hook (the S update terms are \
-         not implemented)",
     )?;
     let mut loaded = load_s_v1(source, None)?;
     bind_math_v1(&mut loaded, training_math)?;
@@ -336,7 +349,6 @@ pub(super) struct SUnsupportedOptionsV1 {
     pub(super) e_supported: bool,
     pub(super) soft_q: bool,
     pub(super) search_targets: bool,
-    pub(super) ex1: bool,
 }
 
 /// The update command's inputs.
@@ -352,6 +364,9 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) preparation_workers: Option<usize>,
     pub(super) max_prepared_tensor_mebibytes: usize,
     pub(super) unsupported: SUnsupportedOptionsV1,
+    /// EX1 or W5 (`Ex1Update`); the caller validated the options and their
+    /// combination.
+    pub(super) ex1: Option<Ex1UpdateOptionsV1>,
     pub(super) training_math: TrainingMathV1,
     pub(super) record_format: CheckpointRecordFormatV1,
     pub(super) started: std::time::Instant,
@@ -367,11 +382,6 @@ fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String>
     ensure(
         !u.e_supported && !u.soft_q && !u.search_targets,
         "an S learner refuses E, SQ1 and TP1 search-target supervision",
-    )?;
-    ensure(
-        !u.ex1,
-        "an S learner does not yet run the EX1 or W5 update terms (forward-KL rows, \
-         search-played masks)",
     )?;
     ensure(
         matches!(inputs.update_backend, ExpandedUpdateBackendV1::Cpu),
@@ -418,6 +428,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        ex1,
         training_math,
         started,
         ..
@@ -429,6 +440,9 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             record.gamma_bits == gamma.to_bits() && record.gae_lambda_bits == lambda.to_bits(),
             "S continuation must keep the lineage's gamma and lambda",
         )?;
+        // An EX1 or W5 lineage continues only with its own identity (and
+        // W5's next global update); an ordinary lineage admits EX1.
+        ex1_update_v1::check_continuation_v1(record.ex1.as_ref(), ex1.as_ref())?;
     }
     let LoadedSV1 {
         policy, mut state, ..
@@ -455,9 +469,11 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     let mut ids = BTreeSet::new();
     for episode in &episodes {
         validate_trajectory(episode)?;
+        // Rows the search played are authenticated and masked only by a
+        // W5 update.
         ensure(
-            episode.search_played.is_none(),
-            "an S learner does not yet train search-played rows",
+            episode.search_played.is_none() || ex1.as_ref().is_some_and(|o| o.w5.is_some()),
+            "search-played rows need a w5 update",
         )?;
         ensure(
             ids.insert(episode.episode.id.clone()),
@@ -526,6 +542,27 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             .ok_or_else(|| format!("gae group {index} has no substeps"))?;
         values.push(f32::from_bits(first.value));
     }
+    // EX1: the hook's rows, authenticated against S's training forward at
+    // the update-start parameters.
+    let teacher_started = std::time::Instant::now();
+    let ex1_teacher = ex1
+        .as_ref()
+        .map(|options| {
+            let model = state.model_v1();
+            let mut tape = STapeV1::default();
+            ex1_update_v1::ex1_teach_with_v1(options, &trajectories, &episodes, &mut |tensor| {
+                model
+                    .forward_v1(SInputV1::of_tensor_v1(tensor), &mut tape)
+                    .map(|output| output.logits)
+            })
+        })
+        .transpose()?;
+    let policy_mask = ex1_teacher
+        .as_ref()
+        .map(|(receipt, _)| ex1_update_v1::w5_policy_mask_v1(receipt, &tensor_groups))
+        .transpose()?
+        .unwrap_or_default();
+    let teacher_seconds = teacher_started.elapsed().as_secs_f64();
     let terminal_returns: Vec<i8> = tensor_groups.iter().map(|group| group.0).collect();
     let episode_ordinals: Vec<usize> = tensor_groups.iter().map(|group| group.1).collect();
     let gae = compute_gae_targets_of_values_v1(
@@ -558,12 +595,46 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         groups.len()
     );
     let learner_started = std::time::Instant::now();
-    let step = state.train_step_gae_v1(
-        &groups,
-        value_coefficient,
-        learning_rate,
-        &mut SWorkV1::default(),
-    )?;
+    let (step, ex1_exposure) = match (&ex1_teacher, &ex1) {
+        (Some((_, rows)), Some(options)) => {
+            let masked_rows = policy_mask.len();
+            let input = ex1_update_v1::ex1_s_auxiliary_input_v1(rows, options, policy_mask);
+            let (step, auxiliary) = state.train_step_gae_auxiliary_v1(
+                &groups,
+                value_coefficient,
+                learning_rate,
+                &input,
+                &mut SWorkV1::default(),
+            )?;
+            let movement = s_movement_v1(rows, state.model_v1(), auxiliary.ordinary_only.as_ref())?;
+            let mut exposure = json!({"rows":rows.len(),
+                "denominator":crate::ex1_v1::EX1_DENOMINATOR_V1,
+                "coefficient":options.coefficient,
+                "kl_before":auxiliary.divergences_before,
+                "auxiliary_loss":auxiliary.auxiliary_loss,
+                "total_loss":f64::from(step.loss.loss) + auxiliary.auxiliary_loss,
+                "gradient_components":auxiliary.gradient_components,
+                "cap":auxiliary.cap,"adam_steps":auxiliary.adam_steps,
+                "movement":movement,"thresholds":ex1_update_v1::ex1_thresholds_v1(),
+                "learner":S_ARCHITECTURE_V1});
+            if options.w5.is_some() {
+                exposure["pg_masked_rows"] = json!(masked_rows);
+                exposure["policy_groups"] = json!(auxiliary.policy_groups);
+                exposure["step_telemetry"] = json!(input.step_telemetry);
+            }
+            (step, Some(exposure))
+        }
+        (None, None) => (
+            state.train_step_gae_v1(
+                &groups,
+                value_coefficient,
+                learning_rate,
+                &mut SWorkV1::default(),
+            )?,
+            None,
+        ),
+        _ => return Err("an EX1 update lacks its teacher".into()),
+    };
     let learner_update_seconds = learner_started.elapsed().as_secs_f64();
     drop(groups);
     let checkpoint_started = std::time::Instant::now();
@@ -573,6 +644,19 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         S_LEARNER_STATE_FILE_V1,
         &encode_checkpoint_v1(&state),
     )?;
+    let ex1_pin = match (&ex1_teacher, &ex1_exposure) {
+        (Some((receipt, _)), Some(exposure)) => {
+            let mut document = receipt.clone();
+            document["schema"] = json!("ex1-update/v1");
+            document["gradient_exposure"] = exposure.clone();
+            Some(publish_json(
+                &output_directory,
+                "ex1-update.json",
+                &document,
+            )?)
+        }
+        _ => None,
+    };
     let feature_identity = policy.feature_identity_v1();
     let record = SLearnerCheckpointV1 {
         schema: S_LEARNER_CHECKPOINT_SCHEMA_V1.into(),
@@ -593,6 +677,15 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
         training_math,
+        ex1: ex1.as_ref().map(|options| {
+            let mut saved = json!({
+                "continuation":ex1_update_v1::continuation_identity(options),
+                "collection":options.collection,"receipt":ex1_pin});
+            if options.w5.is_some() {
+                saved["w5_next_update"] = json!(options.update + 1);
+            }
+            saved
+        }),
     };
     let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &record)?;
     // Readback through the continuation loader, with this update's inputs.
@@ -631,6 +724,15 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     if let Some(telemetry) = preparation_telemetry {
         result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
     }
+    if let (Some((receipt, _)), Some(options), Some(exposure)) =
+        (&ex1_teacher, &ex1, &ex1_exposure)
+    {
+        result["ex1"] = json!({"method":ex1_update_v1::EX1_METHOD_V1,"receipt":ex1_pin,
+            "collection":options.collection,"rows":receipt["rows"],
+            "rows_dropped":receipt["rows_dropped"],"searches":receipt["searches"],
+            "searches_failed":receipt["searches_failed"],"cap":exposure["cap"],
+            "adam_steps":exposure["adam_steps"],"teacher_seconds":teacher_seconds});
+    }
     result["input_read_seconds"] = json!(input_read_seconds);
     result["behavior_replay_seconds"] = json!(behavior_replay_seconds);
     result["learner_update_seconds"] = json!(learner_update_seconds);
@@ -638,6 +740,26 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     result["update_elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
+}
+
+/// EX1's movement rows on S: each row's log p after the combined step and
+/// after the ordinary-only step (when telemetry ran).
+fn s_movement_v1(
+    rows: &[ex1_update_v1::Ex1TaughtRowV1],
+    after: &SModelV1,
+    alone: Option<&SModelV1>,
+) -> Result<Value, String> {
+    let forward = |model: &SModelV1, tensor: &NativeFlatDecisionTensorV2| {
+        model
+            .forward_v1(SInputV1::of_tensor_v1(tensor), &mut STapeV1::default())
+            .map(|output| output.logits)
+    };
+    let mut alone = alone.map(|model| move |tensor: &NativeFlatDecisionTensorV2| forward(model, tensor));
+    ex1_update_v1::ex1_movement_with_v1(
+        rows,
+        &mut |tensor| forward(after, tensor),
+        alone.as_mut().map(|f| f as ex1_update_v1::Ex1ForwardV1<'_>),
+    )
 }
 
 #[cfg(test)]

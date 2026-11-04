@@ -217,6 +217,24 @@ pub(super) fn ex1_teach_v1(
     state: &NativePolicyValueTrainStateV1,
     generation: FreshLineageGenerationV1,
 ) -> Result<(Value, Vec<Ex1TaughtRowV1>), String> {
+    let model = state.model_v1();
+    let parameters = model.parameter_snapshot_v1();
+    ex1_teach_with_v1(options, trajectories, episodes, &mut |tensor| {
+        training_forward_v1(model, generation, &parameters, view_v1(tensor, generation))
+            .map(|(logits, _)| logits)
+            .map_err(|e| format!("ex1 training forward: {e:?}"))
+    })
+}
+
+/// [`ex1_teach_v1`] for any learner: `forward` is the learner's training
+/// forward of a trajectory tensor at the update-start parameters (its
+/// logits), which must equal the deployed logits bit for bit.
+pub(super) fn ex1_teach_with_v1(
+    options: &Ex1UpdateOptionsV1,
+    trajectories: &[PinnedFileV1],
+    episodes: &[ExpandedTrajectoryV1],
+    forward: &mut dyn FnMut(&NativeFlatDecisionTensorV2) -> Result<Vec<f32>, String>,
+) -> Result<(Value, Vec<Ex1TaughtRowV1>), String> {
     options.validate_v1()?;
     let collection: Value =
         serde_json::from_slice(&read_pinned_bytes(&options.collection)?).map_err(err)?;
@@ -235,8 +253,6 @@ pub(super) fn ex1_teach_v1(
         sidecars.len() == episodes.len(),
         "ex1 collection lacks one record per trajectory",
     )?;
-    let model = state.model_v1();
-    let parameters = model.parameter_snapshot_v1();
     let mut rows = Vec::new();
     let mut strata: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
     let (mut searches, mut failed, mut discarded_searches, mut offers) = (0u64, 0u64, 0u64, 0u64);
@@ -371,9 +387,7 @@ pub(super) fn ex1_teach_v1(
                 }
             }
             let tensor = decision.tensor.tensor();
-            let (logits, _) =
-                training_forward_v1(model, generation, &parameters, view_v1(&tensor, generation))
-                    .map_err(|e| format!("ex1 training forward: {e:?}"))?;
+            let logits = forward(&tensor)?;
             ensure(
                 logits.iter().map(|z| z.to_bits()).collect::<Vec<_>>() == decision.logits,
                 "ex1 training forward differs from the deployed logits",
@@ -456,6 +470,59 @@ pub(super) fn ex1_auxiliary_input_v1<'a>(
     }
 }
 
+/// [`ex1_auxiliary_input_v1`] for the S learner (`s_transformer_v1`): the
+/// same rows, targets, dose, cap, telemetry and mask.
+pub(super) fn ex1_s_auxiliary_input_v1<'a>(
+    rows: &'a [Ex1TaughtRowV1],
+    options: &Ex1UpdateOptionsV1,
+    policy_mask: Vec<(usize, usize)>,
+) -> crate::s_transformer_v1::SAuxiliaryInputV1<'a> {
+    crate::s_transformer_v1::SAuxiliaryInputV1 {
+        direction: EX1_DIVERGENCE_V1,
+        coefficient: options.coefficient,
+        denominator: EX1_DENOMINATOR_V1,
+        cap: options.cap.kappa_v1(),
+        step_telemetry: options.step_telemetry_v1() || rows.is_empty(),
+        policy_mask,
+        rows: rows
+            .iter()
+            .map(|row| crate::s_transformer_v1::SAuxiliaryRowV1 {
+                input: crate::s_transformer_v1::SInputV1::of_tensor_v1(&row.tensor),
+                target: &row.target,
+            })
+            .collect(),
+    }
+}
+
+/// W5: each played root's `(slot, step)` in the receipt as its `(group,
+/// substep)` in this update's learner groups; empty without W5.
+pub(super) fn w5_policy_mask_v1(
+    receipt: &Value,
+    tensor_groups: &[LearnerTensorGroupV1<'_>],
+) -> Result<Vec<(usize, usize)>, String> {
+    let mut policy_mask = Vec::new();
+    if let Some(masked) = receipt["w5"]["pg_masked"].as_array() {
+        let mut place = BTreeMap::new();
+        for (group, (_, slot, substeps)) in tensor_groups.iter().enumerate() {
+            for (substep, (row, _)) in substeps.iter().enumerate() {
+                place.insert((*slot, row.step), (group, substep));
+            }
+        }
+        for entry in masked {
+            let key = (
+                entry["slot"].as_u64().ok_or("w5 mask lacks a slot")? as usize,
+                entry["step"].as_u64().ok_or("w5 mask lacks a step")?,
+            );
+            policy_mask.push(
+                *place
+                    .get(&key)
+                    .ok_or("w5 masked row is not a learner substep of the batch")?,
+            );
+        }
+    }
+    Ok(policy_mask)
+}
+
 fn log_softmax_v1(logits: &[f32]) -> Result<Vec<f64>, String> {
     let z: Vec<f64> = logits.iter().map(|&x| f64::from(x)).collect();
     Ok(line_b_softmax_v1(&z)
@@ -474,20 +541,37 @@ pub(super) fn ex1_movement_v1(
     combined: &[NativeNamedParameterV1],
     ordinary: Option<&[NativeNamedParameterV1]>,
 ) -> Result<Value, String> {
-    let forward = |parameters: &[NativeNamedParameterV1], row: &Ex1TaughtRowV1| {
-        training_forward_v1(
-            model,
-            generation,
-            parameters,
-            view_v1(&row.tensor, generation),
-        )
-        .map_err(|e| format!("ex1 movement forward: {e:?}"))
-        .and_then(|(logits, _)| log_softmax_v1(&logits))
+    let forward = |parameters: &[NativeNamedParameterV1], tensor: &NativeFlatDecisionTensorV2| {
+        training_forward_v1(model, generation, parameters, view_v1(tensor, generation))
+            .map(|(logits, _)| logits)
+            .map_err(|e| format!("ex1 movement forward: {e:?}"))
     };
+    let mut alone = ordinary.map(|p| move |tensor: &NativeFlatDecisionTensorV2| forward(p, tensor));
+    ex1_movement_with_v1(
+        rows,
+        &mut |tensor| forward(combined, tensor),
+        alone.as_mut().map(|f| f as Ex1ForwardV1<'_>),
+    )
+}
+
+/// A row's logits from one learner forward (the movement telemetry's).
+pub(super) type Ex1ForwardV1<'f> =
+    &'f mut dyn FnMut(&NativeFlatDecisionTensorV2) -> Result<Vec<f32>, String>;
+
+/// [`ex1_movement_v1`] for any learner: `after` and `alone` give a row's
+/// logits after the combined step and after the ordinary-only step.
+pub(super) fn ex1_movement_with_v1(
+    rows: &[Ex1TaughtRowV1],
+    after: Ex1ForwardV1<'_>,
+    mut alone: Option<Ex1ForwardV1<'_>>,
+) -> Result<Value, String> {
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        let after = forward(combined, row)?;
-        let alone = ordinary.map(|p| forward(p, row)).transpose()?;
+        let after = log_softmax_v1(&after(&row.tensor)?)?;
+        let alone = match alone.as_mut() {
+            Some(forward) => Some(log_softmax_v1(&forward(&row.tensor)?)?),
+            None => None,
+        };
         let at = |index: usize| {
             json!({"index":index,"before":row.student_log[index],"after_combined":after[index],
                 "after_ordinary":alone.as_ref().map(|a| a[index])})

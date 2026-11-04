@@ -605,8 +605,8 @@ impl NativeExpandedTrainingRunV1 {
         )?;
         validate_source_paths(&self.initial_source)?;
         // W5's native S learner (`s_learner_v1`) runs the ordinary CPU GAE
-        // update and collection only; its own update and loader refuse the
-        // rest too, this check refuses them before any work.
+        // update and collection, with or without EX1/W5; its own update and
+        // loader refuse the rest too, this check refuses them before any work.
         if self.initial_source.s_learner.is_some() {
             check(
                 self.update_backend.is_cpu()
@@ -617,12 +617,12 @@ impl NativeExpandedTrainingRunV1 {
                     && self.e_supported.is_none()
                     && self.soft_q.is_none()
                     && self.search_targets.is_none()
-                    && self.ex1.is_none()
                     && matches!(
                         self.loss_selection,
                         ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
                     ),
-                "an S learner run requires the ordinary sequential CPU GAE update, record                  format v1 and the legacy sampler, without line (b), E, SQ1, search targets or ex1",
+                "an S learner run requires the ordinary sequential CPU GAE update, record \
+                 format v1 and the legacy sampler, without line (b), E, SQ1 or search targets",
             )?;
         }
         if let Some(options) = &self.e_supported {
