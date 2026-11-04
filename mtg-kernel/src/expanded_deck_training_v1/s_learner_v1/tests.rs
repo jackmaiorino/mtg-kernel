@@ -1098,8 +1098,9 @@ fn s_search_digest_skip_v1() {
 }
 
 /// Timing receipt (ignored; run by hand on one host): S's W5 searches at
-/// 16k on fixed seeds with the state digest on, then skipped (pilot-size S,
-/// random initialization), per-search wall and the records' equality.
+/// 16k on fixed seeds with the state digest on and skipped, interleaved
+/// twice (on, off, on, off) against host drift (pilot-size S, random
+/// initialization); per-search walls and the records' equality.
 #[test]
 #[ignore = "timing receipt"]
 fn s_search_digest_skip_timing_receipt() {
@@ -1137,7 +1138,7 @@ fn s_search_digest_skip_timing_v1() {
             })
             .unwrap();
     let mut outputs = Vec::new();
-    for skip in [false, true] {
+    for (round, skip) in [false, true, false, true].into_iter().enumerate() {
         S_SEARCH_DIGEST_SKIP_V1.with(|flag| flag.set(skip));
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: s.clone(),
@@ -1158,7 +1159,7 @@ fn s_search_digest_skip_timing_v1() {
                     capture_0b: None,
                 }),
             }),
-            output_directory: root.join(format!("collect-{skip}")),
+            output_directory: root.join(format!("collect-{round}")),
         })
         .unwrap();
         S_SEARCH_DIGEST_SKIP_V1.with(|flag| flag.set(true));
@@ -1183,11 +1184,13 @@ fn s_search_digest_skip_timing_v1() {
         }
         eprintln!(
             "TIMING {}",
-            json!({"state_digest_skipped":skip,"budget":16_000,"walls":walls,
+            json!({"round":round,"state_digest_skipped":skip,"budget":16_000,"walls":walls,
                 "collection_elapsed_seconds":collection["collection_elapsed_seconds"]})
         );
         outputs.push((trajectories, records));
     }
-    assert_eq!(outputs[0], outputs[1], "the skip changed a record");
+    for output in &outputs[1..] {
+        assert_eq!(&outputs[0], output, "the skip changed a record");
+    }
     let _ = fs::remove_dir_all(&root);
 }
