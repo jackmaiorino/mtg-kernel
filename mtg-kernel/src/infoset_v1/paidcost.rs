@@ -37,6 +37,14 @@ impl OutletV1 {
             Self::Shaman => "Krark-Clan Shaman",
         }
     }
+
+    /// The strict-view dump tag (the fixture glob matches `*-v<n>`).
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Food => "food",
+            Self::Shaman => "shaman",
+        }
+    }
 }
 
 fn lembas_in_library(st: &GameState) -> bool {
@@ -330,7 +338,7 @@ fn lembas_paid_cost_fixture_in_both_worlds() {
                     lembas_paid(outlet, deep),
                     v,
                     6,
-                    &format!("fx-lembaspaid-{outlet:?}-{}", u8::from(deep)),
+                    &format!("fx-lembaspaid-{}-v{}", outlet.tag(), u8::from(deep)),
                 )
             })
             .collect();
