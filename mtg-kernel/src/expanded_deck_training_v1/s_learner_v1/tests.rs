@@ -315,6 +315,35 @@ fn s_learner_end_to_end_v1() {
     let document: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(document.get("ex1").is_none());
     assert_eq!(serde_json::to_value(&record).unwrap(), document);
+    // PR A's (239cfad50) record members under the platform's libm, literally.
+    let mut keys: Vec<&str> = document
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let mut pr_a = vec![
+        "schema",
+        "architecture",
+        "initial_sha256",
+        "source_import",
+        "feature_contract_digest",
+        "feature_encoding_digest",
+        "card_db_hash",
+        "state",
+        "state_sha256",
+        "adam_step",
+        "trajectories",
+        "loss_identity",
+        "gamma_bits",
+        "gae_lambda_bits",
+        "entropy_coefficient_bits",
+        "learning_rate_bits",
+        "value_coefficient_bits",
+    ];
+    pr_a.sort_unstable();
+    keys.sort_unstable();
+    assert_eq!(keys, pr_a);
     let restored = decode_checkpoint_v1(&fs::read(&record.state.path).unwrap()).unwrap();
     assert_eq!(restored.state_sha256_v1(), after.state_sha256);
     // The run driver's continuation read binds the update's inputs.
