@@ -12729,6 +12729,33 @@ pub(crate) fn validate_pending_discard_binding(
 /// If a discard is pending, either auto-resolves it (no real choice: the
 /// legal pool is already <= the required count) or returns
 /// `Decision::Discard`.
+/// The hand cards a pending discard may choose from (its own source or the
+/// spell being cast excluded), in hand order.
+fn pending_discard_choices(state: &GameState, pd: &PendingDiscard) -> Vec<ObjectId> {
+    let exclude = match &pd.resume {
+        DiscardResume::FinishCast { .. } => state.engine.pending_cast.as_ref().map(|p| p.spell),
+        DiscardResume::FinishActivation { source, .. } => Some(*source),
+        _ => None,
+    };
+    state.players[pd.player.index()]
+        .hand
+        .iter()
+        .copied()
+        .filter(|&id| Some(id) != exclude)
+        .collect()
+}
+
+/// The `Decision::Discard` a pending discard presents (player, count,
+/// choices), for the W1 payload's import check (amendment 43.1 part 2);
+/// None without a pending discard.
+pub(crate) fn pending_discard_decision_v1(
+    state: &GameState,
+) -> Option<(PlayerId, u32, Vec<ObjectId>)> {
+    let pd = state.engine.pending_discard.as_ref()?;
+    let choices = pending_discard_choices(state, pd);
+    Some((pd.player, pd.count.min(choices.len() as u32), choices))
+}
+
 fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
     let pd = state.engine.pending_discard.clone()?;
     if let Err((source, _message)) = validate_pending_discard_binding(state, &pd) {
@@ -12738,17 +12765,7 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
             source,
         });
     }
-    let exclude = match &pd.resume {
-        DiscardResume::FinishCast { .. } => state.engine.pending_cast.as_ref().map(|p| p.spell),
-        DiscardResume::FinishActivation { source, .. } => Some(*source),
-        _ => None,
-    };
-    let choices: Vec<ObjectId> = state.players[pd.player.index()]
-        .hand
-        .iter()
-        .copied()
-        .filter(|&id| Some(id) != exclude)
-        .collect();
+    let choices = pending_discard_choices(state, &pd);
 
     if state.engine.spellbench_neutral_v1.choices {
         // The neutral contract poses every nonempty discard, even a forced

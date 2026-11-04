@@ -5406,11 +5406,19 @@ impl FastActorSessionV1 {
             })?;
             context.combat = Some(renamed);
         }
+        if let Some(discard) = &context.discard {
+            let renamed = discard.rename(|o| {
+                ids.get(&u64::from(o.0))
+                    .and_then(|n| u32::try_from(*n).ok())
+                    .map(ObjectId)
+            })?;
+            context.discard = Some(renamed);
+        }
         Some(context)
     }
 
-    /// Why a payload cannot carry the surface (diagnostics for R2 tallies).
-    #[cfg(test)]
+    /// Why a payload cannot carry the surface: the R2 subclass the bridge
+    /// sends (amendment 43.1 part 2).
     pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
         self.surface.payload_refusal_detail_v1()
     }
@@ -5435,6 +5443,18 @@ impl FastActorSessionV1 {
         // presented, so the import presents the live scan point itself.
         if let Some(combat) = context.as_ref().and_then(|c| c.combat.as_ref()) {
             surface.set_combat_context_v1(combat, 0);
+        }
+        // A carried discard record (amendment 43.1 part 2), likewise; its
+        // remaining choices are the imported state's own (the payload's
+        // import checked the record against that state first).
+        if let Some(discard) = context.as_ref().and_then(|c| c.discard.as_ref()) {
+            if let Some((_, _, choices)) = crate::engine::pending_discard_decision_v1(&state) {
+                let remaining = choices
+                    .into_iter()
+                    .filter(|x| !discard.chosen.contains(x))
+                    .collect();
+                surface.set_discard_context_v1(discard, remaining);
+            }
         }
         let mut session = FastActorSessionV1 {
             deck_ids: template.deck_ids.clone(),

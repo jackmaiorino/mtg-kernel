@@ -139,19 +139,24 @@ pub(crate) fn infoset_extension_v1(
                 })
             }
             None => {
-                // The live surface names objects mid-scan (R2).
+                // The live surface names objects the payload cannot carry
+                // (R2); the subclass names that surface state (amendment
+                // 43.1 part 2), so every R2 can be classified.
+                let detail = fast.payload_refusal_detail_v1();
                 let refused = ExportErrorV1::Refused {
                     code: crate::infoset_v1::RefusalCodeV1::R2,
-                    detail: "surface mid-scan".into(),
+                    detail: format!("surface: {detail}"),
                 };
                 state.tally[seat_index].record(&Err(refused));
-                json!({"schema": INFOSET_SCHEMA_V1, "refusal": "R2"})
+                json!({"schema": INFOSET_SCHEMA_V1, "refusal": "R2", "refusal_detail": detail})
             }
         },
         Err(error @ ExportErrorV1::Refused { .. }) => {
+            // An export refusal's subclass is fixed: its code says which
+            // predicate refused (the free-text detail stays engine-side).
             let code = error.code_name();
             state.tally[seat_index].record(&Err(error.clone()));
-            json!({"schema": INFOSET_SCHEMA_V1, "refusal": code})
+            json!({"schema": INFOSET_SCHEMA_V1, "refusal": code, "refusal_detail": "export"})
         }
         Err(ExportErrorV1::Fault { code, detail }) => {
             return Err(format!("engine_fault:infoset:{code:?}: {detail}"));

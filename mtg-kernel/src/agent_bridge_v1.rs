@@ -3597,6 +3597,10 @@ mod tests {
                     } else {
                         crate::ids::PlayerId::P1
                     };
+                    let wire_detail = extension["refusal_detail"]
+                        .as_str()
+                        .expect("a refusal carries its subclass")
+                        .to_string();
                     let detail = match crate::infoset_v1::export_v1(
                         &crate::infoset_v1::ExportInputV1 {
                             state: st,
@@ -3606,8 +3610,18 @@ mod tests {
                         },
                         crate::infoset_v1::ExportOptionsV1::default(),
                     ) {
-                        Err(crate::infoset_v1::ExportErrorV1::Refused { detail, .. }) => detail,
-                        _ => format!("surface: {}", lockstep.payload_refusal_detail_v1()),
+                        Err(crate::infoset_v1::ExportErrorV1::Refused { detail, .. }) => {
+                            assert_eq!(wire_detail, "export", "{deck}: export refusal subclass");
+                            detail
+                        }
+                        _ => {
+                            assert_eq!(
+                                wire_detail,
+                                lockstep.payload_refusal_detail_v1(),
+                                "{deck}: surface refusal subclass"
+                            );
+                            format!("surface: {wire_detail}")
+                        }
                     };
                     let detail: String = detail.chars().take(60).collect();
                     *refusals.entry(format!("{code}: {detail}")).or_default() += 1;
