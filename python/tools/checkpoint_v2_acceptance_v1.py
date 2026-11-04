@@ -585,6 +585,19 @@ def parse_typeperf_line(line, header):
     return at, values
 
 
+def check_typeperf_row_width(line, header):
+    """A complete data row whose cell count differs from the header's cannot be mapped to columns; stop the sampler
+    (the start precondition then fails loudly) instead of counting every row as missing. A final fragment without
+    its newline (typeperf terminated mid-write) is not a complete row and is left to parse_typeperf_line."""
+    if not line.endswith('\n'):
+        return
+    line = line.strip()
+    if not line.startswith('"') or line.startswith('"(PDH-CSV'):
+        return
+    cells = line.split('","')
+    require(len(cells) == len(header), f'typeperf row has {len(cells)} cells but the header has {len(header)}')
+
+
 def disk_columns(header, letter):
     """typeperf columns of the physical disk holding drive `letter`: (idle column, read-bytes column)."""
     if not letter:
@@ -658,9 +671,12 @@ def start_window_failures(stats, artifact_disk=True):
 
 
 class Sampler(threading.Thread):
+    # No Processor Information counter: on some hosts typeperf leaves it out of the header while every row still
+    # carries its value, so no row matched the header and the start precondition saw 100% missing rows. The rule
+    # reads only the disk columns.
     COUNTERS = [r'\PhysicalDisk(*)\% Idle Time', r'\PhysicalDisk(*)\Disk Read Bytes/sec',
                 r'\PhysicalDisk(*)\Disk Write Bytes/sec', r'\PhysicalDisk(*)\Current Disk Queue Length',
-                r'\Processor Information(_Total)\% Processor Time', r'\System\Processor Queue Length']
+                r'\System\Processor Queue Length']
 
     def __init__(self, samples, csv_path, run_disk, artifact_disk):
         super().__init__(daemon=True)
@@ -690,6 +706,7 @@ class Sampler(threading.Thread):
                         continue
                     if header is None:
                         continue
+                    check_typeperf_row_width(line, header)
                     parsed = parse_typeperf_line(line, header)
                     if parsed is None:
                         continue
