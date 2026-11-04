@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -387,6 +388,31 @@ class CountersTests(unittest.TestCase):
         acc.check_typeperf_row_width(wide, self.HEADER)
         self.assertNotIn(r'\Processor Information(_Total)\% Processor Time', acc.Sampler.COUNTERS)
 
+    def test_block_waits_for_sampler_rows(self):
+        # Rows stamped inside a block that the reader has not yet delivered are waited for, not counted missing.
+        samples = acc.Samples(interval=5)
+        for t in range(0, 50, 5):
+            samples.add(t, 1e6, 1.0)
+        m = acc.Measurement.__new__(acc.Measurement)
+        m.samples, m.sampler = samples, FakeWatch()
+
+        def late():
+            time.sleep(0.6)
+            for t in (50, 55, 60):
+                samples.add(t, 1e6, 1.0)
+        feeder = threading.Thread(target=late)
+        feeder.start()
+        catchup = m.wait_for_sampler(60)
+        feeder.join()
+        self.assertTrue(catchup['caught_up'])
+        self.assertGreater(catchup['waited'], 0.3)
+        self.assertEqual(acc.window_stats(samples.window(0, 60), 0, 60, 5)['missing_fraction'], 0.0)
+        # A dead sampler ends the wait at once; the absent rows then count as missing.
+        dead = FakeWatch()
+        dead.is_alive = lambda: False
+        m.sampler = dead
+        self.assertEqual(m.wait_for_sampler(1000)['caught_up'], False)
+
     def test_contamination(self):
         rows = [(t, 10e6, 10.0) for t in range(0, 100, 5)]
         stats = acc.window_stats(rows, 0, 100, 5)
@@ -516,6 +542,9 @@ class FakeSamples:
 
     def window(self, start, end):
         return [(t, 5e6, 5.0) for t in range(int(start) + 1, int(end))] or [(start, 5e6, 5.0)]
+
+    def latest(self):
+        return float('inf')
 
 
 class FakeWatch:
