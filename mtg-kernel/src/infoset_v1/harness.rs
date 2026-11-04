@@ -324,6 +324,7 @@ pub(crate) struct PairReportV1 {
 
 /// A short, comparable head of an outcome for diagnostics.
 fn head(o: &Result<Vec<u8>, String>) -> String {
+    use sha2::Digest as _;
     match o {
         Err(e) => format!("Err({e})"),
         Ok(b) => {
