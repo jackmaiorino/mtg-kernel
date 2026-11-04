@@ -374,6 +374,16 @@ class CountersTests(unittest.TestCase):
         self.assertEqual(values[self.HEADER[7]], 3000000.5)
         self.assertIsNone(acc.parse_typeperf_line('Exiting, please wait...', self.HEADER))
 
+    def test_typeperf_row_width(self):
+        # A host's typeperf left a counter out of the header while rows kept its value: refuse, do not drop rows.
+        acc.check_typeperf_row_width('"11/03/2026 07:36:15.927","95.5","40.0","99.7","98.4","1.0","2.0","3.5"',
+                                     self.HEADER)
+        acc.check_typeperf_row_width('Exiting, please wait...', self.HEADER)
+        with self.assertRaises(acc.Refused):
+            acc.check_typeperf_row_width('"11/03/2026 07:36:15.927","95.5","40.0","99.7","98.4","1.0","2.0","3.5",'
+                                         '"12.0"', self.HEADER)
+        self.assertNotIn(r'\Processor Information(_Total)\% Processor Time', acc.Sampler.COUNTERS)
+
     def test_contamination(self):
         rows = [(t, 10e6, 10.0) for t in range(0, 100, 5)]
         stats = acc.window_stats(rows, 0, 100, 5)
