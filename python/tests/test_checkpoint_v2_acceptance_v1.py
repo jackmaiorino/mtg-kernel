@@ -348,9 +348,10 @@ class RetentionTests(unittest.TestCase):
             path.write_text('{}')
             self.assertFalse(acc.correspondence_passed(path))
         args = argparse.Namespace(precondition_seconds=acc.PRECONDITION_SECONDS, settle_seconds=acc.SETTLE_SECONDS,
-                                  pool='0-19', run_disk='D', artifact_disk='E', root='D:/x', artifact_root='E:/y')
-        for change in ({'artifact_disk': ''}, {'pool': '0-15'}, {'pool': 'own'}, {'settle_seconds': 1.0},
-                       {'artifact_root': 'D:/y'}):
+                                  pool='4-23', run_disk='D', artifact_disk='E', root='D:/x', artifact_root='E:/y')
+        # Amendment 2: exactly 4-23. The design's 0-19, a subset, a superset and 'own' are refused.
+        for change in ({'artifact_disk': ''}, {'pool': '0-19'}, {'pool': '0-15'}, {'pool': '4-22'}, {'pool': '0-23'},
+                       {'pool': '3-23'}, {'pool': 'own'}, {'settle_seconds': 1.0}, {'artifact_root': 'D:/y'}):
             with self.assertRaises(acc.Refused):
                 acc.formal_placement(argparse.Namespace(**dict(vars(args), **change)))
         if os.name == 'nt':
@@ -448,6 +449,23 @@ class CountersTests(unittest.TestCase):
         self.assertEqual([c['pid'] for c in acc.foreign_claims(status, pool, {1})], [3])
         status['timed'] = {'held': True, 'cores': None}
         self.assertEqual(len(acc.foreign_claims(status, pool, {1, 3})), 1)
+
+    def test_amendment_2_pool(self):
+        # Claims on 0-3 (a GPU campaign beside the measurement) are outside the amended pool; any core of 4-23 is not.
+        self.assertEqual(acc.parse_cores(acc.POOL_CORES), set(range(4, 24)))
+        pool = acc.parse_cores(acc.POOL_CORES)
+        status = {'claims': [{'pid': 7, 'cores': [0, 1]}, {'pid': 8, 'cores': [2, 3]},
+                             {'pid': 1, 'cores': list(range(4, 24))}],
+                  'timed': {'held': False, 'cores': []}}
+        self.assertEqual(acc.foreign_claims(status, pool, {1}), [])
+        for cores in ([3, 4], [23], [12]):
+            status['claims'].append({'pid': 9, 'cores': cores})
+            self.assertEqual([c['pid'] for c in acc.foreign_claims(status, pool, {1})], [9])
+            status['claims'].pop()
+        status['timed'] = {'held': True, 'cores': [0, 1, 2, 3]}
+        self.assertEqual(acc.foreign_claims(status, pool, {1}), [])
+        status['timed'] = {'held': True, 'cores': [3, 4]}
+        self.assertEqual(len(acc.foreign_claims(status, pool, {1})), 1)
 
 
 FAKE_BINARY = r'''
