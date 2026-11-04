@@ -45,7 +45,7 @@ pub(crate) fn new_game(decks: [&str; 2], seed: u64, first: PlayerId) -> FastActo
             .card_ids
             .to_vec()
     });
-    FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+    let mut s = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         seed,
         seed,
         2_000,
@@ -54,7 +54,12 @@ pub(crate) fn new_game(decks: [&str; 2], seed: u64, first: PlayerId) -> FastActo
         mainboards,
         first,
     )
-    .expect("reset")
+    .expect("reset");
+    // AC1 runs the entrant's configuration: the bridge's neutral choices.
+    if super::harness::ac1_neutral() {
+        s.enable_spellbench_neutral_choices();
+    }
+    s
 }
 
 /// Forced deal: `owner`'s hand starts with `hand` and its library with
@@ -438,6 +443,7 @@ impl ScriptV1 {
             if let (Some((_, world, dump)), Some(line)) = (self.strict.as_mut(), line.as_mut()) {
                 line["c"] = serde_json::json!([world.raw_candidate(i)]);
                 dump.line(line);
+                world.advance(i);
             }
             self.native.push(vals[i].clone());
             let st = self.s.game_state();
@@ -507,6 +513,9 @@ pub(crate) struct AtV1 {
     /// Exported handles that are `known_name` occupants or pins, by name.
     pub known: Vec<String>,
     pub pinned: Vec<String>,
+    /// Mutant L8's canonical export bytes, when it exports (the L8 bytes
+    /// evidence of lead ruling 6).
+    pub l8_export: Option<Vec<u8>>,
 }
 
 pub(crate) fn observe(
@@ -567,6 +576,20 @@ pub(crate) fn observe(
         nodes,
         known,
         pinned,
+        l8_export: mutants
+            .contains(&MutantV1::L8)
+            .then(|| {
+                export_at(
+                    s,
+                    v,
+                    ExportOptionsV1 {
+                        mutant: Some(MutantV1::L8),
+                    },
+                )
+                .ok()
+            })
+            .flatten()
+            .map(|x| x.bytes),
     }
 }
 
@@ -594,7 +617,8 @@ pub(crate) fn record_strict(
     name: &str,
 ) -> (Vec<AtV1>, ScriptV1) {
     if super::transcript::DumpV1::enabled() {
-        let header = serde_json::json!({"family": "fixture", "tag": name, "viewer": format!("{v:?}")});
+        let header =
+            serde_json::json!({"family": "fixture", "tag": name, "viewer": format!("{v:?}")});
         script.strict = Some((
             v,
             super::transcript::WorldV1::new(v),
@@ -602,8 +626,8 @@ pub(crate) fn record_strict(
         ));
     }
     let (out, mut script) = record(script, v, extra);
-    if let Some((_, _, dump)) = script.strict.take() {
-        dump.finish("script");
+    if let Some((_, world, dump)) = script.strict.take() {
+        dump.finish(&format!("script; raw rebuilds {}", world.rebuilds()));
     }
     (out, script)
 }
@@ -1387,94 +1411,132 @@ fn w_pin_engine_fixtures() {
     );
 }
 
-/// L8 (count-fact binding) witnesses: compared decisions where the correct
-/// producer exports equal bytes in both worlds and mutant L8 differs. The
-/// bounced Hawk's span began on the stack, so L8's `C:` binding exports its
-/// generation above 1, while a fresh Hawk exports 1. The witness pair puts
-/// back no Hawk in one world and the bounced Hawk and a fresh one in the
-/// other, so L8's bound copies differ in history; the control pair puts
-/// back two fresh Hawks, so the bounced copy stays in both worlds and L8
-/// must not differ (binding alone is invisible between equal copies).
+/// L8 (count-fact binding) under amendment 43.3 (lead ruling 6). V is
+/// Faeries; CawGates holds four tracked Hawks (three fetched, one bounced by
+/// Snap), then Brainstorms and puts back two cards, so the tracker keeps two
+/// Hawk count facts and P exports two `known_name` Hawks in every variant.
+/// Mutant L8 binds those facts to the first true remaining Hawks with `C:`
+/// handles. A bound copy exports the generation of its last span: a fetched
+/// Hawk's span began with its observed search (generation 2), the bounced
+/// Hawk's with its unlinked move back to the hand (generation 1). So:
+/// - no Hawk put back vs two fetched Hawks put back (the witness pair): L8
+///   binds two fetched copies in W and the fetched and the bounced copy in
+///   W', so its bytes differ while P's agree;
+/// - no Hawk put back vs the bounced and a fetched Hawk put back: L8 binds two
+///   fetched copies in both worlds (reported, not required).
+///
+/// Witness bar (ruling 6): at least 5 compared decisions where L8 differs and
+/// P does not, each shown in L8's bytes to differ only in a bound Hawk's
+/// generation (and the knowledge row that carries it).
 #[test]
 fn l8_bound_copies_engine_fixture() {
-    // Ruling 2 (c): the delivered comparison counts witnesses only at
-    // decisions the entrant receives, so the fixture runs in several game
-    // seeds (the forced deals and script are the same; later draws differ)
-    // and sums them; every seed's control must stay at 0.
-    let (mut total, mut total_control, mut total_samples) = (0u64, 0u64, 0u64);
+    let (mut total, mut equal_copies, mut equal_samples) = (0u64, 0u64, 0u64);
     for seed in [72u64, 73, 74, 75, 76, 77] {
-        let (w, c, n) = l8_bound_copies_witnesses(seed);
+        let (w, e, n) = l8_bound_copies_witnesses(seed);
         total += w;
-        total_control += c;
-        total_samples += n;
+        equal_copies += e;
+        equal_samples += n;
     }
     eprintln!(
-        "l8-bound-copies over six seeds: {total} delivered witnesses; control {total_control} of {total_samples}"
+        "l8-bound-copies over six seeds: {total} witnesses (no Hawk vs two fetched Hawks put back); bounced and fetched put back: L8 differs at {equal_copies} of {equal_samples}"
     );
     assert!(
         total >= 5,
-        "L8 has at least 5 delivered witnesses (design 13): {total}"
-    );
-    assert!(
-        total_samples >= 5,
-        "the control compares at least 5 post-Brainstorm decisions: {total_samples}"
-    );
-    assert_eq!(
-        total_control, 0,
-        "binding between equal copies leaves L8's bytes unchanged"
+        "L8 has at least 5 witnesses (design 13, ruling 6): {total}"
     );
 }
 
-/// Ruling 4 (3) diagnostics: where the L8 control pair (no Hawk put back vs
-/// two fresh Hawks put back) shows an L8 difference while P agrees and both
-/// worlds export two `known_name` Hawks, the bytes of L8's two exports.
-#[test]
-fn l8_control_difference_bytes() {
-    let v = PlayerId::P1;
-    let hawks = vec!["Squadron Hawk".to_string(); 2];
-    for seed in [73u64, 74, 75] {
-        let (a, _) = record(l8_bound_copies(L8PutBackV1::NoHawk, seed), v, 30);
-        let (b, _) = record(l8_bound_copies(L8PutBackV1::TwoFresh, seed), v, 30);
-        let mut shown = 0;
-        for (x, y) in a.iter().zip(&b) {
-            if !(x.p.is_ok() && x.p == y.p && x.known == hawks && y.known == hawks) {
-                continue;
+/// The paths at which two canonical exports differ (labels and state), with
+/// the first export's labels and state.
+fn export_differences(x: &[u8], y: &[u8]) -> (Vec<String>, Value, Value) {
+    fn parse(b: &[u8]) -> (Value, Value) {
+        let text = std::str::from_utf8(b).expect("utf-8 export");
+        let mut parts = text.splitn(3, '\n');
+        let _schema = parts.next();
+        let labels: Value = serde_json::from_str(parts.next().expect("labels")).expect("labels");
+        let state: Value = serde_json::from_str(parts.next().expect("state")).expect("state");
+        (labels, state)
+    }
+    fn walk(a: &Value, b: &Value, path: String, out: &mut Vec<String>) {
+        match (a, b) {
+            (Value::Object(x), Value::Object(y)) => {
+                for k in x.keys().chain(y.keys()).collect::<BTreeSet<_>>() {
+                    walk(
+                        x.get(k).unwrap_or(&Value::Null),
+                        y.get(k).unwrap_or(&Value::Null),
+                        format!("{path}.{k}"),
+                        out,
+                    );
+                }
             }
-            let l8 = |r: &AtV1| {
-                r.mutants
-                    .iter()
-                    .find(|(m, _)| *m == MutantV1::L8)
-                    .map(|(_, o)| o.clone())
-                    .expect("L8")
-            };
-            let (mx, my) = (l8(x), l8(y));
-            if mx == my {
-                continue;
+            (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
+                for (i, (u, v)) in x.iter().zip(y).enumerate() {
+                    walk(u, v, format!("{path}[{i}]"), out);
+                }
             }
-            // The first differing byte of the two exports, with context.
-            let (bx, by) = (mx.clone().unwrap_or_default(), my.clone().unwrap_or_default());
-            let at = bx.iter().zip(&by).position(|(u, v)| u != v).unwrap_or(bx.len().min(by.len()));
-            let window = |b: &[u8]| String::from_utf8_lossy(&b[at.saturating_sub(160)..(at + 160).min(b.len())]).to_string();
-            eprintln!(
-                "L8 control seed {seed} script step {} (former view equal {}): lengths {} / {}, first difference at byte {at}:
-  W  ...{}...
-  W' ...{}...",
-                x.step,
-                x.view == y.view,
-                bx.len(),
-                by.len(),
-                window(&bx),
-                window(&by)
-            );
-            shown += 1;
-            if shown >= 2 {
-                break;
-            }
+            _ if a != b => out.push(path),
+            _ => {}
         }
     }
+    let ((lx, sx), (ly, sy)) = (parse(x), parse(y));
+    let mut out = Vec::new();
+    walk(&lx, &ly, "labels".into(), &mut out);
+    walk(&sx, &sy, "state".into(), &mut out);
+    (out, lx, sx)
 }
 
-/// One seed of the L8 fixture: (witnesses, control witnesses, control samples).
+/// Checks that L8's two exports differ only through its bound copies: every
+/// differing path is the generation of a `C:`-handled Squadron Hawk in the
+/// opponent's exported hand, or a knowledge row's generation. Returns the
+/// paths and a byte window at the first difference.
+fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, String), String> {
+    let (paths, labels, state) = export_differences(x, y);
+    if paths.is_empty() {
+        return Err("L8's exports are equal".into());
+    }
+    let hand: Vec<u64> = state["players"][opp.index()]["hand"]
+        .as_array()
+        .map(|h| h.iter().filter_map(Value::as_u64).collect())
+        .unwrap_or_default();
+    let hawk = u64::from(id("Squadron Hawk"));
+    for p in &paths {
+        let bound_hawk = p
+            .strip_prefix("state.objects.items[")
+            .and_then(|r| r.strip_suffix("].zone_change_count"))
+            .and_then(|i| i.parse::<usize>().ok())
+            .is_some_and(|i| {
+                state["objects"]["items"][i]["card_def"].as_u64() == Some(hawk)
+                    && labels[i].as_str().is_some_and(|l| l.starts_with("C:"))
+                    && hand.contains(&(i as u64))
+            });
+        let knowledge_row =
+            p.starts_with("state.hand_knowledge") && p.ends_with(".zone_change_count");
+        if !(bound_hawk || knowledge_row) {
+            return Err(format!(
+                "L8's exports differ outside its bound copies at {p}"
+            ));
+        }
+    }
+    let at = x
+        .iter()
+        .zip(y)
+        .position(|(u, v)| u != v)
+        .unwrap_or(x.len().min(y.len()));
+    let window = |b: &[u8]| {
+        String::from_utf8_lossy(&b[at.saturating_sub(120)..(at + 60).min(b.len())]).to_string()
+    };
+    Ok((
+        paths,
+        format!(
+            "first difference at byte {at}:\n  W  ...{}...\n  W' ...{}...",
+            window(x),
+            window(y)
+        ),
+    ))
+}
+
+/// One seed of the L8 fixture: (witnesses, L8 differences on the
+/// bounced-and-fetched pair, its samples).
 fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
     let v = PlayerId::P1;
     let runs: Vec<_> = [
@@ -1493,11 +1555,11 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
     })
     .collect();
     let (records, reports) = pairs(&format!("l8-bound-copies seed {seed}"), runs);
-    // Compared decisions after the Brainstorm (P exports two `known_name`
-    // Hawks, equal bytes, in both worlds), split by whether L8 differs:
-    // (witnesses, agreeing samples).
     let hawks = vec!["Squadron Hawk".to_string(); 2];
-    let after_brainstorm = |b: &[AtV1]| -> (u64, u64) {
+    let mut shown = false;
+    // Compared decisions after the Brainstorm (P exports two `known_name`
+    // Hawks, equal bytes, in both worlds): (L8 differs, L8 agrees).
+    let mut after_brainstorm = |b: &[AtV1], check: bool| -> (u64, u64) {
         let (mut differ, mut agree) = (0, 0);
         for (x, y) in records[0].iter().zip(b) {
             if x.view != y.view {
@@ -1512,23 +1574,43 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
                     .find(|(m, _)| *m == MutantV1::L8)
                     .map(|(_, o)| o.clone())
             };
-            if l8(x) != l8(y) {
-                differ += 1;
-            } else {
+            if l8(x) == l8(y) {
                 agree += 1;
+                continue;
+            }
+            differ += 1;
+            if check {
+                let (Some(bx), Some(by)) = (&x.l8_export, &y.l8_export) else {
+                    panic!(
+                        "seed {seed} step {}: an L8 witness without L8 exports",
+                        x.step
+                    );
+                };
+                match l8_mechanism(bx, by, v.opponent()) {
+                    Ok((paths, window)) => {
+                        if !shown {
+                            eprintln!(
+                                "L8 witness bytes, seed {seed} script step {}: differing paths {paths:?}; {window}",
+                                x.step
+                            );
+                            shown = true;
+                        }
+                    }
+                    Err(e) => panic!("seed {seed} step {}: {e}", x.step),
+                }
             }
         }
         (differ, agree)
     };
-    let (control, control_samples) = after_brainstorm(&records[1]);
-    let (bounced_out, _) = after_brainstorm(&records[2]);
+    let (witnesses, _) = after_brainstorm(&records[1], true);
+    let (equal_differ, equal_agree) = after_brainstorm(&records[2], false);
     eprintln!(
-        "l8-bound-copies: L8 witnesses with P exporting two known_name Hawks: bounced and fresh put back {bounced_out}; two fresh put back (control) {control} of {}",
-        control + control_samples
+        "l8-bound-copies seed {seed}: witnesses (no Hawk vs two fetched put back) {witnesses}; bounced and fetched put back: L8 differs at {equal_differ} of {}",
+        equal_differ + equal_agree
     );
     assert!(
         reports.iter().all(|r| r.compared > 0),
         "both pairs compare decisions: {reports:?}"
     );
-    (bounced_out, control, control + control_samples)
+    (witnesses, equal_differ, equal_differ + equal_agree)
 }

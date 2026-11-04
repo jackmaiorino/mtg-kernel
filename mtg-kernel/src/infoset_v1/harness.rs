@@ -234,8 +234,27 @@ pub(crate) struct GameV1 {
     pub native: Vec<serde_json::Value>,
 }
 
+/// Whether AC1's games run with the bridge's neutral choices, as the
+/// entrant's bridge always does (lead ruling 6). On by default;
+/// `W1_AC1_NEUTRAL=0` gives the former configuration for comparison.
+pub(crate) fn ac1_neutral() -> bool {
+    std::env::var("W1_AC1_NEUTRAL").map_or(true, |v| v != "0")
+}
+
+/// An AC1 engine-family game, in AC1's configuration ([`ac1_neutral`]).
 pub(crate) fn record_game(decks: [&str; 2], seed: u64, max_decisions: usize) -> GameV1 {
-    let live = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+    record_game_with(decks, seed, max_decisions, ac1_neutral())
+}
+
+/// A uniformly random game; `neutral` enables the bridge's neutral choices
+/// on the reset session before the import, as the bridge does.
+pub(crate) fn record_game_with(
+    decks: [&str; 2],
+    seed: u64,
+    max_decisions: usize,
+    neutral: bool,
+) -> GameV1 {
+    let mut live = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
         seed,
         seed,
         2_000,
@@ -243,6 +262,9 @@ pub(crate) fn record_game(decks: [&str; 2], seed: u64, max_decisions: usize) -> 
         [decks[0].to_string(), decks[1].to_string()],
     )
     .expect("reset");
+    if neutral {
+        live.enable_spellbench_neutral_choices();
+    }
     let start = FastActorSessionV1::import_infoset_v1(&live, live.game_state().clone(), 0);
     let mut s = start.clone();
     let mut rng = SplitMix64::seed(seed ^ 0x51ed);
@@ -662,6 +684,10 @@ pub(crate) fn compare_worlds_with(
                 b.map_or(serde_json::Value::Null, |b| st.w2.raw_candidate(b))
             ]);
             st.dump.line(line);
+            if let (Some(a), Some(b)) = (a, b) {
+                st.w.advance(a);
+                st.w2.advance(b);
+            }
         }
         let (Some(a), Some(b)) = (a, b) else {
             if old_live {
@@ -681,7 +707,12 @@ pub(crate) fn compare_worlds_with(
         }
     }
     if let Some(st) = strict {
-        st.dump.finish(end);
+        let rebuilds = format!(
+            "{end}; raw rebuilds {} {}",
+            st.w.rebuilds(),
+            st.w2.rebuilds()
+        );
+        st.dump.finish(&rebuilds);
     }
     report
 }
@@ -709,9 +740,12 @@ impl PrefixV1 {
         };
         let w = self.world.decision(s);
         let c = self.world.raw_candidate(row);
+        self.world.advance(row);
         let a = format!("{:?}", d.acting_player);
-        self.lines.push(serde_json::json!({"k": k, "prefix": true, "a": [a, a], "w": [w, w],
-                                           "c": [c, c]}));
+        self.lines.push(
+            serde_json::json!({"k": k, "prefix": true, "a": [a, a], "w": [w, w],
+                                           "c": [c, c]}),
+        );
     }
 
     /// The dump of a pair that branches at decision `k` (the next one, at
@@ -732,8 +766,11 @@ impl PrefixV1 {
         let w = pair.w.decision(s);
         let c = [pair.w.raw_candidate(a), pair.w.raw_candidate(b)];
         pair.w2 = pair.w.clone();
+        pair.w.advance(a);
+        pair.w2.advance(b);
         let who = format!("{:?}", d.acting_player);
-        pair.dump.line(&serde_json::json!({"k": k, "branch": true, "a": [who, who],
+        pair.dump
+            .line(&serde_json::json!({"k": k, "branch": true, "a": [who, who],
                                            "w": [w, w], "c": c}));
         pair
     }
@@ -815,7 +852,8 @@ pub(crate) fn f_deal(
     let mut st = start.clone();
     swap_objects(&mut st, a, b);
     let w2 = FastActorSessionV1::import_infoset_v1(&game.start, st, 0);
-    let header = serde_json::json!({"family": "F-deal", "tag": tag, "viewer": format!("{viewer:?}")});
+    let header =
+        serde_json::json!({"family": "F-deal", "tag": tag, "viewer": format!("{viewer:?}")});
     let strict = fresh_pair(tag, &format!("{tag}-fdeal"), header, viewer);
     Some(compare_worlds(
         game.start.clone(),
@@ -849,7 +887,8 @@ pub(crate) fn f_prov(
     let mut st = start.clone();
     st.players[opp.index()].library.swap(i, j);
     let w2 = FastActorSessionV1::import_infoset_v1(&game.start, st, 0);
-    let header = serde_json::json!({"family": "F-prov", "tag": tag, "viewer": format!("{viewer:?}")});
+    let header =
+        serde_json::json!({"family": "F-prov", "tag": tag, "viewer": format!("{viewer:?}")});
     let strict = fresh_pair(tag, &format!("{tag}-fprov"), header, viewer);
     Some(compare_worlds_with(
         game.start.clone(),
@@ -918,7 +957,14 @@ pub(crate) fn f_slot(
     let header = serde_json::json!({"family": "F-slot", "tag": tag, "at": at,
                                     "viewer": format!("{viewer:?}")});
     let strict = prefix.map(|p| p.pair(&format!("{tag}-fslot{at}"), header));
-    Some(compare_worlds(w, w2, &game.actions[at..], viewer, mutants, strict))
+    Some(compare_worlds(
+        w,
+        w2,
+        &game.actions[at..],
+        viewer,
+        mutants,
+        strict,
+    ))
 }
 
 /// AC3: the imported state's menu is in bijection with the live menu and a
@@ -1218,7 +1264,7 @@ fn l13_over_the_ac1_engine_families() {
 /// every decision whose transcript is equal; here the pairs must exist.
 #[test]
 fn ac1_f_choice_wildfire_burn_handle_order_witness() {
-    let game = record_game(["Wildfire", "Burn"], 12, 300);
+    let game = record_game_with(["Wildfire", "Burn"], 12, 300, false);
     let (reports, _) = f_choice(
         &game,
         PlayerId::P0,
@@ -1232,6 +1278,64 @@ fn ac1_f_choice_wildfire_burn_handle_order_witness() {
     for r in &reports[..2] {
         assert!(r.compared > 0, "the witness pair compares decisions: {r:?}");
     }
+}
+
+/// Amendment 43.3, permanent AC1 witness (lead ruling 6): on Wildfire vs
+/// Burn (seed 12), viewer p0, at decision 93 Burn pays Fireblast's cost by
+/// sacrificing its two Mountains, in opposite orders in W and W' (candidate
+/// 0 is W's alternative). V's bot-facing records are byte-equal after the
+/// sacrifice (two Mountain moves to the graveyard, each under a fresh id),
+/// but P once named the sacrificed copies by their battlefield spans
+/// (`event_history[214].Sacrificed.object` C:34 vs C:19). Under 43.3 each
+/// Mountain's span ends at its unlinked move, the graveyard copies take new
+/// handles where V receives them, and the earlier references become
+/// tombstones: P must agree across the worlds.
+#[test]
+fn ac1_wildfire_burn_fireblast_sacrifice_order_witness() {
+    // The witness was found without neutral choices; it stays there.
+    let game = record_game_with(["Wildfire", "Burn"], 12, 300, false);
+    let viewer = PlayerId::P0;
+    let at = 93;
+    let mut s = game.start.clone();
+    for chosen in &game.actions[..at] {
+        let FastActorResponseV1::Decision(d) = s.current_response() else {
+            panic!("the game ends before decision {at}");
+        };
+        let a = menu(&s).iter().position(|x| x == chosen).expect("replay");
+        s.step(d.episode_id, d.step, a as u32).expect("replay");
+    }
+    let FastActorResponseV1::Decision(d) = s.current_response() else {
+        panic!("no decision {at}");
+    };
+    assert_eq!(
+        seat(d.acting_player),
+        viewer.opponent(),
+        "Burn chooses at {at}"
+    );
+    let m = menu(&s);
+    let a = m
+        .iter()
+        .position(|x| *x == game.actions[at])
+        .expect("W's choice");
+    let b = 0;
+    assert_ne!(a, b, "W' takes the other sacrifice order");
+    let kind =
+        |x: &[u8]| serde_json::from_slice::<serde_json::Value>(x).unwrap()["action_kind"].clone();
+    assert_eq!(
+        kind(&m[a]),
+        kind(&m[b]),
+        "both are the same hidden-choice kind"
+    );
+    let (mut w, mut w2) = (s.clone(), s.clone());
+    w.step(d.episode_id, d.step, a as u32).expect("W");
+    w2.step(d.episode_id, d.step, b as u32).expect("W'");
+    let r = compare_worlds_with(w, w2, &game.actions[at + 1..], viewer, &[], false, 6, None);
+    eprintln!("Fireblast witness: {r:?}");
+    assert!(r.compared > 0, "the witness pair compares decisions: {r:?}");
+    assert_eq!(
+        r.p_differs, 0,
+        "P differs across the sacrifice orders: {r:?}"
+    );
 }
 
 /// Ruling 3 (3): the F-choice family over every deck pair and seed of the

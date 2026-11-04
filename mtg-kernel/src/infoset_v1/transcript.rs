@@ -83,12 +83,26 @@ impl WorldV1 {
         self.rows.get(row).map_or(Value::Null, |c| json!(c))
     }
 
+    /// The copy answers row `row` at the last decision: the lockstep raw
+    /// session takes the raw candidate that row executes.
+    pub(crate) fn advance(&mut self, row: usize) {
+        if let Some(&c) = self.rows.get(row) {
+            self.mirror.advance(c);
+        }
+    }
+
+    /// Raw sessions the mirror built from the copy so far.
+    pub(crate) fn rebuilds(&self) -> u64 {
+        self.mirror.rebuilds
+    }
+
     /// V's spans without object identity (no native id, no name): for each
     /// span, the V decision at which it started (and ended), its position in
     /// the start record and the zone it ended in, as a sorted list.
     fn spans(&mut self, s: &FastActorSessionV1) -> Value {
         let state = s.game_state();
-        let p = super::projection::project_v1(state, state.observation_journal.notes(), self.viewer);
+        let p =
+            super::projection::project_v1(state, state.observation_journal.notes(), self.viewer);
         self.items_at.push(p.items);
         let ordinal = |item: usize| self.items_at.partition_point(|&n| n <= item);
         let mut spans: Vec<String> = Vec::new();
@@ -128,7 +142,13 @@ impl DumpV1 {
         std::fs::create_dir_all(&dir).expect("dump directory");
         let safe: String = name
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let file = std::fs::File::create(dir.join(format!("{safe}.jsonl.gz"))).expect("dump file");
         let mut d = Self {

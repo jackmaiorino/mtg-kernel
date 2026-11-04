@@ -1142,11 +1142,21 @@ enum WireResponseV1 {
 /// One mirror per world, called at every decision in order (the history
 /// slices and the block-root step depend on it). The flat-v4 tensor is
 /// replaced by its digest: the adapter passes it through unread.
+///
+/// The raw session runs in lockstep with the copy, as in the bridge: it is
+/// built from the copy once (at the first decision, or after a family edits
+/// the state) and then stepped with the raw candidate each answered row
+/// executes ([`BridgeMirrorV1::advance`]). Rebuilding it at every decision
+/// loses session state the copy's carried context does not hold, and the
+/// rebuilt session can advance elsewhere.
 #[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct BridgeMirrorV1 {
     history_cursor: (usize, usize, usize),
     private_block_root_step: Option<u64>,
+    raw: Option<RlEpisodeSessionV1>,
+    /// Raw sessions built from the copy (1 for a pair that never resyncs).
+    pub(crate) rebuilds: u64,
 }
 
 #[cfg(test)]
@@ -1155,6 +1165,27 @@ impl BridgeMirrorV1 {
         Self {
             history_cursor: (0, 0, 0),
             private_block_root_step: None,
+            raw: None,
+            rebuilds: 0,
+        }
+    }
+
+    /// Steps the lockstep raw session with raw candidate `candidate` (the
+    /// one the copy's answered row executes). A failure drops the session;
+    /// the next decision rebuilds it from the copy.
+    pub(crate) fn advance(&mut self, candidate: u32) {
+        let Some(mut raw) = self.raw.take() else {
+            return;
+        };
+        let RlSessionResponseV1::Decision(d) = raw.current_response() else {
+            return;
+        };
+        let Some(action) = d.legal_actions.get(candidate as usize) else {
+            return;
+        };
+        let id = action.stable_id.clone();
+        if raw.step(d.episode_id, d.step, candidate, &id).is_ok() {
+            self.raw = Some(raw);
         }
     }
 
@@ -1168,17 +1199,29 @@ impl BridgeMirrorV1 {
         let FastActorResponseV1::Decision(fd) = fast.current_response() else {
             return Err("not a decision".into());
         };
-        let raw = RlEpisodeSessionV1::from_fast_session_for_test(fast);
+        let same = |r: &RlEpisodeSessionV1| match r.current_response() {
+            RlSessionResponseV1::Decision(decision) => {
+                decision.step == fd.step
+                    && decision.acting_player == fd.acting_player
+                    && decision.physical_decision_id == fd.physical_decision_id
+                    && decision.substep_index == fd.substep_index
+                    && decision.substep_count == fd.substep_count
+                    && r.game_state() == fast.game_state()
+            }
+            RlSessionResponseV1::Terminal(_) => false,
+        };
+        let raw = match self.raw.take() {
+            Some(r) if same(&r) => r,
+            _ => {
+                self.rebuilds += 1;
+                RlEpisodeSessionV1::from_fast_session_for_test(fast)
+            }
+        };
         let response = raw.current_response();
         let RlSessionResponseV1::Decision(decision) = &response else {
             return Err("the raw session presents no decision".into());
         };
-        if decision.step != fd.step
-            || decision.acting_player != fd.acting_player
-            || decision.physical_decision_id != fd.physical_decision_id
-            || decision.substep_index != fd.substep_index
-            || decision.substep_count != fd.substep_count
-        {
+        if !same(&raw) {
             return Err("the raw session presents another decision".into());
         }
         if decision
@@ -1201,16 +1244,14 @@ impl BridgeMirrorV1 {
             .iter()
             .map(|a| a.semantic.clone())
             .collect();
-        let rows = crate::agent_bridge_flat_v4::map_rows_to_candidates_v1(
-            &raw_semantics,
-            &rows_semantics,
-        )
-        .map_err(|e| format!("row map: {e:?}"))?;
+        let rows =
+            crate::agent_bridge_flat_v4::map_rows_to_candidates_v1(&raw_semantics, &rows_semantics)
+                .map_err(|e| format!("row map: {e:?}"))?;
         let mut scratch = FlatV4EncodeScratchV1::default();
         let encoded =
             encode_flat_v4_tensor_v1(fast, &mut scratch).map_err(|e| format!("encode: {e:?}"))?;
-        let mut flat = flat_v4_extension_value_v1(&encoded, &rows)
-            .map_err(|e| format!("extension: {e:?}"))?;
+        let mut flat =
+            flat_v4_extension_value_v1(&encoded, &rows).map_err(|e| format!("extension: {e:?}"))?;
         if let Value::Object(m) = &mut flat {
             let keep = ["row_candidate_ids"];
             let mut digest = Sha256::new();
@@ -1243,6 +1284,7 @@ impl BridgeMirrorV1 {
         let identity = SpellbenchEngineIdentityV1::with_source_revision(None);
         let mut value = decision_response_value_v1(&identity, "ac1", "ac1", decision, Some(flat))?;
         value["extensions"]["x_kernel_v2_support"] = support;
+        self.raw = Some(game.session);
         Ok((value, rows))
     }
 }

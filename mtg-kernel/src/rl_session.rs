@@ -5514,8 +5514,7 @@ impl RlEpisodeSessionV1 {
             surface.set_combat_context_v1(combat, 0);
         }
         if let Some(discard) = context.as_ref().and_then(|c| c.discard.as_ref()) {
-            if let Some((_, _, choices)) = crate::engine::pending_discard_decision_v1(&fast.state)
-            {
+            if let Some((_, _, choices)) = crate::engine::pending_discard_decision_v1(&fast.state) {
                 let remaining = choices
                     .into_iter()
                     .filter(|x| !discard.chosen.contains(x))

@@ -478,7 +478,10 @@ pub(crate) fn export_v1(
                 }
                 continue;
             };
-            if let Some(end) = span.end {
+            // R1b reads where V's tracking lapsed: an amendment 43.3 split
+            // (a visible zone change the bot cannot link) is no lapse, and a
+            // live reference across one links as 6.5 maps it.
+            if let Some(end) = projection.lapse_after(r.object, span) {
                 let owner = state.objects.get(r.object).owner;
                 let def = state.objects.get(r.object).card_def;
                 let joined = if is(MutantV1::L13) {
