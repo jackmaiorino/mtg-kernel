@@ -161,6 +161,31 @@ fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<
         .map(|(i, t)| (t, i as u64))
         .collect();
     rerank(&mut obs, &rank);
+    // Attachment lists name objects by bare arena id, outside the
+    // `arena_id` keys `rename` maps: map them the same way, as sets.
+    fn attachments(v: &mut serde_json::Value, ids: Option<&BTreeMap<u64, u64>>) {
+        match v {
+            serde_json::Value::Object(m) => m.iter_mut().for_each(|(k, x)| {
+                if let (true, serde_json::Value::Array(xs)) = (k == "attachments", &mut *x) {
+                    if let Some(ids) = ids {
+                        for a in xs.iter_mut() {
+                            if let Some(n) = a.as_u64() {
+                                *a = ids
+                                    .get(&n)
+                                    .map_or(serde_json::json!("hidden"), |c| serde_json::json!(c));
+                            }
+                        }
+                    }
+                    xs.sort_by_key(|a| a.to_string());
+                } else {
+                    attachments(x, ids);
+                }
+            }),
+            serde_json::Value::Array(xs) => xs.iter_mut().for_each(|x| attachments(x, ids)),
+            _ => {}
+        }
+    }
+    attachments(&mut obs, ids);
     rename(&mut obs, ids);
     let mut rows: Vec<String> = menu
         .iter()
