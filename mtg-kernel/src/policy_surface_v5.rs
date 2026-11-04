@@ -396,6 +396,87 @@ pub struct SurfaceContextV1 {
     /// every other decision, so those payloads keep their bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub combat: Option<CombatContextV1>,
+    /// A live discard reshape's progress (amendment 43.1 part 2); absent at
+    /// every other decision, so those payloads keep their bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discard: Option<DiscardContextV1>,
+}
+
+/// A live discard reshape (amendment 43.1 part 2): the discarding player,
+/// the cards picked so far in pick order, and how many are still needed.
+/// The remaining choices are not carried: the import recomputes them from
+/// the imported state's pending discard, so no hand order travels. All of
+/// it is V's transcript (V's own picks at V's own discard).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiscardContextV1 {
+    pub player: PlayerId,
+    pub chosen: Vec<ObjectId>,
+    pub remaining_needed: u32,
+}
+
+impl DiscardContextV1 {
+    /// Every picked card renamed through `f`; None if any has no image.
+    pub(crate) fn rename(&self, f: impl Fn(ObjectId) -> Option<ObjectId>) -> Option<Self> {
+        Some(Self {
+            player: self.player,
+            chosen: self
+                .chosen
+                .iter()
+                .map(|x| f(*x))
+                .collect::<Option<Vec<_>>>()?,
+            remaining_needed: self.remaining_needed,
+        })
+    }
+
+    /// The import's fail-closed check against the imported state; returns
+    /// the remaining choices (the pending discard's choices not yet picked,
+    /// in the imported hand's order). The state must hold the pending
+    /// discard of `player`, who is the payload's viewer; the picks are
+    /// distinct tracked (`C:`) choices of it; picks plus the count still
+    /// needed equal the decision's count; at least one card is still
+    /// needed and the remaining choices cover it.
+    pub(crate) fn validate_in_state(
+        &self,
+        state: &GameState,
+        handles: &[String],
+        viewer: PlayerId,
+    ) -> Result<Vec<ObjectId>, String> {
+        let Some((player, count, choices)) = engine::pending_discard_decision_v1(state) else {
+            return Err("discard context: no pending discard".into());
+        };
+        if self.player != player || self.player != viewer {
+            return Err("discard context: player".into());
+        }
+        let tracked = |o: &ObjectId| {
+            handles
+                .get(o.0 as usize)
+                .is_some_and(|h| h.starts_with("C:"))
+        };
+        let mut distinct = self.chosen.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() != self.chosen.len()
+            || !self
+                .chosen
+                .iter()
+                .all(|x| tracked(x) && choices.contains(x))
+        {
+            return Err("discard context: picks".into());
+        }
+        let remaining: Vec<ObjectId> = choices
+            .iter()
+            .copied()
+            .filter(|x| !self.chosen.contains(x))
+            .collect();
+        if self.remaining_needed == 0
+            || self.chosen.len() as u64 + u64::from(self.remaining_needed) != u64::from(count)
+            || (remaining.len() as u64) < u64::from(self.remaining_needed)
+        {
+            return Err("discard context: progress".into());
+        }
+        Ok(remaining)
+    }
 }
 
 /// A live combat inclusion scan with the blocker reshape around it
@@ -625,6 +706,7 @@ impl PolicySurfaceV5 {
             scalars: self.inner.infoset_context_v1()?,
             hunter_order_enabled_v45: self.hunter_order_enabled_v45,
             combat: None,
+            discard: None,
         })
     }
 
@@ -632,13 +714,29 @@ impl PolicySurfaceV5 {
     /// its combat record in native object ids (the producer renames them).
     /// None while a Hunter trigger order or another reshape names objects.
     pub(crate) fn infoset_context_with_combat_v1(&self) -> Option<SurfaceContextV1> {
+        let public = self.inner.public_context();
+        // A live discard reshape (amendment 43.1 part 2) travels as the
+        // discard record, in native ids (the producer renames them).
+        let discard = public.discard.as_ref().map(|d| DiscardContextV1 {
+            player: d.player,
+            chosen: d.chosen.clone(),
+            remaining_needed: d.remaining_needed,
+        });
         let Some(scan) = &self.scan else {
-            return self.infoset_context_v1();
+            if discard.is_none() || self.hunter_order_v45.is_some() || public.blockers.is_some() {
+                return self.infoset_context_v1();
+            }
+            return Some(SurfaceContextV1 {
+                scalars: self.inner.infoset_scalars_with_reshapes_v1()?,
+                hunter_order_enabled_v45: self.hunter_order_enabled_v45,
+                combat: None,
+                discard,
+            });
         };
-        if self.hunter_order_v45.is_some() {
+        if self.hunter_order_v45.is_some() || discard.is_some() {
             return None;
         }
-        let blockers = self.inner.public_context().blockers;
+        let blockers = public.blockers;
         let combat = match scan {
             CombatScanV5::Attackers {
                 player,
@@ -673,30 +771,47 @@ impl PolicySurfaceV5 {
             },
         };
         Some(SurfaceContextV1 {
-            scalars: self.inner.infoset_scalars_in_combat_v1()?,
+            scalars: self.inner.infoset_scalars_with_reshapes_v1()?,
             hunter_order_enabled_v45: self.hunter_order_enabled_v45,
             combat: Some(combat),
+            discard: None,
         })
     }
 
-    /// Why a payload cannot carry this surface (diagnostics for R2 tallies).
-    #[cfg(test)]
+    /// Why a payload cannot carry this surface: the R2 subclass the bridge
+    /// sends with the refusal (amendment 43.1 part 2). A fixed name of the
+    /// surface state V's own decision presents.
     pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
         if self.hunter_order_v45.is_some() {
-            return "Hunter trigger order";
+            return "hunter_trigger_order";
         }
         let p = self.inner.public_context();
-        if p.discard.is_some() {
-            "discard reshape"
-        } else if p.optional_cost.is_some() {
-            "optional-cost reshape"
+        if p.optional_cost.is_some() {
+            "optional_cost_reshape"
         } else if p.madness_cast_reprompt_exemption.is_some() {
-            "madness reprompt"
+            "madness_reprompt"
+        } else if p.discard.is_some() {
+            "discard_untracked"
         } else if self.scan.is_some() || p.blockers.is_some() {
-            "combat object untracked"
+            "combat_untracked"
         } else {
-            "other"
+            "other_surface"
         }
+    }
+
+    /// Restores a carried discard record (amendment 43.1 part 2) with the
+    /// remaining choices its import check computed from the imported state.
+    pub(crate) fn set_discard_context_v1(
+        &mut self,
+        discard: &DiscardContextV1,
+        remaining: Vec<ObjectId>,
+    ) {
+        self.inner.set_discard_reshape_v1(
+            discard.player,
+            discard.chosen.clone(),
+            remaining,
+            discard.remaining_needed,
+        );
     }
 
     /// A restored combat scan (amendment 43.1) must still admit a legal

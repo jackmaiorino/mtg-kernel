@@ -98,6 +98,12 @@ impl PayloadV1 {
         if let Some(combat) = &self.surface.combat {
             combat.validate_in_state(&state, &self.handles)?;
         }
+        if let Some(discard) = &self.surface.discard {
+            if self.surface.combat.is_some() {
+                return Err("payload carries both a combat and a discard record".into());
+            }
+            discard.validate_in_state(&state, &self.handles, PlayerId(self.viewer))?;
+        }
         let digest = super::export::canonical_digest_v1(&state, &self.handles);
         if digest != self.state_sha256 {
             return Err("payload state digest differs from its canonical bytes".into());

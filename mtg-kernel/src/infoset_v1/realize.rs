@@ -1160,4 +1160,65 @@ mod tests {
         assert!(failures.is_empty());
         assert_eq!(gaps, 0, "P exports an unrealizable state");
     }
+
+    /// Amendment 43.1 part 2: discard roots are realized with their record.
+    #[test]
+    fn realizability_at_discard_roots() {
+        use crate::rl::ActionSemanticV1;
+        let (mut checked, mut gaps, mut failures) = (0u32, 0u32, Vec::new());
+        for (decks, seed) in [
+            (["Wildfire", "Faeries"], 51u64),
+            (["CawGates", "Burn"], 52),
+            (["Faeries", "Elves"], 53),
+            (["Affinity", "Wildfire"], 54),
+            (["Burn", "CawGates"], 55),
+            (["Rally", "Faeries"], 56),
+            (["Elves", "Affinity"], 57),
+            (["Wildfire", "Wildfire"], 58),
+        ] {
+            let g = super::super::harness::record_game(decks, seed, 1_000);
+            let game = NativeGameV1 {
+                start: g.start.clone(),
+                actions: g.native.clone(),
+                edits: Vec::new(),
+            };
+            let mut s = g.start.clone();
+            let mut here = 0;
+            for (i, a) in g.native.iter().enumerate() {
+                let FastActorResponseV1::Decision(d) = s.current_response() else {
+                    break;
+                };
+                let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+                let discard = sem
+                    .iter()
+                    .any(|x| matches!(x, ActionSemanticV1::Discard { .. }));
+                if discard && d.legal_action_count >= 2 && here < 8 {
+                    here += 1;
+                    let viewer = seat(d.acting_player);
+                    match realize_at(&game, i, viewer, None) {
+                        Ok(Ok(_)) => checked += 1,
+                        Ok(Err(e)) => {
+                            if impossible_at(&game, i, viewer, None).is_some() {
+                                gaps += 1;
+                            } else {
+                                failures.push(format!("{decks:?} step {i}: {e}"));
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+                let index = sem
+                    .iter()
+                    .position(|x| serde_json::to_value(x).ok().as_ref() == Some(a))
+                    .expect("replay");
+                s.step(d.episode_id, d.step, index as u32).expect("replay");
+            }
+        }
+        eprintln!(
+            "realizability at discard roots: {checked} realized, {gaps} proven unrealizable, failures {failures:#?}"
+        );
+        assert!(failures.is_empty());
+        assert_eq!(gaps, 0, "P exports an unrealizable discard root");
+        assert!(checked >= 3, "discard roots realized");
+    }
 }

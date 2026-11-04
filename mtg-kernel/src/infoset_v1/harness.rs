@@ -332,9 +332,14 @@ pub(crate) fn p_outcome(s: &FastActorSessionV1, viewer: PlayerId) -> Result<Vec<
     let x = x.expect("outcome passed");
     if s.surface_context_v1().is_none() {
         let ids = super::order::canonical_ids_v1(&x);
-        if let Some(combat) = s.payload_surface_context_v1(&ids).and_then(|c| c.combat) {
+        let context = s.payload_surface_context_v1(&ids);
+        if let Some(combat) = context.as_ref().and_then(|c| c.combat.as_ref()) {
             bytes.extend_from_slice(b"|combat:");
-            bytes.extend(serde_json::to_vec(&combat).expect("combat serializes"));
+            bytes.extend(serde_json::to_vec(combat).expect("combat serializes"));
+        }
+        if let Some(discard) = context.as_ref().and_then(|c| c.discard.as_ref()) {
+            bytes.extend_from_slice(b"|discard:");
+            bytes.extend(serde_json::to_vec(discard).expect("discard serializes"));
         }
     }
     Ok(bytes)

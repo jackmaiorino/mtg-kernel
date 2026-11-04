@@ -969,3 +969,153 @@ fn combat_context_validation_fails_closed() {
         "an unmapped object refuses"
     );
 }
+
+/// Amendment 43.1 part 2: at every viewer discard point the payload carries
+/// the discard record and imports at the same pick (the row keys pair one to
+/// one), AC3 holds there, tampered records are refused against the real
+/// state, and walking both sessions through the rest of the discard by
+/// paired rows keeps them paired.
+#[test]
+fn discard_payloads_import_at_the_live_discard_point() {
+    use crate::ids::ObjectId;
+    use crate::policy_surface_v5::DiscardContextV1;
+    use crate::rl::ActionSemanticV1;
+    let (mut roots, mut mid, mut walked, mut refused, mut tampered) =
+        (0u32, 0u32, 0u32, 0u32, 0u32);
+    let discarding = |x: &FastActorSessionV1| {
+        x.diagnostic_current_action_semantics()
+            .unwrap_or_default()
+            .iter()
+            .any(|a| matches!(a, ActionSemanticV1::Discard { .. }))
+    };
+    for (decks, seed) in [
+        (["Wildfire", "Faeries"], 51u64),
+        (["CawGates", "Burn"], 52),
+        (["Faeries", "Elves"], 53),
+        (["Affinity", "Wildfire"], 54),
+        (["Burn", "CawGates"], 55),
+        (["Rally", "Faeries"], 56),
+        (["Elves", "Affinity"], 57),
+        (["Wildfire", "Wildfire"], 58),
+    ] {
+        play(decks, seed, 1_000, |s, v| {
+            if !discarding(s) {
+                return;
+            }
+            let Ok(x) = export_at(s, v, ExportOptionsV1::default()) else {
+                return;
+            };
+            let ids = super::order::canonical_ids_v1(&x);
+            let Some(payload) = PayloadV1::new(&x, s, v, 0) else {
+                refused += 1;
+                return;
+            };
+            let discard = payload
+                .surface
+                .discard
+                .clone()
+                .expect("a discard point's payload carries the record");
+            assert!(payload.surface.combat.is_none(), "{decks:?}: one record");
+            roots += 1;
+            if !discard.chosen.is_empty() {
+                mid += 1;
+            }
+            let back = PayloadV1::from_bytes(&payload.to_bytes()).expect("round trip");
+            assert_eq!(back, payload, "the payload round-trips");
+            let mut imported = payload.import().expect("a discard payload imports");
+            let imported_ids = super::order::imported_ids_v1(&payload.handles);
+            super::harness::ac3_check(s, &x, 7)
+                .unwrap_or_else(|e| panic!("{decks:?}: AC3 at a discard root: {e}"));
+            // The import's state check refuses a record the surface would
+            // not present there.
+            let state: crate::state::GameState =
+                serde_json::from_value(payload.state.clone()).expect("payload state");
+            discard
+                .validate_in_state(&state, &payload.handles, v)
+                .expect("the live record passes the state check");
+            let bad = |f: &dyn Fn(&mut DiscardContextV1)| {
+                let mut d = discard.clone();
+                f(&mut d);
+                d.validate_in_state(&state, &payload.handles, v).is_err()
+            };
+            assert!(bad(&|d| d.remaining_needed += 1), "{decks:?}: count");
+            assert!(
+                bad(&|d| d.player = d.player.opponent()),
+                "{decks:?}: player"
+            );
+            let foreign = (0..payload.handles.len())
+                .map(|n| ObjectId(n as u32))
+                .find(|o| !state.players[v.index()].hand.contains(o));
+            if let Some(o) = foreign {
+                assert!(
+                    bad(&|d| {
+                        d.chosen.push(o);
+                        d.remaining_needed = d.remaining_needed.saturating_sub(1).max(1);
+                    }),
+                    "{decks:?}: a pick outside the hand"
+                );
+                tampered += 1;
+            }
+            tampered += 2;
+            // The rest of the discard: every remaining pick of this
+            // obligation (the viewer's discard points in the root's turn and
+            // step).
+            let mut live = s.clone();
+            let root = (s.game_state().turn, s.game_state().step);
+            let mut left = false;
+            for depth in 0..64usize {
+                let decision = |x: &FastActorSessionV1| match x.current_response() {
+                    FastActorResponseV1::Decision(d) => Some(d),
+                    FastActorResponseV1::Terminal(t) => {
+                        assert_ne!(
+                            t.terminal_classification,
+                            crate::rl::TerminalClassificationV1::Halted,
+                            "{decks:?}: a discard walk halted: {}",
+                            t.terminal_reason
+                        );
+                        None
+                    }
+                };
+                let (d, e) = (decision(&live), decision(&imported));
+                let same = |x: &FastActorSessionV1, d: Option<FastActorDecisionV1>| {
+                    let st = x.game_state();
+                    d.is_some_and(|d| seat(d.acting_player) == v)
+                        && discarding(x)
+                        && (st.turn, st.step) == root
+                };
+                let (in_live, in_imported) = (same(&live, d), same(&imported, e));
+                assert_eq!(
+                    in_live, in_imported,
+                    "{decks:?}: depth {depth}: discards end apart"
+                );
+                if !in_live {
+                    left = true;
+                    break;
+                }
+                let (Some(d), Some(e)) = (d, e) else {
+                    unreachable!("both sessions are at the viewer's discard point")
+                };
+                let a = super::order::row_keys_v1(&live, Some(&ids)).expect("live keys");
+                let b = super::order::row_keys_v1(&imported, Some(&imported_ids))
+                    .expect("imported keys");
+                let pairs = super::order::live_rows_v1(&a, &b).unwrap_or_else(|| {
+                    panic!("{decks:?}: depth {depth}: keys do not pair: {a:?} vs {b:?}")
+                });
+                let i = depth % b.len();
+                imported
+                    .step(e.episode_id, e.step, i as u32)
+                    .expect("imported step");
+                live.step(d.episode_id, d.step, pairs[i])
+                    .expect("live step");
+                walked += 1;
+            }
+            assert!(left, "{decks:?}: the discard did not end within its bound");
+        });
+    }
+    eprintln!(
+        "discard payloads: {roots} discard points ({mid} past the first pick), {walked} paired steps, {refused} refused, {tampered} tampered records refused"
+    );
+    assert_eq!(refused, 0, "no discard point refuses");
+    assert!(roots >= 5, "discard witnesses");
+    assert!(mid > 0, "a discard past its first pick exported");
+}
