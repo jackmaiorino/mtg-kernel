@@ -109,6 +109,7 @@ pub(crate) fn export_at(
             journal: state.observation_journal.notes(),
             viewer,
             decklists: [&lists[0], &lists[1]],
+            marks: Some(&s.infoset_marks_v1(viewer)),
         },
         options,
     )
@@ -289,6 +290,7 @@ fn lembas_waiting_source_is_pinned_on_the_canonical_epoch_path() {
                 journal: &[],
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: None,
             },
             ExportOptionsV1::default(),
         );
@@ -394,6 +396,7 @@ fn wildfire_join_refuses_in_both_worlds_and_l13_differs() {
                 journal: st.observation_journal.notes(),
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: None,
             },
             ExportOptionsV1 { mutant },
         )
@@ -500,6 +503,7 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
                 journal: &[],
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: None,
             },
             ExportOptionsV1::default(),
         )
@@ -627,6 +631,7 @@ fn a_reveal_never_links_the_unidentified_draw_before_it() {
                 journal: st.observation_journal.notes(),
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: None,
             },
             ExportOptionsV1::default(),
         )
@@ -686,6 +691,7 @@ fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
                 journal: st.observation_journal.notes(),
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: None,
             },
             ExportOptionsV1::default(),
         )

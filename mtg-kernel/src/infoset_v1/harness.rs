@@ -1142,6 +1142,139 @@ pub(crate) fn f_choice(
     (out, tried)
 }
 
+/// Candidates of the current decision that cast a copy V tracks in the
+/// opponent's hand, grouped by the copy's definition: (definition, menu
+/// indices in menu order).
+pub(crate) fn tracked_hand_casts(s: &FastActorSessionV1, viewer: PlayerId) -> Vec<(u64, Vec<usize>)> {
+    let opp = viewer.opponent();
+    let state = s.game_state();
+    let projection =
+        super::projection::project_v1(state, state.observation_journal.notes(), viewer);
+    let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+    let mut groups: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    for (i, x) in sem.iter().enumerate() {
+        let v = serde_json::to_value(x).expect("semantics serialize");
+        if v["action_kind"] != "cast_spell" {
+            continue;
+        }
+        let (Some(arena), Some(def)) = (
+            v["source"]["arena_id"].as_u64(),
+            v["source"]["card_db_id"].as_u64(),
+        ) else {
+            continue;
+        };
+        let id = ObjectId(arena as u32);
+        let o = state.objects.get(id);
+        if o.zone == Zone::Hand && o.owner == opp && projection.tracked(id) {
+            groups.entry(def).or_default().push(i);
+        }
+    }
+    groups.into_iter().filter(|(_, g)| g.len() >= 2).collect()
+}
+
+/// A continuation from `w`: up to `n` decisions answered uniformly at random
+/// (seeded), as semantic menu rows.
+fn continuation(w: &FastActorSessionV1, seed: u64, n: usize) -> Vec<Vec<u8>> {
+    let mut s = w.clone();
+    let mut rng = SplitMix64::seed(seed);
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let FastActorResponseV1::Decision(d) = s.current_response() else {
+            break;
+        };
+        let a = (rng.next_u64() % u64::from(d.legal_action_count)) as u32;
+        out.push(menu(&s)[a as usize].clone());
+        if s.step(d.episode_id, d.step, a).is_err() {
+            break;
+        }
+    }
+    out
+}
+
+/// F-cast (lead ruling 7 (b), amendment 43.4): at an opponent decision whose
+/// menu casts two copies of one card that V tracks in the opponent's hand
+/// (revealed, fetched and revealed, or returned from a public zone), W casts
+/// one and W' the other. V's bot-facing transcript gives the opponent's hand
+/// cards no id, so V may not be able to tell which copy left; the strict
+/// checker decides. W takes the recorded choice when it is one of the copies
+/// (the game's own actions continue), else the first copy, and both worlds
+/// continue with a seeded random continuation from W.
+pub(crate) fn f_cast(
+    game: &GameV1,
+    viewer: PlayerId,
+    mutants: &[MutantV1],
+    points: usize,
+    limit: usize,
+    tag: &str,
+) -> (Vec<PairReportV1>, u64) {
+    let opp = viewer.opponent();
+    let mut out = Vec::new();
+    let (mut tried, mut used) = (0u64, 0usize);
+    let mut s = game.start.clone();
+    let mut prefix = PrefixV1::new(viewer, tag);
+    for (i, chosen) in game.actions.iter().enumerate() {
+        let FastActorResponseV1::Decision(d) = s.current_response() else {
+            break;
+        };
+        let m = menu(&s);
+        let Some(a) = m.iter().position(|x| x == chosen) else {
+            break;
+        };
+        if used < points && seat(d.acting_player) == opp {
+            for (_, group) in tracked_hand_casts(&s, viewer) {
+                used += 1;
+                let x = if group.contains(&a) { a } else { group[0] };
+                let Some(&y) = group.iter().find(|&&b| b != x) else {
+                    continue;
+                };
+                let (mut w, mut w2) = (s.clone(), s.clone());
+                if w.step(d.episode_id, d.step, x as u32).is_err()
+                    || w2.step(d.episode_id, d.step, y as u32).is_err()
+                {
+                    continue;
+                }
+                tried += 1;
+                let actions = if x == a {
+                    game.actions[i + 1..].to_vec()
+                } else {
+                    continuation(&w, 0xfca5 ^ i as u64, 300)
+                };
+                let header = serde_json::json!({"family": "F-cast", "tag": tag, "at": i,
+                    "copies": [x, y], "recorded": x == a, "viewer": format!("{viewer:?}")});
+                let strict = prefix
+                    .as_ref()
+                    .map(|p| p.branch(&format!("{tag}-fcast{i}-{y}"), header, i, &s, x, y));
+                let r = compare_worlds_with(w, w2, &actions, viewer, mutants, false, limit, strict);
+                out.push(r);
+            }
+        }
+        if let Some(prefix) = prefix.as_mut() {
+            prefix.push(i, &s, a);
+        }
+        s.step(d.episode_id, d.step, a as u32).expect("replay");
+    }
+    (out, tried)
+}
+
+/// The first byte difference of two exports, with a window on each side.
+pub(crate) fn byte_window(x: &[u8], y: &[u8]) -> String {
+    let at = x
+        .iter()
+        .zip(y)
+        .position(|(u, v)| u != v)
+        .unwrap_or(x.len().min(y.len()));
+    let window = |b: &[u8]| {
+        String::from_utf8_lossy(&b[at.saturating_sub(160)..(at + 120).min(b.len())]).to_string()
+    };
+    format!(
+        "lengths {} and {}, first difference at byte {at}:\n  W  ...{}...\n  W' ...{}...",
+        x.len(),
+        y.len(),
+        window(x),
+        window(y)
+    )
+}
+
 fn tally(reports: &[PairReportV1], totals: &mut BTreeMap<String, u64>) -> (u64, u64) {
     let (mut compared, mut truncated) = (0, 0);
     for r in reports {
@@ -1468,6 +1601,72 @@ fn ac1_f_choice_on_engine_games() {
         totals.get("L4").copied().unwrap_or(0) > 0,
         "L4 has F-choice witnesses"
     );
+}
+
+/// Lead ruling 7 (c): L2 is vacuous. P fixes every unpinned `U:` occupant at
+/// generation 1 (6.5's static assertion), so mutant L2 (unknown-slot
+/// occupants keep their true incarnation) either exports P's own bytes or
+/// trips that assertion and refuses R2, the same way in both worlds of any
+/// pair. Checked at every decision of the AC1 engine-family games, both
+/// viewers. If unpinned `U:` generations ever vary, or L2 ever delivers a
+/// payload P does not, this test fails and L2 needs measured witnesses.
+#[test]
+fn l2_is_vacuous_unpinned_unknown_generations_are_fixed_at_one() {
+    let l2 = ExportOptionsV1 {
+        mutant: Some(MutantV1::L2),
+    };
+    let (mut exports, mut occupants, mut l2_refusals, mut l2_equal) = (0u64, 0u64, 0u64, 0u64);
+    for (decks, seed) in ENGINE_FAMILY_GAMES {
+        let game = record_game(decks, seed, 300);
+        let mut s = game.start.clone();
+        for chosen in &game.actions {
+            let FastActorResponseV1::Decision(d) = s.current_response() else {
+                break;
+            };
+            let viewer = seat(d.acting_player);
+            if d.legal_action_count >= 2 {
+                if let Ok(x) = export_at(&s, viewer, ExportOptionsV1::default()) {
+                    exports += 1;
+                    for (id, o) in x.state.objects.iter() {
+                        if let HandleV1::U { pinned: false, .. } = x.handles[id.0 as usize] {
+                            occupants += 1;
+                            assert_eq!(
+                                o.zone_change_count, 1,
+                                "{decks:?} seed {seed}: an unpinned U: occupant at generation {}",
+                                o.zone_change_count
+                            );
+                        }
+                    }
+                    match export_at(&s, viewer, l2) {
+                        Ok(m) => {
+                            assert_eq!(
+                                m.bytes, x.bytes,
+                                "{decks:?} seed {seed}: L2 exports a payload P does not"
+                            );
+                            l2_equal += 1;
+                        }
+                        Err(e) => {
+                            assert_eq!(e.code_name(), "R2", "{decks:?} seed {seed}: {e:?}");
+                            let ExportErrorV1::Refused { detail, .. } = &e else {
+                                unreachable!()
+                            };
+                            assert!(
+                                detail.contains("generation 1"),
+                                "{decks:?} seed {seed}: L2 refuses for another reason: {detail}"
+                            );
+                            l2_refusals += 1;
+                        }
+                    }
+                }
+            }
+            let a = menu(&s).iter().position(|x| x == chosen).expect("replay");
+            s.step(d.episode_id, d.step, a as u32).expect("replay");
+        }
+    }
+    eprintln!(
+        "L2 vacuity: {exports} exports, {occupants} unpinned U: occupants all at generation 1; L2 refuses R2 (static assertion) at {l2_refusals}, equals P at {l2_equal}"
+    );
+    assert!(exports > 0 && occupants > 0);
 }
 
 #[test]

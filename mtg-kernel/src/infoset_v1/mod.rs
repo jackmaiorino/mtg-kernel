@@ -26,11 +26,15 @@ pub(crate) mod projection;
 pub(crate) mod rewrite;
 
 #[cfg(test)]
+mod fcast;
+#[cfg(test)]
 mod fixtures;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]
 mod realize;
+#[cfg(test)]
+mod samename;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

@@ -5439,6 +5439,15 @@ impl FastActorSessionV1 {
         context: Option<crate::policy_surface_v5::SurfaceContextV1>,
     ) -> FastActorSessionV1 {
         let mut surface = PolicySurfaceV5::new_for_session();
+        // The decision marks (lead ruling 7 (a)) carry over when the state
+        // continues the template's committed stream (a fixture's edited
+        // restart); otherwise they start empty.
+        if template.state.engine.event_history.len() == state.engine.event_history.len()
+            && template.state.observation_journal.notes().len()
+                == state.observation_journal.notes().len()
+        {
+            surface.carry_infoset_marks_v1(&template.surface);
+        }
         // A carried combat record (amendment 43.1) is the live surface's
         // object-naming progress: restored before the first decision is
         // presented, so the import presents the live scan point itself.
@@ -5486,6 +5495,13 @@ impl FastActorSessionV1 {
             session.surface.set_infoset_context_v1(context);
         }
         session
+    }
+
+    /// The (event-history length, journal length) of every decision this
+    /// session presented to `seat`, oldest first (lead ruling 7 (a)): the
+    /// bounds of the batches `seat`'s bot-facing transcript receives.
+    pub(crate) fn infoset_marks_v1(&self, seat: crate::ids::PlayerId) -> Vec<(usize, usize)> {
+        self.surface.infoset_marks_v1(seat)
     }
 
     /// The public deck identities of this session, by seat.
@@ -10945,6 +10961,13 @@ impl FastActorSessionV1 {
             // Advanced by `advance_rules_only_v1`; never reaches this match.
             FlatActionContractModeV1::RulesOnlyV1 => {}
         }
+        // W1 producer (lead ruling 7 (a)): where this presented decision
+        // falls in the committed stream, per seat.
+        self.surface.push_infoset_mark_v1(
+            current.actor,
+            self.state.engine.event_history.len(),
+            self.state.observation_journal.notes().len(),
+        );
         self.current = Some(current);
     }
 }

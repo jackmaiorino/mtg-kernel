@@ -47,6 +47,11 @@ pub enum MutantV1 {
     L12,
     /// v6's true-identity join test instead of R1b.
     L13,
+    /// The rule before amendment 43.4 (harness only, lead ruling 7 (b)):
+    /// tracked objects in the opponent's hand take `C:` handles by span
+    /// start and the hand lists them in fact order. Its witnesses are the
+    /// pairs that differed before the fix.
+    L14,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -60,6 +65,11 @@ pub struct ExportInputV1<'a> {
     pub viewer: PlayerId,
     /// The public decklists (card definitions), indexed by owner.
     pub decklists: [&'a [u16]; 2],
+    /// Where V's decisions fell in the committed stream (event-history
+    /// length, journal length), oldest first: the bounds of the batches V's
+    /// bot-facing transcript receives (lead ruling 7 (a)). `None` when the
+    /// caller has no session: the whole stream is one batch (fail closed).
+    pub marks: Option<&'a [(usize, usize)]>,
 }
 
 /// The export: the canonical state, its bytes and its handle table.
@@ -86,6 +96,12 @@ pub(crate) const R3B_OWN_DETAIL: &str = "own library-search plan pending";
 /// nor V's own readable one (fail closed: the wire subclass `plan_error`,
 /// a C5 fault on the entrant side).
 pub(crate) const R3_UNREADABLE_DETAIL: &str = "library-search plan unreadable";
+
+/// R1's detail for a live reference to one of two or more same-name objects
+/// that left together in one batch of V's transcript (lead ruling 7 (a)):
+/// the bridge's wire subclass `same_name_batch`, a C5 fault.
+pub(crate) const R1_SAME_NAME_BATCH_DETAIL: &str =
+    "a live reference names one of two same-name objects that left in one batch V cannot order";
 
 fn refuse(code: RefusalCodeV1, detail: impl Into<String>) -> ExportErrorV1 {
     ExportErrorV1::refuse(code, detail)
@@ -320,15 +336,23 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
 /// here reads S's zone-list, arena or id order. Two spans that start in the
 /// same record without a V-presented position cannot be ordered from V's
 /// transcript: the export refuses (R2, fail closed) rather than guess.
+///
+/// Amendment 43.4 (lead ruling 7 (b)): the tracked objects in the
+/// opponent's hand (`opp_hand`, already in their 43.4 order) are not keyed by
+/// span start. The bot-facing transcript gives them no id, so which of two
+/// same-name copies remains after one leaves is not V's information; they
+/// follow every other tracked object, in the order given.
 fn tracked_order(
     state: &GameState,
     projection: &ProjectionV1,
     l3: bool,
+    opp_hand: Option<&[ObjectId]>,
 ) -> Result<Vec<ObjectId>, ExportErrorV1> {
     let mut keyed: Vec<((usize, u32), ObjectId)> = state
         .objects
         .iter()
         .filter(|(id, _)| projection.tracked(*id))
+        .filter(|(id, _)| l3 || opp_hand.is_none_or(|h| !h.contains(id)))
         .map(|(id, _)| {
             let key = projection
                 .current_span(id)
@@ -349,7 +373,25 @@ fn tracked_order(
             "two tracked objects start their spans in one record without a V-presented order",
         ));
     }
-    Ok(keyed.into_iter().map(|(_, id)| id).collect())
+    let mut out: Vec<ObjectId> = keyed.into_iter().map(|(_, id)| id).collect();
+    out.extend(opp_hand.unwrap_or(&[]).iter().copied());
+    Ok(out)
+}
+
+/// Amendment 43.4 (design 6.2): the tracked objects in the opponent's hand,
+/// ordered only by what V can see of them: name, then the order of V's
+/// tracker facts about the copies (the fact list is V's transcript). Span
+/// start is not used. Copies with equal names and equal facts export
+/// identically, so their order cannot move the payload.
+fn opp_hand_order_v1(state: &GameState, projection: &ProjectionV1, tracked: &mut [ObjectId]) {
+    let fact = |id: &ObjectId| {
+        projection
+            .hand_facts
+            .iter()
+            .position(|f| f.native == Some(*id))
+            .unwrap_or(usize::MAX)
+    };
+    tracked.sort_by_key(|id| (name_key(state.objects.get(*id).card_def), fact(id)));
 }
 
 /// The exported state of one viewer at one decision.
@@ -405,6 +447,10 @@ pub(crate) fn export_v1(
                 .filter_map(|f| f.native)
                 .filter(|id| p.hand.contains(id))
                 .collect();
+            if !is(MutantV1::L14) {
+                // Amendment 43.4: name, then V's fact order.
+                opp_hand_order_v1(state, &projection, &mut opp_hand_tracked);
+            }
             if is(MutantV1::L8) {
                 // Count facts bound to the true remaining copies.
                 for f in projection.hand_facts.iter().filter(|f| f.native.is_none()) {
@@ -518,6 +564,43 @@ pub(crate) fn export_v1(
             RefusalCodeV1::R1,
             "a live reference names an untracked object",
         ));
+    }
+    // Lead ruling 7 (a): a live reference keeps its link across an unlinked
+    // visible move (6.5, the Lembas table) only while V can tell which copy
+    // moved. If another object of the same name and owner also left V's
+    // sight or changed zone in the same batch of V's transcript (no V
+    // decision between the two), V cannot pair the reference with either
+    // copy: refuse, fail closed. Reads V's spans, the names V saw and V's
+    // own decision points only.
+    let bounds = projection.batch_bounds(input.marks);
+    for (r, region) in &refs {
+        if *region != "live" {
+            continue;
+        }
+        let Some(track) = projection.objects.get(r.object.0 as usize) else {
+            continue;
+        };
+        let o = state.objects.get(r.object);
+        for &g in &r.generations {
+            for end in track.spans.iter().filter_map(|s| s.end) {
+                if !end.split || end.last_gen < g {
+                    continue;
+                }
+                let batch = ProjectionV1::batch_of(&bounds, end.item);
+                let twin = projection.objects.iter().enumerate().any(|(i, other)| {
+                    let other_obj = state.objects.get(ObjectId(i as u32));
+                    i != r.object.0 as usize
+                        && other_obj.owner == o.owner
+                        && card_name(other_obj.card_def) == card_name(o.card_def)
+                        && other.spans.iter().filter_map(|s| s.end).any(|e| {
+                            ProjectionV1::batch_of(&bounds, e.item) == batch
+                        })
+                });
+                if twin {
+                    return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_BATCH_DETAIL));
+                }
+            }
+        }
     }
 
     // Step 4: joint pinned allocation.
@@ -756,7 +839,12 @@ pub(crate) fn export_v1(
         .collect();
 
     // Step 7: handles. C first, then U per owner in step-3 order, then H.
-    let mut tracked = tracked_order(state, &projection, is(MutantV1::L3))?;
+    let mut tracked = tracked_order(
+        state,
+        &projection,
+        is(MutantV1::L3),
+        (!is(MutantV1::L14)).then_some(opp_hand_tracked.as_slice()),
+    )?;
     if is(MutantV1::L8) {
         // Mutant L8's bound copies take `C:` handles (invented continuity).
         for id in &opp_hand_tracked {

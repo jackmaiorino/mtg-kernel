@@ -690,6 +690,7 @@ mod tests {
                             journal: st.observation_journal.notes(),
                             viewer,
                             decklists: [&lists[0], &lists[1]],
+                            marks: Some(&s.infoset_marks_v1(viewer)),
                         },
                         ExportOptionsV1::default(),
                     ) {
@@ -771,6 +772,7 @@ mod tests {
                         journal: st.observation_journal.notes(),
                         viewer,
                         decklists: [&lists[0], &lists[1]],
+                        marks: Some(&s.infoset_marks_v1(viewer)),
                     },
                     ExportOptionsV1::default(),
                 )

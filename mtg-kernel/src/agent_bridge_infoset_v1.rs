@@ -114,6 +114,7 @@ pub(crate) fn delivered_v1(
             journal: game.observation_journal.notes(),
             viewer,
             decklists: [&lists[0], &lists[1]],
+            marks: Some(&fast.infoset_marks_v1(viewer)),
         },
         ExportOptionsV1::default(),
     );
@@ -261,6 +262,7 @@ fn log_refusal_v1(
                 journal: game.observation_journal.notes(),
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: Some(&fast.infoset_marks_v1(viewer)),
             });
     }
     let path = std::path::Path::new(&dir).join(format!("refusals-{}.jsonl", std::process::id()));
@@ -276,7 +278,8 @@ fn log_refusal_v1(
 
 /// The wire subclass of an export refusal: R3 names whose plan is pending
 /// (`opponent`, the design 6.7 predicate; `plan_error`, a search the planner
-/// could not read), every other code `export`.
+/// could not read), R3b `own_library_search`, R1 `same_name_batch` (lead
+/// ruling 7 (a)), every other code `export`.
 pub(crate) fn export_refusal_subclass_v1(error: &ExportErrorV1) -> &'static str {
     match error {
         ExportErrorV1::Refused {
@@ -291,6 +294,12 @@ pub(crate) fn export_refusal_subclass_v1(error: &ExportErrorV1) -> &'static str 
             code: crate::infoset_v1::RefusalCodeV1::R3b,
             ..
         } => "own_library_search",
+        // Lead ruling 7 (a): two same-name objects left in one batch of V's
+        // transcript and a live reference names one of them. A C5 fault.
+        ExportErrorV1::Refused {
+            code: crate::infoset_v1::RefusalCodeV1::R1,
+            detail,
+        } if detail == crate::infoset_v1::export::R1_SAME_NAME_BATCH_DETAIL => "same_name_batch",
         _ => "export",
     }
 }
