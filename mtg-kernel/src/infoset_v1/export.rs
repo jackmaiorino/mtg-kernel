@@ -314,66 +314,42 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
 }
 
 /// Canonical order of tracked objects (6.2 step 7).
-fn tracked_order(state: &GameState, projection: &ProjectionV1, l3: bool) -> Vec<ObjectId> {
-    let v = projection.viewer;
-    let opp = v.opponent();
-    let mut out: Vec<ObjectId> = Vec::new();
-    let mut seen = BTreeSet::new();
-    let mut push = |id: ObjectId, out: &mut Vec<ObjectId>| {
-        if projection.tracked(id) && seen.insert(id) {
-            out.push(id);
-        }
-    };
-    for p in [PlayerId::P0, PlayerId::P1] {
-        for &id in &state.players[p.index()].battlefield {
-            push(id, &mut out);
-        }
-    }
-    for p in [PlayerId::P0, PlayerId::P1] {
-        for &id in &state.players[p.index()].graveyard {
-            push(id, &mut out);
-        }
-    }
-    for &id in state.exile.iter().chain(&state.command) {
-        push(id, &mut out);
-    }
-    for item in &state.stack {
-        if state.objects.get(item.source).zone == Zone::Stack {
-            push(item.source, &mut out);
-        }
-    }
-    for &id in &state.players[v.index()].hand {
-        push(id, &mut out);
-    }
-    for f in &projection.hand_facts {
-        if let Some(id) = f.native {
-            push(id, &mut out);
-        }
-    }
-    let _ = opp;
-    for p in [PlayerId::P0, PlayerId::P1] {
-        for id in projection.library[p.index()].values() {
-            push(*id, &mut out);
-        }
-    }
-    let mut rest: Vec<(usize, u32, ObjectId)> = state
+/// The tracked objects in `C:` handle order (design 6.2 steps 2 and 7;
+/// ruling 3): by the start of their current span in V's transcript, keyed
+/// (record index, position within that record as presented to V). Nothing
+/// here reads S's zone-list, arena or id order. Two spans that start in the
+/// same record without a V-presented position cannot be ordered from V's
+/// transcript: the export refuses (R2, fail closed) rather than guess.
+fn tracked_order(
+    state: &GameState,
+    projection: &ProjectionV1,
+    l3: bool,
+) -> Result<Vec<ObjectId>, ExportErrorV1> {
+    let mut keyed: Vec<((usize, u32), ObjectId)> = state
         .objects
         .iter()
-        .filter(|(id, _)| projection.tracked(*id) && !seen.contains(id))
+        .filter(|(id, _)| projection.tracked(*id))
         .map(|(id, _)| {
-            let start = projection
+            let key = projection
                 .current_span(id)
-                .map_or(usize::MAX, |s| s.start_item);
-            (start, id.0, id)
+                .map_or((usize::MAX, u32::MAX), |s| (s.start_item, s.start_pos));
+            (key, id)
         })
         .collect();
-    rest.sort();
-    out.extend(rest.into_iter().map(|(_, _, id)| id));
     if l3 {
         // Mutant L3: raw native ids order the public objects.
+        let mut out: Vec<ObjectId> = keyed.into_iter().map(|(_, id)| id).collect();
         out.sort();
+        return Ok(out);
     }
-    out
+    keyed.sort_by_key(|(key, _)| *key);
+    if keyed.windows(2).any(|w| w[0].0 == w[1].0) {
+        return Err(refuse(
+            RefusalCodeV1::R2,
+            "two tracked objects start their spans in one record without a V-presented order",
+        ));
+    }
+    Ok(keyed.into_iter().map(|(_, id)| id).collect())
 }
 
 /// The exported state of one viewer at one decision.
@@ -777,7 +753,7 @@ pub(crate) fn export_v1(
         .collect();
 
     // Step 7: handles. C first, then U per owner in step-3 order, then H.
-    let mut tracked = tracked_order(state, &projection, is(MutantV1::L3));
+    let mut tracked = tracked_order(state, &projection, is(MutantV1::L3))?;
     if is(MutantV1::L8) {
         // Mutant L8's bound copies take `C:` handles (invented continuity).
         for id in &opp_hand_tracked {

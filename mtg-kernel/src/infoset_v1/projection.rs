@@ -26,6 +26,11 @@ pub(crate) struct SpanV1 {
     /// The generation at which the span began.
     pub start_gen: u32,
     pub start_item: usize,
+    /// The object's position within the record where the span starts, as
+    /// presented to V (its index among the objects V identified in that
+    /// record); `u32::MAX` when V did not identify it there (ruling 3: such
+    /// a span has no V-presented position).
+    pub start_pos: u32,
     /// The event-history index from which references made inside the span
     /// may link to the object (the first event at or after `start_item`).
     pub start_event: usize,
@@ -477,9 +482,15 @@ impl WalkV1<'_> {
                 } else {
                     o.moves
                 };
+                let start_pos = observed
+                    .iter()
+                    .position(|x| *x == id)
+                    .map_or(u32::MAX, |p| p as u32);
+                let o = &mut self.objs[i];
                 o.spans.push(SpanV1 {
                     start_gen,
                     start_item: item,
+                    start_pos,
                     start_event: next_event,
                     end: None,
                 });

@@ -1008,6 +1008,60 @@ fn l13_over_the_ac1_engine_families() {
     );
 }
 
+/// Ruling 3, permanent AC1 witness: on Wildfire vs Burn (seed 12), viewer
+/// p0, the first two F-choice pairs once exported `engine.event_history`
+/// naming a tracked object C:25 in one world and C:24 in the other (and
+/// C:29 / C:30), because `C:` handles followed S's zone-list order. Handles
+/// now follow span start in V's transcript; P must agree across the worlds.
+#[test]
+fn ac1_f_choice_wildfire_burn_handle_order_witness() {
+    let game = record_game(["Wildfire", "Burn"], 12, 300);
+    let (reports, _) = f_choice(&game, PlayerId::P0, &super::fixtures::LEAKAGE_V1, 3, 2, 40);
+    assert!(reports.len() >= 2, "the witness pairs exist: {reports:?}");
+    for r in &reports[..2] {
+        assert!(r.compared > 0, "the witness pair compares decisions: {r:?}");
+        assert_eq!(r.p_differs, 0, "P differs across the worlds: {:?}", r.notes);
+    }
+}
+
+/// Ruling 3 (3): the F-choice family over every deck pair and seed of the
+/// AC1 engine families, both viewers.
+#[test]
+fn ac1_f_choice_over_every_engine_family_game() {
+    let (mut compared, mut differs, mut truncated, mut pairs) = (0u64, 0u64, 0u64, 0usize);
+    let mut notes = Vec::new();
+    for (decks, seed) in [
+        (["CawGates", "Faeries"], 11u64),
+        (["Wildfire", "Burn"], 12),
+        (["Spy", "Elves"], 13),
+        (["CawGates", "Faeries"], 31),
+        (["Terror", "CawGates"], 32),
+        (["Faeries", "Terror"], 33),
+    ] {
+        let game = record_game(decks, seed, 300);
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let (reports, _) = f_choice(&game, viewer, &super::fixtures::LEAKAGE_V1, 3, 2, 40);
+            for r in &reports {
+                pairs += 1;
+                compared += r.compared;
+                differs += r.p_differs;
+                truncated += u64::from(r.truncated);
+                for n in &r.notes {
+                    notes.push(format!("{decks:?} seed {seed} {viewer:?}: {n}"));
+                }
+            }
+        }
+    }
+    for n in notes.iter().filter(|n| n.contains("P differs")) {
+        eprintln!("F-choice diagnostics: {n}");
+    }
+    eprintln!(
+        "F-choice over every engine-family game: pairs {pairs}, compared {compared}, cross-world P differences {differs}, truncated pairs {truncated}"
+    );
+    assert!(compared > 0);
+    assert_eq!(differs, 0, "the correct producer differs across worlds");
+}
+
 #[test]
 fn ac1_f_choice_on_engine_games() {
     let mutants = super::fixtures::LEAKAGE_V1;
