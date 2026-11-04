@@ -301,7 +301,7 @@ pub(super) fn bank_roles(
     policy: &FrozenPlayPolicyV1,
     opponents: &[FrozenPlayPolicyV1],
 ) -> Result<Roles, String> {
-    let fork = |p: &FrozenPlayPolicyV1| p.fork_for_collection_v3();
+    let fork = |p: &FrozenPlayPolicyV1| p.fork_for_search_v1();
     Ok(Roles {
         focal: fork(policy)?,
         opps: opponents.iter().map(fork).collect::<Result<_, _>>()?,
