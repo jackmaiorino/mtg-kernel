@@ -3607,7 +3607,7 @@ mod tests {
                         crate::infoset_v1::ExportOptionsV1::default(),
                     ) {
                         Err(crate::infoset_v1::ExportErrorV1::Refused { detail, .. }) => detail,
-                        _ => "surface mid-scan".to_string(),
+                        _ => format!("surface: {}", lockstep.payload_refusal_detail_v1()),
                     };
                     let detail: String = detail.chars().take(60).collect();
                     *refusals.entry(format!("{code}: {detail}")).or_default() += 1;

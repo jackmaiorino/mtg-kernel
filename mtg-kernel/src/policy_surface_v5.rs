@@ -679,6 +679,25 @@ impl PolicySurfaceV5 {
         })
     }
 
+    /// Why a payload cannot carry this surface (diagnostics for R2 tallies).
+    pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
+        if self.hunter_order_v45.is_some() {
+            return "Hunter trigger order";
+        }
+        let p = self.inner.public_context();
+        if p.discard.is_some() {
+            "discard reshape"
+        } else if p.optional_cost.is_some() {
+            "optional-cost reshape"
+        } else if p.madness_cast_reprompt_exemption.is_some() {
+            "madness reprompt"
+        } else if self.scan.is_some() || p.blockers.is_some() {
+            "combat object untracked"
+        } else {
+            "other"
+        }
+    }
+
     /// A restored combat scan (amendment 43.1) must still admit a legal
     /// declaration: including or excluding the current candidate keeps a
     /// completion the engine accepts (the scan's own answer rule).

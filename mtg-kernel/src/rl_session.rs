@@ -5408,6 +5408,11 @@ impl FastActorSessionV1 {
         Some(context)
     }
 
+    /// Why a payload cannot carry the surface (diagnostics for R2 tallies).
+    pub(crate) fn payload_refusal_detail_v1(&self) -> &'static str {
+        self.surface.payload_refusal_detail_v1()
+    }
+
     /// A restored combat scan (amendment 43.1) admits a legal declaration.
     pub(crate) fn validate_restored_combat_scan_v1(&self) -> Result<(), String> {
         self.surface
