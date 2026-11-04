@@ -10,7 +10,7 @@
 //! forced shuffle outcome; V's views are compared at every V decision and
 //! the correct producer's payloads must agree byte for byte.
 
-use super::harness::{local_menu, outcome, seat, swap_objects, view, PairReportV1};
+use super::harness::{local_menu, seat, swap_objects, view, PairReportV1};
 use super::tests::export_at;
 use super::*;
 use crate::ids::{ObjectId, PlayerId};
@@ -540,7 +540,8 @@ pub(crate) fn observe(
             .map(|m| {
                 (
                     *m,
-                    outcome(&export_at(s, v, ExportOptionsV1 { mutant: Some(*m) })),
+                    // As delivered (G5), like P.
+                    super::harness::deliverable_outcome(s, v, ExportOptionsV1 { mutant: Some(*m) }),
                 )
             })
             .collect(),
