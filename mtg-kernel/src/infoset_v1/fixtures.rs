@@ -1425,6 +1425,52 @@ fn l8_bound_copies_engine_fixture() {
     );
 }
 
+/// Ruling 4 (3) diagnostics: where the L8 control pair (no Hawk put back vs
+/// two fresh Hawks put back) shows an L8 difference while P agrees and both
+/// worlds export two `known_name` Hawks, the bytes of L8's two exports.
+#[test]
+fn l8_control_difference_bytes() {
+    let v = PlayerId::P1;
+    let hawks = vec!["Squadron Hawk".to_string(); 2];
+    for seed in [73u64, 74, 75] {
+        let (a, _) = record(l8_bound_copies(L8PutBackV1::NoHawk, seed), v, 30);
+        let (b, _) = record(l8_bound_copies(L8PutBackV1::TwoFresh, seed), v, 30);
+        let mut shown = 0;
+        for (x, y) in a.iter().zip(&b) {
+            if !(x.p.is_ok() && x.p == y.p && x.known == hawks && y.known == hawks) {
+                continue;
+            }
+            let l8 = |r: &AtV1| {
+                r.mutants
+                    .iter()
+                    .find(|(m, _)| *m == MutantV1::L8)
+                    .map(|(_, o)| o.clone())
+                    .expect("L8")
+            };
+            let (mx, my) = (l8(x), l8(y));
+            if mx == my {
+                continue;
+            }
+            let parse = |o: &Result<Vec<u8>, String>| -> serde_json::Value {
+                match o {
+                    Ok(b) => serde_json::from_slice(b).unwrap_or(serde_json::Value::Null),
+                    Err(e) => serde_json::json!({ "refused": e }),
+                }
+            };
+            eprintln!(
+                "L8 control seed {seed} script step {} (former view equal {}): {:?}",
+                x.step,
+                x.view == y.view,
+                super::tests::diffs(&parse(&mx), &parse(&my), String::new(), 12)
+            );
+            shown += 1;
+            if shown >= 2 {
+                break;
+            }
+        }
+    }
+}
+
 /// One seed of the L8 fixture: (witnesses, control witnesses, control samples).
 fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
     let v = PlayerId::P1;
