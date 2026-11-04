@@ -113,11 +113,13 @@ impl PayloadV1 {
             self.deck_ids.clone(),
         )
         .map_err(|e| format!("template session: {}", e.message))?;
-        Ok(FastActorSessionV1::import_infoset_with_surface_v1(
+        let session = FastActorSessionV1::import_infoset_with_surface_v1(
             &template,
             state,
             self.own_decision_index,
             Some(self.surface.clone()),
-        ))
+        );
+        session.validate_restored_combat_scan_v1()?;
+        Ok(session)
     }
 }

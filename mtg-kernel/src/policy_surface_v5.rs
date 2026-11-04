@@ -575,7 +575,12 @@ impl CombatContextV1 {
                 {
                     return Err("combat context: no blocker declaration".into());
                 }
-                let attacking = |a: &ObjectId| combat.attackers.contains(a);
+                // An attacker that left the battlefield left combat (the
+                // engine's own declaration filter).
+                let attacking = |a: &ObjectId| {
+                    combat.attackers.contains(a)
+                        && state.objects.get(*a).zone == crate::state::Zone::Battlefield
+                };
                 let legal = |a: ObjectId| set(&engine::legal_blockers_for(state, a));
                 let used: Vec<ObjectId> = b.accumulated.iter().map(|(x, _)| *x).collect();
                 if set(&used).len() != used.len()
@@ -594,10 +599,12 @@ impl CombatContextV1 {
                 let queued: Vec<ObjectId> = b.remaining.iter().map(|(a, _)| *a).collect();
                 if set(&queued).len() != queued.len()
                     || queued.contains(&attacker)
-                    || !b
-                        .remaining
-                        .iter()
-                        .all(|(a, xs)| attacking(a) && !xs.is_empty() && set(xs) == legal(*a))
+                    || !b.remaining.iter().all(|(a, xs)| {
+                        attacking(a)
+                            && !xs.is_empty()
+                            && set(xs).len() == xs.len()
+                            && set(xs) == legal(*a)
+                    })
                 {
                     return Err("combat context: queued attackers".into());
                 }
@@ -670,6 +677,19 @@ impl PolicySurfaceV5 {
             hunter_order_enabled_v45: self.hunter_order_enabled_v45,
             combat: Some(combat),
         })
+    }
+
+    /// A restored combat scan (amendment 43.1) must still admit a legal
+    /// declaration: including or excluding the current candidate keeps a
+    /// completion the engine accepts (the scan's own answer rule).
+    pub(crate) fn validate_restored_combat_scan_v1(&self, state: &GameState) -> Result<(), String> {
+        let Some(scan) = &self.scan else {
+            return Ok(());
+        };
+        scan.validate_shape()?;
+        scan.answer_keeps_a_legal_completion(state, &self.inner, true)
+            .or_else(|_| scan.answer_keeps_a_legal_completion(state, &self.inner, false))
+            .map_err(|e| format!("combat context admits no legal declaration: {e}"))
     }
 
     /// Restores a carried (validated) combat record, amendment 43.1, before

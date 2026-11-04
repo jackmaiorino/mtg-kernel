@@ -5408,6 +5408,12 @@ impl FastActorSessionV1 {
         Some(context)
     }
 
+    /// A restored combat scan (amendment 43.1) admits a legal declaration.
+    pub(crate) fn validate_restored_combat_scan_v1(&self) -> Result<(), String> {
+        self.surface
+            .validate_restored_combat_scan_v1(self.game_state())
+    }
+
     /// As `import_infoset_v1`, with the surface context given explicitly
     /// (from a payload).
     pub(crate) fn import_infoset_with_surface_v1(
