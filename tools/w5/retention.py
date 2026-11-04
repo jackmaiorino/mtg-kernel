@@ -29,6 +29,9 @@ Rules (frozen in the design):
 - Selection: the endpoint's checkpoint if kept, else its weights-only snapshot, else a replay from the nearest
   kept full state at or before it, which must reproduce every recorded hash. Then a PRUNE manifest lists every
   non-selected full state and snapshot, by kind.
+- S learners (XS): a full state is two files, the S checkpoint record (`checkpoint.json`, schema
+  `w5-s-learner-checkpoint/v1`) and the S container it pins (`s-train-state.bin`). Every rule above treats them
+  as one state: both are pruned, kept, verified and counted together (`checkpoint_parts`).
 
 Commands:
   retention.py index CHAIN.json                    per-update index (cached in INDEX next to the manifest)
@@ -66,6 +69,9 @@ SNAPSHOT_CAP_BYTES = 30 * 10**9
 X_CAP_SECONDS = 10.5 * DAY  # default; a chain manifest's `x_cap_seconds` (frozen at Stage 0) overrides it
 HISTORY_KINDS = ('initial', 'completed_iteration')
 INDEX_SCHEMA = 'w5-chain-index/v1'
+S_RECORD_SCHEMA = 'w5-s-learner-checkpoint/v1'
+# An S record pins at most 1,024 trajectories, far below this; larger checkpoints (net-8's) are never parsed here.
+S_RECORD_MAX_BYTES = 4 << 20
 
 
 def read(path):
@@ -86,6 +92,39 @@ def sha(path):
         for block in iter(lambda: f.read(1 << 20), b''):
             h.update(block)
     return h.hexdigest()
+
+
+def checkpoint_parts(pin):
+    """The files of one full train state: the checkpoint itself and, when it is an S checkpoint record, the S
+    container it pins. Each part is {'path', 'sha256', 'part'}."""
+    path = Path(pin['path'])
+    parts = [{'path': path.as_posix(), 'sha256': pin['sha256'], 'part': 'checkpoint'}]
+    try:
+        small = path.stat().st_size <= S_RECORD_MAX_BYTES
+    except OSError:
+        return parts
+    if small:
+        data = path.read_bytes()
+        if data[:1] == b'{':
+            try:
+                doc = json.loads(data)
+            except ValueError:
+                doc = None
+            if isinstance(doc, dict) and doc.get('schema') == S_RECORD_SCHEMA:
+                state = doc['state']
+                parts.append({'path': Path(state['path']).as_posix(), 'sha256': state['sha256'], 'part': 's_state'})
+    return parts
+
+
+def state_present(pin):
+    """Every file of the state exists."""
+    return all(Path(p['path']).exists() for p in checkpoint_parts(pin))
+
+
+def state_intact(pin):
+    """Every file of the state exists and matches its pin."""
+    parts = checkpoint_parts(pin)
+    return all(Path(p['path']).exists() and sha(p['path']) == p['sha256'] for p in parts)
 
 
 def load_chain(path):
@@ -254,10 +293,14 @@ def plan(chain_path, snapshot_from=None):
             continue
         if not (complete[s] and s + 1 < len(segs) and complete[s + 1]):
             continue
-        path = Path(rec['checkpoint']['path'])
-        if path.exists():
-            checkpoints.append({'boundary': rec['boundary'], 'path': path.as_posix(),
-                                'sha256': rec['checkpoint']['sha256'], 'bytes': path.stat().st_size})
+        for part in checkpoint_parts(rec['checkpoint']):
+            path = Path(part['path'])
+            if path.exists():
+                item = {'boundary': rec['boundary'], 'path': path.as_posix(), 'sha256': part['sha256'],
+                        'bytes': path.stat().st_size}
+                if part['part'] != 'checkpoint':
+                    item['part'] = part['part']
+                checkpoints.append(item)
     done = [i for i, c in enumerate(complete) if c]
     for s in done[:-TRAJECTORY_SEGMENTS] if len(done) > TRAJECTORY_SEGMENTS else []:
         for path in sorted(Path(segs[s]['root'], 'iterations').glob('*/attempt-*/collect/episode-*.json')):
@@ -367,7 +410,7 @@ def select(chain, records, r_usec, weights=None):
         raise SystemExit('stop: no boundary reaches R yet')
     endpoint = hit['boundary']
     by_boundary = {r['boundary']: r for r in records}
-    if Path(hit['checkpoint']['path']).exists() and sha(hit['checkpoint']['path']) == hit['checkpoint']['sha256']:
+    if state_intact(hit['checkpoint']):
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'], 'replay': None}
     snap = (weights or {}).get(endpoint)
     if snap and sha(snap['path']) == snap['sha256'] and snap['cut_from_state_sha256'] == hit['after_state_sha256']:
@@ -379,7 +422,7 @@ def select(chain, records, r_usec, weights=None):
             start = {'boundary': 0, 'checkpoint': None}
             break
         rec = by_boundary.get(b)
-        if rec and Path(rec['checkpoint']['path']).exists():
+        if rec and state_present(rec['checkpoint']):
             start = {'boundary': b, 'checkpoint': rec['checkpoint']}
             break
     expected = [{'boundary': b, 'after_state_sha256': by_boundary[b]['after_state_sha256']}
@@ -444,7 +487,7 @@ def verify_replay(spec, replay_root):
         checkpoint = doc.get('checkpoint')
     equal = [g == e['after_state_sha256'] for g, e in zip(got, expected)]
     ok = all(equal) and len(got) == len(expected)
-    if ok and not (checkpoint and Path(checkpoint['path']).exists() and sha(checkpoint['path']) == checkpoint['sha256']):
+    if ok and not (checkpoint and state_intact(checkpoint)):
         ok = False
     return {'schema': 'w5-replay-receipt/v1', 'endpoint_boundary': spec['endpoint_boundary'],
             'from_boundary': spec['replay']['from']['boundary'], 'updates': len(expected),
@@ -468,19 +511,26 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
         record = next((r for r in records if r['boundary'] == selected_boundary), None)
         if record is None or replay_receipt.get('endpoint_after_state_sha256') != record['after_state_sha256']:
             raise SystemExit("stop: the replayed endpoint's state is not this chain's recorded state")
-        if not Path(pin['path']).exists() or sha(pin['path']) != pin['sha256']:
+        if not state_intact(pin):
             raise SystemExit('stop: the replayed checkpoint differs from its pin')
-        keep.append({'boundary': selected_boundary, 'kind': 'full', 'path': Path(pin['path']).as_posix(),
-                     'sha256': pin['sha256'], 'bytes': Path(pin['path']).stat().st_size, 'replayed': True})
+        for part in checkpoint_parts(pin):
+            item = {'boundary': selected_boundary, 'kind': 'full', 'path': part['path'], 'sha256': part['sha256'],
+                    'bytes': Path(part['path']).stat().st_size, 'replayed': True}
+            if part['part'] != 'checkpoint':
+                item['part'] = part['part']
+            keep.append(item)
     for rec in records:
-        path = Path(rec['checkpoint']['path'])
-        if not path.exists():
+        parts = [p for p in checkpoint_parts(rec['checkpoint']) if Path(p['path']).exists()]
+        if not parts or parts[0]['part'] != 'checkpoint':
             continue
-        item = {'boundary': rec['boundary'], 'kind': 'full', 'path': path.as_posix(),
-                'sha256': rec['checkpoint']['sha256'], 'bytes': path.stat().st_size}
-        # The endpoint's full state is kept only when it still matches its pin (as selection requires).
-        intact = rec['boundary'] == selected_boundary and not keep and sha(path) == rec['checkpoint']['sha256']
-        (keep if intact else prune).append(item)
+        # The endpoint's full state is kept only when every file still matches its pin (as selection requires).
+        intact = rec['boundary'] == selected_boundary and not keep and state_intact(rec['checkpoint'])
+        for part in parts:
+            item = {'boundary': rec['boundary'], 'kind': 'full', 'path': part['path'], 'sha256': part['sha256'],
+                    'bytes': Path(part['path']).stat().st_size}
+            if part['part'] != 'checkpoint':
+                item['part'] = part['part']
+            (keep if intact else prune).append(item)
     for b, snap in sorted(weights.items()):
         item = {'boundary': b, 'kind': 'weights', 'path': snap['path'], 'sha256': snap['sha256'],
                 'bytes': Path(snap['path']).stat().st_size}
@@ -526,7 +576,7 @@ def guard(roots, cap_bytes, next_bytes=0, chains=()):
     kinds, escaped = [], []
     for chain_path in chains:
         chain, records = index(chain_path)
-        full = [Path(r['checkpoint']['path']) for r in records if Path(r['checkpoint']['path']).exists()]
+        full = [Path(p['path']) for r in records for p in checkpoint_parts(r['checkpoint']) if Path(p['path']).exists()]
         weights = [Path(s['path']) for s in snapshots(chain_path).values()]
         # Where the chain will write (segment roots and its snapshot directory), checked before anything exists.
         destinations = [Path(seg['root']) for seg in chain['segments']] + [snapshot_dir(chain_path, chain)]

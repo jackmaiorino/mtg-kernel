@@ -208,6 +208,28 @@ fn s_materialize_v1(
     )
 }
 
+/// The document of a pinned S train-state container (an S learner's
+/// `initial` or a record's `state`), after its full decode: schema,
+/// architecture, config, Adam step, state hash, and the parameter names and
+/// shapes in layout order. Python tools read S layouts through this, never by
+/// parsing a container.
+pub fn s_container_document_v1(input: &PinnedFileV1) -> Result<Value, String> {
+    let state = decode_checkpoint_v1(&read_pinned_bytes(input)?)?;
+    let model = state.model_v1();
+    let parameters: Vec<Value> = model
+        .layout_v1()
+        .tensors
+        .iter()
+        .map(|spec| json!({"name":spec.name,"shape":spec.shape}))
+        .collect();
+    Ok(
+        json!({"schema":crate::s_transformer_v1::S_TRAIN_STATE_SCHEMA_V1,
+        "architecture":S_ARCHITECTURE_V1,"config":model.config_v1(),
+        "adam_step":state.adam_step_v1(),"state_sha256":state.state_sha256_v1(),
+        "parameters_sha256":model.parameter_sha256_v1(),"parameters":parameters}),
+    )
+}
+
 /// A playable v1 checkpoint from the pinned weights snapshot: its
 /// parameters, zero moments, its original schema and the state hash of that
 /// state. `template` is a source of the same lineage (its play import and
