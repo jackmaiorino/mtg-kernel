@@ -709,6 +709,10 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
     use crate::rl::ActionSemanticV1;
     let (mut attack, mut block, mut mid_scan, mut walked, mut refused) =
         (0u32, 0u32, 0u32, 0u32, 0u32);
+    // Design 13 AC3 witnesses: declarations that open with at least two
+    // candidates (several possible attackers, or several possible blockers
+    // for one attacker).
+    let (mut multi_attack, mut multi_block) = (0u32, 0u32);
     for (decks, seed) in [
         (["Burn", "Burn"], 41u64),
         (["Wildfire", "Elves"], 42),
@@ -744,10 +748,21 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
                 .clone()
                 .expect("a combat point's payload carries the scan");
             assert_eq!(combat.kind, kind, "{decks:?}: scan kind");
+            let multi = combat.cursor == 0 && combat.candidates.len() >= 2;
             match kind {
-                crate::policy_surface_v5::CombatScanKindV1::Attackers => attack += 1,
-                crate::policy_surface_v5::CombatScanKindV1::Blockers => block += 1,
+                crate::policy_surface_v5::CombatScanKindV1::Attackers => {
+                    attack += 1;
+                    multi_attack += u32::from(multi);
+                }
+                crate::policy_surface_v5::CombatScanKindV1::Blockers => {
+                    block += 1;
+                    multi_block += u32::from(multi);
+                }
             }
+            // AC3 at the combat root: the imported menu and view, and a
+            // random rollout to the end with zero engine faults.
+            super::harness::ac3_check(s, &x, 7)
+                .unwrap_or_else(|e| panic!("{decks:?}: AC3 at a combat root: {e}"));
             if combat.cursor > 0 {
                 mid_scan += 1;
             }
@@ -831,7 +846,11 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
         });
     }
     eprintln!(
-        "combat payloads: {attack} attacker points, {block} blocker points, {mid_scan} mid-scan, {walked} paired steps, {refused} refused"
+        "combat payloads: {attack} attacker points ({multi_attack} multi-attacker roots), {block} blocker points ({multi_block} multi-blocker roots), {mid_scan} mid-scan, {walked} paired steps, {refused} refused"
+    );
+    assert!(
+        multi_attack >= 5 && multi_block >= 5,
+        "design 13: 5 multi-attacker and 5 multi-blocker witnesses"
     );
     assert!(attack > 0 && block > 0, "both scan kinds exported");
     assert!(mid_scan > 0, "a scan past its first candidate exported");

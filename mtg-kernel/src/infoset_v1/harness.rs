@@ -540,11 +540,22 @@ pub(crate) fn ac3_check(
     export: &InfosetV1,
     seed: u64,
 ) -> Result<(), String> {
-    if live.surface_context_v1().is_none() {
-        // The surface names objects mid-scan: the payload refuses (R2).
-        return Ok(());
-    }
-    let imported = FastActorSessionV1::import_infoset_v1(live, export.state.clone(), 0);
+    // At a combat scan root the context carries the scan record (amendment
+    // 43.1), as the payload does; a surface the payload cannot carry refuses
+    // (R2) and has nothing to check.
+    let context = match live.surface_context_v1() {
+        Some(c) => c,
+        None => match live.payload_surface_context_v1(&super::order::canonical_ids_v1(export)) {
+            Some(c) => c,
+            None => return Ok(()),
+        },
+    };
+    let imported = FastActorSessionV1::import_infoset_with_surface_v1(
+        live,
+        export.state.clone(),
+        0,
+        Some(context),
+    );
     let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
         (live.current_response(), imported.current_response())
     else {
