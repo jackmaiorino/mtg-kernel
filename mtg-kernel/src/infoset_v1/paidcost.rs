@@ -407,3 +407,153 @@ fn drawing_the_paid_lembas_or_its_twin_exports_alike() {
     assert_eq!(pa, pb, "drawing the paid Lembas or its twin exports alike");
     assert_eq!(pa, Err("R1b".to_string()), "R1b refuses in both worlds");
 }
+
+/// The opponent's Shaman payment for Sol round 2. V is Faeries (P1).
+/// Wildfire casts two Lembas and Krark-Clan Shaman and sacrifices one
+/// Lembas to the Shaman; the session stops at V's first decision with the
+/// Shaman ability and the Lembas's shuffle trigger waiting.
+fn opponent_payment() -> FastActorSessionV1 {
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let live = new_game(["Wildfire", "Faeries"], 77, o);
+    let mut st = live.game_state().clone();
+    force_deal(
+        &mut st,
+        o,
+        &[
+            "Mountain",
+            "Swamp",
+            "Forest",
+            "Lembas",
+            "Lembas",
+            "Krark-Clan Shaman",
+            "Swamp",
+        ],
+        &["Cast Down", "Swamp", "Cast Down", "Forest", "Cast Down"],
+    );
+    force_deal(
+        &mut st,
+        v,
+        &[
+            "Island",
+            "Island",
+            "Island",
+            "Spellstutter Sprite",
+            "Island",
+            "Force Spike",
+            "Dispel",
+        ],
+        &["Island", "Island", "Island", "Island"],
+    );
+    let mut script = ScriptV1::new(restart(&live, st));
+    script.push(
+        o,
+        vec![
+            play_land("Mountain"),
+            play_land("Swamp"),
+            cast("Lembas"),
+            play_land("Forest"),
+            cast("Krark-Clan Shaman"),
+            cast("Lembas"),
+            activate("Krark-Clan Shaman"),
+            pick("Lembas"),
+        ],
+    );
+    script.keep(
+        o,
+        &["Mountain", "Swamp", "Forest", "Lembas", "Krark-Clan Shaman"],
+    );
+    script.push(
+        v,
+        vec![
+            play_land("Island"),
+            play_land("Island"),
+            play_land("Island"),
+        ],
+    );
+    let lembas = id("Lembas");
+    let mut found: Option<FastActorSessionV1> = None;
+    script.run(400, 4, &mut |s, p, _| {
+        let st = s.game_state();
+        if found.is_none()
+            && p == v
+            && waiting(st, OutletV1::Shaman).is_some()
+            && st
+                .stack
+                .iter()
+                .any(|i| st.objects.get(i.source).card_def == lembas)
+        {
+            found = Some(s.clone());
+        }
+    });
+    found.unwrap_or_else(|| {
+        panic!(
+            "no V decision with the Shaman ability and the shuffle trigger waiting:
+{}",
+            script.trace.join(
+                "
+"
+            )
+        )
+    })
+}
+
+/// Sol round 2: the opponent's paid Lembas A (its shuffle trigger removed,
+/// so A stays in the graveyard) and a twin B (sacrificed by state surgery)
+/// return from the graveyard to the opponent's hand together, in one batch
+/// of V's transcript; then A or B goes to the library. V's records agree
+/// whichever copy went, so P must agree: R1 in both (`same_name_batch`,
+/// read before tracking decides the tombstone), never an export in the
+/// world where A went to the library (untracked, 43.5-eligible).
+#[test]
+fn a_paid_copy_and_its_twin_leaving_in_one_batch_refuse_alike() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut base = s.game_state().clone();
+    let i = waiting(&base, OutletV1::Shaman).expect("the Shaman ability waits");
+    let a = paid_object(&base, i);
+    assert_eq!(base.objects.get(a).zone, Zone::Graveyard);
+    let b = base.players[o.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|x| base.objects.get(*x).card_def == lembas)
+        .expect("the other Lembas is on the battlefield");
+    base.stack
+        .retain(|it| base.objects.get(it.source).card_def != lembas);
+    propose_and_commit(&mut base, ProposedEvent::zone_change(b, Zone::Graveyard));
+    base.engine.pending_triggers.clear();
+    propose_and_commit(&mut base, ProposedEvent::zone_change(a, Zone::Hand));
+    propose_and_commit(&mut base, ProposedEvent::zone_change(b, Zone::Hand));
+    let lists = decklists(&s);
+    let marks = s.infoset_marks_v1(v);
+    let run = |gone: ObjectId| {
+        let mut st = base.clone();
+        propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Library));
+        export_v1(
+            &ExportInputV1 {
+                state: &st,
+                journal: st.observation_journal.notes(),
+                viewer: v,
+                decklists: [&lists[0], &lists[1]],
+                marks: Some(&marks),
+            },
+            ExportOptionsV1::default(),
+        )
+        .map(|x| x.bytes)
+        .map_err(|e| format!("{e:?}"))
+    };
+    let (pa, pb) = (run(a), run(b));
+    eprintln!(
+        "paid copy and twin, one batch: A went {:?} / B went {:?}",
+        pa.as_ref().map(Vec::len),
+        pb.as_ref().map(Vec::len)
+    );
+    assert!(
+        pa.as_ref().is_err_and(|e| e.contains("R1"))
+            && pb.as_ref().is_err_and(|e| e.contains("R1")),
+        "both worlds refuse R1"
+    );
+    assert_eq!(pa, pb, "P agrees whichever copy went");
+}

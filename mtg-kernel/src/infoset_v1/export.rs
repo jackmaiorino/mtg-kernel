@@ -647,7 +647,8 @@ pub(crate) fn export_v1(
     // generation 0. Otherwise R1 stays. R1b still reads such a reference
     // (Sol round 1): whether the paid copy is untracked can depend on which
     // same-name copy V later drew, so R1b's name-level join test must
-    // refuse in both worlds before tracking decides the tombstone.
+    // refuse in both worlds before tracking decides the tombstone; so does
+    // R1 `same_name_batch` below (Sol round 2).
     let unread_paid = unread_paid_costs_v1(state, &tagged, v);
     let paid_tomb = |r: &RefV1| -> bool {
         r.class == ClassV1::Live
@@ -722,9 +723,12 @@ pub(crate) fn export_v1(
     // same batch of V's transcript (no V decision between the two), V cannot
     // pair the reference with either copy: refuse, fail closed. Reads V's
     // spans, the names and zones V saw and V's own decision points only.
+    // It reads 43.5's tombstone-eligible paid-cost references too (Sol
+    // round 2): which copy stays tracked after such a batch is not V's
+    // information, so the batch test runs before tracking decides.
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
-        if *region != "live" || paid_tomb(r) {
+        if *region != "live" {
             continue;
         }
         let Some(track) = projection.objects.get(r.object.0 as usize) else {
