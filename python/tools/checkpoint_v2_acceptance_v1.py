@@ -33,9 +33,11 @@ p <= 0.025 (and the 6.2 correspondence receipt, pinned in the spec, passed).
 
 Contamination (frozen). A block is contaminated when, over its span, the artifact disk (E:) averages more than 50%
 busy, the run disk (D:) averages more than 60 MB/s of reads (or, in comparison, more than twice the larger of the
-calibration baseline and a 10 MB/s floor: amendment 1, docs/checkpoint_v2_acceptance_amendment_1.md), another host_slots claim or a timed hold overlaps the pool cores, or more than 10% of the sampler's rows
-are missing. The claim check polls `host_slots status` every 15 s; a block with a poll gap over 60 s counts as
-contaminated, because overlap could not be excluded.
+calibration baseline and a 10 MB/s floor: amendment 1, docs/checkpoint_v2_acceptance_amendment_1.md), another
+host_slots claim or a timed hold overlaps the pool cores (4-23 since amendment 2,
+docs/checkpoint_v2_acceptance_amendment_2.md), or more than 10% of the sampler's rows are missing. The claim check
+polls `host_slots status` every 15 s; a block with a poll gap over 60 s counts as contaminated, because overlap could
+not be excluded.
 
 Start precondition. A group starts at the first instant, after the previous group's prune and settle (120 s with no
 harness writes), at which the trailing 10 minutes show: E: under 50% busy and D: reads under 60 MB/s (window means,
@@ -93,7 +95,9 @@ RUNS = 16
 RUNS_PER_BASE = {'c': 8, 'v8': 8}
 UPDATES = 18
 STAGGER_SECONDS = 2.0
-POOL_CORES = '0-19'
+# Amendment 2 (docs/checkpoint_v2_acceptance_amendment_2.md): the pool moves from the design's 0-19 to 4-23, the
+# 20 cores left free beside a long GPU campaign on 0-3. Only foreign claims overlapping this pool count as overlap.
+POOL_CORES = '4-23'
 RUN_DISK = 'D'
 ARTIFACT_DISK = 'E'
 PRECONDITION_SECONDS = 600.0
@@ -1214,10 +1218,10 @@ class Measurement:
                                         'per_group_bytes': self.group_bytes(),
                                         'declared_peak_bytes': self.group_bytes() * 1.2 + 1e9},
                         'constants': {k: globals()[k] for k in (
-                            'RUNS', 'UPDATES', 'STAGGER_SECONDS', 'E_BUSY_MAX', 'D_READ_MAX', 'MISSING_MAX',
-                            'RELATIVE_FACTOR', 'D_READ_BASELINE_FLOOR', 'CALIBRATION_COUPLES', 'N_MIN', 'N_MAX', 'MAX_DISCARDS',
-                            'MAX_WARMUPS', 'GUARD_ALPHA', 'SAMPLE_INTERVAL', 'CLAIM_POLL_SECONDS',
-                            'CLAIM_GAP_MAX')}}
+                            'RUNS', 'UPDATES', 'POOL_CORES', 'STAGGER_SECONDS', 'E_BUSY_MAX', 'D_READ_MAX',
+                            'MISSING_MAX', 'RELATIVE_FACTOR', 'D_READ_BASELINE_FLOOR', 'CALIBRATION_COUPLES', 'N_MIN',
+                            'N_MAX', 'MAX_DISCARDS', 'MAX_WARMUPS', 'GUARD_ALPHA', 'SAMPLE_INTERVAL',
+                            'CLAIM_POLL_SECONDS', 'CLAIM_GAP_MAX')}}
             write_json(self.manifest_path, manifest)
             state = new_state(bits)
             self.save(state)
@@ -1297,8 +1301,9 @@ class Measurement:
 
 
 def formal_placement(args):
-    """The measurement's frozen placement: pool 0-19, run root on D:, artifact root on E:, both disks sampled, the
-    frozen precondition and settle times. Anything else is validation only."""
+    """The measurement's frozen placement: pool 4-23 (amendment 2; the design's 0-19 is no longer accepted), run root
+    on D:, artifact root on E:, both disks sampled, the frozen precondition and settle times. Anything else is
+    validation only."""
     require(args.precondition_seconds == PRECONDITION_SECONDS and args.settle_seconds == SETTLE_SECONDS,
             'the measurement uses the frozen precondition and settle times')
     require(parse_cores(args.pool) == parse_cores(POOL_CORES) if args.pool != 'own' else False,
