@@ -1079,8 +1079,13 @@ class Measurement:
         # A passing window is admitted only once the sampler has delivered every row stamped inside it: rows still
         # in transit could carry disk load the window has not seen.
         now = time.time()
-        self.wait_for_sampler(now)
-        return self._precondition_at(now)
+        catchup = self.wait_for_sampler(now)
+        failing, stats, claims = self._precondition_at(now)
+        if not catchup['caught_up']:
+            # A sampler that died or stalled during the wait does not admit a group; wait_for_start's next pass stops
+            # on a dead or failed sampler.
+            failing.append("the sampler did not deliver the window's rows")
+        return failing, stats, claims
 
     def _precondition_at(self, now):
         start = now - self.precondition_seconds

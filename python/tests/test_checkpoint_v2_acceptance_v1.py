@@ -423,7 +423,8 @@ class CountersTests(unittest.TestCase):
         m.dir = Path('.')
         m.group_bytes = lambda: 0
         m.samples = acc.Samples(interval=5)
-        m.claims = SimpleNamespace(window=lambda start, end: [(t, [], True) for t in range(int(start), int(end), 15)])
+        m.claims = SimpleNamespace(window=lambda start, end: [(t, [], True) for t in range(int(start), int(end), 15)],
+                                   is_alive=lambda: True)
         m.sampler = FakeWatch()
         for stamp in range(600, 1170, 5):
             m.samples.add(stamp, 1e6, 1.0)
@@ -437,6 +438,27 @@ class CountersTests(unittest.TestCase):
             failing, stats, _ = m.precondition()
         self.assertTrue(any('busy' in f for f in failing), failing)
         self.assertEqual(stats['rows'], 120)
+        # Sol round 2: a sampler that dies during the wait does not admit the group, and wait_for_start then stops.
+        m.samples = acc.Samples(interval=5)
+        for stamp in range(600, 1200, 5):
+            m.samples.add(stamp, 1e6, 1.0)
+        dead = FakeWatch()
+        dead.is_alive = lambda: False
+        dead.error = 'reader failed'
+
+        def die(end):
+            m.sampler = dead
+            return {'waited': 0.0, 'caught_up': False}
+        m.wait_for_sampler = die
+        events = []
+        m.event = lambda kind, **k: events.append(kind)
+        with mock.patch.object(acc.time, 'time', return_value=1200.5),                 mock.patch.object(acc.time, 'sleep'),                 mock.patch.object(acc.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 ** 12)):
+            failing, _, _ = m.precondition()
+            self.assertIn("the sampler did not deliver the window's rows", failing)
+            m.sampler = FakeWatch()
+            with self.assertRaises(acc.Refused):
+                m.wait_for_start()
+        self.assertNotIn('precondition-met', events)
 
     def test_contamination(self):
         rows = [(t, 10e6, 10.0) for t in range(0, 100, 5)]
