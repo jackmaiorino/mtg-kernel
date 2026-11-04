@@ -147,12 +147,14 @@ Target references map `TargetRefV1::Player` → `{"player": seat}` and
 
 This wire carries native identity and must reach only a trusted adapter,
 never a bot. Each library is shuffled before its objects are allocated, so
-an arena id minus its seat's offset is the card's initial library position
-(its draw ordinal until the first shuffle). The arena id never changes,
-including through hidden zones; only `zone_change_count` advances. A viewer
-of `object_id` or of `x_kernel_v5` (whose `CardStableRefV1` also carries
-`card_db_id`) could therefore re-identify a card after an unseen shuffle or
-redraw, tell identical copies apart and date each card's draw. The Spellbench
+an arena id minus its seat's offset is the card's initial library position;
+while draws consume that original order (no shuffle, scry or other
+rearrangement or removal), it is also the card's draw ordinal. The arena id
+never changes, including through hidden zones; only `zone_change_count`
+advances. A viewer of `object_id` or of `x_kernel_v5` (whose
+`CardStableRefV1` also carries `card_db_id`) could therefore re-identify a
+card after an unseen shuffle or redraw, tell identical copies apart and,
+while draws follow the original order, infer when a card was drawn. The Spellbench
 v2 adapter (`integrations/mtg_kernel/kernel_engine_v2.py`) keeps these
 identities private, mints per-viewer ids that change on every zone change,
 and never forwards `x_kernel_v5`. Its `check_engine_v2` audit fails if
