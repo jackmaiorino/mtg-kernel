@@ -524,8 +524,13 @@ fn a_paid_copy_and_its_twin_leaving_in_one_batch_refuse_alike() {
         .retain(|it| base.objects.get(it.source).card_def != lembas);
     propose_and_commit(&mut base, ProposedEvent::zone_change(b, Zone::Graveyard));
     base.engine.pending_triggers.clear();
-    propose_and_commit(&mut base, ProposedEvent::zone_change(a, Zone::Hand));
-    propose_and_commit(&mut base, ProposedEvent::zone_change(b, Zone::Hand));
+    // Public returns to the hand: V's native rows know both copies, as the
+    // engine's return effects record them.
+    for x in [a, b] {
+        propose_and_commit(&mut base, ProposedEvent::zone_change(x, Zone::Hand));
+        base.reveal_hand_card(v, o, x)
+            .expect("reveal the returned copy");
+    }
     let lists = decklists(&s);
     let marks = s.infoset_marks_v1(v);
     let run = |gone: ObjectId| {
