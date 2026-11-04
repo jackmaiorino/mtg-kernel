@@ -33,6 +33,8 @@ mod harness;
 mod realize;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transcript;
 
 pub(crate) use export::{export_v1, ExportInputV1, ExportOptionsV1, InfosetV1, MutantV1};
 pub(crate) use payload::PayloadV1;

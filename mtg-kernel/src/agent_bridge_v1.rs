@@ -1132,6 +1132,121 @@ enum WireResponseV1 {
     Terminal(Value),
 }
 
+/// AC1 strict view (lead rulings 4 and 5, test only): the bridge's own wire
+/// response at each decision of a flat-action session, as the bridge sends
+/// it to the Spellbench adapter with `--x-kernel-flat-v4
+/// --private-v2-support` on: the decision (candidates in the raw session's
+/// order), `x_kernel_v5`, `x_kernel_flat_v4` with its row map, and
+/// `x_kernel_v2_support` with the history slice since the previous call. The
+/// adapter code the entrant runs turns these into the bot-facing messages.
+/// One mirror per world, called at every decision in order (the history
+/// slices and the block-root step depend on it). The flat-v4 tensor is
+/// replaced by its digest: the adapter passes it through unread.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct BridgeMirrorV1 {
+    history_cursor: (usize, usize, usize),
+    private_block_root_step: Option<u64>,
+}
+
+#[cfg(test)]
+impl BridgeMirrorV1 {
+    pub(crate) fn new() -> Self {
+        Self {
+            history_cursor: (0, 0, 0),
+            private_block_root_step: None,
+        }
+    }
+
+    /// The response at `fast`'s current decision and the raw candidate each
+    /// of the copy's rows executes (row r executes candidate `rows[r]`).
+    pub(crate) fn response(
+        &mut self,
+        fast: &crate::rl_session::FastActorSessionV1,
+    ) -> Result<(Value, Vec<u32>), String> {
+        use crate::rl_session::FastActorResponseV1;
+        let FastActorResponseV1::Decision(fd) = fast.current_response() else {
+            return Err("not a decision".into());
+        };
+        let raw = RlEpisodeSessionV1::from_fast_session_for_test(fast);
+        let response = raw.current_response();
+        let RlSessionResponseV1::Decision(decision) = &response else {
+            return Err("the raw session presents no decision".into());
+        };
+        if decision.step != fd.step
+            || decision.acting_player != fd.acting_player
+            || decision.physical_decision_id != fd.physical_decision_id
+            || decision.substep_index != fd.substep_index
+            || decision.substep_count != fd.substep_count
+        {
+            return Err("the raw session presents another decision".into());
+        }
+        if decision
+            .observation
+            .projection
+            .surface
+            .surface_context
+            .private_blockers
+            .is_some()
+        {
+            self.private_block_root_step.get_or_insert(decision.step);
+        } else {
+            self.private_block_root_step = None;
+        }
+        let rows_semantics = fast
+            .diagnostic_current_action_semantics()
+            .ok_or("no copy menu")?;
+        let raw_semantics: Vec<ActionSemanticV1> = decision
+            .legal_actions
+            .iter()
+            .map(|a| a.semantic.clone())
+            .collect();
+        let rows = crate::agent_bridge_flat_v4::map_rows_to_candidates_v1(
+            &raw_semantics,
+            &rows_semantics,
+        )
+        .map_err(|e| format!("row map: {e:?}"))?;
+        let mut scratch = FlatV4EncodeScratchV1::default();
+        let encoded =
+            encode_flat_v4_tensor_v1(fast, &mut scratch).map_err(|e| format!("encode: {e:?}"))?;
+        let mut flat = flat_v4_extension_value_v1(&encoded, &rows)
+            .map_err(|e| format!("extension: {e:?}"))?;
+        if let Value::Object(m) = &mut flat {
+            let keep = ["row_candidate_ids"];
+            let mut digest = Sha256::new();
+            for (k, v) in m.iter().filter(|(k, _)| !keep.contains(&k.as_str())) {
+                digest.update(k.as_bytes());
+                digest.update(v.to_string().as_bytes());
+            }
+            m.retain(|k, _| keep.contains(&k.as_str()));
+            m.insert(
+                "tensor_sha256".into(),
+                json!(format!("{:x}", digest.finalize())),
+            );
+        }
+        let mut game = SpellbenchBridgeGameV1 {
+            game_id: "ac1".into(),
+            episode_id: spellbench_episode_id_v1("ac1"),
+            session: raw,
+            terminal_sent: false,
+            flat_v4: None,
+            flat_v4_rows: rows.clone(),
+            flat_v4_scratch: FlatV4EncodeScratchV1::default(),
+            private_block_root_step: self.private_block_root_step,
+            history_cursor: self.history_cursor,
+            infoset: None,
+            force_flat_v4_encode_error: false,
+            force_session_action_id: None,
+        };
+        let support = private_v2_support_with_history(&mut game);
+        self.history_cursor = game.history_cursor;
+        let identity = SpellbenchEngineIdentityV1::with_source_revision(None);
+        let mut value = decision_response_value_v1(&identity, "ac1", "ac1", decision, Some(flat))?;
+        value["extensions"]["x_kernel_v2_support"] = support;
+        Ok((value, rows))
+    }
+}
+
 /// Attaches the pending `x_kernel_infoset_v1` extension to a decision; at a
 /// terminal, writes the engine-side receipt (per-seat tallies by predicate)
 /// to stderr, never to a seat.

@@ -279,6 +279,12 @@ pub(crate) struct ScriptV1 {
     pub edits: Vec<(usize, ObjectId, ObjectId)>,
     /// Cards a seat's default cleanup discard never takes.
     pub keep: [BTreeSet<u64>; 2],
+    /// The strict-view dump (rulings 4 and 5): V, its world, the file.
+    pub strict: Option<(
+        PlayerId,
+        super::transcript::WorldV1,
+        super::transcript::DumpV1,
+    )>,
 }
 
 impl ScriptV1 {
@@ -292,6 +298,7 @@ impl ScriptV1 {
             native: Vec::new(),
             edits: Vec::new(),
             keep: [BTreeSet::new(), BTreeSet::new()],
+            strict: None,
         }
     }
 
@@ -395,6 +402,14 @@ impl ScriptV1 {
                 }
                 _ => {}
             }
+            let mut line = self.strict.as_mut().map(|(v, world, _)| {
+                let mut line = serde_json::json!({"k": self.steps,
+                    "a": [format!("{:?}", d.acting_player)], "w": [world.decision(&self.s)]});
+                if p == *v && d.legal_action_count >= 2 {
+                    line["v"] = strict_v_info(&self.s, *v);
+                }
+                line
+            });
             if d.legal_action_count >= 2 {
                 at(&self.s, p, self.steps);
             }
@@ -420,6 +435,10 @@ impl ScriptV1 {
             }
             let i =
                 choice.unwrap_or_else(|| default_choice(&vals, &local, p, &self.keep[p.index()]));
+            if let (Some((_, world, dump)), Some(line)) = (self.strict.as_mut(), line.as_mut()) {
+                line["c"] = serde_json::json!([world.raw_candidate(i)]);
+                dump.line(line);
+            }
             self.native.push(vals[i].clone());
             let st = self.s.game_state();
             self.trace.push(format!(
@@ -549,6 +568,44 @@ pub(crate) fn observe(
         known,
         pinned,
     }
+}
+
+/// P's and each leakage mutant's delivered outcome at a V decision (as
+/// digests) and the exported `known_name` handles by name, for the strict
+/// checker.
+fn strict_v_info(s: &FastActorSessionV1, v: PlayerId) -> Value {
+    use super::transcript::digest;
+    let at = observe(s, v, 0, &LEAKAGE_V1);
+    let m: serde_json::Map<String, Value> = at
+        .mutants
+        .iter()
+        .map(|(m, o)| (format!("{m:?}"), serde_json::json!([digest(o)])))
+        .collect();
+    serde_json::json!({"p": [digest(&at.p)], "ph": [super::harness::head(&at.p)], "m": m,
+                       "known": [at.known]})
+}
+
+/// As [`record`], also dumping every decision for the strict view under
+/// `name` (when `W1_STRICT_DUMP_DIR` is set).
+pub(crate) fn record_strict(
+    mut script: ScriptV1,
+    v: PlayerId,
+    extra: usize,
+    name: &str,
+) -> (Vec<AtV1>, ScriptV1) {
+    if super::transcript::DumpV1::enabled() {
+        let header = serde_json::json!({"family": "fixture", "tag": name, "viewer": format!("{v:?}")});
+        script.strict = Some((
+            v,
+            super::transcript::WorldV1::new(v),
+            super::transcript::DumpV1::open(name, header),
+        ));
+    }
+    let (out, mut script) = record(script, v, extra);
+    if let Some((_, _, dump)) = script.strict.take() {
+        dump.finish("script");
+    }
+    (out, script)
 }
 
 /// Lockstep comparison of two worlds' V-decision records (truncated at the
@@ -1377,7 +1434,14 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
         L8PutBackV1::BouncedAndFresh,
     ]
     .iter()
-    .map(|p| record(l8_bound_copies(*p, seed), v, 30))
+    .map(|p| {
+        record_strict(
+            l8_bound_copies(*p, seed),
+            v,
+            30,
+            &format!("l8-seed{seed}-{p:?}"),
+        )
+    })
     .collect();
     let (records, reports) = pairs(&format!("l8-bound-copies seed {seed}"), runs);
     // Compared decisions after the Brainstorm (P exports two `known_name`

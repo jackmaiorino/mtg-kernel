@@ -364,7 +364,7 @@ fn split_difference(s: &FastActorSessionV1, t: &FastActorSessionV1, viewer: Play
 }
 
 /// A short, comparable head of an outcome for diagnostics.
-fn head(o: &Result<Vec<u8>, String>) -> String {
+pub(crate) fn head(o: &Result<Vec<u8>, String>) -> String {
     use sha2::Digest as _;
     match o {
         Err(e) => format!("Err({e})"),
@@ -491,6 +491,42 @@ pub(crate) fn p_export_outcome(
     Ok(bytes)
 }
 
+/// The strict-view dump of one pair (rulings 4 and 5): both worlds' bridge
+/// mirrors and the file (see `transcript.rs`).
+pub(crate) struct StrictPairV1 {
+    pub dump: super::transcript::DumpV1,
+    pub w: super::transcript::WorldV1,
+    pub w2: super::transcript::WorldV1,
+}
+
+/// P's and each mutant's delivered outcome at a V decision, as digests.
+fn v_info(
+    s: &FastActorSessionV1,
+    t: &FastActorSessionV1,
+    viewer: PlayerId,
+    mutants: &[MutantV1],
+    p: &Result<Vec<u8>, String>,
+    p2: &Result<Vec<u8>, String>,
+    old_equal: bool,
+) -> serde_json::Value {
+    use super::transcript::digest;
+    let m: serde_json::Map<String, serde_json::Value> = mutants
+        .iter()
+        .map(|m| {
+            let o = ExportOptionsV1 { mutant: Some(*m) };
+            (
+                format!("{m:?}"),
+                serde_json::json!([
+                    digest(&deliverable_outcome(s, viewer, o)),
+                    digest(&deliverable_outcome(t, viewer, o))
+                ]),
+            )
+        })
+        .collect();
+    serde_json::json!({"p": [digest(p), digest(p2)], "ph": [head(p), head(p2)], "m": m,
+                       "old": old_equal})
+}
+
 /// Plays W and W' in lockstep from `w` and `w2` (equal up to the family's
 /// permutation), comparing every viewer decision while views agree.
 pub(crate) fn compare_worlds(
@@ -499,13 +535,20 @@ pub(crate) fn compare_worlds(
     actions: &[Vec<u8>],
     viewer: PlayerId,
     mutants: &[MutantV1],
+    strict: Option<StrictPairV1>,
 ) -> PairReportV1 {
-    compare_worlds_with(w, w2, actions, viewer, mutants, false, usize::MAX)
+    compare_worlds_with(w, w2, actions, viewer, mutants, false, usize::MAX, strict)
 }
 
 /// As [`compare_worlds`]; with `index_fallback`, W' takes W's candidate
 /// index when no candidate matches semantically (F-prov: the worlds differ
 /// only in native ids, which the semantic form carries).
+///
+/// The report is the former comparison (V's current observation with
+/// decision-local ids). With `strict`, the pair continues past that view's
+/// first difference until the replay ends or `limit` V decisions, writing
+/// every decision to the dump; the strict checker decides truncation.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compare_worlds_with(
     w: FastActorSessionV1,
     w2: FastActorSessionV1,
@@ -514,70 +557,95 @@ pub(crate) fn compare_worlds_with(
     mutants: &[MutantV1],
     index_fallback: bool,
     limit: usize,
+    mut strict: Option<StrictPairV1>,
 ) -> PairReportV1 {
     let mut report = PairReportV1::default();
     let (mut s, mut t) = (w, w2);
-    for chosen in actions {
-        if report.compared as usize >= limit {
+    let mut old_live = true;
+    let mut v_points = 0usize;
+    let mut end = "actions";
+    for (k, chosen) in actions.iter().enumerate() {
+        if old_live && strict.is_none() && report.compared as usize >= limit {
+            end = "limit";
+            break;
+        }
+        if strict.is_some() && v_points >= limit {
+            end = "limit";
             break;
         }
         let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
             (s.current_response(), t.current_response())
         else {
+            end = "terminal";
             break;
         };
+        let mut line = strict.as_mut().map(|st| {
+            serde_json::json!({"k": k,
+                "a": [format!("{:?}", d.acting_player), format!("{:?}", e.acting_player)],
+                "w": [st.w.decision(&s), st.w2.decision(&t)]})
+        });
         if seat(d.acting_player) == viewer && d.legal_action_count >= 2 {
-            if view(&s) != view(&t) {
+            v_points += 1;
+            let old_equal = old_live && view(&s) == view(&t);
+            if old_live && !old_equal {
                 report.truncated = true;
-                break;
+                old_live = false;
             }
             let p = p_outcome(&s, viewer);
             let p2 = p_outcome(&t, viewer);
-            report.compared += 1;
-            if let Err(code) = &p {
-                *report.p_refusals.entry(code.clone()).or_default() += 1;
-            }
-            if p != p2 {
-                if report.p_differs == 0 {
-                    report.notes.push(format!(
-                        "P differs at decision {}: {} vs {}; split: {}",
-                        report.compared,
-                        head(&p),
-                        head(&p2),
-                        split_difference(&s, &t, viewer)
-                    ));
+            if old_live {
+                report.compared += 1;
+                if let Err(code) = &p {
+                    *report.p_refusals.entry(code.clone()).or_default() += 1;
                 }
-                report.p_differs += 1;
-            } else {
-                let plain = ExportOptionsV1::default();
-                let (ps, pt) = (
-                    deliverable_outcome(&s, viewer, plain),
-                    deliverable_outcome(&t, viewer, plain),
-                );
-                for m in mutants {
-                    let o = ExportOptionsV1 { mutant: Some(*m) };
-                    let (ms, mt) = (
-                        deliverable_outcome(&s, viewer, o),
-                        deliverable_outcome(&t, viewer, o),
+                if p != p2 {
+                    if report.p_differs == 0 {
+                        report.notes.push(format!(
+                            "P differs at decision {}: {} vs {}; split: {}",
+                            report.compared,
+                            head(&p),
+                            head(&p2),
+                            split_difference(&s, &t, viewer)
+                        ));
+                    }
+                    report.p_differs += 1;
+                } else {
+                    let plain = ExportOptionsV1::default();
+                    let (ps, pt) = (
+                        deliverable_outcome(&s, viewer, plain),
+                        deliverable_outcome(&t, viewer, plain),
                     );
-                    if ms != mt {
-                        *report.witnesses.entry(format!("{m:?}")).or_default() += 1;
-                    }
-                    if ms != ps || mt != pt {
-                        let n = report.departs.entry(format!("{m:?}")).or_default();
-                        if *n == 0 {
-                            report.notes.push(format!(
-                                "{m:?} departs at decision {}: P {} / {}; M {} / {}",
-                                report.compared,
-                                head(&ps),
-                                head(&pt),
-                                head(&ms),
-                                head(&mt)
-                            ));
+                    for m in mutants {
+                        let o = ExportOptionsV1 { mutant: Some(*m) };
+                        let (ms, mt) = (
+                            deliverable_outcome(&s, viewer, o),
+                            deliverable_outcome(&t, viewer, o),
+                        );
+                        if ms != mt {
+                            *report.witnesses.entry(format!("{m:?}")).or_default() += 1;
                         }
-                        *n += 1;
+                        if ms != ps || mt != pt {
+                            let n = report.departs.entry(format!("{m:?}")).or_default();
+                            if *n == 0 {
+                                report.notes.push(format!(
+                                    "{m:?} departs at decision {}: P {} / {}; M {} / {}",
+                                    report.compared,
+                                    head(&ps),
+                                    head(&pt),
+                                    head(&ms),
+                                    head(&mt)
+                                ));
+                            }
+                            *n += 1;
+                        }
                     }
                 }
+            }
+            if let Some(line) = line.as_mut() {
+                line["v"] = v_info(&s, &t, viewer, mutants, &p, &p2, old_equal);
+            } else if !old_live {
+                end = "old view";
+                break;
             }
         }
         let a = menu(&s).iter().position(|x| x == chosen);
@@ -588,18 +656,114 @@ pub(crate) fn compare_worlds_with(
                 None
             },
         );
+        if let (Some(st), Some(line)) = (strict.as_mut(), line.as_mut()) {
+            line["c"] = serde_json::json!([
+                a.map_or(serde_json::Value::Null, |a| st.w.raw_candidate(a)),
+                b.map_or(serde_json::Value::Null, |b| st.w2.raw_candidate(b))
+            ]);
+            st.dump.line(line);
+        }
         let (Some(a), Some(b)) = (a, b) else {
-            report.truncated = true;
+            if old_live {
+                report.truncated = true;
+            }
+            end = "replay";
             break;
         };
         if s.step(d.episode_id, d.step, a as u32).is_err()
             || t.step(e.episode_id, e.step, b as u32).is_err()
         {
-            report.truncated = true;
+            if old_live {
+                report.truncated = true;
+            }
+            end = "step";
             break;
         }
     }
+    if let Some(st) = strict {
+        st.dump.finish(end);
+    }
     report
+}
+
+/// A prefix replay's shared dump lines and V's world at its end (strict
+/// view): the lines are written at the head of every pair that branches
+/// there.
+pub(crate) struct PrefixV1 {
+    pub lines: Vec<serde_json::Value>,
+    pub world: super::transcript::WorldV1,
+}
+
+impl PrefixV1 {
+    pub(crate) fn new(viewer: PlayerId, tag: &str) -> Option<Self> {
+        (!tag.is_empty() && super::transcript::DumpV1::enabled()).then(|| Self {
+            lines: Vec::new(),
+            world: super::transcript::WorldV1::new(viewer),
+        })
+    }
+
+    /// Records decision `k` of the shared prefix answered by `row`.
+    pub(crate) fn push(&mut self, k: usize, s: &FastActorSessionV1, row: usize) {
+        let FastActorResponseV1::Decision(d) = s.current_response() else {
+            return;
+        };
+        let w = self.world.decision(s);
+        let c = self.world.raw_candidate(row);
+        let a = format!("{:?}", d.acting_player);
+        self.lines.push(serde_json::json!({"k": k, "prefix": true, "a": [a, a], "w": [w, w],
+                                           "c": [c, c]}));
+    }
+
+    /// The dump of a pair that branches at decision `k` (the next one, at
+    /// `s`): W answers row `a`, W' row `b`.
+    pub(crate) fn branch(
+        &self,
+        name: &str,
+        header: serde_json::Value,
+        k: usize,
+        s: &FastActorSessionV1,
+        a: usize,
+        b: usize,
+    ) -> StrictPairV1 {
+        let mut pair = self.pair(name, header);
+        let FastActorResponseV1::Decision(d) = s.current_response() else {
+            return pair;
+        };
+        let w = pair.w.decision(s);
+        let c = [pair.w.raw_candidate(a), pair.w.raw_candidate(b)];
+        pair.w2 = pair.w.clone();
+        let who = format!("{:?}", d.acting_player);
+        pair.dump.line(&serde_json::json!({"k": k, "branch": true, "a": [who, who],
+                                           "w": [w, w], "c": c}));
+        pair
+    }
+
+    /// The dump of one pair branching here.
+    pub(crate) fn pair(&self, name: &str, header: serde_json::Value) -> StrictPairV1 {
+        let mut dump = super::transcript::DumpV1::open(name, header);
+        for l in &self.lines {
+            dump.line(l);
+        }
+        StrictPairV1 {
+            dump,
+            w: self.world.clone(),
+            w2: self.world.clone(),
+        }
+    }
+}
+
+/// A fresh pair dump from the game start.
+pub(crate) fn fresh_pair(
+    tag: &str,
+    name: &str,
+    header: serde_json::Value,
+    viewer: PlayerId,
+) -> Option<StrictPairV1> {
+    (!tag.is_empty() && super::transcript::DumpV1::enabled()).then(|| StrictPairV1 {
+        dump: super::transcript::DumpV1::open(name, header),
+        w: super::transcript::WorldV1::new(viewer),
+        w2: super::transcript::WorldV1::new(viewer),
+    })
 }
 
 /// Objects V never tracked during `game` (whole prefix), per owner.
@@ -634,6 +798,7 @@ pub(crate) fn f_deal(
     game: &GameV1,
     viewer: PlayerId,
     mutants: &[MutantV1],
+    tag: &str,
 ) -> Option<PairReportV1> {
     let opp = viewer.opponent();
     let hidden = never_seen(game, viewer);
@@ -650,12 +815,15 @@ pub(crate) fn f_deal(
     let mut st = start.clone();
     swap_objects(&mut st, a, b);
     let w2 = FastActorSessionV1::import_infoset_v1(&game.start, st, 0);
+    let header = serde_json::json!({"family": "F-deal", "tag": tag, "viewer": format!("{viewer:?}")});
+    let strict = fresh_pair(tag, &format!("{tag}-fdeal"), header, viewer);
     Some(compare_worlds(
         game.start.clone(),
         w2,
         &game.actions,
         viewer,
         mutants,
+        strict,
     ))
 }
 
@@ -666,6 +834,7 @@ pub(crate) fn f_prov(
     game: &GameV1,
     viewer: PlayerId,
     mutants: &[MutantV1],
+    tag: &str,
 ) -> Option<PairReportV1> {
     let opp = viewer.opponent();
     let start = game.start.game_state();
@@ -680,6 +849,8 @@ pub(crate) fn f_prov(
     let mut st = start.clone();
     st.players[opp.index()].library.swap(i, j);
     let w2 = FastActorSessionV1::import_infoset_v1(&game.start, st, 0);
+    let header = serde_json::json!({"family": "F-prov", "tag": tag, "viewer": format!("{viewer:?}")});
+    let strict = fresh_pair(tag, &format!("{tag}-fprov"), header, viewer);
     Some(compare_worlds_with(
         game.start.clone(),
         w2,
@@ -688,6 +859,7 @@ pub(crate) fn f_prov(
         mutants,
         true,
         usize::MAX,
+        strict,
     ))
 }
 
@@ -697,13 +869,18 @@ pub(crate) fn f_slot(
     viewer: PlayerId,
     at: usize,
     mutants: &[MutantV1],
+    tag: &str,
 ) -> Option<PairReportV1> {
     let mut s = game.start.clone();
-    for chosen in game.actions.iter().take(at) {
+    let mut prefix = PrefixV1::new(viewer, tag);
+    for (k, chosen) in game.actions.iter().take(at).enumerate() {
         let FastActorResponseV1::Decision(d) = s.current_response() else {
             return None;
         };
         let a = menu(&s).iter().position(|x| x == chosen)?;
+        if let Some(prefix) = prefix.as_mut() {
+            prefix.push(k, &s, a);
+        }
         s.step(d.episode_id, d.step, a as u32).ok()?;
     }
     let state = s.game_state();
@@ -738,7 +915,10 @@ pub(crate) fn f_slot(
     let w2 = FastActorSessionV1::import_infoset_v1(&s, st, 0);
     // Rebuild W the same way so both sessions share construction.
     let w = FastActorSessionV1::import_infoset_v1(&s, s.game_state().clone(), 0);
-    Some(compare_worlds(w, w2, &game.actions[at..], viewer, mutants))
+    let header = serde_json::json!({"family": "F-slot", "tag": tag, "at": at,
+                                    "viewer": format!("{viewer:?}")});
+    let strict = prefix.map(|p| p.pair(&format!("{tag}-fslot{at}"), header));
+    Some(compare_worlds(w, w2, &game.actions[at..], viewer, mutants, strict))
 }
 
 /// AC3: the imported state's menu is in bijection with the live menu and a
@@ -845,12 +1025,14 @@ pub(crate) fn f_choice(
     points: usize,
     alternatives: usize,
     limit: usize,
+    tag: &str,
 ) -> (Vec<PairReportV1>, u64) {
     let opp = viewer.opponent();
     let mut out = Vec::new();
     let mut tried = 0u64;
     let mut used = 0;
     let mut s = game.start.clone();
+    let mut prefix = PrefixV1::new(viewer, tag);
     let kind_of = |x: &[u8]| -> String {
         serde_json::from_slice::<serde_json::Value>(x)
             .ok()
@@ -882,6 +1064,11 @@ pub(crate) fn f_choice(
                     continue;
                 }
                 tried += 1;
+                let header = serde_json::json!({"family": "F-choice", "tag": tag, "at": i,
+                    "alternative": b, "viewer": format!("{viewer:?}")});
+                let strict = prefix
+                    .as_ref()
+                    .map(|p| p.branch(&format!("{tag}-fchoice{i}-{b}"), header, i, &s, a, b));
                 let r = compare_worlds_with(
                     w,
                     w2,
@@ -890,11 +1077,15 @@ pub(crate) fn f_choice(
                     mutants,
                     false,
                     limit,
+                    strict,
                 );
                 if r.compared > 0 {
                     out.push(r);
                 }
             }
+        }
+        if let Some(prefix) = prefix.as_mut() {
+            prefix.push(i, &s, a);
         }
         s.step(d.episode_id, d.step, a as u32).expect("replay");
     }
@@ -931,10 +1122,10 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
         let game = record_game(decks, seed, 300);
         for viewer in [PlayerId::P0, PlayerId::P1] {
             let mut reports = Vec::new();
-            reports.extend(f_deal(&game, viewer, &mutants));
-            reports.extend(f_prov(&game, viewer, &mutants));
+            reports.extend(f_deal(&game, viewer, &mutants, ""));
+            reports.extend(f_prov(&game, viewer, &mutants, ""));
             for at in [20, 60, 120] {
-                reports.extend(f_slot(&game, viewer, at, &mutants));
+                reports.extend(f_slot(&game, viewer, at, &mutants, ""));
             }
             let (c, t) = tally(&reports, &mut totals);
             compared += c;
@@ -947,36 +1138,46 @@ fn ac1_f_deal_and_f_slot_on_engine_games() {
     assert!(compared > 0);
 }
 
-/// G9 (fairness gate): L13 over the AC1 engine families (F-deal, F-prov,
-/// F-slot and F-choice on their games). A witness is a compared decision
-/// where P agrees across the worlds and L13 does not, so L13 must depart from
-/// P in one of them. Ruling 2 (c) accepts the written vacuity argument
-/// provisionally: the test asserts no witness and no cross-world P
-/// difference, and reports the departures (the Wildfire join fixture holds
-/// L13's presence witness).
+/// The AC1 engine-family games (deck pair, seed).
+pub(crate) const ENGINE_FAMILY_GAMES: [([&str; 2], u64); 6] = [
+    (["CawGates", "Faeries"], 11),
+    (["Wildfire", "Burn"], 12),
+    (["Spy", "Elves"], 13),
+    (["CawGates", "Faeries"], 31),
+    (["Terror", "CawGates"], 32),
+    (["Faeries", "Terror"], 33),
+];
+
+/// A dump tag for one game and viewer.
+fn game_tag(family: &str, decks: [&str; 2], seed: u64, viewer: PlayerId) -> String {
+    format!("{family}-{}-{}-{seed}-p{}", decks[0], decks[1], viewer.0)
+}
+
+/// G9 (fairness gate): L13 over the AC1 engine families. Here F-deal, F-prov
+/// and F-slot on every engine-family game (F-choice runs in
+/// `ac1_f_choice_over_every_engine_family_game`), with every leakage mutant.
+/// A witness is a compared decision where P agrees across the worlds and L13
+/// does not. Ruling 2 (c) accepts the written vacuity argument provisionally:
+/// no witness, no cross-world P difference, departures reported. With
+/// `W1_STRICT_DUMP_DIR` set, every pair is dumped for the strict view
+/// (rulings 4 and 5), whose checker applies the same criteria to the
+/// decisions it compares, F-choice included.
 #[test]
 fn l13_over_the_ac1_engine_families() {
-    let mutants = [MutantV1::L13];
+    let mutants = super::fixtures::LEAKAGE_V1;
     let (mut compared, mut witnesses, mut departs) = (0u64, 0u64, 0u64);
     let (mut p_differs, mut p_equal) = (0u64, 0u64);
     let mut notes: Vec<String> = Vec::new();
-    for (decks, seed) in [
-        (["CawGates", "Faeries"], 11u64),
-        (["Wildfire", "Burn"], 12),
-        (["Spy", "Elves"], 13),
-        (["CawGates", "Faeries"], 31),
-        (["Terror", "CawGates"], 32),
-        (["Faeries", "Terror"], 33),
-    ] {
+    for (decks, seed) in ENGINE_FAMILY_GAMES {
         let game = record_game(decks, seed, 300);
         for viewer in [PlayerId::P0, PlayerId::P1] {
+            let tag = game_tag("fam", decks, seed, viewer);
             let mut reports = Vec::new();
-            reports.extend(f_deal(&game, viewer, &mutants));
-            reports.extend(f_prov(&game, viewer, &mutants));
+            reports.extend(f_deal(&game, viewer, &mutants, &tag));
+            reports.extend(f_prov(&game, viewer, &mutants, &tag));
             for at in [20, 60, 120] {
-                reports.extend(f_slot(&game, viewer, at, &mutants));
+                reports.extend(f_slot(&game, viewer, at, &mutants, &tag));
             }
-            reports.extend(f_choice(&game, viewer, &mutants, 3, 2, 40).0);
             for (i, r) in reports.iter().enumerate() {
                 for note in &r.notes {
                     notes.push(format!("{decks:?} seed {seed} {viewer:?} pair {i}: {note}"));
@@ -990,18 +1191,14 @@ fn l13_over_the_ac1_engine_families() {
         }
     }
     eprintln!(
-        "L13 over the AC1 engine families: compared {compared} ({p_equal} with P equal across the worlds), witnesses {witnesses}, decisions where L13 departs from P {departs}"
+        "L13 over F-deal, F-prov and F-slot on the AC1 engine-family games: compared {compared} ({p_equal} with P equal across the worlds), witnesses {witnesses}, decisions where L13 departs from P {departs}"
     );
     assert!(compared > 0);
-    for note in &notes {
+    for note in notes.iter().filter(|n| n.contains("L13")) {
         eprintln!("L13 diagnostics: {note}");
     }
-    // Vacuity is read only where P agrees (mutants are evaluated there).
     assert_eq!(p_differs, 0, "the correct producer differs across worlds");
     assert!(p_equal > 0, "no decision with P equal across the worlds");
-    // Ruling 2 (c): the written vacuity argument (packet section 10.2 (c))
-    // is accepted provisionally: no witness across the worlds, departures
-    // reported (each an R1b to R1 code change, equal in both worlds).
     assert_eq!(
         witnesses, 0,
         "an L13 witness contradicts the vacuity argument"
@@ -1013,34 +1210,46 @@ fn l13_over_the_ac1_engine_families() {
 /// naming a tracked object C:25 in one world and C:24 in the other (and
 /// C:29 / C:30), because `C:` handles followed S's zone-list order. Handles
 /// now follow span start in V's transcript; P must agree across the worlds.
+///
+/// Ruling 4: the former view (V's current observation with decision-local
+/// ids) is weaker than V's transcript, so these pairs compared decisions that
+/// are not V-equivalent. The strict checker reads their dumps (written by
+/// `ac1_f_choice_over_every_engine_family_game`) and requires P equal at
+/// every decision whose transcript is equal; here the pairs must exist.
 #[test]
 fn ac1_f_choice_wildfire_burn_handle_order_witness() {
     let game = record_game(["Wildfire", "Burn"], 12, 300);
-    let (reports, _) = f_choice(&game, PlayerId::P0, &super::fixtures::LEAKAGE_V1, 3, 2, 40);
+    let (reports, _) = f_choice(
+        &game,
+        PlayerId::P0,
+        &super::fixtures::LEAKAGE_V1,
+        3,
+        2,
+        40,
+        "",
+    );
     assert!(reports.len() >= 2, "the witness pairs exist: {reports:?}");
     for r in &reports[..2] {
         assert!(r.compared > 0, "the witness pair compares decisions: {r:?}");
-        assert_eq!(r.p_differs, 0, "P differs across the worlds: {:?}", r.notes);
     }
 }
 
 /// Ruling 3 (3): the F-choice family over every deck pair and seed of the
-/// AC1 engine families, both viewers.
+/// AC1 engine families, both viewers. The counts printed are the former
+/// view's; rulings 4 and 5 make V's whole transcript the test of
+/// V-equivalence, which the strict checker applies to this test's dumps
+/// (`W1_STRICT_DUMP_DIR`), requiring 0 cross-world P differences among the
+/// decisions it compares.
 #[test]
 fn ac1_f_choice_over_every_engine_family_game() {
     let (mut compared, mut differs, mut truncated, mut pairs) = (0u64, 0u64, 0u64, 0usize);
     let mut notes = Vec::new();
-    for (decks, seed) in [
-        (["CawGates", "Faeries"], 11u64),
-        (["Wildfire", "Burn"], 12),
-        (["Spy", "Elves"], 13),
-        (["CawGates", "Faeries"], 31),
-        (["Terror", "CawGates"], 32),
-        (["Faeries", "Terror"], 33),
-    ] {
+    for (decks, seed) in ENGINE_FAMILY_GAMES {
         let game = record_game(decks, seed, 300);
         for viewer in [PlayerId::P0, PlayerId::P1] {
-            let (reports, _) = f_choice(&game, viewer, &super::fixtures::LEAKAGE_V1, 3, 2, 40);
+            let tag = game_tag("fchoice", decks, seed, viewer);
+            let (reports, _) =
+                f_choice(&game, viewer, &super::fixtures::LEAKAGE_V1, 3, 2, 40, &tag);
             for r in &reports {
                 pairs += 1;
                 compared += r.compared;
@@ -1056,10 +1265,9 @@ fn ac1_f_choice_over_every_engine_family_game() {
         eprintln!("F-choice diagnostics: {n}");
     }
     eprintln!(
-        "F-choice over every engine-family game: pairs {pairs}, compared {compared}, cross-world P differences {differs}, truncated pairs {truncated}"
+        "F-choice over every engine-family game, former view: pairs {pairs}, compared {compared}, cross-world P differences {differs}, truncated pairs {truncated}"
     );
     assert!(compared > 0);
-    assert_eq!(differs, 0, "the correct producer differs across worlds");
 }
 
 #[test]
@@ -1074,7 +1282,7 @@ fn ac1_f_choice_on_engine_games() {
     ] {
         let game = record_game(decks, seed, 300);
         for viewer in [PlayerId::P0, PlayerId::P1] {
-            let (reports, n) = f_choice(&game, viewer, &mutants, 3, 2, 40);
+            let (reports, n) = f_choice(&game, viewer, &mutants, 3, 2, 40, "");
             tried += n;
             pairs += reports.len();
             let (c, t) = tally(&reports, &mut totals);
