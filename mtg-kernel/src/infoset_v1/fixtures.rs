@@ -1450,40 +1450,77 @@ fn l8_bound_copies_engine_fixture() {
     );
 }
 
-/// One side of a canonical export: its handle labels and its state.
+/// One side of a canonical export: its handle labels and its state, with
+/// every object reference typed (serialized under id tagging, so a reference
+/// is found by its type, never by its value).
 struct ExportSideV1 {
-    labels: Value,
+    labels: Vec<String>,
     state: Value,
+    /// Labels of L8's bound copies: `C:` Squadron Hawks in the opponent's
+    /// exported hand (P exports none tracked there after the Brainstorm).
+    bound: BTreeSet<String>,
 }
 
 impl ExportSideV1 {
-    fn parse(b: &[u8]) -> Self {
+    fn parse(b: &[u8], opp: PlayerId) -> Self {
         let text = std::str::from_utf8(b).expect("utf-8 export");
         let mut parts = text.splitn(3, '\n');
         let _schema = parts.next();
-        let labels = serde_json::from_str(parts.next().expect("labels")).expect("labels");
-        let state = serde_json::from_str(parts.next().expect("state")).expect("state");
-        Self { labels, state }
+        let labels: Vec<String> =
+            serde_json::from_str(parts.next().expect("labels")).expect("labels");
+        let state: GameState = serde_json::from_str(parts.next().expect("state")).expect("state");
+        let hawk = id("Squadron Hawk");
+        let bound = state.players[opp.index()]
+            .hand
+            .iter()
+            .filter(|h| {
+                state.objects.get(**h).card_def == hawk && labels[h.0 as usize].starts_with("C:")
+            })
+            .map(|h| labels[h.0 as usize].clone())
+            .collect();
+        let state = super::rewrite::tagged_value(&state);
+        Self {
+            labels,
+            state,
+            bound,
+        }
     }
 
-    /// Handles of `C:`-labelled Squadron Hawks in `owner`'s exported hand.
-    fn c_hawks_in_hand(&self, owner: PlayerId) -> Vec<u64> {
-        let hawk = u64::from(id("Squadron Hawk"));
-        self.state["players"][owner.index()]["hand"]
-            .as_array()
-            .map(|h| {
-                h.iter()
-                    .filter_map(Value::as_u64)
-                    .filter(|&i| {
-                        self.state["objects"]["items"][i as usize]["card_def"].as_u64()
-                            == Some(hawk)
-                            && self.labels[i as usize]
-                                .as_str()
-                                .is_some_and(|l| l.starts_with("C:"))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// The state with every object reference replaced by `name(label)`, and
+    /// tombstone arena items dropped (they carry only what a record showed).
+    fn named(&self, name: &dyn Fn(&str) -> String) -> Value {
+        fn walk(v: &Value, labels: &[String], name: &dyn Fn(&str) -> String) -> Value {
+            let label = |s: &str| {
+                s.strip_prefix(crate::ids::OBJECT_ID_TAG_PREFIX_V1)
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .map(|n| name(&labels[n]))
+            };
+            match v {
+                Value::String(s) => label(s).map_or_else(|| v.clone(), Value::String),
+                Value::Array(xs) => {
+                    Value::Array(xs.iter().map(|x| walk(x, labels, name)).collect())
+                }
+                Value::Object(m) => Value::Object(
+                    m.iter()
+                        .map(|(k, x)| {
+                            (label(k).unwrap_or_else(|| k.clone()), walk(x, labels, name))
+                        })
+                        .collect(),
+                ),
+                _ => v.clone(),
+            }
+        }
+        let mut out = walk(&self.state, &self.labels, name);
+        if let Some(items) = out["objects"]["items"].as_array_mut() {
+            let keep: Vec<Value> = items
+                .iter()
+                .zip(&self.labels)
+                .filter(|(_, l)| !l.starts_with("H:"))
+                .map(|(x, _)| x.clone())
+                .collect();
+            *items = keep;
+        }
+        out
     }
 }
 
@@ -1510,61 +1547,78 @@ fn json_differences(a: &Value, b: &Value, path: String, out: &mut Vec<(String, V
     }
 }
 
-/// Checks that L8's two exports differ through its bound copies (lead ruling
-/// 6). In both worlds P exports no tracked Hawk in the opponent's hand, so
-/// the `C:` Hawks there are exactly L8's bound copies. Every differing leaf
-/// must be a handle label, an arena object that is a Hawk or a tombstone, an
-/// `engine.event_history` reference, or a knowledge row; and at least one
-/// differing history reference must name a bound copy in one world (L8's
-/// `C:` continuity links that copy's own observed history). Returns the
-/// differing paths and a byte window at the first difference.
+/// Checks that L8's two exports differ only through its bound copies (lead
+/// ruling 6, Sol review). Object references are typed and named by label.
+/// (1) With every bound-copy label and every tombstone label renamed to one
+/// token, the two states are equal: every difference is a reference that
+/// names a bound copy or a tombstone (which history L8's continuity links)
+/// or a bound copy itself. (2) With bound copies kept apart, the states
+/// differ, and every differing leaf names a bound copy on at least one side.
+/// Returns the differing leaves of (2) and a byte window at the first raw
+/// difference.
 fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, String), String> {
-    let (sx, sy) = (ExportSideV1::parse(x), ExportSideV1::parse(y));
-    let mut diffs = Vec::new();
-    json_differences(&sx.labels, &sy.labels, "labels".into(), &mut diffs);
-    json_differences(&sx.state, &sy.state, "state".into(), &mut diffs);
-    if diffs.is_empty() {
-        return Err("L8's exports are equal".into());
-    }
-    let (bx, by) = (sx.c_hawks_in_hand(opp), sy.c_hawks_in_hand(opp));
-    if bx.is_empty() || by.is_empty() {
+    let (sx, sy) = (ExportSideV1::parse(x, opp), ExportSideV1::parse(y, opp));
+    if sx.bound.is_empty() || sy.bound.is_empty() {
         return Err("L8 binds no Hawk".into());
     }
-    let hawk = u64::from(id("Squadron Hawk"));
-    let object_ok = |side: &ExportSideV1, i: usize| {
-        let o = &side.state["objects"]["items"][i];
-        o["card_def"].as_u64() == Some(hawk) || o["zone"] == "Command"
+    let merged = |side: &ExportSideV1| {
+        side.named(&|l: &str| {
+            if side.bound.contains(l) || l.starts_with("H:") {
+                "bound-or-tombstone".to_string()
+            } else {
+                l.to_string()
+            }
+        })
     };
-    let mut names_bound = false;
-    for (p, l, r) in &diffs {
-        if p.starts_with("labels[") || p.starts_with("state.hand_knowledge") {
-            continue;
-        }
-        if let Some(rest) = p.strip_prefix("state.objects.items[") {
-            let i: usize = rest
-                .split(']')
-                .next()
-                .and_then(|n| n.parse().ok())
-                .ok_or_else(|| format!("unparsed path {p}"))?;
-            if object_ok(&sx, i) && object_ok(&sy, i) {
-                continue;
-            }
-            return Err(format!("L8's exports differ in a non-Hawk object at {p}"));
-        }
-        if p.starts_with("state.engine.event_history[") {
-            if l.as_u64().is_some_and(|v| bx.contains(&v))
-                || r.as_u64().is_some_and(|v| by.contains(&v))
-            {
-                names_bound = true;
-            }
-            continue;
-        }
+    let mut rest = Vec::new();
+    json_differences(&merged(&sx), &merged(&sy), "state".into(), &mut rest);
+    if let Some((p, l, r)) = rest.first() {
         return Err(format!(
-            "L8's exports differ outside its bound copies at {p}"
+            "L8's exports differ outside its bound copies at {p}: {l} vs {r}"
         ));
     }
-    if !names_bound {
-        return Err("no differing history reference names a bound copy".into());
+    let apart = |side: &ExportSideV1| {
+        side.named(&|l: &str| {
+            if side.bound.contains(l) {
+                format!("bound {l}")
+            } else if l.starts_with("H:") {
+                "tombstone".to_string()
+            } else {
+                l.to_string()
+            }
+        })
+    };
+    let mut diffs = Vec::new();
+    json_differences(&apart(&sx), &apart(&sy), "state".into(), &mut diffs);
+    if diffs.is_empty() {
+        return Err("no difference names a bound copy".into());
+    }
+    let names_bound = |v: &Value| v.as_str().is_some_and(|s| s.starts_with("bound "));
+    // Arena items are aligned with the labels that are not tombstones.
+    let kept = |side: &ExportSideV1| -> Vec<String> {
+        side.labels
+            .iter()
+            .filter(|l| !l.starts_with("H:"))
+            .cloned()
+            .collect()
+    };
+    let (kx, ky) = (kept(&sx), kept(&sy));
+    let in_bound_item = |p: &str| {
+        p.strip_prefix("state.objects.items[")
+            .and_then(|r| r.split(']').next())
+            .and_then(|i| i.parse::<usize>().ok())
+            .is_some_and(|i| {
+                kx.get(i).is_some_and(|l| sx.bound.contains(l))
+                    || ky.get(i).is_some_and(|l| sy.bound.contains(l))
+            })
+    };
+    if let Some((p, l, r)) = diffs
+        .iter()
+        .find(|(p, l, r)| !(names_bound(l) || names_bound(r) || in_bound_item(p)))
+    {
+        return Err(format!(
+            "a differing leaf names no bound copy at {p}: {l} vs {r}"
+        ));
     }
     let at = x
         .iter()
@@ -1574,11 +1628,15 @@ fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, Strin
     let window = |b: &[u8]| {
         String::from_utf8_lossy(&b[at.saturating_sub(120)..(at + 80).min(b.len())]).to_string()
     };
-    let paths: Vec<String> = diffs.iter().map(|(p, _, _)| p.clone()).take(12).collect();
+    let paths: Vec<String> = diffs
+        .iter()
+        .take(8)
+        .map(|(p, l, r)| format!("{p}: {l} vs {r}"))
+        .collect();
     Ok((
         paths,
         format!(
-            "{} differing leaves; first difference at byte {at}:\n  W  ...{}...\n  W' ...{}...",
+            "{} differing leaves; first raw difference at byte {at}:\n  W  ...{}...\n  W' ...{}...",
             diffs.len(),
             window(x),
             window(y)
