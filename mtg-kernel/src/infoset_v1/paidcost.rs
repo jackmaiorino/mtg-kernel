@@ -535,7 +535,10 @@ fn a_paid_copy_and_its_twin_leaving_in_one_batch_refuse_alike() {
     let marks = s.infoset_marks_v1(v);
     let run = |gone: ObjectId| {
         let mut st = base.clone();
-        propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Library));
+        // A private put-back from the hand (Brainstorm's path): every
+        // nonowner hand fact is invalidated, then the card goes on top.
+        st.clear_nonowner_hand_knowledge(o);
+        propose_and_commit(&mut st, ProposedEvent::private_top_library_insert(gone));
         export_v1(
             &ExportInputV1 {
                 state: &st,
@@ -555,10 +558,14 @@ fn a_paid_copy_and_its_twin_leaving_in_one_batch_refuse_alike() {
         pa.as_ref().map(Vec::len),
         pb.as_ref().map(Vec::len)
     );
+    let batch = |p: &Result<Vec<u8>, String>| {
+        p.as_ref().is_err_and(|e| {
+            e.contains("R1") && e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL)
+        })
+    };
     assert!(
-        pa.as_ref().is_err_and(|e| e.contains("R1"))
-            && pb.as_ref().is_err_and(|e| e.contains("R1")),
-        "both worlds refuse R1"
+        batch(&pa) && batch(&pb),
+        "both worlds refuse R1 same_name_batch"
     );
     assert_eq!(pa, pb, "P agrees whichever copy went");
 }
