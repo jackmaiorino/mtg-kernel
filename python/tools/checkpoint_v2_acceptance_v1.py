@@ -1082,9 +1082,11 @@ class Measurement:
         catchup = self.wait_for_sampler(now)
         failing, stats, claims = self._precondition_at(now)
         if not catchup['caught_up']:
-            # A sampler that died or stalled during the wait does not admit a group; wait_for_start's next pass stops
-            # on a dead or failed sampler.
             failing.append("the sampler did not deliver the window's rows")
+        # A sampler that failed or died during the wait (even after its last row arrived) does not admit a group;
+        # wait_for_start's next pass stops on it.
+        if self.sampler.error is not None or not self.sampler.is_alive():
+            failing.append('the sampler stopped during the start wait')
         return failing, stats, claims
 
     def _precondition_at(self, now):

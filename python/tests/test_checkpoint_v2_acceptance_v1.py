@@ -459,6 +459,21 @@ class CountersTests(unittest.TestCase):
             with self.assertRaises(acc.Refused):
                 m.wait_for_start()
         self.assertNotIn('precondition-met', events)
+        # Sol round 3: the boundary row arrives, then the sampler dies: still no admission.
+
+        def deliver_then_die(end):
+            m.samples.add(end, 1e6, 1.0)
+            m.sampler = dead
+            return {'waited': 0.0, 'caught_up': True}
+        m.wait_for_sampler = deliver_then_die
+        with mock.patch.object(acc.time, 'time', return_value=1200.5),                 mock.patch.object(acc.time, 'sleep'),                 mock.patch.object(acc.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 ** 12)):
+            m.sampler = FakeWatch()
+            failing, _, _ = m.precondition()
+            self.assertIn('the sampler stopped during the start wait', failing)
+            m.sampler = FakeWatch()
+            with self.assertRaises(acc.Refused):
+                m.wait_for_start()
+        self.assertNotIn('precondition-met', events)
 
     def test_contamination(self):
         rows = [(t, 10e6, 10.0) for t in range(0, 100, 5)]
