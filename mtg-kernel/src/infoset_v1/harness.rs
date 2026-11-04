@@ -1338,6 +1338,50 @@ fn ac1_wildfire_burn_fireblast_sacrifice_order_witness() {
     );
 }
 
+/// Amendment 43.3 invariant (and the Sol review's regression): a span never
+/// contains a zone change, so every tracked object's current span starts at
+/// its current generation, however V came to follow it (a split, an observed
+/// arrival, a reveal in place). With no live or linked reference below it,
+/// the exported generation is then 1 for every tracked object, and cannot
+/// tell a copy V followed before from one it did not (the paired cleanup
+/// discard of a revealed and an unknown copy).
+#[test]
+fn spans_start_at_the_current_generation() {
+    let mut checked = 0u64;
+    for (decks, seed) in ENGINE_FAMILY_GAMES {
+        let game = record_game(decks, seed, 300);
+        let mut s = game.start.clone();
+        for chosen in &game.actions {
+            let FastActorResponseV1::Decision(d) = s.current_response() else {
+                break;
+            };
+            let state = s.game_state();
+            for v in [PlayerId::P0, PlayerId::P1] {
+                let p = super::projection::project_v1(state, state.observation_journal.notes(), v);
+                for (id, o) in state.objects.iter() {
+                    if !p.tracked(id) {
+                        continue;
+                    }
+                    let span = p.current_span(id).expect("a tracked object has a span");
+                    assert_eq!(
+                        span.start_gen, o.zone_change_count,
+                        "{decks:?} seed {seed} viewer {v:?}: object {} span starts at {} but its generation is {}",
+                        id.0, span.start_gen, o.zone_change_count
+                    );
+                    assert!(
+                        span.cover_gen + 1 >= span.start_gen && span.cover_gen <= span.start_gen
+                    );
+                    checked += 1;
+                }
+            }
+            let a = menu(&s).iter().position(|x| x == chosen).expect("replay");
+            s.step(d.episode_id, d.step, a as u32).expect("replay");
+        }
+    }
+    eprintln!("spans start at the current generation: {checked} tracked objects checked");
+    assert!(checked > 0);
+}
+
 /// Ruling 3 (3): the F-choice family over every deck pair and seed of the
 /// AC1 engine families, both viewers. The counts printed are the former
 /// view's; rulings 4 and 5 make V's whole transcript the test of
