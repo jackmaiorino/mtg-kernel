@@ -4,7 +4,7 @@
 use super::*;
 use crate::ids::PlayerId;
 use crate::rl::PlayerSeatV1;
-use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+use crate::rl_session::{FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::runtime_deck_by_id;
 use crate::state::SplitMix64;
 
@@ -772,22 +772,23 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
             // The rest of the declaration: every remaining inclusion point
             // (later candidates, and for blocks later attackers' scans).
             for depth in 0..24usize {
-                let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
-                    (live.current_response(), imported.current_response())
-                else {
-                    panic!("{decks:?}: a scan point left the decision sequence");
+                // A terminal session has left the declaration (the game can
+                // end right after one, before the next decision).
+                let decision = |x: &FastActorSessionV1| match x.current_response() {
+                    FastActorResponseV1::Decision(d) => Some(d),
+                    FastActorResponseV1::Terminal(_) => None,
                 };
+                let (d, e) = (decision(&live), decision(&imported));
                 // The same declaration: the viewer's inclusion points in the
                 // root's turn and combat step (afterwards the worlds' hidden
                 // cards may lead them apart).
-                let same = |x: &FastActorSessionV1, actor: PlayerSeatV1| {
+                let same = |x: &FastActorSessionV1, d: Option<FastActorDecisionV1>| {
                     let st = x.game_state();
-                    seat(actor) == v && inclusion(x) && (st.turn, st.step) == root_turn_step
+                    d.is_some_and(|d| seat(d.acting_player) == v)
+                        && inclusion(x)
+                        && (st.turn, st.step) == root_turn_step
                 };
-                let (in_live, in_imported) = (
-                    same(&live, d.acting_player),
-                    same(&imported, e.acting_player),
-                );
+                let (in_live, in_imported) = (same(&live, d), same(&imported, e));
                 if in_live != in_imported {
                     let forms = |x: &FastActorSessionV1| {
                         x.diagnostic_current_action_semantics()
@@ -798,15 +799,18 @@ fn combat_scan_payloads_import_at_the_live_scan_point() {
                     };
                     panic!(
                         "{decks:?}: depth {depth}: scans end apart (live {in_live}, imported {in_imported}); root combat {combat:?}; live actor {:?} menu {:?}; imported actor {:?} menu {:?}",
-                        d.acting_player,
+                        d.map(|d| d.acting_player),
                         forms(&live),
-                        e.acting_player,
+                        e.map(|e| e.acting_player),
                         forms(&imported)
                     );
                 }
                 if !in_live {
                     break;
                 }
+                let (Some(d), Some(e)) = (d, e) else {
+                    unreachable!("both sessions are at the viewer's inclusion point")
+                };
                 let a = super::order::row_keys_v1(&live, Some(&ids)).expect("live keys");
                 let b = super::order::row_keys_v1(&imported, Some(&imported_ids))
                     .expect("imported keys");
