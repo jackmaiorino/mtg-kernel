@@ -322,6 +322,47 @@ pub(crate) struct PairReportV1 {
     pub notes: Vec<String>,
 }
 
+/// Diagnostics (ruling 2 (b)): where two worlds' delivered payloads
+/// differ: the canonical export bytes, and each payload field that differs,
+/// with the surface context printed in full on both sides.
+fn split_difference(s: &FastActorSessionV1, t: &FastActorSessionV1, viewer: PlayerId) -> String {
+    let plain = ExportOptionsV1::default();
+    let (xs, xt) = (export_at(s, viewer, plain), export_at(t, viewer, plain));
+    let export_equal = outcome(&xs) == outcome(&xt);
+    let (Ok(xs), Ok(xt)) = (xs, xt) else {
+        return format!("export_equal {export_equal}; an export refused");
+    };
+    let (Some(ps), Some(pt)) = (
+        PayloadV1::new(&xs, s, viewer, 0),
+        PayloadV1::new(&xt, t, viewer, 0),
+    ) else {
+        return format!("export_equal {export_equal}; a payload refused");
+    };
+    let (a, b) = (
+        serde_json::to_value(&ps).expect("payload"),
+        serde_json::to_value(&pt).expect("payload"),
+    );
+    let fields: Vec<String> = a
+        .as_object()
+        .expect("object")
+        .iter()
+        .filter(|(k, v)| b.get(k.as_str()) != Some(*v))
+        .map(|(k, _)| k.clone())
+        .collect();
+    let state_diffs = if a["state"] != b["state"] {
+        format!(
+            "{:?}",
+            super::tests::diffs(&a["state"], &b["state"], String::new(), 6)
+        )
+    } else {
+        "none".into()
+    };
+    format!(
+        "export_equal {export_equal}; differing payload fields {fields:?}; state diffs {state_diffs}; surface W {}; surface W' {}",
+        a["surface"], b["surface"]
+    )
+}
+
 /// A short, comparable head of an outcome for diagnostics.
 fn head(o: &Result<Vec<u8>, String>) -> String {
     use sha2::Digest as _;
@@ -499,10 +540,11 @@ pub(crate) fn compare_worlds_with(
             if p != p2 {
                 if report.p_differs == 0 {
                     report.notes.push(format!(
-                        "P differs at decision {}: {} vs {}",
+                        "P differs at decision {}: {} vs {}; split: {}",
                         report.compared,
                         head(&p),
-                        head(&p2)
+                        head(&p2),
+                        split_difference(&s, &t, viewer)
                     ));
                 }
                 report.p_differs += 1;
