@@ -482,6 +482,11 @@ Treetop Village reuse the Standard manland animation, Serra's Sanctum Tolarian A
 yield, and Skycloud Expanse is a paid additional mana ability adding a fixed bundle.
 
 Known gaps:
+- Premodern Enchantress is fully supported by the catalog but is not in `PLAYABLE` (it is
+  `KNOWN_GAP` in `tests/eternal/eternal_catalog_v1.rs`). The schema 4 public-session observation
+  cannot represent shroud granted by Argothian Enchantress, Sterling Grove or Solitary
+  Confinement, so a session refuses such a game (`refuse_unrepresented_shroud`). Representing
+  it is a protocol change outside P1b.
 - Fade, treasure and depletion counters live in module state: effects that read or move
   counters generally (none in the catalog) and policy observations don't see them.
 - Replenish leaves in the graveyard an Aura whose enchant rule neither `AttachmentDef` nor
