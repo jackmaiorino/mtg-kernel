@@ -3455,8 +3455,10 @@ pub enum ExpandedTrainingCommandV1 {
         #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
         training_math: TrainingMathV1,
         /// The checkpoint record format (`checkpoint_container_v1`); omitted
-        /// for v1, so every existing command keeps its bytes.
-        #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_v1")]
+        /// for the default (`auto`: the container where the writer's scope
+        /// gate admits the checkpoint, v1 JSON otherwise), so every command
+        /// written before the default switch keeps its bytes.
+        #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_auto")]
         record_format: CheckpointRecordFormatV1,
         output_directory: PathBuf,
     },
@@ -3497,8 +3499,10 @@ pub enum ExpandedTrainingCommandV1 {
         #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
         training_math: TrainingMathV1,
         /// The checkpoint record format (`checkpoint_container_v1`); omitted
-        /// for v1, so every existing command keeps its bytes.
-        #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_v1")]
+        /// for the default (`auto`: the container where the writer's scope
+        /// gate admits the checkpoint, v1 JSON otherwise), so every command
+        /// written before the default switch keeps its bytes.
+        #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_auto")]
         record_format: CheckpointRecordFormatV1,
         output_directory: PathBuf,
     },
@@ -5444,12 +5448,15 @@ fn execute_update_inner_v1(
         training_math,
         input_contract: input_contract.clone(),
     };
+    // The default (`Auto`) resolves here, on the checkpoint itself, so the
+    // choice cannot disagree with the scope gate; an explicit v2 outside the
+    // gate is refused by name.
+    let record_format = record_format.resolve_v1(&checkpoint)?;
     let checkpoint_pin = match record_format {
-        CheckpointRecordFormatV1::V1 => {
+        CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => {
             publish_json(&output_directory, "checkpoint.json", &checkpoint)?
         }
         CheckpointRecordFormatV1::V2 => {
-            checkpoint_container_v1::admit_writer_v1(&checkpoint)?;
             let bytes = checkpoint_container_v1::encode_v1(&checkpoint)?;
             publish_json_bytes_v1(&output_directory, "checkpoint.json", &bytes)?
         }

@@ -27,6 +27,28 @@
 //! re-encodes what it decoded and refuses unless the bytes are equal.
 //! [`export_v1`] reproduces the v1 JSON bytes `publish_json` writes for the
 //! same checkpoint.
+//!
+//! # Default, identity and config bytes (the default switch)
+//!
+//! The 16-run acceptance measurement accepted v2, so an update writes the
+//! container by default wherever the writer's scope gate ([`admit_writer_v1`])
+//! admits its checkpoint, and v1 JSON everywhere else. The selection is
+//! [`CheckpointRecordFormatV1`]:
+//!
+//! - **Absent (`Auto`)**: v2 inside the gate, v1 outside it. Never
+//!   serialized, so every run config, update command, `run.json` and run
+//!   identity written before the switch keeps its bytes, and the same file
+//!   still means the same run. What changes is the checkpoint file an
+//!   in-scope default run publishes (and so the pins that carry its hash).
+//! - **`"v1"`**: always v1 JSON. Serialized when explicit, so it no longer
+//!   shares bytes with absence (before the switch it did, because absence
+//!   meant v1). A config that needs the old bytes and output states `"v1"`.
+//! - **`"v2"`**: always the container; outside the gate it is refused by name.
+//!
+//! The gate is applied to the checkpoint about to be written, so the default
+//! cannot disagree with it. A run cannot resume across builds (`run.json`
+//! pins the implementation digest), so the switch never changes a format
+//! mid-run, and readers accept either format for any source.
 
 use super::{ExpandedCheckpointV1, ParameterBitsV1};
 use serde::{Deserialize, Serialize};
@@ -41,21 +63,54 @@ const ALIGN_V1: usize = 256;
 pub(crate) const STATE_FORMAT_V1: &str = "mtgts-sections-v1";
 const SECTION_NAMES_V1: [&str; 3] = ["parameters", "first_moments", "second_moments"];
 
-/// How an update publishes its checkpoint: v1 JSON (the default) or the
-/// container. A run config and an update command omit the field for v1, so
-/// every existing config, command and run identity keeps its bytes.
+/// How an update publishes its checkpoint.
+///
+/// - `Auto` (the default, and what an absent field means): the container
+///   (`V2`) for a checkpoint inside the writer's scope gate, v1 JSON for every
+///   other kind. The choice is a pure function of the checkpoint about to be
+///   written (`admit_writer_v1`), so it is deterministic.
+/// - `V1`: always v1 JSON.
+/// - `V2`: always the container; a checkpoint outside the gate is refused by
+///   name.
+///
+/// Wire rule (design 4.2, revised for the default switch): `Auto` is never
+/// serialized, so every config, command and run identity written before the
+/// switch keeps its bytes. An explicit `"v1"` or `"v2"` is serialized, so an
+/// explicit `"v1"` no longer serializes like absence (before the switch it
+/// did, because absence meant v1).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckpointRecordFormatV1 {
     #[default]
+    Auto,
     V1,
     V2,
 }
 
 impl CheckpointRecordFormatV1 {
-    /// The serde skip predicate: an explicit `"v1"` serializes like absence.
-    pub fn is_v1(&self) -> bool {
-        matches!(self, Self::V1)
+    /// The serde skip predicate: absence and an explicit `"auto"` share bytes.
+    pub fn is_auto(&self) -> bool {
+        matches!(self, Self::Auto)
+    }
+
+    /// Whether the container was explicitly demanded (never true for `Auto`).
+    pub fn is_v2(&self) -> bool {
+        matches!(self, Self::V2)
+    }
+
+    /// The format an update writes for `saved`: `V1` or `V2`, never `Auto`.
+    /// An explicit `V2` outside the scope gate is an error; `Auto` falls back
+    /// to `V1` there.
+    pub(crate) fn resolve_v1(self, saved: &ExpandedCheckpointV1) -> Result<Self, String> {
+        match self {
+            Self::V1 => Ok(Self::V1),
+            Self::V2 => admit_writer_v1(saved).map(|()| Self::V2),
+            Self::Auto => Ok(if admit_writer_v1(saved).is_ok() {
+                Self::V2
+            } else {
+                Self::V1
+            }),
+        }
     }
 }
 

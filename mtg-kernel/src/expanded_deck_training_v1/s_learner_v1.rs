@@ -392,7 +392,7 @@ fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String>
         "an S learner refuses fixed-partition backward",
     )?;
     ensure(
-        inputs.record_format == CheckpointRecordFormatV1::V1,
+        !inputs.record_format.is_v2(),
         "an S learner writes its own checkpoint record and container; record format v2 is \
          refused",
     )?;
