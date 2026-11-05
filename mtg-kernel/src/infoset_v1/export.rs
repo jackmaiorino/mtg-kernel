@@ -528,8 +528,11 @@ fn tracked_order(
 /// when that copy entered the hand, is not V's information). With no
 /// epoch: the stack item it sits in bounds it, from the span at which V
 /// tracked the item's source at the epoch the item records (or the source's
-/// current span when the item records none); else game start. The item's
-/// own `source` field, when V tracked the source there, does not cross. A
+/// current span when the item records none; a self-paid item: its
+/// departure), inside a pending resolution its item's, inside this turn's
+/// combat state the turn's start; else game start. The item's own `source`
+/// field, when V tracked the source there, does not cross; nor does a
+/// reference whose object's current span began at or before the bound. A
 /// zone's membership list never crosses. Several epochs take the earliest
 /// bound.
 pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usize> {
@@ -537,18 +540,40 @@ pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usiz
         return None;
     }
     if r.generations.is_empty() {
-        let span = r.container.and_then(|(source, g)| match g {
-            Some(g) => projection.tracked_at(source, g),
-            None => projection.current_span(source),
-        });
-        // The item's own `source` field names the object at the epoch the
-        // item records, which V tracked: as a reference to that epoch, it
-        // does not cross (Sol design review 2: no other continuity is
-        // read).
-        if span.is_some() && r.container.is_some_and(|(source, _)| source == r.object) {
+        let bound = match r.container {
+            Some((source, g)) => {
+                let span = match g {
+                    Some(g) => projection.tracked_at(source, g),
+                    None => projection.current_span(source),
+                };
+                match (span, g) {
+                    // The item's own `source` field names the object at the
+                    // epoch the item records, which V tracked: as a reference
+                    // to that epoch, it does not cross.
+                    (Some(_), _) if source == r.object => return None,
+                    (Some(s), _) => s.start_item,
+                    // An item its source activated from the hand and paid
+                    // with itself: bounded by that departure, its receipt.
+                    (None, Some(g)) if r.item_self_paid == Some((source, g)) => {
+                        projection.left_seen(source, g).unwrap_or(0)
+                    }
+                    _ => 0,
+                }
+            }
+            // This turn's combat state: the turn's start.
+            None if r.turn_scoped => projection.turn_starts.last().copied().unwrap_or(0),
+            None => 0,
+        };
+        // V has followed the object's current incarnation (its current
+        // span, a transcript entity; no chain through splits, Sol design
+        // review 2) since before the reference could exist.
+        if projection
+            .current_span(r.object)
+            .is_some_and(|s| s.start_item <= bound)
+        {
             return None;
         }
-        return Some(span.map_or(0, |s| s.start_item));
+        return Some(bound);
     }
     let mut bound: Option<usize> = None;
     for &g in &r.generations {
@@ -620,9 +645,11 @@ pub(crate) fn export_v1(
             // name, in hand order: mutants may read the truth.
             let bind = |facts: &mut dyn Iterator<Item = u16>, out: &mut Vec<ObjectId>| {
                 for def in facts {
-                    if let Some(&id) = p.hand.iter().find(|id| {
-                        state.objects.get(**id).card_def == def && !out.contains(id)
-                    }) {
+                    if let Some(&id) = p
+                        .hand
+                        .iter()
+                        .find(|id| state.objects.get(**id).card_def == def && !out.contains(id))
+                    {
                         out.push(id);
                     }
                 }
@@ -1469,6 +1496,7 @@ pub(crate) fn export_v1(
                 item_self_paid: None,
                 container: None,
                 membership: false,
+                turn_scoped: false,
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1778,6 +1806,7 @@ fn collect_refs(
             item_self_paid: None,
             container: None,
             membership: false,
+            turn_scoped: false,
         };
         for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
@@ -1824,6 +1853,7 @@ fn rewrite_state(
         item_self_paid: None,
         container: None,
         membership: false,
+        turn_scoped: false,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1870,7 +1900,10 @@ fn rewrite_state(
                         }
                     }
                 } else {
-                    walker.walk(ef, ClassV1::Live, ek)?;
+                    walker.turn_scoped = ek == "combat";
+                    let walked = walker.walk(ef, ClassV1::Live, ek);
+                    walker.turn_scoped = false;
+                    walked?;
                 }
             }
             continue;
@@ -1908,6 +1941,7 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         item_self_paid: None,
         container: None,
         membership: false,
+        turn_scoped: false,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {

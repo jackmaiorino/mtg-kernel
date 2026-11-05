@@ -56,6 +56,9 @@ pub(crate) struct RefV1 {
     /// command zone), not a record about the object: tracking and the slot
     /// layout decide it, never the seam predicate.
     pub membership: bool,
+    /// Amendment 43.8: the reference sits in this turn's combat state
+    /// (declared attackers and blockers), which the turn's start bounds.
+    pub turn_scoped: bool,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -136,6 +139,8 @@ pub(crate) struct WalkerV1<'a> {
     pub container: Option<(ObjectId, Option<u32>)>,
     /// Walking a zone's membership list (see [`RefV1::membership`]).
     pub membership: bool,
+    /// Walking the combat state (see [`RefV1::turn_scoped`]).
+    pub turn_scoped: bool,
 }
 
 /// A stack item whose source activated it from the hand at epoch g and paid
@@ -213,6 +218,7 @@ impl WalkerV1<'_> {
                             item_self_paid: self.item_self_paid,
                             container: self.container,
                             membership: self.membership,
+                            turn_scoped: self.turn_scoped,
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -236,6 +242,7 @@ impl WalkerV1<'_> {
                     item_self_paid: self.item_self_paid,
                     container: self.container,
                     membership: self.membership,
+                    turn_scoped: self.turn_scoped,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -263,6 +270,15 @@ impl WalkerV1<'_> {
             self.item_self_paid = Some(item);
         }
         if let Some(c) = stack_item_container(map) {
+            self.container = Some(c);
+        }
+        // A pending resolution (`EffectContinuation`): everything in it
+        // belongs to the item it resolves.
+        if let Some(c) = map
+            .get("resolving_item")
+            .and_then(|v| v.as_object())
+            .and_then(stack_item_container)
+        {
             self.container = Some(c);
         }
         let walked = self.walk_map_inner(map, class, parent);
@@ -350,6 +366,7 @@ impl WalkerV1<'_> {
                 item_self_paid: self.item_self_paid,
                 container: self.container,
                 membership: self.membership,
+                turn_scoped: self.turn_scoped,
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -378,6 +395,7 @@ impl WalkerV1<'_> {
                 item_self_paid: self.item_self_paid,
                 container: self.container,
                 membership: self.membership,
+                turn_scoped: self.turn_scoped,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;

@@ -157,10 +157,7 @@ fn cap_hand_rows(live: &mut serde_json::Value, imported: &serde_json::Value) {
 /// through `ids` (native to canonical for the live session), bookkeeping
 /// fields dropped, and candidate lists and menu rows sorted (the wire
 /// re-sorts the engine's native-id order).
-fn ac3_view(
-    s: &FastActorSessionV1,
-    ids: Option<&BTreeMap<u64, u64>>,
-) -> Option<serde_json::Value> {
+fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<serde_json::Value> {
     use super::order::canonical_rename_v1 as rename;
     let FastActorResponseV1::Decision(d) = s.current_response() else {
         return None;

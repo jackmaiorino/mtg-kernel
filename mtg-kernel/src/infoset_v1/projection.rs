@@ -142,6 +142,8 @@ pub(crate) struct ProjectionV1 {
     /// than as possible search outcomes (an aborted cast back to the hand is
     /// revealed this way; the export's moves-without-events rule).
     pub revealed: Vec<u16>,
+    /// Amendment 43.8: the stream items at which turns began (upkeeps).
+    pub turn_starts: Vec<usize>,
     /// Harness only (the realizability proof): the departures from the
     /// opponent's hand V saw, (stream item, card definition).
     pub departures: Vec<(usize, u16)>,
@@ -297,6 +299,7 @@ struct WalkV1<'a> {
     seams: Vec<(usize, u16)>,
     departures: Vec<(usize, u16)>,
     revealed: Vec<u16>,
+    turn_starts: Vec<usize>,
     departure_known: Vec<(usize, Vec<u16>)>,
     removed: Vec<(PlayerId, Option<ObjectId>)>,
     survivors: SurvivorTreeV1,
@@ -332,6 +335,11 @@ struct WalkV1<'a> {
     /// received other than reveals of that owner's hand. A reveal while it
     /// is set may be a search outcome (R8b). Draws never set it.
     search_mark: Option<PlayerId>,
+    /// The name of the opponent's card a `zone_move` from a public zone to
+    /// its hand moved, when that was the latest wire event V received other
+    /// than reveals of that hand: a reveal of that name then shows the card
+    /// that just arrived, not an aborted cast.
+    entry_mark: Option<u16>,
 }
 
 /// Projects V's history from the native stream.
@@ -361,6 +369,7 @@ pub(crate) fn project_v1(
         seams: Vec::new(),
         departures: Vec::new(),
         revealed: Vec::new(),
+        turn_starts: Vec::new(),
         departure_known: Vec::new(),
         removed: Vec::new(),
         survivors: SurvivorTreeV1::default(),
@@ -380,6 +389,7 @@ pub(crate) fn project_v1(
         committed: (0, 0),
         stamps: Vec::new(),
         search_mark: None,
+        entry_mark: None,
     };
     let events = &state.engine.event_history;
     let mut event_items = Vec::with_capacity(events.len());
@@ -536,6 +546,7 @@ pub(crate) fn project_v1(
         seams: w.seams,
         departures: w.departures,
         revealed: w.revealed,
+        turn_starts: w.turn_starts,
         survivors: w.survivors,
         transfers: w.transfers,
         arrivals: w.arrivals,
@@ -777,17 +788,28 @@ impl WalkV1<'_> {
                 from: Zone::Library,
                 to: Zone::Hand,
                 ..
-            } => self.search_mark = Some(self.owner(*object)),
+            } => {
+                self.search_mark = Some(self.owner(*object));
+                self.entry_mark = None;
+            }
             CommittedEvent::Draw {
                 object: Some(_), ..
             }
             | CommittedEvent::ZoneChange { .. }
-            | CommittedEvent::CreateToken { .. }
-            | CommittedEvent::UpkeepBegan { .. } => self.search_mark = None,
+            | CommittedEvent::CreateToken { .. } => {
+                self.search_mark = None;
+                self.entry_mark = None;
+            }
+            CommittedEvent::UpkeepBegan { .. } => {
+                self.search_mark = None;
+                self.entry_mark = None;
+                self.turn_starts.push(self.item);
+            }
             CommittedEvent::SpellCast { spell, .. } => {
                 let copy = self.state.objects.get(*spell).spell_copy_origin.is_some();
                 if !copy && self.objs[spell.0 as usize].zone != Some(Zone::Stack) {
                     self.search_mark = None;
+                    self.entry_mark = None;
                 }
             }
             _ => {}
@@ -939,6 +961,7 @@ impl WalkV1<'_> {
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
                 self.search_mark = None;
+                self.entry_mark = None;
                 self.reorders.push((self.item, *owner));
                 let records: Vec<u64> = self.put_backs_on_top[owner.index()]
                     .drain(..)
@@ -961,6 +984,7 @@ impl WalkV1<'_> {
                     return;
                 }
                 self.search_mark = None;
+                self.entry_mark = None;
                 let gone: Vec<u32> = positions.iter().map(|(p, _)| *p).collect();
                 let natives: Vec<ObjectId> = positions.iter().map(|(_, o)| *o).collect();
                 let lib = &mut self.library[owner.index()];
@@ -978,6 +1002,7 @@ impl WalkV1<'_> {
                 revealed_to,
             } => {
                 self.search_mark = None;
+                self.entry_mark = None;
                 self.reorders.push((self.item, *owner));
                 // Put-back cards stay among the top cards: no reset; their
                 // positions are no longer certain (R8 latch).
@@ -1008,6 +1033,7 @@ impl WalkV1<'_> {
                 ordered_bottom,
             } => {
                 self.search_mark = None;
+                self.entry_mark = None;
                 self.reorders.push((self.item, *owner));
                 // Put-back cards stay among the top cards: no reset; their
                 // positions are no longer certain (R8 latch).
@@ -1064,6 +1090,7 @@ impl WalkV1<'_> {
                 }
                 if *owner == viewer {
                     self.search_mark = None;
+                    self.entry_mark = None;
                     self.settle(&[]);
                     return;
                 }
@@ -1081,7 +1108,7 @@ impl WalkV1<'_> {
                     self.seams.push((self.item, card_def));
                 } else {
                     self.search_mark = None;
-                    if !self.revealed.contains(&card_def) {
+                    if self.entry_mark != Some(card_def) && !self.revealed.contains(&card_def) {
                         self.revealed.push(card_def);
                     }
                 }
@@ -1207,6 +1234,7 @@ impl WalkV1<'_> {
         let card_def = self.card_def(id);
         if to == Zone::Hand && from != Zone::Hand {
             if is_public(from) {
+                self.entry_mark = Some(card_def);
                 self.hand.push(HandFactV1 {
                     card_def,
                     how: FactHowV1::FromPublicZone,

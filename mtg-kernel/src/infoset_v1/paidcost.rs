@@ -1063,7 +1063,7 @@ fn repeat_reveal_small_world(world1: bool) -> Result<Vec<u8>, String> {
         it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
     });
     st.engine.pending_triggers.clear();
-    let in_library = library_lembas(&mut st, ObjectId(u32::MAX), 3);
+    let in_library = three_library_lembas(&mut st);
     let (c, a, b) = (in_library[0], in_library[1], in_library[2]);
     let mut marks = s.infoset_marks_v1(v);
     let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
@@ -1139,7 +1139,7 @@ fn reveal_after_unseen_world(search: bool, shown_new: bool) -> Result<Vec<u8>, S
         it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
     });
     st.engine.pending_triggers.clear();
-    let in_library = library_lembas(&mut st, ObjectId(u32::MAX), 3);
+    let in_library = three_library_lembas(&mut st);
     let (c, a, b) = (in_library[0], in_library[1], in_library[2]);
     let mut marks = s.infoset_marks_v1(v);
     let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
@@ -1512,6 +1512,42 @@ fn library_lembas(st: &mut GameState, keep: ObjectId, n: usize) -> Vec<ObjectId>
         propose_and_commit(st, ProposedEvent::private_bottom_library_insert(x));
         st.engine.pending_triggers.clear();
     }
+}
+
+/// Three of the opponent's Lembas in its library: any in its battlefield
+/// or graveyard are put there unseen first (the same moves in both worlds).
+fn three_library_lembas(st: &mut GameState) -> Vec<ObjectId> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let o = PlayerId::P0;
+    let lembas = id("Lembas");
+    let elsewhere: Vec<ObjectId> = st.players[o.index()]
+        .battlefield
+        .iter()
+        .chain(&st.players[o.index()].graveyard)
+        .copied()
+        .filter(|x| st.objects.get(*x).card_def == lembas)
+        .collect();
+    for x in elsewhere {
+        if st.players[o.index()]
+            .library
+            .iter()
+            .filter(|y| st.objects.get(**y).card_def == lembas)
+            .count()
+            >= 3
+        {
+            break;
+        }
+        propose_and_commit(st, ProposedEvent::private_bottom_library_insert(x));
+        st.engine.pending_triggers.clear();
+    }
+    let lib: Vec<ObjectId> = st.players[o.index()]
+        .library
+        .iter()
+        .copied()
+        .filter(|x| st.objects.get(*x).card_def == lembas)
+        .collect();
+    assert!(lib.len() >= 3, "three Lembas in the opponent's library");
+    lib
 }
 
 /// Sol round 2 on ruling 11, findings 1 and 2. The opponent's Shaman
