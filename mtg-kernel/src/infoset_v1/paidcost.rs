@@ -562,20 +562,7 @@ fn a_paid_copy_and_its_twin_leaving_in_one_batch_refuse_alike() {
         pa.as_ref().map(Vec::len),
         pb.as_ref().map(Vec::len)
     );
-    // Amendment 43.6 reads first: the two equal-key copies sat in the hand
-    // when one was put back, so `same_name_hand` refuses before
-    // `same_name_batch` would.
-    let refused = |p: &Result<Vec<u8>, String>| {
-        p.as_ref().is_err_and(|e| {
-            e.contains("R1")
-                && (e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)
-                    || e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL))
-        })
-    };
-    assert!(
-        refused(&pa) && refused(&pb),
-        "both worlds refuse R1 (same_name_hand or same_name_batch)"
-    );
+    // Amendment 43.7: neither copy is tracked in the hand; P agrees.
     assert_eq!(pa, pb, "P agrees whichever copy went");
 }
 
@@ -689,8 +676,8 @@ enum HandSecondV1 {
     RevealedFromLibrary,
 }
 
-/// Amendment 43.6: equal-key copies, either one discarded. Both orders
-/// refuse R1 `same_name_hand`, with equal outcomes.
+/// Amendment 43.6's pair (equal-key copies, either one discarded), kept
+/// under 43.7: the producer no longer emits `same_name_hand`; P agrees.
 #[test]
 fn same_name_hand_refuses_in_both_orders() {
     let (pa, pb) = (
@@ -702,11 +689,6 @@ fn same_name_hand_refuses_in_both_orders() {
         pa.as_ref().map(Vec::len),
         pb.as_ref().map(Vec::len)
     );
-    let hand = |p: &Result<Vec<u8>, String>| {
-        p.as_ref()
-            .is_err_and(|e| e.contains("R1") && e.contains(super::export::R1_SAME_NAME_HAND_DETAIL))
-    };
-    assert!(hand(&pa) && hand(&pb), "R1 same_name_hand in both orders");
     assert_eq!(pa, pb, "P agrees whichever copy left");
 }
 
@@ -851,7 +833,7 @@ fn mixed_hand_world_with(discard_bound: bool, again: bool) -> Result<Vec<u8>, St
 }
 
 /// Lead ruling 11 (R2): discarding the unbound copy or the bound fourth
-/// copy gives equal P: R1 `same_name_hand` in both worlds. Prints the first
+/// copy gives equal P (amendment 43.7). Prints the first
 /// byte difference when the exports differ.
 #[test]
 fn mixed_bound_and_count_hand_facts_agree() {
@@ -880,14 +862,9 @@ fn mixed_bound_and_count_hand_facts_agree() {
         }
     }
     assert_eq!(unbound, bound, "P agrees whichever copy was discarded");
-    // Before the repair both exported, 110,202 against 110,855 bytes: the
+    // Before 43.7 both exported, 110,202 against 110,855 bytes: the
     // fourth copy survived as `C:16` beside 16 other tracked objects in one
     // world, and as a name-level `U:` occupant in the other.
-    assert!(
-        unbound.as_ref().is_err_and(|e| e.contains("R1")
-            && e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)),
-        "R1 same_name_hand in both worlds: {unbound:?}"
-    );
 }
 
 /// Sol round 1 on ruling 11 (R2), finding 2: after the mixed departure, the
@@ -905,11 +882,6 @@ fn mixed_hand_mark_survives_a_second_departure() {
         b.as_ref().map(Vec::len)
     );
     assert_eq!(a, b, "P agrees after the second departure");
-    assert!(
-        a.as_ref()
-            .is_err_and(|e| e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)),
-        "R1 same_name_hand in both worlds: {a:?}"
-    );
 }
 
 /// Sol round 1 on ruling 11 (R2), finding 3: a copy D returns from the
@@ -1018,6 +990,31 @@ fn bound_and_unknown_hand_copies_agree() {
     assert_eq!(unknown, bound, "P agrees whichever copy was discarded");
 }
 
+/// The opponent's Lembas in its library, at least `n`: battlefield copies
+/// (never `keep`) are put into the library unseen when the deal left too
+/// few there. The same moves happen in both worlds of every pair.
+fn library_lembas(st: &mut GameState, keep: ObjectId, n: usize) -> Vec<ObjectId> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let o = PlayerId::P0;
+    let lembas = id("Lembas");
+    let mine = |st: &GameState, zone: &[ObjectId]| -> Vec<ObjectId> {
+        zone.iter()
+            .copied()
+            .filter(|x| *x != keep && st.objects.get(*x).card_def == lembas)
+            .collect()
+    };
+    loop {
+        let lib = mine(st, &st.players[o.index()].library);
+        if lib.len() >= n {
+            return lib;
+        }
+        let field = mine(st, &st.players[o.index()].battlefield);
+        let x = *field.first().expect("a Lembas to move into the library");
+        propose_and_commit(st, ProposedEvent::private_bottom_library_insert(x));
+        st.engine.pending_triggers.clear();
+    }
+}
+
 /// Sol round 2 on ruling 11, findings 1 and 2. The opponent's Shaman
 /// ability waits with its paid-cost record. A Lembas D reaches the
 /// opponent's hand from the graveyard (a bound fact) and a Lembas C is drawn
@@ -1060,16 +1057,7 @@ fn reference_world_with(
     st.stack
         .retain(|it| st.objects.get(it.source).card_def != lembas);
     st.engine.pending_triggers.clear();
-    let in_library: Vec<ObjectId> = st.players[o.index()]
-        .library
-        .iter()
-        .copied()
-        .filter(|x| st.objects.get(*x).card_def == lembas)
-        .collect();
-    assert!(
-        in_library.len() >= 2 + usize::from(twin),
-        "enough Lembas in the opponent's library"
-    );
+    let in_library = library_lembas(&mut st, paid, 2);
     let (d, c) = if paid_is_d {
         (paid, in_library[0])
     } else {
@@ -1092,10 +1080,8 @@ fn reference_world_with(
     st.engine.pending_triggers.clear();
     mark(&st, &mut marks);
     if twin {
-        let b = in_library[2];
-        propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Graveyard));
-        st.engine.pending_triggers.clear();
-        mark(&st, &mut marks);
+        // The twin: the paid copy, from the graveyard (the record is re-made).
+        let b = paid;
         propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Hand));
         st.reveal_hand_card(v, o, b).expect("reveal B");
         st.engine.pending_triggers.clear();
@@ -1151,11 +1137,6 @@ fn reference_world_with(
 fn a_reference_from_before_the_hand_refuses_alike() {
     let (a, b) = (reference_world(true, true), reference_world(true, false));
     eprintln!("reference before the hand: D discarded {a:?} / C discarded {b:?}");
-    assert!(
-        a.as_ref()
-            .is_err_and(|e| e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)),
-        "R1 same_name_hand: {a:?}"
-    );
     assert_eq!(a, b, "P agrees whichever copy was discarded");
 }
 
@@ -1221,16 +1202,11 @@ fn stale_lapse_world(reveal_a: bool) -> Result<Vec<u8>, String> {
     st.stack
         .retain(|it| st.objects.get(it.source).card_def != lembas);
     st.engine.pending_triggers.clear();
-    let in_library: Vec<ObjectId> = st.players[o.index()]
-        .library
-        .iter()
-        .copied()
-        .filter(|x| st.objects.get(*x).card_def == lembas)
-        .collect();
-    assert!(
-        in_library.len() >= 2,
-        "two Lembas in the opponent's library"
+    let paid = paid_object(
+        &st,
+        waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits"),
     );
+    let in_library = library_lembas(&mut st, paid, 2);
     let (a, b) = (in_library[0], in_library[1]);
     let mut marks = s.infoset_marks_v1(v);
     let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
@@ -1307,16 +1283,11 @@ fn hand_lapse_world(first: bool, exile_with: bool) -> Result<Vec<u8>, String> {
     st.stack
         .retain(|it| st.objects.get(it.source).card_def != lembas);
     st.engine.pending_triggers.clear();
-    let in_library: Vec<ObjectId> = st.players[o.index()]
-        .library
-        .iter()
-        .copied()
-        .filter(|x| st.objects.get(*x).card_def == lembas)
-        .collect();
-    assert!(
-        in_library.len() >= 2,
-        "two Lembas in the opponent's library"
+    let paid = paid_object(
+        &st,
+        waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits"),
     );
+    let in_library = library_lembas(&mut st, paid, 2);
     let (a, b) = (in_library[0], in_library[1]);
     // The graveyard Lembas: the paid one (its shuffle trigger removed).
     let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");

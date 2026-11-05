@@ -660,9 +660,11 @@ fn a_reveal_never_links_the_unidentified_draw_before_it() {
 
 /// R5 regression (bridge, Wildfire seed 6): the opponent's hand holds a
 /// revealed copy A and an unrevealed copy B of one card; B leaves publicly.
-/// V's fact about A stays (B is a different public object), as the engine's
-/// own knowledge rows do, so the export is not refused R5 and A keeps its
-/// `C:` handle.
+/// V's fact about A stays, as the engine's own knowledge rows do, so the
+/// export is not refused R5. Amendment 43.7 (lead ruling 12): A is no longer
+/// tracked in the hand (formerly it kept its `C:` handle); it stays known by
+/// name, as a known-name occupant with V's hand row. The name is kept for
+/// traceability.
 #[test]
 fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
     use crate::event::{propose_and_commit, ProposedEvent};
@@ -709,10 +711,17 @@ fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
             ExportOptionsV1::default(),
         )
         .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
+        // Amendment 43.7: the revealed copy is not tracked in the hand; it
+        // stays known by name (a known-name occupant with V's hand row).
         assert!(
-            x.tracked_natives.contains(&a),
-            "the revealed copy stays tracked"
+            !x.tracked_natives.contains(&a),
+            "no opponent-hand copy is tracked"
         );
+        let known = x.state.hand_knowledge[viewer.index()][opp.index()]
+            .iter()
+            .filter(|k| x.state.objects.get(k.object).card_def == st.objects.get(a).card_def)
+            .count();
+        assert_eq!(known, 1, "the revealed copy stays known by name");
         return;
     }
     panic!("no seed deals the opponent two copies of one card");

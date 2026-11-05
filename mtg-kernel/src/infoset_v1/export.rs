@@ -441,19 +441,7 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
         .iter()
         .map(|k| (k.object.0, k.zone_change_count))
         .collect();
-    // Lead ruling 11 (R2): a copy released by an attributed departure may
-    // stay in the engine's rows while V no longer binds it.
-    let released: BTreeSet<(u32, u32)> = projection
-        .released
-        .iter()
-        .filter(|id| state.players[opp.index()].hand.contains(id))
-        .map(|id| (id.0, state.objects.get(*id).zone_change_count))
-        .collect();
-    if !projected.is_subset(&native)
-        || !native
-            .iter()
-            .all(|k| projected.contains(k) || released.contains(k))
-    {
+    if projected != native {
         return Err(refuse(
             RefusalCodeV1::R5,
             "hand physical facts differ from native rows",
@@ -528,22 +516,6 @@ fn tracked_order(
     Ok(out)
 }
 
-/// Amendment 43.4 (design 6.2): the tracked objects in the opponent's hand,
-/// ordered only by what V can see of them: name, then the order of V's
-/// tracker facts about the copies (the fact list is V's transcript). Span
-/// start is not used. Copies with equal names and equal facts export
-/// identically, so their order cannot move the payload.
-fn opp_hand_order_v1(state: &GameState, projection: &ProjectionV1, tracked: &mut [ObjectId]) {
-    let fact = |id: &ObjectId| {
-        projection
-            .hand_facts
-            .iter()
-            .position(|f| f.native == Some(*id))
-            .unwrap_or(usize::MAX)
-    };
-    tracked.sort_by_key(|id| (name_key(state.objects.get(*id).card_def), fact(id)));
-}
-
 /// The exported state of one viewer at one decision.
 pub(crate) fn export_v1(
     input: &ExportInputV1<'_>,
@@ -591,17 +563,25 @@ pub(crate) fn export_v1(
     for owner in [PlayerId::P0, PlayerId::P1] {
         let p = &state.players[owner.index()];
         if owner != v {
-            opp_hand_tracked = projection
-                .hand_facts
-                .iter()
-                .filter_map(|f| f.native)
-                .filter(|id| p.hand.contains(id))
-                .collect();
-            if !is(MutantV1::L14) {
-                // Amendment 43.4: name, then V's fact order.
-                opp_hand_order_v1(state, &projection, &mut opp_hand_tracked);
+            // Amendment 43.7: no opponent-hand object is tracked, so none
+            // takes a `C:` handle; V's facts become known-name occupants
+            // below. Mutant L14 keeps the rule before 43.4 and 43.7 (bound
+            // copies tracked, in fact order).
+            if is(MutantV1::L14) {
+                opp_hand_tracked = projection
+                    .hand_facts
+                    .iter()
+                    .filter_map(|f| f.native)
+                    .filter(|id| p.hand.contains(id))
+                    .collect();
             }
             if is(MutantV1::L8) {
+                // Bound facts keep their physical copies (invented continuity).
+                for id in projection.hand_facts.iter().filter_map(|f| f.native) {
+                    if p.hand.contains(&id) && !opp_hand_tracked.contains(&id) {
+                        opp_hand_tracked.push(id);
+                    }
+                }
                 // Count facts bound to the true remaining copies.
                 for f in projection.hand_facts.iter().filter(|f| f.native.is_none()) {
                     if let Some(&id) = p.hand.iter().find(|id| {
@@ -679,60 +659,6 @@ pub(crate) fn export_v1(
                     && unread_paid.contains(&(r.object, *g)))
     };
 
-    // Lead ruling 11 (R2), first of the R1 family: an opponent-hand fact
-    // left by an identified departure of its name while V held both a bound
-    // and an unbound fact of that name. Whether the survivor is the bound
-    // copy (`C:`) or a name-level occupant (`U:`) is not V's information,
-    // and the engine's knowledge rows (R5) keep the bound copy known, so
-    // the export cannot drop the binding: refuse in both worlds, tallied
-    // with 43.6 (`same_name_hand`). No live reference is needed.
-    if projection.hand_facts.iter().any(|f| f.ambiguous) {
-        return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
-    }
-
-    // Amendment 43.6 (lead ruling 9 (b)): a live
-    // reference (contract, binding, receipt or paid-cost record) to a copy
-    // that sat in the opponent's hand beside another copy with equal 43.4
-    // keys when one of them left V's tracking, made at or before the
-    // copy's epoch in that hand, refuses. The
-    // candidate set is the same whichever copy left, so this runs before
-    // every test that reads which copy V still tracks.
-    for (r, region) in &refs {
-        if *region != "live" {
-            continue;
-        }
-        // A reference with no epoch is current membership (a zone vector,
-        // an attachment), not a historical link across the hand (Sol r1).
-        // If the referenced object lapsed after the reference's epoch at a
-        // stream item before the ambiguous departure, inside or after the
-        // span the reference resolves to, which copy V later saw in the hand
-        // is not V's to pair (R1b's question), so the candidate does not
-        // cross (lead ruling 11, Sol rounds 2 to 4). A lapse before that
-        // span is history the reference does not cross (Sol round 4).
-        let track = projection.objects.get(r.object.0 as usize);
-        let lapsed_before = |g: u32, item: usize| {
-            let Some(start) = projection.span_of(r.object, g).map(|s| s.start_item) else {
-                return false;
-            };
-            track.is_some_and(|t| {
-                t.spans.iter().filter_map(|s| s.end).any(|e| {
-                    !e.split && e.moved && e.last_gen >= g && e.item < item && e.item >= start
-                })
-            })
-        };
-        let crossed = projection.hand_ambiguities.iter().any(|a| {
-            a.candidates.iter().any(|&(o, g_hand)| {
-                o == r.object
-                    && r.generations
-                        .iter()
-                        .any(|&g| g <= g_hand && !lapsed_before(g, a.item))
-            })
-        });
-        if crossed {
-            return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
-        }
-    }
-
     // Lead ruling 7 (a): a live reference keeps its link across an unlinked
     // visible move (6.5, the Lembas table) only while V can tell which copy
     // moved. If another object of the same name and owner also left the
@@ -744,8 +670,7 @@ pub(crate) fn export_v1(
     // round 2): which copy stays tracked after such a batch is not V's
     // information, so the batch test runs before tracking decides. Lead
     // ruling 11 (R1): it runs before R1b and the R1 untracked test, which
-    // read tracking (whether the referenced copy lapsed or split), so both
-    // worlds refuse with the same subclass.
+    // read tracking, so both worlds refuse with the same subclass.
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
         if *region != "live" {
@@ -758,19 +683,12 @@ pub(crate) fn export_v1(
         for &g in &r.generations {
             // Every end of the referenced object counts, a lapse (it left
             // V's sight) as much as a split (lead ruling 11, R1): a twin's
-            // departure counts either way, so skipping the reference's own
-            // lapses let the world where it lapsed export while the world
-            // where it split refused. The scan stops after the first lapse:
-            // which later spans belong to the referenced copy is not V's
-            // information there, and R1b decides (Sol round 1).
-            // From the span the reference resolves to (Sol round 5: an
-            // older span of the same generation is history it does not
-            // name); without one, every end at or after g.
-            let from_span = projection.span_of(r.object, g).map(|s| s.start_item);
+            // departure counts either way. The scan stops after the first
+            // lapse: which later spans belong to the referenced copy is not
+            // V's information there, and R1b decides.
             let ends = track
                 .spans
                 .iter()
-                .filter(|s| from_span.is_none_or(|start| s.start_item >= start))
                 .filter_map(|s| s.end)
                 .filter(|e| e.last_gen >= g);
             let mut lapsed = false;
@@ -778,9 +696,7 @@ pub(crate) fn export_v1(
                 if lapsed {
                     break;
                 }
-                // A lapse without a move (a fact unbound in the hand) leaves
-                // the copy where it was; only a lapse that moved it stops.
-                lapsed = !end.split && end.moved;
+                lapsed = !end.split;
                 let batch = ProjectionV1::batch_of(&bounds, end.item);
                 let twin = projection.objects.iter().enumerate().any(|(i, other)| {
                     let other_obj = state.objects.get(ObjectId(i as u32));
@@ -872,7 +788,8 @@ pub(crate) fn export_v1(
                     && !o.v4.is_token
                     && o.spell_copy_origin.is_none()
                     && (projection.tracked(*id)
-                        || (is(MutantV1::L8) && opp_hand_tracked.contains(id)))
+                        || ((is(MutantV1::L8) || is(MutantV1::L14))
+                            && opp_hand_tracked.contains(id)))
             })
             .map(|(_, o)| o.card_def)
             .collect()
@@ -898,6 +815,29 @@ pub(crate) fn export_v1(
             format!("pinned {} beyond the decklist", card_name(d)),
         )
     })?;
+    // Amendment 43.7: V's bound facts about the opponent's hand are
+    // known-name occupants, in 43.4 order (name, then V's fact order); they
+    // leave the pool before the survivor allocation, as their copies did when
+    // they were tracked.
+    let mut bound_names: Vec<(NameKeyV1, usize, u16)> = projection
+        .hand_facts
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| {
+            f.native.is_some_and(|id| {
+                state.players[opp.index()].hand.contains(&id) && !opp_hand_tracked.contains(&id)
+            })
+        })
+        .map(|(k, f)| (name_key(f.card_def), k, f.card_def))
+        .collect();
+    bound_names.sort();
+    let bound_names: Vec<u16> = bound_names.into_iter().map(|(_, _, d)| d).collect();
+    subtract(&mut pool5, bound_names.iter().copied()).map_err(|d| {
+        fault(
+            FaultCodeV1::I4,
+            format!("{} known in the hand beyond the decklist", card_name(d)),
+        )
+    })?;
     let survivors = &projection.survivors;
     let allocation = if is(MutantV1::L11) {
         // Tracker-rule facts only.
@@ -916,10 +856,14 @@ pub(crate) fn export_v1(
             opp_hand_slots,
         )
     } else {
-        survivors.allocate(&pool5, opp_hand_slots, &name_key)
+        survivors.allocate(
+            &pool5,
+            opp_hand_slots.saturating_sub(bound_names.len()),
+            &name_key,
+        )
     };
     let known_names = match allocation {
-        Ok(x) => x,
+        Ok(x) => bound_names.iter().copied().chain(x).collect::<Vec<u16>>(),
         Err(e) => {
             return Err(refuse(
                 RefusalCodeV1::R8,
@@ -1096,8 +1040,9 @@ pub(crate) fn export_v1(
         is(MutantV1::L3),
         (!is(MutantV1::L14)).then_some(opp_hand_tracked.as_slice()),
     )?;
-    if is(MutantV1::L8) {
-        // Mutant L8's bound copies take `C:` handles (invented continuity).
+    if is(MutantV1::L8) || is(MutantV1::L14) {
+        // Mutant L8's bound copies take `C:` handles (invented continuity);
+        // L14 keeps the rule before 43.7 (bound copies tracked, fact order).
         for id in &opp_hand_tracked {
             if !tracked.contains(id) {
                 tracked.push(*id);

@@ -148,10 +148,10 @@ fn fixture_bytes(game: &GameV1, v: PlayerId) -> String {
                     break;
                 };
                 if seat(e.acting_player) == v && e.legal_action_count >= 2 {
-                    // Amendment 43.6: while the cast copy's receipt names
-                    // its hand epoch, P refuses `same_name_hand` in both
-                    // worlds; the 43.4 witness is the first V decision at
-                    // which both export.
+                    // While P refuses, it must refuse alike; the witness
+                    // is the first V decision at which both worlds export
+                    // (under 43.7 the revealed copies are name-level
+                    // occupants, and L14 keeps them tracked).
                     let (p, p2) = (
                         export_at(&w, v, ExportOptionsV1::default()),
                         export_at(&w2, v, ExportOptionsV1::default()),
