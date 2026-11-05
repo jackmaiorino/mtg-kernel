@@ -1075,6 +1075,9 @@ class Supervisor:
             prepare_root(self.root, self.layout, self.plan["isolation"])
             prepare_box(self.root, self.slot)
         self.recover()
+        if self.spec.get("handoff") is True:  # a W5 controller chain: an OOM kill is a chain failure, never resumed
+            require(not any(r["event"] == "close" and r.get("chain_failure") for r in self.ledger.records()),
+                    f"Chain {self.chain} was OOM-killed: a chain failure")
         summary = self.ledger.summary()
         if summary["unresolved_lower_bounds"]:
             require(bool(self.accept_lower_bound), f"Chain {self.chain} has lower-bound instances "

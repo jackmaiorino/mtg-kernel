@@ -1598,9 +1598,11 @@ def cycle(plan, plan_path, now=None):
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
     names |= {p['C'] for p in plan['pairs'].values()}
+    recovered = recover_unsupervised(plan, root)  # before anything reads the chains: dead supervisors' instances
+    oom_failures = end_oom_failures(plan, root)  # close, and OOM closes become chain failures, first
     infos = {n: chain_info(root, n) for n in sorted(names)}
     looks = {n: look(i, plan['r_nom_usec']) for n, i in infos.items()}
-    report = {'unix': now, 'pairs': {}, 'retention': {}}
+    report = {'unix': now, 'pairs': {}, 'retention': {}, 'recovered': recovered, 'oom_failures': oom_failures}
     budget = load_budget(root)
     for key, pair in sorted(plan['pairs'].items()):
         c, x = infos[pair['C']], infos[pair['X']]
@@ -1638,6 +1640,10 @@ def cycle(plan, plan_path, now=None):
         pdir = root / 'pairs' / f'{pair["C"]}--{pair["X"]}'
         if (pdir / 'PAIR.json').exists():
             pair_state[pair['X']] = read(pdir / 'PAIR.json')
+    # The admission census is read before the prune: whatever any verdict admits after it (one run in flight and
+    # GUARD_SEGMENTS more) is inside the next verdict's reservation and the per-chain hot cap.
+    ceilings = {n: admitted(chain_dir(root, n)) + GUARD_SEGMENTS for n, c in plan['chains'].items()
+                if c['arm'] in MEASURED and writing(root, n)}
     for n in sorted(n for n in names if n in plan['chains']):
         info = infos[n]
         if info['end'] is not None or read_end(root, n) is not None or not info['records']:
@@ -1656,15 +1662,9 @@ def cycle(plan, plan_path, now=None):
         removed = retention.apply(doc, root / 'retention' / f'{n}.jsonl')
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
-    report['recovered'] = recover_unsupervised(plan, root)
-    report['oom_failures'] = end_oom_failures(plan, root)
     report['kills'] = enforce_ends(plan, root)
     report['fills'] = occupancy(plan, root)
     report['purged'] = purge_hold(root, plan['hold_days'], now)
-    ceilings = {}  # read before the byte census: runs admitted later are inside the reservation
-    for n, c in plan['chains'].items():
-        if c['arm'] in MEASURED and writing(root, n):
-            ceilings[n] = admitted(chain_dir(root, n)) + GUARD_SEGMENTS
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests)
