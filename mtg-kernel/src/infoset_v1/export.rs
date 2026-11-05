@@ -422,7 +422,11 @@ fn invariants(
 }
 
 /// R5: physical facts against the native V-observer rows, both ways.
-fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), ExportErrorV1> {
+fn knowledge_check(
+    state: &GameState,
+    projection: &ProjectionV1,
+    hand_claims: bool,
+) -> Result<(), ExportErrorV1> {
     let v = projection.viewer;
     let opp = v.opponent();
     if !projection.inconsistencies.is_empty() {
@@ -435,13 +439,16 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
     // copies; the check is soundness by name (L and C within the true hand),
     // which only a projection defect can fail. The engine's copy-level rows
     // may claim more than V's conservative readings.
+    // Revision c (lead ruling 15, fallback D): P claims no hand facts, so
+    // only the validity mutants that claim them check them.
     let mut hand = multiset(
         state.players[opp.index()]
             .hand
             .iter()
             .map(|id| state.objects.get(*id).card_def),
     );
-    if subtract(&mut hand, projection.hand_facts.iter().map(|f| f.card_def)).is_err() {
+    if hand_claims && subtract(&mut hand, projection.hand_facts.iter().map(|f| f.card_def)).is_err()
+    {
         return Err(refuse(
             RefusalCodeV1::R5,
             "hand facts claim a card the hand does not hold",
@@ -626,7 +633,11 @@ pub(crate) fn export_v1(
             return Err(refuse(RefusalCodeV1::L7, "synthetic"));
         }
     }
-    knowledge_check(state, &projection)?;
+    knowledge_check(
+        state,
+        &projection,
+        is(MutantV1::L8) || is(MutantV1::L11) || is(MutantV1::L12) || is(MutantV1::L14),
+    )?;
     // R3: a pending library-search plan owned by the opponent (design 6.7).
     // R3b (amendment 43.2): V's own pending library search, decided by the
     // pending effect's owner and chooser (the planner reads it for V), never

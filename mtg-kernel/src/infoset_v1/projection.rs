@@ -1128,11 +1128,6 @@ impl WalkV1<'_> {
                     // entering the hand (a seam event).
                     self.survivors.taint_name(card_def);
                     self.seams.push((self.item, card_def));
-                    let known = self
-                        .hand
-                        .iter()
-                        .filter(|f| f.known && f.card_def == card_def)
-                        .count();
                     if let Some(pos) = self.search_known.iter().position(|d| *d == card_def) {
                         // (a) The run's known move of the name and a
                         // re-revealed card of the name claim the same.
@@ -1152,25 +1147,23 @@ impl WalkV1<'_> {
                             how: FactHowV1::Revealed,
                             known: true,
                         });
-                    } else if known == 0 {
-                        // (c) A moved card or a re-reveal of a card V did not
-                        // know: both claim exactly one of the name. The run's
-                        // unknown moves are not lowered.
-                        if self.search_unknown > 0 {
-                            self.entries.push((self.item, card_def));
-                            self.hand.push(HandFactV1 {
-                                card_def,
-                                how: FactHowV1::Revealed,
-                                known: true,
-                            });
-                        } else {
-                            self.revealed_in_hand(card_def);
-                        }
+                    } else if self.search_unknown > 0 {
+                        // (c) The 43.8 search-run reading: a moved card, its
+                        // own fact. It can over-claim after a private move
+                        // and an aborted cast's re-reveal (Sol code review 1,
+                        // finding 1); under revision c (lead ruling 15,
+                        // fallback D) these facts reach only the validity
+                        // mutants and the harness, never P.
+                        self.search_unknown -= 1;
+                        self.entries.push((self.item, card_def));
+                        self.hand.push(HandFactV1 {
+                            card_def,
+                            how: FactHowV1::Revealed,
+                            known: true,
+                        });
+                    } else {
+                        self.revealed_in_hand(card_def);
                     }
-                    // Otherwise (a known card of the name) nothing is
-                    // claimed: the export claims no opponent-hand names
-                    // (lead ruling 15, fallback D), so these facts feed only
-                    // the harness's soundness check and the mutants.
                 } else {
                     self.search_mark = None;
                     self.revealed_in_hand(card_def);
