@@ -261,10 +261,9 @@ pub(crate) fn prevents_life_gain(state: &GameState) -> bool {
 /// Gemstone Mine: "This land enters with three mining counters on it."
 pub(crate) fn apply_entry_counters(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
-    if live.zone != Zone::Battlefield
-        || live.v4.face_index != 0
-        || definition_name(state, object) != Some(GEMSTONE_MINE)
-    {
+    if live.zone != Zone::Battlefield || live.v4.face_index != 0 || !printed_mine(state, object) {
+        // Under a land type change (a moon) it has no replacement effect
+        // that gives counters (614.12).
         return;
     }
     let link = live_link(state, object);

@@ -320,6 +320,8 @@ impl P1aChoiceV1 {
             self,
             Self::PortentOrderV1 { .. }
                 | Self::LackeyPutV1
+                // The bottom order is the owner's private choice (401.4).
+                | Self::RingleaderBottomV1
                 | Self::SylvanChooseV1
                 | Self::SylvanKeepV1 { .. }
         )
@@ -1703,7 +1705,10 @@ pub(crate) fn drive(
                     state,
                     goblins
                         .iter()
-                        .map(|&card| ProposedEvent::zone_change(card, Zone::Hand))
+                        .map(|&card| {
+                            // Revealed: both players keep its identity in hand.
+                            ProposedEvent::zone_change_preserving_known_identity(card, Zone::Hand)
+                        })
                         .collect(),
                 );
             }

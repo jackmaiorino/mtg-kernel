@@ -16894,7 +16894,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
             }
             EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(op))
-                if op.contains_player_choice() =>
+                if op.drives_in_resumable() =>
             {
                 if crate::eternal_cards_v1::e3::drive(state, &mut continuation, &op, path)? {
                     state.engine.pending_effect = Some(continuation);
@@ -24583,14 +24583,26 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         }
         EffectCond::TargetIsColor(idx, color) => match ctx.targets.get(*idx as usize) {
             Some(Target::Object(id)) => {
+                let wanted = crate::card_def::mana_color_mask(*color);
+                // Wave P1a's color override (Wild Mongrel's chosen color, a
+                // split half's own colors on the stack) replaces the printed
+                // colors; an earlier Painter's addition is overwritten (613.7).
+                if let Some((mask, setter)) =
+                    crate::eternal_premodern_p1a_v1::statics::color_override_timed(state, *id)
+                {
+                    return (mask
+                        | crate::eternal_legacy_e9a_v1::statics::painter_mask_after(
+                            state, setter,
+                        ))
+                        & wanted
+                        != 0;
+                }
                 let def_idx = state.objects.get(*id).card_def;
                 // Painter's Servant's added color (eternal wave E9a).
                 crate::card_def::CARD_DEFS[def_idx as usize]
                     .colors
                     .contains(color)
-                    || crate::eternal_legacy_e9a_v1::statics::painter_mask(state)
-                        & crate::card_def::mana_color_mask(*color)
-                        != 0
+                    || crate::eternal_legacy_e9a_v1::statics::painter_mask(state) & wanted != 0
             }
             _ => false,
         },

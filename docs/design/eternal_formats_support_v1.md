@@ -499,3 +499,8 @@ and `build_eternal_p1a_v1.rs`, whose tables wave E9a's fall through to. New prim
 Known gaps: Ice can be cast only from hand, as an Adventure form can, so a split card cast
 from another zone (a flashback grant, Yawgmoth's Will) is cast as Fire; naming effects name
 the whole card ("Fire // Ice"), not one half. Morph is modeled for Exalted Angel only.
+Wild Mongrel's chosen color is ordered by timestamp against Painter's Servant only; a
+later color-setting effect from another wave (Oko's Elk) does not override it. Exalted
+Angel's life gain trigger reads its printed ability with last-known information, so damage
+an effect deals for it after it left the battlefield (Legolas's Quick Reflexes) still
+triggers it. Neither interaction needs a Premodern card.
