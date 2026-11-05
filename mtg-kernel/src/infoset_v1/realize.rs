@@ -258,6 +258,37 @@ fn replay(
             views.push(view(&s));
         }
         let kind = vals[index]["action_kind"].as_str().unwrap_or("");
+        // Amendment 43.7: which same-name copy leaves the owner's hand in
+        // V's sight (a land played, a spell cast, a card discarded) is not
+        // V's information either: the other copies of the definition are
+        // alternatives, as at a hidden choice.
+        let source = |v: &Value| {
+            named_object(v).or_else(|| v["source"]["arena_id"].as_u64().map(|n| n as u32))
+        };
+        if took_w && p == owner && !hidden_choice(kind) {
+            let st = s.game_state();
+            let hand = &st.players[owner.index()].hand;
+            if let Some(chosen) = source(&vals[index]).filter(|o| hand.contains(&ObjectId(*o))) {
+                let def = st.objects.get(ObjectId(chosen)).card_def;
+                let others: Vec<u32> = vals
+                    .iter()
+                    .filter(|v| v["action_kind"] == vals[index]["action_kind"])
+                    .filter_map(source)
+                    .filter(|o| {
+                        *o != chosen
+                            && hand.contains(&ObjectId(*o))
+                            && st.objects.get(ObjectId(*o)).card_def == def
+                    })
+                    .collect();
+                if !others.is_empty() {
+                    choices.push(ChoicePointV1 {
+                        at: i,
+                        chosen,
+                        others,
+                    });
+                }
+            }
+        }
         if took_w && p == owner && hidden_choice(kind) {
             let hand = &s.game_state().players[owner.index()].hand;
             if let Some(chosen) =
@@ -732,7 +763,9 @@ pub(crate) fn realize(
             for c in &run.choices {
                 // m is in the hand at d: it must be the one chosen instead
                 // of an object W chose (or the reverse).
-                if c.others.contains(&m) && end_zone.get(&c.chosen) == Some(&!in_hand) {
+                // (A copy that left the hidden zones in V's sight counts as
+                // outside m's zone too, amendment 43.7.)
+                if c.others.contains(&m) && end_zone.get(&c.chosen) != Some(in_hand) {
                     next.push(MoveV1::Choice {
                         at: c.at,
                         x: m,
