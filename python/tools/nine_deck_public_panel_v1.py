@@ -644,6 +644,14 @@ def candidate_layout(source: dict) -> str:
     return sha256_bytes(json.dumps(layout, sort_keys=True).encode())
 
 
+def candidate_pin_sha256(source: dict) -> str:
+    """The candidate's checkpoint pin, or, for a native S source without a checkpoint record (S0 on its
+    initial state), its `s_learner.initial` container pin."""
+    if source.get("checkpoint") is None and source.get("s_learner") is not None:
+        return source["s_learner"]["initial"]["sha256"]
+    return source["checkpoint"]["sha256"]
+
+
 S_LEARNER_SOURCE = "w5-s-learner/v1"
 S_LEARNER_CHECKPOINT = "w5-s-learner-checkpoint/v1"
 
@@ -802,7 +810,7 @@ def rows(plan_path: Path) -> list[dict]:
         if sorted(list(files) + list(errors)) != list(range(len(item["cases"]))):
             raise ValueError(f"{request_path}: matches and technical terminations do not cover every case")
         for index, case in enumerate(item["cases"]):
-            row = {"panel": plan["panel"], "checkpoint_sha256": plan["candidate"]["checkpoint"]["sha256"],
+            row = {"panel": plan["panel"], "checkpoint_sha256": candidate_pin_sha256(plan["candidate"]),
                    "own": case["own"], "other": case["other"], "seat": case["seat"], "seed": case["seed"]}
             if "cases_input" in plan:
                 require(index in request_bindings, "case lacks its original native request binding")

@@ -14,6 +14,12 @@
 //!   Each decision's step, physical decision, actor and legal count, and the
 //!   winner, must equal the record.
 //!
+//! Runtime (`s4a-tensor-dump`): `S4A_RUNTIME=resolution-boundary-v1` applies
+//! that rules profile when each game is built, before any decision (as an
+//! RT1 episode's `runtime_rules`), and `S4A_GAME_LIMITS` replaces the census
+//! game limits. Either one, when set, is recorded on every game row
+//! (`runtime_rules`, `limits`); unset keeps the earlier rows and games.
+//!
 //! Tensors go to `TD_BIN` (appended; each game's block offset and length are
 //! in its row). One decision record, all little-endian:
 //! `u32 x 8` header (objects, edges, actions, refs, state length, selected,
@@ -26,7 +32,9 @@
 
 use super::play::{acting, apply, decision, Meter};
 use super::replay_labels::LabelJob;
-use super::{game_setup, new_session, spy_defs, write_line, CensusConfigV1, Shared};
+use super::{
+    game_setup, new_session, new_session_with_limits, spy_defs, write_line, CensusConfigV1, Shared,
+};
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_policy_value_net_v1::{
@@ -153,7 +161,13 @@ pub(super) fn dump_game(
 ) -> Result<(), String> {
     let setup = game_setup(cfg, shared.labels.len(), game);
     let opp = &mut opps[setup.model];
-    let mut s = new_session(&setup)?;
+    let mut s = match shared.game_limits {
+        Some((physical, steps)) => new_session_with_limits(&setup, physical, steps)?,
+        None => new_session(&setup)?,
+    };
+    if let Some(rules) = shared.runtime_rules {
+        s.set_runtime_rules_v1(rules)?;
+    }
     let seeds = paired_policy_seeds_v1(setup.seed);
     focal.reset_sampling_v1(seeds);
     opp.reset_sampling_v1(seeds);
@@ -202,13 +216,19 @@ pub(super) fn dump_game(
         return Err("game ended without a terminal".into());
     };
     let offset = put_block(&block)?;
-    let row = json!({"kind":"td_game","game":game,"seed":setup.seed,
+    let mut row = json!({"kind":"td_game","game":game,"seed":setup.seed,
         "decks":[RUNTIME_DECKS[setup.decks[0]].id,RUNTIME_DECKS[setup.decks[1]].id],
         "focal_seat":setup.focal,"opp_model":shared.labels[setup.model],
         "starting_player":setup.starting,
         "classification":format!("{:?}", t.terminal_classification),
         "winner":t.winner.map(seat_u8),"forced":forced,
         "bin_offset":offset,"bin_bytes":block.len(),"decisions":rows});
+    if shared.runtime_rules.is_some() {
+        row["runtime_rules"] = json!("resolution-boundary-v1");
+    }
+    if let Some((physical, steps)) = shared.game_limits {
+        row["limits"] = json!({"max_physical_decisions":physical,"max_policy_steps":steps});
+    }
     write_line(sink, &row)
 }
 

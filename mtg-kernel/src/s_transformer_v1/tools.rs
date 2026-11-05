@@ -12,6 +12,11 @@
 //!   states.
 //! - `resume-check`: run-to-run and checkpoint-resume identity of after-state
 //!   hashes.
+//! - `import-values`: an S container from a PyTorch export, with a fresh
+//!   optimizer (W5 E4's S0 export).
+//! - `starting-state`: XS's frozen starting-state hash (design 6.2) of a
+//!   fresh-optimizer S container plus named extras (the trainer's RNG states
+//!   and data cursors), `STrainStateV1::starting_state_sha256_v1`.
 //!
 //! Decisions are stored in the bignet pilot's `s4a-tensor-dump` record
 //! format (`regret_census_v1/stage4a/tensor_dump.rs`), so real recorded
@@ -834,6 +839,52 @@ pub fn import_values_v1(values: &Path, names: &Path, out: &Path) -> Result<Value
     }))
 }
 
+/// `starting-state`: XS's frozen starting state (W5 design 6.2, ruling 6).
+/// `checkpoint` must hold a fresh optimizer (zero first and second moments,
+/// step 0); `extras` is a JSON list of `[name, hex bytes]` pairs (the
+/// trainer's RNG states and data cursors), hashed in the order given after
+/// the state's own hash. Names must be distinct and nonempty.
+pub fn starting_state_v1(checkpoint: &Path, extras: &Path) -> Result<Value, String> {
+    let bytes = std::fs::read(checkpoint).map_err(|e| format!("{}: {e}", checkpoint.display()))?;
+    let state = decode_checkpoint_v1(&bytes)?;
+    if state.adam_step_v1() != 0
+        || state.first_moments_v1().iter().any(|v| v.to_bits() != 0)
+        || state.second_moments_v1().iter().any(|v| v.to_bits() != 0)
+    {
+        return Err("the starting state needs a fresh optimizer: zero moments and step 0".into());
+    }
+    let listed: Vec<(String, String)> = serde_json::from_slice(
+        &std::fs::read(extras).map_err(|e| format!("{}: {e}", extras.display()))?,
+    )
+    .map_err(|e| format!("{}: {e}", extras.display()))?;
+    let mut decoded = Vec::with_capacity(listed.len());
+    let mut names = std::collections::BTreeSet::new();
+    for (name, hex) in &listed {
+        if name.is_empty() || !names.insert(name.as_str()) {
+            return Err(format!("extra name {name:?} is empty or repeated"));
+        }
+        if hex.len() % 2 != 0 {
+            return Err(format!("extra {name}: odd hex length"));
+        }
+        let raw = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+            .collect::<Result<Vec<u8>, _>>()
+            .map_err(|_| format!("extra {name}: not hex"))?;
+        decoded.push((name.as_str(), raw));
+    }
+    let pairs: Vec<(&str, &[u8])> = decoded.iter().map(|(n, b)| (*n, b.as_slice())).collect();
+    Ok(json!({
+        "schema": "s-starting-state-v1",
+        "checkpoint_sha256": sha256_hex_v1(&bytes),
+        "parameter_sha256": state.model_v1().parameter_sha256_v1(),
+        "state_sha256": state.state_sha256_v1(),
+        "adam_step": state.adam_step_v1(),
+        "extras": listed,
+        "starting_state_sha256": state.starting_state_sha256_v1(&pairs),
+    }))
+}
+
 /// The binary's entry: `<command> key=value ...`, printing a JSON receipt.
 pub fn main_v1(args: &[String]) -> Result<Value, String> {
     let (command, rest) = args.split_first().ok_or(USAGE_V1)?;
@@ -876,8 +927,12 @@ pub fn main_v1(args: &[String]) -> Result<Value, String> {
             Path::new(&get("names").ok_or("names=<file> is required")?),
             Path::new(&get("out").ok_or("out=<file> is required")?),
         ),
+        "starting-state" => starting_state_v1(
+            Path::new(&get("checkpoint").ok_or("checkpoint=<file> is required")?),
+            Path::new(&get("extras").ok_or("extras=<file> is required")?),
+        ),
         _ => Err(USAGE_V1.into()),
     }
 }
 
-const USAGE_V1: &str = "usage: s_transformer_v1 parity-dump out=<dir> [seed batches groups] | logits-dump out=<file> model=<spec> states=<spec> | bench [seed count reps] | resume-check out=<dir> [seed steps split groups] | import-values values=<file> names=<file> out=<file>";
+const USAGE_V1: &str = "usage: s_transformer_v1 parity-dump out=<dir> [seed batches groups] | logits-dump out=<file> model=<spec> states=<spec> | bench [seed count reps] | resume-check out=<dir> [seed steps split groups] | import-values values=<file> names=<file> out=<file> | starting-state checkpoint=<file> extras=<file>";

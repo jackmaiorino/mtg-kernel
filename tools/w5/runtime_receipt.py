@@ -73,9 +73,18 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+S0_PLAN_SCHEMA = "w5-s0-record-plan/v1"
+
+
 def runtime_profile(configs: list[dict]) -> dict[str, int]:
+    """Episodes (or S0 recording games) per runtime rules profile. An S0 recording plan (tools/w5/s0.py) declares
+    one runtime for all of its games."""
     out = Counter()
     for config in configs:
+        if config.get("schema") == S0_PLAN_SCHEMA:
+            rules = config["runtime"]["runtime_rules"]
+            out["default" if rules is None else str(rules)] += int(config["games"])
+            continue
         for ep in rp.episodes(config):
             out["default" if ep.get("runtime_rules") is None else str(ep["runtime_rules"])] += 1
     return dict(out)
