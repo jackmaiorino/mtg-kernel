@@ -1223,8 +1223,13 @@ fn optional_cost_and_madness_records_travel_and_import() {
             let Ok(x) = export_at(s, v, ExportOptionsV1::default()) else {
                 return;
             };
-            let p = super::payload::PayloadV1::new(&x, s, v, 0)
-                .unwrap_or_else(|| panic!("seed {seed}: the {k} record does not travel"));
+            // The madness exemption travels only during its announcement;
+            // after it (trigger ordering) the producer still refuses.
+            let announcing = s.game_state().engine.pending_cast.is_some();
+            let Some(p) = super::payload::PayloadV1::new(&x, s, v, 0) else {
+                assert!(k == 1 && !announcing, "seed {seed}: the {k} record does not travel");
+                return;
+            };
             assert!(
                 p.surface.optional_cost.is_some() || p.surface.madness_reprompt.is_some(),
                 "seed {seed}: no record"

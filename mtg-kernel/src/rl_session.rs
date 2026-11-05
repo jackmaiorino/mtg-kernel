@@ -5416,6 +5416,16 @@ impl FastActorSessionV1 {
             context.discard = Some(renamed);
         }
         if let Some(card) = context.madness_reprompt {
+            // Only during the madness announcement itself (amendment 43.9).
+            if self
+                .state
+                .engine
+                .pending_cast
+                .as_ref()
+                .is_none_or(|p| p.spell != card)
+            {
+                return None;
+            }
             let renamed = ids
                 .get(&u64::from(card.0))
                 .and_then(|n| u32::try_from(*n).ok())

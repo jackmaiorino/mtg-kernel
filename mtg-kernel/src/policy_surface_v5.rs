@@ -449,8 +449,11 @@ pub(crate) fn validate_optional_cost_in_state_v1(
 
 /// Amendment 43.9: the import's fail-closed check of a carried madness
 /// exemption: a tracked (`C:`) card cast by its madness route (its current
-/// incarnation's cast origin), that is the spell being announced or, on the
-/// stack, the source of a stack item.
+/// incarnation's cast origin) that is the spell being announced. The
+/// exemption is armed when that announcement begins and travels only while
+/// it lasts (Sol design review 2 on cut 2: a card already on the stack
+/// cannot show that its exemption is unconsumed); after it, the producer
+/// still refuses R2 `madness_reprompt`.
 pub(crate) fn validate_madness_reprompt_in_state_v1(
     card: ObjectId,
     state: &GameState,
@@ -470,9 +473,7 @@ pub(crate) fn validate_madness_reprompt_in_state_v1(
         .engine
         .pending_cast
         .as_ref()
-        .is_some_and(|p| p.spell == card)
-        || (object.zone == crate::state::Zone::Stack
-            && state.stack.iter().any(|item| item.source == card));
+        .is_some_and(|p| p.spell == card);
     if !tracked || !madness || !cast {
         return Err("madness context: card".into());
     }
