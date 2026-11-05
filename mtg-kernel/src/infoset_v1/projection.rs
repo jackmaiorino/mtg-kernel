@@ -62,6 +62,10 @@ pub(crate) struct SpanEndV1 {
     /// span (where a move it made there started). Lead ruling 7 (a): V tells
     /// two departures apart by their origin zone.
     pub from: Zone,
+    /// The object itself changed zone at the item that ended the span. A
+    /// lapse without a move (a fact unbound in the opponent's hand) leaves
+    /// the copy where V last saw it (lead ruling 11, Sol round 5).
+    pub moved: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -463,6 +467,7 @@ pub(crate) fn project_v1(
                         zone,
                         split: true,
                         from,
+                        moved: true,
                     });
                 }
                 o.spans.push(SpanV1 {
@@ -644,6 +649,7 @@ impl WalkV1<'_> {
                     .find(|(x, _)| *x == id)
                     .map_or(o.zone, |(_, z)| *z)
                     .unwrap_or(Zone::Library);
+                let moved = prev_zones.iter().any(|(x, _)| *x == id);
                 let o = &mut self.objs[i];
                 let last_gen = o.last_obs_gen;
                 let zone = o.last_obs_zone.unwrap_or(Zone::Library);
@@ -654,6 +660,7 @@ impl WalkV1<'_> {
                         zone,
                         split: false,
                         from,
+                        moved,
                     });
                 }
             } else if now {
@@ -685,6 +692,7 @@ impl WalkV1<'_> {
                             zone,
                             split: true,
                             from: zone,
+                            moved: true,
                         });
                     }
                     o.spans.push(SpanV1 {
@@ -1272,6 +1280,25 @@ impl WalkV1<'_> {
                 if !bound.contains(&id) {
                     let moves = self.objs[id.0 as usize].moves;
                     candidates.push((id, moves.saturating_sub(1)));
+                }
+                // Sol round 5: an untracked card of the hand that V tracked
+                // before under this name (its fact lapsed in the hand) may be
+                // the copy that left or the copy that stayed. The hand's
+                // contents and V's tracking before the departure are the same
+                // in both worlds, so is this set.
+                for (i, o) in self.objs.iter().enumerate() {
+                    let other = ObjectId(i as u32);
+                    if other != id
+                        && o.exists
+                        && o.owner == Some(owner)
+                        && o.zone == Some(Zone::Hand)
+                        && !o.tracked
+                        && !o.spans.is_empty()
+                        && self.state.objects.get(other).card_def == card_def
+                        && !candidates.iter().any(|(c, _)| *c == other)
+                    {
+                        candidates.push((other, o.moves));
+                    }
                 }
                 self.hand_ambiguities.push(HandAmbiguityV1 {
                     item: self.item,

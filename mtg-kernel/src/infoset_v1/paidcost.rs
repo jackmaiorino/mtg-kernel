@@ -1289,3 +1289,137 @@ fn a_stale_lapse_exempts_nothing() {
     eprintln!("stale lapse: A revealed {a:?} / B revealed {b:?}");
     assert_eq!(a, b, "P agrees whichever copy was revealed");
 }
+
+/// Sol round 5 on ruling 11. Lembas A (and B, for finding 2) are drawn
+/// unseen; A is revealed; an unrelated card is put back unidentified (A's
+/// fact lapses, A stays in the hand). Finding 1 (`exile_with` false): a
+/// Lembas D returns publicly from the graveyard, then A (`first`) or D is
+/// discarded; the Shaman's record names A at its hand epoch. Finding 2
+/// (`exile_with` true): A (`first`) or B is discarded without a new reveal,
+/// the record names it at its hand epoch, and in a later batch it is exiled
+/// together with a Lembas C from the graveyard. Returns P.
+fn hand_lapse_world(first: bool, exile_with: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    st.stack
+        .retain(|it| st.objects.get(it.source).card_def != lembas);
+    st.engine.pending_triggers.clear();
+    let in_library: Vec<ObjectId> = st.players[o.index()]
+        .library
+        .iter()
+        .copied()
+        .filter(|x| st.objects.get(*x).card_def == lembas)
+        .collect();
+    assert!(
+        in_library.len() >= 2,
+        "two Lembas in the opponent's library"
+    );
+    let (a, b) = (in_library[0], in_library[1]);
+    // The graveyard Lembas: the paid one (its shuffle trigger removed).
+    let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+    let in_graveyard = paid_object(&st, i);
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    let drawn: &[ObjectId] = if exile_with { &[a, b] } else { &[a] };
+    for &x in drawn {
+        let lib = &mut st.players[o.index()].library;
+        let at = lib.iter().position(|y| *y == x).expect("in the library");
+        let moved = lib.remove(at);
+        lib.insert(0, moved);
+        propose_and_commit(&mut st, ProposedEvent::draw(o));
+    }
+    mark(&st, &mut marks);
+    st.reveal_hand_card(v, o, a).expect("reveal A");
+    mark(&st, &mut marks);
+    let other = st.players[o.index()]
+        .hand
+        .iter()
+        .copied()
+        .find(|x| st.objects.get(*x).card_def != lembas)
+        .expect("another card in the hand");
+    st.clear_nonowner_hand_knowledge(o);
+    propose_and_commit(&mut st, ProposedEvent::private_top_library_insert(other));
+    mark(&st, &mut marks);
+    let gone = if exile_with {
+        if first {
+            a
+        } else {
+            b
+        }
+    } else {
+        propose_and_commit(
+            &mut st,
+            ProposedEvent::zone_change(in_graveyard, Zone::Hand),
+        );
+        st.reveal_hand_card(v, o, in_graveyard).expect("reveal D");
+        st.engine.pending_triggers.clear();
+        mark(&st, &mut marks);
+        if first {
+            a
+        } else {
+            in_graveyard
+        }
+    };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    let named = if exile_with { gone } else { a };
+    let zcc = st.objects.get(named).zone_change_count;
+    let hand = if st.objects.get(named).zone == Zone::Hand {
+        zcc
+    } else {
+        zcc - 1
+    };
+    let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+    let r = &mut st.stack[i].v4.paid_cost_refs[0];
+    r.object = named;
+    r.zone_change_count = hand;
+    if exile_with {
+        mark(&st, &mut marks);
+        for x in [gone, in_graveyard] {
+            propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Exile));
+        }
+        st.engine.pending_triggers.clear();
+    }
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// Sol round 5 finding 1: A or D discarded, the record names A at its hand
+/// epoch. Equal P.
+#[test]
+fn a_lapsed_hand_copy_or_a_returned_copy_agree() {
+    let (a, b) = (
+        hand_lapse_world(true, false),
+        hand_lapse_world(false, false),
+    );
+    eprintln!("lapsed hand copy: A discarded {a:?} / D discarded {b:?}");
+    assert_eq!(a, b, "P agrees whichever copy was discarded");
+}
+
+/// Sol round 5 finding 2: A or B discarded and later exiled with a
+/// graveyard Lembas in one batch. Equal P.
+#[test]
+fn a_stale_hand_lapse_does_not_stop_the_batch_scan() {
+    let (a, b) = (hand_lapse_world(true, true), hand_lapse_world(false, true));
+    eprintln!("stale hand lapse then batch: A {a:?} / B {b:?}");
+    assert_eq!(a, b, "P agrees whichever copy was discarded");
+}

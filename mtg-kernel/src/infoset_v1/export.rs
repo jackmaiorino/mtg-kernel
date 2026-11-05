@@ -715,10 +715,9 @@ pub(crate) fn export_v1(
                 return false;
             };
             track.is_some_and(|t| {
-                t.spans
-                    .iter()
-                    .filter_map(|s| s.end)
-                    .any(|e| !e.split && e.last_gen >= g && e.item < item && e.item >= start)
+                t.spans.iter().filter_map(|s| s.end).any(|e| {
+                    !e.split && e.moved && e.last_gen >= g && e.item < item && e.item >= start
+                })
             })
         };
         let crossed = projection.hand_ambiguities.iter().any(|a| {
@@ -764,9 +763,14 @@ pub(crate) fn export_v1(
             // where it split refused. The scan stops after the first lapse:
             // which later spans belong to the referenced copy is not V's
             // information there, and R1b decides (Sol round 1).
+            // From the span the reference resolves to (Sol round 5: an
+            // older span of the same generation is history it does not
+            // name); without one, every end at or after g.
+            let from_span = projection.span_of(r.object, g).map(|s| s.start_item);
             let ends = track
                 .spans
                 .iter()
+                .filter(|s| from_span.is_none_or(|start| s.start_item >= start))
                 .filter_map(|s| s.end)
                 .filter(|e| e.last_gen >= g);
             let mut lapsed = false;
@@ -774,7 +778,9 @@ pub(crate) fn export_v1(
                 if lapsed {
                     break;
                 }
-                lapsed = !end.split;
+                // A lapse without a move (a fact unbound in the hand) leaves
+                // the copy where it was; only a lapse that moved it stops.
+                lapsed = !end.split && end.moved;
                 let batch = ProjectionV1::batch_of(&bounds, end.item);
                 let twin = projection.objects.iter().enumerate().any(|(i, other)| {
                     let other_obj = state.objects.get(ObjectId(i as u32));
