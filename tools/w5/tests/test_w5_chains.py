@@ -199,7 +199,7 @@ class ChainTests(unittest.TestCase):
 
     def test_x8_differs_from_c_only_in_the_search_block(self):
         other = jwrite(self.node.t / 'other-base.json', base_doc(('fixed', 'current')))
-        inputs = json.loads(self.node.inputs('1a', {}).read_text())
+        inputs = json.loads(self.node.inputs('1a', {}, r_nom_usec=10**9).read_text())
         inputs['arms']['X8']['base'] = str(other)
         inputs['chains'] = {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/chain1'},
                             'x8-1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/chain1'},
@@ -457,19 +457,38 @@ class ChainTests(unittest.TestCase):
     def test_an_ended_chains_box_holds_the_filler(self):
         path, plan = self.node.stage0()
         chains.write_once(self.node.root / 'chains' / 'c1' / 'END.json', {'reason': 'c-wall', 'unix': time.time()})
+        self.node.ledger('c1', 'open', 'close')
         self.node.ledger('x1', 'open')
-        with mock.patch.object(chains.subprocess, 'Popen') as popen, contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(chains.occupancy(plan, path, self.node.root), {'started': ['fill0'], 'killed': []})
+        events, outages = [], {}
+        with mock.patch.object(chains.subprocess, 'Popen') as popen, contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.object(chains, 'node_outages', lambda plan: dict(outages)), \
+                mock.patch.object(chains, 'node_event', lambda plan, record, reason: events.append(record)):
+            self.assertEqual(chains.occupancy(plan, path, self.node.root),
+                             {'started': ['fill0'], 'killed': [], 'outages': [0]})
+            self.assertEqual((events[0]['event'], events[0]['box_slot'], events[0]['chain']),
+                             ('outage-start', 0, 'fill0'))
+            self.assertIsNotNone(events[0]['empty_since'])
             cmd = popen.call_args[0][0]
             self.assertEqual(cmd[2:6], ['run', '--plan', str(path), '--chain'])
             self.assertEqual(cmd[6:8], ['fill0', '--qualification'])
-            self.assertEqual(chains.occupancy(plan, path, self.node.root)['started'], [])  # starting
-            # Every measured chain ended and closed: the fillers go.
+            outages[0] = dict(events[0], source='w5-chains')
+            # Starting: no second outage and no second start.
+            self.assertEqual(chains.occupancy(plan, path, self.node.root), {'started': [], 'killed': [],
+                                                                            'outages': []})
+            # Every measured chain ended and closed: the fillers go and the outage closes.
             chains.write_once(self.node.root / 'chains' / 'x1' / 'END.json', {'reason': 'x', 'unix': time.time()})
             self.node.ledger('x1', 'close')
             self.node.ledger('fill0', 'open')
-            self.assertEqual(chains.occupancy(plan, path, self.node.root), {'started': [], 'killed': ['fill0']})
+            self.assertEqual(chains.occupancy(plan, path, self.node.root)['killed'], ['fill0'])
+            self.assertEqual((events[-1]['event'], events[-1]['outage_id']), ('restored', events[0]['id']))
         self.assertTrue((self.node.root / 'state' / 'fill0' / 'control' / 'kill.request').exists())
+
+    def test_guard_reservation(self):
+        _, plan = self.node.stage0()
+        c, x, f = (plan['arms'][a]['segment_updates'] * 1000 for a in ('C', 'X8', 'F'))
+        self.assertEqual(chains.guard_reservation(plan, self.node.root), 5 * (c + x) + 2 * 3 * f)
+        chains.write_once(self.node.root / 'chains' / 'c1' / 'END.json', {'reason': 'c-wall'})
+        self.assertEqual(chains.guard_reservation(plan, self.node.root), 5 * x + 2 * 3 * f)
 
     def test_supervise_selects_replays_and_prunes_a_pair(self):
         path, plan = self.node.stage0(c_wall=1.5, r_nom_usec=10_000_000)

@@ -80,8 +80,11 @@ is killed once all measured chains have ended); the byte guard verdict (`<root>/
   one (then exits 7); supervise default 60 s. One running plan per node (the guard counts its chains).
 - Fillers (paused-box `_filler`, Stage 1b F chains, `fill<slot>`) start fresh from the C parent at update 0 and
   delete each segment once the next one finishes; their trees go with `clean-fillers` at the stage's end. A box
-  left by an ended chain is refilled within one supervise cycle (the gap is in LOG.jsonl).
-- Byte guard: each verdict reserves GUARD_SEGMENTS = 4 segments per running chain.
+  left by an ended chain is an occupancy outage in w5box's node log (measured chains frozen) from the cycle that
+  sees it until its filler joins; `empty_since` records the chain's close, so the unfrozen gap (at most one
+  supervise cycle) is on record.
+- Byte guard: each verdict reserves 5 segments per measured chain (one in flight, GUARD_SEGMENTS = 4 admitted)
+  and two F segments per box (fillers do not wait on the guard; their hot set is bounded).
 """
 import argparse
 import copy
@@ -998,14 +1001,17 @@ def pair_decide(plan, info_c, info_x, st, now):
         st['snapshot_from'] = retention.first_at_or_past(x['records'], retention.SNAPSHOT_TRIGGER * rhat)['boundary']
         st['snapshot_window'] = {'r_hat_usec': rhat, 'snapshot_bytes': size,
                                  'projected_updates': out.get('snapshot_window_updates')}
-    # Once open, the window stays open while R_i is not final, up to the 30 GB of snapshots per chain.
-    if st.get('snapshot_from') is not None and sum(s['bytes'] for s in made.values()) >= \
-            retention.SNAPSHOT_CAP_BYTES:
-        st['snapshot_capped'] = True
+    # Once open, the window stays open while R_i is not final, up to 30 GB of snapshots per chain: each cycle cuts
+    # at most as many as the remaining bytes allow at the measured snapshot size.
+    room = None
+    if st.get('snapshot_from') is not None and size:
+        room = int((retention.SNAPSHOT_CAP_BYTES - sum(s['bytes'] for s in made.values())) // size)
+        if room <= 0:
+            st['snapshot_capped'] = True
     st['snapshotting'] = st.get('snapshot_from') is not None and not c_ended and not st.get('snapshot_capped')
-    if st['snapshotting']:
+    if st['snapshotting'] and room:
         out['snapshots_made'] = len(retention.snapshot(x['path'], plan['container_tool']['path'],
-                                                       st['snapshot_from']))
+                                                       st['snapshot_from'], max_new=room))
     if action == 'pause' and x['live'] and not x['paused'] and not (control / 'pause.now').exists():
         request(plan, x['name'], 'pause', {'reason': '1.10 R-hat', 'r_hat_usec': out['projection']['r_hat_usec']})
     elif action == 'resume_to':
@@ -1194,6 +1200,19 @@ def pair_finalize(plan, plan_path, c, x, st, looks):
     return st
 
 
+def guard_reservation(plan, root):
+    """Bytes the verdict reserves: per measured chain that has not ended, one segment possibly in flight from an
+    earlier verdict plus the GUARD_SEGMENTS this verdict admits; per box, a filler's whole hot set (two F
+    segments: a paused-box filler, a Stage 1b F chain or `fill<slot>` keeps at most its live segment and its
+    source, and does not wait on the guard, which would break occupancy)."""
+    def segment(arm):
+        return plan['arms'][arm]['segment_updates'] * plan['arms'][arm]['bytes_per_update']
+    measured = sum(segment(c['arm']) for n, c in plan['chains'].items()
+                   if c['arm'] in MEASURED and read_end(root, n) is None)
+    boxes = len({c['slot'] for c in plan['chains'].values()})
+    return (GUARD_SEGMENTS + 1) * measured + 2 * boxes * segment('F')
+
+
 def enforce_ends(plan, root):
     """An ended measured chain must not keep running: a kill that did not land (a supervise crash between END and
     the request, or a lost request) is requested again once the END is older than END_KILL_GRACE."""
@@ -1208,28 +1227,72 @@ def enforce_ends(plan, root):
     return kills
 
 
+def node_outages(plan):
+    """Open outages by box slot in w5box's node occupancy log (none before w5box has written one)."""
+    node = w5box.NodeLog(Path(plan['root']) / 'state')
+    if not node.path.exists():
+        return {}
+    with node.locked():
+        records, torn = node.read()
+    return w5box.NodeLog.state(records, torn)['open_outages']
+
+
+def node_event(plan, record, reason):
+    """Appends an occupancy event to w5box's node log and runs w5box's node enforcement (amendment A1: every
+    measured chain on the node stays frozen while any box has an open outage)."""
+    node = w5box.NodeLog(Path(plan['root']) / 'state')
+    with node.locked():
+        node.append(dict(record, source='w5-chains'))
+    w5box.enforce_node(read(plan['arms']['F']['w5box_plan']['path']), node, reason)
+
+
+def closed_unix(root, name):
+    path = ledger_path(root, name)
+    closes = [r['unix'] for r in w5box.Ledger(path).records() if r['event'] == 'close'] if path.exists() else []
+    return closes[-1] if closes else None
+
+
 def occupancy(plan, plan_path, root):
     """Section 2.1 and amendment A1: a box whose measured chain has ended (END, instance closed) holds the frozen
     filler (`fill<slot>`, C-recipe RT1 from C's parent, seed root w5/filler<slot>) while another measured chain on
-    the node runs; once every measured chain has ended and closed, the plan's F chains are killed. Starts are
-    detached `run`s (qualification runs when arm F has no box throughput record)."""
+    the node runs. Until it does, the box is an occupancy outage in w5box's node log (opened here, `empty_since` the
+    chain's close), so w5box freezes the node's measured chains; w5box closes the outage when the filler joins the
+    box (`run` restores its own slot), and a filler that later exits leaves the box empty, which opens a new one.
+    Once every measured chain has ended and closed, the plan's F chains are killed and its open outages closed.
+    Starts are detached `run`s (qualification runs when arm F has no box throughput record)."""
     measured = [n for n, c in plan['chains'].items() if c['arm'] in MEASURED]
     closed = {n: read_end(root, n) is not None and not live(root, n) for n in measured}
-    out = {'started': [], 'killed': []}
+    out = {'started': [], 'killed': [], 'outages': []}
+    if not any(closed.values()):
+        return out
+    outages = node_outages(plan)
     if all(closed.values()):
         for n, c in sorted(plan['chains'].items()):
             if c['arm'] == 'F' and live(root, n) and not (Path(root) / 'state' / n / 'control' /
                                                           'kill.request').exists():
                 request(plan, n, 'kill')
                 out['killed'].append(n)
+        for slot, outage in sorted(outages.items()):
+            if outage.get('source') == 'w5-chains':
+                node_event(plan, {'event': 'restored', 'outage_id': outage['id'], 'box_slot': slot,
+                                  'chain': outage['chain'], 'how': 'every measured chain has ended'}, 'fill-done')
         return out
     if not any(live(root, n) for n in measured):
         return out
     marks = Path(root) / 'plan' / plan['label'] / 'fills'
     for n in sorted(n for n in measured if closed[n]):
-        fill = f'fill{plan["chains"][n]["slot"]}'
+        slot = plan['chains'][n]['slot']
+        fill = f'fill{slot}'
         mark = marks / f'{fill}.json'
-        if live(root, fill) or (mark.exists() and time.time() - read(mark)['unix'] < FILL_START_GRACE):
+        if live(root, fill):
+            continue
+        if slot not in outages:
+            node_event(plan, {'event': 'outage-start', 'id': f'{fill}/{time.time_ns()}', 'box_slot': slot,
+                              'chain': fill, 'reason': f'{n} has ended; the box waits for its frozen filler',
+                              'empty_since': closed_unix(root, n),
+                              'affected': w5box.node_chains(Path(root) / 'state')}, 'fill-outage')
+            out['outages'].append(slot)
+        if mark.exists() and time.time() - read(mark)['unix'] < FILL_START_GRACE:
             continue
         cmd = [sys.executable, str(HERE / 'chains.py'), 'run', '--plan', str(plan_path), '--chain', fill]
         if not plan['arms']['F'].get('throughput'):
@@ -1294,10 +1357,7 @@ def cycle(plan, plan_path, now=None):
     report['kills'] = enforce_ends(plan, root)
     report['fills'] = occupancy(plan, plan_path, root)
     report['purged'] = purge_hold(root, plan['hold_days'], now)
-    next_bytes = GUARD_SEGMENTS * sum(
-        plan['arms'][c['arm']]['segment_updates'] * plan['arms'][c['arm']]['bytes_per_update']
-        for n, c in plan['chains'].items()
-        if (c['arm'] in MEASURED and read_end(root, n) is None) or (c['arm'] == 'F' and live(root, n)))
+    next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests)
     write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], id=time.time_ns(),

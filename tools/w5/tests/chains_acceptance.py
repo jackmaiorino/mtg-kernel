@@ -152,7 +152,9 @@ def main():
         receipt['pair_a'] = {'pair': pa, 'exits': codes_a, 'r_usec': r, 'x_pause': pause, 'x_close': close,
                              'paused_samples': samples, 'filler_usage_usec': filler_usage,
                              'c_end': end(root, 'c1'), 'x_end': end(root, 'x1'),
-                             'snapshots': len(retention.snapshots(root / 'chains' / 'x1' / 'chain.json')),
+                             'snapshots': len(retention.snapshot_index_path(root / 'chains' / 'x1' / 'chain.json')
+                                              .read_text().splitlines())
+                             if retention.snapshot_index_path(root / 'chains' / 'x1' / 'chain.json').exists() else 0,
                              'filler_runs': [p.as_posix() for p in (root / 'fillers').glob('slot*/run-*')]}
         checks = {
             'a_c_ended_at_its_wall': end(root, 'c1')['reason'] == 'c-wall' and codes_a['c1'] == 0,
@@ -188,13 +190,17 @@ def main():
         fill0_path = root / 'state' / 'fill0' / 'ledger.jsonl'
         fill0 = w5box.Ledger(fill0_path).records() if fill0_path.exists() else []
         fill0_opens = [e['unix'] for e in fill0 if e['event'] == 'open']
+        node_log = w5box.NodeLog(root / 'state').read()[0]
+        fill_outages = [e for e in node_log if e['event'] == 'outage-start' and e.get('source') == 'w5-chains'
+                        and e['chain'] == 'fill0']
+        restored = {e['outage_id']: e for e in node_log if e['event'] == 'restored'}
         r2 = records(root, 'c2')[-1]['ledger_usec']
         x2_rec = records(root, 'x2')
         x2_ledger = w5box.Ledger(root / 'state' / 'x2' / 'ledger.jsonl').records()
         resumes = [e for e in x2_ledger if e['event'] == 'resume']
         source = json.loads((root / 'state' / 'x2' / 'ledger-source.json').read_text())
         receipt['pair_b'] = {'pair': pb, 'exits': codes_b, 'r_usec': r2, 'x_resumes': resumes,
-                             'fill_starts': fill_starts, 'fill0_opens': fill0_opens,
+                             'fill_starts': fill_starts, 'fill0_opens': fill0_opens, 'fill_outages': fill_outages,
                              'x_end': end(root, 'x2'), 'ledger_source': source}
         checks.update({
             'b_resumed_once_with_stop_at_r': len(resumes) == 1 and resumes[0]['payload'].get('stop_at_usec') == r2
@@ -204,6 +210,8 @@ def main():
             'b_matched': pb['label'] == 'matched' and pb['done'] and pb['endpoints']['x2'] == x2_rec[-1]['boundary'],
             'b_ended_c_box_refilled_while_x_ran': bool(fill_starts) and bool(fill0_opens) and
             max(fill0_opens) < end(root, 'x2')['unix'],
+            'b_empty_box_was_an_outage_until_the_filler_joined': bool(fill_outages) and all(
+                restored.get(o['id'], {}).get('how') == 'chain-restart' for o in fill_outages),
         })
         receipt['checks'] = checks
         receipt['pass'] = all(checks.values())

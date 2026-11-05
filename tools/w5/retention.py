@@ -227,10 +227,10 @@ def snapshots(chain_path):
     return {b: r for b, r in out.items() if Path(r['path']).exists()}
 
 
-def snapshot(chain_path, binary, snapshot_from):
+def snapshot(chain_path, binary, snapshot_from, max_new=None):
     """Cuts a weights-only snapshot of every unpruned checkpoint at or past `snapshot_from` that keeps no full
-    state and has none yet (the binary verifies the checkpoint against its pin). Each snapshot must have been
-    cut from the recorded after-state."""
+    state and has none yet (the binary verifies the checkpoint against its pin), earliest first and at most
+    `max_new` of them. Each snapshot must have been cut from the recorded after-state."""
     chain, records = index(chain_path)
     latest = records[-1]['boundary'] if records else 0
     have = snapshots(chain_path)
@@ -239,6 +239,8 @@ def snapshot(chain_path, binary, snapshot_from):
     made = []
     for rec in records:
         b = rec['boundary']
+        if max_new is not None and len(made) >= max_new:
+            break
         if b < snapshot_from or b in have or keeps_full_state(chain['arm'], b, latest):
             continue
         if not Path(rec['checkpoint']['path']).exists():
