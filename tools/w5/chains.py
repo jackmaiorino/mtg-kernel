@@ -44,8 +44,8 @@ A chain has no planned length: C stops at its wall, X at R_i (or the cap), a fil
 
 **In-box driver** (`_drive`, the chain process w5box meters; its own CPU, a few configs and hashes per segment,
 is part of the chain's ledger in every arm). Per segment: END, STOP (`<root>/STOP` or `chains/<name>/STOP`: stop
-at the next segment boundary; `w5box.py kill` stops at once) and byte guard admission (a fresh verdict, at most
-GUARD_SEGMENTS segments of this chain per verdict, which reserved that many); an interrupted iteration
+at the next segment boundary; `w5box.py kill` stops at once) and byte guard admission (a fresh verdict whose
+ceiling for this chain, fixed at supervise's census, is above the segment's index); an interrupted iteration
 is moved aside (mtg-kernel#336). C: from `launched_unix` (the first start) plus the C wall, the trainer is killed
 and the chain ends at its last completed boundary (END `c-wall`). X: a trainer that stops at the ledger source's
 `stop_at_usec` (resume to R_i) ends the chain (END `x-stop-at`). Any other failure writes FAILURE.json and exits 8;
@@ -63,8 +63,8 @@ its last valid one, labelled under budget), `retention.select`, a replay where t
 `_replay`, then `verify-replay`), the PRUNE manifest (look checkpoints kept), and the pruned files moved to the
 same-volume hold folder `<root>/hold` with a move manifest, purged after `hold_days`. Then the rolling retention of
 running chains (`retention.plan` / `apply`); kills retried for ended chains still running; occupancy (a box whose
-measured chain has ended holds the frozen filler `fill<slot>` while another measured chain runs, and every F chain
-is killed once all measured chains have ended); the byte guard verdict (`<root>/GUARD.json`).
+measured chain has ended holds the frozen filler while another measured chain runs, through `w5box.py fill`; F
+chains and fills stop once all measured chains have ended); the byte guard verdict (`<root>/GUARD.json`).
 
 **Implementation choices** (not design constants):
 - Segment lengths: C 256, X8 and XS 16, F 64 updates (C's hot trajectories over 64 segments stay near 16k updates;
@@ -78,11 +78,10 @@ is killed once all measured chains have ended); the byte guard verdict (`<root>/
   are about half a second).
 - Cadences: driver trainer poll 1 s (C only), guard verdict valid 15 minutes, a driver waits up to 30 minutes for
   one (then exits 7); supervise default 60 s. One running plan per node (the guard counts its chains).
-- Fillers (paused-box `_filler`, Stage 1b F chains, `fill<slot>`) start fresh from the C parent at update 0 and
+- Fillers (paused-box and ended-box `_filler`, Stage 1b F chains) start fresh from the C parent at update 0 and
   delete each segment once the next one finishes; their trees go with `clean-fillers` at the stage's end. A box
-  left by an ended chain is an occupancy outage in w5box's node log (measured chains frozen) from the cycle that
-  sees it until its filler joins; `empty_since` records the chain's close, so the unfrozen gap (at most one
-  supervise cycle) is on record.
+  left by an ended chain becomes an outage when supervise's next cycle starts `w5box.py fill` (`--empty-since`
+  records the chain's close, so the unfrozen gap of at most one cycle is on record).
 - Byte guard: each verdict reserves 5 segments per measured chain (one in flight, GUARD_SEGMENTS = 4 admitted)
   and two F segments per box (fillers do not wait on the guard; their hot set is bounded).
 """
@@ -481,12 +480,6 @@ def make_plan(inputs_path):
             counts[c['arm']] = counts.get(c['arm'], 0) + 1
         require(len(chains) == boxes and len(set(counts.values())) == 1,
                 f'Stage {stage} uses every box, half per arm: {counts} on {boxes} boxes')
-    for name, c in sorted(chains.items()):  # a box filler per measured box, for when its chain has ended
-        if c['arm'] in MEASURED:
-            fill = f'fill{c["slot"]}'
-            require(fill not in chains_in, f'{fill} is reserved for the box filler of slot {c["slot"]}')
-            chains[fill] = {'arm': 'F', 'slot': c['slot'], 'seed_root': f'w5/filler{c["slot"]}', 'pair': None,
-                            'manifest': None, 'fill_for': name}
     scratch = root / 'plan' / label / '_paircheck'
     xs_other = {}
     plan_pairs = {}
@@ -638,10 +631,11 @@ def end_doc(name, arm_name, reason, boundary, receipt, by, **detail):
             'unix': round(time.time(), 3), 'detail': detail}
 
 
-def guard_admit(root, cdir):
-    """Admission for one segment: a fresh `ok` verdict from supervise, which reserved GUARD_SEGMENTS segments per
-    chain; each verdict admits at most that many segments of this chain (counted in GUARD-USE.json), so a stopped
-    supervise cannot let drivers write past the cap."""
+def guard_admit(root, chain, index):
+    """Admission for segment `index`: a fresh `ok` verdict from supervise whose ceiling for this chain is above
+    `index`. Supervise reads every manifest before it counts bytes and sets each ceiling to the segments started
+    then plus GUARD_SEGMENTS, so whatever any verdict admits after a census (one segment in flight and the next
+    GUARD_SEGMENTS) is inside that verdict's reservation, and a stopped supervise admits nothing more."""
     path = Path(root) / 'GUARD.json'
     if not path.exists():
         return False, 'no guard verdict'
@@ -650,12 +644,8 @@ def guard_admit(root, cdir):
         return False, 'the guard verdict is stale (is supervise running?)'
     if not g.get('ok'):
         return False, f'the byte guard refuses ({g.get("used_bytes")} used)'
-    use_path = Path(cdir) / 'GUARD-USE.json'
-    use = read(use_path) if use_path.exists() else {}
-    used = use.get('used', 0) if use.get('id') == g['id'] else 0
-    if used >= g['segments_per_chain']:
-        return False, 'this verdict\'s segment allowance is used (is supervise running?)'
-    write(use_path, {'id': g['id'], 'used': used + 1})
+    if index >= g.get('ceilings', {}).get(chain, 0):
+        return False, f'segment {index} is past this verdict\'s ceiling (is supervise running?)'
     return True, 'ok'
 
 
@@ -747,7 +737,9 @@ def drive_locked(a, arm, root, cdir, man_path):
             return 0
         if reached_stop(man, a.ledger_source):  # a stop at a segment's last update, or a restart past it
             return end_at_stop(a, arm, root, cdir, man)
-        ok, why = guard_admit(root, cdir)
+        segs = man['segments']
+        index = len(segs) - 1 if segs and not (Path(segs[-1]['root']) / 'completion.json').exists() else len(segs)
+        ok, why = guard_admit(root, a.chain, index)
         if not ok:
             if waiting is None:
                 waiting = time.time()
@@ -1201,10 +1193,9 @@ def pair_finalize(plan, plan_path, c, x, st, looks):
 
 
 def guard_reservation(plan, root):
-    """Bytes the verdict reserves: per measured chain that has not ended, one segment possibly in flight from an
-    earlier verdict plus the GUARD_SEGMENTS this verdict admits; per box, a filler's whole hot set (two F
-    segments: a paused-box filler, a Stage 1b F chain or `fill<slot>` keeps at most its live segment and its
-    source, and does not wait on the guard, which would break occupancy)."""
+    """Bytes the verdict reserves: per measured chain that has not ended, the segment possibly in flight at the
+    census plus the GUARD_SEGMENTS its ceiling admits; per box, a filler's whole hot set (two F segments: a filler
+    keeps at most its live segment and its source, and does not wait on the guard, which would break occupancy)."""
     def segment(arm):
         return plan['arms'][arm]['segment_updates'] * plan['arms'][arm]['bytes_per_update']
     measured = sum(segment(c['arm']) for n, c in plan['chains'].items()
@@ -1227,85 +1218,69 @@ def enforce_ends(plan, root):
     return kills
 
 
-def node_outages(plan):
-    """Open outages by box slot in w5box's node occupancy log (none before w5box has written one)."""
-    node = w5box.NodeLog(Path(plan['root']) / 'state')
-    if not node.path.exists():
-        return {}
-    with node.locked():
-        records, torn = node.read()
-    return w5box.NodeLog.state(records, torn)['open_outages']
-
-
-def node_event(plan, record, reason):
-    """Appends an occupancy event to w5box's node log and runs w5box's node enforcement (amendment A1: every
-    measured chain on the node stays frozen while any box has an open outage)."""
-    node = w5box.NodeLog(Path(plan['root']) / 'state')
-    with node.locked():
-        node.append(dict(record, source='w5-chains'))
-    w5box.enforce_node(read(plan['arms']['F']['w5box_plan']['path']), node, reason)
-
-
 def closed_unix(root, name):
     path = ledger_path(root, name)
     closes = [r['unix'] for r in w5box.Ledger(path).records() if r['event'] == 'close'] if path.exists() else []
     return closes[-1] if closes else None
 
 
-def occupancy(plan, plan_path, root):
+def fill_running(root, slot):
+    """`w5box.py fill` holds the box (its mark names a live process)."""
+    mark = Path(root) / 'state' / f'box{slot}.fill.json'
+    if not mark.exists():
+        return False
+    if os.name == 'nt':
+        return True
+    try:
+        os.kill(read(mark)['pid'], 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def occupancy(plan, root):
     """Section 2.1 and amendment A1: a box whose measured chain has ended (END, instance closed) holds the frozen
-    filler (`fill<slot>`, C-recipe RT1 from C's parent, seed root w5/filler<slot>) while another measured chain on
-    the node runs. Until it does, the box is an occupancy outage in w5box's node log (opened here, `empty_since` the
-    chain's close), so w5box freezes the node's measured chains; w5box closes the outage when the filler joins the
-    box (`run` restores its own slot), and a filler that later exits leaves the box empty, which opens a new one.
-    Once every measured chain has ended and closed, the plan's F chains are killed and its open outages closed.
-    Starts are detached `run`s (qualification runs when arm F has no box throughput record)."""
+    filler while another measured chain on the node runs. `w5box.py fill` (started detached here) runs it under the
+    paused-box filler's rules: the box is an outage in the node log, so the node's measured chains stay frozen,
+    until a verified filler runs; exits are replaced and repeated failures fault the box. Once every measured chain
+    has ended and closed, each fill is stopped (`box<k>.fill.stop`) and the plan's F chains are killed."""
     measured = [n for n, c in plan['chains'].items() if c['arm'] in MEASURED]
     closed = {n: read_end(root, n) is not None and not live(root, n) for n in measured}
-    out = {'started': [], 'killed': [], 'outages': []}
-    if not any(closed.values()):
-        return out
-    outages = node_outages(plan)
-    if all(closed.values()):
+    out = {'started': [], 'stopped': [], 'killed': []}
+    slots = sorted({plan['chains'][n]['slot'] for n in measured})
+    if measured and all(closed.values()):
+        for slot in slots:
+            if fill_running(root, slot) and not (Path(root) / 'state' / f'box{slot}.fill.stop').exists():
+                (Path(root) / 'state' / f'box{slot}.fill.stop').write_text('')
+                out['stopped'].append(slot)
         for n, c in sorted(plan['chains'].items()):
             if c['arm'] == 'F' and live(root, n) and not (Path(root) / 'state' / n / 'control' /
                                                           'kill.request').exists():
                 request(plan, n, 'kill')
                 out['killed'].append(n)
-        for slot, outage in sorted(outages.items()):
-            if outage.get('source') == 'w5-chains':
-                node_event(plan, {'event': 'restored', 'outage_id': outage['id'], 'box_slot': slot,
-                                  'chain': outage['chain'], 'how': 'every measured chain has ended'}, 'fill-done')
         return out
     if not any(live(root, n) for n in measured):
         return out
     marks = Path(root) / 'plan' / plan['label'] / 'fills'
     for n in sorted(n for n in measured if closed[n]):
         slot = plan['chains'][n]['slot']
-        fill = f'fill{slot}'
-        mark = marks / f'{fill}.json'
-        if live(root, fill):
+        mark = marks / f'box{slot}.json'
+        if fill_running(root, slot) or (mark.exists() and time.time() - read(mark)['unix'] < FILL_START_GRACE):
             continue
-        if slot not in outages:
-            node_event(plan, {'event': 'outage-start', 'id': f'{fill}/{time.time_ns()}', 'box_slot': slot,
-                              'chain': fill, 'reason': f'{n} has ended; the box waits for its frozen filler',
-                              'empty_since': closed_unix(root, n),
-                              'affected': w5box.node_chains(Path(root) / 'state')}, 'fill-outage')
-            out['outages'].append(slot)
-        if mark.exists() and time.time() - read(mark)['unix'] < FILL_START_GRACE:
-            continue
-        cmd = [sys.executable, str(HERE / 'chains.py'), 'run', '--plan', str(plan_path), '--chain', fill]
-        if not plan['arms']['F'].get('throughput'):
-            cmd += ['--qualification', f'{plan["label"]}-fill', '--max-wall-seconds',
-                    str(w5box.UNQUALIFIED_MAX_WALL)]
+        since = closed_unix(root, n)
+        cmd = [sys.executable, str(HERE / 'w5box.py'), 'fill', '--plan', w5box_plan(plan, n), '--slot', str(slot)]
+        if since is not None:
+            cmd += ['--empty-since', repr(since)]
         kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
             {'start_new_session': True}
         marks.mkdir(parents=True, exist_ok=True)
-        with open(marks / f'{fill}.log', 'ab') as log_file:
+        with open(marks / f'box{slot}.log', 'ab') as log_file:
             subprocess.Popen(cmd, stdout=log_file, stderr=log_file, stdin=subprocess.DEVNULL, **kwargs)
         write(mark, {'unix': time.time(), 'for': n})
-        log(root, event='fill-start', chain=fill, slot=plan['chains'][n]['slot'], ended=n)
-        out['started'].append(fill)
+        log(root, event='fill-start', slot=slot, ended=n, empty_since=since)
+        out['started'].append(slot)
     return out
 
 
@@ -1355,13 +1330,16 @@ def cycle(plan, plan_path, now=None):
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
     report['kills'] = enforce_ends(plan, root)
-    report['fills'] = occupancy(plan, plan_path, root)
+    report['fills'] = occupancy(plan, root)
     report['purged'] = purge_hold(root, plan['hold_days'], now)
+    ceilings = {}  # read before the byte census: segments started later are inside the reservation
+    for n, c in plan['chains'].items():
+        if c['arm'] in MEASURED and read_end(root, n) is None:
+            ceilings[n] = len(read(c['manifest'])['segments']) + GUARD_SEGMENTS
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests)
-    write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], id=time.time_ns(),
-                                    segments_per_chain=GUARD_SEGMENTS))
+    write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], ceilings=ceilings))
     report['guard'] = {k: g[k] for k in ('ok', 'used_bytes', 'next_bytes', 'cap_bytes')}
     write(root / 'plan' / plan['label'] / 'SUPERVISE.json', report)
     return report

@@ -53,6 +53,13 @@ thaw when no outage, fault, operator freeze or torn log tail remains. A new chai
 node is not clear. Escalation (`ESCALATE.json`): any outage open for 2 hours, or a fault at once in Stage 1b. Each
 chain copies every node event into its ledger exactly once (a durable watermark).
 
+**Ended boxes.** A box whose chain has ended holds the frozen filler while the node's other measured chains run
+(`w5box.py fill`, started by tools/w5/chains.py supervise), under the same rules: the box is an outage from the
+command's start (`--empty-since` records when the chain closed) until a verified filler runs in its filler cgroup; a
+filler that exits opens a new outage at once and is replaced, and FILLER_RESTARTS failed replacements fault the box
+(SIGTERM leaves it open for an operator; the next start retries). `box<k>.fill.stop` ends it once every measured
+chain has ended: the filler goes and the box's open outage closes.
+
 **Guard (COMPUTE-POLICY item 5).** `run` refuses before any spawn unless the plan's pins hold (host class, the
 complete detected box layout, binary and config hashes, `argv[0]` is the pinned binary and the config is in
 `argv`) and a box throughput record binds this plan's complete launch specification (`w5-box-throughput/v1`:
@@ -64,6 +71,7 @@ scaling checks only).
     w5box.py host-class
     w5box.py run --plan PLAN.json --chain CHAIN [--qualification LABEL --max-wall-seconds S]
     w5box.py pause|resume|kill|refill --plan PLAN.json --chain CHAIN [--payload JSON]
+    w5box.py fill --plan PLAN.json --slot K [--empty-since UNIX]  an ended chain's box holds the frozen filler
     w5box.py node-freeze|node-thaw --plan PLAN.json --reason TEXT    operator freeze or thaw of the node's chains
     w5box.py occupancy --plan PLAN.json                           open faults, freeze state and outages
     w5box.py ledger --plan PLAN.json --chain CHAIN       current ledger value (closed + live)
@@ -102,6 +110,7 @@ BASE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bi
 LEDGER_SOURCE_SCHEMA = "w5-chain-ledger-source/v1"
 FILLER_RESTARTS = 3
 ESCALATE_SECONDS = 2 * 3600
+FILL_POLL_SECONDS = 1.0
 REFILL_VERIFY_SECONDS = 10.0
 REFILL_MIN_CPU_USEC = 1_000_000
 OCCUPANCY_SCHEMA = "w5-node-occupancy/v1"
@@ -417,6 +426,25 @@ def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: 
         os.waitpid(pid, 0)
         raise RuntimeError(f"spawn into {cgroup.path} failed before the child joined")
     return pid
+
+
+def verify_filler(cg: Cgroup, pid: int, cpus: list[int]) -> tuple[dict, int | None]:
+    """A new filler is alive, its process is in the box's filler cgroup and cpuset, and it burns CPU. Returns the
+    checks and the pid (None once it has exited and been reaped)."""
+    before = cg.usage_usec()
+    deadline = time.monotonic() + REFILL_VERIFY_SECONDS
+    while time.monotonic() < deadline:
+        time.sleep(0.25)
+        done, _ = os.waitpid(pid, os.WNOHANG)
+        if done == pid:
+            pid = None
+            break
+    procs = {int(x) for x in cg.read("cgroup.procs").split()}
+    burned = cg.usage_usec() - before
+    checks = {"alive": pid is not None, "pid_in_filler_cgroup": pid in procs,
+              "cpuset": parse_cpu_list(cg.read("cpuset.cpus.effective")) == cpus,
+              "burning": burned >= REFILL_MIN_CPU_USEC}
+    return dict(checks, ok=all(checks.values()), burned_usec=burned), pid
 
 
 def rusage_usec(ru) -> int:
@@ -932,20 +960,8 @@ class Supervisor:
 
     def verify_filler(self) -> dict:
         """A new filler is alive, its process is in the box's filler cgroup and cpuset, and it burns CPU."""
-        before = self.filler_cg.usage_usec()
-        deadline = time.monotonic() + REFILL_VERIFY_SECONDS
-        while time.monotonic() < deadline:
-            time.sleep(0.25)
-            done, _ = os.waitpid(self.filler_pid, os.WNOHANG)
-            if done == self.filler_pid:
-                self.filler_pid = None
-                break
-        procs = {int(x) for x in self.filler_cg.read("cgroup.procs").split()}
-        burned = self.filler_cg.usage_usec() - before
-        checks = {"alive": self.filler_pid is not None, "pid_in_filler_cgroup": self.filler_pid in procs,
-                  "cpuset": parse_cpu_list(self.filler_cg.read("cpuset.cpus.effective")) == self.slot["cpus"],
-                  "burning": burned >= REFILL_MIN_CPU_USEC}
-        return dict(checks, ok=all(checks.values()), burned_usec=burned)
+        result, self.filler_pid = verify_filler(self.filler_cg, self.filler_pid, self.slot["cpus"])
+        return result
 
     def clear_filler(self) -> bool:
         """Kill whatever is in the filler cgroup and confirm it is empty (no mixed old and new processes)."""
@@ -1166,6 +1182,107 @@ class Supervisor:
         return code if code >= 0 else 128 - code
 
 
+# ---------------------------------------------------------------- an ended chain's box
+
+def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None) -> int:
+    """`w5box.py fill`: the frozen filler in an ended chain's box, with the paused-box filler's outage, verification,
+    replacement and fault rules (module docstring, "Ended boxes")."""
+    state_root = Path(plan["state_root"])
+    slot = layout["boxes"][index]
+    lock = flock(state_root / f"box{index}.lock", f"Box {index}")
+    node = NodeLog(state_root)
+    root = Cgroup(plan["cgroup_root"])
+    with node.locked():
+        prepare_root(root, layout, plan["isolation"])
+        box = prepare_box(root, slot)
+    chain_cg, filler_cg = Cgroup(box.path / "chain"), Cgroup(box.path / "filler")
+    require(not chain_cg.exists() or not chain_cg.populated(), f"Box {index} holds a running chain")
+    filler = plan["filler"]
+    seed_root = filler["seed_root_template"].format(j=index)
+    env = dict(BASE_ENV)
+    env.update(plan.get("env", {}))
+    env.update({"W5_FILLER_SEED_ROOT": seed_root, "W5_BOX_SLOT": str(index)})
+    stop_path, mark = state_root / f"box{index}.fill.stop", state_root / f"box{index}.fill.json"
+    stop_path.unlink(missing_ok=True)
+    write_json_atomic(mark, {"pid": os.getpid(), "unix": time.time(), "empty_since": empty_since}, durable=True)
+    stop = {"flag": False}
+    signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("flag", True))
+
+    def open_outage(reason: str, **extra) -> None:
+        with node.locked():
+            records, torn = node.read()
+            if index not in NodeLog.state(records, torn)["open_outages"]:
+                node.append(dict({"event": "outage-start", "id": f"fill{index}/{time.time_ns()}", "box_slot": index,
+                                  "chain": None, "reason": reason, "affected": node_chains(state_root)}, **extra))
+        enforce_node(plan, node, "fill-outage")
+
+    def close_outage(how: str, **extra) -> None:
+        with node.locked():
+            records, torn = node.read()
+            outage = NodeLog.state(records, torn)["open_outages"].get(index)
+            if outage is not None:
+                node.append(dict({"event": "restored", "outage_id": outage["id"], "box_slot": index, "chain": None,
+                                  "how": how}, **extra))
+        enforce_node(plan, node, how)
+
+    def clear(pid: int | None) -> None:
+        if filler_cg.exists():
+            filler_cg.kill()
+            require(filler_cg.wait_empty(SETTLE_SECONDS), f"Box {index}: the filler did not die")
+            if pid is not None:
+                try:
+                    os.waitpid(pid, 0)
+                except ChildProcessError:
+                    pass
+            filler_cg.rmdir()
+
+    open_outage("ended box: waiting for the frozen filler", empty_since=empty_since)
+    pid, seq, failures, faulted, ended = None, 0, 0, False, False
+    try:
+        while not stop["flag"]:
+            if stop_path.exists():
+                ended = True
+                break
+            if pid is not None:
+                done, status = os.waitpid(pid, os.WNOHANG)
+                if done == pid:
+                    pid = None
+                    open_outage("the box filler exited", exit=os.waitstatus_to_exitcode(status))
+            if pid is None and not faulted:
+                clear(None)
+                make_leaf(box, "filler", int(filler["memory_max_bytes"]))
+                pid = spawn_into(filler_cg, filler_argv(filler, seed_root, index, seq), env,
+                                 state_root / f"box{index}.fill" / f"filler-{seq}.log")
+                seq += 1
+                verification, pid = verify_filler(filler_cg, pid, slot["cpus"])
+                if verification["ok"]:
+                    failures = 0
+                    close_outage("fill-verified", verification=verification)
+                else:
+                    failures += 1
+                    clear(pid)
+                    pid = None
+                    if failures >= FILLER_RESTARTS:
+                        faulted = True
+                        with node.locked():
+                            records, torn = node.read()
+                            outage = NodeLog.state(records, torn)["open_outages"].get(index)
+                            node.append({"event": "fault", "outage_id": outage and outage["id"], "box_slot": index,
+                                         "chain": None, "attempts": failures, "affected": node_chains(state_root),
+                                         "meaning": "the ended box holds no verified filler; the node's chains stay "
+                                                    "frozen"})
+            enforce_node(plan, node, "fill")  # escalation of an outage left open
+            time.sleep(FILL_POLL_SECONDS)
+    finally:
+        clear(pid)
+        if ended:  # every measured chain has ended: nothing waits on this box any more
+            close_outage("fill-stopped")
+        stop_path.unlink(missing_ok=True)
+        mark.unlink(missing_ok=True)
+        lock.close()
+    return 0
+
+
 # ---------------------------------------------------------------- commands
 
 def guarded_supervisor(args) -> Supervisor:
@@ -1227,6 +1344,10 @@ def main(argv=None) -> int:
         p.add_argument("--reason", required=True)
     p = sub.add_parser("occupancy")
     p.add_argument("--plan", required=True)
+    p = sub.add_parser("fill")
+    p.add_argument("--plan", required=True)
+    p.add_argument("--slot", type=int, required=True)
+    p.add_argument("--empty-since", type=float, default=None)
     for name in ("pause", "resume", "kill", "refill", "ledger", "verify-ledger"):
         p = sub.add_parser(name)
         p.add_argument("--plan", required=True)
@@ -1249,6 +1370,20 @@ def main(argv=None) -> int:
             return 0
         if args.command == "run":
             return guarded_supervisor(args).run()
+        if args.command == "fill":
+            require(sys.platform.startswith("linux"), "The W5 launcher runs on Linux only")
+            plan, _ = load_plan(args.plan)
+            frozen = plan["layout"]
+            layout = compute_layout(read_topology(), frozen["cores_per_box"], frozen["offbox_cores_per_domain"],
+                                    len(frozen["boxes"]))
+            require(host_class() == plan["host_class"], "Host class differs from the plan's")
+            require({k: frozen.get(k) for k in LAYOUT_KEYS} == {k: layout[k] for k in LAYOUT_KEYS},
+                    "The plan's box layout differs from the layout detected on this host")
+            require(0 <= args.slot < len(layout["boxes"]), "Box slot is not in the layout")
+            filler = plan["filler"]
+            check_launch(filler, filler_argv(filler, filler["seed_root_template"].format(j=args.slot), args.slot, 0),
+                         "filler")
+            return fill_box(plan, args.slot, layout, args.empty_since)
         if args.command == "pause":  # --now: freeze at once; else an intent the trainer takes at a boundary
             return request(args, "pause.now" if args.now else "pause.intent")
         if args.command in ("resume", "kill", "refill"):

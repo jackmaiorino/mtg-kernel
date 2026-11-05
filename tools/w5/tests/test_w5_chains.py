@@ -94,9 +94,9 @@ class Node:
             doc['stop_at_usec'] = stop
         return jwrite(state / 'ledger-source.json', doc)
 
-    def guard(self, ok=True, segments=10**6):
+    def guard(self, ok=True, ceilings=None):
         jwrite(self.root / 'GUARD.json', {'ok': ok, 'unix': time.time(), 'used_bytes': 0, 'cap_bytes': 1,
-                                          'id': time.time_ns(), 'segments_per_chain': segments})
+                                          'ceilings': ceilings or {'c1': 10**6, 'x1': 10**6}})
 
     def ledger(self, name, *events):
         led = w5box.Ledger(self.root / 'state' / name / 'ledger.jsonl')
@@ -159,10 +159,7 @@ class ChainTests(unittest.TestCase):
         with self.assertRaisesRegex(chains.Stop, 'R_nom is frozen'):
             self.node.stage0(r_nom_usec=200)
         _, plan = self.node.stage0(r_nom_usec=100)
-        self.assertEqual(sorted(n for n, c in plan['chains'].items() if c.get('fill_for')), ['fill0', 'fill1'])
-        box = json.loads(Path(plan['arms']['F']['w5box_plan']['path']).read_text())
-        self.assertEqual(box['chains']['fill1']['seed_root'], 'w5/filler1')
-        self.assertIn('f2', box['chains'])
+        self.assertEqual(json.loads(Path(plan['chains']['c1']['manifest']).read_text())['r_nom_usec'], 100)
 
     def test_stage0_unpaired_chains_share_a_seed_root(self):
         _, plan = self.node.plan('0', {f'tc{k}': {'arm': 'C', 'slot': k, 'seed_root': 'w5/q-throughput'}
@@ -304,7 +301,7 @@ class ChainTests(unittest.TestCase):
 
     def test_a_guard_verdict_admits_a_bounded_number_of_segments(self):
         _, plan = self.node.stage0(c_wall=600.0)
-        self.node.guard(segments=2)
+        self.node.guard(ceilings={'c1': 2})
         with mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
             self.assertEqual(self.node.drive(plan, 'c1'), chains.EXIT_ROOM)
         self.assertEqual(len(json.loads(Path(plan['chains']['c1']['manifest']).read_text())['segments']), 2)
@@ -456,32 +453,26 @@ class ChainTests(unittest.TestCase):
 
     def test_an_ended_chains_box_holds_the_filler(self):
         path, plan = self.node.stage0()
-        chains.write_once(self.node.root / 'chains' / 'c1' / 'END.json', {'reason': 'c-wall', 'unix': time.time()})
+        root = self.node.root
+        chains.write_once(root / 'chains' / 'c1' / 'END.json', {'reason': 'c-wall', 'unix': time.time()})
         self.node.ledger('c1', 'open', 'close')
         self.node.ledger('x1', 'open')
-        events, outages = [], {}
-        with mock.patch.object(chains.subprocess, 'Popen') as popen, contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.object(chains, 'node_outages', lambda plan: dict(outages)), \
-                mock.patch.object(chains, 'node_event', lambda plan, record, reason: events.append(record)):
-            self.assertEqual(chains.occupancy(plan, path, self.node.root),
-                             {'started': ['fill0'], 'killed': [], 'outages': [0]})
-            self.assertEqual((events[0]['event'], events[0]['box_slot'], events[0]['chain']),
-                             ('outage-start', 0, 'fill0'))
-            self.assertIsNotNone(events[0]['empty_since'])
+        with mock.patch.object(chains.subprocess, 'Popen') as popen, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.occupancy(plan, root), {'started': [0], 'stopped': [], 'killed': []})
             cmd = popen.call_args[0][0]
-            self.assertEqual(cmd[2:6], ['run', '--plan', str(path), '--chain'])
-            self.assertEqual(cmd[6:8], ['fill0', '--qualification'])
-            outages[0] = dict(events[0], source='w5-chains')
-            # Starting: no second outage and no second start.
-            self.assertEqual(chains.occupancy(plan, path, self.node.root), {'started': [], 'killed': [],
-                                                                            'outages': []})
-            # Every measured chain ended and closed: the fillers go and the outage closes.
-            chains.write_once(self.node.root / 'chains' / 'x1' / 'END.json', {'reason': 'x', 'unix': time.time()})
+            self.assertEqual(cmd[1:7], [str(chains.HERE / 'w5box.py'), 'fill', '--plan',
+                                        plan['arms']['C']['w5box_plan']['path'], '--slot', '0'])
+            self.assertEqual(cmd[7], '--empty-since')
+            self.assertEqual(chains.occupancy(plan, root)['started'], [])  # starting
+            # Every measured chain ended and closed: the fill stops and the F chains go.
+            (root / 'state' / 'box0.fill.json').write_text(json.dumps({'pid': 1, 'unix': time.time()}))
+            chains.write_once(root / 'chains' / 'x1' / 'END.json', {'reason': 'x', 'unix': time.time()})
             self.node.ledger('x1', 'close')
-            self.node.ledger('fill0', 'open')
-            self.assertEqual(chains.occupancy(plan, path, self.node.root)['killed'], ['fill0'])
-            self.assertEqual((events[-1]['event'], events[-1]['outage_id']), ('restored', events[0]['id']))
-        self.assertTrue((self.node.root / 'state' / 'fill0' / 'control' / 'kill.request').exists())
+            self.node.ledger('f2', 'open')
+            with mock.patch.object(chains, 'fill_running', lambda root, slot: slot == 0):
+                self.assertEqual(chains.occupancy(plan, root), {'started': [], 'stopped': [0], 'killed': ['f2']})
+        self.assertTrue((root / 'state' / 'box0.fill.stop').exists())
+        self.assertTrue((root / 'state' / 'f2' / 'control' / 'kill.request').exists())
 
     def test_guard_reservation(self):
         _, plan = self.node.stage0()

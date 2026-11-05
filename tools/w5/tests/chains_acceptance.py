@@ -135,8 +135,9 @@ def main():
         pair_a = root / 'pairs' / 'c1--x1' / 'PAIR.json'
         wait_for(lambda: pair_a.exists() and json.loads(pair_a.read_text()).get('done'), 300, 'pair A')
         codes_a = {'c1': c1.wait(timeout=120), 'x1': x1.wait(timeout=120)}
-        fills = ('fill0', 'fill1')
-        wait_for(lambda: not any(chains.live(root, f) for f in fills), 120, 'the fillers of pair A to stop')
+        def fills_running():
+            return [k for k in range(2) if (root / 'state' / f'box{k}.fill.json').exists()]
+        wait_for(lambda: not fills_running(), 120, 'the fills of pair A to stop')
         supervise.terminate()
         supervise.wait(timeout=60)
         supervise = None
@@ -183,24 +184,22 @@ def main():
         pair_b = root / 'pairs' / 'c2--x2' / 'PAIR.json'
         wait_for(lambda: pair_b.exists() and json.loads(pair_b.read_text()).get('done'), 300, 'pair B')
         codes_b['x2'] = x2.wait(timeout=120)
-        wait_for(lambda: not any(chains.live(root, f) for f in fills), 120, 'the fillers of pair B to stop')
+        wait_for(lambda: not fills_running(), 120, 'the fills of pair B to stop')
         pb = json.loads(pair_b.read_text())
         log_b = [json.loads(line) for line in (root / 'LOG.jsonl').read_text().splitlines()]
         fill_starts = [e for e in log_b if e.get('event') == 'fill-start' and e.get('ended') == 'c2']
-        fill0_path = root / 'state' / 'fill0' / 'ledger.jsonl'
-        fill0 = w5box.Ledger(fill0_path).records() if fill0_path.exists() else []
-        fill0_opens = [e['unix'] for e in fill0 if e['event'] == 'open']
         node_log = w5box.NodeLog(root / 'state').read()[0]
-        fill_outages = [e for e in node_log if e['event'] == 'outage-start' and e.get('source') == 'w5-chains'
-                        and e['chain'] == 'fill0']
+        fill_outages = [e for e in node_log if e['event'] == 'outage-start' and e['id'].startswith('fill0/')
+                        and e['unix'] >= fill_starts[0]['unix'] - 1] if fill_starts else []
         restored = {e['outage_id']: e for e in node_log if e['event'] == 'restored'}
+        verified = [restored[o['id']] for o in fill_outages if restored.get(o['id'], {}).get('how') == 'fill-verified']
         r2 = records(root, 'c2')[-1]['ledger_usec']
         x2_rec = records(root, 'x2')
         x2_ledger = w5box.Ledger(root / 'state' / 'x2' / 'ledger.jsonl').records()
         resumes = [e for e in x2_ledger if e['event'] == 'resume']
         source = json.loads((root / 'state' / 'x2' / 'ledger-source.json').read_text())
         receipt['pair_b'] = {'pair': pb, 'exits': codes_b, 'r_usec': r2, 'x_resumes': resumes,
-                             'fill_starts': fill_starts, 'fill0_opens': fill0_opens, 'fill_outages': fill_outages,
+                             'fill_starts': fill_starts, 'fill_outages': fill_outages, 'fill_verified': verified,
                              'x_end': end(root, 'x2'), 'ledger_source': source}
         checks.update({
             'b_resumed_once_with_stop_at_r': len(resumes) == 1 and resumes[0]['payload'].get('stop_at_usec') == r2
@@ -208,10 +207,10 @@ def main():
             'b_x_stopped_at_r': end(root, 'x2')['reason'] == 'x-stop-at' and codes_b['x2'] == 0 and
             x2_rec[-1]['ledger_usec'] >= r2 and (len(x2_rec) == 1 or x2_rec[-2]['ledger_usec'] < r2),
             'b_matched': pb['label'] == 'matched' and pb['done'] and pb['endpoints']['x2'] == x2_rec[-1]['boundary'],
-            'b_ended_c_box_refilled_while_x_ran': bool(fill_starts) and bool(fill0_opens) and
-            max(fill0_opens) < end(root, 'x2')['unix'],
-            'b_empty_box_was_an_outage_until_the_filler_joined': bool(fill_outages) and all(
-                restored.get(o['id'], {}).get('how') == 'chain-restart' for o in fill_outages),
+            'b_ended_box_was_an_outage_until_its_filler_was_verified': bool(fill_outages) and bool(verified) and
+            fill_outages[0].get('empty_since') is not None and verified[0]['unix'] < end(root, 'x2')['unix'],
+            'b_fill_stopped_after_the_stage': not (root / 'state' / 'box0.fill.json').exists() and
+            not (cgroup_root / f'box{lay["boxes"][0]["slot"]}' / 'filler').exists(),
         })
         receipt['checks'] = checks
         receipt['pass'] = all(checks.values())
