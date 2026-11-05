@@ -213,6 +213,16 @@ impl ProjectionV1 {
             .find(|s| s.cover_gen == g && g < s.start_gen)
             .map(|s| s.start_item)
     }
+    /// Amendment 43.8: the stream item at which V saw `id` move from a span
+    /// into generation `g` (V tracked it up to that move).
+    pub(crate) fn entered_seen(&self, id: ObjectId, g: u32) -> Option<usize> {
+        let o = self.objects.get(id.0 as usize)?;
+        o.spans
+            .iter()
+            .filter_map(|s| s.end)
+            .find(|e| e.entered && e.last_gen == g)
+            .map(|e| e.item)
+    }
     pub(crate) fn tracked(&self, id: ObjectId) -> bool {
         self.objects.get(id.0 as usize).is_some_and(|o| o.tracked)
     }

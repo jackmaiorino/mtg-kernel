@@ -523,8 +523,8 @@ fn tracked_order(
 /// it). For an epoch V did not track: the object's own cast receipt, or a
 /// reference inside an item the object activated from the hand and paid
 /// with itself, is a record its departure wrote, bounded by that departure
-/// when V saw it (where V's unbroken tracking after it began); every other
-/// such epoch is bounded by game start (which hidden copy it names, and
+/// when V saw it; a paid-cost record, by the payment's move into the epoch
+/// when V saw it; every other such epoch is bounded by game start (which hidden copy it names, and
 /// when that copy entered the hand, is not V's information). With no
 /// epoch: the stack item it sits in bounds it, from the span at which V
 /// tracked the item's source at the epoch the item records (or the source's
@@ -584,10 +584,18 @@ pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usiz
             continue;
         }
         let receipt = r.cast_receipt || r.item_self_paid == Some((r.object, g));
-        let b = receipt
-            .then(|| projection.left_seen(r.object, g))
-            .flatten()
-            .unwrap_or(0);
+        let b = if receipt {
+            projection.left_seen(r.object, g)
+        } else if r.paid_cost {
+            // A paid-cost record stores the epoch the payment moved its
+            // object into: when V saw that move (a permanent V followed,
+            // returned to the hand as a cost), the record is the move's own,
+            // bounded by it; a later departure of the name still counts.
+            projection.entered_seen(r.object, g)
+        } else {
+            None
+        }
+        .unwrap_or(0);
         bound = Some(bound.map_or(b, |x: usize| x.min(b)));
     }
     bound
