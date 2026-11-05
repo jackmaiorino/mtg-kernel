@@ -731,6 +731,9 @@ impl HarnessSurfaceV2 {
     /// The id-free throttle and mana-activity context the W1 export carries
     /// (`infoset_v1`); None while a reshape or exemption that names objects
     /// is active.
+    // Amendment 43.9: the payload path reads the records directly; tests
+    // and fixture imports still use the plain context.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn infoset_context_v1(&self) -> Option<HarnessSurfaceScalarsV1> {
         if self.blockers.is_some()
             || self.discard.is_some()

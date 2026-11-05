@@ -800,6 +800,9 @@ impl PolicySurfaceV5 {
 
     /// None while the surface holds object-naming progress (a combat scan,
     /// a blocker reshape, a Hunter trigger order).
+    // Amendment 43.9: the payload path reads the records directly; tests
+    // and fixture imports still use the plain context.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn infoset_context_v1(&self) -> Option<SurfaceContextV1> {
         if self.scan.is_some() || self.hunter_order_v45.is_some() {
             return None;
