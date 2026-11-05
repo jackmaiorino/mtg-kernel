@@ -3,7 +3,8 @@
 Through the real tools with the stand-in trainer (fake_trainer.py, which burns CPU and reads the real chain ledger
 from the chain cgroup's cpu.stat) in two one-core boxes:
 - `chains.py throughput` for C and for X8 of a Stage 0 plan: a serial phase (one box) and a full-node phase (both
-  boxes), each chain through `chains.py run` and `w5box.py run` in qualification mode, stopped at N updates;
+  boxes), each chain through `chains.py run` and `w5box.py run` in qualification mode, every box ended together
+  once each has completed N updates;
 - the records pass w5box's guard: the plan, planned again with them, launches without a qualification label
   (`guarded_supervisor` builds the supervisor), and a record with one changed after-state hash is refused;
 - `chains.py stage0-exit` reports utilization, R_nom and days to R_nom from the two records;
@@ -118,8 +119,9 @@ def main():
             'unqualified_launch_refused': 'throughput record' in receipt['unqualified_launch'].get('refused', ''),
             'both_records_written': set(records) == {'C', 'X8'},
             'serial_then_full_node': all([p['concurrent_boxes'] for p in ps] == [1, 2] for ps in phases.values()),
-            'every_box_stopped_cleanly': all(set(p['exits'].values()) == {chains.EXIT_STOP}
-                                             for ps in phases.values() for p in ps),
+            # The phase ends every box at once: a STOP at a segment boundary (5) or the w5box kill (128 + 9).
+            'every_box_ended_with_its_phase': all(set(p['exits'].values()) <= {chains.EXIT_STOP, 137}
+                                                  for ps in phases.values() for p in ps),
             'identical_states_in_every_box': all(
                 len({json.dumps(b['identity'], sort_keys=True) for p in ps for b in p['boxes']}) == 1
                 for ps in phases.values()),

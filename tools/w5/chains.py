@@ -101,7 +101,9 @@ Stage 0 plan derived from the plan's own inputs, so the arm file, filler, enviro
 specification are byte-identical and the phase binds what the plan launches (checked: equal throughput bindings).
 Its chains (`<label>-<arm>-p<count>-s<slot>`, slots 0 to count - 1, all on one seed root, default
 `w5/throughput`) run fresh through `chains.py run` in qualification mode, under this command's own supervise
-cycles; each stops at its first N updates (a chain STOP file once the segment ending at N has started).
+cycles without fills; the node runs whole until every box has completed N updates (so each box's window has every
+other box busy), then every chain ends at once (STOP files, then w5box kills: a chain ended alone would leave a
+handoff outage freezing the rest), and a chain that exits short of N fails the phase.
 Per box: updates N, the ledger at boundary N (in-box CPU), the in-box wall from the instance's start to boundary
 N less node-frozen intervals (a phase's first chains start held until every box is occupied), and identity rows
 (the after-state hash of every boundary 1 to N), which must be equal in every box of every phase. The record also
@@ -1629,7 +1631,7 @@ def occupancy(plan, root):
     return out
 
 
-def cycle(plan, plan_path, now=None):
+def cycle(plan, plan_path, now=None, fills=True):
     now = time.time() if now is None else now
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
@@ -1699,7 +1701,7 @@ def cycle(plan, plan_path, now=None):
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
     report['kills'] = enforce_ends(plan, root)
-    report['fills'] = occupancy(plan, root)
+    report['fills'] = occupancy(plan, root) if fills else None
     report['purged'] = purge_hold(root, plan['hold_days'], now)
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
@@ -1993,40 +1995,62 @@ def stop_chains(plan, names):
             p.write_text('throughput window complete\n')
 
 
+def reached(plan, name, updates):
+    """The chain has completed update N - 1 (boundary N): its receipt exists (N is whole segments)."""
+    length = plan['arms'][plan['chains'][name]['arm']]['segment_updates']
+    return (chain_dir(plan['root'], name) / f'seg-{updates // length - 1:05d}' / 'iterations' /
+            f'{length - 1:06d}' / 'complete.json').exists()
+
+
+def end_phase(plan, procs, poll):
+    """Every chain of the phase goes at once: STOP files (no new segment, no rerun), then w5box kills. A chain
+    stopped alone would leave its box a handoff outage that freezes the rest of the node. Returns the chains still
+    running after the grace."""
+    stop_chains(plan, procs)
+    for n, p in procs.items():
+        if p.poll() is None and live(plan['root'], n):
+            try:
+                request(plan, n, 'kill')
+            except Stop as exc:
+                log(plan['root'], chain=n, event='throughput-kill-failed', reason=str(exc))
+    deadline = time.monotonic() + THROUGHPUT_STOP_GRACE
+    for p in procs.values():
+        while p.poll() is None and time.monotonic() < deadline:
+            time.sleep(poll)
+    return sorted(n for n, p in procs.items() if p.poll() is None)
+
+
 def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=launch_phase, poll=THROUGHPUT_POLL):
-    """One phase: a guard verdict, the launch hold, every chain started, each stopped once the segment that ends at
-    `updates` has started, supervise cycles throughout; then each box's measurement."""
+    """One phase: a guard verdict, the launch hold and every chain started; the node runs whole until every box has
+    completed N updates (so each box's window has every other box busy), then all chains end together. Supervise
+    cycles run throughout without fills (a qualification box holds no filler). A chain that exits short of N fails
+    the phase."""
     names = sorted(plan['chains'])
-    length = plan['arms'][plan['chains'][names[0]]['arm']]['segment_updates']
-    cycle(plan, plan_path)  # a guard verdict and admission ceilings before any driver starts
+    cycle(plan, plan_path, fills=False)  # a guard verdict and admission ceilings before any driver starts
     launcher(plan_path)
-    procs = {}
-    peaks, node, stopped_at, last = {}, {}, set(), time.monotonic()
+    procs, peaks, node, short, last = {}, {}, {}, None, time.monotonic()
     try:
         for n in names:
             procs[n] = spawn(plan_path, n, max_wall)
-        while any(p.poll() is None for p in procs.values()):
-            for n in names:  # the driver writes a segment's config after its STOP check for that segment
-                if n not in stopped_at and (chain_dir(plan['root'], n) / 'segments' /
-                                            f'seg-{updates // length - 1:05d}.json').exists():
-                    stop_chains(plan, [n])
-                    stopped_at.add(n)
+        while True:
+            done = {n for n in names if reached(plan, n, updates)}
+            if len(done) == len(names):
+                break
+            gone = sorted(n for n in names if n not in done and procs[n].poll() is not None)
+            if gone:
+                short = {n: procs[n].returncode for n in gone}
+                break
             sample_memory(plan, peaks, node)
             if time.monotonic() - last >= THROUGHPUT_CYCLE:
-                cycle(plan, plan_path)
+                cycle(plan, plan_path, fills=False)
                 last = time.monotonic()
             time.sleep(poll)
     finally:
-        stop_chains(plan, names)
-        deadline = time.monotonic() + THROUGHPUT_STOP_GRACE
-        for n, p in procs.items():
-            while p.poll() is None and time.monotonic() < deadline:
-                time.sleep(poll)
-            if p.poll() is None:
-                if live(plan['root'], n):
-                    request(plan, n, 'kill')
-                p.wait()
+        running = end_phase(plan, procs, poll)
     exits = {n: p.returncode for n, p in procs.items()}
+    if short:
+        raise Stop(f'{sorted(short)} exited {short} before {updates} updates')
+    require(not running, f'{running} did not end within {THROUGHPUT_STOP_GRACE:g} s of the kill')
     boxes = [box_measurement(plan, n, updates, box_threads(plan, plan['chains'][n]['slot']), peaks.get(n))
              for n in names]
     return {'concurrent_boxes': len(names), 'label': plan['label'], 'plan': pin(plan_path), 'exits': exits,

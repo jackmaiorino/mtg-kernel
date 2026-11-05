@@ -39,6 +39,7 @@ def stand_in_spawn(node):
         led.append({'event': 'open', 'instance': 0, 'base_usec': 0, 'cgroup': 'x', 'cgroup_inode': 0,
                     'manifest_sha256': '0'})
         led.append({'event': 'start', 'instance': 0, 'started_frozen': False})
+        (node.root / 'state' / name / 'control').mkdir(parents=True, exist_ok=True)  # w5box kill requests land here
         return subprocess.Popen([sys.executable, str(HERE.parent / 'chains.py'), '_drive', '--arm-file',
                                  plan['arms'][c['arm']]['file']['path'], '--chain', name, '--seed-root',
                                  c['seed_root'], '--state', str(node.root / 'state' / name), '--ledger-source',
@@ -67,7 +68,9 @@ class ThroughputTests(unittest.TestCase):
         self.addCleanup(env.stop)
         # No w5box supervisors here: the stand-in ledgers are open without one, which is not a dead supervisor.
         # The node log's lock is POSIX: closing the phases' handoff outages runs in throughput_acceptance.py.
-        for name, value in (('recover_unsupervised', lambda plan, root: []), ('close_handoffs', lambda plan, root: [])):
+        # Stand-in drivers outrun the guard's per-verdict admissions: a wide ceiling keeps them from its 30 s poll.
+        for name, value in (('recover_unsupervised', lambda plan, root: []), ('close_handoffs', lambda plan, root: []),
+                            ('GUARD_SEGMENTS', 10**6)):
             patch = mock.patch.object(chains, name, value)
             patch.start()
             self.addCleanup(patch.stop)
@@ -118,12 +121,17 @@ class ThroughputTests(unittest.TestCase):
         self.assertTrue(all(b['seconds'] > 0 and b['in_box_utilization'] > 0 for b in boxes))
         self.assertEqual(record['qualification']['box_threads'], 1)
         self.assertEqual(set(record['phases'][-1]['exits'].values()), {chains.EXIT_STOP})
-        # Each chain stopped at the segment that ends at N; the passing record removed the segment trees.
+        # Every chain ran at least to N, ended with the phase (STOP, and a w5box kill request), and the passing
+        # record removed the segment trees.
         for phase in record['phases']:
             for name in phase['exits']:
-                man = json.loads((self.node.root / 'chains' / name / 'chain.json').read_text())
-                self.assertEqual(len(man['segments']), 2)
-                self.assertFalse(list((self.node.root / 'chains' / name).glob('seg-*')))
+                cdir = self.node.root / 'chains' / name
+                man = json.loads((cdir / 'chain.json').read_text())
+                self.assertGreaterEqual(len(man['segments']), 2)
+                self.assertTrue((cdir / 'STOP').exists())
+                self.assertTrue((self.node.root / 'state' / name / 'control' / 'kill.request').exists() or
+                                phase['exits'][name] == chains.EXIT_STOP)
+                self.assertFalse(list(cdir.glob('seg-*')))
         # The plan, planned again with the record, binds it: w5box's guard rule accepts it.
         inputs = json.loads(Path(plan['inputs']['path']).read_text())
         inputs['arms']['C']['throughput'] = str(out)
@@ -178,7 +186,7 @@ class ThroughputTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '5'}):
             passed, record, out = self.run_throughput(path, 'C', 'tn', 8)
         self.assertFalse(passed)
-        self.assertIn('phase tn-c-p1: tn-c-p1-s0 completed 5 of 8 updates', record['why'])
+        self.assertIn("phase tn-c-p1: ['tn-c-p1-s0'] exited {'tn-c-p1-s0': 8} before 8 updates", record['why'])
         self.assertEqual(record['phases'], [])
         self.assertTrue(Path(f'{out}.failed.json').exists())
         later = json.loads((self.node.root / 'chains' / 'tn-c-p4-s0' / 'chain.json').read_text())
