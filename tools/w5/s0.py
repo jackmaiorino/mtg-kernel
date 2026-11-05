@@ -255,17 +255,46 @@ def frames_path(stem) -> Path:
     return Path(f"{stem}.frames.npy")
 
 
+def chunk_lock(stem):
+    """An exclusive OS lock on STEM.lock, or None while another process holds it. The OS releases it when the
+    holder exits, so a recorder or packer left running by a killed driver keeps its chunk locked."""
+    f = open(f"{stem}.lock", "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
 def pack_chunk(stem, level: int = ZSTD_LEVEL) -> dict:
     """Packs a finished chunk's tensor file record by record (STORE_CODEC): STEM.binz holds one zstd frame per
     record in file order, STEM.frames.npy the table (raw offset, raw length, packed offset, packed length). The
     packed file is read back and every frame decoded; the decoded bytes must hash to the raw file's SHA-256 before
     the receipt (STEM.pack.json) is written and the raw file removed. Rerunning on a packed chunk only removes a
-    raw file left behind, after checking it against the receipt."""
+    raw file left behind, after checking the packed files against the receipt and the raw file against its decoded
+    hash. The packer holds the chunk lock throughout, so a resumed recording cannot set the chunk aside under it."""
     stem = Path(stem)
+    lock = chunk_lock(stem)
+    require(lock is not None, f"{stem.name} is locked by another recorder or packer")
+    try:
+        return _pack_locked(stem, level)
+    finally:
+        lock.close()
+
+
+def _pack_locked(stem: Path, level: int) -> dict:
     raw, packed, frames_file, receipt_path = (Path(f"{stem}.bin"), Path(f"{stem}.binz"), frames_path(stem),
                                               Path(f"{stem}.pack.json"))
     if receipt_path.exists():
         receipt = read_json(receipt_path)
+        check_pack(stem, receipt.get("codec"))   # the packed outputs exist and match their pins
         if raw.exists():
             require(sha256_file(raw) == receipt["decoded"]["sha256"], f"{raw.name} differs from its pack receipt")
             raw.unlink()
@@ -316,7 +345,7 @@ def check_pack(stem, codec: dict) -> tuple[dict, np.ndarray]:
     receipt_path = Path(f"{stem}.pack.json")
     require(receipt_path.exists(), f"{Path(stem).name} has not been packed")
     receipt = read_json(receipt_path)
-    require(receipt.get("schema") == PACK_SCHEMA and receipt["codec"] == codec,
+    require(receipt.get("schema") == PACK_SCHEMA and receipt.get("codec") == codec,
             f"{Path(stem).name}: packed with another codec")
     for key in ("packed", "frames"):
         path = Path(f"{stem}.binz") if key == "packed" else frames_path(stem)
@@ -359,6 +388,7 @@ class PackedChunk:
 
     def __init__(self, path, table: np.ndarray):
         self.f, self.table = open(path, "rb"), table
+        self.total = int(table[:, 1].sum())
         self.decompress = zstd_api()[3]
 
     def close(self):
@@ -366,6 +396,10 @@ class PackedChunk:
 
     def read(self, offset: int, length: int) -> bytes:
         i = int(np.searchsorted(self.table[:, 0], offset))
+        if length == 0:   # a game with no recorded decision: an empty block at a record boundary or the end
+            require(offset == self.total or (i < len(self.table) and int(self.table[i, 0]) == offset),
+                    f"offset {offset} is not a record boundary")
+            return b""
         require(i < len(self.table) and int(self.table[i, 0]) == offset, f"offset {offset} is not a record start")
         out, end = [], offset + length
         while offset < end:
@@ -504,12 +538,18 @@ def set_aside(stem: Path) -> None:
 
 
 def start_chunk(plan: dict, binary: Path, stem: Path, first: int, games: int):
+    """Starts the chunk's recorder. A packed store's chunk is locked first (held by this driver while it records,
+    then by the packer), so a packer left running by a killed driver stops the resume instead of racing it."""
     check_parent(plan)
-    set_aside(stem)
     stem.parent.mkdir(parents=True, exist_ok=True)
+    lock = None
+    if plan.get("store_codec") is not None:
+        lock = chunk_lock(stem)
+        require(lock is not None, f"{stem.name} is locked by a recorder or packer still running; stop it first")
+    set_aside(stem)
     cmd, env = chunk_command(plan, binary, stem, first, games)
     log = open(str(stem) + ".log", "w", encoding="utf-8")
-    return subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT), log, time.time()
+    return subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT), log, time.time(), lock
 
 
 def close_census(proc, log, stem: Path, first: int, games: int) -> int:
@@ -542,9 +582,9 @@ def run_chunks(plan: dict, binary: Path, items: list[tuple[Path, int, int]], par
     while pending or running:
         while pending and len(running) < parallel:
             stem, first, games = pending.pop(0)
-            proc, log, t0 = start_chunk(plan, binary, stem, first, games)
+            proc, log, t0, lock = start_chunk(plan, binary, stem, first, games)
             running.append({"proc": proc, "log": log, "stem": stem, "first": first, "games": games, "t0": t0,
-                            "phase": "record"})
+                            "phase": "record", "lock": lock})
         time.sleep(0.05)
         for job in list(running):
             if job["proc"].poll() is None:
@@ -552,6 +592,8 @@ def run_chunks(plan: dict, binary: Path, items: list[tuple[Path, int, int]], par
             stem, first, games = job["stem"], job["first"], job["games"]
             if job["phase"] == "record":
                 rc = close_census(job["proc"], job["log"], stem, first, games)
+                if job["lock"] is not None:   # the packer takes the lock over
+                    job["lock"].close()
                 if rc == 0 and codec is not None:
                     job["proc"], job["log"] = start_pack(stem, codec)
                     job["phase"] = "pack"
@@ -782,12 +824,16 @@ def verify_games(index: dict, root: Path, rows) -> int:
                 if line.strip():
                     row = json.loads(line)
                     rows_of[row["game"]] = (chunk["name"], row)
+    by_chunk = {}
     for g in wanted:
-        name, row = rows_of[g]
+        by_chunk.setdefault(rows_of[g][0], []).append(g)
+    for name, chunk_games in by_chunk.items():   # one reader (one pin check) per chunk
         reader = open_chunk(root, chunk_pins[name], codec)
         try:
-            require(sha256_bytes(reader.read(row["bin_offset"], row["bin_bytes"])) == games[g]["block_sha256"],
-                    f"game {g}: block differs from the index")
+            for g in chunk_games:
+                row = rows_of[g][1]
+                require(sha256_bytes(reader.read(row["bin_offset"], row["bin_bytes"])) == games[g]["block_sha256"],
+                        f"game {g}: block differs from the index")
         finally:
             reader.close()
     return len(wanted)

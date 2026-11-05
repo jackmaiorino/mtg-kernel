@@ -66,7 +66,8 @@ for g in range(first, first + games):
         continue
     rng = np.random.default_rng([seed % 2**32, g])
     block, rows = b"", []
-    for i in range(int(rng.integers(3, 8))):
+    empty = str(g) in os.environ.get("FAKE_EMPTY", "").split(",")
+    for i in range(0 if empty else int(rng.integers(3, 8))):
         rec = synthetic_record(rng, actor=i % 2)
         start = len(block)
         block += s0.encode_record(rec)
@@ -282,6 +283,57 @@ class RecordAndIndexTests(unittest.TestCase):
 class PackedStoreTests(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("FAKE_TRAILING", None)
+        os.environ.pop("FAKE_EMPTY", None)
+
+    def test_games_without_decisions_index_like_the_raw_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            # Chunk 0 is all empty games; chunk 1 ends with an empty game (a read at the end of the file).
+            os.environ["FAKE_EMPTY"] = ",".join(str(g) for g in [*range(16), 20, 31])
+            raw, packed = self.pair(tmp, games=32, chunk=16)
+            _, m_raw = raw.record_and_index()
+            _, m_packed = packed.record_and_index()
+            self.assertEqual(m_packed["chunks"][0]["bytes"], 0)
+            self.assertEqual((tmp / "packed" / "root" / "index.games.json").read_bytes(),
+                             (tmp / "raw" / "root" / "index.games.json").read_bytes())
+            self.assertEqual(m_packed["counts"]["decisions_indexed"], m_raw["counts"]["decisions_indexed"])
+            ix, _, root = s0.load_index(tmp / "packed" / "root" / "manifest.json")
+            self.assertEqual(s0.verify_games(ix, root, np.arange(ix["game"].size)),
+                             len(set(ix["game"].tolist())))
+
+    def test_lock_and_receipt_guard_the_raw_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            rng = np.random.default_rng(11)
+            raw = b"".join(s0.encode_record(synthetic_record(rng)) for _ in range(5))
+            stem = tmp / "c"
+            (tmp / "c.bin").write_bytes(raw)
+            held = s0.chunk_lock(stem)
+            self.assertIsNotNone(held)
+            self.assertIsNone(s0.chunk_lock(stem))
+            with self.assertRaisesRegex(s0.S0Error, "locked"):
+                s0.pack_chunk(stem)
+            held.close()
+            s0.pack_chunk(stem)
+            # A receipt whose packed outputs are gone never removes the raw file.
+            (tmp / "c.bin").write_bytes(raw)
+            (tmp / "c.binz").unlink()
+            with self.assertRaises(s0.S0Error):
+                s0.pack_chunk(stem)
+            self.assertTrue((tmp / "c.bin").exists())
+
+    def test_a_locked_chunk_stops_the_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Recorded(Path(tmp), games=32, codec=s0.STORE_CODEC)
+            store = Path(tmp) / "root" / "store"
+            store.mkdir(parents=True)
+            held = s0.chunk_lock(store / "chunk-000000")   # a packer left running by a killed driver
+            try:
+                with self.assertRaisesRegex(s0.S0Error, "still running"):
+                    s0.record(rec.plan_path, rec.fake, 1)
+            finally:
+                held.close()
+            self.assertEqual(s0.record(rec.plan_path, rec.fake, 1)["failed"], [])
 
     def pair(self, tmp: Path, games=96, chunk=32):
         """The same fake games recorded raw and packed."""
