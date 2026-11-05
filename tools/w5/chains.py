@@ -828,6 +828,8 @@ def run(a):
     root = Path(plan['root'])
     c = plan['chains'][a.chain]
     require(c['arm'] in MEASURED, f'{a.chain} is a filler box: supervise runs it through `w5box.py fill`')
+    waiting = [f['slot'] for f in plan['chains'].values() if f['arm'] == 'F' and not fill_ready(root, f['slot'])]
+    require(not waiting, f'filler boxes {waiting} hold no verified filler yet (supervise starts them)')
     require(read_end(root, a.chain) is None, f'{a.chain} has ended')
     require(not stopped(root, chain_dir(root, a.chain)), 'a STOP file is present')
     for p in plan['pairs'].values():
@@ -1218,14 +1220,17 @@ def pair_finalize(plan, plan_path, c, x, st, looks, budget):
     under = []
     if c['end']['reason'] != 'c-wall':
         under.append(f'C ended early ({c["end"]["reason"]}): R_i is the ledger at its last valid boundary')
-    if x['end']['reason'] in FAILED_ENDS:  # section 7.4: a failed (or lead-stopped) chain's last valid checkpoint
-        hit = None
+    last = x_valid[-1]['boundary'] if x_valid else 0
+    if not c_valid:  # C ended before its first update: R_i = 0, reached at X's boundary 0 (its parent)
+        x_b = 0
+    elif x['end']['reason'] in FAILED_ENDS and c['end']['reason'] == 'c-wall':
+        x_b = last  # section 7.4: a failed (or lead-stopped) chain's last valid checkpoint
         under.append(f'X ended by {x["end"]["reason"]}: its endpoint is its last valid boundary')
-    else:
-        hit = retention.first_at_or_past(x_valid, r) if c_valid else None
+    else:  # section 2.2, C failing early included: the first valid boundary at or past R_i
+        hit = retention.first_at_or_past(x_valid, r)
+        x_b = hit['boundary'] if hit else last
         if hit is None:
             under.append(f'X short of R_i ({x["end"]["reason"]})')
-    x_b = hit['boundary'] if hit else (x_valid[-1]['boundary'] if x_valid else 0)
     st.update(r_usec=r, endpoints={c['name']: c_b, x['name']: x_b},
               label='under-budget' if under else 'matched', under_budget=under)
     sels = {}
@@ -1286,6 +1291,15 @@ def closed_unix(root, name):
     path = ledger_path(root, name)
     closes = [r['unix'] for r in w5box.Ledger(path).records() if r['event'] == 'close'] if path.exists() else []
     return closes[-1] if closes else None
+
+
+def fill_ready(root, slot):
+    """A filler box holds a verified filler: its `w5box.py fill` runs and the box has no open outage (the fill
+    opens one before it takes the box and closes it only on verification)."""
+    if not fill_running(root, slot):
+        return False
+    records, torn = w5box.NodeLog(Path(root) / 'state').read()
+    return slot not in w5box.NodeLog.state(records, torn)['open_outages']
 
 
 def fill_running(root, slot):

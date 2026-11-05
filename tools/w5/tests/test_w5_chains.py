@@ -338,6 +338,9 @@ class ChainTests(unittest.TestCase):
         self.node.guard()
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '3'}):
             self.node.drive(plan, 'c1')
+        with contextlib.redirect_stderr(io.StringIO()):  # the filler box (f2, slot 2) holds no verified filler
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_REFUSED)
+        jwrite(self.node.root / 'state' / 'box2.fill.json', {'pid': 1, 'unix': time.time()})
         with mock.patch.object(chains.subprocess, 'call', return_value=w5box.EXIT_OOM) as call:
             self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_OOM)
         self.assertEqual(call.call_args[0][0][2:7], ['run', '--plan', plan['arms']['C']['w5box_plan']['path'],
@@ -502,6 +505,21 @@ class ChainTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()):
                 st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
             self.assertEqual((st['endpoints']['x1'], st['label']), (endpoint, label), reason)
+        # C ended before its first update: R_i = 0, so X's endpoint is boundary 0 (its parent).
+        c = {'name': 'c1', 'records': [], 'end': {'reason': 'chain-failure', 'last_valid_boundary': 0}}
+        x = {'name': 'x1', 'records': recs, 'end': {'reason': 'x-stop-at', 'last_valid_boundary': 3}}
+        with mock.patch.object(chains, 'select_endpoint', lambda *a: {'boundary': a[3], 'kind': 'checkpoint'}), \
+                mock.patch.object(chains, 'prune_chain', lambda *a: {}):
+            st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
+        self.assertEqual((st['r_usec'], st['endpoints'], st['label']), (0, {'c1': 0, 'x1': 0}, 'under-budget'))
+        # C failing early at R_i = 100 with X failed later: the first boundary at or past R_i.
+        c = {'name': 'c1', 'records': [{'boundary': 1, 'ledger_usec': 100}], 'end': {'reason': 'operator',
+                                                                                    'last_valid_boundary': 1}}
+        x = {'name': 'x1', 'records': recs, 'end': {'reason': 'chain-failure', 'last_valid_boundary': 3}}
+        with mock.patch.object(chains, 'select_endpoint', lambda *a: {'boundary': a[3], 'kind': 'checkpoint'}), \
+                mock.patch.object(chains, 'prune_chain', lambda *a: {}):
+            st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
+        self.assertEqual((st['endpoints']['x1'], st['label']), (2, 'under-budget'))
 
     def test_replays_in_one_cycle_share_the_headroom(self):
         _, plan = self.node.stage0()

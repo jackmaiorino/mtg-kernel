@@ -1217,12 +1217,13 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, st
                                   "affected": node_chains(state_root)}, **extra))
         enforce_node(plan, node, "fill-outage")
 
-    def close_outage(how: str, **extra) -> None:
-        """Closes this box's open outage if this stage's fill opened it."""
+    def close_outage(how: str, any_source: bool = False, **extra) -> None:
+        """Closes this box's open outage if this stage's fill opened it, or any open outage (and fault) of the box
+        once a verified filler holds it (an outage inherited from the paused-box filler included)."""
         with node.locked():
             records, torn = node.read()
             outage = NodeLog.state(records, torn)["open_outages"].get(index)
-            if outage is not None and outage.get("stop") == stop_key:
+            if outage is not None and (any_source or outage.get("stop") == stop_key):
                 node.append(dict({"event": "restored", "outage_id": outage["id"], "box_slot": index, "chain": None,
                                   "how": how}, **extra))
         enforce_node(plan, node, how)
@@ -1285,7 +1286,7 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, st
                 verification, pid = verify_filler(filler_cg, pid, slot["cpus"])
                 if verification["ok"]:
                     failures = 0
-                    close_outage("fill-verified", verification=verification)
+                    close_outage("fill-verified", any_source=True, verification=verification)
                 else:
                     failures += 1
                     clear(pid)
