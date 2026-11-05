@@ -7,7 +7,7 @@ S0 is a distillation of b512 into S. This tool covers every step except the trai
       off, the training limits, the nine-deck pool), recorded with teacher logits by `regret_census_v1
       mode=s4a-tensor-dump` (mtg-kernel#480). 100k games is the frozen size; the one retry records 2x in place
       of the first store, in its own seed namespace.
-  s0.py qualify-record --plan ROOT/plan.json --binary EXE --parallel 1,2,4 [--games 16]
+  s0.py qualify-record --plan ROOT/plan.json --binary EXE --parallel 1,2,4 [--games 64]
       the recorder's throughput check (COMPUTE-POLICY): completed games per second at each process count, on
       throwaway chunks; `record` runs a production plan only with a receipt for this binary and host.
   s0.py record --plan ROOT/plan.json --binary EXE [--parallel P] [--limit-chunks N]
@@ -359,7 +359,7 @@ def host_identity() -> dict:
             "logical_cpus": os.cpu_count()}
 
 
-def qualify_record(plan_path, binary, parallel: list[int], games: int = 16) -> dict:
+def qualify_record(plan_path, binary, parallel: list[int], games: int = 64) -> dict:
     """Completed games per second for each process count, one fresh chunk of `games` per process, on game
     indices past the plan (never in the store)."""
     plan, root = load_plan(plan_path)
@@ -895,7 +895,8 @@ def main(argv=None) -> int:
     p.add_argument("--plan", type=Path, required=True)
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--parallel", default="1,2,4")
-    p.add_argument("--games", type=int, default=16)
+    p.add_argument("--games", type=int, default=64,
+                   help="games per process; the census start-up (about 6 s) dominates smaller chunks")
     p = sub.add_parser("record")
     p.add_argument("--plan", type=Path, required=True)
     p.add_argument("--binary", type=Path, required=True)
