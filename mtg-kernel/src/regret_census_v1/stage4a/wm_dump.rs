@@ -54,7 +54,7 @@ fn seat(state: &GameState, p: usize) -> Value {
         "bf":bf,"gy":cards(&ps.graveyard),"hand_cards":cards(&ps.hand)})
 }
 
-fn facts(state: &GameState) -> Value {
+pub(super) fn facts(state: &GameState) -> Value {
     let exile: Vec<[u16; 2]> = state
         .exile
         .iter()

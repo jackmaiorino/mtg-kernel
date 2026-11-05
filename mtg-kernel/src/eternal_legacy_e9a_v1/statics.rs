@@ -39,6 +39,13 @@ pub(crate) const WUBRG: u8 = 0x1f;
 /// permanents are the chosen color in addition to their other colors." The
 /// colors every Painter's Servant whose ability applies adds, as a mask.
 pub(crate) fn painter_mask(state: &GameState) -> u8 {
+    painter_mask_after(state, None)
+}
+
+/// `painter_mask` without the Painter's Servants whose effect is earlier
+/// than a color-setting effect at timestamp `after` (Wild Mongrel), which
+/// overwrites their addition (613.7).
+pub(crate) fn painter_mask_after(state: &GameState, after: Option<u64>) -> u8 {
     if !cfg!(feature = "eternal-fixtures") {
         return 0;
     }
@@ -50,6 +57,9 @@ pub(crate) fn painter_mask(state: &GameState) -> u8 {
         for &object in &state.players[player.index()].battlefield {
             let live = state.objects.get(object);
             if live.card_def != id || !active_named(state, object, PAINTERS_SERVANT) {
+                continue;
+            }
+            if after.is_some_and(|setter| live.v4.layer_timestamp.unwrap_or(0) < setter) {
                 continue;
             }
             if let Some(color) = live.v4.chosen_color {

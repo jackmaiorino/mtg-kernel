@@ -2089,7 +2089,11 @@ fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
     // Painter's Servant adds its chosen color to every card, spell and
     // permanent (eternal wave E9a).
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_legacy_e9a_v1::statics::painter_mask(state) & card_def::mana_color_mask(color)
+    if crate::eternal_legacy_e9a_v1::statics::painter_mask_after(
+        state,
+        crate::eternal_premodern_p1a_v1::statics::color_override_timed(state, id)
+            .and_then(|(_, timestamp)| timestamp),
+    ) & card_def::mana_color_mask(color)
         != 0
     {
         return true;
@@ -21781,7 +21785,11 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
     // colors." (eternal wave E9a)
     #[cfg(feature = "eternal-fixtures")]
     {
-        let painted = crate::eternal_legacy_e9a_v1::statics::painter_mask(state);
+        // A later color-setting effect (Wild Mongrel) overwrites an earlier
+        // Painter's addition (613.7).
+        let setter = crate::eternal_premodern_p1a_v1::statics::color_override_timed(state, id)
+            .and_then(|(_, timestamp)| timestamp);
+        let painted = crate::eternal_legacy_e9a_v1::statics::painter_mask_after(state, setter);
         if painted != 0 {
             return unpainted_object_color_mask(state, id) | painted;
         }

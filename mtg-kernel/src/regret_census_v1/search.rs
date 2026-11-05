@@ -473,6 +473,15 @@ pub(super) fn game_setup(cfg: &CensusConfigV1, models: usize, game: u64) -> Game
 }
 
 pub(super) fn new_session(setup: &GameSetup) -> Result<FastActorSessionV1, String> {
+    new_session_with_limits(setup, MAX_PHYSICAL, MAX_PHYSICAL * 128)
+}
+
+/// `new_session` with explicit physical-decision and policy-step limits.
+pub(super) fn new_session_with_limits(
+    setup: &GameSetup,
+    max_physical: u64,
+    max_policy_steps: u64,
+) -> Result<FastActorSessionV1, String> {
     let decks = [
         &RUNTIME_DECKS[setup.decks[0]],
         &RUNTIME_DECKS[setup.decks[1]],
@@ -480,8 +489,8 @@ pub(super) fn new_session(setup: &GameSetup) -> Result<FastActorSessionV1, Strin
     FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         1,
         setup.seed,
-        MAX_PHYSICAL,
-        MAX_PHYSICAL * 128,
+        max_physical,
+        max_policy_steps,
         [decks[0].id.to_owned(), decks[1].id.to_owned()],
         [decks[0].card_ids.to_vec(), decks[1].card_ids.to_vec()],
         PlayerId(setup.starting),
