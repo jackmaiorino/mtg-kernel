@@ -1046,6 +1046,18 @@ fn reference_world_with(
     named_at: HandRefAtV1,
     twin: bool,
 ) -> Result<Vec<u8>, String> {
+    reference_world_to(paid_is_d, discard_d, named_at, twin, Zone::Graveyard)
+}
+
+/// As [`reference_world_with`]; the leaving copy goes to `to` (the
+/// battlefield for a ninjutsu-like public move, Sol round 8 finding 2).
+fn reference_world_to(
+    paid_is_d: bool,
+    discard_d: bool,
+    named_at: HandRefAtV1,
+    twin: bool,
+    to: Zone,
+) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let s = opponent_payment();
@@ -1095,7 +1107,7 @@ fn reference_world_with(
     assert_eq!(st.objects.get(c).zone, Zone::Hand, "C was drawn");
     mark(&st, &mut marks);
     let gone = if discard_d { d } else { c };
-    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, to));
     st.engine.pending_triggers.clear();
     let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
     if !paid_is_d {
@@ -1174,6 +1186,47 @@ fn a_reference_to_d_at_its_hand_epoch_agrees() {
     let (a, b) = (run(true), run(false));
     eprintln!("reference to D at its hand epoch: D discarded {a:?} / C discarded {b:?}");
     assert_eq!(a, b, "P agrees whichever copy was discarded");
+}
+
+/// Sol round 8 on #526 (amendment 43.7), finding 2: the ninjutsu shape. A
+/// paid-cost record names D at its epoch in the opponent's hand (as a
+/// ninjutsu record names the creature it returned); then D or the unseen C
+/// leaves the hand for the battlefield in V's sight. Before the repair the
+/// world where D left linked the record to D's new span (its cover epoch is
+/// the hand epoch), while the world where C left refused R1b. A reference at
+/// an opponent-hand epoch never links: both worlds refuse `same_name_hand`.
+#[test]
+fn a_hand_epoch_reference_and_a_ninjutsu_departure_agree() {
+    let run =
+        |d_leaves| reference_world_to(false, d_leaves, HandRefAtV1::D, false, Zone::Battlefield);
+    let (a, b) = (run(true), run(false));
+    eprintln!("ninjutsu departure: D left {a:?} / C left {b:?}");
+    assert_eq!(a, b, "P agrees whichever copy left");
+    let refused = format!(
+        "{:?}",
+        ExportErrorV1::refuse(
+            crate::infoset_v1::RefusalCodeV1::R1,
+            crate::infoset_v1::export::R1_SAME_NAME_HAND_DETAIL
+        )
+    );
+    assert_eq!(
+        a,
+        Err(refused),
+        "the hand-epoch reference refuses same_name_hand"
+    );
+    // The control: the record names D at its graveyard epoch, from before
+    // the hand (not a hand epoch); the refusal is not this rule's.
+    let before =
+        |d_leaves| reference_world_to(true, d_leaves, HandRefAtV1::D, false, Zone::Battlefield);
+    let (x, y) = (before(true), before(false));
+    eprintln!("ninjutsu control (graveyard epoch): D left {x:?} / C left {y:?}");
+    assert_eq!(x, y, "P agrees whichever copy left");
+    assert!(
+        x.as_ref()
+            .err()
+            .is_none_or(|e| !e.contains("same-name copies in the opponent's hand")),
+        "a reference outside the hand is not refused by the hand rule: {x:?}"
+    );
 }
 
 /// Sol round 3 on ruling 11, finding 2: equal-key bound D and B, unseen C;

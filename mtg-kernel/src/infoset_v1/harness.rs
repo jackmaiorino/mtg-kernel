@@ -117,13 +117,32 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
 /// through `ids` (native to canonical for the live session), bookkeeping
 /// fields dropped, and candidate lists and menu rows sorted (the wire
 /// re-sorts the engine's native-id order).
-fn ac3_view(s: &FastActorSessionV1, ids: Option<&BTreeMap<u64, u64>>) -> Option<serde_json::Value> {
+fn ac3_view(
+    s: &FastActorSessionV1,
+    ids: Option<&BTreeMap<u64, u64>>,
+    released: &[u64],
+) -> Option<serde_json::Value> {
     use super::order::canonical_rename_v1 as rename;
     let FastActorResponseV1::Decision(d) = s.current_response() else {
         return None;
     };
     let (obs, menu) = s.actor_visible_decision_v4(d).ok()?;
     let mut obs = serde_json::to_value(&obs).ok()?;
+    // Amendment 43.7 (Sol round 8, finding 3): the engine's rows still list
+    // a copy whose bound fact another copy's identified departure ended (the
+    // adapter's rule); V's view holds no fact for it.
+    if let Some(rows) = obs
+        .get_mut("known_hand_cards")
+        .and_then(|x| x.as_array_mut())
+    {
+        for side in rows.iter_mut().filter_map(|x| x.as_array_mut()) {
+            side.retain(|row| {
+                row["stable"]["arena_id"]
+                    .as_u64()
+                    .is_none_or(|n| !released.contains(&n))
+            });
+        }
+    }
     // Timestamps are re-ranked by design (6.5): compare their dense ranks.
     fn timestamps(v: &serde_json::Value, out: &mut std::collections::BTreeSet<u64>) {
         match v {
@@ -1011,14 +1030,29 @@ pub(crate) fn ac3_check(
             d.legal_action_count, e.legal_action_count
         ));
     }
-    // V's observation and menu, with viewer-local ids, are identical.
+    // V's observation and menu, with viewer-local ids, are identical. Only
+    // `C:` handles carry identity on both sides (Sol round 8, finding 3):
+    // the live side hides every untracked native, so the imported side hides
+    // its `U:` and `H:` arena indices the same way (amendment 43.7 makes the
+    // opponent's hand all `U:` occupants, known names included).
     let ids: BTreeMap<u64, u64> = export
         .tracked_natives
         .iter()
         .enumerate()
         .map(|(n, id)| (u64::from(id.0), n as u64))
         .collect();
-    if let (Some(a), Some(b)) = (ac3_view(live, Some(&ids)), ac3_view(&imported, None)) {
+    let imported_ids: BTreeMap<u64, u64> = (0..export.tracked_natives.len() as u64)
+        .map(|n| (n, n))
+        .collect();
+    let released: Vec<u64> = export
+        .released_natives
+        .iter()
+        .map(|id| u64::from(id.0))
+        .collect();
+    if let (Some(a), Some(b)) = (
+        ac3_view(live, Some(&ids), &released),
+        ac3_view(&imported, Some(&imported_ids), &[]),
+    ) {
         if a != b {
             return Err(format!(
                 "the imported view differs at {:?}",
@@ -1142,13 +1176,13 @@ pub(crate) fn f_choice(
     (out, tried)
 }
 
-/// Candidates of the current decision that cast a copy V tracks in the
+/// Candidates of the current decision that cast a copy V knows in the
 /// opponent's hand, grouped by the copy's definition: (definition, menu
-/// indices in menu order).
-pub(crate) fn tracked_hand_casts(
-    s: &FastActorSessionV1,
-    viewer: PlayerId,
-) -> Vec<(u64, Vec<usize>)> {
+/// indices in menu order). Amendment 43.7: no opponent-hand copy is tracked,
+/// so a copy V knows is one V holds a bound fact for (revealed, fetched and
+/// revealed, or returned from a public zone), the copies the F-cast family
+/// tracked before 43.7.
+pub(crate) fn known_hand_casts(s: &FastActorSessionV1, viewer: PlayerId) -> Vec<(u64, Vec<usize>)> {
     let opp = viewer.opponent();
     let state = s.game_state();
     let projection =
@@ -1168,7 +1202,10 @@ pub(crate) fn tracked_hand_casts(
         };
         let id = ObjectId(arena as u32);
         let o = state.objects.get(id);
-        if o.zone == Zone::Hand && o.owner == opp && projection.tracked(id) {
+        if o.zone == Zone::Hand
+            && o.owner == opp
+            && projection.hand_facts.iter().any(|f| f.native == Some(id))
+        {
             groups.entry(def).or_default().push(i);
         }
     }
@@ -1195,7 +1232,7 @@ fn continuation(w: &FastActorSessionV1, seed: u64, n: usize) -> Vec<Vec<u8>> {
 }
 
 /// F-cast (lead ruling 7 (b), amendment 43.4): at an opponent decision whose
-/// menu casts two copies of one card that V tracks in the opponent's hand
+/// menu casts two copies of one card that V knows in the opponent's hand
 /// (revealed, fetched and revealed, or returned from a public zone), W casts
 /// one and W' the other. V's bot-facing transcript gives the opponent's hand
 /// cards no id, so V may not be able to tell which copy left; the strict
@@ -1224,7 +1261,7 @@ pub(crate) fn f_cast(
             break;
         };
         if used < points && seat(d.acting_player) == opp {
-            for (_, group) in tracked_hand_casts(&s, viewer) {
+            for (_, group) in known_hand_casts(&s, viewer) {
                 used += 1;
                 let x = if group.contains(&a) { a } else { group[0] };
                 let Some(&y) = group.iter().find(|&&b| b != x) else {

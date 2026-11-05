@@ -777,8 +777,9 @@ pub(crate) fn spy_versus_terror(put_back: [&str; 2]) -> ScriptV1 {
 /// The Fable bounce (ruling 44; CawGates versus Faeries, off-board). V is
 /// Faeries (P1). CawGates casts Squadron Hawk and fetches the other three,
 /// then Brainstorms returning `put_back`; Faeries Snaps the battlefield Hawk
-/// back. The survivor tree is ({Hawk x3}, 1); the bounced Hawk is tracked
-/// and never counts toward it. `hawks` of the two returned cards are Hawks
+/// back. The survivor tree is ({Hawk x3}, 1); the bounced Hawk never counts
+/// toward it (amendment 43.7: it is a bound fact, exported as a known-name
+/// occupant, not a tracked copy). `hawks` of the two returned cards are Hawks
 /// (the others are untracked cards: the Hawk search shuffles the library,
 /// so the Brainstorm's draws are named by role).
 pub(crate) fn fable_bounce(hawks: usize) -> ScriptV1 {
@@ -1329,10 +1330,14 @@ fn fable_bounce_engine_fixture() {
         .rev()
         .find(|r| r.p.is_ok())
         .expect("an export while the node holds");
+    // Amendment 43.7: the bounced Hawk is no longer a tracked copy in the
+    // opponent's hand; its bound fact is a known-name occupant beside the
+    // survivor node's Hawk. Before 43.7 the bounced Hawk took a `C:` handle
+    // and only the survivor was a known name.
     assert_eq!(
         last.known,
-        vec!["Squadron Hawk".to_string()],
-        "one untracked Hawk survivor is still exported after the bounce"
+        vec!["Squadron Hawk".to_string(); 2],
+        "the bounced Hawk's fact and one untracked Hawk survivor are known names after the bounce"
     );
     assert!(reports.iter().all(|r| r.compared > 0));
 }
@@ -1448,6 +1453,11 @@ fn w_pin_engine_fixtures() {
 /// Witness bar (ruling 6): at least 5 compared decisions where L8 differs and
 /// P does not, each shown in L8's bytes to differ through the bound copies
 /// (`l8_mechanism`).
+///
+/// Amendment 43.7: P binds no copy in the opponent's hand at all (the
+/// bounced Hawk is a known name, not a `C:` copy), while L8 still binds; the
+/// history L8 links to a bound copy is a tombstone in P, so the mechanism
+/// check masks the epoch stored beside such a reference with the reference.
 #[test]
 fn l8_bound_copies_engine_fixture() {
     let (mut total, mut equal_copies, mut equal_samples) = (0u64, 0u64, 0u64);
@@ -1572,19 +1582,46 @@ fn json_differences(a: &Value, b: &Value, path: String, out: &mut Vec<(String, V
 /// differ, and every differing leaf names a bound copy on at least one side.
 /// Returns the differing leaves of (2) and a byte window at the first raw
 /// difference.
+///
+/// Amendment 43.7: P never binds a copy in the opponent's hand, so the
+/// history L8's continuity links to a bound copy (the Snap's `Targeted`
+/// event, the search) is a tombstone in the other world, and the epoch the
+/// record stores beside the reference differs with it (a linked epoch
+/// against a tombstone's 0). That epoch is part of the reference: both
+/// checks mask the epoch field paired with a reference that names a bound
+/// copy or a tombstone (the rewrite's own pairing, `generation_partner`).
 fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, String), String> {
     let (sx, sy) = (ExportSideV1::parse(x, opp), ExportSideV1::parse(y, opp));
     if sx.bound.is_empty() || sy.bound.is_empty() {
         return Err("L8 binds no Hawk".into());
     }
+    fn mask_epochs(v: &mut Value, masked: &dyn Fn(&Value) -> bool) {
+        match v {
+            Value::Object(m) => {
+                let partners: Vec<String> = m
+                    .iter()
+                    .filter(|(_, x)| masked(x))
+                    .filter_map(|(k, _)| super::rewrite::generation_partner(k, m))
+                    .collect();
+                for p in partners {
+                    m.insert(p, Value::String("epoch of a masked reference".into()));
+                }
+                m.values_mut().for_each(|x| mask_epochs(x, masked));
+            }
+            Value::Array(xs) => xs.iter_mut().for_each(|x| mask_epochs(x, masked)),
+            _ => {}
+        }
+    }
     let merged = |side: &ExportSideV1| {
-        side.named(&|l: &str| {
+        let mut v = side.named(&|l: &str| {
             if side.bound.contains(l) || l.starts_with("H:") {
                 "bound-or-tombstone".to_string()
             } else {
                 l.to_string()
             }
-        })
+        });
+        mask_epochs(&mut v, &|x| x.as_str() == Some("bound-or-tombstone"));
+        v
     };
     let mut rest = Vec::new();
     json_differences(&merged(&sx), &merged(&sy), "state".into(), &mut rest);
@@ -1594,7 +1631,7 @@ fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, Strin
         ));
     }
     let apart = |side: &ExportSideV1| {
-        side.named(&|l: &str| {
+        let mut v = side.named(&|l: &str| {
             if side.bound.contains(l) {
                 format!("bound {l}")
             } else if l.starts_with("H:") {
@@ -1602,7 +1639,12 @@ fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, Strin
             } else {
                 l.to_string()
             }
-        })
+        });
+        mask_epochs(&mut v, &|x| {
+            x.as_str()
+                .is_some_and(|s| s.starts_with("bound ") || s == "tombstone")
+        });
+        v
     };
     let mut diffs = Vec::new();
     json_differences(&apart(&sx), &apart(&sy), "state".into(), &mut diffs);

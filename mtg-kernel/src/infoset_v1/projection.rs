@@ -115,6 +115,17 @@ struct ObjectTrackV1 {
     last_obs_gen: u32,
     last_obs_zone: Option<Zone>,
     spans: Vec<SpanV1>,
+    opp_hand: Vec<OppHandEpochV1>,
+}
+
+/// Amendment 43.7 (Sol round 8, finding 2): an epoch an object of V's
+/// opponent spent in that player's hand, and where it went from there
+/// (`None` while it is still there). Counted from the native stream (hidden
+/// draws included); read only to refuse live references into the hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OppHandEpochV1 {
+    pub generation: u32,
+    pub left_to: Option<Zone>,
 }
 
 /// The projection's output.
@@ -168,9 +179,21 @@ pub(crate) struct ObjectTrackSummaryV1 {
     pub moves: u32,
     pub last_obs_gen: u32,
     pub spans: Vec<SpanV1>,
+    pub opp_hand: Vec<OppHandEpochV1>,
 }
 
 impl ProjectionV1 {
+    /// Amendment 43.7 (Sol round 8, finding 2): the opponent-hand epoch `g`
+    /// of `id`, if `g` is one.
+    pub(crate) fn opp_hand_epoch(&self, id: ObjectId, g: u32) -> Option<OppHandEpochV1> {
+        self.objects
+            .get(id.0 as usize)?
+            .opp_hand
+            .iter()
+            .rev()
+            .find(|e| e.generation == g)
+            .copied()
+    }
     pub(crate) fn tracked(&self, id: ObjectId) -> bool {
         self.objects.get(id.0 as usize).is_some_and(|o| o.tracked)
     }
@@ -481,6 +504,7 @@ pub(crate) fn project_v1(
                 moves: o.moves,
                 last_obs_gen: o.last_obs_gen,
                 spans: o.spans,
+                opp_hand: o.opp_hand,
             })
             .collect(),
         library: w.library,
@@ -708,9 +732,25 @@ impl WalkV1<'_> {
     fn moved(&mut self, id: ObjectId, zone: Zone) {
         let before = self.objs[id.0 as usize].zone;
         self.prev_zones.push((id, before));
+        let opp_owned = self.objs[id.0 as usize].owner == Some(self.opp());
         let o = &mut self.objs[id.0 as usize];
         o.zone = Some(zone);
         o.moves += 1;
+        if opp_owned {
+            // Amendment 43.7 (Sol round 8, finding 2): the opponent-hand
+            // epochs, whether or not V saw the move.
+            if before == Some(Zone::Hand) {
+                if let Some(e) = o.opp_hand.last_mut().filter(|e| e.left_to.is_none()) {
+                    e.left_to = Some(zone);
+                }
+            }
+            if zone == Zone::Hand {
+                o.opp_hand.push(OppHandEpochV1 {
+                    generation: o.moves,
+                    left_to: None,
+                });
+            }
+        }
     }
 
     fn event(&mut self, event: &CommittedEvent, index: usize, positions: &[&ObservationNoteV1]) {

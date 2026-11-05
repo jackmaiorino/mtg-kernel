@@ -9,7 +9,7 @@ use super::fixtures::{
     ScriptV1, LEAKAGE_V1,
 };
 use super::harness::{
-    byte_window, f_cast, local_menu, record_game, seat, tracked_hand_casts, GameV1, PairReportV1,
+    byte_window, f_cast, known_hand_casts, local_menu, record_game, seat, GameV1, PairReportV1,
     ENGINE_FAMILY_GAMES,
 };
 use super::tests::export_at;
@@ -133,7 +133,7 @@ fn fixture_bytes(game: &GameV1, v: PlayerId) -> String {
             .iter()
             .position(|x| x == chosen)
             .expect("replay");
-        let groups = tracked_hand_casts(&s, v);
+        let groups = known_hand_casts(&s, v);
         if seat(d.acting_player) == v.opponent() && !groups.is_empty() {
             let g = &groups[0].1;
             let x = if g.contains(&a) { a } else { g[0] };

@@ -83,6 +83,11 @@ pub struct InfosetV1 {
     /// Harness diagnostics only, never in the payload: the native object
     /// behind each `C:` handle, in handle order.
     pub(crate) tracked_natives: Vec<ObjectId>,
+    /// Harness diagnostics only, never in the payload: copies in the
+    /// opponent's hand whose bound fact another copy's identified departure
+    /// ended (amendment 43.7, the adapter's rule). The engine's knowledge
+    /// rows may still list them; V's view does not (Sol round 8, finding 3).
+    pub(crate) released_natives: Vec<ObjectId>,
 }
 
 /// R3's detail when the opponent's library-search plan is pending (design
@@ -103,9 +108,10 @@ pub(crate) const R3_UNREADABLE_DETAIL: &str = "library-search plan unreadable";
 pub(crate) const R1_SAME_NAME_BATCH_DETAIL: &str =
     "a live reference names one of two same-name objects that left in one batch V cannot order";
 
-/// R1's detail for a live reference to a copy that sat in the opponent's
-/// hand beside another copy with equal 43.4 keys when one of them left V's
-/// tracking (amendment 43.6, lead ruling 9 (b)): the wire subclass
+/// R1's detail for a live reference made at an epoch its object spent in the
+/// opponent's hand, other than that object's own cast receipt (amendment
+/// 43.7, Sol round 8 finding 2): the hand is opaque to identity, so such a
+/// reference cannot link to whichever copy later leaves. The wire subclass
 /// `same_name_hand`, a C5 fault.
 pub(crate) const R1_SAME_NAME_HAND_DETAIL: &str =
     "a live reference names one of two same-name copies in the opponent's hand that V cannot tell apart";
@@ -683,6 +689,30 @@ pub(crate) fn export_v1(
     // information, so the batch test runs before tracking decides. Lead
     // ruling 11 (R1): it runs before R1b and the R1 untracked test, which
     // read tracking, so both worlds refuse with the same subclass.
+    // Amendment 43.7 (Sol round 8, finding 2): the opponent's hand is opaque
+    // to identity, so a live reference made at an epoch its object spent
+    // there names a name-level occupant, not a copy: whichever same-name
+    // copy later leaves the hand, V cannot pair the reference with it (a
+    // ninjutsu paid-cost record naming the returned creature at its hand
+    // epoch is the example). It never links: refuse, whether or not the
+    // copy has left, so the outcome cannot depend on which copy did. The one
+    // exception is the object's own cast receipt (`spell_cast_origin`
+    // paired with the object it describes) at the epoch it left the hand
+    // for the stack: it names the cast copy, the one V saw go to the stack,
+    // in every world. This runs first, before every test that reads spans.
+    for (r, region) in &refs {
+        if *region != "live" {
+            continue;
+        }
+        for &g in &r.generations {
+            if let Some(epoch) = projection.opp_hand_epoch(r.object, g) {
+                if !(r.cast_receipt && epoch.left_to == Some(Zone::Stack)) {
+                    return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
+                }
+            }
+        }
+    }
+
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
         if *region != "live" {
@@ -1548,6 +1578,12 @@ pub(crate) fn export_v1(
         sha256,
         handles,
         tracked_natives: tracked,
+        released_natives: projection
+            .released
+            .iter()
+            .copied()
+            .filter(|id| state.players[opp.index()].hand.contains(id))
+            .collect(),
     })
 }
 

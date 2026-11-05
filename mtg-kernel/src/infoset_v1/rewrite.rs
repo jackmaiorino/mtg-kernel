@@ -36,6 +36,11 @@ pub(crate) struct RefV1 {
     /// The `object` of a paid-cost record (`paid_cost_refs`), amendment
     /// 43.5.
     pub paid_cost: bool,
+    /// Amendment 43.7 (Sol round 8, finding 2): the epochs come from a
+    /// `spell_cast_origin` record paired with the object it describes (the
+    /// arena object's own field, or the source contract that names it): the
+    /// object's own cast receipt.
+    pub cast_receipt: bool,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -82,7 +87,7 @@ const FINGERPRINTS_V1: &[&str] = &[
 /// Fields whose value is a `(value, timestamp)` pair.
 const TIMESTAMP_PAIRS_V1: &[&str] = &["added_subtype_v1"];
 
-fn generation_partner(id_key: &str, map: &Map<String, Value>) -> Option<String> {
+pub(crate) fn generation_partner(id_key: &str, map: &Map<String, Value>) -> Option<String> {
     let stem = id_key.strip_suffix("_id").unwrap_or(id_key);
     [
         format!("{id_key}_zone_change_count"),
@@ -148,6 +153,7 @@ impl WalkerV1<'_> {
                             object,
                             generations: Vec::new(),
                             paid_cost: false,
+                            cast_receipt: false,
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -167,6 +173,7 @@ impl WalkerV1<'_> {
                     object,
                     generations: Vec::new(),
                     paid_cost: false,
+                    cast_receipt: false,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -259,6 +266,7 @@ impl WalkerV1<'_> {
                 object,
                 generations,
                 paid_cost: parent == "paid_cost_refs" && k.as_deref() == Some("object"),
+                cast_receipt: parent == "spell_cast_origin" && k.is_none(),
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -283,6 +291,7 @@ impl WalkerV1<'_> {
                 object,
                 generations: Vec::new(),
                 paid_cost: false,
+                cast_receipt: false,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;
