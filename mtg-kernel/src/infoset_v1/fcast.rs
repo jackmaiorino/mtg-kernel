@@ -148,8 +148,38 @@ fn fixture_bytes(game: &GameV1, v: PlayerId) -> String {
                     break;
                 };
                 if seat(e.acting_player) == v && e.legal_action_count >= 2 {
-                    let p = export_at(&w, v, ExportOptionsV1::default()).expect("P exports");
-                    let p2 = export_at(&w2, v, ExportOptionsV1::default()).expect("P exports");
+                    // Amendment 43.6: while the cast copy's receipt names
+                    // its hand epoch, P refuses `same_name_hand` in both
+                    // worlds; the 43.4 witness is the first V decision at
+                    // which both export.
+                    let (p, p2) = (
+                        export_at(&w, v, ExportOptionsV1::default()),
+                        export_at(&w2, v, ExportOptionsV1::default()),
+                    );
+                    let (p, p2) = match (p, p2) {
+                        (Ok(p), Ok(p2)) => (p, p2),
+                        (Err(a), Err(b)) => {
+                            assert_eq!(
+                                format!("{a:?}"),
+                                format!("{b:?}"),
+                                "P agrees while it refuses"
+                            );
+                            let (Some(b), Some(c)) = (
+                                local_menu(&w).iter().position(|r| r == later),
+                                local_menu(&w2).iter().position(|r| r == later),
+                            ) else {
+                                panic!("the worlds part before V decides");
+                            };
+                            w.step(e.episode_id, e.step, b as u32).expect("W");
+                            w2.step(f.episode_id, f.step, c as u32).expect("W'");
+                            continue;
+                        }
+                        (a, b) => panic!(
+                            "P presence differs: {:?} / {:?}",
+                            a.as_ref().err(),
+                            b.as_ref().err()
+                        ),
+                    };
                     assert_eq!(p.bytes, p2.bytes, "P agrees at the first V decision");
                     let o = ExportOptionsV1 {
                         mutant: Some(MutantV1::L14),

@@ -562,14 +562,19 @@ fn a_paid_copy_and_its_twin_leaving_in_one_batch_refuse_alike() {
         pa.as_ref().map(Vec::len),
         pb.as_ref().map(Vec::len)
     );
-    let batch = |p: &Result<Vec<u8>, String>| {
+    // Amendment 43.6 reads first: the two equal-key copies sat in the hand
+    // when one was put back, so `same_name_hand` refuses before
+    // `same_name_batch` would.
+    let refused = |p: &Result<Vec<u8>, String>| {
         p.as_ref().is_err_and(|e| {
-            e.contains("R1") && e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL)
+            e.contains("R1")
+                && (e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)
+                    || e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL))
         })
     };
     assert!(
-        batch(&pa) && batch(&pb),
-        "both worlds refuse R1 same_name_batch"
+        refused(&pa) && refused(&pb),
+        "both worlds refuse R1 (same_name_hand or same_name_batch)"
     );
     assert_eq!(pa, pb, "P agrees whichever copy went");
 }
