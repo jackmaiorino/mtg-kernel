@@ -448,8 +448,9 @@ pub(crate) fn validate_optional_cost_in_state_v1(
 }
 
 /// Amendment 43.9: the import's fail-closed check of a carried madness
-/// exemption: a tracked (`C:`) card that is the spell being announced or
-/// the source of a stack item.
+/// exemption: a tracked (`C:`) card cast by its madness route (its current
+/// incarnation's cast origin), that is the spell being announced or, on the
+/// stack, the source of a stack item.
 pub(crate) fn validate_madness_reprompt_in_state_v1(
     card: ObjectId,
     state: &GameState,
@@ -458,13 +459,21 @@ pub(crate) fn validate_madness_reprompt_in_state_v1(
     let tracked = handles
         .get(card.0 as usize)
         .is_some_and(|h| h.starts_with("C:"));
+    if card.0 as usize >= state.objects.len() {
+        return Err("madness context: card".into());
+    }
+    let object = state.objects.get(card);
+    let madness = object.v4.spell_cast_origin.as_ref().is_some_and(|origin| {
+        matches!(origin.route, crate::state::SpellCastRouteV4::Madness)
+    });
     let cast = state
         .engine
         .pending_cast
         .as_ref()
         .is_some_and(|p| p.spell == card)
-        || state.stack.iter().any(|item| item.source == card);
-    if !tracked || !cast {
+        || (object.zone == crate::state::Zone::Stack
+            && state.stack.iter().any(|item| item.source == card));
+    if !tracked || !madness || !cast {
         return Err("madness context: card".into());
     }
     Ok(())
@@ -907,6 +916,19 @@ impl PolicySurfaceV5 {
         } else {
             "other_surface"
         }
+    }
+
+    /// Restores a carried optional-cost record (amendment 43.9).
+    pub(crate) fn set_optional_cost_reshape_v1(
+        &mut self,
+        o: &crate::surface_v2::OptionalCostReshapePublicV2,
+    ) {
+        self.inner.set_optional_cost_reshape_v1(o);
+    }
+
+    /// Restores a carried madness reprompt exemption (amendment 43.9).
+    pub(crate) fn set_madness_reprompt_v1(&mut self, card: ObjectId) {
+        self.inner.set_madness_reprompt_v1(card);
     }
 
     /// Restores a carried discard record (amendment 43.1 part 2) with the
