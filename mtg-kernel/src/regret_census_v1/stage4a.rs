@@ -105,7 +105,7 @@ pub(super) mod viewer_replay;
 pub(super) mod viewer_uct;
 pub(crate) mod world;
 
-use super::search::{game_setup, new_session, GameSetup};
+use super::search::{game_setup, new_session, new_session_with_limits, GameSetup};
 use super::{load_policy_v1, CensusConfigV1};
 use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::runtime_decks::RUNTIME_DECKS;
@@ -265,6 +265,10 @@ struct Shared {
     /// Explicit search-only activation, recorded in rows.
     fast_forward: bool,
     runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+    /// `S4A_GAME_LIMITS` (s4a-tensor-dump only): the game's physical-decision
+    /// and policy-step limits in place of the census defaults, so a recording
+    /// can run a training runtime's limits. None keeps the defaults.
+    game_limits: Option<(u64, u64)>,
     /// E's selection rule (`S4A_SELECT`): None is the formal untried-first
     /// rule; `fpu-1.5` the finite-urgency candidate.
     select_urgency: Option<f64>,
@@ -285,6 +289,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         Err(error) => return Err(format!("invalid S4A_RUNTIME: {error}")),
     };
     let runtime_rules = parse_runtime_rules(&cfg.mode, runtime_setting.as_deref())?;
+    let game_limits = parse_game_limits(&cfg.mode, std::env::var("S4A_GAME_LIMITS"))?;
     let select_urgency = parse_select_rule(&cfg.mode, std::env::var("S4A_SELECT"))?;
     let bestline = parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
     let entries: Vec<(String, String)> = std::env::var("OPPONENTS")
@@ -341,6 +346,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         prior: world::DeckPrior::new(&cfg.decks),
         fast_forward,
         runtime_rules,
+        game_limits,
         select_urgency,
         bestline,
     })
@@ -399,13 +405,50 @@ fn parse_runtime_rules(
 ) -> Result<Option<crate::engine::RuntimeRulesV1>, String> {
     match setting {
         None | Some("") | Some("historical") => Ok(None),
-        Some("resolution-boundary-v1") if mode == "s4a-diag" || mode == "s4a-bank-parity" => {
+        Some("resolution-boundary-v1")
+            if mode == "s4a-diag" || mode == "s4a-bank-parity" || mode == "s4a-tensor-dump" =>
+        {
             Ok(Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1))
         }
-        Some("resolution-boundary-v1") => {
-            Err("S4A_RUNTIME=resolution-boundary-v1 is supported only for s4a-diag".into())
-        }
+        Some("resolution-boundary-v1") => Err(
+            "S4A_RUNTIME=resolution-boundary-v1 is supported only for s4a-diag, s4a-bank-parity and s4a-tensor-dump"
+                .into(),
+        ),
         Some(other) => Err(format!("unknown S4A_RUNTIME {other}")),
+    }
+}
+
+/// `S4A_GAME_LIMITS=<max physical decisions>,<max policy steps>`: the
+/// game limits of an `s4a-tensor-dump` recording (W5 S0 records under the
+/// training runtime's limits). Unset keeps the census defaults; other modes
+/// refuse it.
+fn parse_game_limits(
+    mode: &str,
+    setting: Result<String, std::env::VarError>,
+) -> Result<Option<(u64, u64)>, String> {
+    let value = match setting {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(error) => return Err(format!("invalid S4A_GAME_LIMITS: {error}")),
+    };
+    if mode != "s4a-tensor-dump" {
+        return Err(format!(
+            "S4A_GAME_LIMITS is supported only for s4a-tensor-dump, not {mode}"
+        ));
+    }
+    let parts: Vec<&str> = value.split(',').map(str::trim).collect();
+    let parsed: Vec<u64> = parts
+        .iter()
+        .map(|t| {
+            t.parse::<u64>()
+                .map_err(|_| format!("bad S4A_GAME_LIMITS {value}"))
+        })
+        .collect::<Result<_, _>>()?;
+    match parsed.as_slice() {
+        [physical, steps] if *physical > 0 && *steps > 0 => Ok(Some((*physical, *steps))),
+        _ => Err(format!(
+            "S4A_GAME_LIMITS needs two positive numbers <max physical decisions>,<max policy steps>, not {value}"
+        )),
     }
 }
 

@@ -207,10 +207,76 @@ fn runtime_setting_refuses_unknown_identity_and_unsupported_modes() {
         parse_runtime_rules("s4a-diag", Some("resolution-boundary-v1")).unwrap(),
         Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
     );
+    assert_eq!(
+        parse_runtime_rules("s4a-tensor-dump", Some("resolution-boundary-v1")).unwrap(),
+        Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+    );
     for mode in ["s4a-corpus", "s4a-run"] {
         assert!(parse_runtime_rules(mode, Some("resolution-boundary-v1")).is_err());
     }
     assert!(parse_runtime_rules("s4a-diag", Some("unknown")).is_err());
+}
+
+#[test]
+fn game_limits_are_tensor_dump_only_and_two_positive_numbers() {
+    use std::env::VarError;
+    assert_eq!(
+        parse_game_limits("s4a-tensor-dump", Err(VarError::NotPresent)).unwrap(),
+        None
+    );
+    assert_eq!(
+        parse_game_limits("s4a-corpus", Err(VarError::NotPresent)).unwrap(),
+        None
+    );
+    assert_eq!(
+        parse_game_limits("s4a-tensor-dump", Ok("100000, 200000".into())).unwrap(),
+        Some((100_000, 200_000))
+    );
+    for bad in ["", "100000", "100000,0", "0,5", "1,2,3", "x,2"] {
+        assert!(
+            parse_game_limits("s4a-tensor-dump", Ok(bad.into())).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(parse_game_limits("s4a-corpus", Ok("100000,200000".into())).is_err());
+}
+
+/// The training-runtime recording (W5 S0): a game built with the training
+/// limits and the resolution-boundary profile plays to a terminal through the
+/// recorder's own selection call.
+#[test]
+fn tensor_dump_session_with_limits_and_profile_plays_to_the_end() {
+    let cfg = test_cfg();
+    let setup = game_setup(&cfg, 1, 3);
+    let mut limited = new_session_with_limits(&setup, 100_000, 200_000).unwrap();
+    limited
+        .set_runtime_rules_v1(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+        .unwrap();
+    let (mut a, mut b) = (fixture(), fixture());
+    let seeds = crate::paired_bo1_harness_v1::paired_policy_seeds_v1(setup.seed);
+    a.reset_sampling_v1(seeds);
+    b.reset_sampling_v1(seeds);
+    let mut steps = 0u64;
+    while let Some(d) = play::decision(&limited) {
+        let actor = play::acting(&d);
+        let policy = if actor.0 as usize == setup.focal {
+            &mut a
+        } else {
+            &mut b
+        };
+        let action = if d.legal_action_count < 2 {
+            0
+        } else {
+            policy.select_with_training_tensor_v4(&limited).unwrap().0
+        };
+        limited.step(d.episode_id, d.step, action).unwrap();
+        steps += 1;
+        assert!(steps < 200_000, "the fixture game ends");
+    }
+    assert!(matches!(
+        limited.current_response(),
+        crate::rl_session::FastActorResponseV1::Terminal(_)
+    ));
 }
 
 pub(super) fn test_cfg() -> CensusConfigV1 {

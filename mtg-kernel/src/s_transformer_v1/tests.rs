@@ -298,6 +298,46 @@ fn fresh_optimizer_is_zero_and_starting_hash_binds_extras() {
 }
 
 #[test]
+fn starting_state_command_needs_a_fresh_optimizer_and_hashes_extras_in_order() {
+    let dir = std::env::temp_dir().join(format!("s-starting-state-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let model = SModelV1::init_pilot_scheme_v1(TINY_V1, 20_261_102).unwrap();
+    let fresh = STrainStateV1::fresh_optimizer_v1(model);
+    let checkpoint = dir.join("fresh.bin");
+    std::fs::write(&checkpoint, encode_checkpoint_v1(&fresh)).unwrap();
+    let extras = dir.join("extras.json");
+    std::fs::write(&extras, r#"[["rng","010203"],["cursor","00"]]"#).unwrap();
+    let receipt = super::tools::starting_state_v1(&checkpoint, &extras).unwrap();
+    assert_eq!(
+        receipt["starting_state_sha256"],
+        fresh.starting_state_sha256_v1(&[("rng", &[1u8, 2, 3][..]), ("cursor", &[0u8][..])])
+    );
+    assert_eq!(receipt["state_sha256"], fresh.state_sha256_v1());
+    assert_eq!(receipt["adam_step"], 0);
+    for bad in [
+        r#"[["rng","0102"],["rng","00"]]"#,
+        r#"[["","00"]]"#,
+        r#"[["rng","0g"]]"#,
+        r#"[["rng","012"]]"#,
+    ] {
+        std::fs::write(&extras, bad).unwrap();
+        assert!(
+            super::tools::starting_state_v1(&checkpoint, &extras).is_err(),
+            "{bad}"
+        );
+    }
+    std::fs::write(&extras, r#"[["rng","00"]]"#).unwrap();
+    let mut stepped = fresh.clone();
+    let data = tiny_groups_v1(12, 3);
+    stepped
+        .train_step_gae_v1(&as_groups_v1(&data), 0.5, 1.0e-4, &mut SWorkV1::default())
+        .unwrap();
+    std::fs::write(&checkpoint, encode_checkpoint_v1(&stepped)).unwrap();
+    assert!(super::tools::starting_state_v1(&checkpoint, &extras).is_err());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn checkpoint_round_trips_and_refuses_tampering() {
     let model = SModelV1::init_parity_v1(TINY_V1, 8).unwrap();
     let mut state = STrainStateV1::fresh_optimizer_v1(model);
