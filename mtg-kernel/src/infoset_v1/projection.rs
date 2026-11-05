@@ -1140,7 +1140,19 @@ impl WalkV1<'_> {
                 .iter()
                 .filter(|f| f.card_def == def && f.how == how)
                 .filter_map(|f| f.native)
-                .map(|o| (o, self.objs[o.0 as usize].moves))
+                .map(|o| {
+                    // The departing copy was already moved (its epoch is
+                    // the destination's): record its epoch in the hand.
+                    let moves = self.objs[o.0 as usize].moves;
+                    (
+                        o,
+                        if o == id {
+                            moves.saturating_sub(1)
+                        } else {
+                            moves
+                        },
+                    )
+                })
                 .collect();
             if candidates.len() >= 2 {
                 self.hand_ambiguities.push(HandAmbiguityV1 {

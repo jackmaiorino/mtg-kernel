@@ -671,18 +671,19 @@ pub(crate) fn export_v1(
     // reference (contract, binding, receipt or paid-cost record) to a copy
     // that sat in the opponent's hand beside another copy with equal 43.4
     // keys when one of them left V's tracking, made at or before the
-    // copy's epoch in that hand (or carrying no epoch), refuses. The
+    // copy's epoch in that hand, refuses. The
     // candidate set is the same whichever copy left, so this runs before
     // every test that reads which copy V still tracks.
     for (r, region) in &refs {
         if *region != "live" {
             continue;
         }
+        // A reference with no epoch is current membership (a zone vector,
+        // an attachment), not a historical link across the hand (Sol r1).
         let crossed = projection.hand_ambiguities.iter().any(|a| {
-            a.candidates.iter().any(|&(o, g_hand)| {
-                o == r.object
-                    && (r.generations.is_empty() || r.generations.iter().any(|&g| g <= g_hand))
-            })
+            a.candidates
+                .iter()
+                .any(|&(o, g_hand)| o == r.object && r.generations.iter().any(|&g| g <= g_hand))
         });
         if crossed {
             return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));

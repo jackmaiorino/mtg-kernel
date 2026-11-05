@@ -580,6 +580,27 @@ fn a_paid_copy_and_its_twin_leaving_in_one_batch_refuse_alike() {
 /// a V decision, a separate batch) a second Lembas `second` does; one of
 /// them is discarded and shuffled away. Returns P for V.
 fn hand_world(second: HandSecondV1, discard_a: bool) -> Result<Vec<u8>, String> {
+    hand_world_with(second, discard_a, HandRefV1::Paid)
+}
+
+/// The live reference the controls keep to A.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandRefV1 {
+    /// The Shaman's paid-cost record, made before A entered the hand.
+    Paid,
+    /// No reference survives (the Shaman ability removed): equal-key
+    /// copies alone do not refuse.
+    None,
+    /// The discarded copy stays in the graveyard and the record is re-made
+    /// fresh at its graveyard epoch, after it left the hand.
+    Fresh,
+}
+
+fn hand_world_with(
+    second: HandSecondV1,
+    discard_a: bool,
+    reference: HandRefV1,
+) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let s = opponent_payment();
@@ -625,7 +646,20 @@ fn hand_world(second: HandSecondV1, discard_a: bool) -> Result<Vec<u8>, String> 
     let gone = if discard_a { a } else { b };
     propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
     st.engine.pending_triggers.clear();
-    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Library));
+    match reference {
+        HandRefV1::Paid => {
+            propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Library));
+        }
+        HandRefV1::None => {
+            propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Library));
+            st.stack.retain(|it| it.v4.paid_cost_refs.is_empty());
+        }
+        HandRefV1::Fresh => {
+            let zcc = st.objects.get(a).zone_change_count;
+            let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+            st.stack[i].v4.paid_cost_refs[0].zone_change_count = zcc;
+        }
+    }
     let lists = decklists(&s);
     export_v1(
         &ExportInputV1 {
@@ -685,4 +719,26 @@ fn different_hand_keys_still_export() {
             p.as_ref().err()
         );
     }
+}
+
+/// Sol review of 43.6, round 1 controls: equal-key copies with no surviving
+/// historical reference export in both orders (current zone membership is
+/// no reference across the hand), and a reference made fresh at the
+/// discarded copy's graveyard epoch exports.
+#[test]
+fn same_name_hand_controls_export() {
+    for discard_a in [true, false] {
+        let p = hand_world_with(HandSecondV1::FromGraveyard, discard_a, HandRefV1::None);
+        assert!(
+            p.is_ok(),
+            "no reference, discard A {discard_a}: {:?}",
+            p.as_ref().err()
+        );
+    }
+    let p = hand_world_with(HandSecondV1::FromGraveyard, true, HandRefV1::Fresh);
+    assert!(
+        p.is_ok(),
+        "a fresh graveyard reference: {:?}",
+        p.as_ref().err()
+    );
 }
