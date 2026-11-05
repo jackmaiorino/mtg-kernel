@@ -14,6 +14,8 @@ E3 binary (`--command`, a JSON argv template with {source}, {out}; LABEL_JOBS an
   logit_parity.py dump --binary CENSUS --source SRC.json --pin CHECKPOINT [--pin ...] --jobs FIXED.jsonl --out DIR
                        [--command JSON]
   logit_parity.py compare --linux DIR --windows DIR --out RECEIPT.json
+  logit_parity.py scorer --dump DIR --jobs FIXED.jsonl --scorer EXE [--scorer-arg ARG ...] --config SCORER.json
+                         --out RECEIPT.json
 
 A state is a scored focal decision with at least two legal actions. `dump` refuses a source that does not load
 the pinned checkpoint files, a `--command` whose program is not the pinned binary, replay rows that do not cover
@@ -21,6 +23,11 @@ exactly the fixed jobs' focal decisions, and any record whose length differs fro
 logits are not finite. `compare` refuses different jobs, checkpoint bytes or decision sequences, uses the fixed
 1e-5 tolerance (an argmax tie excuses only a switch between the two winners within 1e-5 on both hosts), and
 requires byte-identical input tensors; the value difference is reported beside.
+
+`scorer` ties a dump to the Spellbench bot's forward (E5): it sends every dumped decision's input tensor to
+`spellbench_scorer_v1` (the bot's scorer binary and config, which must load the dump's source) and requires the
+scorer's logits and value to equal the dump's bit for bit. Run on the rating host beside that host's dump, it shows
+that the receipt's Windows forward is the forward the rated bot plays.
 """
 from __future__ import annotations
 
@@ -34,10 +41,15 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 DUMP_SCHEMA = "w5-logit-dump/v1"
 RECEIPT_SCHEMA = "w5-logit-parity/v1"
+SCORER_RECEIPT_SCHEMA = "w5-scorer-parity/v1"
+SCORER_READY = "mtg-kernel-spellbench-scorer-ready/v1"
+SCORER_REQUEST = "mtg-kernel-spellbench-scorer-request/v1"
+SCORER_CHOICE = "mtg-kernel-spellbench-scorer-choice/v1"
 MIN_STATES = 10_000
 TOLERANCE = 1e-5
 HEADER = struct.Struct("<8I")
@@ -196,11 +208,14 @@ def canonical_source(value, files: dict[str, str], base: Path):
     return value
 
 
-def source_identity(source: Path) -> str:
-    files = source_pins(source)
-    value = json.loads(Path(source).read_text(encoding="utf-8"))
-    canon = canonical_source(value, files, Path(source).parent)
+def value_identity(value, base: Path) -> str:
+    """`source_identity` of a source value whose relative paths resolve against `base`."""
+    canon = canonical_source(value, referenced_files(value, base), base)
     return hashlib.sha256(json.dumps(canon, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def source_identity(source: Path) -> str:
+    return value_identity(json.loads(Path(source).read_text(encoding="utf-8")), Path(source).parent)
 
 
 def dump(binary: Path, source: Path, pins: list[Path], jobs: Path, out: Path, command: list[str] | None) -> dict:
@@ -237,6 +252,108 @@ def dump(binary: Path, source: Path, pins: list[Path], jobs: Path, out: Path, co
               "states": sum(1 for s in states if s["legal"] >= 2)}
     (out / "dump.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
     return record
+
+
+# ---------------------------------------------------------------- the bot's scorer
+
+# The scorer's tensor fields in TD_BIN record order: struct code (u32 float bits or i32) and length.
+TENSOR_FIELDS = (
+    ("state", "I", ("state", 1)), ("object_features", "I", ("objects", OBJECT_DIM)),
+    ("object_card_ids", "i", ("objects", 1)), ("object_groups", "i", ("objects", 1)),
+    ("object_node_ids", "i", ("objects", 1)), ("edge_features", "I", ("edges", EDGE_DIM)),
+    ("edge_source_indices", "i", ("edges", 1)), ("edge_target_indices", "i", ("edges", 1)),
+    ("action_features", "I", ("actions", ACTION_DIM)), ("action_ref_features", "I", ("refs", ACTION_REF_DIM)),
+    ("action_ref_card_ids", "i", ("refs", 1)), ("action_ref_action_indices", "i", ("refs", 1)),
+    ("action_ref_node_indices", "i", ("refs", 1)))
+
+
+def decode_request(block: bytes) -> tuple[dict, list[int], int, int]:
+    """One TD_BIN record as the scorer's tensor (floats as u32 bits), its logit bits, value bits and actor."""
+    decode(block)  # layout and finiteness
+    objects, edges, actions, refs, state_len, _selected, _legal, actor = HEADER.unpack_from(block, 0)
+    counts = {"state": state_len, "objects": objects, "edges": edges, "actions": actions, "refs": refs}
+    tensor, offset = {}, HEADER.size
+    for field, code, (count, width) in TENSOR_FIELDS:
+        n = counts[count] * width
+        tensor[field] = list(struct.unpack_from(f"<{n}{code}", block, offset))
+        offset += 4 * n
+    logits = list(struct.unpack_from(f"<{actions}I", block, offset))
+    value = struct.unpack_from("<I", block, offset + 4 * actions)[0]
+    return tensor, logits, value, actor
+
+
+def bits_to_float(bits: int) -> float:
+    return struct.unpack("<f", struct.pack("<I", bits))[0]
+
+
+def scorer_check(dump_dir: Path, jobs: Path, scorer: Path, config: Path, scorer_args: list[str] = ()) -> dict:
+    record = json.loads((dump_dir / "dump.json").read_text(encoding="utf-8"))
+    require(record.get("schema") == DUMP_SCHEMA, f"{dump_dir}: not a logit dump")
+    rows_path, tensors_path = dump_dir / "rows.jsonl", dump_dir / "tensors.bin"
+    require(sha256_file(rows_path) == record["rows_sha256"] and sha256_file(tensors_path) == record["tensors_sha256"],
+            f"{dump_dir}: rows or tensors changed")
+    require(sha256_file(jobs) == record["jobs_sha256"], "the jobs are not the dump's fixed states")
+    settings = json.loads(Path(config).read_text(encoding="utf-8"))
+    require(value_identity(settings.get("source"), Path(config).parent) == record["source_identity"],
+            "the scorer config does not load the dump's source (files and settings)")
+    data = tensors_path.read_bytes()
+    rows = [json.loads(line) for line in rows_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    require([r.get("id") for r in rows] == [job for job, _ in expected_decisions(jobs)],
+            "replay rows differ from the fixed jobs")
+    # Binary pipes: request lines end in LF on every system. Diagnostics go to a file, never a full pipe.
+    errors = tempfile.TemporaryFile()
+    argv = [str(scorer), *scorer_args, "--config", str(config)]  # as the bot runs it (--scorer-arg)
+    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=errors)
+    decisions = states = logit_mismatches = value_mismatches = 0
+    worst, first_mismatch = 0.0, None
+    try:
+        ready = json.loads(proc.stdout.readline() or "null")
+        require(isinstance(ready, dict) and ready.get("schema") == SCORER_READY, f"scorer did not start: {ready!r}")
+        sampled = ready.get("selection") == "sampled-wide-v1"
+        for row in rows:
+            require(row.get("kind") == "td_replay", f"replay failed: {row}")
+            base = row["bin_offset"]
+            for index, legal, _selected, _turn, start, length in row["decisions"]:
+                tensor, logits, value, actor = decode_request(data[base + start:base + start + length])
+                request = {"schema": SCORER_REQUEST, "request_id": f"{row['id']}:{index}", "game_id": row["id"],
+                           "seat": f"p{actor}", "step": index,
+                           "feature_contract_digest": ready.get("feature_contract_digest"),
+                           "feature_encoding_digest": ready.get("feature_encoding_digest"),
+                           "row_candidate_ids": list(range(legal)), "sample_seed": decisions if sampled else None,
+                           "tensor": tensor}
+                proc.stdin.write(json.dumps(request, separators=(",", ":")).encode() + b"\n")
+                proc.stdin.flush()
+                choice = json.loads(proc.stdout.readline() or "null")
+                require(isinstance(choice, dict) and choice.get("schema") == SCORER_CHOICE,
+                        f"{row['id']}:{index}: scorer answered {choice!r}")
+                got = choice["logits_bits"]
+                require(len(got) == len(logits), f"{row['id']}:{index}: scorer row count differs")
+                worst = max([worst] + [abs(bits_to_float(a) - bits_to_float(b)) for a, b in zip(got, logits)])
+                if got != logits:
+                    logit_mismatches += 1
+                    first_mismatch = first_mismatch or [row["id"], index]
+                value_mismatches += choice["value_bits"] != value
+                decisions += 1
+                states += legal >= 2
+    finally:
+        proc.stdin.close()
+        proc.wait()
+        errors.seek(0)
+        stderr = errors.read().decode("utf-8", "replace")
+        errors.close()
+    require(decisions == record["decisions"], "the scorer did not see every dumped decision")
+    checks = {"logits_bit_identical": logit_mismatches == 0, "values_bit_identical": value_mismatches == 0}
+    return {"schema": SCORER_RECEIPT_SCHEMA, "pass": all(checks.values()), "checks": checks, "decisions": decisions,
+            "states": states, "logit_mismatches": logit_mismatches, "value_mismatches": value_mismatches,
+            "first_mismatch": first_mismatch, "max_abs_logit_diff": worst, "host_class": host_class(),
+            "hostname": platform.node(), "argv": argv, "scorer": {"path": str(scorer), "sha256": sha256_file(scorer)},
+            "config": {"path": str(config), "sha256": sha256_file(config)},
+            "ready": {k: ready.get(k) for k in ("model_state_sha256", "model_architecture", "feature_contract_digest",
+                                                "feature_encoding_digest", "selection", "sampler_identity")},
+            "dump": {k: record[k] for k in ("host_class", "source_identity", "jobs_sha256", "tensors_sha256",
+                                            "logits_sha256", "pins")},
+            "scorer_stderr_tail": stderr[-2000:]}
 
 
 # ---------------------------------------------------------------- the comparison
@@ -315,6 +432,13 @@ def main(argv=None) -> int:
     p.add_argument("--linux", type=Path, required=True)
     p.add_argument("--windows", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("scorer")
+    p.add_argument("--dump", type=Path, required=True)
+    p.add_argument("--jobs", type=Path, required=True)
+    p.add_argument("--scorer", type=Path, required=True)
+    p.add_argument("--scorer-arg", action="append", default=[], help="argument placed before --config")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.op == "states":
@@ -325,6 +449,9 @@ def main(argv=None) -> int:
         elif args.op == "dump":
             command = json.loads(args.command) if args.command else None
             result = dump(args.binary, args.source, args.pin, args.jobs, args.out, command)
+        elif args.op == "scorer":
+            result = scorer_check(args.dump, args.jobs, args.scorer, args.config, args.scorer_arg)
+            args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
         else:
             result = compare(load_dump(args.linux), load_dump(args.windows))
             args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")

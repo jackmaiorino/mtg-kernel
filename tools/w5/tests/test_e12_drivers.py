@@ -41,6 +41,37 @@ for line in open(os.environ["LABEL_JOBS"]):
 '''
 
 
+FAKE_SCORER = r"""
+import json, os, struct, sys
+args = sys.argv[1:]
+config = json.load(open(args[args.index("--config") + 1]))
+shift = float(os.environ.get("FAKE_SCORER_SHIFT", "0"))
+bits = lambda x: struct.unpack("<I", struct.pack("<f", x))[0]
+out = sys.stdout.buffer
+out.write(json.dumps({"schema": "mtg-kernel-spellbench-scorer-ready/v1", "model_state_sha256": "m",
+                      "feature_contract_digest": "c", "feature_encoding_digest": "e",
+                      "selection": config["selection"]}).encode() + b"\n")
+out.flush()
+for line in sys.stdin.buffer:
+    assert line.endswith(b"}\n"), line[-4:]
+    r = json.loads(line)
+    t = r["tensor"]
+    n = len(r["row_candidate_ids"])
+    step = r["step"]
+    # the fake replay's record, field by field (floats as u32 bits)
+    assert t["state"] == [bits(0.5), bits(float(step)), bits(1.0)], t["state"]
+    assert t["object_features"] == [bits(0.25)] * 98 and t["object_card_ids"] == [7]
+    assert t["object_groups"] == [0] and t["object_node_ids"] == [1] and t["edge_features"] == []
+    assert t["action_features"] == [bits(0.5)] * (195 * n) and t["action_ref_card_ids"] == []
+    assert r["feature_contract_digest"] == "c" and r["seat"] in ("p0", "p1")
+    assert (r["sample_seed"] is None) == (config["selection"] == "argmax-first-v1")
+    logits = [bits(0.1 * a + (shift if a == 0 else 0.0)) for a in range(n)]
+    out.write(json.dumps({"schema": "mtg-kernel-spellbench-scorer-choice/v1", "logits_bits": logits,
+                          "value_bits": bits(0.25), "selected_row": 0}).encode() + b"\n")
+    out.flush()
+"""
+
+
 def jobs(count, per_game=6):
     return [{"id": f"g{i:03d}", "focal": i % 2,
              "decisions": [{"actor": d % 2, "legal_action_count": 1 + d % 4, "selected": 0, "step": d,
@@ -168,6 +199,50 @@ class DumpCompareTests(unittest.TestCase):
         with self.assertRaises(lp.ParityError):  # the command does not run the pinned binary
             lp.dump(self.fake, self.source, [self.ckpt], self.jobs, self.root / "y", command)
 
+
+    def scorer_case(self, shift=0.0, selection="sampled-wide-v1", source=None):
+        import os
+        if not (self.root / "d").exists():
+            self.dump("d")
+        fake = self.root / "fake_scorer.py"
+        fake.write_text(FAKE_SCORER)
+        config = self.root / "bot.scorer.json"
+        config.write_text(json.dumps({"schema": "mtg-kernel-spellbench-scorer-config/v1",
+                                      "source": source or json.loads(self.source.read_text()),
+                                      "selection": selection}))
+        os.environ["FAKE_SCORER_SHIFT"] = str(shift)
+        return lp.scorer_check(self.root / "d", self.jobs, Path(sys.executable), config, [str(fake)])
+
+    def test_scorer_check_requires_the_dumped_forward_bit_for_bit(self):
+        ok = self.scorer_case()
+        self.assertTrue(ok["pass"])
+        self.assertEqual(ok["decisions"], 30)
+        self.assertEqual(ok["states"], 20)
+        self.assertEqual(ok["max_abs_logit_diff"], 0.0)
+        self.assertEqual(ok["ready"]["model_state_sha256"], "m")
+        self.assertTrue(self.scorer_case(selection="argmax-first-v1")["pass"])
+        off = self.scorer_case(shift=1e-7)  # one float32 step away still fails
+        self.assertFalse(off["pass"])
+        self.assertFalse(off["checks"]["logits_bit_identical"])
+        self.assertTrue(off["checks"]["values_bit_identical"])
+        self.assertEqual(off["logit_mismatches"], 30)
+        with self.assertRaises(lp.ParityError):  # the scorer must load the dump's source
+            self.scorer_case(source={"kind": "checkpoint", "checkpoint": "ckpt.bin", "temperature": 0.5})
+
+    def test_scorer_check_cli(self):
+        import os
+        self.dump("d")
+        fake = self.root / "fake_scorer.py"
+        fake.write_text(FAKE_SCORER)
+        (self.root / "bot.scorer.json").write_text(json.dumps(
+            {"schema": "mtg-kernel-spellbench-scorer-config/v1", "source": json.loads(self.source.read_text()),
+             "selection": "sampled-wide-v1"}))
+        os.environ["FAKE_SCORER_SHIFT"] = "0"
+        code = lp.main(["scorer", "--dump", str(self.root / "d"), "--jobs", str(self.jobs), "--scorer", sys.executable,
+                        "--scorer-arg", str(fake), "--config", str(self.root / "bot.scorer.json"),
+                        "--out", str(self.root / "scorer.json")])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads((self.root / "scorer.json").read_text())["schema"], "w5-scorer-parity/v1")
 
 def parity(ckpt="c", census="e", linux="linux-zen5-9950x", windows="windows-cpu"):
     return {"schema": "w5-logit-parity/v1", "pass": True, "checkpoint_pins": [ckpt], "max_abs_logit_diff": 0.0,
