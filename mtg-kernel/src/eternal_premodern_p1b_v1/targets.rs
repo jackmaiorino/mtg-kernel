@@ -3,7 +3,7 @@
 //! `target_matches` ask these first.
 
 use super::LEGACYS_ALLURE;
-use crate::card_def::{CardType, Subtype};
+use crate::card_def::{CardType, Subtype, TargetSpec};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardTargetV1;
 use crate::state::{GameState, ObjectLinkV4, Target, Zone};
@@ -15,6 +15,14 @@ pub(crate) fn owns(target: StandardTargetV1) -> bool {
         StandardTargetV1::CreaturePowerAtMostTreasureCountersV1
             | StandardTargetV1::AssemblyWorkerCreatureV1
     )
+}
+
+/// Whether an activated ability targeting with `spec` keeps judging its
+/// targets from its frozen source incarnation once that source left:
+/// Legacy's Allure's bound is the sacrificed incarnation's treasure
+/// counters, never those of the card after it returns (Replenish).
+pub(crate) fn judged_from_frozen_source(spec: TargetSpec) -> bool {
+    spec == TargetSpec::StandardV1(StandardTargetV1::CreaturePowerAtMostTreasureCountersV1)
 }
 
 /// How many targets this module's filter takes, and how many at least.

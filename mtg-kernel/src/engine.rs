@@ -5185,7 +5185,16 @@ fn activation_legal_targets_with_source_lki(
     {
         return crate::source_power_activation_v1::current_targets(state, source);
     }
-    let captured_source = captured_source.filter(|_| crate::source_type_hexproof_v1::enabled());
+    // Legacy's Allure's target stays bounded by its sacrificed incarnation
+    // after the card returns (Premodern wave P1b).
+    let captured_source = captured_source.filter(|_| {
+        crate::source_type_hexproof_v1::enabled()
+            || (cfg!(feature = "eternal-fixtures")
+                && source_departed
+                && crate::eternal_premodern_p1b_v1::targets::judged_from_frozen_source(
+                    ability.target_spec,
+                ))
+    });
     let controller =
         captured_source.map_or_else(|| state.objects.get(source).controller, |s| s.controller);
     legal_targets_for_controller_from_source(
