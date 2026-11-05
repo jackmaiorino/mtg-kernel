@@ -103,6 +103,13 @@ pub(crate) const R3_UNREADABLE_DETAIL: &str = "library-search plan unreadable";
 pub(crate) const R1_SAME_NAME_BATCH_DETAIL: &str =
     "a live reference names one of two same-name objects that left in one batch V cannot order";
 
+/// R1's detail for a live reference to a copy that sat in the opponent's
+/// hand beside another copy with equal 43.4 keys when one of them left V's
+/// tracking (amendment 43.6, lead ruling 9 (b)): the wire subclass
+/// `same_name_hand`, a C5 fault.
+pub(crate) const R1_SAME_NAME_HAND_DETAIL: &str =
+    "a live reference names one of two same-name copies in the opponent's hand that V cannot tell apart";
+
 fn refuse(code: RefusalCodeV1, detail: impl Into<String>) -> ExportErrorV1 {
     ExportErrorV1::refuse(code, detail)
 }
@@ -659,6 +666,29 @@ pub(crate) fn export_v1(
                 if projection.span_of(r.object, *g).is_some()
                     && unread_paid.contains(&(r.object, *g)))
     };
+
+    // Amendment 43.6 (lead ruling 9 (b)), first of the R1 family: a live
+    // reference (contract, binding, receipt or paid-cost record) to a copy
+    // that sat in the opponent's hand beside another copy with equal 43.4
+    // keys when one of them left V's tracking, made at or before the
+    // copy's epoch in that hand, refuses. The
+    // candidate set is the same whichever copy left, so this runs before
+    // every test that reads which copy V still tracks.
+    for (r, region) in &refs {
+        if *region != "live" {
+            continue;
+        }
+        // A reference with no epoch is current membership (a zone vector,
+        // an attachment), not a historical link across the hand (Sol r1).
+        let crossed = projection.hand_ambiguities.iter().any(|a| {
+            a.candidates
+                .iter()
+                .any(|&(o, g_hand)| o == r.object && r.generations.iter().any(|&g| g <= g_hand))
+        });
+        if crossed {
+            return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
+        }
+    }
 
     // R1b first (a name-level, public-event predicate), then R1 and R2.
     for (r, region) in &refs {
@@ -1552,7 +1582,44 @@ pub(crate) fn refusal_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
             "paths": at,
         }));
     }
-    json!({"viewer": input.viewer.0, "items": projection.items, "untracked_live_refs": out})
+    // Lead ruling 9 (a): the items that hold paid-cost records, with their
+    // kind, source card, effect and 43.5's verdict (log only).
+    let holder = |where_: &str, i: usize, item: &crate::state::StackItem| {
+        let effect = item
+            .inline_effect
+            .as_ref()
+            .map(|e| format!("{e:?}").chars().take(240).collect::<String>());
+        json!({
+            "at": format!("{where_}[{i}]"),
+            "kind": format!("{:?}", item.kind),
+            "source_card": card_name(state.objects.get(item.source).card_def),
+            "source_zone": format!("{:?}", state.objects.get(item.source).zone),
+            "controller": item.controller.0,
+            "inline_effect": effect,
+            "granted": item.v4.granted_by.is_some(),
+            "paid_cost_cards": item
+                .v4
+                .paid_cost_refs
+                .iter()
+                .map(|p| card_name(p.card_def))
+                .collect::<Vec<_>>(),
+            "unread_43_5": paid_costs_unread_v1(state, item),
+        })
+    };
+    let mut holders: Vec<Value> = state
+        .stack
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| !item.v4.paid_cost_refs.is_empty())
+        .map(|(i, item)| holder("stack", i, item))
+        .collect();
+    if let Some(pending) = state.engine.pending_effect.as_ref() {
+        if !pending.resolving_item.v4.paid_cost_refs.is_empty() {
+            holders.push(holder("pending_effect", 0, &pending.resolving_item));
+        }
+    }
+    json!({"viewer": input.viewer.0, "items": projection.items, "untracked_live_refs": out,
+           "paid_cost_holders": holders})
 }
 
 /// Collect pass: every reference with its region.

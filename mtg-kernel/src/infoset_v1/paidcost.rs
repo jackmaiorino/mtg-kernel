@@ -562,14 +562,188 @@ fn a_paid_copy_and_its_twin_leaving_in_one_batch_refuse_alike() {
         pa.as_ref().map(Vec::len),
         pb.as_ref().map(Vec::len)
     );
-    let batch = |p: &Result<Vec<u8>, String>| {
+    // Amendment 43.6 reads first: the two equal-key copies sat in the hand
+    // when one was put back, so `same_name_hand` refuses before
+    // `same_name_batch` would.
+    let refused = |p: &Result<Vec<u8>, String>| {
         p.as_ref().is_err_and(|e| {
-            e.contains("R1") && e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL)
+            e.contains("R1")
+                && (e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)
+                    || e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL))
         })
     };
     assert!(
-        batch(&pa) && batch(&pb),
-        "both worlds refuse R1 same_name_batch"
+        refused(&pa) && refused(&pb),
+        "both worlds refuse R1 (same_name_hand or same_name_batch)"
     );
     assert_eq!(pa, pb, "P agrees whichever copy went");
+}
+
+/// Amendment 43.6 (lead ruling 9 (b)), Sol round 3's pair. The opponent's
+/// Shaman payment waits with its paid Lembas A in the graveyard (A's
+/// shuffle trigger removed). A returns to the opponent's hand, then (after
+/// a V decision, a separate batch) a second Lembas `second` does; one of
+/// them is discarded and shuffled away. Returns P for V.
+fn hand_world(second: HandSecondV1, discard_a: bool) -> Result<Vec<u8>, String> {
+    hand_world_with(second, discard_a, HandRefV1::Paid)
+}
+
+/// The live reference the controls keep to A.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandRefV1 {
+    /// The Shaman's paid-cost record, made before A entered the hand.
+    Paid,
+    /// No reference survives (the Shaman ability removed): equal-key
+    /// copies alone do not refuse.
+    None,
+    /// The discarded copy stays in the graveyard and the record is re-made
+    /// fresh at its graveyard epoch, after it left the hand.
+    Fresh,
+}
+
+fn hand_world_with(
+    second: HandSecondV1,
+    discard_a: bool,
+    reference: HandRefV1,
+) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+    let a = paid_object(&st, i);
+    st.stack
+        .retain(|it| st.objects.get(it.source).card_def != lembas);
+    let b = match second {
+        HandSecondV1::FromGraveyard => {
+            let b = st.players[o.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .find(|x| st.objects.get(*x).card_def == lembas)
+                .expect("the other Lembas is on the battlefield");
+            propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Graveyard));
+            st.engine.pending_triggers.clear();
+            b
+        }
+        HandSecondV1::RevealedFromLibrary => st.players[o.index()]
+            .library
+            .iter()
+            .copied()
+            .find(|x| st.objects.get(*x).card_def == lembas)
+            .expect("a Lembas in the opponent's library"),
+    };
+    let mut marks = s.infoset_marks_v1(v);
+    propose_and_commit(&mut st, ProposedEvent::zone_change(a, Zone::Hand));
+    st.reveal_hand_card(v, o, a).expect("reveal A");
+    // A V decision between the two returns: separate batches.
+    marks.push((
+        st.engine.event_history.len(),
+        st.observation_journal.notes().len(),
+    ));
+    propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Hand));
+    st.reveal_hand_card(v, o, b).expect("reveal B");
+    marks.push((
+        st.engine.event_history.len(),
+        st.observation_journal.notes().len(),
+    ));
+    let gone = if discard_a { a } else { b };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    match reference {
+        HandRefV1::Paid => {
+            propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Library));
+        }
+        HandRefV1::None => {
+            propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Library));
+            st.stack.retain(|it| it.v4.paid_cost_refs.is_empty());
+        }
+        HandRefV1::Fresh => {
+            let zcc = st.objects.get(a).zone_change_count;
+            let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+            st.stack[i].v4.paid_cost_refs[0].zone_change_count = zcc;
+        }
+    }
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// How the second Lembas reaches the opponent's hand.
+#[derive(Clone, Copy, Debug)]
+enum HandSecondV1 {
+    /// From the graveyard, like A: equal 43.4 keys (a public-zone fact).
+    FromGraveyard,
+    /// Drawn unseen, then revealed: a different fact, different keys.
+    RevealedFromLibrary,
+}
+
+/// Amendment 43.6: equal-key copies, either one discarded. Both orders
+/// refuse R1 `same_name_hand`, with equal outcomes.
+#[test]
+fn same_name_hand_refuses_in_both_orders() {
+    let (pa, pb) = (
+        hand_world(HandSecondV1::FromGraveyard, true),
+        hand_world(HandSecondV1::FromGraveyard, false),
+    );
+    eprintln!(
+        "same-name hand: A discarded {:?} / B discarded {:?}",
+        pa.as_ref().map(Vec::len),
+        pb.as_ref().map(Vec::len)
+    );
+    let hand = |p: &Result<Vec<u8>, String>| {
+        p.as_ref()
+            .is_err_and(|e| e.contains("R1") && e.contains(super::export::R1_SAME_NAME_HAND_DETAIL))
+    };
+    assert!(hand(&pa) && hand(&pb), "R1 same_name_hand in both orders");
+    assert_eq!(pa, pb, "P agrees whichever copy left");
+}
+
+/// Amendment 43.6's negative control: the copies' 43.4 keys differ (one
+/// returned from the graveyard, one revealed after an unseen draw), so
+/// either discard still exports.
+#[test]
+fn different_hand_keys_still_export() {
+    for discard_a in [true, false] {
+        let p = hand_world(HandSecondV1::RevealedFromLibrary, discard_a);
+        assert!(
+            p.is_ok(),
+            "discard {}: different keys export: {:?}",
+            if discard_a { "A" } else { "the revealed copy" },
+            p.as_ref().err()
+        );
+    }
+}
+
+/// Sol review of 43.6, round 1 controls: equal-key copies with no surviving
+/// historical reference export in both orders (current zone membership is
+/// no reference across the hand), and a reference made fresh at the
+/// discarded copy's graveyard epoch exports.
+#[test]
+fn same_name_hand_controls_export() {
+    for discard_a in [true, false] {
+        let p = hand_world_with(HandSecondV1::FromGraveyard, discard_a, HandRefV1::None);
+        assert!(
+            p.is_ok(),
+            "no reference, discard A {discard_a}: {:?}",
+            p.as_ref().err()
+        );
+    }
+    let p = hand_world_with(HandSecondV1::FromGraveyard, true, HandRefV1::Fresh);
+    assert!(
+        p.is_ok(),
+        "a fresh graveyard reference: {:?}",
+        p.as_ref().err()
+    );
 }

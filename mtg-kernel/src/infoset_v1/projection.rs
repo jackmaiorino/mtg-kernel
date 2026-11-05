@@ -96,6 +96,19 @@ pub(crate) struct TransferV1 {
     pub dir: TransferDirV1,
 }
 
+/// Amendment 43.6 (lead ruling 9 (b)): a copy left the opponent's hand while
+/// another copy with the same name and the same V-visible fact (equal 43.4
+/// keys) was there with it, so V cannot tell which copy left. Every
+/// candidate is listed with its epoch in the hand. Recorded from the fact
+/// structure V sees (names, how each fact arose), never from which copy
+/// actually left: the candidate set is the same whichever copy it was.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HandAmbiguityV1 {
+    pub item: usize,
+    pub card_def: u16,
+    pub candidates: Vec<(ObjectId, u32)>,
+}
+
 /// A card of `owner` named `card_def` became tracked by V from a hidden zone
 /// (made public, looked at, or searched and revealed). R1b reads this log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,6 +142,9 @@ pub(crate) struct ProjectionV1 {
     pub survivors: SurvivorTreeV1,
     pub transfers: Vec<TransferV1>,
     pub arrivals: Vec<ArrivalV1>,
+    /// Amendment 43.6: departures from the opponent's hand that V cannot
+    /// attribute between equal-key copies.
+    pub hand_ambiguities: Vec<HandAmbiguityV1>,
     /// Stream items at which an owner's library order changed unseen by
     /// V's tracking (a shuffle, a reorder, a scry), with the owner.
     pub reorders: Vec<(usize, PlayerId)>,
@@ -254,6 +270,7 @@ struct WalkV1<'a> {
     survivors: SurvivorTreeV1,
     transfers: Vec<TransferV1>,
     arrivals: Vec<ArrivalV1>,
+    hand_ambiguities: Vec<HandAmbiguityV1>,
     reorders: Vec<(usize, PlayerId)>,
     /// Unidentified put-backs per owner still on top of the library (no
     /// reorder since): the next unidentified draws take them back.
@@ -313,6 +330,7 @@ pub(crate) fn project_v1(
         survivors: SurvivorTreeV1::default(),
         transfers: Vec::new(),
         arrivals: Vec::new(),
+        hand_ambiguities: Vec::new(),
         reorders: Vec::new(),
         put_backs_on_top: [Vec::new(), Vec::new()],
         last_departure: Vec::new(),
@@ -482,6 +500,7 @@ pub(crate) fn project_v1(
         survivors: w.survivors,
         transfers: w.transfers,
         arrivals: w.arrivals,
+        hand_ambiguities: w.hand_ambiguities,
         reorders: w.reorders,
         top_draws: w.top_draws,
         r8_latch: w.r8_latch,
@@ -1089,6 +1108,62 @@ impl WalkV1<'_> {
         });
     }
 
+    /// Amendment 43.6: before a copy leaves the opponent's hand, record
+    /// every group of two or more bound facts with one name and one fact
+    /// kind that V cannot tell apart at this departure: the departing
+    /// copy's own group when it leaves identified by name, else every such
+    /// group (an unidentified departure could be any card).
+    fn note_hand_ambiguity(&mut self, id: ObjectId, card_def: u16, identified: bool) {
+        let item = self.item;
+        let departing_how = self
+            .hand
+            .iter()
+            .find(|f| f.native == Some(id))
+            .map(|f| f.how);
+        let mut groups: Vec<(u16, FactHowV1)> = Vec::new();
+        for f in &self.hand {
+            if f.native.is_none() || groups.contains(&(f.card_def, f.how)) {
+                continue;
+            }
+            let wanted = if identified {
+                f.card_def == card_def && departing_how.is_none_or(|h| h == f.how)
+            } else {
+                true
+            };
+            if wanted {
+                groups.push((f.card_def, f.how));
+            }
+        }
+        for (def, how) in groups {
+            let candidates: Vec<(ObjectId, u32)> = self
+                .hand
+                .iter()
+                .filter(|f| f.card_def == def && f.how == how)
+                .filter_map(|f| f.native)
+                .map(|o| {
+                    // The departing copy was already moved (its epoch is
+                    // the destination's): record its epoch in the hand.
+                    let moves = self.objs[o.0 as usize].moves;
+                    (
+                        o,
+                        if o == id {
+                            moves.saturating_sub(1)
+                        } else {
+                            moves
+                        },
+                    )
+                })
+                .collect();
+            if candidates.len() >= 2 {
+                self.hand_ambiguities.push(HandAmbiguityV1 {
+                    item,
+                    card_def: def,
+                    candidates,
+                });
+            }
+        }
+    }
+
     fn hand_move(&mut self, id: ObjectId, owner: PlayerId, from: Zone, to: Zone, named: bool) {
         if owner == self.viewer {
             return;
@@ -1109,6 +1184,7 @@ impl WalkV1<'_> {
         if from != Zone::Hand || to == Zone::Hand {
             return;
         }
+        self.note_hand_ambiguity(id, card_def, is_public(to) || named);
         let tracked = self.objs[id.0 as usize].tracked;
         if is_public(to) || named {
             // Identified as it leaves: drop its own fact, else one count fact
