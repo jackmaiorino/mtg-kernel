@@ -265,3 +265,153 @@ fn same_name_batch_refuses_in_both_worlds() {
     );
     assert_eq!(pa, pb, "P agrees across the worlds");
 }
+
+/// Lead ruling 11 (R1, Fable Q1): the waiting ability's source and its twin
+/// leave the battlefield in one batch of V's transcript, one into the
+/// graveyard (an amendment 43.3 split) and one into the library unseen (a
+/// lapse). V's records agree whichever copy went where (the graveyard move
+/// comes first in both worlds). Returns P for V after the moves.
+fn p_mixed(s: &FastActorSessionV1, source_to_library: bool) -> Result<Vec<u8>, String> {
+    let v = PlayerId::P1;
+    let mut st = s.game_state().clone();
+    mixed_batch(&mut st, source_to_library);
+    let lists = super::tests::decklists(s);
+    let marks = s.infoset_marks_v1(v);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// The mixed batch: the waiting Shaman ability's source and the other
+/// Shaman leave the battlefield, the first named one to the graveyard, then
+/// the other to the bottom of the library (hidden from V).
+fn mixed_batch(st: &mut GameState, source_to_library: bool) {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let shaman = id(SHAMAN);
+    let source = st
+        .stack
+        .iter()
+        .find(|i| {
+            i.kind == crate::state::StackItemKind::ActivatedAbility
+                && st.objects.get(i.source).card_def == shaman
+        })
+        .map(|i| i.source)
+        .expect("the waiting ability");
+    let twin = st.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|x| *x != source && st.objects.get(*x).card_def == shaman)
+        .expect("the other Shaman is on the battlefield");
+    let (to_graveyard, to_library) = if source_to_library {
+        (twin, source)
+    } else {
+        (source, twin)
+    };
+    propose_and_commit(
+        st,
+        ProposedEvent::zone_change(to_graveyard, crate::state::Zone::Graveyard),
+    );
+    propose_and_commit(st, ProposedEvent::private_bottom_library_insert(to_library));
+    st.engine.pending_triggers.clear();
+}
+
+/// Lead ruling 11 (R1): in both orders of a mixed lapse/split batch, P
+/// refuses R1 `same_name_batch` with equal outcomes. Before the repair the
+/// batch test skipped the referenced copy's own lapse, so the world where
+/// the source lapsed exported (the source is pinned as a contract source)
+/// while the world where it split refused.
+#[test]
+fn mixed_lapse_split_batch_refuses_in_both_orders() {
+    let s = at_the_wait(0);
+    let (split, lapse) = (p_mixed(&s, false), p_mixed(&s, true));
+    eprintln!(
+        "mixed batch: source split {:?} / source lapsed {:?}",
+        split.as_ref().map(Vec::len),
+        lapse.as_ref().map(Vec::len)
+    );
+    let batch = |p: &Result<Vec<u8>, String>| {
+        p.as_ref().is_err_and(|e| {
+            e.contains("R1") && e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL)
+        })
+    };
+    assert!(
+        batch(&split) && batch(&lapse),
+        "R1 same_name_batch in both orders: {split:?} / {lapse:?}"
+    );
+    assert_eq!(split, lapse, "P agrees whichever copy lapsed");
+}
+
+/// The mixed-batch AC1 fixture (lead ruling 11, R1): the same-name script
+/// with Shaman copy 0 activated; at V's first decision with the ability
+/// waiting, an edit makes the source and its twin leave in one batch, one
+/// split and one lapsed (world 0: the source splits; world 1: it lapses).
+/// The rest of the game is scripted as before.
+pub(crate) fn mixed_batch_fixture(source_to_library: bool) -> ScriptV1 {
+    let v = PlayerId::P1;
+    let mut script = same_name_batch(0);
+    let intents = &mut script.intents[v.index()];
+    intents.push_front(super::fixtures::edit(
+        "the source and its twin leave in one batch, one split, one lapsed",
+        move |st: &mut GameState| mixed_batch(st, source_to_library),
+    ));
+    intents.push_front(super::fixtures::gate(
+        "the Shaman ability waits",
+        |st: &GameState| shaman_items(st) == 1,
+    ));
+    script
+}
+
+/// AC1 over the mixed-batch fixture: P agrees across the worlds at every
+/// compared V decision, and the decisions while the ability waits refuse R1
+/// `same_name_batch` in both worlds. Strict-view dumps
+/// `fx-mixedbatch-v0/v1`.
+#[test]
+fn mixed_batch_fixture_in_both_worlds() {
+    let v = PlayerId::P1;
+    let runs: Vec<(Vec<AtV1>, ScriptV1)> = [false, true]
+        .iter()
+        .map(|&lapse| {
+            record_strict(
+                mixed_batch_fixture(lapse),
+                v,
+                4,
+                &format!("fx-mixedbatch-v{}", u8::from(lapse)),
+            )
+        })
+        .collect();
+    let report: PairReportV1 = super::fixtures::compare_records(&runs[0].0, &runs[1].0);
+    eprintln!("mixed batch fixture, source split vs lapsed: {report:?}");
+    for (lapse, (_, script)) in [false, true].iter().zip(&runs) {
+        assert!(
+            script.trace.iter().any(|t| t.starts_with("edit ")),
+            "world {lapse}: the edit ran"
+        );
+    }
+    assert_eq!(
+        report.p_differs, 0,
+        "P differs across the worlds: {report:?}"
+    );
+    assert!(
+        report.compared > 0,
+        "the pair compares decisions: {report:?}"
+    );
+    assert!(
+        report
+            .p_refusals
+            .get("R1:same_name_batch")
+            .copied()
+            .unwrap_or(0)
+            > 0,
+        "the waiting decisions refuse R1 same_name_batch in both worlds: {report:?}"
+    );
+}

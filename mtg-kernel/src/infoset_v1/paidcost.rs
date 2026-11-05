@@ -747,3 +747,121 @@ fn same_name_hand_controls_export() {
         p.as_ref().err()
     );
 }
+
+/// Lead ruling 11 (R2, Astra item 1): a hand with one unbound name-level
+/// fact and one bound copy of the same name. Three copies of a card of the
+/// opponent return from the graveyard to its hand (bound facts), two cards
+/// are put back unidentified (one unbound fact of that name remains, for
+/// the third copy), then a fourth copy returns (bound). One copy of that
+/// name is discarded: the unbound copy (`discard_bound` false) or the
+/// fourth (true). No live reference remains. V's records agree whichever
+/// copy went. Returns P for V.
+fn mixed_hand_world(discard_bound: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    // No live reference: the Shaman ability and the shuffle trigger go.
+    st.stack.retain(|it| {
+        it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
+    });
+    st.engine.pending_triggers.clear();
+    // The first name with four copies in the opponent's library.
+    let lib = st.players[o.index()].library.clone();
+    let mut defs: Vec<u16> = lib.iter().map(|x| st.objects.get(*x).card_def).collect();
+    defs.sort_unstable();
+    defs.dedup();
+    let def = defs
+        .into_iter()
+        .find(|d| {
+            lib.iter()
+                .filter(|x| st.objects.get(**x).card_def == *d)
+                .count()
+                >= 4
+        })
+        .expect("a name with four copies in the opponent's library");
+    let copies: Vec<ObjectId> = lib
+        .iter()
+        .copied()
+        .filter(|x| st.objects.get(*x).card_def == def)
+        .take(4)
+        .collect();
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    for &x in &copies {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Graveyard));
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    for &x in &copies[..3] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Hand));
+        st.reveal_hand_card(v, o, x)
+            .expect("reveal the returned copy");
+    }
+    mark(&st, &mut marks);
+    // Two private put-backs (Brainstorm's path).
+    for &x in &copies[..2] {
+        st.clear_nonowner_hand_knowledge(o);
+        propose_and_commit(&mut st, ProposedEvent::private_top_library_insert(x));
+        mark(&st, &mut marks);
+    }
+    let fourth = copies[3];
+    propose_and_commit(&mut st, ProposedEvent::zone_change(fourth, Zone::Hand));
+    st.reveal_hand_card(v, o, fourth)
+        .expect("reveal the fourth copy");
+    mark(&st, &mut marks);
+    let gone = if discard_bound { fourth } else { copies[2] };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// Lead ruling 11 (R2): discarding the unbound copy or the bound fourth
+/// copy gives equal P (an export or the same refusal). Prints the first
+/// byte difference when the exports differ.
+#[test]
+fn mixed_bound_and_count_hand_facts_agree() {
+    let (unbound, bound) = (mixed_hand_world(false), mixed_hand_world(true));
+    eprintln!(
+        "mixed hand: unbound copy discarded {:?} / bound copy discarded {:?}",
+        unbound.as_ref().map(Vec::len),
+        bound.as_ref().map(Vec::len)
+    );
+    if let (Ok(a), Ok(b)) = (&unbound, &bound) {
+        if let (Ok(x), Ok(y)) = (
+            serde_json::from_slice::<serde_json::Value>(a),
+            serde_json::from_slice::<serde_json::Value>(b),
+        ) {
+            eprintln!(
+                "first JSON difference: {}",
+                first_diff(&x, &y, String::new())
+            );
+        }
+        if let Some(at) = (0..a.len().min(b.len())).find(|&i| a[i] != b[i]) {
+            let window = |x: &[u8]| {
+                String::from_utf8_lossy(&x[at.saturating_sub(300)..(at + 300).min(x.len())])
+                    .to_string()
+            };
+            eprintln!("first difference at byte {at}\n--- unbound discarded:\n{}\n--- bound discarded:\n{}", window(a), window(b));
+        }
+    }
+    assert_eq!(unbound, bound, "P agrees whichever copy was discarded");
+}

@@ -690,7 +690,56 @@ pub(crate) fn export_v1(
         }
     }
 
-    // R1b first (a name-level, public-event predicate), then R1 and R2.
+    // Lead ruling 7 (a): a live reference keeps its link across an unlinked
+    // visible move (6.5, the Lembas table) only while V can tell which copy
+    // moved. If another object of the same name and owner also left the
+    // same zone (changing zone in V's sight, or leaving V's sight) in the
+    // same batch of V's transcript (no V decision between the two), V cannot
+    // pair the reference with either copy: refuse, fail closed. Reads V's
+    // spans, the names and zones V saw and V's own decision points only.
+    // It reads 43.5's tombstone-eligible paid-cost references too (Sol
+    // round 2): which copy stays tracked after such a batch is not V's
+    // information, so the batch test runs before tracking decides. Lead
+    // ruling 11 (R1): it runs before R1b and the R1 untracked test, which
+    // read tracking (whether the referenced copy lapsed or split), so both
+    // worlds refuse with the same subclass.
+    let bounds = projection.batch_bounds(input.marks);
+    for (r, region) in &refs {
+        if *region != "live" {
+            continue;
+        }
+        let Some(track) = projection.objects.get(r.object.0 as usize) else {
+            continue;
+        };
+        let o = state.objects.get(r.object);
+        for &g in &r.generations {
+            // Every end of the referenced object counts, a lapse (it left
+            // V's sight) as much as a split (lead ruling 11, R1): a twin's
+            // departure counts either way, so skipping the reference's own
+            // lapses let the world where it lapsed export while the world
+            // where it split refused.
+            for end in track.spans.iter().filter_map(|s| s.end) {
+                if end.last_gen < g {
+                    continue;
+                }
+                let batch = ProjectionV1::batch_of(&bounds, end.item);
+                let twin = projection.objects.iter().enumerate().any(|(i, other)| {
+                    let other_obj = state.objects.get(ObjectId(i as u32));
+                    i != r.object.0 as usize
+                        && other_obj.owner == o.owner
+                        && card_name(other_obj.card_def) == card_name(o.card_def)
+                        && other.spans.iter().filter_map(|s| s.end).any(|e| {
+                            e.from == end.from && ProjectionV1::batch_of(&bounds, e.item) == batch
+                        })
+                });
+                if twin {
+                    return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_BATCH_DETAIL));
+                }
+            }
+        }
+    }
+
+    // R1b (a name-level, public-event predicate), then R1 and R2.
     for (r, region) in &refs {
         if *region != "live" {
             continue;
@@ -746,47 +795,6 @@ pub(crate) fn export_v1(
             "a live reference names an untracked object",
         ));
     }
-    // Lead ruling 7 (a): a live reference keeps its link across an unlinked
-    // visible move (6.5, the Lembas table) only while V can tell which copy
-    // moved. If another object of the same name and owner also left the
-    // same zone (changing zone in V's sight, or leaving V's sight) in the
-    // same batch of V's transcript (no V decision between the two), V cannot
-    // pair the reference with either copy: refuse, fail closed. Reads V's
-    // spans, the names and zones V saw and V's own decision points only.
-    // It reads 43.5's tombstone-eligible paid-cost references too (Sol
-    // round 2): which copy stays tracked after such a batch is not V's
-    // information, so the batch test runs before tracking decides.
-    let bounds = projection.batch_bounds(input.marks);
-    for (r, region) in &refs {
-        if *region != "live" {
-            continue;
-        }
-        let Some(track) = projection.objects.get(r.object.0 as usize) else {
-            continue;
-        };
-        let o = state.objects.get(r.object);
-        for &g in &r.generations {
-            for end in track.spans.iter().filter_map(|s| s.end) {
-                if !end.split || end.last_gen < g {
-                    continue;
-                }
-                let batch = ProjectionV1::batch_of(&bounds, end.item);
-                let twin = projection.objects.iter().enumerate().any(|(i, other)| {
-                    let other_obj = state.objects.get(ObjectId(i as u32));
-                    i != r.object.0 as usize
-                        && other_obj.owner == o.owner
-                        && card_name(other_obj.card_def) == card_name(o.card_def)
-                        && other.spans.iter().filter_map(|s| s.end).any(|e| {
-                            e.from == end.from && ProjectionV1::batch_of(&bounds, e.item) == batch
-                        })
-                });
-                if twin {
-                    return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_BATCH_DETAIL));
-                }
-            }
-        }
-    }
-
     // Step 4: joint pinned allocation.
     let opp_hand_slots = slots
         .iter()
