@@ -412,6 +412,33 @@ fn legal_object_target(
     .then_some(object)
 }
 
+/// Target `index`, if it is an object still legal for the resolving
+/// ability under `spec`, judged from the ability's frozen source incarnation
+/// rather than whatever that object is now.
+fn legal_object_target_from_ability_source(
+    ctx: &ExecCtx,
+    state: &GameState,
+    index: usize,
+    spec: TargetSpec,
+) -> Option<ObjectId> {
+    let Some(contract) = ctx.ability_source_contract else {
+        return legal_object_target(ctx, state, index, spec);
+    };
+    let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+        return None;
+    };
+    (ctx.target_incarnation_matches(index, state)
+        && crate::engine::effect_target_is_legal_from_ability_source(
+            state,
+            contract,
+            ctx.controller,
+            spec,
+            &ctx.targets,
+            index,
+        ))
+    .then_some(object)
+}
+
 /// Target `index`, if it is a player still legal under `spec`.
 fn legal_player_target(
     ctx: &ExecCtx,
@@ -883,7 +910,9 @@ pub(crate) fn execute(op: &P1bOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 crate::standard_cards_v1::StandardTargetV1::CreaturePowerAtMostTreasureCountersV1,
             );
             let allure = ability_source_link(ctx);
-            let target = legal_object_target(ctx, state, 0, spec);
+            // Judged from the ability's frozen source: a new incarnation of
+            // the Allure (returned by Replenish) has none of its counters.
+            let target = legal_object_target_from_ability_source(ctx, state, 0, spec);
             let counters =
                 allure.map_or(0, |allure| statics::allure_counters_for_link(state, allure));
             // The sacrificed Allure's record ends with its ability.
@@ -1519,7 +1548,6 @@ pub(crate) fn delayed_triggers(
     note_spell_casts(state, events);
     note_entries(state, events);
     note_departures(state, events);
-    note_taps(state, events);
     prune(state);
     let Some(eternal) = state.eternal_v1.as_mut() else {
         return Vec::new();
@@ -1675,19 +1703,16 @@ fn note_departures(state: &mut GameState, events: &[CommittedEvent]) {
 }
 
 /// City of Brass: "Whenever this land becomes tapped, it deals 1 damage to
-/// you."
-fn note_taps(state: &mut GameState, events: &[CommittedEvent]) {
-    for event in events {
-        let CommittedEvent::Tap { object } = *event else {
-            continue;
-        };
-        if !active_named(state, object, CITY_OF_BRASS) {
-            continue;
-        }
-        let source = AbilitySourceContractV4::capture(state, object);
-        let controller = state.objects.get(object).controller;
-        queue_trigger(state, source, controller, p1b(P1bOpV1::CityDamageV1), None);
+/// you." Called as the tap commits, so the trigger's source and controller
+/// are captured even if the land leaves before triggers are collected (a
+/// cost that taps it for mana and then sacrifices it, as Dust Bowl's can).
+pub(crate) fn city_tapped(state: &mut GameState, object: ObjectId) {
+    if !active_named(state, object, CITY_OF_BRASS) {
+        return;
     }
+    let source = AbilitySourceContractV4::capture(state, object);
+    let controller = state.objects.get(object).controller;
+    queue_trigger(state, source, controller, p1b(P1bOpV1::CityDamageV1), None);
 }
 
 /// Drops records whose objects moved on.

@@ -471,6 +471,19 @@ fn city_of_brass_deals_one_damage_whenever_it_becomes_tapped() {
 }
 
 #[test]
+fn city_of_brass_still_deals_damage_after_leaving_before_its_trigger_is_collected() {
+    // Tapped and then sacrificed before triggers are collected, as a cost
+    // that taps it for mana and sacrifices it does: it still triggers.
+    let mut state = islands();
+    let city = put(&mut state, P0, "City of Brass", Zone::Battlefield);
+    event::propose_and_commit(&mut state, ProposedEvent::tap(city));
+    to_graveyard(&mut state, city);
+    settled(&mut state);
+    assert_eq!(zone(&state, city), Zone::Graveyard);
+    assert_eq!(state.players[0].life, 19);
+}
+
+#[test]
 fn serras_sanctum_adds_white_for_each_enchantment() {
     let mut state = islands();
     let sanctum = put(&mut state, P0, "Serra's Sanctum", Zone::Battlefield);
@@ -833,6 +846,22 @@ fn decree_of_justice_makes_angels_and_cycles_for_soldiers() {
 }
 
 #[test]
+fn decree_of_justice_cycling_triggers_when_the_card_is_exiled_instead() {
+    // An opponent's Dauthi Voidwalker exiles the cycled card; the cycling
+    // still happened, so "When you cycle" still triggers (702.29c).
+    let mut state = islands();
+    put(&mut state, P1, "Dauthi Voidwalker", Zone::Battlefield);
+    let decree = put(&mut state, P0, "Decree of Justice", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 4);
+    activate(&mut state, decree, 0, &[]);
+    // Options: decline, X = 1, X = 2.
+    settle_picking(&mut state, 2, None);
+    assert_eq!(zone(&state, decree), Zone::Exile);
+    assert_eq!(controls(&state, P0, "Soldier Token").len(), 2);
+    assert_eq!(state.players[0].hand.len(), 1, "cycling drew a card");
+}
+
+#[test]
 fn winters_grasp_destroys_a_land() {
     let mut state = islands();
     let tower = put(&mut state, P1, "Coastal Tower", Zone::Battlefield);
@@ -1045,6 +1074,31 @@ fn legacys_allure_steals_a_creature_no_stronger_than_its_counters() {
 }
 
 #[test]
+fn legacys_allure_ability_keeps_its_counters_after_the_allure_returns() {
+    let mut state = islands();
+    let allure = put(&mut state, P0, "Legacy's Allure", Zone::Battlefield);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    for _ in 0..2 {
+        to_next_turn(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectOption { .. } => Some(Action::ChooseEffectOption(1)),
+            _ => None,
+        });
+    }
+    assert_eq!(p1b::treasure_counters(&state, allure), 2);
+    activate(&mut state, allure, 0, &[Target::Object(elves)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(zone(&state, allure), Zone::Graveyard);
+    assert!(!state.stack.is_empty());
+    // In response the Allure returns (as Replenish returns it) without
+    // counters; its ability still uses the sacrificed incarnation's two.
+    enter(&mut state, allure);
+    assert_eq!(zone(&state, allure), Zone::Battlefield);
+    assert_eq!(p1b::treasure_counters(&state, allure), 0);
+    settled(&mut state);
+    assert_eq!(state.objects.get(elves).controller, P0);
+}
+
+#[test]
 fn mirris_guile_may_reorder_the_top_three_at_upkeep() {
     let mut state = game(&["Island"; 10]);
     put(&mut state, P0, "Mirri's Guile", Zone::Battlefield);
@@ -1104,6 +1158,40 @@ fn opalescence_animates_the_other_non_aura_enchantments() {
     assert!(!is_creature(&state, rancor));
     to_graveyard(&mut state, opalescence);
     assert!(!is_creature(&state, seal), "ends as Opalescence leaves");
+}
+
+#[test]
+fn opalescence_ignores_a_permanent_that_stopped_being_an_enchantment() {
+    let mut state = islands();
+    let first = put(&mut state, P0, "Opalescence", Zone::Hand);
+    enter(&mut state, first);
+    let seal = put(&mut state, P1, "Seal of Cleansing", Zone::Battlefield);
+    assert_eq!(power_toughness(&state, seal), (2, 2));
+    // Oko's +1 turns the animated Seal into a 3/3 Elk that is no longer an
+    // enchantment.
+    let oko = put(&mut state, P0, "Oko, Thief of Crowns", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::U], 1);
+    cast(&mut state, oko, &[]);
+    settled(&mut state);
+    activate(&mut state, oko, 1, &[Target::Object(seal)]);
+    settled(&mut state);
+    assert!(!engine::object_has_type(
+        &state,
+        seal,
+        CardType::Enchantment
+    ));
+    assert!(is_creature(&state, seal));
+    assert_eq!(power_toughness(&state, seal), (3, 3));
+    // A newer Opalescence doesn't apply to it: its eligibility is decided by
+    // the layer 4 types, so its layer 7b setting doesn't override the Elk's.
+    let second = put(&mut state, P0, "Opalescence", Zone::Hand);
+    enter(&mut state, second);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, seal), (3, 3));
+    assert!(
+        is_creature(&state, first),
+        "the newer one animates the older"
+    );
 }
 
 #[test]

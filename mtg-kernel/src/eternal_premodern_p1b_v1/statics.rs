@@ -72,8 +72,11 @@ fn opalescence_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
         return None;
     }
     let def = definition(state, object)?;
-    let face_types = def.types_for_face(live.v4.face_index);
-    if !face_types.contains(&CardType::Enchantment)
+    // Eligibility follows the layer 4 card types: a permanent that stopped
+    // being an enchantment (an Elk of Oko's) is neither animated nor given
+    // the layer 7b base power and toughness. Opalescence only adds
+    // Creature, so this Enchantment query never reaches it again.
+    if !crate::engine::object_has_type(state, object, CardType::Enchantment)
         || def
             .subtypes_for_face(live.v4.face_index)
             .contains(&Subtype::Aura)
@@ -271,7 +274,10 @@ pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_i
             sacrificed.retain(|(host, _)| *host != departed);
             sacrificed.push((departed, count));
         }
-        (DECREE_OF_JUSTICE, 0) if live.zone == Zone::Graveyard => {
+        // Cycling triggers on the cycling itself (702.29c), wherever the
+        // discarded card went (Dauthi Voidwalker exiles it instead): the
+        // paid cost only has to have moved it out of its owner's hand.
+        (DECREE_OF_JUSTICE, 0) if live.zone != Zone::Hand => {
             let owner = live.owner;
             let contract = AbilitySourceContractV4::capture(state, source);
             queue_trigger(
@@ -282,7 +288,7 @@ pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_i
                 None,
             );
         }
-        (DECREE_OF_SILENCE, 0) if live.zone == Zone::Graveyard => {
+        (DECREE_OF_SILENCE, 0) if live.zone != Zone::Hand => {
             let owner = live.owner;
             let contract = AbilitySourceContractV4::capture(state, source);
             queue_trigger(

@@ -808,6 +808,7 @@ impl Subtype {
         Subtype::Peasant,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Atog,
+        #[cfg(feature = "eternal-fixtures")]
         Subtype::Jackal,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Specter,
