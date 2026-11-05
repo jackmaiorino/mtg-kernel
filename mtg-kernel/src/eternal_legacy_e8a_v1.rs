@@ -1157,6 +1157,10 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_legacy_e9a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // And through E9a's to Premodern wave P1b's.
+    if let Some(spec) = crate::eternal_premodern_p1b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }

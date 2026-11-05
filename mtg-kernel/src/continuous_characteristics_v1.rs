@@ -308,6 +308,8 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
         settings.extend(crate::eternal_e5a_v1::statics::base_power_toughness(
             state, id,
         ));
+        // Opalescence's enchantment creatures (Premodern wave P1b).
+        settings.extend(crate::eternal_premodern_p1b_v1::statics::base_power_toughness(state, id));
     }
     if object.zone == Zone::Battlefield {
         settings.extend(object.v4.temporary_base_pt_v1);

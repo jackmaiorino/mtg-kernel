@@ -100,7 +100,10 @@ fn operands(
     use DynamicValueDef as V;
     if matches!(
         value,
-        V::ControllerLifeTotal | V::UrzasLandsIfMetalcraftV1 | V::SixIfDungeonCompletedElseTwoV1
+        V::ControllerLifeTotal
+            | V::UrzasLandsIfMetalcraftV1
+            | V::SixIfDungeonCompletedElseTwoV1
+            | V::GraveyardCardsNamedV1(_)
     ) {
         return Err("life-total damage requires a distinct scalar sampling contract".into());
     }
@@ -125,7 +128,8 @@ fn operands(
                 V::Fixed(_)
                 | V::ControllerLifeTotal
                 | V::UrzasLandsIfMetalcraftV1
-                | V::SixIfDungeonCompletedElseTwoV1 => {
+                | V::SixIfDungeonCompletedElseTwoV1
+                | V::GraveyardCardsNamedV1(_) => {
                     unreachable!("scalar values have no permanent operands")
                 }
                 V::BattlefieldPermanentsWithSubtype(subtype) => (

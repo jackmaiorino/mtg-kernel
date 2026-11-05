@@ -17,7 +17,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 119] = [
+const PLAYABLE: [(&str, &str); 124] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -173,13 +173,24 @@ const PLAYABLE: [(&str, &str); 119] = [
     ("legacy", "legacy-naya-initiative"),
     ("legacy", "legacy-mono-black-midrange"),
     ("legacy", "legacy-death-and-taxes-60-card"),
+    ("premodern", "premodern-replenish"),
     ("premodern", "premodern-sligh-rdw"),
     ("premodern", "premodern-terrageddon"),
     ("premodern", "premodern-goblins"),
     ("premodern", "premodern-mono-black-aggro"),
     ("premodern", "premodern-rg-aggro"),
     ("premodern", "premodern-stiflenought"),
+    ("premodern", "premodern-oath-of-druids"),
+    ("premodern", "premodern-landstill-uw-control"),
+    ("premodern", "premodern-psychatog"),
+    ("premodern", "premodern-grow"),
 ];
+
+/// Fully supported decks that are not in `PLAYABLE`: the schema 4 public-session
+/// observation has no public keyword representation for a permanent's shroud,
+/// so a session refuses a game where Argothian Enchantress or Sterling Grove
+/// grants it. Representing it is a protocol change.
+const KNOWN_GAP: [(&str, &str); 1] = [("premodern", "premodern-enchantress")];
 
 fn read_json(relative: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -281,6 +292,7 @@ fn playable_snapshot_decks_match_the_tracked_list() {
                 .all(fully_supported)
         })
         .map(|deck| (deck.format.clone(), deck.archetype.clone()))
+        .filter(|key| !KNOWN_GAP.contains(&(key.0.as_str(), key.1.as_str())))
         .collect();
     let expected: BTreeSet<(String, String)> = PLAYABLE
         .iter()
