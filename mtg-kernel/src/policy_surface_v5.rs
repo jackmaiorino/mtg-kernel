@@ -382,6 +382,12 @@ pub struct PolicySurfaceV5 {
     scan: Option<CombatScanV5>,
     hunter_order_enabled_v45: bool,
     hunter_order_v45: Option<hunter_order_v45::TriggerOrderV45>,
+    /// W1 producer (lead ruling 7 (a)): where each presented decision fell
+    /// in the committed stream, as (seat, event-history length, observation
+    /// journal length), oldest first. A seat's marks bound the batches its
+    /// bot-facing transcript receives. Bookkeeping only: no transition,
+    /// observation or hash reads it.
+    infoset_marks_v1: std::sync::Arc<Vec<(u8, u32, u32)>>,
 }
 
 /// The session surface's public context, carried by the W1 information-set
@@ -696,6 +702,31 @@ impl CombatContextV1 {
 }
 
 impl PolicySurfaceV5 {
+    /// Records that a decision of `seat` is presented with `events` committed
+    /// events and `notes` journal notes (lead ruling 7 (a)).
+    pub(crate) fn push_infoset_mark_v1(&mut self, seat: PlayerId, events: usize, notes: usize) {
+        let mark = (seat.0, events as u32, notes as u32);
+        if self.infoset_marks_v1.last() != Some(&mark) {
+            std::sync::Arc::make_mut(&mut self.infoset_marks_v1).push(mark);
+        }
+    }
+
+    /// The (event-history length, journal length) of every decision
+    /// presented to `seat`, oldest first.
+    pub(crate) fn infoset_marks_v1(&self, seat: PlayerId) -> Vec<(usize, usize)> {
+        self.infoset_marks_v1
+            .iter()
+            .filter(|m| m.0 == seat.0)
+            .map(|m| (m.1 as usize, m.2 as usize))
+            .collect()
+    }
+
+    /// Carries another surface's marks (a session restarted on the same
+    /// committed stream).
+    pub(crate) fn carry_infoset_marks_v1(&mut self, from: &PolicySurfaceV5) {
+        self.infoset_marks_v1 = from.infoset_marks_v1.clone();
+    }
+
     /// None while the surface holds object-naming progress (a combat scan,
     /// a blocker reshape, a Hunter trigger order).
     pub(crate) fn infoset_context_v1(&self) -> Option<SurfaceContextV1> {
@@ -881,6 +912,7 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
+            infoset_marks_v1: Default::default(),
         }
     }
 
@@ -893,6 +925,7 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
+            infoset_marks_v1: Default::default(),
         }
     }
 

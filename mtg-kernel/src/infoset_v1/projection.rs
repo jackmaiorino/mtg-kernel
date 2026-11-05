@@ -58,6 +58,10 @@ pub(crate) struct SpanEndV1 {
     /// change), while the object stayed in V's sight. V still sees the object
     /// in its new zone, under a new span; it cannot link the two.
     pub split: bool,
+    /// The zone the object was in before the stream item that ended the
+    /// span (where a move it made there started). Lead ruling 7 (a): V tells
+    /// two departures apart by their origin zone.
+    pub from: Zone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,6 +148,10 @@ pub(crate) struct ProjectionV1 {
     pub event_observed: Vec<Vec<ObjectId>>,
     /// Total stream items.
     pub items: usize,
+    /// Per stream item: (events, notes) committed when it was absorbed, as
+    /// running maxima (lead ruling 7 (a)): a decision presented at (h, j)
+    /// follows exactly the items stamped at most (h, j).
+    pub stamps: Vec<(usize, usize)>,
     /// Internal consistency failures (a projection bug): R5.
     pub inconsistencies: Vec<String>,
 }
@@ -179,6 +187,31 @@ impl ProjectionV1 {
     }
     pub(crate) fn last_span(&self, id: ObjectId) -> Option<&SpanV1> {
         self.objects.get(id.0 as usize)?.spans.last()
+    }
+    /// Lead ruling 7 (a): the stream items at which V's bot-facing records
+    /// split the stream into batches, from V's decision marks (event-history
+    /// length, journal length), ascending. A mark with no stamped item after
+    /// it separates nothing (the current decision). With no marks known the
+    /// whole stream is one batch (fail closed).
+    pub(crate) fn batch_bounds(&self, marks: Option<&[(usize, usize)]>) -> Vec<usize> {
+        let mut out: Vec<usize> = marks
+            .unwrap_or(&[])
+            .iter()
+            .map(|&(h, j)| {
+                self.stamps
+                    .iter()
+                    .take_while(|&&(e, n)| e <= h && n <= j)
+                    .count()
+            })
+            .filter(|&b| b < self.stamps.len())
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+    /// The batch of stream item `item`: how many bounds lie at or before it.
+    pub(crate) fn batch_of(bounds: &[usize], item: usize) -> usize {
+        bounds.partition_point(|&b| b <= item)
     }
     /// Where V's tracking of `id` lapsed at or after `span` (the first end
     /// from `span` on that is not an amendment 43.3 split): the object left
@@ -243,6 +276,9 @@ struct WalkV1<'a> {
     /// Zones before the current item of the objects it moved.
     prev_zones: Vec<(ObjectId, Option<Zone>)>,
     last_observed: Vec<ObjectId>,
+    /// (events, notes) committed so far, and each item's stamp.
+    committed: (usize, usize),
+    stamps: Vec<(usize, usize)>,
     /// The owner whose library-to-hand move was the latest event, if it was
     /// one: a hand reveal right after such moves is a search-and-reveal
     /// outcome (R8b), recognized from the public event order alone.
@@ -288,6 +324,8 @@ pub(crate) fn project_v1(
         inconsistencies: Vec::new(),
         prev_zones: Vec::new(),
         last_observed: Vec::new(),
+        committed: (0, 0),
+        stamps: Vec::new(),
         last_event_library_to_hand: None,
     };
     let events = &state.engine.event_history;
@@ -304,6 +342,7 @@ pub(crate) fn project_v1(
         while cursor < journal.len() && journal[cursor].history_len <= index {
             let note = &journal[cursor];
             cursor += 1;
+            w.committed.1 = w.committed.1.max(cursor);
             if matches!(
                 note.kind,
                 ObservationNoteKindV1::LibraryRemoval { .. }
@@ -327,6 +366,7 @@ pub(crate) fn project_v1(
         }
         event_items.push(w.item);
         w.next_event = index;
+        w.committed.0 = index + 1;
         w.event(event, index, &positions);
         event_observed.push(std::mem::take(&mut w.last_observed));
         w.removed.clear();
@@ -337,7 +377,8 @@ pub(crate) fn project_v1(
         }
     }
     w.next_event = events.len();
-    for note in &journal[cursor..] {
+    for (k, note) in journal[cursor..].iter().enumerate() {
+        w.committed.1 = w.committed.1.max(cursor + k + 1);
         w.note(note);
     }
     // A spell being cast sits on the stack before its SpellCast commits:
@@ -377,12 +418,14 @@ pub(crate) fn project_v1(
                 let last_gen = o.last_obs_gen;
                 let zone = o.last_obs_zone.unwrap_or(Zone::Library);
                 let item = final_item;
+                let from = o.zone.unwrap_or(Zone::Library);
                 if let Some(span) = o.spans.last_mut().filter(|s| s.end.is_none()) {
                     span.end = Some(SpanEndV1 {
                         last_gen,
                         item,
                         zone,
                         split: true,
+                        from,
                     });
                 }
                 o.spans.push(SpanV1 {
@@ -445,6 +488,7 @@ pub(crate) fn project_v1(
         event_items,
         event_observed,
         items,
+        stamps: w.stamps,
         inconsistencies: w.inconsistencies,
     }
 }
@@ -551,6 +595,11 @@ impl WalkV1<'_> {
                 o.last_obs_gen = o.moves;
                 o.last_obs_zone = o.zone;
             } else if !now && o.tracked {
+                let from = prev_zones
+                    .iter()
+                    .find(|(x, _)| *x == id)
+                    .map_or(o.zone, |(_, z)| *z)
+                    .unwrap_or(Zone::Library);
                 let o = &mut self.objs[i];
                 let last_gen = o.last_obs_gen;
                 let zone = o.last_obs_zone.unwrap_or(Zone::Library);
@@ -560,6 +609,7 @@ impl WalkV1<'_> {
                         item,
                         zone,
                         split: false,
+                        from,
                     });
                 }
             } else if now {
@@ -590,6 +640,7 @@ impl WalkV1<'_> {
                             item,
                             zone,
                             split: true,
+                            from: zone,
                         });
                     }
                     o.spans.push(SpanV1 {
@@ -619,6 +670,7 @@ impl WalkV1<'_> {
             }
         }
         self.survivors.assert_laminar();
+        self.stamps.push(self.committed);
         self.item += 1;
     }
 

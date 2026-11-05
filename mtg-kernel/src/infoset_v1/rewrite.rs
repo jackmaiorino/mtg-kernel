@@ -33,6 +33,9 @@ pub(crate) struct RefV1 {
     /// Every epoch of the object the record stores beside it (a cast
     /// receipt stores its origin and stack epochs), in field order.
     pub generations: Vec<u32>,
+    /// The `object` of a paid-cost record (`paid_cost_refs`), amendment
+    /// 43.5.
+    pub paid_cost: bool,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -144,6 +147,7 @@ impl WalkerV1<'_> {
                             slot: self.next_slot(),
                             object,
                             generations: Vec::new(),
+                            paid_cost: false,
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -162,6 +166,7 @@ impl WalkerV1<'_> {
                     slot: self.next_slot(),
                     object,
                     generations: Vec::new(),
+                    paid_cost: false,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -253,6 +258,7 @@ impl WalkerV1<'_> {
                 slot: self.next_slot(),
                 object,
                 generations,
+                paid_cost: parent == "paid_cost_refs" && k.as_deref() == Some("object"),
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -276,6 +282,7 @@ impl WalkerV1<'_> {
                 slot: self.next_slot(),
                 object,
                 generations: Vec::new(),
+                paid_cost: false,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;

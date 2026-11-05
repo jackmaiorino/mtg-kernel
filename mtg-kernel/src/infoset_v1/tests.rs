@@ -109,6 +109,7 @@ pub(crate) fn export_at(
             journal: state.observation_journal.notes(),
             viewer,
             decklists: [&lists[0], &lists[1]],
+            marks: Some(&s.infoset_marks_v1(viewer)),
         },
         options,
     )
@@ -289,6 +290,7 @@ fn lembas_waiting_source_is_pinned_on_the_canonical_epoch_path() {
                 journal: &[],
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: Some(&every_event_marks(&state, &[])),
             },
             ExportOptionsV1::default(),
         );
@@ -322,6 +324,19 @@ fn lembas_waiting_source_is_pinned_on_the_canonical_epoch_path() {
             pin.zone_change_count
         );
     }
+}
+
+/// Decision marks for a recorded state without its session (lead ruling 7
+/// (a)): a V decision after every committed event, so each event is its own
+/// batch. For fixture states that test predicates other than the batches;
+/// without marks the export treats the whole stream as one batch.
+pub(crate) fn every_event_marks(
+    state: &crate::state::GameState,
+    journal: &[crate::state::ObservationNoteV1],
+) -> Vec<(usize, usize)> {
+    (0..=state.engine.event_history.len())
+        .map(|k| (k, journal.iter().filter(|n| n.history_len <= k).count()))
+        .collect()
 }
 
 /// The recorded decks of a fixture state, matched by full card multisets.
@@ -394,6 +409,7 @@ fn wildfire_join_refuses_in_both_worlds_and_l13_differs() {
                 journal: st.observation_journal.notes(),
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: Some(&every_event_marks(&st, st.observation_journal.notes())),
             },
             ExportOptionsV1 { mutant },
         )
@@ -500,6 +516,7 @@ fn ac3_l_lembas_continuations_match_the_true_state() {
                 journal: &[],
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: Some(&every_event_marks(&state, &[])),
             },
             ExportOptionsV1::default(),
         )
@@ -627,6 +644,7 @@ fn a_reveal_never_links_the_unidentified_draw_before_it() {
                 journal: st.observation_journal.notes(),
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: None,
             },
             ExportOptionsV1::default(),
         )
@@ -686,6 +704,7 @@ fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
                 journal: st.observation_journal.notes(),
                 viewer,
                 decklists: [&lists[0], &lists[1]],
+                marks: None,
             },
             ExportOptionsV1::default(),
         )

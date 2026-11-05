@@ -47,6 +47,11 @@ pub enum MutantV1 {
     L12,
     /// v6's true-identity join test instead of R1b.
     L13,
+    /// The rule before amendment 43.4 (harness only, lead ruling 7 (b)):
+    /// tracked objects in the opponent's hand take `C:` handles by span
+    /// start and the hand lists them in fact order. Its witnesses are the
+    /// pairs that differed before the fix.
+    L14,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -60,6 +65,11 @@ pub struct ExportInputV1<'a> {
     pub viewer: PlayerId,
     /// The public decklists (card definitions), indexed by owner.
     pub decklists: [&'a [u16]; 2],
+    /// Where V's decisions fell in the committed stream (event-history
+    /// length, journal length), oldest first: the bounds of the batches V's
+    /// bot-facing transcript receives (lead ruling 7 (a)). `None` when the
+    /// caller has no session: the whole stream is one batch (fail closed).
+    pub marks: Option<&'a [(usize, usize)]>,
 }
 
 /// The export: the canonical state, its bytes and its handle table.
@@ -86,6 +96,12 @@ pub(crate) const R3B_OWN_DETAIL: &str = "own library-search plan pending";
 /// nor V's own readable one (fail closed: the wire subclass `plan_error`,
 /// a C5 fault on the entrant side).
 pub(crate) const R3_UNREADABLE_DETAIL: &str = "library-search plan unreadable";
+
+/// R1's detail for a live reference to one of two or more same-name objects
+/// that left together in one batch of V's transcript (lead ruling 7 (a)):
+/// the bridge's wire subclass `same_name_batch`, a C5 fault.
+pub(crate) const R1_SAME_NAME_BATCH_DETAIL: &str =
+    "a live reference names one of two same-name objects that left in one batch V cannot order";
 
 fn refuse(code: RefusalCodeV1, detail: impl Into<String>) -> ExportErrorV1 {
     ExportErrorV1::refuse(code, detail)
@@ -164,6 +180,137 @@ pub(crate) fn contract_pins(state: &GameState) -> Vec<ObjectId> {
         }
     }
     out
+}
+
+/// Amendment 43.5 (lead ruling 8): whether a waiting stack item's
+/// resolution reads none of its paid-cost objects. Fail closed: only an
+/// activated ability whose whole effect is one generic op that never
+/// consults the paid-cost record (in `effect.rs` only
+/// `GainLifeEqualToPaidCostManaValue` and
+/// `DealDamageToTargetEqualToChosenCostCreaturePower` read it), with no
+/// captured last-known power, no payment by its own source, no grant and
+/// no catalog-owned payment record (`fixed_source_damage_v3`).
+fn paid_costs_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
+    use crate::effect::EffectOp;
+    let source = item.v4.ability_source_contract.map(|c| c.source);
+    item.kind == crate::state::StackItemKind::ActivatedAbility
+        && source == Some(item.source)
+        && item.v4.granted_by.is_none()
+        && item.v4.cauldron_grant.0.is_none()
+        && matches!(
+            item.inline_effect,
+            Some(
+                EffectOp::GainLife { .. }
+                    | EffectOp::DamageAllCreatures { .. }
+                    | EffectOp::DealDamage { .. }
+            )
+        )
+        && item
+            .v4
+            .paid_cost_refs
+            .iter()
+            .all(|p| p.power_lki.is_none() && p.object != item.source)
+        && !crate::fixed_source_damage_v3::tracked(state, item)
+}
+
+/// Amendment 43.5: the paid-cost records (object, epoch) whose live
+/// references may become 6.9 tombstones for viewer `v`. Every live
+/// occurrence of the record (anywhere outside the event history and the
+/// history-like records) must sit in a waiting stack item whose resolution
+/// reads none of its paid objects ([`paid_costs_unread_v1`]), with the
+/// payment public to V. Any other occurrence (a pending resolution's
+/// context, a pending trigger, a nested record) keeps R1.
+pub(crate) fn unread_paid_costs_v1(
+    state: &GameState,
+    tagged: &Value,
+    v: PlayerId,
+) -> BTreeSet<(ObjectId, u32)> {
+    type OccurrenceV1 = (String, Option<ObjectId>, Option<u64>);
+    fn scan(value: &Value, path: &str, out: &mut Vec<OccurrenceV1>) {
+        match value {
+            Value::Object(m) => {
+                for (k, x) in m {
+                    let at = format!("{path}.{k}");
+                    if k == "paid_cost_refs" {
+                        for e in x.as_array().into_iter().flatten() {
+                            out.push((
+                                at.clone(),
+                                super::rewrite::parse_tag(&e["object"]),
+                                e["zone_change_count"].as_u64(),
+                            ));
+                        }
+                    }
+                    scan(x, &at, out);
+                }
+            }
+            Value::Array(xs) => {
+                for (i, x) in xs.iter().enumerate() {
+                    scan(x, &format!("{path}.{i}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut occurrences = Vec::new();
+    if let Some(map) = tagged.as_object() {
+        for (k, x) in map {
+            if HISTORY_RECORDS_V1.contains(&k.as_str()) {
+                continue;
+            }
+            if k == "engine" {
+                for (ek, ex) in x.as_object().into_iter().flatten() {
+                    if ek != "event_history" && ek != "event_log" {
+                        scan(ex, &format!("engine.{ek}"), &mut occurrences);
+                    }
+                }
+                continue;
+            }
+            scan(x, k, &mut occurrences);
+        }
+    }
+    let bit = 1u8 << v.index();
+    let unread_at = |path: &str, object: ObjectId, g: u64| -> bool {
+        let Some(i) = path
+            .strip_prefix("stack.")
+            .and_then(|rest| rest.strip_suffix(".v4.paid_cost_refs"))
+            .and_then(|i| i.parse::<usize>().ok())
+        else {
+            return false;
+        };
+        state.stack.get(i).is_some_and(|item| {
+            paid_costs_unread_v1(state, item)
+                && item.v4.paid_cost_refs.iter().any(|p| {
+                    p.object == object
+                        && u64::from(p.zone_change_count) == g
+                        && p.visible_to_mask & bit != 0
+                })
+        })
+    };
+    let mut keys: BTreeMap<(ObjectId, u32), bool> = BTreeMap::new();
+    for (path, object, g) in occurrences {
+        // A record the scan cannot read: nothing becomes a tombstone.
+        let (Some(object), Some(g)) = (object, g.and_then(|g| u32::try_from(g).ok())) else {
+            return BTreeSet::new();
+        };
+        let ok = unread_at(&path, object, u64::from(g));
+        *keys.entry((object, g)).or_insert(true) &= ok;
+    }
+    keys.into_iter()
+        .filter_map(|(k, ok)| ok.then_some(k))
+        .collect()
+}
+
+/// The number of history-like records `rewrite_state` numbers (the
+/// transient event log's entries, then one per history record present):
+/// amendment 43.5's paid-cost tombstones are numbered after them.
+fn record_count_v1(tagged: &Value) -> usize {
+    let log = tagged["engine"]["event_log"].as_array().map_or(0, Vec::len);
+    let records = tagged.as_object().map_or(0, |m| {
+        m.keys()
+            .filter(|k| HISTORY_RECORDS_V1.contains(&k.as_str()))
+            .count()
+    });
+    log + records
 }
 
 /// An unknown hidden slot (step 3).
@@ -320,15 +467,23 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
 /// here reads S's zone-list, arena or id order. Two spans that start in the
 /// same record without a V-presented position cannot be ordered from V's
 /// transcript: the export refuses (R2, fail closed) rather than guess.
+///
+/// Amendment 43.4 (lead ruling 7 (b)): the tracked objects in the
+/// opponent's hand (`opp_hand`, already in their 43.4 order) are not keyed by
+/// span start. The bot-facing transcript gives them no id, so which of two
+/// same-name copies remains after one leaves is not V's information; they
+/// follow every other tracked object, in the order given.
 fn tracked_order(
     state: &GameState,
     projection: &ProjectionV1,
     l3: bool,
+    opp_hand: Option<&[ObjectId]>,
 ) -> Result<Vec<ObjectId>, ExportErrorV1> {
     let mut keyed: Vec<((usize, u32), ObjectId)> = state
         .objects
         .iter()
         .filter(|(id, _)| projection.tracked(*id))
+        .filter(|(id, _)| l3 || opp_hand.is_none_or(|h| !h.contains(id)))
         .map(|(id, _)| {
             let key = projection
                 .current_span(id)
@@ -349,7 +504,25 @@ fn tracked_order(
             "two tracked objects start their spans in one record without a V-presented order",
         ));
     }
-    Ok(keyed.into_iter().map(|(_, id)| id).collect())
+    let mut out: Vec<ObjectId> = keyed.into_iter().map(|(_, id)| id).collect();
+    out.extend(opp_hand.unwrap_or(&[]).iter().copied());
+    Ok(out)
+}
+
+/// Amendment 43.4 (design 6.2): the tracked objects in the opponent's hand,
+/// ordered only by what V can see of them: name, then the order of V's
+/// tracker facts about the copies (the fact list is V's transcript). Span
+/// start is not used. Copies with equal names and equal facts export
+/// identically, so their order cannot move the payload.
+fn opp_hand_order_v1(state: &GameState, projection: &ProjectionV1, tracked: &mut [ObjectId]) {
+    let fact = |id: &ObjectId| {
+        projection
+            .hand_facts
+            .iter()
+            .position(|f| f.native == Some(*id))
+            .unwrap_or(usize::MAX)
+    };
+    tracked.sort_by_key(|id| (name_key(state.objects.get(*id).card_def), fact(id)));
 }
 
 /// The exported state of one viewer at one decision.
@@ -405,6 +578,10 @@ pub(crate) fn export_v1(
                 .filter_map(|f| f.native)
                 .filter(|id| p.hand.contains(id))
                 .collect();
+            if !is(MutantV1::L14) {
+                // Amendment 43.4: name, then V's fact order.
+                opp_hand_order_v1(state, &projection, &mut opp_hand_tracked);
+            }
             if is(MutantV1::L8) {
                 // Count facts bound to the true remaining copies.
                 for f in projection.hand_facts.iter().filter(|f| f.native.is_none()) {
@@ -462,6 +639,26 @@ pub(crate) fn export_v1(
         .enumerate()
         .map(|(i, s)| (s.native, i))
         .collect();
+    // Amendment 43.5 (lead ruling 8): a paid-cost reference to an object
+    // that has since left V's tracking (no handle, no pin) becomes a 6.9
+    // tombstone instead of an R1 refusal, when no pending resolution reads
+    // the paid object and V saw the payment (V observed the paid epoch).
+    // The record keeps its own fields; only the object becomes `H:`, at
+    // generation 0. Otherwise R1 stays. R1b still reads such a reference
+    // (Sol round 1): whether the paid copy is untracked can depend on which
+    // same-name copy V later drew, so R1b's name-level join test must
+    // refuse in both worlds before tracking decides the tombstone; so does
+    // R1 `same_name_batch` below (Sol round 2).
+    let unread_paid = unread_paid_costs_v1(state, &tagged, v);
+    let paid_tomb = |r: &RefV1| -> bool {
+        r.class == ClassV1::Live
+            && r.paid_cost
+            && !projection.tracked(r.object)
+            && !pinned_untracked.contains(&r.object)
+            && matches!(r.generations.as_slice(), [g]
+                if projection.span_of(r.object, *g).is_some()
+                    && unread_paid.contains(&(r.object, *g)))
+    };
 
     // R1b first (a name-level, public-event predicate), then R1 and R2.
     for (r, region) in &refs {
@@ -509,7 +706,7 @@ pub(crate) fn export_v1(
         if *region != "live" || projection.tracked(r.object) {
             continue;
         }
-        if pinned_untracked.contains(&r.object) {
+        if pinned_untracked.contains(&r.object) || paid_tomb(r) {
             continue;
         }
         // A live physical reference to an object V does not track: the
@@ -518,6 +715,46 @@ pub(crate) fn export_v1(
             RefusalCodeV1::R1,
             "a live reference names an untracked object",
         ));
+    }
+    // Lead ruling 7 (a): a live reference keeps its link across an unlinked
+    // visible move (6.5, the Lembas table) only while V can tell which copy
+    // moved. If another object of the same name and owner also left the
+    // same zone (changing zone in V's sight, or leaving V's sight) in the
+    // same batch of V's transcript (no V decision between the two), V cannot
+    // pair the reference with either copy: refuse, fail closed. Reads V's
+    // spans, the names and zones V saw and V's own decision points only.
+    // It reads 43.5's tombstone-eligible paid-cost references too (Sol
+    // round 2): which copy stays tracked after such a batch is not V's
+    // information, so the batch test runs before tracking decides.
+    let bounds = projection.batch_bounds(input.marks);
+    for (r, region) in &refs {
+        if *region != "live" {
+            continue;
+        }
+        let Some(track) = projection.objects.get(r.object.0 as usize) else {
+            continue;
+        };
+        let o = state.objects.get(r.object);
+        for &g in &r.generations {
+            for end in track.spans.iter().filter_map(|s| s.end) {
+                if !end.split || end.last_gen < g {
+                    continue;
+                }
+                let batch = ProjectionV1::batch_of(&bounds, end.item);
+                let twin = projection.objects.iter().enumerate().any(|(i, other)| {
+                    let other_obj = state.objects.get(ObjectId(i as u32));
+                    i != r.object.0 as usize
+                        && other_obj.owner == o.owner
+                        && card_name(other_obj.card_def) == card_name(o.card_def)
+                        && other.spans.iter().filter_map(|s| s.end).any(|e| {
+                            e.from == end.from && ProjectionV1::batch_of(&bounds, e.item) == batch
+                        })
+                });
+                if twin {
+                    return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_BATCH_DETAIL));
+                }
+            }
+        }
     }
 
     // Step 4: joint pinned allocation.
@@ -756,7 +993,12 @@ pub(crate) fn export_v1(
         .collect();
 
     // Step 7: handles. C first, then U per owner in step-3 order, then H.
-    let mut tracked = tracked_order(state, &projection, is(MutantV1::L3))?;
+    let mut tracked = tracked_order(
+        state,
+        &projection,
+        is(MutantV1::L3),
+        (!is(MutantV1::L14)).then_some(opp_hand_tracked.as_slice()),
+    )?;
     if is(MutantV1::L8) {
         // Mutant L8's bound copies take `C:` handles (invented continuity).
         for id in &opp_hand_tracked {
@@ -854,8 +1096,8 @@ pub(crate) fn export_v1(
         // epochs map on the same path, so they count toward p0 too.
         let raw_l4 =
             is(MutantV1::L4) && r.class != ClassV1::Live && !pinned_untracked.contains(&r.object);
-        let counts =
-            (*region == "live") || (new_id.contains_key(&r.object) && (linkable(r) || raw_l4));
+        let counts = (*region == "live" && !paid_tomb(r))
+            || (new_id.contains_key(&r.object) && (linkable(r) || raw_l4));
         if counts {
             for &g in &r.generations {
                 let e = p0.entry(r.object).or_insert(g);
@@ -927,9 +1169,25 @@ pub(crate) fn export_v1(
     };
     let mut timestamps: BTreeSet<u64> = BTreeSet::new();
     let pinned_set: BTreeSet<ObjectId> = pinned_untracked.iter().copied().collect();
+    // Amendment 43.5's tombstones are `H:<e>:<k>`: e numbers past every
+    // event and history-like record, k counts them in walk order.
+    let paid_e = (state.engine.event_history.len() + record_count_v1(&tagged)) as u32;
+    let mut paid_k = 0u32;
     {
         let mut resolve = |r: RefV1| -> Result<ResolvedV1, ExportErrorV1> {
             let o = r.object;
+            if paid_tomb(&r) {
+                let def = state.objects.get(o).card_def;
+                let id = tomb_base + tombstones.len() as u32;
+                tombstones.push(template(state.objects.get(o).owner, def, Zone::Command, 0));
+                handles.push(HandleV1::H {
+                    e: paid_e,
+                    j: paid_k,
+                    named: true,
+                });
+                paid_k += 1;
+                return Ok(Some((id, vec![0; r.generations.len()])));
+            }
             let raw_history = is(MutantV1::L4) && r.class != ClassV1::Live;
             if let Some(&id) = new_id.get(&o) {
                 let pin = pinned_set.contains(&o);
@@ -1225,6 +1483,76 @@ pub(crate) fn export_v1(
         handles,
         tracked_natives: tracked,
     })
+}
+
+/// Diagnostics only (the bridge's `W1_INFOSET_REFUSAL_LOG`, never on the
+/// wire): every live reference to an object V does not track, with the
+/// object's true card, owner, zone and generation, V's last span of it, and
+/// the JSON paths of the state where the reference sits. Reads S freely; it
+/// explains a refusal after the fact and feeds nothing back.
+pub(crate) fn refusal_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
+    let state = input.state;
+    let projection = project_v1(state, input.journal, input.viewer);
+    let tagged = tagged_value(state);
+    let mut refs: Vec<(RefV1, &'static str)> = Vec::new();
+    {
+        let mut record = |r: RefV1, region: &'static str| refs.push((r, region));
+        if collect_refs(&tagged, &mut record).is_err() {
+            return json!({"error": "collect pass refused"});
+        }
+    }
+    let pins = contract_pins(state);
+    fn paths(v: &Value, tag: &str, at: String, out: &mut Vec<String>) {
+        match v {
+            Value::String(s) if s == tag => out.push(at),
+            Value::Array(xs) => {
+                for (i, x) in xs.iter().enumerate() {
+                    paths(x, tag, format!("{at}[{i}]"), out);
+                }
+            }
+            Value::Object(m) => {
+                for (k, x) in m {
+                    if k == tag {
+                        out.push(format!("{at}.<key>"));
+                    }
+                    paths(x, tag, format!("{at}.{k}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (r, region) in &refs {
+        if *region != "live" || projection.tracked(r.object) || !seen.insert(r.object) {
+            continue;
+        }
+        let o = state.objects.get(r.object);
+        let tag = format!("{}{}", crate::ids::OBJECT_ID_TAG_PREFIX_V1, r.object.0);
+        let mut at = Vec::new();
+        paths(&tagged, &tag, "state".into(), &mut at);
+        at.retain(|p| {
+            !p.starts_with("state.engine.event_history") && !p.starts_with("state.objects")
+        });
+        at.truncate(12);
+        let span = projection.last_span(r.object).map(|s| {
+            json!({"start_item": s.start_item, "start_gen": s.start_gen,
+                   "end": s.end.map(|e| json!({"item": e.item, "zone": format!("{:?}", e.zone),
+                                               "last_gen": e.last_gen, "split": e.split}))})
+        });
+        out.push(json!({
+            "object": r.object.0,
+            "card": card_name(o.card_def),
+            "owner": o.owner.0,
+            "zone": format!("{:?}", o.zone),
+            "generation": o.zone_change_count,
+            "ref_generations": r.generations,
+            "pinned": pins.contains(&r.object),
+            "last_span": span,
+            "paths": at,
+        }));
+    }
+    json!({"viewer": input.viewer.0, "items": projection.items, "untracked_live_refs": out})
 }
 
 /// Collect pass: every reference with its region.

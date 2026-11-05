@@ -162,6 +162,7 @@ pub(super) fn run(
                     journal: state.observation_journal.notes(),
                     viewer: seat,
                     decklists: [&lists[0], &lists[1]],
+                    marks: Some(&s.infoset_marks_v1(seat)),
                 },
                 ExportOptionsV1::default(),
             );

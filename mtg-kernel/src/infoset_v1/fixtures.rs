@@ -97,6 +97,7 @@ pub(crate) fn restart(template: &FastActorSessionV1, state: GameState) -> FastAc
 }
 
 type CandPred = Box<dyn Fn(&Value) -> bool>;
+type SessionCandPred = Box<dyn Fn(&FastActorSessionV1, &Value) -> bool>;
 type StatePred = Box<dyn Fn(&GameState) -> bool>;
 type Surgery = Box<dyn Fn(&mut GameState)>;
 
@@ -104,6 +105,8 @@ type Surgery = Box<dyn Fn(&mut GameState)>;
 pub(crate) enum IntentV1 {
     /// Take the first candidate matching the predicate when one is offered.
     Take(String, CandPred),
+    /// As `Take`, with the session at hand (a choice by what V tracks).
+    TakeIn(String, SessionCandPred),
     /// Hold the queue (default answers) until the state predicate holds.
     Gate(String, StatePred),
     /// Edit the state at this decision (a forced shuffle outcome), then
@@ -278,6 +281,9 @@ pub(crate) struct ScriptV1 {
     pub intents: [VecDeque<IntentV1>; 2],
     pub trace: Vec<String>,
     pub steps: usize,
+    /// Each chosen candidate's semantic menu row (decision-local ids), so a
+    /// script replays as an engine game ([`super::harness::GameV1`]).
+    pub actions: Vec<Vec<u8>>,
     /// Each chosen candidate with native ids (realizability replays).
     pub native: Vec<Value>,
     /// Library positions the script's edits exchanged: (decision, a, b).
@@ -300,6 +306,7 @@ impl ScriptV1 {
             intents: [VecDeque::new(), VecDeque::new()],
             trace: Vec::new(),
             steps: 0,
+            actions: Vec::new(),
             native: Vec::new(),
             edits: Vec::new(),
             keep: [BTreeSet::new(), BTreeSet::new()],
@@ -336,9 +343,10 @@ impl ScriptV1 {
             .map(|q| {
                 q.iter()
                     .map(|i| match i {
-                        IntentV1::Take(w, _) | IntentV1::Gate(w, _) | IntentV1::Edit(w, _) => {
-                            w.clone()
-                        }
+                        IntentV1::Take(w, _)
+                        | IntentV1::TakeIn(w, _)
+                        | IntentV1::Gate(w, _)
+                        | IntentV1::Edit(w, _) => w.clone(),
                     })
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -429,11 +437,20 @@ impl ScriptV1 {
             let local = local_menu(&self.s);
             let mut why = "default".to_string();
             let mut choice = None;
-            if let Some(IntentV1::Take(w, pred)) = self.intents[p.index()].front() {
-                if let Some(i) = vals.iter().position(pred) {
-                    choice = Some(i);
-                    why = w.clone();
+            match self.intents[p.index()].front() {
+                Some(IntentV1::Take(w, pred)) => {
+                    if let Some(i) = vals.iter().position(pred) {
+                        choice = Some(i);
+                        why = w.clone();
+                    }
                 }
+                Some(IntentV1::TakeIn(w, pred)) => {
+                    if let Some(i) = vals.iter().position(|v| pred(&self.s, v)) {
+                        choice = Some(i);
+                        why = w.clone();
+                    }
+                }
+                _ => {}
             }
             if choice.is_some() {
                 self.intents[p.index()].pop_front();
@@ -446,6 +463,7 @@ impl ScriptV1 {
                 world.advance(i);
             }
             self.native.push(vals[i].clone());
+            self.actions.push(local[i].clone());
             let st = self.s.game_state();
             self.trace.push(format!(
                 "t{} {:?} P{} {:?} {} of {}: {} [{}]",
