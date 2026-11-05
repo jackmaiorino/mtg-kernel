@@ -816,7 +816,7 @@ class Supervisor:
     # --- recovery of an instance whose supervisor died
     def recover(self, killed_running: bool = False) -> None:
         """Closes an instance whose supervisor died (`killed_running`: `w5box.py recover` stopped it while it still
-        ran, so it ran until now)."""
+        ran, neither frozen nor marked paused, so it ran until now)."""
         owner = json.loads(self.owner_path.read_text()) if self.owner_path.exists() else None
         if owner is not None and owner["chain"] != self.chain:
             other = Ledger(self.state_root / owner["chain"] / "ledger.jsonl").summary()
@@ -1233,14 +1233,16 @@ def recover_chain(plan: dict, plan_sha: str, chain: str, layout: dict, detected:
     locks = [flock(sup.state / "supervisor.lock", f"Chain {chain}"),
              flock(sup.state_root / f"box{sup.slot['slot']}.lock", f"Box {sup.slot['slot']}")]
     try:
-        killed = False
+        killed = running = False
         if sup.chain_cg.exists() and sup.chain_cg.populated():  # unsupervised: nothing reads its requests
+            # It ran until now only if it was neither frozen nor marked paused (a pause freezes before its record).
+            running = not sup.chain_cg.frozen() and not sup.paused_path.exists()
             # Killed as it is: a paused (frozen) chain never runs again beside its box's filler.
             sup.chain_cg.kill()
             require(sup.chain_cg.wait_empty(SETTLE_SECONDS), f"{sup.chain_cg.path} did not empty")
             killed = True
-        sup.recover(killed_running=killed)  # a handoff chain's box is held there, before the instance closes
-        return {"chain": chain, "recovered": True, "killed": killed}
+        sup.recover(killed_running=running)  # a handoff chain's box is held there, before the instance closes
+        return {"chain": chain, "recovered": True, "killed": killed, "was_running": running}
     finally:
         for lock in locks:
             lock.close()
