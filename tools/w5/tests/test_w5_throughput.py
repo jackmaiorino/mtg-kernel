@@ -138,7 +138,8 @@ class ThroughputTests(unittest.TestCase):
         path2, plan2 = chains.make_plan(jwrite(self.node.t / 'inputs-with-record.json', inputs))
         box = json.loads(Path(plan2['arms']['C']['w5box_plan']['path']).read_text())
         self.assertEqual(box['throughput']['sha256'], chains.sha(out))
-        guard = w5box.require_throughput(json.loads(out.read_text()), w5box.throughput_binding(box, box['chains']['c1']))
+        binding = w5box.throughput_binding(box, box['chains']['c1'])
+        guard = w5box.require_throughput(json.loads(out.read_text()), binding)
         self.assertEqual(len(guard['in_box_cpu_per_wall']), 4)
         # ... and not another arm's launch plan.
         xbox = json.loads(Path(plan2['arms']['X8']['w5box_plan']['path']).read_text())
@@ -208,7 +209,10 @@ class ThroughputTests(unittest.TestCase):
             ticks.append(1)
             if len(ticks) == 2:
                 procs['a'].returncode = 3  # an OOM close after boundary N
-        with mock.patch.object(chains, 'cycle'), mock.patch.object(chains, 'sample_memory'),                 mock.patch.object(chains, 'reached', lambda plan, n, u: n == 'a'),                 mock.patch.object(chains, 'end_phase', return_value=[]) as ended,                 mock.patch.object(chains.time, 'sleep', sleep):
+        with mock.patch.object(chains, 'cycle'), mock.patch.object(chains, 'sample_memory'), \
+                mock.patch.object(chains, 'reached', lambda plan, n, u: n == 'a'), \
+                mock.patch.object(chains, 'end_phase', return_value=[]) as ended, \
+                mock.patch.object(chains.time, 'sleep', sleep):
             with self.assertRaisesRegex(chains.Stop, r"\['a'\] exited \{'a': 3\} before every box"):
                 chains.run_phase('plan', {'chains': {'a': {}, 'b': {}}}, 8, 60, spawn=lambda p, n, w: procs[n],
                                  launcher=lambda p: None)
@@ -252,7 +256,8 @@ class Stage0ExitTests(unittest.TestCase):
         self.assertAlmostEqual(out['r_nom_usec'], 3.0e6 * 7 * 86400)
         self.assertAlmostEqual(out['arms']['X8']['projected_days_to_r_nom'], 7 / 1.2)
         self.assertAlmostEqual(out['arms']['C']['in_box_utilization_mean'], 0.75)
-        self.assertGreater(out['arms']['XS']['projected_days_slowest_box'], out['arms']['XS']['projected_days_to_r_nom'])
+        xs = out['arms']['XS']
+        self.assertGreater(xs['projected_days_slowest_box'], xs['projected_days_to_r_nom'])
         self.assertEqual(out['declared_response_reading']['branch'], 'launch')
         self.assertEqual(out['declared_response_reading']['worst_arm'], 'XS')
         # 12 days: the cap response, ceil(1.2 x 12) = 15 days.
