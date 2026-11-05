@@ -167,6 +167,12 @@ def check(a) -> int:
                 if r["kind"] == "error":
                     res["searches"].append({"budget": r["budget"], "seed": r["seed"], "error": r["error"]})
                     continue
+                if search_failed(r):
+                    sel = r.get("selection") or {}
+                    res["searches"].append({"budget": r["budget"], "seed": r["seed"], "failed": True,
+                                            "incomplete": sel.get("incomplete"), "faults": sel.get("faults"),
+                                            "error": "failed search: no verdict"})
+                    continue
                 o2 = r["o2"]
                 edges = o2.get("edges") or []
                 top = o2.get("top_edge")
@@ -195,6 +201,12 @@ def check(a) -> int:
                 print(t, pt["key"], s.get("budget"), s.get("seed"), s.get("top"), s.get("top_visits"),
                       s.get("avoids_misplay"), s.get("matches_right_call"), s.get("error", ""))
     return 0
+
+
+def search_failed(row: dict) -> bool:
+    """A search that stopped on a fault or left its budget incomplete (as `reach` marks it)."""
+    sel = row.get("selection") or {}
+    return bool(row.get("failed") or sel.get("incomplete") or sel.get("faults"))
 
 
 def seat_view(facts: dict, seat: int, card: list[str]) -> dict:

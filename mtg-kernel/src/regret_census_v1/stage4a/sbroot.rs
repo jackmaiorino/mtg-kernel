@@ -158,9 +158,16 @@ pub(super) fn run(
                 for &seed in &seeds {
                     let row = (|| -> Result<Value, String> {
                         let r = search(policy, &rb, &root_id, budget, seed, false)?;
-                        let o2 = o2(r.tree, &rb, &mut scorer, None)?;
+                        // As in `reach::measure`: a search that stopped on a
+                        // fault or left its budget incomplete gives no O2.
+                        let failed = r.sel.incomplete || !r.sel.faults.is_empty();
+                        let o2 = if failed {
+                            json!({"valid": false, "reason": "failed_search"})
+                        } else {
+                            o2(r.tree, &rb, &mut scorer, None)?
+                        };
                         Ok(json!({"kind": "search", "i": step.i, "root_id": root_id,
-                            "budget": budget, "seed": seed, "selection": r.sel.json(),
+                            "budget": budget, "seed": seed, "failed": failed, "selection": r.sel.json(),
                             "o2": o2, "cpu_seconds": r.cpu, "wall_seconds": r.wall}))
                     })()
                     .unwrap_or_else(|e| {

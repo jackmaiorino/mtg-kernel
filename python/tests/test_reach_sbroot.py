@@ -33,6 +33,12 @@ class DescribeTests(unittest.TestCase):
         self.assertFalse(sbroot.verdict(cast, ["pass"]))
         self.assertIsNone(sbroot.verdict(cast, ["pass", "cast_spell Cast Down"]))
 
+    def test_failed_searches_get_no_verdict(self):
+        self.assertTrue(sbroot.search_failed({"failed": True, "selection": {}}))
+        self.assertTrue(sbroot.search_failed({"selection": {"incomplete": True, "faults": []}}))
+        self.assertTrue(sbroot.search_failed({"selection": {"incomplete": False, "faults": ["sampler limit"]}}))
+        self.assertFalse(sbroot.search_failed({"failed": False, "selection": {"incomplete": False, "faults": []}}))
+
     def test_bridge_kinds_name_flat_kinds(self):
         self.assertEqual(BRIDGE_KIND["choose_boolean"], "choose_effect_boolean")
         self.assertNotIn("choose_target", BRIDGE_KIND)
