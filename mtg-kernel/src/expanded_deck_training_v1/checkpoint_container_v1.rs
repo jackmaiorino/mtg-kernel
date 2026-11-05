@@ -36,10 +36,12 @@
 //! [`CheckpointRecordFormatV1`]:
 //!
 //! - **Absent (`Auto`)**: v2 inside the gate, v1 outside it. Never
-//!   serialized, so every run config, update command, `run.json` and run
-//!   identity written before the switch keeps its bytes, and the same file
-//!   still means the same run. What changes is the checkpoint file an
-//!   in-scope default run publishes (and so the pins that carry its hash).
+//!   serialized, so every run config, update command, `run.json` config
+//!   member and run identity written before the switch keeps its bytes, and
+//!   the same file still means the same run. (The rest of `run.json` carries
+//!   build metadata and differs by build, as before.) What changes is the
+//!   checkpoint file an in-scope default run publishes, and so the pins that
+//!   carry its hash.
 //! - **`"v1"`**: always v1 JSON. Serialized when explicit, so it no longer
 //!   shares bytes with absence (before the switch it did, because absence
 //!   meant v1). A config that needs the old bytes and output states `"v1"`.
@@ -48,7 +50,10 @@
 //! The gate is applied to the checkpoint about to be written, so the default
 //! cannot disagree with it. A run cannot resume across builds (`run.json`
 //! pins the implementation digest), so the switch never changes a format
-//! mid-run, and readers accept either format for any source.
+//! mid-run. The Rust readers of section 4.1 accept either format; the
+//! no-state-digest conversion and the registry-transfer paths refuse a
+//! container by name, and Python tools read one only through
+//! `python/tools/checkpoint_container_v1.py`.
 
 use super::{ExpandedCheckpointV1, ParameterBitsV1};
 use serde::{Deserialize, Serialize};
