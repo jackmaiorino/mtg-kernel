@@ -880,7 +880,14 @@ pub(crate) fn export_v1(
         )
     };
     let known_names = match allocation {
-        Ok(x) => bound_names.iter().copied().chain(x).collect::<Vec<u16>>(),
+        Ok(x) => {
+            // Sol round 8: one order for every known-name occupant, by name
+            // only, so whether a name came from a bound fact or from F
+            // cannot move the payload.
+            let mut all: Vec<u16> = bound_names.iter().copied().chain(x).collect();
+            all.sort_by_key(|d| name_key(*d));
+            all
+        }
         Err(e) => {
             return Err(refuse(
                 RefusalCodeV1::R8,
