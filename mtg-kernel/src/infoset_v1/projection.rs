@@ -147,6 +147,12 @@ pub(crate) struct ProjectionV1 {
     /// Harness only (the realizability proof): the departures from the
     /// opponent's hand V saw, (stream item, card definition).
     pub departures: Vec<(usize, u16)>,
+    /// Harness only (the realizability proof): the cards V saw enter the
+    /// opponent's hand, each once, (stream item, card definition). Seam
+    /// events are not arrival counts: a known library card's move and its
+    /// search reveal are two seams of one card (Sol code review 1 on 43.8,
+    /// finding 3).
+    pub entries: Vec<(usize, u16)>,
     pub survivors: SurvivorTreeV1,
     pub transfers: Vec<TransferV1>,
     pub arrivals: Vec<ArrivalV1>,
@@ -308,6 +314,7 @@ struct WalkV1<'a> {
     hand: Vec<HandFactV1>,
     seams: Vec<(usize, u16)>,
     departures: Vec<(usize, u16)>,
+    entries: Vec<(usize, u16)>,
     revealed: Vec<u16>,
     turn_starts: Vec<usize>,
     departure_known: Vec<(usize, Vec<u16>)>,
@@ -340,23 +347,16 @@ struct WalkV1<'a> {
     /// (events, notes) committed so far, and each item's stamp.
     committed: (usize, usize),
     stamps: Vec<(usize, usize)>,
-    /// Amendment 43.8, the search mark: the owner of the card a `zone_move`
-    /// from library to hand moved, when that was the latest wire event V
-    /// received other than reveals of that owner's hand. A reveal while it
-    /// is set may be a search outcome (R8b). Draws never set it.
-    search_mark: Option<PlayerId>,
-    /// The name of the opponent's card a `zone_move` from a public zone to
-    /// its hand moved, when that was the latest wire event V received other
-    /// than reveals of that hand: a reveal of that name then shows the card
-    /// that just arrived, not an aborted cast.
-    entry_mark: Option<u16>,
-    /// The search run's moves (Sol round 12 on 43.7, finding 3): how many
-    /// cards it moved that V did not know, and the names of those V knew
-    /// at their library positions (already known facts). A reveal in the run
-    /// shows one of them: a known one changes nothing; otherwise it is a
-    /// new card (each card the run moved is revealed once), its own fact.
-    search_unknown: usize,
-    search_known: Vec<u16>,
+    /// Sol code review 1 on 43.8 (finding 1): whether the note being
+    /// applied is a reveal the kernel anchored to the move it follows (made
+    /// before that move committed: the moving effect reveals the card it
+    /// moves, as a search-and-reveal does). An aborted cast's reveal is
+    /// made after its own moves and is never anchored. Which effects reveal
+    /// what they move is fixed by the effect, which V sees resolve.
+    anchored: bool,
+    /// The opponent's card the latest library-to-hand move took, and
+    /// whether V knew it at its library position.
+    last_to_hand: Option<(ObjectId, bool)>,
 }
 
 /// Projects V's history from the native stream.
@@ -385,6 +385,7 @@ pub(crate) fn project_v1(
         hand: Vec::new(),
         seams: Vec::new(),
         departures: Vec::new(),
+        entries: Vec::new(),
         revealed: Vec::new(),
         turn_starts: Vec::new(),
         departure_known: Vec::new(),
@@ -405,10 +406,8 @@ pub(crate) fn project_v1(
         last_observed: Vec::new(),
         committed: (0, 0),
         stamps: Vec::new(),
-        search_mark: None,
-        entry_mark: None,
-        search_unknown: 0,
-        search_known: Vec::new(),
+        anchored: false,
+        last_to_hand: None,
     };
     let events = &state.engine.event_history;
     let mut event_items = Vec::with_capacity(events.len());
@@ -454,9 +453,11 @@ pub(crate) fn project_v1(
         w.removed.clear();
         // Deferred notes follow event `index`.
         w.next_event = index + 1;
+        w.anchored = true;
         for note in after {
             w.note(note);
         }
+        w.anchored = false;
     }
     w.next_event = events.len();
     for (k, note) in journal[cursor..].iter().enumerate() {
@@ -564,6 +565,7 @@ pub(crate) fn project_v1(
         hand_facts: w.hand,
         seams: w.seams,
         departures: w.departures,
+        entries: w.entries,
         revealed: w.revealed,
         turn_starts: w.turn_starts,
         survivors: w.survivors,
@@ -797,46 +799,8 @@ impl WalkV1<'_> {
 
     fn event(&mut self, event: &CommittedEvent, index: usize, positions: &[&ObservationNoteV1]) {
         let _ = index;
-        // Amendment 43.8: the search mark follows the wire events V receives
-        // (kernel_history_v2.py `_event`): set by a `zone_move` from library
-        // to hand, cleared by every other event the adapter emits, untouched
-        // by committed events it does not emit.
-        match event {
-            CommittedEvent::ZoneChange {
-                object,
-                from: Zone::Library,
-                to: Zone::Hand,
-                ..
-            } => {
-                let owner = self.owner(*object);
-                if self.search_mark != Some(owner) {
-                    self.search_unknown = 0;
-                    self.search_known.clear();
-                }
-                self.search_mark = Some(owner);
-                self.entry_mark = None;
-            }
-            CommittedEvent::Draw {
-                object: Some(_), ..
-            }
-            | CommittedEvent::ZoneChange { .. }
-            | CommittedEvent::CreateToken { .. } => {
-                self.search_mark = None;
-                self.entry_mark = None;
-            }
-            CommittedEvent::UpkeepBegan { .. } => {
-                self.search_mark = None;
-                self.entry_mark = None;
-                self.turn_starts.push(self.item);
-            }
-            CommittedEvent::SpellCast { spell, .. } => {
-                let copy = self.state.objects.get(*spell).spell_copy_origin.is_some();
-                if !copy && self.objs[spell.0 as usize].zone != Some(Zone::Stack) {
-                    self.search_mark = None;
-                    self.entry_mark = None;
-                }
-            }
-            _ => {}
+        if let CommittedEvent::UpkeepBegan { .. } = event {
+            self.turn_starts.push(self.item);
         }
         match event {
             CommittedEvent::Draw { player, object } => {
@@ -984,8 +948,6 @@ impl WalkV1<'_> {
         let viewer = self.viewer;
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
-                self.search_mark = None;
-                self.entry_mark = None;
                 self.reorders.push((self.item, *owner));
                 let records: Vec<u64> = self.put_backs_on_top[owner.index()]
                     .drain(..)
@@ -1007,8 +969,6 @@ impl WalkV1<'_> {
                     self.settle(&[]);
                     return;
                 }
-                self.search_mark = None;
-                self.entry_mark = None;
                 let gone: Vec<u32> = positions.iter().map(|(p, _)| *p).collect();
                 let natives: Vec<ObjectId> = positions.iter().map(|(_, o)| *o).collect();
                 let lib = &mut self.library[owner.index()];
@@ -1025,8 +985,6 @@ impl WalkV1<'_> {
                 ordered,
                 revealed_to,
             } => {
-                self.search_mark = None;
-                self.entry_mark = None;
                 self.reorders.push((self.item, *owner));
                 // Put-back cards stay among the top cards: no reset; their
                 // positions are no longer certain (R8 latch).
@@ -1056,8 +1014,6 @@ impl WalkV1<'_> {
                 retained_top,
                 ordered_bottom,
             } => {
-                self.search_mark = None;
-                self.entry_mark = None;
                 self.reorders.push((self.item, *owner));
                 // Put-back cards stay among the top cards: no reset; their
                 // positions are no longer certain (R8 latch).
@@ -1113,38 +1069,39 @@ impl WalkV1<'_> {
                     return;
                 }
                 if *owner == viewer {
-                    self.search_mark = None;
-                    self.entry_mark = None;
                     self.settle(&[]);
                     return;
                 }
                 let id = *object;
                 let card_def = self.card_def(id);
-                // Amendment 43.8: a reveal while the search mark is set may
-                // be a search outcome: it may locate a card outside the hand
-                // (R8b, applied before the reveal's own update; ruling 44)
-                // and it may be a card entering the hand (a seam event). Read
-                // from the wire order alone; consecutive reveals keep the
-                // mark.
-                let search = self.search_mark == Some(*owner);
-                if search {
+                // Amendment 43.8: a reveal the kernel anchored to the move
+                // it follows shows the card that move took (Sol code review
+                // 1, finding 1: wire order alone cannot tell it from an
+                // aborted cast's reveal, which is never anchored). A search
+                // outcome may locate a card outside the hand (R8b, applied
+                // before the reveal's own update; ruling 44), and the card
+                // entering the hand is a seam event.
+                let moved = self
+                    .last_to_hand
+                    .filter(|(o, _)| self.anchored && *o == id)
+                    .map(|(_, known)| known);
+                if let Some(known) = moved {
                     self.survivors.taint_name(card_def);
                     self.seams.push((self.item, card_def));
-                    if let Some(pos) = self.search_known.iter().position(|d| *d == card_def) {
-                        self.search_known.remove(pos);
-                    } else if self.search_unknown > 0 {
-                        self.search_unknown -= 1;
+                    if !known {
+                        // Its own fact: a card that just entered the hand.
+                        self.entries.push((self.item, card_def));
                         self.hand.push(HandFactV1 {
                             card_def,
                             how: FactHowV1::Revealed,
                             known: true,
                         });
-                    } else {
-                        self.revealed_in_hand(card_def);
                     }
                 } else {
-                    self.search_mark = None;
-                    if self.entry_mark != Some(card_def) && !self.revealed.contains(&card_def) {
+                    // Any other reveal of the opponent's hand (an aborted
+                    // cast looks the same, also right after a public move
+                    // of the name to the hand; Sol code review 1).
+                    if !self.anchored && !self.revealed.contains(&card_def) {
                         self.revealed.push(card_def);
                     }
                     self.revealed_in_hand(card_def);
@@ -1227,13 +1184,7 @@ impl WalkV1<'_> {
             .removed
             .iter()
             .any(|(o, captured)| *o == owner && *captured == Some(id));
-        if self.search_mark == Some(owner) {
-            if known {
-                self.search_known.push(self.card_def(id));
-            } else {
-                self.search_unknown += 1;
-            }
-        }
+        self.last_to_hand = Some((id, known));
         if known {
             let card_def = self.card_def(id);
             self.hand.push(HandFactV1 {
@@ -1242,6 +1193,7 @@ impl WalkV1<'_> {
                 known: true,
             });
             self.seams.push((self.item, card_def));
+            self.entries.push((self.item, card_def));
         }
     }
 
@@ -1277,13 +1229,13 @@ impl WalkV1<'_> {
         let card_def = self.card_def(id);
         if to == Zone::Hand && from != Zone::Hand {
             if is_public(from) {
-                self.entry_mark = Some(card_def);
                 self.hand.push(HandFactV1 {
                     card_def,
                     how: FactHowV1::FromPublicZone,
                     known: true,
                 });
                 self.seams.push((self.item, card_def));
+                self.entries.push((self.item, card_def));
             } else if from == Zone::Library {
                 self.library_to_hand(id, owner);
             }

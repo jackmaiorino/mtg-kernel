@@ -801,12 +801,15 @@ pub(crate) fn export_v1(
         }
         // An epochless reference beside a reference to the same object at
         // an epoch V tracked, in the same item (a target and its target
-        // contract), names that tracked incarnation: as that reference.
+        // contract), names that tracked incarnation: as that reference. The
+        // same item, not another item of the same source (Sol code review
+        // 1 on 43.8, finding 2).
         if r.generations.is_empty()
+            && r.container_seq.is_some()
             && refs.iter().any(|(t, reg)| {
                 *reg == "live"
                     && t.object == r.object
-                    && t.container == r.container
+                    && t.container_seq == r.container_seq
                     && !t.generations.is_empty()
                     && t.generations
                         .iter()
@@ -1528,6 +1531,8 @@ pub(crate) fn export_v1(
                 membership: false,
                 turn_scoped: false,
                 announcing: false,
+                container_seq: None,
+                seq_next: 0,
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1840,6 +1845,9 @@ fn collect_refs(
             membership: false,
             turn_scoped: false,
             announcing: false,
+            container_seq: None,
+            // Apart from the state walk's items.
+            seq_next: 1 << 30,
         };
         for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
@@ -1895,6 +1903,8 @@ fn rewrite_state(
         membership: false,
         turn_scoped: false,
         announcing: false,
+        container_seq: None,
+        seq_next: 0,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1993,6 +2003,8 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         membership: false,
         turn_scoped: false,
         announcing: false,
+        container_seq: None,
+        seq_next: 0,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {

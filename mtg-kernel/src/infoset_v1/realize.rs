@@ -537,8 +537,8 @@ pub(crate) fn impossible_v1(
             // Amendment 43.8: the names V knew in the hand right before the
             // put-back (L). A card of them leaves afterwards only by an
             // unidentified put-back or by a departure V sees, which names
-            // it; a card of them that enters in V's sight afterwards (a
-            // seam event that is not a departure) adds one.
+            // it; a card of them that enters in V's sight afterwards adds
+            // one.
             let mut names: BTreeMap<u16, u32> = BTreeMap::new();
             for (_, defs) in p.departure_known.iter().filter(|(item, _)| *item == at) {
                 for d in defs {
@@ -548,17 +548,12 @@ pub(crate) fn impossible_v1(
             if names.is_empty() {
                 continue;
             }
-            let mut departures: Vec<(usize, u16)> = p
-                .departures
-                .iter()
-                .copied()
-                .filter(|(item, _)| *item > at)
-                .collect();
+            // Entries V saw, each card once (not seam events: a known
+            // library card's move and its search reveal are one arrival;
+            // Sol code review 1 on 43.8, finding 3).
             let mut entered: BTreeMap<u16, u32> = BTreeMap::new();
-            for &(item, d) in p.seams.iter().filter(|(item, _)| *item > at) {
-                if let Some(k) = departures.iter().position(|x| *x == (item, d)) {
-                    departures.remove(k);
-                } else if names.contains_key(&d) {
+            for &(_, d) in p.entries.iter().filter(|(item, _)| *item > at) {
+                if names.contains_key(&d) {
                     add(&mut entered, d);
                 }
             }

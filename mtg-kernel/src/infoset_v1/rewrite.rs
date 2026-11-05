@@ -51,6 +51,11 @@ pub(crate) struct RefV1 {
     /// source and the source's epoch the item records (its ability source
     /// contract), for the creation bound of a reference with no epoch.
     pub container: Option<(ObjectId, Option<u32>)>,
+    /// Which stack item, pending trigger or pending resolution of the walk
+    /// the reference sits in (its walk order): two references share it only
+    /// inside the same item (Sol code review 1 on 43.8, finding 2: distinct
+    /// triggers of one source share `container`).
+    pub container_seq: Option<u32>,
     /// Amendment 43.8 (Sol design review 2): the reference is a zone's
     /// membership list (a player's battlefield or graveyard, the exile or
     /// command zone) or a list the engine clears at every zone change of the
@@ -146,6 +151,10 @@ pub(crate) struct WalkerV1<'a> {
     pub item_self_paid: Option<(ObjectId, u32)>,
     /// The enclosing stack item, if any (see [`RefV1::container`]).
     pub container: Option<(ObjectId, Option<u32>)>,
+    /// The enclosing item's walk order (see [`RefV1::container_seq`]).
+    pub container_seq: Option<u32>,
+    /// The next item's walk order.
+    pub seq_next: u32,
     /// Walking a zone's membership list (see [`RefV1::membership`]).
     pub membership: bool,
     /// Walking this turn's until-end-of-turn effects (see [`RefV1::turn_scoped`]).
@@ -234,6 +243,7 @@ impl WalkerV1<'_> {
                             cast_receipt: false,
                             item_self_paid: self.item_self_paid,
                             container: self.container,
+                            container_seq: self.container_seq,
                             membership: self.membership,
                             turn_scoped: self.turn_scoped,
                             announcing: self.announcing,
@@ -260,6 +270,7 @@ impl WalkerV1<'_> {
                     cast_receipt: false,
                     item_self_paid: self.item_self_paid,
                     container: self.container,
+                    container_seq: self.container_seq,
                     membership: self.membership,
                     turn_scoped: self.turn_scoped,
                     announcing: self.announcing,
@@ -286,24 +297,24 @@ impl WalkerV1<'_> {
         class: ClassV1,
         parent: &str,
     ) -> Result<(), ExportErrorV1> {
-        let enclosing = (self.item_self_paid, self.container);
+        let enclosing = (self.item_self_paid, self.container, self.container_seq);
         if let Some(item) = self_paid_from_hand(map) {
             self.item_self_paid = Some(item);
         }
-        if let Some(c) = stack_item_container(map) {
+        // A stack item or pending trigger, or a pending resolution
+        // (`EffectContinuation`): everything in it belongs to the item.
+        let c = stack_item_container(map).or_else(|| {
+            map.get("resolving_item")
+                .and_then(|v| v.as_object())
+                .and_then(stack_item_container)
+        });
+        if let Some(c) = c {
             self.container = Some(c);
-        }
-        // A pending resolution (`EffectContinuation`): everything in it
-        // belongs to the item it resolves.
-        if let Some(c) = map
-            .get("resolving_item")
-            .and_then(|v| v.as_object())
-            .and_then(stack_item_container)
-        {
-            self.container = Some(c);
+            self.container_seq = Some(self.seq_next);
+            self.seq_next += 1;
         }
         let walked = self.walk_map_inner(map, class, parent);
-        (self.item_self_paid, self.container) = enclosing;
+        (self.item_self_paid, self.container, self.container_seq) = enclosing;
         walked
     }
 
@@ -386,6 +397,7 @@ impl WalkerV1<'_> {
                 cast_receipt: parent == "spell_cast_origin" && k.is_none(),
                 item_self_paid: self.item_self_paid,
                 container: self.container,
+                container_seq: self.container_seq,
                 membership: self.membership,
                 turn_scoped: self.turn_scoped,
                 announcing: self.announcing,
@@ -417,6 +429,7 @@ impl WalkerV1<'_> {
                 cast_receipt: false,
                 item_self_paid: self.item_self_paid,
                 container: self.container,
+                container_seq: self.container_seq,
                 membership: self.membership,
                 turn_scoped: self.turn_scoped,
                 announcing: self.announcing,
