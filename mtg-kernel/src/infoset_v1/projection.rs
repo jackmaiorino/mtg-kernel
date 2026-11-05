@@ -78,6 +78,13 @@ pub(crate) struct HandFactV1 {
     pub how: FactHowV1,
     /// The physical copy while V can tell which one; `None` once it cannot.
     pub native: Option<ObjectId>,
+    /// Lead ruling 11 (R2): the fact remained after a copy with its name
+    /// left the hand identified by name while V held both a bound and an
+    /// unbound fact of that name. V cannot tell whether the copy that left
+    /// was the bound one, so whether this fact is bound (a `C:` survivor) or
+    /// unbound (a `U:` occupant) is not V's information. Set from V's fact
+    /// structure only; the export refuses while any such fact remains.
+    pub ambiguous: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1083,6 +1090,7 @@ impl WalkV1<'_> {
                 card_def,
                 how: FactHowV1::Tracked,
                 native: Some(id),
+                ambiguous: false,
             });
         }
     }
@@ -1105,6 +1113,7 @@ impl WalkV1<'_> {
             card_def,
             how: FactHowV1::Revealed,
             native: Some(id),
+            ambiguous: false,
         });
     }
 
@@ -1175,6 +1184,7 @@ impl WalkV1<'_> {
                     card_def,
                     how: FactHowV1::FromPublicZone,
                     native: Some(id),
+                    ambiguous: false,
                 });
             } else if from == Zone::Library {
                 self.library_to_hand(id, owner);
@@ -1192,6 +1202,9 @@ impl WalkV1<'_> {
             // copies apart by their public object ids, and the departure of
             // a different object does not end that copy's span (6.1). The
             // engine's own knowledge rows keep it too (R5 compares them).
+            let named_facts = || self.hand.iter().filter(|f| f.card_def == card_def);
+            let mixed = named_facts().any(|f| f.native.is_some())
+                && named_facts().any(|f| f.native.is_none());
             let pos = self
                 .hand
                 .iter()
@@ -1203,6 +1216,14 @@ impl WalkV1<'_> {
                 });
             if let Some(pos) = pos {
                 self.hand.remove(pos);
+            }
+            if mixed {
+                // Lead ruling 11 (R2): V held a bound and an unbound fact of
+                // this name, so which one this departure ended is not V's
+                // information. Every remaining fact of the name is marked.
+                for f in self.hand.iter_mut().filter(|f| f.card_def == card_def) {
+                    f.ambiguous = true;
+                }
             }
             if !tracked {
                 self.survivors.identified_departure(card_def);

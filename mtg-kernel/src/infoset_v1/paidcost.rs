@@ -835,7 +835,7 @@ fn mixed_hand_world(discard_bound: bool) -> Result<Vec<u8>, String> {
 }
 
 /// Lead ruling 11 (R2): discarding the unbound copy or the bound fourth
-/// copy gives equal P (an export or the same refusal). Prints the first
+/// copy gives equal P: R1 `same_name_hand` in both worlds. Prints the first
 /// byte difference when the exports differ.
 #[test]
 fn mixed_bound_and_count_hand_facts_agree() {
@@ -864,4 +864,12 @@ fn mixed_bound_and_count_hand_facts_agree() {
         }
     }
     assert_eq!(unbound, bound, "P agrees whichever copy was discarded");
+    // Before the repair both exported, 110,202 against 110,855 bytes: the
+    // fourth copy survived as `C:16` beside 16 other tracked objects in one
+    // world, and as a name-level `U:` occupant in the other.
+    assert!(
+        unbound.as_ref().is_err_and(|e| e.contains("R1")
+            && e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)),
+        "R1 same_name_hand in both worlds: {unbound:?}"
+    );
 }

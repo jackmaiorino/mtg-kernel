@@ -667,7 +667,18 @@ pub(crate) fn export_v1(
                     && unread_paid.contains(&(r.object, *g)))
     };
 
-    // Amendment 43.6 (lead ruling 9 (b)), first of the R1 family: a live
+    // Lead ruling 11 (R2), first of the R1 family: an opponent-hand fact
+    // left by an identified departure of its name while V held both a bound
+    // and an unbound fact of that name. Whether the survivor is the bound
+    // copy (`C:`) or a name-level occupant (`U:`) is not V's information,
+    // and the engine's knowledge rows (R5) keep the bound copy known, so
+    // the export cannot drop the binding: refuse in both worlds, tallied
+    // with 43.6 (`same_name_hand`). No live reference is needed.
+    if projection.hand_facts.iter().any(|f| f.ambiguous) {
+        return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
+    }
+
+    // Amendment 43.6 (lead ruling 9 (b)): a live
     // reference (contract, binding, receipt or paid-cost record) to a copy
     // that sat in the opponent's hand beside another copy with equal 43.4
     // keys when one of them left V's tracking, made at or before the

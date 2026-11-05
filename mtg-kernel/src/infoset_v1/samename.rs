@@ -359,14 +359,16 @@ fn mixed_lapse_split_batch_refuses_in_both_orders() {
 pub(crate) fn mixed_batch_fixture(source_to_library: bool) -> ScriptV1 {
     let v = PlayerId::P1;
     let mut script = same_name_batch(0);
+    // After V's land plays: V needs mana for a decision while the ability
+    // waits (the activating player does not keep priority).
     let intents = &mut script.intents[v.index()];
-    intents.push_front(super::fixtures::edit(
-        "the source and its twin leave in one batch, one split, one lapsed",
-        move |st: &mut GameState| mixed_batch(st, source_to_library),
-    ));
-    intents.push_front(super::fixtures::gate(
+    intents.push_back(super::fixtures::gate(
         "the Shaman ability waits",
         |st: &GameState| shaman_items(st) == 1,
+    ));
+    intents.push_back(super::fixtures::edit(
+        "the source and its twin leave in one batch, one split, one lapsed",
+        move |st: &mut GameState| mixed_batch(st, source_to_library),
     ));
     script
 }
