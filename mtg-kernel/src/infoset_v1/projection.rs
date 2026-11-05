@@ -1074,10 +1074,11 @@ impl WalkV1<'_> {
                 // locates a card outside the hand: R8b, applied before the
                 // in-place reveal update below (ruling 44). Recognized from
                 // the public event order, never from the card's identity.
-                if !was && self.last_event_library_to_hand == Some(*owner) {
+                let search = self.last_event_library_to_hand == Some(*owner);
+                if !was && search {
                     self.survivors.taint_name(card_def);
                 }
-                self.revealed_in_hand(id, card_def, was);
+                self.revealed_in_hand(id, card_def, was, search);
                 self.settle(&[id]);
             }
             ObservationNoteKindV1::LibraryRemoval { owner, position } => {
@@ -1162,16 +1163,19 @@ impl WalkV1<'_> {
         }
     }
 
-    fn revealed_in_hand(&mut self, id: ObjectId, card_def: u16, was_tracked: bool) {
+    fn revealed_in_hand(&mut self, id: ObjectId, card_def: u16, was_tracked: bool, search: bool) {
         if self.hand.iter().any(|f| f.native == Some(id)) {
             return;
         }
-        // Sol round 10 (amendment 43.7): a reveal names a card of the hand,
-        // not a copy. While V holds a fact of the name, the reveal may show
-        // that same card, so it tells V nothing new: no fact or survivor
-        // change, whichever copy it was. The engine's row for the revealed
-        // copy is allowed (R5) as for a released copy.
-        if !was_tracked && self.hand.iter().any(|f| f.card_def == card_def) {
+        // Sol round 10 (amendment 43.7): a reveal of a card already in the
+        // hand names a card, not a copy. While V holds a fact of the name,
+        // it may show that same card, so it tells V nothing new: no fact or
+        // survivor change, whichever copy it was. The engine's row for the
+        // revealed copy is allowed (R5) as for a released copy. A
+        // search-and-reveal outcome (Sol round 11) shows the cards the
+        // search just moved, recognized from the public event order: each
+        // is a new card and takes its own fact, as before.
+        if !was_tracked && !search && self.hand.iter().any(|f| f.card_def == card_def) {
             if !self.released.contains(&id) {
                 self.released.push(id);
             }

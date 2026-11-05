@@ -938,25 +938,40 @@ fn repeat_reveal_world(world1: bool) -> Result<Vec<u8>, String> {
         it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
     });
     st.engine.pending_triggers.clear();
-    let lib = st.players[o.index()].library.clone();
-    let mut defs: Vec<u16> = lib.iter().map(|x| st.objects.get(*x).card_def).collect();
+    // Six copies of one name outside the hand (library first, then the
+    // battlefield and the graveyard); C must come from the library.
+    let pl = &st.players[o.index()];
+    let pool: Vec<ObjectId> = pl
+        .library
+        .iter()
+        .chain(&pl.battlefield)
+        .chain(&pl.graveyard)
+        .copied()
+        .filter(|x| !st.objects.get(*x).v4.is_token)
+        .collect();
+    let mut defs: Vec<u16> = pl
+        .library
+        .iter()
+        .map(|x| st.objects.get(*x).card_def)
+        .collect();
     defs.sort_unstable();
     defs.dedup();
     let def = defs
         .into_iter()
         .find(|d| {
-            lib.iter()
+            pool.iter()
                 .filter(|x| st.objects.get(**x).card_def == *d)
                 .count()
                 >= 6
         })
-        .expect("a name with six copies in the opponent's library");
-    let c6: Vec<ObjectId> = lib
+        .expect("a name with six copies outside the opponent's hand");
+    let c6: Vec<ObjectId> = pool
         .iter()
         .copied()
         .filter(|x| st.objects.get(*x).card_def == def)
         .take(6)
         .collect();
+    let c6 = vec![c6[1], c6[2], c6[3], c6[4], c6[5], c6[0]];
     let (e, f, u, a, b, c) = (c6[0], c6[1], c6[2], c6[3], c6[4], c6[5]);
     let mut marks = s.infoset_marks_v1(v);
     let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
@@ -1103,6 +1118,77 @@ fn desynced_receipt_world(d_left: bool, desync: bool) -> Result<Vec<u8>, String>
     )
     .map(|x| x.bytes)
     .map_err(|e| format!("{e:?}"))
+}
+
+/// Sol round 11 on #526, finding 1 (unit form): a live reference with no
+/// epoch to Lembas D, which V tracked in the graveyard before D returned to
+/// the opponent's hand; C is drawn unseen; then D or C is discarded. The
+/// native case is a trigger's `other_than` naming a creature later bounced
+/// and recast. Before the repair the D world linked the reference to D's
+/// graveyard incarnation (export) and the C world refused R1 (untracked);
+/// both now refuse `same_name_hand`. Returns P.
+fn genless_world(d_left: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+    let paid = paid_object(&st, i);
+    st.stack
+        .retain(|it| st.objects.get(it.source).card_def != lembas);
+    st.engine.pending_triggers.clear();
+    let in_library = library_lembas(&mut st, paid, 2);
+    let (d, c) = (in_library[0], in_library[1]);
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(d, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    propose_and_commit(&mut st, ProposedEvent::zone_change(d, Zone::Hand));
+    st.reveal_hand_card(v, o, d).expect("reveal D");
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    let lib = &mut st.players[o.index()].library;
+    let at = lib.iter().position(|x| *x == c).expect("C in the library");
+    let c_id = lib.remove(at);
+    lib.insert(0, c_id);
+    propose_and_commit(&mut st, ProposedEvent::draw(o));
+    assert_eq!(st.objects.get(c).zone, Zone::Hand, "C was drawn");
+    mark(&st, &mut marks);
+    let gone = if d_left { d } else { c };
+    let hand = st.objects.get(gone).zone_change_count;
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+    let _ = hand;
+    // A live reference with no epoch to D, made before D's hand stint.
+    st.stack[i].discarded = vec![d];
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+#[test]
+fn a_reference_without_an_epoch_across_the_hand_agrees() {
+    let (d, c) = (genless_world(true), genless_world(false));
+    eprintln!("epochless reference: D left {d:?} / C left {c:?}");
+    assert_eq!(d, c, "P agrees whichever copy left");
 }
 
 #[test]
