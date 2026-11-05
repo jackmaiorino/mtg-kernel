@@ -246,6 +246,8 @@ pub enum P1aOpV1 {
     RandomDiscardV1 { player: PlayerId },
     /// Jackal Pup deals `amount` damage to its controller.
     PupDamageV1 { amount: i32 },
+    /// Exalted Angel: its controller gains `amount` life.
+    AngelLifeV1 { amount: i32 },
     /// Rith's Grove's entry. A choice.
     GroveV1,
     /// Siege-Gang Commander's three Goblins.
@@ -274,6 +276,19 @@ impl P1aOpV1 {
                 | Self::GroveV1
                 | Self::SylvanLibraryV1
                 | Self::SylvanDrawV1
+        )
+    }
+
+    /// Whether this leaf draws cards, so a dredge choice moves its program
+    /// into the resumable interpreter (wave E7b), where `drive` stages each
+    /// draw as a replaceable `DrawCards` frame.
+    pub(crate) fn draws(&self) -> bool {
+        matches!(
+            self,
+            Self::IceV1
+                | Self::SkeletalScryingV1
+                | Self::GravebornMuseV1
+                | Self::PortentUpkeepDrawV1
         )
     }
 }
@@ -971,6 +986,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         GOBLIN_SHARPSHOOTER => matches!(op, P1aOpV1::UntapSourceV1),
         HYPNOTIC_SPECTER => matches!(op, P1aOpV1::RandomDiscardV1 { .. }),
         JACKAL_PUP => matches!(op, P1aOpV1::PupDamageV1 { .. }),
+        EXALTED_ANGEL => matches!(op, P1aOpV1::AngelLifeV1 { .. }),
         SULFURIC_VORTEX => matches!(op, P1aOpV1::VortexDamageV1 { .. }),
         _ => false,
     }
@@ -1353,6 +1369,18 @@ pub(crate) fn execute(op: &P1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        P1aOpV1::AngelLifeV1 { amount } => {
+            if *amount > 0 {
+                crate::effect::execute(
+                    &EffectOp::GainLife {
+                        player: PlayerRef::Controller,
+                        amount: *amount,
+                    },
+                    ctx,
+                    state,
+                );
+            }
+        }
         P1aOpV1::SiegeGangTokensV1 => {
             let token = token_id(GOBLIN_TOKEN);
             for _ in 0..3 {
@@ -1525,13 +1553,16 @@ fn drawn_this_turn(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
 }
 
 /// Puts `cards` on the bottom of their owner's library in order, the first
-/// highest.
+/// highest. One card's position is public; the order of two or more is the
+/// owner's private choice (rule 401.4), so their positions stay private.
 fn put_on_bottom(state: &mut GameState, cards: &[ObjectId]) {
     for &card in cards {
-        event::propose_and_commit(
-            state,
-            ProposedEvent::public_library_insert(card, LibraryPlacement::Bottom),
-        );
+        let insert = if cards.len() == 1 {
+            ProposedEvent::public_library_insert(card, LibraryPlacement::Bottom)
+        } else {
+            ProposedEvent::private_bottom_library_insert(card)
+        };
+        event::propose_and_commit(state, insert);
     }
 }
 
@@ -1576,11 +1607,11 @@ pub(crate) fn drive(
                 .map(|card| bind(state, card))
                 .collect::<Vec<_>>();
             if top.len() < 2 {
-                // One card or none: looking at it changes no order, and the
-                // controller learns it.
+                // One card or none: looking at it changes no order, and only
+                // the controller learns it.
                 if let Some(card) = top.first() {
                     let ordered = [card.object];
-                    state.reorder_library_top(player, &ordered, &[controller, player])?;
+                    state.reorder_library_top(player, &ordered, &[controller])?;
                 }
                 return Ok(false);
             }
@@ -1699,14 +1730,10 @@ pub(crate) fn drive(
             Ok(true)
         }
         P1aOpV1::GroveV1 => {
-            let source = continuation
-                .ctx
-                .ability_source_contract
-                .map(|contract| contract.source);
+            // Rith's Grove itself is excluded only while it is a Lair.
             let lands = battlefield(state)
                 .filter(|&object| {
                     state.objects.get(object).controller == controller
-                        && Some(object) != source
                         && has_type(state, object, CardType::Land)
                         && !crate::engine::has_effective_subtype(state, object, Subtype::Lair)
                 })
@@ -1765,10 +1792,72 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        // Draws as frames, so each can be dredged; frames run last pushed
+        // first, so a later instruction is pushed before the draw.
+        P1aOpV1::IceV1 => {
+            let ctx = continuation.ctx.clone();
+            if let Some(object) = legal_object_target(&ctx, state, 0, TargetSpec::AnyPermanent) {
+                event::propose_and_commit(state, ProposedEvent::tap(object));
+            }
+            push_draw_then_lose(continuation, 1, 0, path);
+            Ok(false)
+        }
+        P1aOpV1::SkeletalScryingV1 => {
+            let x = u32::from(continuation.ctx.x_value);
+            push_draw_then_lose(continuation, x, x, path);
+            Ok(false)
+        }
+        P1aOpV1::GravebornMuseV1 => {
+            let zombies = battlefield(state)
+                .filter(|&object| {
+                    state.objects.get(object).controller == controller
+                        && crate::engine::has_effective_subtype(state, object, Subtype::Zombie)
+                })
+                .count();
+            let zombies = u32::try_from(zombies).unwrap_or(u32::MAX);
+            push_draw_then_lose(continuation, zombies, zombies, path);
+            Ok(false)
+        }
+        P1aOpV1::PortentUpkeepDrawV1 => {
+            push_draw_then_lose(continuation, 1, 0, path);
+            Ok(false)
+        }
         other => {
             execute(other, &continuation.ctx, state);
             Ok(false)
         }
+    }
+}
+
+/// Stages "draw `draw` cards, then lose `lose` life" for the controller as
+/// frames of the resumable interpreter.
+fn push_draw_then_lose(
+    continuation: &mut EffectContinuation,
+    draw: u32,
+    lose: u32,
+    path: Vec<u16>,
+) {
+    if lose > 0 {
+        continuation
+            .frames
+            .push(crate::effect::EffectFrame::Program {
+                op: EffectOp::LoseLife {
+                    player: PlayerRef::Controller,
+                    amount: i32::try_from(lose).unwrap_or(i32::MAX),
+                },
+                path: path.clone(),
+            });
+    }
+    if draw > 0 {
+        continuation
+            .frames
+            .push(crate::effect::EffectFrame::Program {
+                op: EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: draw,
+                },
+                path,
+            });
     }
 }
 
@@ -1979,10 +2068,39 @@ fn note_cycles(state: &mut GameState) {
 
 /// Damage: Goblin Lackey ("Whenever this creature deals damage to a
 /// player"), Hypnotic Specter ("Whenever this creature deals damage to an
-/// opponent, that player discards a card at random.") and Jackal Pup
+/// opponent, that player discards a card at random."), Jackal Pup
 /// ("Whenever this creature is dealt damage, it deals that much damage to
-/// you.").
+/// you.") and Exalted Angel ("Whenever this creature deals damage, you gain
+/// that much life": one trigger for the damage it dealt in this batch, as
+/// simultaneous combat damage is one event).
 fn note_damage(state: &mut GameState, events: &[CommittedEvent]) {
+    let mut angels: Vec<(ObjectId, i32)> = Vec::new();
+    for event in events {
+        let CommittedEvent::Damage { source, amount, .. } = *event else {
+            continue;
+        };
+        if amount <= 0
+            || definition_name(state, source) != Some(EXALTED_ANGEL)
+            || !printed_source(state, source, EXALTED_ANGEL)
+        {
+            continue;
+        }
+        match angels.iter_mut().find(|(seen, _)| *seen == source) {
+            Some((_, total)) => *total = total.saturating_add(amount),
+            None => angels.push((source, amount)),
+        }
+    }
+    for (angel, amount) in angels {
+        let controller = state.objects.get(angel).controller;
+        let contract = AbilitySourceContractV4::capture(state, angel);
+        queue_trigger(
+            state,
+            contract,
+            controller,
+            p1a(P1aOpV1::AngelLifeV1 { amount }),
+            None,
+        );
+    }
     for event in events {
         let CommittedEvent::Damage {
             source,
@@ -2234,11 +2352,18 @@ fn prune(state: &mut GameState) {
     }
     let now = TurnV1::now(state);
     let on_battlefield = |link: &ObjectLinkV4| link_live_in(state, *link, Zone::Battlefield);
+    // A phased-out permanent keeps its incarnation (and its counters) in the
+    // command zone until it phases in.
+    let counters_kept = |link: &ObjectLinkV4| {
+        on_battlefield(link)
+            || (link_live_in(state, *link, Zone::Command)
+                && crate::eternal_e5a_v1::phasing::phased_out(state, link.object))
+    };
     let mining = p1a
         .mining
         .iter()
         .copied()
-        .filter(|(host, _)| on_battlefield(host))
+        .filter(|(host, _)| counters_kept(host))
         .collect::<Vec<_>>();
     // A Powder Keg's counters stay while an ability of that incarnation is
     // on the stack.
@@ -2247,7 +2372,7 @@ fn prune(state: &mut GameState) {
         .iter()
         .copied()
         .filter(|(host, _)| {
-            on_battlefield(host)
+            counters_kept(host)
                 || state.stack.iter().any(|item| {
                     item.v4.ability_source_contract.is_some_and(|contract| {
                         contract.source == host.object

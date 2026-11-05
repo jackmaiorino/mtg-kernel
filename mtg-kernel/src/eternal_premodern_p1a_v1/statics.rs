@@ -290,18 +290,26 @@ pub fn mining_counters(state: &GameState, land: ObjectId) -> u8 {
     })
 }
 
+/// Whether `land` is a Gemstone Mine that still has its printed mana
+/// ability: a land type change (a moon, Harbinger of the Seas, Vision Charm)
+/// removes it and grants a basic land's mana ability, which costs no
+/// counter and sacrifices nothing (305.7).
+fn printed_mine(state: &GameState, land: ObjectId) -> bool {
+    definition_name(state, land) == Some(GEMSTONE_MINE)
+        && crate::continuous_characteristics_v1::removal_timestamp(state, land).is_none()
+}
+
 /// Gemstone Mine's mana ability costs "Remove a mining counter from this
 /// land": without one it can't be activated.
 pub(crate) fn mana_ability_blocked(state: &GameState, source: ObjectId) -> bool {
-    definition_name(state, source) == Some(GEMSTONE_MINE) && mining_counters(state, source) == 0
+    printed_mine(state, source) && mining_counters(state, source) == 0
 }
 
-/// After a Gemstone Mine was tapped for mana: remove a mining counter, then
-/// "If there are no mining counters on this land, sacrifice it."
+/// After a Gemstone Mine was tapped for its printed mana ability: remove a
+/// mining counter, then "If there are no mining counters on this land,
+/// sacrifice it."
 pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
-    if definition_name(state, land) != Some(GEMSTONE_MINE)
-        || state.objects.get(land).zone != Zone::Battlefield
-    {
+    if !printed_mine(state, land) || state.objects.get(land).zone != Zone::Battlefield {
         return;
     }
     let link = live_link(state, land);
@@ -343,8 +351,16 @@ pub fn fuse_counters(state: &GameState, keg: ObjectId) -> u16 {
 /// color (the latest), and a split card's half on the stack (708.3: only
 /// that half's characteristics).
 pub(crate) fn color_override(state: &GameState, id: ObjectId) -> Option<u8> {
+    color_override_timed(state, id).map(|(mask, _)| mask)
+}
+
+/// `color_override` with the timestamp of a color-setting effect (Wild
+/// Mongrel), so an earlier Painter's Servant addition is overwritten by it
+/// (613.7). A split half's own colors carry no timestamp: Painter's Servant
+/// adds to them.
+pub(crate) fn color_override_timed(state: &GameState, id: ObjectId) -> Option<(u8, Option<u64>)> {
     if let Some(mask) = split_spell_colors(state, id) {
-        return Some(mask);
+        return Some((mask, None));
     }
     let p1a = read_state(state)?;
     if p1a.colors.is_empty() {
@@ -361,7 +377,12 @@ pub(crate) fn color_override(state: &GameState, id: ObjectId) -> Option<u8> {
                 && live.zone == Zone::Battlefield
         })
         .max_by_key(|record| record.timestamp)
-        .map(|record| crate::card_def::mana_color_mask(record.color))
+        .map(|record| {
+            (
+                crate::card_def::mana_color_mask(record.color),
+                Some(record.timestamp),
+            )
+        })
 }
 
 /// Vision Charm: the latest land type change on `object`, its timestamp and
@@ -493,9 +514,25 @@ const EXALTED_ANGEL_MORPH: Cost = Cost {
 /// special action, 702.37e), or `None` when it is not one.
 pub(crate) fn morph_face_up_cost(state: &GameState, id: ObjectId) -> Option<Cost> {
     let live = state.objects.try_get(id)?;
-    if live.zone != Zone::Battlefield || !live.v4.face_down_v1.is_some_and(|face| face.disguised) {
+    if !live.v4.face_down_v1.is_some_and(|face| face.disguised) {
+        return None;
+    }
+    morph_cost(state, id)
+}
+
+/// The morph cost of the face-down permanent `id` when it would have morph
+/// face up (702.37e): not while its abilities are removed (Dress Down). A
+/// manifested morph card may also turn face up this way (701.34c).
+pub(crate) fn morph_cost(state: &GameState, id: ObjectId) -> Option<Cost> {
+    let live = state.objects.try_get(id)?;
+    if live.zone != Zone::Battlefield || live.v4.face_down_v1.is_none() {
         return None;
     }
     let def = CARD_DEFS.get(usize::from(live.card_def))?;
-    (def.name == EXALTED_ANGEL).then_some(EXALTED_ANGEL_MORPH)
+    if def.name != EXALTED_ANGEL
+        || crate::continuous_characteristics_v1::removal_timestamp(state, id).is_some()
+    {
+        return None;
+    }
+    Some(EXALTED_ANGEL_MORPH)
 }

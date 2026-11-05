@@ -60,6 +60,11 @@ fn draws(op: &EffectOp) -> bool {
         EffectOp::Sequence(ops) => ops.iter().any(draws),
         EffectOp::Conditional { then, else_, .. } => draws(then) || draws(else_),
         EffectOp::Choice { options, .. } => options.iter().any(draws),
+        // Premodern wave P1a's leaves that draw (Ice, Skeletal Scrying,
+        // Graveborn Muse, Portent's delayed draw).
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+            crate::eternal_cards_v1::EternalOpV1::P1aV1(op),
+        )) => op.draws(),
         _ => false,
     }
 }

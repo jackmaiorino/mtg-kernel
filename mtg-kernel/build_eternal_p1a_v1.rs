@@ -317,7 +317,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Ball Lightning" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
-        "Exalted Angel" => &["Keywords::FLYING", "Keywords::LIFELINK"],
+        "Exalted Angel" => &["Keywords::FLYING"],
         "Goblin Ringleader" => &["Keywords::HASTE"],
         "Hypnotic Specter" => &["Keywords::FLYING"],
         "Terravore" => &["Keywords::TRAMPLE"],

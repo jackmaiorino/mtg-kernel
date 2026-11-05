@@ -524,7 +524,7 @@ fn p1a_cards_are_full_with_their_printed_characteristics() {
     let ball = def("Ball Lightning");
     assert!(ball.keywords.has(Keywords::TRAMPLE) && ball.keywords.has(Keywords::HASTE));
     let angel = def("Exalted Angel");
-    assert!(angel.keywords.has(Keywords::FLYING) && angel.keywords.has(Keywords::LIFELINK));
+    assert!(angel.keywords.has(Keywords::FLYING) && !angel.keywords.has(Keywords::LIFELINK));
     assert_eq!(
         angel.alt_cost.map(|alt| alt.condition),
         Some(AltCostCondition::DisguiseFromHand)
@@ -612,6 +612,34 @@ fn gemstone_mine_taps_three_times_for_any_color_then_is_sacrificed() {
         Zone::Graveyard,
         "no mining counters left"
     );
+}
+
+#[test]
+fn gemstone_mine_under_blood_moon_taps_for_red_and_keeps_its_counters() {
+    let mut state = islands();
+    let mine = put(&mut state, P0, "Gemstone Mine", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(mine));
+    let moon = put(&mut state, P1, "Blood Moon", Zone::Hand);
+    state.active_player = P1;
+    state.priority_player = P1;
+    pool(&mut state, P1, &[ManaColor::R], 2);
+    cast(&mut state, moon, &[]);
+    settled(&mut state);
+    state.active_player = P0;
+    state.priority_player = P0;
+    for _ in 0..4 {
+        state.objects.get_mut(mine).tapped = false;
+        next(&mut state);
+        act(&mut state, Action::ActivateManaAbility(mine));
+    }
+    assert_eq!(mana(&state, P0, ManaColor::R), 4);
+    assert_eq!(
+        statics::mining_counters(&state, mine),
+        3,
+        "a Mountain's ability"
+    );
+    assert_eq!(zone(&state, mine), Zone::Battlefield);
 }
 
 #[test]
@@ -819,6 +847,40 @@ fn fire_divides_two_damage_and_ice_taps_and_draws() {
         zone(&state, ice),
         Zone::Graveyard,
         "a split card is not exiled"
+    );
+}
+
+#[test]
+fn ices_draw_may_be_dredged() {
+    let mut state = islands();
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let thug = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let ice = put(&mut state, P0, "Fire // Ice", Zone::Hand);
+    let library = state.players[0].library.len();
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    act(&mut state, Action::CastSpell(ice));
+    let mut offered = false;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseSpellMode { .. } => Action::ChooseSpellMode(1),
+        Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(elves)),
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(thug)) && !offered =>
+        {
+            offered = true;
+            Action::ChooseEffectTarget(Target::Object(thug))
+        }
+        Decision::ChooseEffectTargets {
+            selected_count: 1, ..
+        } => Action::FinishEffectSelection,
+        other => first_answer(other),
+    });
+    assert!(offered, "Ice's draw offers dredge");
+    assert!(state.objects.get(elves).tapped);
+    assert_eq!(zone(&state, thug), Zone::Hand, "dredged instead of drawing");
+    assert_eq!(
+        state.players[0].library.len(),
+        library - 4,
+        "dredge 4 mills four"
     );
 }
 
@@ -1286,7 +1348,7 @@ fn sulfuric_vortex_burns_each_upkeep_and_stops_life_gain() {
     });
     settled(&mut state);
     assert_eq!(state.players[1].life, 18);
-    // Lifelink gains nothing.
+    // Exalted Angel's life gain trigger gains nothing.
     let bolt_target = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     damage(&mut state, angel, bolt_target, 4);
     settled(&mut state);
@@ -1375,7 +1437,7 @@ fn exalted_angel_is_cast_face_down_and_turned_up_for_its_morph_cost() {
     act(&mut state, Action::ActivateAbility(angel, 255));
     assert!(state.objects.get(angel).v4.face_down_v1.is_none());
     assert_eq!(power_toughness(&state, angel), (4, 5));
-    assert!(keyword(&state, angel, Keywords::LIFELINK));
+    assert!(keyword(&state, angel, Keywords::FLYING));
 }
 
 #[test]
@@ -1597,6 +1659,28 @@ fn hypnotic_specter_discards_at_random_when_it_hits() {
 }
 
 #[test]
+fn exalted_angel_gains_life_by_trigger_not_lifelink() {
+    let mut state = islands();
+    let angel = put(&mut state, P0, "Exalted Angel", Zone::Battlefield);
+    let first = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let second = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    event::propose_and_commit_batch(
+        &mut state,
+        vec![
+            ProposedEvent::damage(angel, Target::Object(first), 2),
+            ProposedEvent::damage(angel, Target::Object(second), 2),
+        ],
+    );
+    // No life is gained as the damage is dealt: a trigger gains it.
+    assert_eq!(state.players[0].life, 20);
+    settled(&mut state);
+    assert_eq!(
+        state.players[0].life, 24,
+        "one trigger for the batch's 4 damage"
+    );
+}
+
+#[test]
 fn jackal_pup_hurts_its_controller_when_dealt_damage() {
     let mut state = islands();
     let pup = put(&mut state, P0, "Jackal Pup", Zone::Battlefield);
@@ -1754,6 +1838,28 @@ fn wild_mongrel_discards_to_grow_and_change_color() {
     assert_eq!(power_toughness(&state, mongrel), (3, 3));
     let blue = mtg_kernel::card_def::mana_color_mask(ManaColor::U);
     assert_eq!(engine::object_color_mask(&state, mongrel), blue);
+}
+
+#[test]
+fn wild_mongrels_later_color_overwrites_an_earlier_painters_servant() {
+    let mut state = islands();
+    let painter = put(&mut state, P1, "Painter's Servant", Zone::Battlefield);
+    state.objects.get_mut(painter).v4.chosen_color = Some(ManaColor::R);
+    let mongrel = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+    let red = mtg_kernel::card_def::mana_color_mask(ManaColor::R);
+    assert_ne!(
+        engine::object_color_mask(&state, mongrel) & red,
+        0,
+        "painted"
+    );
+    put(&mut state, P0, "Island", Zone::Hand);
+    activate(&mut state, mongrel, 0, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
+        other => first_answer(other),
+    });
+    let blue = mtg_kernel::card_def::mana_color_mask(ManaColor::U);
+    assert_eq!(engine::object_color_mask(&state, mongrel), blue, "613.7");
 }
 
 #[test]
