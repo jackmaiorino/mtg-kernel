@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420" font-family="system-ui,-apple-system,Segoe UI,sans-serif">
+<style>
+.bg{fill:#fcfcfb}.t1{fill:#0b0b0b}.t2{fill:#52514e}.grid{stroke:#e4e3df}.ref{stroke:#8f8e88}
+.s1{stroke:#2a78d6;fill:#2a78d6}.s2{stroke:#eb6834;fill:#eb6834}.ring{stroke:#fcfcfb}
+@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.t1{fill:#f0efec}.t2{fill:#c3c2b7}.grid{stroke:#353533}.ref{stroke:#7d7c76}
+.s1{stroke:#3987e5;fill:#3987e5}.s2{stroke:#d95926;fill:#d95926}.ring{stroke:#1a1a19}}
+text{font-size:12px}.h{font-size:14px;font-weight:600}
+</style>
+<rect class="bg" width="900" height="420"/>
+<text class="t1 h" x="20" y="24">Win rate of a seven by opening lands</text>
+<text class="t2" x="20" y="42">Relative to the same deck with 2-4 lands; 8 decks, Spy excluded; 95% CI</text>
+<line class="grid" x1="60" x2="400" y1="296.2" y2="296.2" stroke-width="1" />
+<text class="t2" x="52" y="300.2" text-anchor="end">40%</text>
+<line class="grid" x1="60" x2="400" y1="228.8" y2="228.8" stroke-width="1" />
+<text class="t2" x="52" y="232.8" text-anchor="end">60%</text>
+<line class="grid" x1="60" x2="400" y1="161.2" y2="161.2" stroke-width="1" />
+<text class="t2" x="52" y="165.2" text-anchor="end">80%</text>
+<line class="ref" x1="60" x2="400" y1="93.8" y2="93.8" stroke-width="1" stroke-dasharray="4 3"/>
+<text class="t2" x="52" y="97.8" text-anchor="end">100%</text>
+<text class="t2" x="80.0" y="348" text-anchor="middle">0</text>
+<text class="t2" x="140.0" y="348" text-anchor="middle">1</text>
+<text class="t2" x="200.0" y="348" text-anchor="middle">2</text>
+<text class="t2" x="260.0" y="348" text-anchor="middle">3</text>
+<text class="t2" x="320.0" y="348" text-anchor="middle">4</text>
+<text class="t2" x="380.0" y="348" text-anchor="middle">5</text>
+<text class="t2" x="230.0" y="366" text-anchor="middle">Lands in the opening seven</text>
+<polyline class="s1" style="fill:none" stroke-width="2" points="76.0,293.0 136.0,147.2 196.0,92.6 256.0,89.4 316.0,108.4 376.0,160.8"/>
+<line class="s1" x1="76.0" x2="76.0" y1="298.1" y2="287.8" stroke-width="1.5"/>
+<circle cx="76.0" cy="293.0" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s1" cx="76.0" cy="293.0" r="4"/>
+<line class="s1" x1="136.0" x2="136.0" y1="150.8" y2="143.6" stroke-width="1.5"/>
+<circle cx="136.0" cy="147.2" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s1" cx="136.0" cy="147.2" r="4"/>
+<line class="s1" x1="196.0" x2="196.0" y1="95.9" y2="89.3" stroke-width="1.5"/>
+<circle cx="196.0" cy="92.6" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s1" cx="196.0" cy="92.6" r="4"/>
+<line class="s1" x1="256.0" x2="256.0" y1="93.5" y2="85.4" stroke-width="1.5"/>
+<circle cx="256.0" cy="89.4" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s1" cx="256.0" cy="89.4" r="4"/>
+<line class="s1" x1="316.0" x2="316.0" y1="114.9" y2="101.8" stroke-width="1.5"/>
+<circle cx="316.0" cy="108.4" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s1" cx="316.0" cy="108.4" r="4"/>
+<line class="s1" x1="376.0" x2="376.0" y1="173.8" y2="147.8" stroke-width="1.5"/>
+<circle cx="376.0" cy="160.8" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s1" cx="376.0" cy="160.8" r="4"/>
+<text class="t1" x="92.0" y="297.0">41% on the play</text>
+<polyline class="s2" style="fill:none" stroke-width="2" points="84.0,205.5 144.0,113.7 204.0,96.4 264.0,92.6 324.0,87.2 384.0,141.2"/>
+<line class="s2" x1="84.0" x2="84.0" y1="209.9" y2="201.0" stroke-width="1.5"/>
+<circle cx="84.0" cy="205.5" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s2" cx="84.0" cy="205.5" r="4"/>
+<line class="s2" x1="144.0" x2="144.0" y1="116.2" y2="111.1" stroke-width="1.5"/>
+<circle cx="144.0" cy="113.7" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s2" cx="144.0" cy="113.7" r="4"/>
+<line class="s2" x1="204.0" x2="204.0" y1="98.6" y2="94.2" stroke-width="1.5"/>
+<circle cx="204.0" cy="96.4" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s2" cx="204.0" cy="96.4" r="4"/>
+<line class="s2" x1="264.0" x2="264.0" y1="95.4" y2="89.8" stroke-width="1.5"/>
+<circle cx="264.0" cy="92.6" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s2" cx="264.0" cy="92.6" r="4"/>
+<line class="s2" x1="324.0" x2="324.0" y1="91.5" y2="82.8" stroke-width="1.5"/>
+<circle cx="324.0" cy="87.2" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s2" cx="324.0" cy="87.2" r="4"/>
+<line class="s2" x1="384.0" x2="384.0" y1="150.8" y2="131.6" stroke-width="1.5"/>
+<circle cx="384.0" cy="141.2" r="5" class="ring" style="fill:none" stroke-width="2"/><circle class="s2" cx="384.0" cy="141.2" r="4"/>
+<text class="t1" x="92.0" y="209.5">67% on the draw</text>
+<circle class="s1" cx="250" cy="272" r="4"/><text class="t2" x="258" y="276">On the play</text>
+<circle class="s2" cx="250" cy="290" r="4"/><text class="t2" x="258" y="294">On the draw</text>
+<text class="t1 h" x="470" y="24">Odds of a 0- or 1-land seven</text>
+<text class="t2" x="470" y="42">Hypergeometric, 60-card deck (lands in parentheses)</text>
+<text class="t1" x="592" y="80" text-anchor="end">Spy (4)</text>
+<rect class="s1" x="600" y="66" width="150.1" height="18" rx="2"/>
+<rect class="s2" x="752.1" y="66" width="82.1" height="18" rx="2"/>
+<text class="t2" x="840.2" y="80">94%</text>
+<text class="t1" x="592" y="110" text-anchor="end">Elves (13)</text>
+<rect class="s1" x="600" y="96" width="40.7" height="18" rx="2"/>
+<rect class="s2" x="642.7" y="96" width="88.4" height="18" rx="2"/>
+<text class="t2" x="737.1" y="110">52%</text>
+<text class="t1" x="592" y="140" text-anchor="end">Terror (16)</text>
+<rect class="s1" x="600" y="126" width="24.8" height="18" rx="2"/>
+<rect class="s2" x="626.8" y="126" width="71.1" height="18" rx="2"/>
+<text class="t2" x="703.9" y="140">39%</text>
+<text class="t1" x="592" y="170" text-anchor="end">Rally (18)</text>
+<rect class="s1" x="600" y="156" width="17.5" height="18" rx="2"/>
+<rect class="s2" x="619.5" y="156" width="59.1" height="18" rx="2"/>
+<text class="t2" x="684.6" y="170">31%</text>
+<text class="t1" x="592" y="200" text-anchor="end">Burn (18)</text>
+<rect class="s1" x="600" y="186" width="17.5" height="18" rx="2"/>
+<rect class="s2" x="619.5" y="186" width="59.1" height="18" rx="2"/>
+<text class="t2" x="684.6" y="200">31%</text>
+<text class="t1" x="592" y="230" text-anchor="end">Faeries (18)</text>
+<rect class="s1" x="600" y="216" width="17.5" height="18" rx="2"/>
+<rect class="s2" x="619.5" y="216" width="59.1" height="18" rx="2"/>
+<text class="t2" x="684.6" y="230">31%</text>
+<text class="t1" x="592" y="260" text-anchor="end">Affinity (19)</text>
+<rect class="s1" x="600" y="246" width="14.6" height="18" rx="2"/>
+<rect class="s2" x="616.6" y="246" width="53.3" height="18" rx="2"/>
+<text class="t2" x="675.9" y="260">28%</text>
+<text class="t1" x="592" y="290" text-anchor="end">Wildfire (20)</text>
+<rect class="s1" x="600" y="276" width="12.1" height="18" rx="2"/>
+<rect class="s2" x="614.1" y="276" width="47.7" height="18" rx="2"/>
+<text class="t2" x="667.8" y="290">25%</text>
+<text class="t1" x="592" y="320" text-anchor="end">CawGates (21)</text>
+<rect class="s1" x="600" y="306" width="10.0" height="18" rx="2"/>
+<rect class="s2" x="612.0" y="306" width="42.4" height="18" rx="2"/>
+<text class="t2" x="660.3" y="320">22%</text>
+<rect class="s1" x="600" y="344" width="10" height="10" rx="2"/><text class="t2" x="616" y="353">0 lands</text>
+<rect class="s2" x="680" y="344" width="10" height="10" rx="2"/><text class="t2" x="696" y="353">1 land</text>
+<text class="t2" x="470" y="374">Spy runs 4 lands on purpose; its keeps hinge on combo pieces, not lands.</text>
+<text class="t2" x="20" y="410">Source: 177,381 OH2 r2 b512 panel games (8 seeds x 5 opponents), opening hands re-dealt from the recorded seeds.</text>
+</svg>

@@ -82,6 +82,7 @@ fn fresh_source(root: &Path) -> ExpandedModelSourceV1 {
             expected_feature_encoding_digest: identity.feature_encoding_digest.into(),
         },
         checkpoint: None,
+        s_learner: None,
     }
 }
 
@@ -1494,6 +1495,8 @@ fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> Expa
         max_policy_steps: 1_000_000,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 
@@ -1530,6 +1533,7 @@ fn run_config(
                 episodes: vec![scheduled(1, ExpandedOpponentAssignmentV1::Initial)],
             },
         ],
+        record_format: Default::default(),
         learning_rate: 0.0003,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -1547,6 +1551,7 @@ fn run_config(
         search_targets: None,
         ex1: None,
         record_process_cpu: false,
+        chain_ledger: None,
         output_directory,
     }
 }
@@ -1597,6 +1602,7 @@ fn converted_run_end_to_end_v1() {
         loss_selection: gae(),
         line_b: None,
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: root.join("parent-update"),
     })
     .unwrap();
@@ -1739,7 +1745,7 @@ fn converted_run_end_to_end_v1() {
     for (bits, admitted) in [(0_u32, true), (0x8000_0000, false), (0x3f80_0000, false)] {
         let mut tensor = common.clone();
         tensor.state[DIGEST.start + 7] = f32::from_bits(bits);
-        match initial.score_replay_tensor_v1(FreshLineageGenerationV1::V4, tensor) {
+        match initial.score_replay_tensor_v1(FreshLineageGenerationV1::V4, tensor, &[]) {
             Ok(scores) => {
                 assert!(admitted, "{bits:#x}");
                 assert_eq!(
@@ -1797,6 +1803,7 @@ fn converted_run_end_to_end_v1() {
             teacher: None,
         }),
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: root.join("line-b"),
     })
     .unwrap_err();

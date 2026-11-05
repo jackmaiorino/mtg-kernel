@@ -10,10 +10,11 @@
 //! episode (the guide's invalidate-on-failure is not inherited).
 
 use super::arms::{Limits, Roles};
-use super::bank::{bank_roles, guide_ctx};
+use super::bank::{fixed_work_roles, guide_ctx};
 use super::canon2::KeyMode;
 use super::play::decision;
 use super::refresh::{Cursor, Lookup};
+use super::root_allocation::SearchOptions;
 use super::seeds::RootSeeds;
 use super::world::DeckPrior;
 use crate::ex1_v1::{Ex1EdgeCountsV1, EX1_SUPPORT_MIN_V1};
@@ -58,18 +59,34 @@ pub(crate) struct Ex1SearcherV1 {
     /// The cursor's pending hit at the current decision (advanced with the
     /// learner's sampled action).
     pending: Option<super::refresh::Hit>,
+    /// An explicit exact key memo (W5); `None` keeps the process default.
+    key_memo: Option<Option<usize>>,
 }
 
 impl Ex1SearcherV1 {
     pub(crate) fn new(learner: &FrozenPlayPolicyV1, focal: PlayerId) -> Result<Self, String> {
         let opponent = learner.fork_for_collection_v3()?;
         Ok(Self {
-            roles: bank_roles(learner, std::slice::from_ref(&opponent))?,
+            roles: fixed_work_roles(learner, std::slice::from_ref(&opponent))?,
             prior: DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>()),
             focal,
             cursor: None,
             pending: None,
+            key_memo: None,
         })
+    }
+
+    /// Every search runs with an exact key memo of `bytes` (W5's recorded
+    /// setting; keys, trees, selection and statistics are unchanged).
+    pub(crate) fn with_key_memo_v1(mut self, bytes: usize) -> Self {
+        self.key_memo = Some(Some(bytes));
+        self
+    }
+
+    /// Every search runs with the key memo off, whatever the process default.
+    pub(crate) fn with_key_memo_off_v1(mut self) -> Self {
+        self.key_memo = Some(None);
+        self
     }
 
     /// Drops the retained tree (the burst's turn ended).
@@ -102,11 +119,17 @@ impl Ex1SearcherV1 {
         // The search recurses deeply: it runs on its own thread with the
         // census binary's stack, whatever thread collects the episode.
         let roles = &mut self.roles;
+        let options = SearchOptions {
+            key_memo: self.key_memo,
+            ..SearchOptions::default()
+        };
         let (sel, tree) = std::thread::scope(|scope| {
             std::thread::Builder::new()
                 .name("ex1-search".into())
                 .stack_size(EX1_SEARCH_STACK_BYTES_V1)
-                .spawn_scoped(scope, || roles.select_e(&ctx))
+                .spawn_scoped(scope, || {
+                    roles.select_e_options(&ctx, None, 1, None, None, None, &options)
+                })
                 .map_err(|e| format!("ex1 search thread: {e}"))?
                 .join()
                 .map_err(|_| "ex1 search thread panicked".to_string())
@@ -119,10 +142,90 @@ impl Ex1SearcherV1 {
             "sampler":sel.sampler.json(),"boundary_encoding_failures":
                 sel.sampler.kinds.get("SampleBoundaryEncodingFailed").copied().unwrap_or(0),
             "nodes":tree.nodes.len(),"wall":wall,"failed":failed});
+        let mut record = record;
+        if let Some(memo) = self.key_memo {
+            record["key_memo_bytes"] = json!(memo);
+        }
         if !failed {
             self.cursor = Some(Cursor::new(tree, 0, KeyMode::Legacy, false));
         }
         Ok((record, !failed))
+    }
+
+    /// One value-leaf search (`s4a-vl-v1`, W5 Stage 2a capture) at the live
+    /// decision `s`: `sims` attempted simulations at `horizon` under a
+    /// transition guard of `sims` x 512, with the same seeds model, sampler,
+    /// key mode and key memo as `search`. It retains no tree. Returns the
+    /// search record (with `primary_sha256` over its deterministic fields) and,
+    /// for a completed search, the root's (visits, value units, draws) per live
+    /// action.
+    #[allow(clippy::type_complexity, reason = "one per-action triple")]
+    pub(crate) fn value_leaf_search(
+        &mut self,
+        s: &FastActorSessionV1,
+        horizon: super::value_leaf::Horizon,
+        sims: u64,
+        seed_root: String,
+    ) -> Result<(Value, Option<Vec<(u64, u64, u64)>>), String> {
+        self.clear();
+        let seeds = RootSeeds {
+            model: EX1_SEED_MODEL_V1.into(),
+            root: seed_root,
+        };
+        let limits = Limits {
+            select_cap: sims.saturating_mul(512),
+            ..Limits::FORMAL
+        };
+        let ctx = guide_ctx(s, self.focal, 0, &seeds, &self.prior, limits)?;
+        let started = Instant::now();
+        let roles = &mut self.roles;
+        let options = SearchOptions {
+            key_memo: self.key_memo,
+            work_limit: Some(sims),
+            value_leaf: Some(super::value_leaf::ValueLeafV1 { horizon }),
+            ..SearchOptions::default()
+        };
+        let (sel, tree) = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .name("ex1-vl-search".into())
+                .stack_size(EX1_SEARCH_STACK_BYTES_V1)
+                .spawn_scoped(scope, || {
+                    roles.select_e_options(&ctx, None, 1, None, None, None, &options)
+                })
+                .map_err(|e| format!("value-leaf search thread: {e}"))?
+                .join()
+                .map_err(|_| "value-leaf search thread panicked".to_string())
+        })?;
+        let wall = started.elapsed().as_secs_f64();
+        let failed = sel.incomplete || !sel.faults.is_empty();
+        let primary = json!({"attempted":sel.attempted,"completed":sel.completed,
+            "nonnatural":sel.nonnatural,"transitions":sel.transitions,"inference":sel.inference,
+            "cap_reached":sel.cap_reached,"incomplete":sel.incomplete,"faults":sel.faults,
+            "tree":sel.extra["tree"],"value_leaf":sel.extra["value_leaf"]});
+        let primary_sha256: String = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(primary.to_string().as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect()
+        };
+        let mut record = json!({"seed_root":seeds.root,"horizon":horizon.label(),"sims":sims,
+            "primary":primary,"primary_sha256":primary_sha256,"nodes":tree.nodes.len(),
+            "wall":wall,"failed":failed});
+        if let Some(memo) = self.key_memo {
+            record["key_memo_bytes"] = json!(memo);
+        }
+        let root = (!failed)
+            .then(|| super::value_leaf::root_edges(&tree))
+            .flatten()
+            .map(|edges| {
+                let mut out = vec![(0, 0, 0); edges.len()];
+                for e in &edges {
+                    out[e.live as usize] = (e.n, e.units, e.draws);
+                }
+                out
+            });
+        Ok((record, root))
     }
 
     /// Looks up the current learner decision (two or more legal actions) in

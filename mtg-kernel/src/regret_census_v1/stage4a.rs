@@ -10,6 +10,9 @@
 //! - `s4a-wm-dump`: the same plain games, one row per game with the exact
 //!   game facts at every decision and the outcome (`stage4a/wm_dump.rs`;
 //!   collab LANES/world-model-probe-20261020).
+//! - `s4a-tensor-dump` and `s4a-tensor-replay`: plain games, or recorded
+//!   evaluator games, with every scored V4 input tensor (`stage4a/tensor_dump.rs`;
+//!   collab LANES/bignet-pilot-20261031).
 //! - `s4a-run`: for each frozen root in `ROOTS`, selection by E, A and D
 //!   under the transition ceiling, then 16 paired evaluation worlds per arm.
 //!   One row per root; a root already present in `out` is skipped (resume).
@@ -79,9 +82,15 @@ mod root_allocation;
 mod root_rebuild;
 mod sbroot;
 mod seeds;
+mod serve;
+mod serve_ac2;
 mod sharing;
+mod tensor_dump;
 mod tree;
 mod utility_root;
+pub(crate) mod value_leaf;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod w4_combat;
 mod win_check;
 mod wm_dump;
 pub(crate) use ex1_search::{
@@ -118,17 +127,33 @@ pub(super) fn run_win_check(cfg: &super::CensusConfigV1) -> Result<(), String> {
     win_check::run(cfg)
 }
 
+/// `s4a-w4` loads its own policies from the panel sources, so `run_v1`
+/// calls it before loading one. It needs the evaluator's loader, which the
+/// `experimental-burn-net8-packed-cuda-v1` feature builds.
+pub(super) fn run_w4(cfg: &super::CensusConfigV1) -> Result<(), String> {
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    return w4_combat::run(cfg);
+    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+    {
+        let _ = cfg;
+        Err("s4a-w4 requires the experimental-burn-net8-packed-cuda-v1 feature".into())
+    }
+}
+
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
         "s4a-corpus"
             | "s4a-wm-dump"
+            | "s4a-tensor-dump"
+            | "s4a-tensor-replay"
             | "s4a-run"
             | "s4a-diag"
             | "s4a-bank"
             | "s4a-bank-parity"
             | "s4a-label-replay"
             | "s4a-win-check"
+            | "s4a-w4"
             | "s4a-bank-trace"
             | "s4a-refresh"
             | "s4a-branch"
@@ -145,6 +170,9 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-policy-ensemble"
             | "s4a-reach"
             | "s4a-sbroot"
+            | "s4a-serve"
+            | "s4a-serve-worker"
+            | "s4a-serve-ac2"
     )
 }
 
@@ -516,7 +544,7 @@ fn set_replay_forward(roles: &mut Roles, fast_forward: bool) {
 /// Modes that play numbered plain games (`first_game`, `games`) instead of
 /// frozen roots.
 fn plain_games(mode: &str) -> bool {
-    mode == "s4a-corpus" || mode == "s4a-wm-dump"
+    mode == "s4a-corpus" || mode == "s4a-wm-dump" || mode == "s4a-tensor-dump"
 }
 
 fn write_line(sink: &Mutex<std::fs::File>, row: &Value) -> Result<(), String> {
@@ -1677,6 +1705,15 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     {
         return Err("reused-action modes require interchange off".into());
     }
+    if cfg.mode == serve::SERVE_MODE {
+        return serve::run_pool(cfg);
+    }
+    if cfg.mode == serve::WORKER_MODE {
+        return serve::run_worker(policy);
+    }
+    if cfg.mode == serve_ac2::AC2_MODE {
+        return serve_ac2::run(cfg, policy);
+    }
     match cfg.mode.as_str() {
         "s4a-bank"
         | "s4a-bank-trace"
@@ -1695,6 +1732,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-root-actions" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
+        "s4a-tensor-replay" => return tensor_dump::replay(cfg, policy),
         "s4a-reach" => return reach::run(cfg, policy),
         "s4a-sbroot" => return sbroot::run(cfg, policy),
         _ => {}
@@ -1770,6 +1808,15 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
                     }
                     let result = if cfg.mode == "s4a-corpus" {
                         corpus_game(cfg, shared, &mut roles.focal, &mut roles.opps, item, sink)
+                    } else if cfg.mode == "s4a-tensor-dump" {
+                        tensor_dump::dump_game(
+                            cfg,
+                            shared,
+                            &mut roles.focal,
+                            &mut roles.opps,
+                            item,
+                            sink,
+                        )
                     } else if cfg.mode == "s4a-wm-dump" {
                         wm_dump::wm_dump_game(
                             cfg,

@@ -14,6 +14,7 @@ pub(crate) mod own_registration;
 pub(crate) mod public_inputs_v1;
 mod scratch_v1;
 pub(crate) mod stack_inputs_v1;
+pub(crate) mod v8_inclusion_v1;
 
 #[cfg(test)]
 use scratch_v1::NativePolicyValueOutputViewV1;
@@ -239,6 +240,10 @@ pub(crate) struct NativeEncodedDecisionViewV1<'a> {
     pub(crate) action_ref_card_ids: &'a [i64],
     pub(crate) action_ref_action_indices: &'a [i64],
     pub(crate) action_ref_node_indices: &'a [i64],
+    /// FlatV8 only (`v8_inclusion_v1`): flattened `(blocker, attacker)` object
+    /// node pairs of the pending blocker declaration. Empty for every other
+    /// contract, whose forwards refuse a nonempty relation.
+    pub(crate) pairing_node_indices: &'a [i64],
 }
 
 impl<'a> NativeEncodedDecisionViewV1<'a> {
@@ -274,6 +279,15 @@ impl<'a> NativeEncodedDecisionViewV1<'a> {
             action_ref_card_ids,
             action_ref_action_indices,
             action_ref_node_indices,
+            pairing_node_indices: &[],
+        }
+    }
+
+    /// This view with the FlatV8 pairing relation (`v8_inclusion_v1`).
+    pub(crate) fn with_pairing_node_indices_v1(self, pairs: &'a [i64]) -> Self {
+        Self {
+            pairing_node_indices: pairs,
+            ..self
         }
     }
 
@@ -387,6 +401,7 @@ impl<'a> NativeEncodedDecisionViewV1<'a> {
             self.action_ref_node_indices,
             object_count,
         )?;
+        v8_inclusion_v1::validate_pairing_v1(self.pairing_node_indices, object_count, config)?;
 
         Ok(ValidatedCountsV1 {
             object_count,
@@ -411,6 +426,15 @@ pub(crate) struct NativeActionIngressCaptureV1 {
     pub(crate) action_count: usize,
     pub(crate) hidden_dim: usize,
     pub(crate) action_ref_pooled: Vec<f32>,
+}
+
+/// Hidden activations of one reference forward: the state encoder output
+/// (`HIDDEN_DIM_V1`) and each action row's scorer hidden after its tanh
+/// (rows times `HIDDEN_DIM_V1`, row major).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct NativeHiddenCaptureV1 {
+    pub(crate) state_hidden: Vec<f32>,
+    pub(crate) scorer_hidden: Vec<f32>,
 }
 
 /// Ordered, owned copy of one Torch-compatible named parameter.  The order
@@ -575,6 +599,9 @@ pub(crate) struct NativePolicyValueNetV1 {
     scorer_second: LinearV1,
     value_first: LinearV1,
     value_second: LinearV1,
+    /// The V8 inclusion net's additive pairing relation path
+    /// (`v8_inclusion_v1`); None for net-8.
+    pairing: Option<v8_inclusion_v1::PairingEncoderV1>,
 }
 
 impl NativePolicyValueNetV1 {
@@ -613,6 +640,7 @@ impl NativePolicyValueNetV1 {
             scorer_second: LinearV1::runner_fixed_v1(HIDDEN_DIM_V1, 1),
             value_first: LinearV1::runner_fixed_v1(HIDDEN_DIM_V1, HIDDEN_DIM_V1),
             value_second: LinearV1::runner_fixed_v1(HIDDEN_DIM_V1, 1),
+            pairing: None,
         };
         model.validate_parameters_v1()?;
         if model.parameter_count_v1() != PARAMETER_COUNT_V1 {
@@ -725,6 +753,12 @@ impl NativePolicyValueNetV1 {
     /// is untouched, and this never compares against its constants.
     pub(crate) fn feature_transfer_config_v4(&self) -> NativePolicyValueModelConfigV1 {
         use crate::native_flat_tensorizer_v4::*;
+        // The V8 inclusion net is of the V4 feature generation, whose inputs
+        // for it are FlatV8's (`v8_inclusion_v1`): its own config, never a V4
+        // label on its dimensions.
+        if self.pairing.is_some() {
+            return self.config;
+        }
         NativePolicyValueModelConfigV1 {
             feature_schema_version: FEATURE_SCHEMA_VERSION_V4,
             feature_registry_version: FEATURE_REGISTRY_VERSION_V4,
@@ -750,6 +784,31 @@ impl NativePolicyValueNetV1 {
         activation_mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.feature_transfer_config_v4())?;
+        self.forward_validated_rows_v1(encoded, counts, None, activation_mode)
+    }
+
+    /// FlatV7 (`native_flat_tensorizer_v7.rs`): the V4 config under the V7
+    /// feature identity. Same shapes and parameters, so a V4 checkpoint
+    /// enters only through the explicit V4-to-V7 transfer.
+    pub(crate) fn feature_transfer_config_v7(&self) -> NativePolicyValueModelConfigV1 {
+        use crate::native_flat_tensorizer_v7::*;
+        NativePolicyValueModelConfigV1 {
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V7,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V7,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V7,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V7,
+            ..self.config
+        }
+    }
+
+    /// V7 sibling of [`Self::forward_feature_transfer_v4_mode`]: identical
+    /// arithmetic over inputs labeled with the V7 schema.
+    pub(crate) fn forward_feature_transfer_v7_mode(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v7())?;
         self.forward_validated_rows_v1(encoded, counts, None, activation_mode)
     }
 
@@ -829,7 +888,33 @@ impl NativePolicyValueNetV1 {
             public,
             stack,
             None,
+            None,
         )
+    }
+
+    /// [`Self::forward_feature_transfer_v4_mode`] that also returns the state
+    /// encoder output and every action row's scorer hidden (after its tanh).
+    /// Measurement only (W4 combat diagnostics): the output is the reference
+    /// forward's, and nothing that plays or trains calls this.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    pub(crate) fn forward_feature_transfer_v4_hidden_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<(NativePolicyValueOutputV1, NativeHiddenCaptureV1), NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v4())?;
+        let mut capture = NativeHiddenCaptureV1::default();
+        let output = self.forward_registration_validated_rows_v1(
+            encoded,
+            counts,
+            None,
+            activation_mode,
+            None,
+            None,
+            None,
+            Some(&mut capture),
+        )?;
+        Ok((output, capture))
     }
 
     #[allow(
@@ -854,6 +939,7 @@ impl NativePolicyValueNetV1 {
             &own_registration::RegistrationInputWeightsV1,
             &crate::own_registration_v1::RegistrationFeatureRowsV1,
         )>,
+        hidden_capture: Option<&mut NativeHiddenCaptureV1>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
         for object in 0..counts.object_count {
@@ -915,6 +1001,14 @@ impl NativePolicyValueNetV1 {
 
         if let Some((weights, rows)) = stack {
             weights.add_messages(rows, &object_base_hidden, &mut edge_pooled, activation_mode);
+        }
+        if let Some(pairing) = &self.pairing {
+            pairing.add_messages_v1(
+                encoded.pairing_node_indices,
+                &object_base_hidden,
+                &mut edge_pooled,
+                activation_mode,
+            );
         }
         let mut node_update_input = Vec::with_capacity(counts.object_count * NODE_UPDATE_INPUT_V1);
         for object in 0..counts.object_count {
@@ -992,22 +1086,35 @@ impl NativePolicyValueNetV1 {
             capture.extend_from_slice(&action_ref_pooled);
         }
 
-        let mut action_input = Vec::with_capacity(counts.action_count * ACTION_ENCODER_INPUT_V1);
+        // The action width is the config's: 195 for net-8, 196 for the V8
+        // inclusion net (`v8_inclusion_v1`).
+        let action_feature_dim = self.config.action_feature_dim;
+        let mut action_input =
+            Vec::with_capacity(counts.action_count * self.action_encoder.first.input_dim);
         for action in 0..counts.action_count {
-            let feature_begin = action * ACTION_FEATURE_DIM_V1;
+            let feature_begin = action * action_feature_dim;
             action_input.extend_from_slice(
-                &encoded.action_features[feature_begin..feature_begin + ACTION_FEATURE_DIM_V1],
+                &encoded.action_features[feature_begin..feature_begin + action_feature_dim],
             );
             let pooled_begin = action * HIDDEN_DIM_V1;
             action_input
                 .extend_from_slice(&action_ref_pooled[pooled_begin..pooled_begin + HIDDEN_DIM_V1]);
         }
-        let action_hidden = apply_two_layer_tanh_rows_v1(
-            &self.action_encoder,
+        // The V8 include column adds only nonzero products
+        // (`v8_inclusion_v1::add_nonzero_products_v1`).
+        let mut action_first = v8_inclusion_v1::linear_rows_guarded_v1(
+            &self.action_encoder.first,
             &action_input,
             counts.action_count,
-            activation_mode,
+            v8_inclusion_v1::include_guard_v1(action_feature_dim),
         );
+        tanh_in_place_v1(&mut action_first, activation_mode);
+        let mut action_hidden = linear_rows_v1(
+            &self.action_encoder.second,
+            &action_first,
+            counts.action_count,
+        );
+        tanh_in_place_v1(&mut action_hidden, activation_mode);
 
         let mut scorer_hidden =
             scorer_first_rows_v1(&self.scorer_first, &state_hidden, &action_hidden);
@@ -1031,6 +1138,10 @@ impl NativePolicyValueNetV1 {
                 field: "value",
                 position: 0,
             });
+        }
+        if let Some(capture) = hidden_capture {
+            capture.state_hidden = state_hidden;
+            capture.scorer_hidden = scorer_hidden;
         }
         Ok(NativePolicyValueOutputV1 { logits, value })
     }
@@ -1147,13 +1258,22 @@ impl NativePolicyValueNetV1 {
             position += 1;
         });
         candidate.validate_parameters_v1()?;
-        if candidate.parameter_count_v1() != PARAMETER_COUNT_V1 {
+        if candidate.parameter_count_v1() != candidate.expected_parameter_count_v1() {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(
                 "parameter_count",
             ));
         }
         *self = candidate;
         Ok(())
+    }
+
+    /// Net-8's parameter count, or the V8 inclusion net's.
+    pub(crate) fn expected_parameter_count_v1(&self) -> usize {
+        if self.pairing.is_some() {
+            v8_inclusion_v1::V8_PARAMETER_COUNT_V1
+        } else {
+            PARAMETER_COUNT_V1
+        }
     }
 
     pub(crate) fn validate_parameters_v1(&self) -> Result<(), NativePolicyValueErrorV1> {
@@ -1192,6 +1312,11 @@ impl NativePolicyValueNetV1 {
         self.scorer_second.validate("scorer.2")?;
         self.value_first.validate("value_head.0")?;
         self.value_second.validate("value_head.2")?;
+        v8_inclusion_v1::validate_variant_v1(
+            self.config,
+            &self.action_encoder.first,
+            self.pairing.as_ref(),
+        )?;
         Ok(())
     }
 
@@ -1236,6 +1361,10 @@ impl NativePolicyValueNetV1 {
         visit_linear_v1(&mut visitor, "scorer.2", &self.scorer_second);
         visit_linear_v1(&mut visitor, "value_head.0", &self.value_first);
         visit_linear_v1(&mut visitor, "value_head.2", &self.value_second);
+        if let Some(pairing) = &self.pairing {
+            visit_linear_v1(&mut visitor, "pairing_encoder.0", &pairing.first);
+            visit_linear_v1(&mut visitor, "pairing_encoder.2", &pairing.second);
+        }
     }
 
     fn visit_parameters_mut_v1(
@@ -1299,6 +1428,10 @@ impl NativePolicyValueNetV1 {
         visit_linear_mut_v1(&mut visitor, "scorer.2", &mut self.scorer_second);
         visit_linear_mut_v1(&mut visitor, "value_head.0", &mut self.value_first);
         visit_linear_mut_v1(&mut visitor, "value_head.2", &mut self.value_second);
+        if let Some(pairing) = &mut self.pairing {
+            visit_linear_mut_v1(&mut visitor, "pairing_encoder.0", &mut pairing.first);
+            visit_linear_mut_v1(&mut visitor, "pairing_encoder.2", &mut pairing.second);
+        }
     }
 }
 
@@ -1314,6 +1447,60 @@ pub(crate) fn sha256_update_f32_le_v1(hasher: &mut Sha256, values: &[f32]) {
             slot.copy_from_slice(&value.to_bits().to_le_bytes());
         }
         hasher.update(&bytes[..chunk.len() * 4]);
+    }
+}
+
+/// The parameters as `gpu_exact_v1::net8` reads them: one buffer, and the
+/// offset of each tensor in `net8_forward.cu`'s `MtgLayout` order (input-major
+/// weights, as `LinearV1::weight_t`).
+#[cfg(feature = "gpu-exact-v1")]
+pub(crate) struct GpuExactNet8ParametersV1 {
+    pub(crate) values: Vec<f32>,
+    pub(crate) layout: Vec<i64>,
+}
+
+#[cfg(feature = "gpu-exact-v1")]
+impl NativePolicyValueNetV1 {
+    /// The parameters for the exact GPU forward, or None for a net it does
+    /// not run (the V8 pairing net, or other widths).
+    pub(crate) fn gpu_exact_parameters_v1(&self) -> Option<GpuExactNet8ParametersV1> {
+        if self.pairing.is_some()
+            || v8_inclusion_v1::include_guard_v1(self.config.action_feature_dim).is_some()
+            || self.config.hidden_dim != HIDDEN_DIM_V1
+            || self.config.card_embedding_dim != CARD_EMBEDDING_DIM_V1
+        {
+            return None;
+        }
+        let mut values = Vec::with_capacity(PARAMETER_COUNT_V1);
+        let mut layout = Vec::with_capacity(33);
+        let mut push = |values: &mut Vec<f32>, tensor: &[f32]| {
+            layout.push(values.len() as i64);
+            values.extend_from_slice(tensor);
+        };
+        push(&mut values, &self.card_embedding);
+        let linears = [
+            &self.object_encoder.first,
+            &self.object_encoder.second,
+            &self.edge_encoder.first,
+            &self.edge_encoder.second,
+            &self.node_update.first,
+            &self.node_update.second,
+            &self.state_encoder.first,
+            &self.state_encoder.second,
+            &self.action_ref_encoder.first,
+            &self.action_ref_encoder.second,
+            &self.action_encoder.first,
+            &self.action_encoder.second,
+            &self.scorer_first,
+            &self.scorer_second,
+            &self.value_first,
+            &self.value_second,
+        ];
+        for linear in linears {
+            push(&mut values, &linear.weight_t);
+            push(&mut values, &linear.bias);
+        }
+        Some(GpuExactNet8ParametersV1 { values, layout })
     }
 }
 
@@ -1339,6 +1526,8 @@ fn visit_linear_v1(
         "scorer.2" => ("scorer.2.weight", "scorer.2.bias"),
         "value_head.0" => ("value_head.0.weight", "value_head.0.bias"),
         "value_head.2" => ("value_head.2.weight", "value_head.2.bias"),
+        "pairing_encoder.0" => ("pairing_encoder.0.weight", "pairing_encoder.0.bias"),
+        "pairing_encoder.2" => ("pairing_encoder.2.weight", "pairing_encoder.2.bias"),
         _ => unreachable!("all native model parameters use frozen names"),
     };
     visitor(
@@ -1371,6 +1560,8 @@ fn visit_linear_mut_v1(
         "scorer.2" => ("scorer.2.weight", "scorer.2.bias"),
         "value_head.0" => ("value_head.0.weight", "value_head.0.bias"),
         "value_head.2" => ("value_head.2.weight", "value_head.2.bias"),
+        "pairing_encoder.0" => ("pairing_encoder.0.weight", "pairing_encoder.0.bias"),
+        "pairing_encoder.2" => ("pairing_encoder.2.weight", "pairing_encoder.2.bias"),
         _ => unreachable!("all native model parameters use frozen names"),
     };
     visitor(

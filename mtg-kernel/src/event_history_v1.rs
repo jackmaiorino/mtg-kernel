@@ -16,16 +16,20 @@
 //!
 //! It also keeps the hash chain behind the linked Aura origin digest v2
 //! ([`EventHistoryV1::chain_digest_v2`]) for its longest unchanged prefix,
-//! so a digest hashes only the events appended since the previous one.
+//! so a digest hashes only the events appended since the previous one, and
+//! a validator's memo of one unchanged prefix
+//! ([`EventHistoryV1::prefix_memo_v1`]), so a validation rechecks only the
+//! events appended since an earlier complete one.
 
 use crate::event::CommittedEvent;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+use std::any::Any;
 use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// One value per `CommittedEvent` variant, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -767,24 +771,104 @@ impl CommittedEvent {
     }
 }
 
-/// The v2 hash chain over a prefix of the events: the prefix length and the
-/// SHA-256 state after it. Only an acceleration: the chain is a function of
-/// the events, so it never enters a comparison, hash, print or record.
+/// The v2 hash chain over prefixes of the events: each prefix length and the
+/// SHA-256 state after it, shortest first. Only an acceleration: the chain is
+/// a function of the events, so it never enters a comparison, hash, print or
+/// record. Earlier prefixes let a copy of a prefix (a Drake enclosing replay
+/// input) resume its chain instead of rehashing every event.
 #[derive(Default)]
-struct ChainV2(Mutex<Option<(usize, Sha256)>>);
+struct ChainV2(Mutex<Arc<Vec<(usize, Sha256)>>>);
+
+/// The most recent prefix states one history keeps; the oldest are dropped
+/// first.
+const CHAIN_V2_PREFIXES: usize = 16;
+/// Every prefix whose length is a multiple of this is kept as well, so a copy
+/// of any earlier prefix rehashes fewer than this many events.
+const CHAIN_V2_STRIDE: usize = 64;
 
 impl ChainV2 {
-    fn get(&self) -> Option<(usize, Sha256)> {
-        self.0.lock().ok().and_then(|chain| chain.clone())
+    fn get(&self) -> Arc<Vec<(usize, Sha256)>> {
+        self.0
+            .lock()
+            .map(|chain| Arc::clone(&chain))
+            .unwrap_or_default()
     }
 
-    fn set(&self, chain: (usize, Sha256)) {
+    /// The longest chained prefix of at most `len` events.
+    fn longest(&self, len: usize) -> Option<(usize, Sha256)> {
+        self.get()
+            .iter()
+            .rev()
+            .find(|(covered, _)| *covered <= len)
+            .cloned()
+    }
+
+    /// Records `chains`, shortest first, past every kept prefix they extend.
+    fn set(&self, chains: Vec<(usize, Sha256)>) {
+        let Some(&(shortest, _)) = chains.first() else {
+            return;
+        };
         if let Ok(mut slot) = self.0.lock() {
-            *slot = Some(chain);
+            let prefixes = Arc::make_mut(&mut slot);
+            prefixes.retain(|(covered, _)| *covered < shortest);
+            prefixes.extend(chains);
+            let recent = |covered: usize| !covered.is_multiple_of(CHAIN_V2_STRIDE);
+            let mut excess = prefixes
+                .iter()
+                .filter(|(covered, _)| recent(*covered))
+                .count()
+                .saturating_sub(CHAIN_V2_PREFIXES);
+            prefixes.retain(|(covered, _)| {
+                let drop = excess > 0 && recent(*covered);
+                excess -= usize::from(drop);
+                !drop
+            });
         }
     }
 
-    /// Drops the chain unless it covers at most the first `len` events.
+    /// Drops every chained prefix longer than the first `len` events.
+    fn keep(&mut self, len: usize) {
+        let slot = self
+            .0
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if slot.iter().any(|(covered, _)| *covered > len) {
+            Arc::make_mut(slot).retain(|(covered, _)| *covered <= len);
+        }
+    }
+
+    fn forget(&mut self) {
+        *self
+            .0
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner()) = Arc::default();
+    }
+}
+
+impl Clone for ChainV2 {
+    fn clone(&self) -> Self {
+        Self(Mutex::new(self.get()))
+    }
+}
+
+/// A shared memo about the first `covered` events.
+pub(crate) type PrefixMemoV1 = (usize, Arc<dyn Any + Send + Sync>);
+
+/// What a validator established about the first `covered` events, kept only
+/// while those events stay unchanged: `push` keeps it, the other counting
+/// methods keep it only when they leave the first `covered` events alone,
+/// and `retain`, `clear` and any `DerefMut` access drop it. Clones carry it.
+/// Only an acceleration, like the chain: never compared, hashed, printed or
+/// recorded.
+#[derive(Default)]
+struct PrefixSlotV1(Mutex<Option<PrefixMemoV1>>);
+
+impl PrefixSlotV1 {
+    fn get(&self) -> Option<PrefixMemoV1> {
+        self.0.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Drops the memo unless it covers at most the first `len` events.
     fn keep(&mut self, len: usize) {
         let slot = self
             .0
@@ -803,7 +887,7 @@ impl ChainV2 {
     }
 }
 
-impl Clone for ChainV2 {
+impl Clone for PrefixSlotV1 {
     fn clone(&self) -> Self {
         Self(Mutex::new(self.get()))
     }
@@ -824,6 +908,7 @@ pub struct EventHistoryV1 {
     /// Set by a mutable access outside the counting methods.
     stale: bool,
     chain: ChainV2,
+    prefix: PrefixSlotV1,
 }
 
 impl EventHistoryV1 {
@@ -833,6 +918,7 @@ impl EventHistoryV1 {
             counts: [0; EVENT_KIND_COUNT_V1],
             stale: false,
             chain: ChainV2::default(),
+            prefix: PrefixSlotV1::default(),
         }
     }
 
@@ -875,6 +961,7 @@ impl EventHistoryV1 {
         sample_harvest_v1::note(&event);
         self.settle();
         self.chain.keep(index);
+        self.prefix.keep(index);
         let kind = event.kind_v1();
         self.events.insert(index, event);
         self.counts[kind as usize] += 1;
@@ -883,6 +970,7 @@ impl EventHistoryV1 {
     pub fn remove(&mut self, index: usize) -> CommittedEvent {
         self.settle();
         self.chain.keep(index);
+        self.prefix.keep(index);
         let event = self.events.remove(index);
         self.counts[event.kind_v1() as usize] -= 1;
         event
@@ -892,6 +980,7 @@ impl EventHistoryV1 {
         self.settle();
         let event = self.events.pop()?;
         self.chain.keep(self.events.len());
+        self.prefix.keep(self.events.len());
         self.counts[event.kind_v1() as usize] -= 1;
         Some(event)
     }
@@ -899,6 +988,7 @@ impl EventHistoryV1 {
     pub fn retain(&mut self, mut keep: impl FnMut(&CommittedEvent) -> bool) {
         self.settle();
         self.chain.forget();
+        self.prefix.forget();
         let Self { events, counts, .. } = self;
         events.retain(|event| {
             let kept = keep(event);
@@ -912,10 +1002,42 @@ impl EventHistoryV1 {
     pub fn truncate(&mut self, len: usize) {
         self.settle();
         self.chain.keep(len);
+        self.prefix.keep(len);
         for event in self.events.get(len..).unwrap_or_default() {
             self.counts[event.kind_v1() as usize] -= 1;
         }
         self.events.truncate(len);
+    }
+
+    /// A copy of the first `len` events (all of them if `len` is longer),
+    /// keeping the chained prefixes and the prefix memo it contains.
+    pub(crate) fn prefix_v1(&self, len: usize) -> Self {
+        let len = len.min(self.events.len());
+        let mut prefix = Self::from(self.events[..len].to_vec());
+        prefix.chain = self.chain.clone();
+        prefix.chain.keep(len);
+        prefix.prefix = self.prefix.clone();
+        prefix.prefix.keep(len);
+        prefix
+    }
+
+    /// The memo a validator left about a prefix of these events, if those
+    /// events are unchanged since: `(covered, memo)` with `covered` at most
+    /// the current length.
+    pub(crate) fn prefix_memo_v1(&self) -> Option<PrefixMemoV1> {
+        self.prefix
+            .get()
+            .filter(|(covered, _)| *covered <= self.events.len())
+    }
+
+    /// Leaves `memo` about the first `covered` events (ignored past the end).
+    /// The caller must have derived it from exactly these events.
+    pub(crate) fn set_prefix_memo_v1(&self, covered: usize, memo: Arc<dyn Any + Send + Sync>) {
+        if covered <= self.events.len() {
+            if let Ok(mut slot) = self.prefix.0.lock() {
+                *slot = Some((covered, memo));
+            }
+        }
     }
 
     pub fn clear(&mut self) {
@@ -923,22 +1045,23 @@ impl EventHistoryV1 {
         self.counts = [0; EVENT_KIND_COUNT_V1];
         self.stale = false;
         self.chain.forget();
+        self.prefix.forget();
     }
 
     /// The v2 hash chain over every event: SHA-256 of a domain tag, then of
     /// each event's canonical JSON length (u64, little-endian) and bytes, in
     /// order. Hashes only the events past the longest prefix chained before.
     pub(crate) fn chain_digest_v2(&self) -> [u8; 32] {
-        let (covered, mut chain) = self
-            .chain
-            .get()
-            .filter(|(covered, _)| *covered <= self.events.len())
-            .unwrap_or_else(|| {
-                let mut chain = Sha256::new();
-                chain.update(b"mtg-kernel/event-history-chain/v2");
-                (0, chain)
-            });
-        for event in &self.events[covered..] {
+        let (covered, mut chain) = self.chain.longest(self.events.len()).unwrap_or_else(|| {
+            let mut chain = Sha256::new();
+            chain.update(b"mtg-kernel/event-history-chain/v2");
+            (0, chain)
+        });
+        let mut chains = Vec::new();
+        for (position, event) in self.events.iter().enumerate().skip(covered) {
+            if position > covered && position.is_multiple_of(CHAIN_V2_STRIDE) {
+                chains.push((position, chain.clone()));
+            }
             let bytes = serde_json::to_vec(event).expect("committed events serialize");
             chain.update(
                 u64::try_from(bytes.len())
@@ -947,7 +1070,8 @@ impl EventHistoryV1 {
             );
             chain.update(&bytes);
         }
-        self.chain.set((self.events.len(), chain.clone()));
+        chains.push((self.events.len(), chain.clone()));
+        self.chain.set(chains);
         chain.finalize().into()
     }
 
@@ -990,6 +1114,7 @@ impl From<Vec<CommittedEvent>> for EventHistoryV1 {
             counts: [0; EVENT_KIND_COUNT_V1],
             stale: true,
             chain: ChainV2::default(),
+            prefix: PrefixSlotV1::default(),
         };
         history.settle();
         history
@@ -1013,11 +1138,12 @@ impl Deref for EventHistoryV1 {
 }
 
 /// Any change outside the counting methods marks the counts stale and drops
-/// the v2 chain.
+/// the v2 chain and the prefix memo.
 impl DerefMut for EventHistoryV1 {
     fn deref_mut(&mut self) -> &mut Vec<CommittedEvent> {
         self.stale = true;
         self.chain.forget();
+        self.prefix.forget();
         &mut self.events
     }
 }

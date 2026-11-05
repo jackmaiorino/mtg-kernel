@@ -15,6 +15,7 @@ fn config() -> Config {
                 expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
             },
+            s_learner: None,
         },
         updates: Vec::new(),
         input_mode: StackInputModeV1::Structured,

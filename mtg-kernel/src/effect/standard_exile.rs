@@ -386,6 +386,7 @@ pub(super) fn finish_play(
             );
             let owner = staged.objects.get(card.object).owner;
             if staged.objects.get(card.object).zone == Zone::Hand {
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 for observer in [PlayerId::P0, PlayerId::P1] {
                     staged
                         .reveal_hand_card(observer, owner, card.object)

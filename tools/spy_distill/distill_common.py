@@ -73,6 +73,24 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def checkpoint_document(data: bytes) -> dict:
+    """A checkpoint's v1 document from bytes in either record format (v1 JSON or the checkpoint container, the
+    default for ordinary fresh checkpoints); a container is decoded in Python, with no binary."""
+    tools = str(REPO / "python" / "tools")
+    if tools not in sys.path:
+        sys.path.append(tools)
+    import checkpoint_container_v1
+    return checkpoint_container_v1.document_from_bytes(data)
+
+
+def read_checkpoint(path, expected_sha256=None) -> dict:
+    """The checkpoint at `path`; with `expected_sha256`, the buffer that is hashed is the one that is decoded."""
+    data = Path(path).read_bytes()
+    require(expected_sha256 is None or hashlib.sha256(data).hexdigest() == expected_sha256,
+            f"checkpoint differs from its pin: {path}")
+    return checkpoint_document(data)
+
+
 def write_json(path, value) -> dict:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

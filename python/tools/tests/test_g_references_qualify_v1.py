@@ -3,7 +3,9 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -42,6 +44,24 @@ class QualifyTests(unittest.TestCase):
         self.path.write_text(json.dumps(raw), encoding="utf-8")
         self.campaign = driver.Campaign(self.path)
 
+    def test_item2_checks_the_eight_trees_against_the_scratch_volume(self):
+        raw = json.loads(self.path.read_text())
+        container = self.root / "container"
+        (container / "G1").mkdir(parents=True)
+        (container / "G1" / "left").write_bytes(b"x" * 50)  # a tree still on the disk counts as reclaimable
+        raw["roots"]["native"] = str(container)
+        raw["storage"]["scratch_roots"] = [str(container)]
+        raw["scratch"] = {"block_peak_bytes": 100, "factor": 1.25, "margin_fraction": 0.1}
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        campaign = driver.Campaign(self.path)
+        disk = type("Disk", (), {"free": 1050, "total": 1000})()
+        with patch.object(qualify.shutil, "disk_usage", return_value=disk):
+            fits = qualify.scratch_item2(campaign, 90, 8)  # 8 x 125 = 1000 <= 1050 + 50 - 100
+            over = qualify.scratch_item2(campaign, 120, 8)  # measured above the admission peak: 8 x 150
+        self.assertEqual((fits["need_bytes"], fits["budget_bytes"], fits["fits"], fits["peak_within_spec"]),
+                         (1000, 1000, True, True))
+        self.assertEqual((over["need_bytes"], over["fits"], over["peak_within_spec"]), (1200, False, False))
+
     def test_plan_writes_the_empty_pool_family_and_keeps_the_spec(self):
         inventory = save(self.root / "inventory.json", b"{}")
         spec = {"storage": {"accounting_roots": [str(self.root)]}, "wall_seconds": 3600, "inventory": inventory}
@@ -63,6 +83,24 @@ class QualifyTests(unittest.TestCase):
         self.assertIsNone(config["initial_source"]["checkpoint"])
         self.assertEqual(g.require_runtime_rules(config), 1620)
         self.assertEqual(value["interrupt_at_update"], 81)
+
+    def test_a_later_start_takes_the_new_lease_inventory_and_keeps_the_plan(self):
+        # lease 2026-10-31 13:26: the volume's plan pinned the first lease's inventory, over 24 h old
+        old = save(self.root / "old" / "inventory.json", b'{"checked": "first lease"}')
+        new = save(self.root / "new" / "inventory.json", b'{"checked": "this lease"}')
+        spec = {"storage": {"accounting_roots": [str(self.root)]}, "wall_seconds": 3600}
+        for inventory in (old, new):
+            path = self.root / f"spec-{inventory['sha256'][:8]}.json"
+            path.write_text(json.dumps({**spec, "inventory": inventory}), encoding="utf-8")
+            with patch.object(qualify, "launch", return_value={"launched": True}) as launched:
+                qualify.main(["start", "--campaign", str(self.path), "--spec", str(path), "--out", str(self.root / "q")])
+            launched.assert_called_once_with(self.path, self.root / "q" / "plan.json")
+            value = json.loads((self.root / "q" / "plan.json").read_text())
+            if inventory is old:
+                first = value
+        self.assertEqual((value["inventory"], value["spec"]["inventory"]), (new, new))
+        self.assertEqual(value["families"], first["families"])     # the trial and pack evidence is reused
+        self.assertEqual(value["root"], first["root"])
 
     def seed_main(self):
         state = {"run": "G1", "status": "complete", "blocks": {}}
@@ -106,21 +144,156 @@ class QualifyTests(unittest.TestCase):
         other = qualify.checkpoint_identity(self.checkpoint("c", "D:/main", state="t" * 64))
         self.assertNotEqual(other["state_sha256"], straight["state_sha256"])
 
+    def block_end(self, campaign, attempt, pin_byte, parameters=(1, 2), paths=3, rows=None, block_folder=None):
+        """A block-2 end in ``campaign``: a checkpoint whose pins live in the driver's own attempt folder
+        (``Campaign.native(run)/G1/b002-a<attempt>``, pin SHA256s path-derived, as on a Pod), and the block's
+        exposure rows (their two path-derived hashes differ per root)."""
+        native = campaign.native("G1") / "G1" / (block_folder or f"{driver.label(2)}-a{attempt}")
+        value = {"state_sha256": "s" * 64, "adam_step": 324, "parameters": list(parameters), "gamma_bits": 7,
+                 "trajectories": [{"path": str(native / "native" / "iterations" / "000161" / "attempt-000000" /
+                                               "collect" / f"episode-{i:04d}.json"), "sha256": pin_byte * 64}
+                                  for i in range(paths)]}
+        item = save(Path(campaign.checkpoints) / f"{pin_byte}-block-002.json", json.dumps(value).encode())
+        rows = rows or [{"episode": i, "winner": "p1", "trajectory_sha256": pin_byte * 64,
+                         "opponent_checkpoint_sha256": pin_byte * 64} for i in range(4)]
+        exposure = Path(campaign.exposure) / f"G1-{driver.label(2)}-episodes.jsonl"
+        exposure.parent.mkdir(parents=True, exist_ok=True)
+        exposure.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        state = campaign.run_state("G1")
+        state["blocks"]["2"] = {"done": True, "final_checkpoint": item,
+                                "attempts": [{"attempt": 1, "outcome": "interrupted"},
+                                             {"attempt": 2, "outcome": "complete"}]}
+        campaign.save_state("G1", state)
+        return state
+
     def test_compare_needs_identity_and_an_interruption(self):
         self.seed_main()
         rerun = qualify.scratch(self.campaign, "interrupt", 2, self.root / "q")
         qualify.seeded(self.campaign, rerun, "G1", {1: 1})
-        straight = self.checkpoint("straight", "D:/main")
-        state = rerun.run_state("G1")
-        state["blocks"]["2"] = {"done": True, "final_checkpoint": self.checkpoint("rerun", "D:/scratch"),
-                                "attempts": [{"attempt": 1, "outcome": "interrupted"},
-                                             {"attempt": 2, "outcome": "complete"}]}
-        rerun.save_state("G1", state)
-        result = qualify.compare(rerun, "G1", 2, qualify.checkpoint_identity(straight))
+        self.block_end(self.campaign, 1, "1")
+        straight = qualify.end_of(self.campaign, "G1", 2)
+        state = self.block_end(rerun, 2, "9")
+        result = qualify.compare(rerun, "G1", 2, straight)
         self.assertTrue(result["identical"] and result["interrupted"])
+        self.assertNotEqual(result["straight"]["content_sha256"], result["rerun"]["content_sha256"])  # #475
+        self.assertEqual(result["rule"], qualify.JUDGED_RULE)
         state["blocks"]["2"]["attempts"] = [{"attempt": 1, "outcome": "complete"}]
         rerun.save_state("G1", state)
-        self.assertFalse(qualify.compare(rerun, "G1", 2, qualify.checkpoint_identity(straight))["interrupted"])
+        self.assertFalse(qualify.compare(rerun, "G1", 2, straight)["interrupted"])
+
+    def test_the_judged_identity_still_sees_every_real_difference(self):
+        self.seed_main()
+        self.block_end(self.campaign, 1, "1")
+        straight = qualify.end_of(self.campaign, "G1", 2)
+        rows = [{"episode": i, "winner": "p1", "trajectory_sha256": "9" * 64, "opponent_checkpoint_sha256": "9" * 64}
+                for i in range(4)]
+        changed = dict(rows[2], winner="p2")
+        for case, kwargs in {"parameters": {"parameters": (1, 3)}, "pin count": {"paths": 2},
+                             "exposure": {"rows": rows[:2] + [changed] + rows[3:]}}.items():
+            rerun = qualify.scratch(self.campaign, "x-" + case.replace(" ", "-"), 2, self.root / "q")
+            qualify.seeded(self.campaign, rerun, "G1", {1: 1})
+            self.block_end(rerun, 2, "9", **kwargs)
+            self.assertFalse(qualify.compare(rerun, "G1", 2, straight)["identical"], case)
+        other = qualify.scratch(self.campaign, "x-path", 2, self.root / "q")
+        qualify.seeded(self.campaign, other, "G1", {1: 1})
+        self.block_end(other, 1, "9", block_folder="b003-a1")  # another block's trajectories
+        self.assertFalse(qualify.compare(other, "G1", 2, straight)["identical"])
+
+    def test_pin_paths_normalize_the_native_root_and_the_attempt_only(self):
+        norm = qualify.normalized_pin_path
+        pod, scratch = "/root/g-native", "/root/g-native/scratch/concurrent-g1"
+        self.assertEqual(norm(f"{scratch}/G1/b001-a1/native/x.json", scratch),
+                         norm(f"{pod}/G1/b001-a2/native/x.json", pod))
+        self.assertNotEqual(norm(f"{pod}/G1/b001-a1/native/x.json", pod), norm(f"{pod}/G2/b001-a1/native/x.json", pod))
+        self.assertNotEqual(norm(f"{pod}/G1/b001-a1/native/x.json", pod), norm(f"{pod}/G1/b002-a1/native/x.json", pod))
+        self.assertNotEqual(norm(f"{pod}/G1/b001-a1/native/x.json", pod),
+                            norm(f"{pod}/G1/b001-a1/native/x-a2/y.json", pod))
+        self.assertNotEqual(norm("/elsewhere/G1/b001-a1/native/x.json", pod), norm(f"{pod}/G1/b001-a1/native/x.json", pod))
+        # The desktop: Windows separators, and the hot-root fallback (scratch hot roots under the qualification).
+        hot, scratch_hot = r"D:\g\campaign\hot", r"D:\g\qualification\scratch\interrupt-b002\hot"
+        self.assertEqual(norm(hot + r"\G1\b002-a1\native\iterations\000161\e.json", hot),
+                         norm(scratch_hot + r"\G1\b002-a2\native\iterations\000161\e.json", scratch_hot))
+
+    def test_driver_native_roots_on_the_desktop_compare_equal(self):
+        """Without roots.native (the desktop), pins live under each campaign's hot root; a scratch campaign's
+        hot root sits under its own folder. Equal blocks still compare equal."""
+        self.seed_main()
+        rerun = qualify.scratch(self.campaign, "interrupt-b002", 2, self.root / "q")
+        qualify.seeded(self.campaign, rerun, "G1", {1: 1})
+        self.assertNotEqual(str(self.campaign.native("G1")), str(rerun.native("G1")))
+        self.block_end(self.campaign, 1, "1")
+        self.block_end(rerun, 2, "9")
+        self.assertTrue(qualify.compare(rerun, "G1", 2, qualify.end_of(self.campaign, "G1", 2))["identical"])
+
+    def test_a_stage_from_the_earlier_rule_is_named_legacy(self):
+        self.assertTrue(qualify.legacy_stage({"blocks": {}}))
+        self.assertFalse(qualify.legacy_stage({"rule": qualify.JUDGED_RULE}))
+
+    def test_run_pack_leaves_its_polling_out_and_ends_at_its_timeout(self):
+        excluded = []
+        watched = type("Watched", (), {"exclude_child": lambda self, pid: excluded.append(pid)})()
+        done = qualify.run_pack([sys.executable, "-c", "print('packed')"], timeout=60, watched=watched)
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "packed"))
+        self.assertEqual(len(excluded), 1)
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            qualify.run_pack([sys.executable, "-c", "import time; time.sleep(60)"], timeout=1, watched=watched)
+        self.assertLess(time.monotonic() - started, 30)  # killed, not waited out
+
+    def test_an_interrupted_trial_and_pack_are_kept_aside_and_run_again(self):
+        """Lease 20261101-2302's release interrupted item 6's history trial: its root has no report, and the
+        dispatcher refuses an existing root. A resume keeps the interrupted roots beside themselves and runs the
+        trial (and an interrupted pack) again on fresh roots."""
+        inventory = save(self.root / "inventory.json", b"{}")
+        value = json.loads(Path(qualify.plan(self.path, {"storage": {"accounting_roots": [str(self.root)]},
+                                                         "wall_seconds": 3600, "inventory": inventory},
+                                             self.root / "q")["path"]).read_text())
+        family = value["families"]["empty-pool"]
+        roots = {name: Path(json.loads(Path(request["path"]).read_text())["root"])
+                 for name, request in family["trials"].items()}
+        interrupted = roots["w1"]
+        interrupted.mkdir(parents=True)
+        (interrupted / "started.json").write_text("{}")
+        for name, root in roots.items():
+            if name != "w1":
+                root.mkdir(parents=True, exist_ok=True)
+                (root / "report.json").write_text("{}")
+        pack_root = Path(json.loads(Path(family["pack"]["path"]).read_text())["root"])
+        pack_root.mkdir(parents=True)
+        (pack_root / "log.jsonl").write_text("")  # started, no pack.json
+        packed = {"root": self.root / "trials" / "w3-plan-packed-0", "cold_root": self.root / "cold" / "w3-plan-packed-0"}
+        for path in packed.values():  # its trials' roots sit beside the base request's, named from the plan
+            path.mkdir(parents=True)
+        (packed["root"] / "report.json").write_text("{}")  # a finished packed trial: kept as evidence
+        (pack_root / "packed-0.request.json").write_text(json.dumps({key: str(path) for key, path in packed.items()}))
+        here, events = [{"cpus": "0,16", "efficiency_class": 0}], []
+
+        def nested(args):
+            self.assertFalse(interrupted.exists())  # dispatched on a fresh root
+            return {"state": "dispatched", "pid": 4242, "token": "t"}
+
+        def wait(root, pid):
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "report.json").write_text("{}")
+
+        def pack(args, **kwargs):
+            root = Path(json.loads(Path(args[-1]).read_text())["root"])
+            self.assertFalse(root.exists())
+            root.mkdir(parents=True)
+            (root / "pack.json").write_text(json.dumps({"topology": here}))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        with patch.object(qualify, "nested", side_effect=nested), patch.object(qualify, "wait_report", side_effect=wait), \
+                patch.object(qualify, "run_pack", side_effect=pack), \
+                patch.object(qualify.dispatch, "host_topology", return_value=here):
+            qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: events.append(fields))
+        self.assertTrue((interrupted.with_name(interrupted.name + "-interrupted-1") / "started.json").exists())
+        self.assertTrue((pack_root.with_name(pack_root.name + "-interrupted-1") / "log.jsonl").exists())
+        self.assertTrue((interrupted / "report.json").exists() and (pack_root / "pack.json").exists())
+        for path in packed.values():
+            self.assertFalse(path.exists())  # a retry of the same plan gets fresh trial roots
+            self.assertTrue(path.with_name(path.name + "-interrupted-1").exists())
+        self.assertTrue((packed["root"].with_name(packed["root"].name + "-interrupted-1") / "report.json").exists())
+        self.assertEqual([event["kind"] for event in events].count("interrupted-root-kept"), 4)
 
     def test_kill_evidence_survives_a_restart(self):
         path = self.root / "q" / "stages" / "item3-kill.json"
@@ -162,7 +335,7 @@ class QualifyTests(unittest.TestCase):
             report = Path(json.loads(Path(family["trials"][name]["path"]).read_text())["root"]) / "report.json"
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text("{}")
-        with patch.object(qualify.subprocess, "run", side_effect=fake_run):
+        with patch.object(qualify, "run_pack", side_effect=fake_run):
             qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         self.assertEqual(calls[0]["timeout_seconds"], (1800 - 600) // 9)
         (pack_root / "pack.json").unlink()
@@ -170,9 +343,119 @@ class QualifyTests(unittest.TestCase):
         def slow(args, **kwargs):  # busy retries outlasting the claim time end the whole pack
             self.assertEqual(kwargs["timeout"], 1200)
             raise subprocess.TimeoutExpired(args, kwargs["timeout"])
-        with patch.object(qualify.subprocess, "run", side_effect=slow), self.assertRaises(SystemExit):
+        with patch.object(qualify, "run_pack", side_effect=slow), self.assertRaises(SystemExit):
             qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
         self.assertLessEqual(json.loads(Path(calls[0]["base_request"]["path"]).read_text())["wall_seconds"], 133)
+
+    def test_a_pack_from_another_host_stays_and_this_host_qualifies_its_own(self):
+        inventory = save(self.root / "inventory.json", b"{}")
+        value = json.loads(Path(qualify.plan(self.path, {"storage": {"accounting_roots": [str(self.root)]},
+                                                         "wall_seconds": 3600, "inventory": inventory},
+                                             self.root / "q")["path"]).read_text())
+        family = value["families"]["empty-pool"]
+        pack_root = Path(json.loads(Path(family["pack"]["path"]).read_text())["root"])
+        for name in family["trials"]:
+            report = Path(json.loads(Path(family["trials"][name]["path"]).read_text())["root"]) / "report.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("{}")
+        here, there = [{"cpus": "0,16", "efficiency_class": 0}], [{"cpus": "0,1", "efficiency_class": 0}]
+        pack_root.mkdir(parents=True)
+        (pack_root / "pack.json").write_text(json.dumps({"topology": there}))  # an earlier Pod's pack
+        runs, events = [], []
+
+        def fake_run(args, **kwargs):  # the pack tool, given its plan
+            runs.append(args)
+            root = Path(json.loads(Path(args[-1]).read_text())["root"])
+            root.mkdir(parents=True)  # the tool requires a fresh root
+            (root / "pack.json").write_text(json.dumps({"topology": here}))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        with patch.object(qualify.dispatch, "host_topology", return_value=here), \
+                patch.object(qualify, "run_pack", side_effect=fake_run):
+            first = qualify.trials_and_pack(self.campaign, family, self.root / "q",
+                                            lambda **fields: events.append(fields))
+            self.assertEqual(len(runs), 1)  # qualified again on this host
+            plan = json.loads(Path(runs[0][-1]).read_text())
+            self.assertNotEqual(plan["root"], str(pack_root))  # its own root, so its trials get fresh roots
+            self.assertEqual(json.loads((pack_root / "pack.json").read_text())["topology"], there)  # untouched
+            self.assertEqual(Path(first["pack"]["path"]), Path(plan["root"]) / "pack.json")
+            self.assertIn("pack-requalify", [event["kind"] for event in events])
+            self.assertTrue(Path(runs[0][-1]).with_suffix(".stdout").exists())  # its own record, none overwritten
+            again = qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+            self.assertEqual(len(runs), 1)  # a restart on this host reuses its own pack
+            self.assertEqual(again["pack"], first["pack"])
+        # A pack tool that refuses before making its root reports its own reason.
+        refused = lambda args, **kwargs: subprocess.CompletedProcess(args, 1, stdout="", stderr="a slot's SMT sibling is not declared")
+        with patch.object(qualify.dispatch, "host_topology", return_value=[{"cpus": "0,2", "efficiency_class": 0}]),                 patch.object(qualify, "run_pack", side_effect=refused):
+            with self.assertRaisesRegex(RuntimeError, "SMT sibling is not declared"):
+                qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+        # Bounded by the claim time (Jack's PC), two hosts keep one bounded plan each.
+        bounded = []
+        for topology in ([{"cpus": "0,8", "efficiency_class": 0}], [{"cpus": "0,4", "efficiency_class": 0}]):
+            with patch.object(qualify.dispatch, "host_topology", return_value=topology), \
+                    patch.object(qualify.driver.Campaign, "wall_left", return_value=3300), \
+                    patch.object(qualify, "run_pack", side_effect=fake_run):
+                qualify.trials_and_pack(self.campaign, family, self.root / "q", lambda **fields: None)
+            bounded.append(Path(runs[-1][-1]))
+        self.assertEqual(len({path.name for path in bounded}), 2)
+        self.assertTrue(all(path.stem.startswith("pack-plan-host-") and "-bounded-" in path.stem for path in bounded))
+        for path in bounded:  # each pinned plan still has the bytes its pack recorded
+            self.assertEqual(Path(json.loads(path.read_text())["root"]).name.split("-")[2], path.stem.split("-")[3])
+
+    def test_the_choice_check_and_the_wave_share_one_volume_walk(self):
+        """#463: each check-choice process walked the network volume itself (22 min on lease 1232); the
+        qualification walks once (or reuses the driver's fresh walk) and passes it, and that walk then serves the
+        wave's admissions."""
+        driver.VOLUMES.clear()
+        self.addCleanup(driver.VOLUMES.clear)
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["storage"]["projected_additional_bytes"] = 1000
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        self.campaign = driver.Campaign(self.path)
+        (self.root / "kept").write_bytes(b"x" * 500)
+        inventory = save(self.root / "inventory.json", json.dumps({"inventory": {}}).encode())
+        config = save(self.root / "config.json", b"{}")
+        value = {"root": str(self.root / "q"), "inventory": inventory, "families": {"empty-pool": {"config": config}}}
+        evidence = {"empty-pool": {"reports": {"w1": {"path": "r"}}, "pack": {"path": "p"}}}
+        checks, walks = [], []
+        real = driver.native_dispatch.accounting_bytes
+
+        def check_choice(args):
+            request = json.loads(Path(args[-1]).read_text(encoding="utf-8"))
+            checks.append(request)
+            Path(request["choice_verification_output"]).write_text("{}")
+            return {}
+        with patch.object(qualify, "nested", side_effect=check_choice),                 patch.object(qualify.dispatch, "workload", return_value="family"),                 patch.object(driver.Campaign, "choice", return_value=({"path": "c"}, {"path": "v"})),                 patch.object(driver.native_dispatch, "accounting_bytes", lambda s: walks.append(1) or real(s)):
+            qualify.make_choice(self.campaign, value, evidence)
+            self.assertEqual(driver.volume_logical(self.campaign)[0], checks[0]["admission"]["logical_bytes"])
+        self.assertEqual(len(walks), 1)  # the admissions after it reuse the same walk
+        self.assertGreaterEqual(checks[0]["admission"]["logical_bytes"], 500)
+        self.assertIsNotNone(driver.native_dispatch.admitted_bytes(checks[0]["admission"], checks[0]["storage"]))
+
+    def test_record_after_writes_the_record_beside_result_or_logs_why_not(self):
+        out, events = self.root / "q", []
+        out.mkdir()
+
+        def recorded(campaign_path, plan_path, target):
+            self.assertEqual((campaign_path, plan_path, target), (self.path, self.root / "plan.json",
+                                                                  out / qualify.RECORD_NAME))
+            return driver.write_json(target, {"pass": False, "item2": {}, "item7": {}})
+        with patch.object(qualify, "record", side_effect=recorded):
+            qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: events.append(fields))
+        self.assertEqual([(event["kind"], event["passed"]) for event in events], [("record", False)])
+        self.assertTrue(Path(events[0]["record"]["path"]).samefile(out / qualify.RECORD_NAME))  # a short-name alias
+        events.clear()
+        with patch.object(qualify, "record", side_effect=FileNotFoundError("no block 2 checkpoint")):
+            qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: events.append(fields))
+        self.assertEqual((events[0]["kind"], events[0]["error_type"]), ("record-error", "FileNotFoundError"))
+        touches = []
+
+        def slow(*args):  # a step longer than a heartbeat records the work in progress
+            time.sleep(0.3)
+            return driver.write_json(out / qualify.RECORD_NAME, {"pass": True})
+        with patch.object(qualify, "record", side_effect=slow), patch.object(qualify, "RECORD_HEARTBEAT_SECONDS", 0.05):
+            qualify.record_after(self.path, self.root / "plan.json", out, lambda **fields: None,
+                                 touch=lambda: touches.append(1))
+        self.assertGreaterEqual(len(touches), 2)
 
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):

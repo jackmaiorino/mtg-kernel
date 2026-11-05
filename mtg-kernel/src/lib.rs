@@ -162,6 +162,14 @@ compile_error!(
 pub mod eaten_observation_v46;
 pub mod eaten_public_v46;
 
+// Spellbench `spellbench/v1` environment-role bridge (spec authority:
+// SPELLBENCH_PROTOCOL_V1.md; adapter contract: docs/contracts/AGENT_BRIDGE_V1.md).
+// In-process server over RlEpisodeSessionV1 plus the strict NDJSON stdio
+// framing used by src/bin/agent_bridge_v1.rs. Purely additive surface; no
+// kernel_rl_jsonl v5/v6 behavior changes.
+pub(crate) mod agent_bridge_flat_v4;
+pub(crate) mod agent_bridge_infoset_v1;
+pub mod agent_bridge_v1;
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
@@ -342,6 +350,7 @@ pub mod viewer_capture_v1;
 pub mod wildwood_public_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
+pub(crate) mod agent_bridge_flat_v4_encode;
 pub mod fast_sampler;
 pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
@@ -352,6 +361,7 @@ pub mod flat_policy_v5;
 pub mod heartfire_history_v1;
 pub mod heartfire_public_v1;
 pub mod ids;
+pub(crate) mod infoset_v1;
 pub mod line_b_teacher_target_v1;
 pub mod ooze_public_v1;
 pub mod phase1_agent_v1;
@@ -456,6 +466,9 @@ pub(crate) mod vector_tanh_v1;
 pub mod gameplay_checkpoint_reconstruction_v1;
 #[allow(dead_code)]
 pub(crate) mod native_policy_value_net_v1;
+// Native S, the W5 XS arm's object transformer (forward, backward, Adam,
+// checkpoint) and its receipt tools. Opt-in: nothing else calls it yet.
+pub mod s_transformer_v1;
 #[cfg(feature = "saved-input-scalar-diagnostic")]
 pub mod saved_input_scalar_diagnostic;
 // Shared cfg(test) helper: gates tests that read machine-local sealed
@@ -511,6 +524,8 @@ pub(crate) mod native_flat_tensorizer_v3;
 pub(crate) mod native_flat_tensorizer_v4;
 pub mod native_flat_tensorizer_v5;
 pub mod native_flat_tensorizer_v6;
+pub(crate) mod native_flat_tensorizer_v7;
+pub(crate) mod native_flat_tensorizer_v8;
 // Multi-buffer SHA-512 for the tensorizer digest tails (byte-identical to sha2).
 pub(crate) mod sha512_multi_v1;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
@@ -724,6 +739,8 @@ pub mod native_training_store_reference_latest_v2;
 pub mod game_summary_v1;
 #[cfg(feature = "gameplay-decision-trace-v1")]
 pub mod gameplay_trace_v1;
+#[cfg(feature = "gpu-exact-v1")]
+pub mod gpu_exact_v1;
 pub mod human_bo3_v1;
 pub mod human_match_v1;
 pub mod human_match_v2;
@@ -770,6 +787,8 @@ pub mod sideboard;
 mod slumbering_cerberus_v1;
 pub mod snapshot;
 pub mod soul_shackled_zombie_public_v1;
+pub mod spellbench_qualify_v1;
+pub mod spellbench_scorer_v1;
 pub mod standard_legends_v1;
 pub mod state;
 #[cfg(test)]
@@ -784,6 +803,7 @@ pub mod surface;
 pub mod surface_v2;
 pub mod trace;
 pub mod trigger;
+pub mod w5_xact_v1;
 mod wildwood_capture_v1;
 mod wildwood_scourge_v1;
 pub mod win_search_v1;

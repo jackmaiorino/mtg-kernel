@@ -1576,7 +1576,26 @@ pub(crate) fn sampler_stash_conflicts_v72(
 }
 
 pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
-    if state.engine.event_history.scan_for_v1(&[EventKindV1::TinybonesV72]).iter().any(|event| matches!(event, CommittedEvent::TinybonesV72 { .. })) || state.objects.iter().any(|(id,o)|crate::optional_trigger_public_v1::reference(state,id,viewer).is_some_and(|r|matches!(r.identity,crate::optional_trigger_public_v1::IdentityV1::Known{card_id}if definition(card_id))) || viewer.is_some_and(|v|o.v4.face_down_v1.is_some_and(|f|f.lookers&(1<<v.index())!=0)&&definition(o.card_def))) {Err("Tinybones requires a distinct complete V72 consumer".into())}else{Ok(())}
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TinybonesV72])
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::TinybonesV72 { .. }))
+        || state.objects.iter().any(|(id, o)| {
+            crate::optional_trigger_public_v1::visible_known(state, id, viewer, |card_id| {
+                definition(card_id)
+            }) || viewer.is_some_and(|v| {
+                o.v4.face_down_v1
+                    .is_some_and(|f| f.lookers & (1 << v.index()) != 0)
+                    && definition(o.card_def)
+            })
+        })
+    {
+        Err("Tinybones requires a distinct complete V72 consumer".into())
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn trigger_recipe() -> EffectOp {

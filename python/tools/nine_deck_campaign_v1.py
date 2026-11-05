@@ -50,6 +50,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import checkpoint_container_v1
 import host_reservation_v1 as reservations
 import native_expanded_dispatch_v1 as native_dispatch
 import nine_deck_baseline_v1 as ndb
@@ -195,14 +196,57 @@ def driver_cpu_seconds() -> float:
     return times.user + times.system
 
 
+START_TOLERANCE_SECONDS = 5.0  # started.json is written just after the native child is created
+
+
+def process_start_unix(pid: int) -> float | None:
+    """The process's start time in Unix seconds, from /proc; None when unreadable."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        boot = next(float(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                    if line.startswith("btime "))
+        return boot + int(fields[19]) / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration, AttributeError):
+        return None
+
+
+def supervisor_owned(pid: int, token) -> bool:
+    """Whether ``pid`` is the reservation supervisor of ``token``: its command line names that token. A reused
+    PID never credits unrelated work."""
+    if not isinstance(token, str) or not token:
+        return False
+    try:
+        return token.encode() in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return False
+
+
+def process_gone(pid: int) -> bool:
+    """Whether ``pid`` has exited, where /proc can say so (Linux): no /proc entry. Elsewhere False."""
+    return Path("/proc/self/stat").exists() and not Path(f"/proc/{pid}").exists()
+
+
 def native_ticks(root: Path) -> int | None:
-    """None outside a block's native part, else its native CPU clock ticks (-1 once unreadable)."""
+    """None outside a block's native part, else its native CPU clock ticks (-1 while unreadable). The native part
+    ends with execution.json or with the recorded process itself: once it has exited (no /proc entry, a zombie,
+    or its PID names another process, whose start differs from started.json's). The dispatcher's work after it
+    (recording the end, fingerprints, archive) is then the attempt's activity: a dispatcher still busy after its
+    native child had exited was taken for a stalled native run, and the guard released the Pod
+    (mtg-kernel#463)."""
     if not (root / "started.json").exists() or (root / "execution.json").exists():
         return None
     try:
-        pid = json.loads((root / "started.json").read_text(encoding="utf-8"))["pid"]
+        started = json.loads((root / "started.json").read_text(encoding="utf-8"))
+        pid = started["pid"]
+        if process_gone(pid):
+            return None
+        start = process_start_unix(pid)
+        if start is None:
+            return -1
+        if abs(start - float(started["started_unix"])) > START_TOLERANCE_SECONDS:
+            return None
         fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-        return -1 if fields[0] in ("Z", "X") else int(fields[11]) + int(fields[12])
+        return None if fields[0] in ("Z", "X") else int(fields[11]) + int(fields[12])
     except (OSError, ValueError, KeyError, IndexError):
         return -1
 
@@ -285,6 +329,10 @@ class LeaseProgress:
         with self.lock:
             self.activity = time.time()
 
+    def excluded_children(self) -> frozenset:
+        """Children of the driver whose CPU is not activity (a subclass observes their work another way)."""
+        return frozenset()
+
     def completed(self) -> None:
         self.productive = time.time()
         self.beat()
@@ -296,41 +344,52 @@ class LeaseProgress:
 
     def beat(self, finished: bool = False) -> None:
         with self.lock:
-            stamp, alive, cpu = time.time(), False, driver_cpu_seconds()
-            if cpu - self.cpu[1] >= DRIVER_BUSY_SHARE * (stamp - self.cpu[0]) > 0:
-                self.activity = stamp
-            self.cpu = (stamp, cpu)
-            # Work in child processes: the driver's own children (the dispatch command's checks), and, outside
-            # the native part, an in-flight attempt's processes under its reservation supervisor (preparation
-            # before the native start; fingerprints and archive after it, until wait_block returns). The
-            # supervisors only wait and poll, so they are left out; during the native part only the native
-            # child's CPU counts, so the dispatcher's polling never hides a stalled native run.
-            attempts = [entry["attempts"][-1] for entry in list(self.active.values()) if entry["attempts"]]
-            native = {attempt["root"]: native_ticks(Path(attempt["root"])) for attempt in attempts}
-            supervisors = {attempt["root"]: (attempt.get("dispatch") or {}).get("pid") for attempt in attempts}
-            supervisors = {root: pid for root, pid in supervisors.items() if isinstance(pid, int)}
-            in_flight = {attempt["root"] for attempt in attempts if "finished" not in attempt and "outcome" not in attempt}
-            table = process_table()
-            observed = {"driver-children": descendant_ticks(table, os.getpid(), frozenset(supervisors.values()))}
-            observed |= {root + ":supervised": descendant_ticks(table, pid) for root, pid in supervisors.items()
-                         if root in in_flight and native[root] is None}
-            for root in supervisors:  # unobserved during the native part: a fresh baseline when it ends
-                if root + ":supervised" not in observed:
-                    self.ticks.pop(root + ":supervised", None)
-            for key, ticks in observed.items():
-                if ticks > self.ticks.get(key, ticks):
-                    self.activity = stamp
-                self.ticks[key] = ticks
-            for root, ticks in native.items():
-                if ticks is None:
-                    continue
-                alive = alive or ticks >= 0
-                if ticks > self.ticks.get(str(root), -1):
-                    self.activity = stamp
-                self.ticks[str(root)] = ticks
+            stamp = time.time()
+            alive = self.observe(stamp)
             write_json(self.path, {"pod_id": self.pod, "epoch": stamp, "last_productive_epoch": self.productive,
                                    "last_activity_epoch": self.activity, "native_alive": alive,
                                    "queued_work": alive, "finished": finished})
+
+    def observe(self, stamp: float) -> bool:
+        """Advance ``activity`` from CPU time (the driver, its children, in-flight attempts' supervised
+        processes and the native runs); whether a native run is alive. Called under ``lock``."""
+        alive, cpu = False, driver_cpu_seconds()
+        if cpu - self.cpu[1] >= DRIVER_BUSY_SHARE * (stamp - self.cpu[0]) > 0:
+            self.activity = stamp
+        self.cpu = (stamp, cpu)
+        # Work in child processes: the driver's own children (the dispatch command's checks), and, outside
+        # the native part, an in-flight attempt's processes under its reservation supervisor (preparation
+        # before the native start; fingerprints and archive after it, until wait_block returns). The
+        # supervisors only wait and poll, so they are left out; during the native part only the native
+        # child's CPU counts, so the dispatcher's polling never hides a stalled native run.
+        attempts = [entry["attempts"][-1] for entry in list(self.active.values()) if entry["attempts"]]
+        in_flight = {attempt["root"] for attempt in attempts if "finished" not in attempt and "outcome" not in attempt}
+        # Only in-flight attempts, only their own processes: a terminal attempt's or a reused PID never counts
+        native = {attempt["root"]: native_ticks(Path(attempt["root"])) for attempt in attempts
+                  if attempt["root"] in in_flight}
+        supervisors = {attempt["root"]: attempt.get("dispatch") or {} for attempt in attempts}
+        supervisors = {root: record["pid"] for root, record in supervisors.items()
+                       if isinstance(record.get("pid"), int) and supervisor_owned(record["pid"], record.get("token"))}
+        table = process_table()
+        observed = {"driver-children": descendant_ticks(table, os.getpid(),
+                                                         frozenset(supervisors.values()) | self.excluded_children())}
+        observed |= {root + ":supervised": descendant_ticks(table, pid) for root, pid in supervisors.items()
+                     if root in in_flight and native.get(root) is None}
+        for root in supervisors:  # unobserved during the native part: a fresh baseline when it ends
+            if root + ":supervised" not in observed:
+                self.ticks.pop(root + ":supervised", None)
+        for key, ticks in observed.items():
+            if ticks > self.ticks.get(key, ticks):
+                self.activity = stamp
+            self.ticks[key] = ticks
+        for root, ticks in native.items():
+            if ticks is None:
+                continue
+            alive = alive or ticks >= 0
+            if ticks > self.ticks.get(str(root), -1):
+                self.activity = stamp
+            self.ticks[str(root)] = ticks
+        return alive
 
 
 def touch(campaign: Campaign) -> None:
@@ -546,9 +605,10 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
         campaign.save_state(run, state)
         touch(campaign)
     if block == 1 and "embedding_gate_pass" not in entry:
-        gate = collector.embedding_gate(json.loads(Path(campaign.raw["t1_source"]["checkpoint"]["path"]).read_bytes()),
-                                        json.loads(Path(entry["final_checkpoint"]["path"]).read_bytes()),
-                                        ndb.load_decks(Path(campaign.raw["decks"])))
+        gate = collector.embedding_gate(
+            checkpoint_container_v1.read_document(campaign.raw["t1_source"]["checkpoint"]["path"]),
+            checkpoint_container_v1.read_document(entry["final_checkpoint"]["path"]),
+            ndb.load_decks(Path(campaign.raw["decks"])))
         entry["embedding_gate"] = write_json(campaign.exposure / f"{run}-b01-embedding-gate.json", gate)
         entry["embedding_gate_pass"] = gate["pass"]
         campaign.save_state(run, state)

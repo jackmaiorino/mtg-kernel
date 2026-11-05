@@ -123,5 +123,76 @@ class PublicCheckpointTests(unittest.TestCase):
             self.assertEqual(before, after)
 
 
+
+class SCandidateLayoutTests(unittest.TestCase):
+    """W5 XS: a native S candidate's layout comes from its record and S container (through the Rust binary's
+    `s-document`, mocked here), is the same for every checkpoint of a lineage, and refuses foreign records."""
+
+    def setUp(self):
+        from unittest import mock
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.config = dict(d_model=8, layers=1, heads=2, ffn=16, card_dim=4, card_vocab=257)
+        self.documents = {}
+        self.initial = self.container('s0.bin', step=1, state='a'*64)
+        self.transfer = dict(expected_feature_contract_digest='contract', expected_feature_encoding_digest='encoding')
+        self.source = dict(play_import=panel.write_json(self.root/'import.json', {'fixture': True}),
+                           feature_transfer=self.transfer, checkpoint=None,
+                           s_learner=dict(schema=panel.S_LEARNER_SOURCE, initial=self.initial))
+        patcher = mock.patch.object(panel.checkpoint_container_v1, 'read_s_document',
+                                    side_effect=lambda path: self.documents[Path(path).name])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def container(self, name, step, state, config=None):
+        path = self.root/name
+        path.write_bytes(b'MTGCKPT\x00' + name.encode())
+        self.documents[name] = dict(schema='s-transformer-train-state-v1', architecture='s-object-transformer-v1',
+                                    config=config or self.config, adam_step=step, state_sha256=state,
+                                    parameters=[dict(name='ref_bias', shape=[2, 2]),
+                                                dict(name='policy.2.weight', shape=[1, 8])])
+        return panel.pin(path)
+
+    def record(self, name, state_pin, step, state, **changes):
+        record = dict(schema=panel.S_LEARNER_CHECKPOINT, architecture='s-object-transformer-v1',
+                      initial_sha256=self.initial['sha256'], feature_contract_digest='contract',
+                      feature_encoding_digest='encoding', state=state_pin, state_sha256=state, adam_step=step)
+        record.update(changes)
+        return panel.write_json(self.root/name, record)
+
+    def test_layout_is_shared_by_every_checkpoint_of_a_lineage(self):
+        fresh = panel.candidate_layout(self.source)
+        state = self.container('s-train-state.bin', step=9, state='b'*64)
+        later = dict(self.source, checkpoint=self.record('checkpoint.json', state, 9, 'b'*64))
+        self.assertEqual(panel.candidate_layout(later), fresh)
+        # Another config or shell is another layout.
+        other = self.container('other.bin', step=9, state='c'*64, config=dict(self.config, d_model=16))
+        wider = dict(self.source, checkpoint=self.record('wider.json', other, 9, 'c'*64))
+        self.assertNotEqual(panel.candidate_layout(wider), fresh)
+        shell = dict(self.source, play_import=panel.write_json(self.root/'import2.json', {'other': True}))
+        self.assertNotEqual(panel.candidate_layout(shell), fresh)
+
+    def test_foreign_or_inconsistent_records_are_refused(self):
+        state = self.container('s-train-state.bin', step=9, state='b'*64)
+        for name, changes in [('initial.json', dict(initial_sha256='0'*64)),
+                              ('schema.json', dict(schema='w5-s-learner-checkpoint/v0')),
+                              ('digest.json', dict(feature_contract_digest='other'))]:
+            source = dict(self.source, checkpoint=self.record(name, state, 9, 'b'*64, **changes))
+            with self.assertRaisesRegex(ValueError, 'does not belong'):
+                panel.candidate_layout(source)
+        for name, step, digest in [('step.json', 8, 'b'*64), ('hash.json', 9, 'd'*64)]:
+            source = dict(self.source, checkpoint=self.record(name, state, step, digest))
+            with self.assertRaisesRegex(ValueError, 'record and container differ'):
+                panel.candidate_layout(source)
+        unknown = dict(self.source, s_learner=dict(self.source['s_learner'], schema='w5-s-learner/v0'))
+        with self.assertRaisesRegex(ValueError, 'unknown S learner source schema'):
+            panel.candidate_layout(unknown)
+        (self.root/'s-train-state.bin').write_bytes(b'changed')
+        source = dict(self.source, checkpoint=self.record('changed.json', state, 9, 'b'*64))
+        with self.assertRaisesRegex(ValueError, 'pinned file changed'):
+            panel.candidate_layout(source)
+
+
 if __name__ == '__main__':
     unittest.main()

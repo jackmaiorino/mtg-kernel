@@ -70,9 +70,15 @@ D1_H2H_NS = "d1-h2h-20261025"
 # panel, so the panel name is in every seed key and the mirror and cross-deck panels never share a game.
 G_MIRROR_NS = "g-references-v1/panel/mirror"
 G_CROSS_NS = "g-references-v1/panel/cross"
+# W4 Step C, the V8 inclusion contract against a fresh control (collab LANES/w4-combat-20261030, STEP-C-DESIGN.md
+# section 3): two panel namespaces of 12 seed families each (H plays both), and the head-to-head namespace (each V8
+# endpoint against its own chain's control endpoint).
+W4C_PANEL_NS_A = "w4c-panel-20261031a"
+W4C_PANEL_NS_B = "w4c-panel-20261031b"
+W4C_H2H_NS = "w4c-h2h-20261031"
 PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS,
                     OH1_PANEL_NS, OH2_PANEL_NS_A, OH2_PANEL_NS_B, OH2_SCREEN_NS, D1_PANEL_NS_A, D1_PANEL_NS_B,
-                    D1_H2H_NS, G_MIRROR_NS, G_CROSS_NS)
+                    D1_H2H_NS, G_MIRROR_NS, G_CROSS_NS, W4C_PANEL_NS_A, W4C_PANEL_NS_B, W4C_H2H_NS)
 
 
 def key(parts: list) -> bytes:

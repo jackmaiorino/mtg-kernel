@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     hash::{Hash, Hasher},
+    sync::{Arc, Mutex, Weak},
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,7 +53,7 @@ pub enum RemovalV1 {
 #[allow(clippy::large_enum_variant)]
 pub enum JournalV1 {
     CombatInput {
-        world: Box<GameState>,
+        world: Arc<GameState>,
         proposals: Vec<ProposedEvent>,
     },
     CombatFinished {
@@ -83,7 +84,7 @@ pub enum JournalV1 {
     },
     Paid {
         debit: u64,
-        original: Box<GameState>,
+        original: Arc<GameState>,
         pending: Box<PendingActivation>,
         item: Box<StackItem>,
     },
@@ -91,19 +92,19 @@ pub enum JournalV1 {
         publication: u64,
         item: Box<StackItem>,
         kind: RemovalV1,
-        original: Box<GameState>,
+        original: Arc<GameState>,
     },
     Completed {
         removed: u64,
-        output: Box<GameState>,
+        output: Arc<GameState>,
     },
     Enclosing {
         start: u64,
-        original: Box<GameState>,
+        original: Arc<GameState>,
         operation: crate::linked_aura_operation_v1::OperationV1,
         answers: Vec<crate::linked_aura_operation_v1::GeneralAnswerV36>,
         used_banner: bool,
-        output: Box<GameState>,
+        output: Arc<GameState>,
     },
 }
 thread_local! { static VERIFYING: Cell<bool> = const { Cell::new(false) }; }
@@ -112,10 +113,19 @@ thread_local! { static VERIFYING: Cell<bool> = const { Cell::new(false) }; }
 // validate(). This predicate memo retains keys only; the separate prefix cache
 // below retains typed event data. Neither provides executable authority or can
 // be restored or serialized by callers. Misses run the original predicate.
-const REPLAY_MEMO_LIMIT: usize = 1024;
+// Every validation looks up each enclosing row of the history in order, so the
+// memo is least recently used: a key that each validation hits stays, and only
+// keys a later validation stopped using are dropped. (A first-in first-out
+// memo smaller than a game's rows missed a growing run of them each time.)
+const REPLAY_MEMO_LIMIT: usize = 1 << 15;
 type ReplayKey = [u8; 32];
+#[derive(Default)]
+struct ReplayMemo {
+    used: HashMap<ReplayKey, u64>,
+    clock: u64,
+}
 thread_local! {
-    static REPLAY_MEMO: RefCell<VecDeque<ReplayKey>> = const { RefCell::new(VecDeque::new()) };
+    static REPLAY_MEMO: RefCell<ReplayMemo> = RefCell::new(ReplayMemo::default());
 }
 
 // Across requests, retain data only for a round-trip-eligible typed prefix.
@@ -124,12 +134,13 @@ thread_local! {
 // executable authority and never replace custody/world/replay validation.
 // Limits bound event count and canonical JSON volume, not resident heap bytes:
 // typed allocations, spare capacity, and SHA bookkeeping have different sizes.
-// Drake combats keep whole worlds in history (about 44 KB of JSON per event in
-// a 1,700-event random game), and every row past the prefix is serialized and
-// parsed again on each validation, so the budget covers a long game about
-// three times over.
-pub(super) const REPLAY_PREFIX_EVENTS: usize = 1 << 14;
-pub(super) const REPLAY_PREFIX_CANONICAL_BYTES: usize = 256 * 1024 * 1024;
+// A retained row shares its saved worlds with the history (they are behind
+// `Arc`), so its JSON volume is far larger than what it holds. Each enclosing
+// row writes two whole worlds (about 170 KB of JSON per row by decision 1,400
+// of a random game), and every row past the prefix is serialized and parsed
+// again on each validation, so the budget holds about 12,000 such rows.
+pub(super) const REPLAY_PREFIX_EVENTS: usize = 1 << 16;
+pub(super) const REPLAY_PREFIX_CANONICAL_BYTES: usize = 1 << 31;
 struct ReplayPrefixRow {
     event: CommittedEvent,
     canonical_bytes: usize,
@@ -482,16 +493,24 @@ pub(super) fn clear_replay_prefix_for_test() {
 
 fn replay_cached(key: &ReplayKey) -> bool {
     // Release the borrow before any replay, including reentrant validation.
-    REPLAY_MEMO.with(|cache| cache.borrow().contains(key))
+    REPLAY_MEMO.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.clock += 1;
+        let now = cache.clock;
+        cache.used.get_mut(key).map(|used| *used = now).is_some()
+    })
 }
 fn remember_replay(key: ReplayKey) {
     REPLAY_MEMO.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if !cache.contains(&key) {
-            if cache.len() == REPLAY_MEMO_LIMIT {
-                cache.pop_front();
-            }
-            cache.push_back(key);
+        cache.clock += 1;
+        let now = cache.clock;
+        cache.used.insert(key, now);
+        if cache.used.len() > REPLAY_MEMO_LIMIT {
+            // Keep the most recently used half; the uses are distinct.
+            let mut uses = cache.used.values().copied().collect::<Vec<_>>();
+            let (_, &mut oldest_kept, _) = uses.select_nth_unstable(REPLAY_MEMO_LIMIT / 2);
+            cache.used.retain(|_, used| *used >= oldest_kept);
         }
     });
 }
@@ -523,7 +542,7 @@ thread_local! {
     not(feature = "standard-magezero-fixtures")
 ))]
 pub(super) fn reset_replay_memo_for_test() {
-    REPLAY_MEMO.with(|cache| cache.borrow_mut().clear());
+    REPLAY_MEMO.with(|cache| *cache.borrow_mut() = ReplayMemo::default());
     REPLAY_MEMO_STATS.with(|stats| stats.set(ReplayMemoStats::default()));
 }
 #[cfg(all(
@@ -599,7 +618,7 @@ fn emit(state: &mut GameState, value: JournalV1) -> Result<u64, String> {
         .engine
         .event_history
         .push(CommittedEvent::DrakeJournalV1 {
-            record: Box::new(RecordV1 { index, value }),
+            record: Arc::new(RecordV1 { index, value }),
         });
     state.engine.drake_ledger_v1.issued = next;
     Ok(index)
@@ -611,9 +630,11 @@ fn world(state: &GameState) -> Result<GameState, String> {
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::DrakeWorld,
     );
-    let mut copy = state.clone();
-    copy.engine.event_history.clear();
-    let mut value = serde_json::to_value(&copy).map_err(|e| e.to_string())?;
+    // Written as if cleared, without cloning the state and its history.
+    let history = &state.engine.event_history;
+    let mut value = history
+        .omitted_v2(|| serde_json::to_value(state))
+        .map_err(|e| e.to_string())?;
     strip_nested_receipts(&mut value, &state.engine.event_history)?;
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
@@ -679,7 +700,13 @@ fn strip_nested_receipts(
     }
     strip(value, None, prefix)
 }
-fn restore_world(saved: &GameState, prefix: &[CommittedEvent]) -> Result<GameState, String> {
+/// `history` is the actual enclosing history; the input reattaches its first
+/// `start` events.
+fn restore_world(
+    saved: &GameState,
+    history: &crate::event_history_v1::EventHistoryV1,
+    start: usize,
+) -> Result<GameState, String> {
     fn restore(
         value: &mut serde_json::Value,
         prefix: &[CommittedEvent],
@@ -731,10 +758,15 @@ fn restore_world(saved: &GameState, prefix: &[CommittedEvent]) -> Result<GameSta
         }
         Ok(())
     }
+    let prefix = history
+        .get(..start)
+        .ok_or("Drake operation original prefix absent")?;
     let mut value = serde_json::to_value(saved).map_err(|e| e.to_string())?;
     restore(&mut value, prefix, None)?;
     let mut input: GameState = serde_json::from_value(value).map_err(|e| e.to_string())?;
-    input.engine.event_history = prefix.to_vec().into();
+    // The prefix keeps the actual history's chained prefixes, so the replay's
+    // origin digest resumes at `start` instead of rehashing every event.
+    input.engine.event_history = history.prefix_v1(start);
     Ok(input)
 }
 pub(crate) fn definition(id: u16) -> bool {
@@ -865,7 +897,7 @@ pub(crate) fn begin_combat(
     if open_combat(state)?.is_some() {
         return Err("Drake combat input replayed before completion".into());
     }
-    let original = Box::new(world(state)?);
+    let original = Arc::new(world(state)?);
     emit(
         state,
         JournalV1::CombatInput {
@@ -998,10 +1030,22 @@ pub(crate) fn collect(
     events: &[CommittedEvent],
 ) -> Result<Vec<PendingTrigger>, String> {
     let mut ready = Vec::new();
+    // One pass for the collected captures, not one per capture.
+    let collected = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|e| match journal(e).map(|r| &r.value) {
+            Some(JournalV1::Collected { capture, .. }) => Some(*capture),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     for e in &state.engine.event_history {
         let Some(row) = journal(e) else { continue };
         if let JournalV1::Captured { marker, .. } = &row.value {
-            if state.engine.event_history.iter().any(|e| matches!(journal(e).map(|r|&r.value),Some(JournalV1::Collected {capture,..}) if *capture==row.index)) {continue;}
+            if collected.contains(&row.index) {
+                continue;
+            }
             let committed = state
                 .engine
                 .event_history
@@ -1172,7 +1216,7 @@ pub(crate) fn record_paid(
         state,
         JournalV1::Paid {
             debit,
-            original: owner.original,
+            original: Arc::from(owner.original),
             pending: Box::new(owner.pending),
             item: Box::new(item),
         },
@@ -1268,12 +1312,12 @@ fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u6
             publication: owner.publication,
             item: Box::new(owner.item.clone()),
             kind,
-            original: owner.original.clone(),
+            original: Arc::new((*owner.original).clone()),
         },
     )
 }
 fn complete(state: &mut GameState, removed: u64) -> Result<(), String> {
-    let output = Box::new(world(state)?);
+    let output = Arc::new(world(state)?);
     emit(state, JournalV1::Completed { removed, output })?;
     Ok(())
 }
@@ -1342,18 +1386,18 @@ pub(crate) fn enclose(
         index,
         value: JournalV1::Enclosing {
             start,
-            original: Box::new(world(original)?),
+            original: Arc::new(world(original)?),
             operation: operation.clone(),
             answers: answers.to_vec(),
             used_banner,
-            output: Box::new(world(output)?),
+            output: Arc::new(world(output)?),
         },
     };
     output
         .engine
         .event_history
         .push(CommittedEvent::DrakeJournalV1 {
-            record: Box::new(record),
+            record: Arc::new(record),
         });
     output.engine.drake_ledger_v1.issued = count;
     Ok(())
@@ -1378,37 +1422,356 @@ fn held(state: &GameState) -> impl Iterator<Item = &PendingTrigger> {
                 .flat_map(|p| p.deferred_triggers.iter()),
         )
 }
-fn refs<'a>(rows: &'a [&RecordV1], predicate: impl Fn(&JournalV1) -> bool) -> Vec<&'a RecordV1> {
-    rows.iter()
-        .copied()
-        .filter(|r| predicate(&r.value))
-        .collect()
+/// A row kind that names one earlier row by its index.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum RowReferenceV1 {
+    Collected,
+    Published,
+    Paid,
+    Removed,
+    Completed,
 }
+const ROW_REFERENCE_KINDS_V1: usize = 5;
+fn reference(value: &JournalV1) -> Option<(RowReferenceV1, u64)> {
+    match value {
+        JournalV1::Collected { capture, .. } => Some((RowReferenceV1::Collected, *capture)),
+        JournalV1::Published { capture, .. } => Some((RowReferenceV1::Published, *capture)),
+        JournalV1::Paid { debit, .. } => Some((RowReferenceV1::Paid, *debit)),
+        JournalV1::Removed { publication, .. } => Some((RowReferenceV1::Removed, *publication)),
+        JournalV1::Completed { removed, .. } => Some((RowReferenceV1::Completed, *removed)),
+        _ => None,
+    }
+}
+
+/// One journal row as the relation checks read it: its index and the row
+/// indices it names, without its saved worlds. Positions are in the list of
+/// every journal row of the history, which is in history order.
+#[derive(Clone, Copy)]
+struct RowV1 {
+    index: u64,
+    /// The row this one names, and that row's position if it is a journal row.
+    reference: Option<(RowReferenceV1, u64, Option<usize>)>,
+    /// An enclosing operation's start, and the position of the first row at
+    /// or after it.
+    enclosing: Option<(u64, usize)>,
+    /// The stack item of a published or paid row.
+    publication: Option<StackItemId>,
+}
+impl RowV1 {
+    fn of(record: &RecordV1) -> Self {
+        Self {
+            index: record.index,
+            reference: reference(&record.value).map(|(kind, target)| (kind, target, None)),
+            enclosing: match record.value {
+                JournalV1::Enclosing { start, .. } => Some((start, 0)),
+                _ => None,
+            },
+            publication: match &record.value {
+                JournalV1::Published { item, .. } | JournalV1::Paid { item, .. } => {
+                    Some(item.v4.stack_item_id)
+                }
+                _ => None,
+            },
+        }
+    }
+}
+/// Locates the targets of `rows[from..]` among all `rows`.
+fn locate(rows: &mut [RowV1], from: usize) {
+    let all = &*rows;
+    let located = all[from..]
+        .iter()
+        .map(|row| {
+            let reference = row.reference.map(|(kind, target, _)| {
+                let position = all.binary_search_by_key(&target, |r| r.index).ok();
+                (kind, target, position)
+            });
+            let enclosing = row
+                .enclosing
+                .map(|(start, _)| (start, all.partition_point(|r| r.index < start)));
+            (reference, enclosing)
+        })
+        .collect::<Vec<_>>();
+    for (row, (reference, enclosing)) in rows[from..].iter_mut().zip(located) {
+        row.reference = reference;
+        row.enclosing = enclosing;
+    }
+}
+
+/// For each row, how many rows name it by each kind and the first of them,
+/// and the coverage change of the enclosing operations at it.
+struct RelationsV1 {
+    named: Vec<[(u32, u64); ROW_REFERENCE_KINDS_V1]>,
+    covering: Vec<i64>,
+}
+impl RelationsV1 {
+    fn of(rows: &[RowV1]) -> Self {
+        let mut named = vec![[(0, 0); ROW_REFERENCE_KINDS_V1]; rows.len()];
+        let mut covering = vec![0_i64; rows.len() + 1];
+        for (position, row) in rows.iter().enumerate() {
+            if let Some((kind, _, Some(target))) = row.reference {
+                let slot = &mut named[target][kind as usize];
+                if slot.0 == 0 {
+                    slot.1 = row.index;
+                }
+                slot.0 += 1;
+            }
+            if let Some((_, from)) = row.enclosing {
+                covering[from.min(position)] += 1;
+                covering[position] -= 1;
+            }
+        }
+        Self { named, covering }
+    }
+    /// How many rows name the row at `position` by `kind`, and the first.
+    fn named(&self, position: Option<usize>, kind: RowReferenceV1) -> (u32, u64) {
+        position.map_or((0, 0), |position| self.named[position][kind as usize])
+    }
+}
+
+/// What a complete validation established about the first `covered` events
+/// of a history: every journal row among them passed the checks that read
+/// only those events (each enclosing replay included), and no reference
+/// escaped into them. A validation of the same events, or of a longer
+/// history that starts with them, checks only the later rows that way; the
+/// checks that read later rows or the rest of the state run in full each
+/// time. Only an acceleration: the verdicts are the same without it.
+///
+/// A longer prefix owns the events it added past the shorter one it extends,
+/// and the shorter one holds the longer one only weakly. So every prefix a
+/// prefix owns, through saved worlds in its added events, belongs to a history
+/// nested strictly inside its own events, and covers at most that smaller
+/// history: ownership always reaches strictly smaller structures and can
+/// never return to a prefix, so a chain never outlives its histories.
+struct CheckedPrefixV1 {
+    covered: usize,
+    rows: Arc<Vec<RowV1>>,
+    /// The events past the prefix this one extends, when one was extended.
+    added: Vec<CommittedEvent>,
+    /// The latest longer prefix a validation of another copy of these
+    /// events accepted. Copies that diverge overwrite it, which only costs
+    /// the others their own checks.
+    next: Mutex<Weak<CheckedPrefixV1>>,
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+thread_local! {
+    static PREFIX_MEMO_OFF: Cell<bool> = const { Cell::new(false) };
+    static LOCAL_ROW_CHECKS: Cell<u64> = const { Cell::new(0) };
+}
+/// Runs `run` with every validation checking every row, as it did before
+/// the checked-prefix memo.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn without_prefix_memo_for_test<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PREFIX_MEMO_OFF.with(|off| off.set(self.0));
+        }
+    }
+    let _restore = Restore(PREFIX_MEMO_OFF.with(|off| off.replace(true)));
+    run()
+}
+/// Rows that got the checks reading their own prefix, on this thread.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn local_row_checks_for_test() -> u64 {
+    LOCAL_ROW_CHECKS.with(Cell::get)
+}
+
+/// The memo applies to validations whose enclosing replays run as the memo's
+/// own did: never while operations recorded before origin digest v2 replay.
+fn prefix_memo_applies() -> bool {
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    if PREFIX_MEMO_OFF.with(Cell::get) {
+        return false;
+    }
+    !crate::linked_aura_operation_v1::origin_v1_active()
+}
+
+/// The checked prefix of `history`, extended by any longer prefix another
+/// copy accepted that `history` also starts with, and whether it was so
+/// extended.
+fn checked_prefix(
+    history: &crate::event_history_v1::EventHistoryV1,
+) -> Option<(Arc<CheckedPrefixV1>, bool)> {
+    if !prefix_memo_applies() {
+        return None;
+    }
+    let (covered, memo) = history.prefix_memo_v1()?;
+    let mut memo = memo.downcast::<CheckedPrefixV1>().ok()?;
+    if memo.covered != covered {
+        return None;
+    }
+    let mut extended = false;
+    loop {
+        let longer = memo
+            .next
+            .lock()
+            .ok()
+            .and_then(|next| next.upgrade())
+            .filter(|longer| {
+                longer.covered == memo.covered + longer.added.len()
+                    && history.get(memo.covered..longer.covered) == Some(longer.added.as_slice())
+            });
+        match longer {
+            Some(longer) => {
+                memo = longer;
+                extended = true;
+            }
+            None => return Some((memo, extended)),
+        }
+    }
+}
+
 /// Validate originals and one-use custody before a public engine mutation.
 /// Private current-operation tails are permitted only under the actual Runner.
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    if COMPARE_V0.with(Cell::get) {
+        return compare_with_v0(state);
+    }
+    validate_checked(state)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+thread_local! {
+    static COMPARE_V0: Cell<bool> = const { Cell::new(false) };
+    static V0_COMPARISONS: RefCell<(u64, Vec<String>)> = const { RefCell::new((0, Vec::new())) };
+}
+/// Runs `run` with every validation also run as it was before the
+/// checked-prefix memo ([`reference_v0::validate_v0`]), and returns how many
+/// validations were compared and each one whose verdict differed.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn comparing_with_v0_for_test<T>(run: impl FnOnce() -> T) -> (T, u64, Vec<String>) {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            COMPARE_V0.with(|on| on.set(self.0));
+        }
+    }
+    V0_COMPARISONS.with(|seen| *seen.borrow_mut() = (0, Vec::new()));
+    let restore = Restore(COMPARE_V0.with(|on| on.replace(true)));
+    let result = run();
+    drop(restore);
+    let (compared, differences) = V0_COMPARISONS.with(|seen| seen.take());
+    (result, compared, differences)
+}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn compare_with_v0(state: &GameState) -> Result<(), String> {
+    struct Resume;
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            COMPARE_V0.with(|on| on.set(true));
+        }
+    }
+    // Not a fully independent oracle: the reference runs second and shares
+    // the replay memo and key caches, and its nested validations (inside its
+    // enclosing replays) run through `validate`, so the memo path, without
+    // a comparison.
+    let checked = validate_checked(state);
+    // The reference's own nested validations are not compared again.
+    COMPARE_V0.with(|on| on.set(false));
+    let resume = Resume;
+    let reference = reference_v0::validate_v0(state);
+    drop(resume);
+    V0_COMPARISONS.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        seen.0 += 1;
+        if checked != reference && seen.1.len() < 16 {
+            seen.1.push(format!(
+                "history {} rows {}: memo {checked:?}, reference {reference:?}",
+                state.engine.event_history.len(),
+                state.engine.drake_ledger_v1.issued
+            ));
+        }
+    });
+    checked
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "custody_reference_v0.rs"]
+mod reference_v0;
+
+fn validate_checked(state: &GameState) -> Result<(), String> {
+    let history = &state.engine.event_history;
+    let memo = checked_prefix(history);
+    let checked = memo.as_ref().map_or(0, |(memo, _)| memo.covered);
+    // Shared with the memo until a new row is added.
+    let mut rows = memo
+        .as_ref()
+        .map_or_else(Arc::default, |(memo, _)| Arc::clone(&memo.rows));
+    let unchecked = rows.len();
     // Kind-guarded scans: a history with no event of the kind gives no rows
-    // either way, and otherwise the whole history (positions included) is read.
-    let rows = state
-        .engine
-        .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::DrakeJournalV1])
-        .iter()
-        .enumerate()
-        .filter_map(|(position, event)| match event {
-            CommittedEvent::DrakeJournalV1 { record } => Some((position, &**record)),
-            _ => None,
-        })
-        .map(|(position, row)| {
+    // either way, and otherwise every event past the checked prefix
+    // (positions included) is read.
+    fn events_after(
+        history: &crate::event_history_v1::EventHistoryV1,
+        checked: usize,
+        kind: crate::event_history_v1::EventKindV1,
+    ) -> &[CommittedEvent] {
+        if history.has_any(&[kind]) {
+            history.get(checked..).unwrap_or_default()
+        } else {
+            &[]
+        }
+    }
+    for (offset, event) in events_after(
+        history,
+        checked,
+        crate::event_history_v1::EventKindV1::DrakeJournalV1,
+    )
+    .iter()
+    .enumerate()
+    {
+        let position = checked + offset;
+        if let CommittedEvent::DrakeJournalV1 { record } = event {
             // An identical appended row must not borrow the earlier record's
             // index and enclosing range. Authenticate its physical position
             // before normalization, relation checks, or enclosing replay.
-            if u64::try_from(position).ok() != Some(row.index) {
+            if u64::try_from(position).ok() != Some(record.index) {
                 return Err("Drake record index differs from actual history position".to_string());
             }
-            Ok(row)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+            Arc::make_mut(&mut rows).push(RowV1::of(record));
+        }
+    }
+    if rows.len() > unchecked {
+        locate(Arc::<Vec<RowV1>>::make_mut(&mut rows), unchecked);
+    }
     if rows.len() as u64 != state.engine.drake_ledger_v1.issued {
         return Err("Drake original journal was erased/replayed".into());
     }
@@ -1419,12 +1782,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         world(state)?;
         remember_world_checked_in_frame(state);
     }
-    if state
-        .engine
-        .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::DrakeHistoryRefV1])
-        .iter()
-        .any(|e| matches!(e, CommittedEvent::DrakeHistoryRefV1 { .. }))
+    if events_after(
+        history,
+        checked,
+        crate::event_history_v1::EventKindV1::DrakeHistoryRefV1,
+    )
+    .iter()
+    .any(|e| matches!(e, CommittedEvent::DrakeHistoryRefV1 { .. }))
     {
         return Err("Drake nested original reference escaped into actual history".into());
     }
@@ -1438,313 +1802,57 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }
     let local = crate::linked_aura_operation_v1::locally_owned(state);
     let verifying = VERIFYING.with(Cell::get);
-    let keys = if verifying
-        || !rows
-            .iter()
-            .any(|row| matches!(row.value, JournalV1::Enclosing { .. }))
-    {
+    // Only rows outside the checked prefix replay, and a validation with a
+    // checked prefix replays them without the replay memo: keys are computed
+    // (and the replay memo fed) only when nothing is checked yet.
+    let keys = if verifying || checked > 0 || !rows.iter().any(|row| row.enclosing.is_some()) {
         BTreeMap::new()
     } else {
-        replay_keys(&state.engine.event_history)
+        replay_keys(history)
     };
     let mut verified_keys = Vec::new();
+    // Indexed once: scanning every row again for each row made validation
+    // quadratic in the rows. Rows are in history order, so each enclosing
+    // operation covers one contiguous run of them.
+    let relations = RelationsV1::of(&rows);
+    let mut coverage = 0;
     let last_closed = rows
         .iter()
-        .filter(|r| matches!(r.value, JournalV1::Enclosing { .. }))
-        .map(|r| r.index)
-        .max();
-    for row in &rows {
-        if state
-            .engine
-            .event_history
-            .get(row.index as usize)
+        .rev()
+        .find(|row| row.enclosing.is_some())
+        .map(|row| row.index);
+    for (position, compact) in rows.iter().enumerate() {
+        coverage += relations.covering[position];
+        let Some(row) = history
+            .get(compact.index as usize)
             .and_then(journal)
-            != Some(*row)
-        {
+            .filter(|row| row.index == compact.index)
+        else {
             return Err("Drake record index moved".into());
-        }
-        let coverage = rows.iter().filter(|operation| matches!(operation.value, JournalV1::Enclosing { start, .. } if row.index >= start && row.index < operation.index)).count();
+        };
         if !matches!(row.value, JournalV1::Enclosing { .. })
             && coverage != 1
             && !(local && last_closed.is_none_or(|last| row.index > last))
         {
             return Err("Drake record lost its unique original enclosing operation".into());
         }
-        match &row.value {
-            JournalV1::CombatInput { world, proposals } => {
-                let genuine = proposals.iter().any(|p| matches!(p, ProposedEvent::Damage(d) if d.is_combat && fresh_source(world, d.source)));
-                if !world.engine.event_history.is_empty() || !genuine {
-                    return Err("Drake pre-batch input changed".into());
-                }
-            }
-            JournalV1::CombatFinished { input } => {
-                if !matches!(at(state, *input)?.value, JournalV1::CombatInput { .. })
-                    || *input >= row.index
-                {
-                    return Err("Drake batch finished without earlier original input".into());
-                }
-            }
-            JournalV1::Captured {
-                input,
-                damage,
-                marker,
-                source: original,
-                player,
-                amount,
-            } => {
-                let JournalV1::CombatInput { world, .. } = &at(state, *input)?.value else {
-                    return Err("Drake capture input absent".into());
-                };
-                if *amount <= 0
-                    || original.zone != Zone::Battlefield
-                    || !definition(original.card_def)
-                    || world.objects.try_get(original.source).is_none()
-                    || AbilitySourceContractV4::capture(world, original.source) != *original
-                    || !crate::continuous_characteristics_v1::printed_abilities_active(
-                        world,
-                        original.source,
-                    )
-                    || !(*input < *damage && *damage < *marker && *marker < row.index)
-                {
-                    return Err("Drake original combat source/controller/quantity changed".into());
-                }
-                let exact_damage = matches!(state.engine.event_history.get(*damage as usize), Some(CommittedEvent::Damage { source, target: crate::state::Target::Player(hit), amount: n }) if *source == original.source && hit == player && n == amount);
-                let exact_marker = matches!(state.engine.event_history.get(*marker as usize), Some(CommittedEvent::CombatDamageToPlayer { source, source_zone_change_count, player: hit, amount: n }) if *source == original.source && *source_zone_change_count == original.zone_change_count && hit == player && n == amount);
-                if !exact_damage || !exact_marker {
-                    return Err(
-                        "Drake capture no longer matches actual final committed damage/marker"
-                            .into(),
-                    );
-                }
-                let collections = refs(
-                    &rows,
-                    |j| matches!(j, JournalV1::Collected { capture, .. } if *capture == row.index),
-                );
-                if collections.len() > 1 || (!local && collections.len() != 1) {
-                    return Err("Drake capture collection lost/duplicated".into());
-                }
-            }
-            JournalV1::Collected {
-                capture,
-                pending: saved,
-            } => {
-                let (original, _) = source(state, *capture)?;
-                if *capture >= row.index || saved.as_ref() != &pending(original, *capture) {
-                    return Err("Drake collected input changed".into());
-                }
-                let publications = refs(
-                    &rows,
-                    |j| matches!(j, JournalV1::Published { capture: c, .. } if c == capture),
-                );
-                let held_count = held(state)
-                    .filter(|p| capture_of(&p.effect) == Some(*capture))
-                    .count();
-                if publications.len() > 1
-                    || held_count > 1
-                    || (!local && publications.len() + held_count != 1)
-                {
-                    return Err("Drake APNAP occurrence disappeared/replayed".into());
-                }
-            }
-            JournalV1::Published { capture, item } => {
-                let (original, _) = source(state, *capture)?;
-                let collections = refs(
-                    &rows,
-                    |j| matches!(j, JournalV1::Collected { capture: c, .. } if c == capture),
-                );
-                if **item != trigger_item(original, *capture, item.v4.stack_item_id)
-                    || item.v4.stack_item_id == StackItemId::default()
-                    || collections.len() != 1
-                    || collections[0].index >= row.index
-                {
-                    return Err("Drake publication no longer owns collected source".into());
-                }
-            }
-            JournalV1::Debit {
-                source,
-                kind,
-                count,
-                before,
-                after,
-            } => {
-                if *kind != SourceCounterKindV1::Incubation
-                    || *count == 0
-                    || *before < 0
-                    || before.checked_sub(i32::from(*count)) != Some(*after)
-                    || *after < 0
-                    || source.zone != Zone::Battlefield
-                {
-                    return Err("Drake original typed debit changed".into());
-                }
-                if !local
-                    && refs(
-                        &rows,
-                        |j| matches!(j, JournalV1::Paid { debit, .. } if *debit == row.index),
-                    )
-                    .len()
-                        != 1
-                {
-                    return Err("Drake debit lost unique paid publication".into());
-                }
-            }
-            JournalV1::Paid {
-                debit,
-                original,
-                pending: saved,
-                item,
-            } => {
-                let JournalV1::Debit {
-                    source,
-                    kind,
-                    count,
-                    before,
-                    after,
-                } = &at(state, *debit)?.value
-                else {
-                    return Err("Drake payment debit absent".into());
-                };
-                if !original.engine.event_history.is_empty()
-                    || *debit >= row.index
-                    || *kind != SourceCounterKindV1::Incubation
-                    || *count != 3
-                    || !definition(source.card_def)
-                    || **item != activation_item(*source, item.v4.stack_item_id)
-                    || item.v4.stack_item_id == StackItemId::default()
-                    || saved.source != source.source
-                    || saved.controller != source.controller
-                    || saved.source_zone_change_count != source.zone_change_count
-                    || saved.ability_index != 0
-                    || saved.cauldron_grant.0.is_some()
-                    || saved.target_spec != TargetSpec::None
-                    || !saved.targets_chosen.is_empty()
-                    || !saved.target_contracts.is_empty()
-                    || !saved.object_cost_chosen.is_empty()
-                    || !crate::continuous_characteristics_v1::printed_abilities_active(
-                        original,
-                        source.source,
-                    )
-                    || original
-                        .objects
-                        .try_get(source.source)
-                        .is_none_or(|o| o.counters.incubation != *before)
-                    || AbilitySourceContractV4::capture(original, source.source) != *source
-                    || before.checked_sub(3) != Some(*after)
-                {
-                    return Err("Drake paid source/counter/input changed".into());
-                }
-            }
-            JournalV1::Removed {
-                publication,
-                item,
-                kind,
-                original,
-            } => {
-                let published = at(state, *publication)?;
-                match &published.value {
-                    JournalV1::Published { item: saved, .. }
-                    | JournalV1::Paid { item: saved, .. }
-                        if saved == item => {}
-                    _ => return Err("Drake removal lost original publication".into()),
-                }
-                after_remove(original, item, *kind)?;
-                if *publication >= row.index || !original.engine.event_history.is_empty() {
-                    return Err("Drake removal input moved/nested".into());
-                }
-                if !local && refs(&rows, |j| matches!(j, JournalV1::Completed { removed, .. } if *removed == row.index)).len() != 1 {
-                    return Err("Drake removal lost unique completion".into());
-                }
-            }
-            JournalV1::Completed { removed, output } => {
-                if *removed >= row.index
-                    || !matches!(at(state, *removed)?.value, JournalV1::Removed { .. })
-                    || !output.engine.event_history.is_empty()
-                {
-                    return Err("Drake completion lost original removal/output".into());
-                }
-            }
-            JournalV1::Enclosing {
-                start,
-                original,
-                operation,
-                answers,
-                used_banner,
-                output,
-            } => {
-                if *start > row.index
-                    || !original.engine.event_history.is_empty()
-                    || !output.engine.event_history.is_empty()
-                {
-                    return Err("Drake whole operation input/output prefix changed".into());
-                }
-                let prefix = state
-                    .engine
-                    .event_history
-                    .get(..*start as usize)
-                    .ok_or("Drake operation original prefix absent")?;
-                if original.engine.drake_ledger_v1.issued
-                    != prefix.iter().filter(|e| journal(e).is_some()).count() as u64
-                {
-                    return Err("Drake operation original ledger changed".into());
-                }
-                if !verifying {
-                    let key = keys.get(&row.index);
-                    let hit = key.is_some_and(replay_cached);
-                    #[cfg(all(
-                        test,
-                        feature = "limited-fdn-fixtures",
-                        not(feature = "standard-magezero-fixtures")
-                    ))]
-                    count_replay(hit, key.is_some());
-                    if !hit {
-                        verification(|| {
-                            let input = restore_world(original, prefix)?;
-                            crate::linked_aura_operation_v1::as_recorded(|| {
-                                let replay = {
-                                    #[cfg(test)]
-                                    let _timing = crate::rl_session::test_timing_v1::span(
-                                        crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
-                                    );
-                                    crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
-                                        &input,
-                                        operation,
-                                        answers,
-                                        *used_banner,
-                                    )?
-                                };
-                                if replay.engine.event_history.get(*start as usize..)
-                                    != state
-                                        .engine
-                                        .event_history
-                                        .get(*start as usize..row.index as usize)
-                                    || world(&replay)? != **output
-                                {
-                                    return Err("Drake complete enclosing original operation/history replay differs".into());
-                                }
-                                Ok(())
-                            })
-                        })?;
-                        if let Some(key) = key {
-                            verified_keys.push(*key);
-                        }
-                    }
-                }
-            }
+        if position >= unchecked {
+            check_row(state, row, compact, verifying, &keys, &mut verified_keys)?;
         }
+        relate_row(state, row, compact, position, &relations, local)?;
         if let JournalV1::Published { item, .. } | JournalV1::Paid { item, .. } = &row.value {
-            let removals = refs(
-                &rows,
-                |j| matches!(j, JournalV1::Removed { publication, .. } if *publication == row.index),
-            );
+            let removals = relations.named(Some(position), RowReferenceV1::Removed).0;
             let lives = state
                 .stack
                 .iter()
                 .filter(|i| i.v4.stack_item_id == item.v4.stack_item_id)
                 .collect::<Vec<_>>();
-            let live_once = matches!((lives.as_slice(), removals.as_slice()), ([live], []) if *live == item.as_ref());
+            let live_once =
+                matches!((lives.as_slice(), removals), ([live], 0) if *live == item.as_ref());
             let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
-            if (disposed && (!lives.is_empty() || !removals.is_empty()))
-                || removals.len() > 1
-                || !(local || live_once || lives.is_empty() && removals.len() == 1 || disposed)
+            if (disposed && (!lives.is_empty() || removals != 0))
+                || removals > 1
+                || !(local || live_once || lives.is_empty() && removals == 1 || disposed)
             {
                 return Err("Drake issued stack row lost/duplicated/replayed".into());
             }
@@ -1761,11 +1869,393 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         }
     }
     for item in &state.stack {
-        validate_item(state, item)?;
+        validate_listed_item(state, item, &rows, &relations)?;
     }
     // Even successful pure predicates are not remembered after a later error.
     for key in verified_keys {
         remember_replay(key);
+    }
+    // Only a validation that replayed every unchecked enclosing row, outside
+    // any operation, leaves its rows for later validations.
+    if !verifying && !local && !rows.is_empty() && prefix_memo_applies() {
+        let covered = history.len();
+        match memo {
+            // Nothing new; a prefix adopted from another copy is kept.
+            Some((memo, extended)) if memo.covered == covered => {
+                if extended {
+                    history.set_prefix_memo_v1(covered, memo);
+                }
+            }
+            memo => leave_prefix(history, memo.map(|(memo, _)| memo), rows),
+        }
+    }
+    Ok(())
+}
+
+/// Leaves on `history` the prefix of all its events with `rows`, extending
+/// `shorter` (a prefix of fewer of its events) when given.
+fn leave_prefix(
+    history: &crate::event_history_v1::EventHistoryV1,
+    shorter: Option<Arc<CheckedPrefixV1>>,
+    rows: Arc<Vec<RowV1>>,
+) {
+    let covered = history.len();
+    let shorter = shorter.filter(|shorter| shorter.covered < covered);
+    let longer = Arc::new(CheckedPrefixV1 {
+        covered,
+        rows,
+        added: shorter
+            .as_ref()
+            .map_or_else(Vec::new, |shorter| history[shorter.covered..].to_vec()),
+        next: Mutex::new(Weak::new()),
+    });
+    if let Some(shorter) = shorter {
+        if let Ok(mut next) = shorter.next.lock() {
+            *next = Arc::downgrade(&longer);
+        }
+    }
+    history.set_prefix_memo_v1(covered, longer);
+}
+
+/// Extends the checked prefix `history` carries to all its events, as a
+/// validation of it would, without validating them.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn extend_prefix_for_test(history: &crate::event_history_v1::EventHistoryV1) {
+    let (memo, _) = checked_prefix(history).expect("a checked prefix");
+    leave_prefix(history, Some(Arc::clone(&memo)), Arc::clone(&memo.rows));
+}
+
+/// The checks of one row that read only the history before the end of the
+/// checked prefix it lies in: its own fields, its saved worlds, the rows and
+/// events it names, and its enclosing replay. They run before the row's
+/// relation checks, as the two always ran.
+fn check_row(
+    state: &GameState,
+    row: &RecordV1,
+    compact: &RowV1,
+    verifying: bool,
+    keys: &BTreeMap<u64, ReplayKey>,
+    verified_keys: &mut Vec<ReplayKey>,
+) -> Result<(), String> {
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    LOCAL_ROW_CHECKS.with(|checks| checks.set(checks.get() + 1));
+    match &row.value {
+        JournalV1::CombatInput { world, proposals } => {
+            let genuine = proposals.iter().any(|p| matches!(p, ProposedEvent::Damage(d) if d.is_combat && fresh_source(world, d.source)));
+            if !world.engine.event_history.is_empty() || !genuine {
+                return Err("Drake pre-batch input changed".into());
+            }
+        }
+        JournalV1::CombatFinished { input } => {
+            if !matches!(at(state, *input)?.value, JournalV1::CombatInput { .. })
+                || *input >= row.index
+            {
+                return Err("Drake batch finished without earlier original input".into());
+            }
+        }
+        JournalV1::Captured {
+            input,
+            damage,
+            marker,
+            source: original,
+            player,
+            amount,
+        } => {
+            let JournalV1::CombatInput { world, .. } = &at(state, *input)?.value else {
+                return Err("Drake capture input absent".into());
+            };
+            if *amount <= 0
+                || original.zone != Zone::Battlefield
+                || !definition(original.card_def)
+                || world.objects.try_get(original.source).is_none()
+                || AbilitySourceContractV4::capture(world, original.source) != *original
+                || !crate::continuous_characteristics_v1::printed_abilities_active(
+                    world,
+                    original.source,
+                )
+                || !(*input < *damage && *damage < *marker && *marker < row.index)
+            {
+                return Err("Drake original combat source/controller/quantity changed".into());
+            }
+            let exact_damage = matches!(state.engine.event_history.get(*damage as usize), Some(CommittedEvent::Damage { source, target: crate::state::Target::Player(hit), amount: n }) if *source == original.source && hit == player && n == amount);
+            let exact_marker = matches!(state.engine.event_history.get(*marker as usize), Some(CommittedEvent::CombatDamageToPlayer { source, source_zone_change_count, player: hit, amount: n }) if *source == original.source && *source_zone_change_count == original.zone_change_count && hit == player && n == amount);
+            if !exact_damage || !exact_marker {
+                return Err(
+                    "Drake capture no longer matches actual final committed damage/marker".into(),
+                );
+            }
+        }
+        JournalV1::Collected {
+            capture,
+            pending: saved,
+        } => {
+            let (original, _) = source(state, *capture)?;
+            if *capture >= row.index || saved.as_ref() != &pending(original, *capture) {
+                return Err("Drake collected input changed".into());
+            }
+        }
+        JournalV1::Published { capture, item } => {
+            // Nothing here bounds `capture` by this row's index. A passing
+            // validation still read only earlier rows: `relate_row` requires
+            // the one collection of `capture` to precede this row, and the
+            // collection's own check requires `capture` to precede it.
+            let (original, _) = source(state, *capture)?;
+            if **item != trigger_item(original, *capture, item.v4.stack_item_id)
+                || item.v4.stack_item_id == StackItemId::default()
+            {
+                return Err("Drake publication no longer owns collected source".into());
+            }
+        }
+        JournalV1::Debit {
+            source,
+            kind,
+            count,
+            before,
+            after,
+        } => {
+            if *kind != SourceCounterKindV1::Incubation
+                || *count == 0
+                || *before < 0
+                || before.checked_sub(i32::from(*count)) != Some(*after)
+                || *after < 0
+                || source.zone != Zone::Battlefield
+            {
+                return Err("Drake original typed debit changed".into());
+            }
+        }
+        JournalV1::Paid {
+            debit,
+            original,
+            pending: saved,
+            item,
+        } => {
+            let JournalV1::Debit {
+                source,
+                kind,
+                count,
+                before,
+                after,
+            } = &at(state, *debit)?.value
+            else {
+                return Err("Drake payment debit absent".into());
+            };
+            if !original.engine.event_history.is_empty()
+                || *debit >= row.index
+                || *kind != SourceCounterKindV1::Incubation
+                || *count != 3
+                || !definition(source.card_def)
+                || **item != activation_item(*source, item.v4.stack_item_id)
+                || item.v4.stack_item_id == StackItemId::default()
+                || saved.source != source.source
+                || saved.controller != source.controller
+                || saved.source_zone_change_count != source.zone_change_count
+                || saved.ability_index != 0
+                || saved.cauldron_grant.0.is_some()
+                || saved.target_spec != TargetSpec::None
+                || !saved.targets_chosen.is_empty()
+                || !saved.target_contracts.is_empty()
+                || !saved.object_cost_chosen.is_empty()
+                || !crate::continuous_characteristics_v1::printed_abilities_active(
+                    original,
+                    source.source,
+                )
+                || original
+                    .objects
+                    .try_get(source.source)
+                    .is_none_or(|o| o.counters.incubation != *before)
+                || AbilitySourceContractV4::capture(original, source.source) != *source
+                || before.checked_sub(3) != Some(*after)
+            {
+                return Err("Drake paid source/counter/input changed".into());
+            }
+        }
+        JournalV1::Removed {
+            publication,
+            item,
+            kind,
+            original,
+        } => {
+            let published = at(state, *publication)?;
+            match &published.value {
+                JournalV1::Published { item: saved, .. } | JournalV1::Paid { item: saved, .. }
+                    if saved == item => {}
+                _ => return Err("Drake removal lost original publication".into()),
+            }
+            after_remove(original, item, *kind)?;
+            if *publication >= row.index || !original.engine.event_history.is_empty() {
+                return Err("Drake removal input moved/nested".into());
+            }
+        }
+        JournalV1::Completed { removed, output } => {
+            if *removed >= row.index
+                || !matches!(at(state, *removed)?.value, JournalV1::Removed { .. })
+                || !output.engine.event_history.is_empty()
+            {
+                return Err("Drake completion lost original removal/output".into());
+            }
+        }
+        JournalV1::Enclosing {
+            start,
+            original,
+            operation,
+            answers,
+            used_banner,
+            output,
+        } => {
+            if *start > row.index
+                || !original.engine.event_history.is_empty()
+                || !output.engine.event_history.is_empty()
+            {
+                return Err("Drake whole operation input/output prefix changed".into());
+            }
+            if state.engine.event_history.get(..*start as usize).is_none() {
+                return Err("Drake operation original prefix absent".into());
+            }
+            // The rows are every journal event in history order, so the
+            // position of the first row at or after `start` counts the
+            // prefix's journal events without scanning it.
+            let before = compact.enclosing.map_or(0, |(_, from)| from);
+            if original.engine.drake_ledger_v1.issued != before as u64 {
+                return Err("Drake operation original ledger changed".into());
+            }
+            if !verifying {
+                let key = keys.get(&row.index);
+                let hit = key.is_some_and(replay_cached);
+                #[cfg(all(
+                    test,
+                    feature = "limited-fdn-fixtures",
+                    not(feature = "standard-magezero-fixtures")
+                ))]
+                count_replay(hit, key.is_some());
+                if !hit {
+                    verification(|| {
+                        let input =
+                            restore_world(original, &state.engine.event_history, *start as usize)?;
+                        crate::linked_aura_operation_v1::as_recorded(|| {
+                            let replay = {
+                                #[cfg(test)]
+                                let _timing = crate::rl_session::test_timing_v1::span(
+                                    crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
+                                );
+                                crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
+                                    &input,
+                                    operation,
+                                    answers,
+                                    *used_banner,
+                                )?
+                            };
+                            if replay.engine.event_history.get(*start as usize..)
+                                != state
+                                    .engine
+                                    .event_history
+                                    .get(*start as usize..row.index as usize)
+                                || world(&replay)? != **output
+                            {
+                                return Err("Drake complete enclosing original operation/history replay differs".into());
+                            }
+                            Ok(())
+                        })
+                    })?;
+                    if let Some(key) = key {
+                        verified_keys.push(*key);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The checks of one row that read the rows naming it or the rest of the
+/// state, which later rows and every operation can change.
+fn relate_row(
+    state: &GameState,
+    row: &RecordV1,
+    compact: &RowV1,
+    position: usize,
+    relations: &RelationsV1,
+    local: bool,
+) -> Result<(), String> {
+    // The checks above proved every row this one names is a journal row.
+    let named = compact.reference.and_then(|(_, _, target)| target);
+    match &row.value {
+        JournalV1::Captured { .. } => {
+            let (collections, _) = relations.named(Some(position), RowReferenceV1::Collected);
+            if collections > 1 || (!local && collections != 1) {
+                return Err("Drake capture collection lost/duplicated".into());
+            }
+        }
+        JournalV1::Collected { capture, .. } => {
+            let (publications, _) = relations.named(named, RowReferenceV1::Published);
+            let held_count = held(state)
+                .filter(|p| capture_of(&p.effect) == Some(*capture))
+                .count();
+            if publications > 1
+                || held_count > 1
+                || (!local && publications as usize + held_count != 1)
+            {
+                return Err("Drake APNAP occurrence disappeared/replayed".into());
+            }
+        }
+        JournalV1::Published { .. } => {
+            let (collections, first) = relations.named(named, RowReferenceV1::Collected);
+            if collections != 1 || first >= row.index {
+                return Err("Drake publication no longer owns collected source".into());
+            }
+        }
+        JournalV1::Debit { .. } => {
+            if !local && relations.named(Some(position), RowReferenceV1::Paid).0 != 1 {
+                return Err("Drake debit lost unique paid publication".into());
+            }
+        }
+        JournalV1::Removed { .. } => {
+            if !local && relations.named(Some(position), RowReferenceV1::Completed).0 != 1 {
+                return Err("Drake removal lost unique completion".into());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// [`validate_item`] over the validation's own rows instead of a history scan.
+fn validate_listed_item(
+    state: &GameState,
+    item: &StackItem,
+    rows: &[RowV1],
+    relations: &RelationsV1,
+) -> Result<(), String> {
+    if !tracked(item) {
+        return Ok(());
+    }
+    let mut listed = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.publication == Some(item.v4.stack_item_id));
+    let (Some((position, row)), None) = (listed.next(), listed.next()) else {
+        return Err("Drake row lost unique actual publication/payment".into());
+    };
+    match state
+        .engine
+        .event_history
+        .get(row.index as usize)
+        .and_then(journal)
+        .map(|row| &row.value)
+    {
+        Some(JournalV1::Published { item: i, .. } | JournalV1::Paid { item: i, .. })
+            if i.as_ref() == item => {}
+        _ => return Err("Drake published row changed".into()),
+    }
+    if relations.named(Some(position), RowReferenceV1::Removed).0 != 0 {
+        return Err("Drake removed publication replayed".into());
     }
     Ok(())
 }
@@ -1775,5 +2265,27 @@ impl Hash for JournalV1 {
         serde_json::to_vec(self)
             .expect("typed Drake journal serializes")
             .hash(h);
+    }
+}
+
+#[cfg(test)]
+mod replay_memo_tests {
+    use super::*;
+
+    #[test]
+    fn a_key_every_validation_hits_outlives_twice_the_limit_of_newer_keys() {
+        REPLAY_MEMO.with(|cache| *cache.borrow_mut() = ReplayMemo::default());
+        let key = |n: usize| {
+            let mut key = [0; 32];
+            key[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            key
+        };
+        remember_replay(key(0));
+        for n in 1..=2 * REPLAY_MEMO_LIMIT {
+            assert!(replay_cached(&key(0)), "evicted after {n} keys");
+            remember_replay(key(n));
+        }
+        assert!(!replay_cached(&key(1)));
+        assert!(REPLAY_MEMO.with(|cache| cache.borrow().used.len()) <= REPLAY_MEMO_LIMIT);
     }
 }

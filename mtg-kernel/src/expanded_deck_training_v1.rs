@@ -11,6 +11,7 @@ pub mod exploration_probe_v1;
 pub mod no_state_digest_v1;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub mod own_registration;
+pub mod s_learner_v1;
 pub mod search_targets_v1;
 pub mod soft_q_teacher_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
@@ -47,6 +48,9 @@ use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::rl::{
     terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
 };
+use crate::rl_session::pauper_london_v1::{
+    PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningV1,
+};
 use crate::rl_session::{
     explicit_deck_hash_v1, FastActorResponseV1, FastActorSessionV1, RlSessionTerminalV1,
     RL_SESSION_SCHEMA_VERSION,
@@ -80,6 +84,8 @@ const FRESH_CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-fresh-checkpoint
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
+#[cfg(test)]
+mod engine_ceiling_probe_v1;
 mod phase1_parallel_collection;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub mod public_features;
@@ -104,6 +110,7 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
 }
+pub(crate) mod checkpoint_container_v1;
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
 mod line_b_root_selection_v1;
@@ -111,10 +118,16 @@ mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
 mod trajectory_parse_ahead_v1;
+pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
+pub mod weights_snapshot_v1;
+pub use checkpoint_container_v1::CheckpointRecordFormatV1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
+};
+pub use weights_snapshot_v1::{
+    materialize_weights_snapshot_v1, s_container_document_v1, weights_snapshot_v1,
 };
 mod registry_transfer_source;
 #[cfg(test)]
@@ -375,6 +388,11 @@ pub struct ExpandedModelSourceV1 {
     /// None means an explicit fresh-optimizer warm start. A successor
     /// checkpoint resumes both model and Adam, with the same feature identity.
     pub checkpoint: Option<PinnedFileV1>,
+    /// W5's native S learner (`s_learner_v1`): the play import is then only
+    /// the FlatV4 shell S plays on, and `checkpoint` pins an S checkpoint
+    /// record. Omitted when absent, so every existing source keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s_learner: Option<Box<s_learner_v1::SLearnerSourceV1>>,
 }
 
 /// Inference identity after exact current-feature model/optimizer validation.
@@ -457,6 +475,9 @@ pub(crate) fn load_expanded_inference_bound_v1(
 fn load_expanded_inference_any_math_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    if source.s_learner.is_some() {
+        return s_learner_v1::load_inference_v1(source);
+    }
     // Inference alone admits the explicit BO3 objective. Legacy initialization
     // and update dispatch keep rejecting its descriptor/checkpoint schemas.
     let bytes = read_pinned_bytes(&source.play_import)?;
@@ -512,12 +533,15 @@ pub(crate) fn load_expanded_update_inference_v1(
     learning_rate: f32,
     value_coefficient: f32,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
-    let bytes = read_pinned_bytes(&source.play_import)?;
     let inputs = CheckpointInputExpectationV1 {
         trajectories,
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
     };
+    if source.s_learner.is_some() {
+        return s_learner_v1::load_update_inference_v1(source, &inputs);
+    }
+    let bytes = read_pinned_bytes(&source.play_import)?;
     let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, Some(&inputs))?;
     inference_identity_v1(source, &policy, &state)
 }
@@ -777,6 +801,10 @@ fn verify_collection_opponent_sources_v1(
             continue;
         }
         checked.push(source.clone());
+        // An S source keeps its own full load (`s_learner_v1`) every time.
+        if source.s_learner.is_some() {
+            continue;
+        }
         let bytes = read_pinned_bytes(&source.play_import)?;
         let checkpoint_bytes = source
             .checkpoint
@@ -824,6 +852,9 @@ pub(super) type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
 pub(super) fn opponent_cache_files_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<Option<VerifiedFilesV1>, String> {
+    if source.s_learner.is_some() {
+        return Ok(None);
+    }
     let bytes = read_pinned_bytes(&source.play_import)?;
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     let (pins, checkpoints) = if probe.get("schema").and_then(Value::as_str)
@@ -1002,6 +1033,15 @@ pub struct ExpandedEpisodeV1 {
     /// byte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<ExpandedResetStartV1>,
+    /// Some selects an opt-in opening protocol (`"london-v1"`,
+    /// docs/design/pauper_london_mulligans_v1.md): London mulligans before
+    /// turn 1, owned by the session (`rl_session::pauper_london_v1`). None
+    /// keeps every prior serialized byte and the keep-seven deal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opening: Option<PauperOpeningV1>,
+    /// Per-physical-seat mulligan modes, present exactly when `opening` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1048,6 +1088,38 @@ pub struct ExpandedResetStartV1 {
 }
 
 impl ExpandedEpisodeV1 {
+    /// The opt-in opening's own refusals (design section 3). The feature
+    /// identity refusal needs the loaded policies and is checked by the
+    /// collector (`require_opening_feature_identity_v1`).
+    pub(crate) fn validate_opening_v1(&self) -> Result<(), String> {
+        ensure(
+            self.opening.is_some() == self.mulligan_modes.is_some(),
+            "mulligan modes are present exactly when an opening is",
+        )?;
+        let Some(modes) = self.mulligan_modes else {
+            return Ok(());
+        };
+        ensure(
+            self.reset.is_none(),
+            "an opening is refused with a reset start (recorded prefixes predate London)",
+        )?;
+        ensure(
+            self.opponent_search.is_none(),
+            "an opening is refused with a search opponent (no London search path in v1)",
+        )?;
+        ensure(
+            !matches!(
+                self.opponent_kind,
+                Some(ExpandedOpponentKindV1::Legacy { .. })
+            ),
+            "an opening is refused with a Legacy opponent kind",
+        )?;
+        ensure(
+            modes.get(self.learner_seat as usize) == Some(&PauperMulliganModeV1::Learned),
+            "the learner seat's mulligans are learned; keep_seven is for declared frozen opponents",
+        )
+    }
+
     /// Policy steps and physical decisions the starting history already
     /// holds (zero for an ordinary episode).
     fn reset_offsets_v1(&self) -> (u64, u64) {
@@ -1078,10 +1150,15 @@ impl ExpandedEpisodeV1 {
             self.reset.is_none(),
             "reset starts are admitted only by the expanded collector",
         )?;
+        ensure(
+            self.opening.is_none(),
+            "an opening is admitted only by the expanded collector",
+        )?;
         self.configurations_checked_v1()
     }
 
     fn configurations_checked_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
+        self.validate_opening_v1()?;
         ensure(
             self.opponent_search.is_none() || self.opponent.is_some(),
             "search opponent requires an explicit opponent model",
@@ -1142,6 +1219,11 @@ struct TensorBitsV1 {
     action_ref_card_ids: Vec<i64>,
     action_ref_action_indices: Vec<i64>,
     action_ref_node_indices: Vec<i64>,
+    /// FlatV8's pairing relation (`native_flat_tensorizer_v8.rs`), flattened
+    /// `(blocker, attacker)` node pairs. Absent when empty, so every other
+    /// row keeps its archived bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pairing_node_indices: Vec<i64>,
 }
 
 fn bits(values: &[f32]) -> Vec<u32> {
@@ -1168,6 +1250,7 @@ impl TensorBitsV1 {
             action_ref_card_ids: Vec::new(),
             action_ref_action_indices: Vec::new(),
             action_ref_node_indices: Vec::new(),
+            pairing_node_indices: Vec::new(),
         }
     }
 
@@ -1186,6 +1269,7 @@ impl TensorBitsV1 {
             && self.action_ref_card_ids.is_empty()
             && self.action_ref_action_indices.is_empty()
             && self.action_ref_node_indices.is_empty()
+            && self.pairing_node_indices.is_empty()
     }
 
     /// Generic over the shared inner tensor, not `NativeFlatDecisionTensorV3`
@@ -1208,8 +1292,18 @@ impl TensorBitsV1 {
             action_ref_card_ids: t.action_ref_card_ids.clone(),
             action_ref_action_indices: t.action_ref_action_indices.clone(),
             action_ref_node_indices: t.action_ref_node_indices.clone(),
+            pairing_node_indices: Vec::new(),
         }
     }
+
+    /// [`Self::from_tensor`] of a FlatV8 decision with its pairing relation.
+    fn from_tensor_v8(t: &NativeFlatDecisionTensorV2, pairing: &[i64]) -> Self {
+        Self {
+            pairing_node_indices: pairing.to_vec(),
+            ..Self::from_tensor(t)
+        }
+    }
+
     fn tensor(&self) -> NativeFlatDecisionTensorV2 {
         NativeFlatDecisionTensorV2 {
             state: floats(&self.state),
@@ -1355,6 +1449,25 @@ struct ExpandedTrajectoryV1 {
         deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
     )]
     input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
+    /// The London opening record (`PauperOpeningRecordV1`) of an episode
+    /// with `opening`; absent otherwise, preserving archived bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opening_record: Option<PauperOpeningRecordV1>,
+    /// W5 (`w5-xact-v1`): the learner rows whose played action the search
+    /// drew from q, each with the learner's own draw (the sampler stream
+    /// still advanced). Absent otherwise, preserving archived bytes. The
+    /// update authenticates every entry against the collection's record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_played: Option<Vec<SearchPlayedRowV1>>,
+}
+
+/// One learner row the search played (`w5-xact-v1`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchPlayedRowV1 {
+    step: u64,
+    /// The learner sampler's own draw at the row.
+    policy_selected: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1555,6 +1668,122 @@ fn initialize_from_source_bytes_v1(
     ),
     String,
 > {
+    ensure(
+        source.s_learner.is_none(),
+        s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
+    if flat_v8_requested_v1(source)? {
+        // A FlatV8 source (the V8 inclusion contract). Its checkpoint is a V8
+        // one: the first is made by the function-preserving V8 conversion
+        // (`v8_inclusion_conversion_v1`), with its seeded pairing draws, and
+        // every FlatV8 update saves one. The play import loads under its V4
+        // identity and takes the V8 identity (`into_flat_v8_v1`), then the
+        // V8 checkpoint restores every parameter and Adam moment.
+        let pin = source
+            .checkpoint
+            .as_ref()
+            .ok_or("a FlatV8 source requires its V8 checkpoint")?;
+        // A cached load of these exact descriptor and checkpoint bytes, after
+        // this branch's reads (`loaded_source_cache_v1`).
+        if let Some((policy, state)) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_v1(source, bytes, inputs)?
+        {
+            return Ok((policy, state, None));
+        }
+        ensure(
+            checkpoint_feature_contract_v1(pin)?
+                == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+            "a FlatV8 source requires a checkpoint with the FlatV8 identity",
+        )?;
+        let import_only = ExpandedModelSourceV1 {
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+            },
+            checkpoint: None,
+            ..source.clone()
+        };
+        let (policy, _, context) = initialize_from_source_bytes_v1(&import_only, bytes, None)?;
+        ensure(
+            context.is_none(),
+            "a FlatV8 checkpoint resumes only an ordinary source",
+        )?;
+        let mut policy = policy.into_flat_v8_v1()?;
+        let model = policy.training_model_v3();
+        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        if let Some(inputs) = inputs {
+            inputs.validate_v1(
+                &saved.trajectories,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits,
+            )?;
+        }
+        let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+        loaded_source_cache_v1::remember_flat_checkpoint_v1(source, bytes, &policy, &state, &saved);
+        return Ok((policy, state, None));
+    }
+    if flat_v7_transfer_requested_v1(source)? {
+        // A FlatV7 source (Pauper London mulligans v1). The play import loads
+        // under its V4 identity and takes the FlatV7 identity
+        // (`into_flat_v7_transfer_v1`). A V4 checkpoint is the explicit
+        // V4-to-V7 transfer: it restores under V4 first, with its parameters
+        // and Adam state unchanged. A FlatV7 checkpoint, which every FlatV7
+        // update saves, restores under the FlatV7 identity, so a FlatV7
+        // lineage resumes without another transfer.
+        let v4 = ExpandedModelSourceV1 {
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+            },
+            ..source.clone()
+        };
+        // Only a load through the FlatV7 checkpoint below is cached, so a hit
+        // makes that path's reads (`loaded_source_cache_v1`).
+        if let Some((policy, state)) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_v1(source, bytes, inputs)?
+        {
+            return Ok((policy, state, None));
+        }
+        let v7_checkpoint = match &source.checkpoint {
+            Some(pin)
+                if checkpoint_feature_contract_v1(pin)?
+                    == crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7 =>
+            {
+                Some(pin)
+            }
+            _ => None,
+        };
+        let Some(pin) = v7_checkpoint else {
+            ensure(
+                inputs.is_none(),
+                "a FlatV7 update's checkpoint has the FlatV7 identity",
+            )?;
+            let (policy, state, context) = initialize_from_source_bytes_v1(&v4, bytes, None)?;
+            return Ok((policy.into_flat_v7_transfer_v1()?, state, context));
+        };
+        let import_only = ExpandedModelSourceV1 {
+            checkpoint: None,
+            ..v4
+        };
+        let (policy, _, context) = initialize_from_source_bytes_v1(&import_only, bytes, None)?;
+        ensure(
+            context.is_none(),
+            "a FlatV7 checkpoint resumes only an ordinary source",
+        )?;
+        let mut policy = policy.into_flat_v7_transfer_v1()?;
+        let model = policy.training_model_v3();
+        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        if let Some(inputs) = inputs {
+            inputs.validate_v1(
+                &saved.trajectories,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits,
+            )?;
+        }
+        let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+        loaded_source_cache_v1::remember_flat_checkpoint_v1(source, bytes, &policy, &state, &saved);
+        return Ok((policy, state, None));
+    }
     if let Some((policy, state)) = loaded_source_cache_v1::lookup_v1(source, bytes, inputs)? {
         return Ok((policy, state, None));
     }
@@ -1623,6 +1852,10 @@ pub(crate) fn validate_ordinary_source_descriptor_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(), String> {
     ensure(
+        source.s_learner.is_none(),
+        s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
+    ensure(
         source.checkpoint.is_some(),
         "ordinary parent checkpoint is required",
     )?;
@@ -1638,6 +1871,49 @@ pub(crate) fn validate_ordinary_source_descriptor_v1(
         let _: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
     }
     Ok(())
+}
+
+/// Whether `source` declares the explicit V4-to-V7 transfer: both expected
+/// feature digests are FlatV7's. A half-V7 declaration is refused.
+fn flat_v7_transfer_requested_v1(source: &ExpandedModelSourceV1) -> Result<bool, String> {
+    use crate::native_flat_tensorizer_v7::{
+        FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+    };
+    let transfer = &source.feature_transfer;
+    let contract = transfer.expected_feature_contract_digest == FEATURE_CONTRACT_DIGEST_V7;
+    let encoding = transfer.expected_feature_encoding_digest == FEATURE_ENCODING_DIGEST_V7;
+    ensure(
+        contract == encoding,
+        "FlatV7 transfer requires both V7 feature digests",
+    )?;
+    Ok(contract)
+}
+
+/// A pinned checkpoint's own `feature_contract_digest`. Every other check
+/// of the checkpoint stays with its restore (`restore_checkpoint_fields_v1`).
+fn checkpoint_feature_contract_v1(pin: &PinnedFileV1) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct IdentityProbeV1 {
+        feature_contract_digest: String,
+    }
+    let probe: IdentityProbeV1 = read_checkpoint_metadata_v1(pin)?;
+    Ok(probe.feature_contract_digest)
+}
+
+/// Whether `source` declares FlatV8 (the V8 inclusion contract): both
+/// expected feature digests are FlatV8's. A half-V8 declaration is refused.
+fn flat_v8_requested_v1(source: &ExpandedModelSourceV1) -> Result<bool, String> {
+    use crate::native_flat_tensorizer_v8::{
+        FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8,
+    };
+    let transfer = &source.feature_transfer;
+    let contract = transfer.expected_feature_contract_digest == FEATURE_CONTRACT_DIGEST_V8;
+    let encoding = transfer.expected_feature_encoding_digest == FEATURE_ENCODING_DIGEST_V8;
+    ensure(
+        contract == encoding,
+        "FlatV8 requires both V8 feature digests",
+    )?;
+    Ok(contract)
 }
 
 fn load_ordinary_policy_v1(
@@ -1660,7 +1936,7 @@ fn read_ordinary_checkpoint_v1(
     origin: &PlayPolicyOriginV1,
 ) -> Result<ExpandedCheckpointV1, String> {
     let saved = if origin.is_fresh_v1() {
-        read_pinned(pin)?
+        read_checkpoint_v1(pin)?
     } else {
         read_legacy_checkpoint_v1(pin)?
     };
@@ -1674,7 +1950,7 @@ fn read_ordinary_checkpoint_v1(
 }
 
 fn read_legacy_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
-    let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
+    let saved = read_checkpoint_v1(pin)?;
     // The ordinary checkpoint reader previously rejected this unknown field,
     // including an explicit null. Preserve that strict wire boundary.
     ensure(
@@ -1712,6 +1988,10 @@ pub fn inspect_fresh_initialization_v1(
     source: &ExpandedModelSourceV1,
     output_directory: &Path,
 ) -> Result<Value, String> {
+    ensure(
+        source.s_learner.is_none(),
+        s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
     ensure(
         source.checkpoint.is_none(),
         "fresh inspection cannot restore a checkpoint",
@@ -2011,9 +2291,26 @@ fn episode_session_v1(
 ) -> Result<FastActorSessionV1, String> {
     let (steps, physical) = episode.reset_offsets_v1();
     let game_seed = episode.reset.as_ref().map_or(episode.seed, |r| r.game_seed);
-    let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+    let mut session = if let Some(modes) = episode.mulligan_modes {
+        // `opening` (London v1) with its refusals; never a reset start.
+        episode.validate_opening_v1()?;
+        FastActorSessionV1::reset_pauper_london_v1(
+            1,
+            game_seed,
+            episode.max_physical_decisions,
+            episode.max_policy_steps,
+            episode.selected.each_ref().map(|d| d.label.clone()),
+            configs.each_ref().map(|d| d.mainboard().to_vec()),
+            PlayerId(episode.starting_player),
+            modes,
+        )
+        .map_err(err)?
+    } else {
+        episode.validate_opening_v1()?;
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?;
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?
+    };
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
     }
@@ -2054,6 +2351,30 @@ pub(crate) fn restore_reset_cut_v1(
     )
 }
 
+/// Design section 6: an episode with `opening` runs only when every seat's
+/// policy has the FlatV7 feature identity, whose contract encodes pregame
+/// state and rows. V3 and V4 identities keep refusing London.
+pub(crate) fn require_opening_feature_identity_v1(
+    episode: &ExpandedEpisodeV1,
+    seats: &[Option<&FrozenPlayPolicyV1>],
+) -> Result<(), String> {
+    if episode.opening.is_none() {
+        return Ok(());
+    }
+    // FlatV8 is built on FlatV7 and keeps its pregame rows.
+    for policy in seats.iter().flatten() {
+        ensure(
+            [
+                crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
+                crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+            ]
+            .contains(&policy.feature_identity_v1().feature_contract_digest),
+            "london-v1 requires the FlatV7 (or FlatV8) feature identity on every seat",
+        )?;
+    }
+    Ok(())
+}
+
 fn collect_episode(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
@@ -2064,7 +2385,9 @@ fn collect_episode(
 }
 
 /// `collect_episode` with EX1's collection hook (`ex1_collect_v1`), which
-/// reads the live decision and never changes the trajectory.
+/// reads the live decision and never changes the trajectory; in W5 mode
+/// (`w5-xact-v1`) the hook's played action at a searched root replaces the
+/// learner's draw (the learner's sampling stream still advances).
 fn collect_episode_hooked_v1(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
@@ -2087,6 +2410,11 @@ fn collect_episode_hooked_v1(
                 == other.policy.feature_identity_v1().generation,
             "learner and opponent use different fresh-lineage feature generations",
         )?;
+        // FlatV7 shares the V4 generation, so compare whole identities too.
+        ensure(
+            policy.feature_identity_v1() == other.policy.feature_identity_v1(),
+            "learner and opponent use different feature identities",
+        )?;
         // The trajectory records one math, the learner's.
         ensure(
             policy.training_math_v1() == other.policy.training_math_v1(),
@@ -2098,6 +2426,10 @@ fn collect_episode_hooked_v1(
             "learner and opponent use different no-state-digest contracts",
         )?;
     }
+    require_opening_feature_identity_v1(
+        episode,
+        &[Some(&*policy), opponent.as_ref().map(|other| &other.policy)],
+    )?;
     let input_contract = no_state_digest_v1::policy_contract_record_v1(policy)?;
     let seat_behaviors = opponent.as_ref().map(|other| {
         std::array::from_fn(|actor| {
@@ -2119,6 +2451,7 @@ fn collect_episode_hooked_v1(
         other.policy.reset_sampling_v1(seeds);
     }
     let mut decisions = Vec::new();
+    let mut search_played = Vec::new();
     loop {
         match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
@@ -2149,6 +2482,8 @@ fn collect_episode_hooked_v1(
                     learner_sampler: policy.collection_sampler_identity_v1().map(str::to_owned),
                     training_math: policy.training_math_v1(),
                     input_contract,
+                    opening_record: session.pauper_opening_record_v1().cloned(),
+                    search_played: (!search_played.is_empty()).then_some(search_played),
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -2179,12 +2514,37 @@ fn collect_episode_hooked_v1(
                     if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
                         let (selected, scores, tensor) =
                             acting.select_with_training_tensor_v4(&session)?;
-                        (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        // FlatV8 rows also record their pairing relation.
+                        let bits = if acting.feature_identity_v1().feature_contract_digest
+                            == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
+                        {
+                            TensorBitsV1::from_tensor_v8(
+                                &tensor.common,
+                                acting.last_scored_pairing_v8()?,
+                            )
+                        } else {
+                            TensorBitsV1::from_tensor(&tensor.common)
+                        };
+                        (selected, scores, bits)
                     } else {
                         let (selected, scores, tensor) =
                             acting.select_with_training_tensor_v3(&session)?;
                         (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                     };
+                let logits = bits(&scores.logits);
+                let played = match (hook.as_deref_mut(), pending) {
+                    (Some(hook), Some(pending)) => {
+                        hook.after_select_v1(pending, &session, d, &logits, selected)?
+                    }
+                    _ => None,
+                };
+                if played.is_some() {
+                    search_played.push(SearchPlayedRowV1 {
+                        step: d.step,
+                        policy_selected: selected,
+                    });
+                }
+                let selected = played.unwrap_or(selected);
                 let record = DecisionRecordV1 {
                     step: d.step,
                     physical_decision_id: d.physical_decision_id,
@@ -2192,16 +2552,13 @@ fn collect_episode_hooked_v1(
                     substep_count: d.substep_count,
                     actor: seat(d.acting_player),
                     selected,
-                    logits: bits(&scores.logits),
+                    logits,
                     value: scores.value.to_bits(),
                     tensor: tensor_bits,
                     sampler_identity: acting_sampler
                         .or_else(|| decision_sampler_identity_v1(scores.logits.len()))
                         .map(str::to_owned),
                 };
-                if let (Some(hook), Some(pending)) = (hook.as_deref_mut(), pending) {
-                    hook.after_select_v1(pending, d, &record.logits, selected)?;
-                }
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
                 decisions.push(record);
             }
@@ -2454,7 +2811,9 @@ fn collect_episode_tolerant_v1(
     let mut ex1_attempts = Vec::new();
     for attempt in 1..=NON_NATURAL_RETRY_LIMIT {
         let mut hook = ex1
-            .map(|options| ex1_collect_v1::Ex1EpisodeHookV1::new(options, policy, &attempt_episode))
+            .map(|options| {
+                ex1_collect_v1::Ex1EpisodeHookV1::new(options, policy, &attempt_episode, slot)
+            })
             .transpose()
             .map_err(|error| (error, std::mem::take(&mut ledger)))?;
         let reborrowed_opponent = opponent.as_deref_mut();
@@ -2605,17 +2964,75 @@ fn validate_actual_behaviors_v1(
 
 fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     validate_behavior_shape_v1(t)?;
+    validate_opening_record_v1(&t.episode, t.opening_record.as_ref())?;
+    // FlatV7 and FlatV8 resolve to the V4 generation (`resolve_contract_v1`)
+    // and have no no-state-digest conversion, so their updates, replays and
+    // checkpoints are admitted here like V4's.
     let contract = trajectory_contract_v1(t)?;
     if contract.input_contract_digest_v1().is_some() {
         no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
     }
+    // W5: a row the search played replays the learner's own draw; the
+    // update authenticates the played action against q.
+    let replayed;
+    let decisions = match &t.search_played {
+        None => &t.decisions,
+        Some(rows) => {
+            ensure(
+                !rows.is_empty() && rows.windows(2).all(|w| w[0].step < w[1].step),
+                "search-played rows empty or not in step order",
+            )?;
+            let mut copy = t.decisions.clone();
+            let (step_offset, _) = t.episode.reset_offsets_v1();
+            for row in rows {
+                let index = row
+                    .step
+                    .checked_sub(step_offset)
+                    .and_then(|i| usize::try_from(i).ok())
+                    .filter(|&i| i < copy.len())
+                    .ok_or("search-played row outside the trajectory")?;
+                let decision = &mut copy[index];
+                ensure(
+                    decision.step == row.step && decision.actor == t.episode.learner_seat,
+                    "search-played row is not a learner decision",
+                )?;
+                decision.selected = row.policy_selected;
+            }
+            replayed = copy;
+            &replayed
+        }
+    };
     validate_episode_records_with_learner_sampler_v1(
         &t.episode,
         &t.configuration_sha256,
-        &t.decisions,
+        decisions,
         &t.terminal,
         t.learner_sampler.as_deref(),
     )
+}
+
+/// An episode with `opening` records its opening exactly once, with the
+/// episode's modes; every other episode records none.
+fn validate_opening_record_v1(
+    episode: &ExpandedEpisodeV1,
+    record: Option<&PauperOpeningRecordV1>,
+) -> Result<(), String> {
+    match (episode.opening, episode.mulligan_modes, record) {
+        (None, None, None) => Ok(()),
+        (Some(opening), Some(modes), Some(record)) => ensure(
+            record.opening == opening
+                && record.seats.iter().zip(modes).all(|(seat, mode)| {
+                    seat.mode == mode
+                        && seat.mulligans_taken <= 7
+                        && u16::from(seat.kept_hand_size) + u16::from(seat.mulligans_taken) == 7
+                        && seat.forced_zero_card_keep == (seat.mulligans_taken == 7)
+                        && (mode == PauperMulliganModeV1::Learned
+                            || (seat.mulligans_taken == 0 && seat.exposed_pregame_decisions == 0))
+                }),
+            "opening record differs from the episode's opening",
+        ),
+        _ => Err("opening record differs from the episode's opening".into()),
+    }
 }
 
 /// Legacy-sampler record validation, unchanged for every existing caller.
@@ -2931,7 +3348,11 @@ fn replay_learner_groups_v1<'a>(
             } else {
                 opponent.unwrap_or(learner)
             };
-            let output = acting.score_replay_tensor_v1(generation, common.clone())?;
+            let output = acting.score_replay_tensor_v1(
+                generation,
+                common.clone(),
+                &row.tensor.pairing_node_indices,
+            )?;
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
@@ -3033,6 +3454,12 @@ pub enum ExpandedTrainingCommandV1 {
         /// platform's libm, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
         training_math: TrainingMathV1,
+        /// The checkpoint record format (`checkpoint_container_v1`); omitted
+        /// for the default (`auto`: the container where the writer's scope
+        /// gate admits the checkpoint, v1 JSON otherwise), so every command
+        /// written before the default switch keeps its bytes.
+        #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_auto")]
+        record_format: CheckpointRecordFormatV1,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -3071,6 +3498,12 @@ pub enum ExpandedTrainingCommandV1 {
         /// platform's libm, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
         training_math: TrainingMathV1,
+        /// The checkpoint record format (`checkpoint_container_v1`); omitted
+        /// for the default (`auto`: the container where the writer's scope
+        /// gate admits the checkpoint, v1 JSON otherwise), so every command
+        /// written before the default switch keeps its bytes.
+        #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_auto")]
+        record_format: CheckpointRecordFormatV1,
         output_directory: PathBuf,
     },
     /// Separate E policy supervision, full Adam and unchanged sampler.
@@ -3249,6 +3682,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             Some(teacher),
             None,
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -3273,6 +3707,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             Some(teacher),
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
             source,
@@ -3299,6 +3734,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             Some(targets),
             None,
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -3325,6 +3761,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             Some(ex1),
             TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::V1,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -3455,6 +3892,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             ex1,
             output_directory,
         } => {
+            // Serial collection plays on this thread: its policy forwards use
+            // the exact GPU service too when the run installed one (same
+            // bits), as the parallel collector threads do.
+            #[cfg(feature = "gpu-exact-v1")]
+            let _gpu = crate::gpu_exact_v1::service::enter_collector_v1();
             let collection_started = std::time::Instant::now();
             ensure(
                 !episodes.is_empty() && episodes.len() <= 1024,
@@ -3466,30 +3908,34 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 episode.configurations()?;
                 ensure(ids.insert(&episode.id), "duplicate episode id")?;
             }
-            let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
-            if let Some(context) = &transfer {
-                context.validate_batch(&episodes)?;
-            }
-            bind_training_math_v1(
-                &source,
-                transfer.as_ref(),
-                training_math,
-                &mut policy,
-                &mut state,
-            )?;
-            collection_sampler.apply_to_learner_v1(&mut policy);
-            let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
-            let learner = ExpandedSeatBehaviorV1 {
-                source: source.clone(),
-                identity: inference_identity_with_state_sha256_v1(
+            let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
+                s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
+            } else {
+                let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+                if let Some(context) = &transfer {
+                    context.validate_batch(&episodes)?;
+                }
+                bind_training_math_v1(
                     &source,
-                    &policy,
-                    &state,
-                    state_hash.clone(),
-                ),
+                    transfer.as_ref(),
+                    training_math,
+                    &mut policy,
+                    &mut state,
+                )?;
+                collection_sampler.apply_to_learner_v1(&mut policy);
+                let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
+                let learner = ExpandedSeatBehaviorV1 {
+                    source: source.clone(),
+                    identity: inference_identity_with_state_sha256_v1(
+                        &source,
+                        &policy,
+                        &state,
+                        state_hash.clone(),
+                    ),
+                };
+                (policy, learner, state_hash)
             };
             let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
-            drop(state);
             let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
             let mut opponent_cache = OpponentCacheV1::for_collection(verified_sources)
                 .with_training_math_v1(training_math);
@@ -3591,6 +4037,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             loss_selection,
             line_b,
             training_math,
+            record_format,
             output_directory,
         } => execute_update_v1(
             source,
@@ -3607,6 +4054,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             None,
             training_math,
+            record_format,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -3620,6 +4068,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             max_prepared_tensor_mebibytes,
             line_b,
             training_math,
+            record_format,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
@@ -3639,6 +4088,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 None,
                 None,
                 training_math,
+                record_format,
             )
         }
     }
@@ -3726,20 +4176,42 @@ fn compute_gae_targets_v1(
             .ok_or_else(|| format!("gae group {index} has no substeps"))?;
         values.push(f32::from_bits(first.expected_value_bits));
     }
-    let mut advantage_and_target = vec![(0.0f32, 0.0f32); groups.len()];
+    let terminal_returns: Vec<i8> = groups.iter().map(|group| group.terminal_return).collect();
+    compute_gae_targets_of_values_v1(&values, &terminal_returns, episode_ordinals, gamma, lambda)
+}
+
+/// [`compute_gae_targets_v1`]'s arithmetic on each group's first-substep
+/// value and terminal return, for a learner whose groups are not net-8's
+/// (`s_learner_v1`).
+fn compute_gae_targets_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<GaeTargetsV1, String> {
+    ensure(
+        values.len() == episode_ordinals.len() && terminal_returns.len() == values.len(),
+        "gae group and episode-ordinal counts differ",
+    )?;
+    ensure(
+        !values.is_empty(),
+        "gae update requires at least one physical decision",
+    )?;
+    let mut advantage_and_target = vec![(0.0f32, 0.0f32); values.len()];
     let mut start = 0usize;
-    while start < groups.len() {
+    while start < values.len() {
         let mut end = start + 1;
-        while end < groups.len() && episode_ordinals[end] == episode_ordinals[start] {
+        while end < values.len() && episode_ordinals[end] == episode_ordinals[start] {
             end += 1;
         }
         for offset in start..end {
             ensure(
-                groups[offset].terminal_return == groups[start].terminal_return,
+                terminal_returns[offset] == terminal_returns[start],
                 "gae episode's physical decisions must share one terminal_return",
             )?;
         }
-        let terminal_return = f32::from(groups[start].terminal_return);
+        let terminal_return = f32::from(terminal_returns[start]);
         let decisions: Vec<(f32, bool)> = (start..end)
             .map(|offset| (values[offset], offset == end - 1))
             .collect();
@@ -3784,6 +4256,7 @@ fn execute_update_v1(
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
     training_math: TrainingMathV1,
+    record_format: CheckpointRecordFormatV1,
 ) -> Result<Value, String> {
     execute_update_inner_v1(
         source,
@@ -3802,6 +4275,7 @@ fn execute_update_v1(
         None,
         None,
         training_math,
+        record_format,
     )
 }
 
@@ -3826,6 +4300,7 @@ fn execute_update_inner_v1(
     search_targets: Option<SearchTargetsOptionsV1>,
     ex1: Option<ex1_update_v1::Ex1UpdateOptionsV1>,
     training_math: TrainingMathV1,
+    record_format: CheckpointRecordFormatV1,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -3897,9 +4372,32 @@ fn execute_update_inner_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
+    if source.s_learner.is_some() {
+        return s_learner_v1::execute_s_update_v1(s_learner_v1::SUpdateInputsV1 {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            update_backend,
+            backward_execution,
+            loss_selection,
+            output_directory,
+            preparation_workers,
+            max_prepared_tensor_mebibytes,
+            unsupported: s_learner_v1::SUnsupportedOptionsV1 {
+                line_b: line_b.is_some(),
+                e_supported: e_supported.is_some(),
+                soft_q: soft_q.is_some(),
+                search_targets: search_targets.is_some(),
+            },
+            ex1,
+            training_math,
+            record_format,
+            started: update_started,
+        });
+    }
     if let Some(pin) = &source.checkpoint {
-        let saved: CheckpointESupportedProbeV1 =
-            serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+        let saved: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(pin)?;
         if let Some(identity) = &saved.e_supported {
             ensure(
                 e_supported
@@ -3951,7 +4449,7 @@ fn execute_update_inner_v1(
                 .checkpoint
                 .as_ref()
                 .ok_or("recovery continuation requires checkpoint")?;
-            let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
+            let saved = read_checkpoint_v1(pin)?;
             ensure(
                 saved.exploration == Some(loss_selection),
                 "recovery continuation selection differs",
@@ -3975,6 +4473,33 @@ fn execute_update_inner_v1(
                 && search_targets.is_none()
                 && ex1.is_none(),
             "the no-state-digest contract admits only the ordinary CPU update",
+        )?;
+    }
+    // FlatV7 and FlatV8 train through the V4 generation's ordinary CPU update
+    // (the RT1 recipe's): the terminal or GAE loss, sequential or
+    // fixed-partition backward, without an auxiliary term, teacher or the
+    // CUDA backend. None of those has been checked against London pregame
+    // rows, and the Burn CUDA trainer has no V8 inclusion net (its manifest
+    // is net-8's), so FlatV8 is refused there explicitly.
+    if [
+        crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7,
+        crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+    ]
+    .contains(&policy.feature_identity_v1().feature_contract_digest)
+    {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::TerminalReinforceValueV3
+                        | ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "FlatV7 and FlatV8 admit only the ordinary CPU update",
         )?;
     }
     if let Some(context) = &transfer {
@@ -4009,6 +4534,13 @@ fn execute_update_inner_v1(
         )?;
     }
     let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    // Rows the search played are authenticated and masked only by a W5
+    // update; every other update refuses them.
+    ensure(
+        ex1.as_ref().is_some_and(|options| options.w5.is_some())
+            || episodes.iter().all(|t| t.search_played.is_none()),
+        "search-played rows need a w5 update",
+    )?;
     for episode in &episodes {
         validate_trajectory(episode)?;
         ensure(
@@ -4091,6 +4623,10 @@ fn execute_update_inner_v1(
     // the loaded policy through the same accessor every other stamping site
     // uses, never a hardcoded V3 constant on a fresh-V4 policy.
     let generation = policy.feature_identity_v1().generation;
+    // FlatV8 rows train under their own schema and pairing relation; the
+    // V8 inclusion net's V4-generation input config is FlatV8's.
+    let flat_v8 = policy.feature_identity_v1().feature_contract_digest
+        == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8;
     // Config-driven fixed-partition backward is a fresh-V4-lineage-only
     // option (`UpdateBackwardExecutionV1`). Any other combination is
     // rejected here, before any learner tensor is built, so a V3-generation
@@ -4114,9 +4650,14 @@ fn execute_update_inner_v1(
             group
                 .iter()
                 .map(|(row, t)| NativePolicySubstepV1 {
-                    forward: NativePolicyForwardInputV1::Encoded(Box::new(
-                        encoded_decision_view_generic_v1(t, generation),
-                    )),
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(if flat_v8 {
+                        crate::native_flat_tensorizer_v8::encoded_decision_view_v8(
+                            t,
+                            &row.tensor.pairing_node_indices,
+                        )
+                    } else {
+                        encoded_decision_view_generic_v1(t, generation)
+                    })),
                     selected_action_index: row.selected as usize,
                     expected_raw_action_logit_bits: &row.logits,
                     expected_value_bits: row.value,
@@ -4425,9 +4966,18 @@ fn execute_update_inner_v1(
                     // Every EX1 update takes the external auxiliary path with
                     // step telemetry; with no rows it is the inactive path,
                     // bit-identical to ordinary.
-                    let (_, rows) = ex1_teacher.as_ref().expect("guarded");
+                    let (receipt, rows) = ex1_teacher.as_ref().expect("guarded");
                     let options = ex1.as_ref().expect("teacher implies options");
-                    let input = ex1_update_v1::ex1_auxiliary_input_v1(rows, options, generation);
+                    // W5: each played root's (slot, step) as its (group,
+                    // substep) in this batch.
+                    let policy_mask = ex1_update_v1::w5_policy_mask_v1(receipt, &tensor_groups)?;
+                    let masked_rows = policy_mask.len();
+                    let input = ex1_update_v1::ex1_auxiliary_input_v1(
+                        rows,
+                        options,
+                        generation,
+                        policy_mask,
+                    );
                     let (result, auxiliary) = state
                         .train_step_gae_external_auxiliary_v1(
                             generation,
@@ -4461,6 +5011,11 @@ fn execute_update_inner_v1(
                         "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual,
                         "cap":auxiliary.cap,"adam_steps":auxiliary.adam_steps,
                         "movement":movement,"thresholds":ex1_update_v1::ex1_thresholds_v1()}));
+                    if options.w5.is_some() {
+                        let exposure = ex1_auxiliary.as_mut().expect("just set");
+                        exposure["pg_masked_rows"] = json!(masked_rows);
+                        exposure["step_telemetry"] = json!(input.step_telemetry);
+                    }
                     result
                 }
                 (ExpandedUpdateBackendV1::Cpu, _)
@@ -4825,9 +5380,15 @@ fn execute_update_inner_v1(
         search_targets:search_targets.as_ref().map(|options|json!({
             "continuation":search_targets_v1::continuation_identity(options),
             "packet":options.packet,"census":st_census_pin})),
-        ex1: ex1.as_ref().map(|options| json!({
-            "continuation":ex1_update_v1::continuation_identity(options),
-            "collection":options.collection,"receipt":ex1_pin})),
+        ex1: ex1.as_ref().map(|options| {
+            let mut saved = json!({
+                "continuation":ex1_update_v1::continuation_identity(options),
+                "collection":options.collection,"receipt":ex1_pin});
+            if options.w5.is_some() {
+                saved["w5_next_update"] = json!(options.update + 1);
+            }
+            saved
+        }),
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: snapshot
@@ -4887,7 +5448,19 @@ fn execute_update_inner_v1(
         training_math,
         input_contract: input_contract.clone(),
     };
-    let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
+    // The default (`Auto`) resolves here, on the checkpoint itself, so the
+    // choice cannot disagree with the scope gate; an explicit v2 outside the
+    // gate is refused by name.
+    let record_format = record_format.resolve_v1(&checkpoint)?;
+    let checkpoint_pin = match record_format {
+        CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => {
+            publish_json(&output_directory, "checkpoint.json", &checkpoint)?
+        }
+        CheckpointRecordFormatV1::V2 => {
+            let bytes = checkpoint_container_v1::encode_v1(&checkpoint)?;
+            publish_json_bytes_v1(&output_directory, "checkpoint.json", &bytes)?
+        }
+    };
     // Readback exercises the real same-format continuation loader.
     let resumed_source = ExpandedModelSourceV1 {
         checkpoint: Some(checkpoint_pin.clone()),
@@ -4899,6 +5472,27 @@ fn execute_update_inner_v1(
             && restored.training_math_v1() == training_math,
         "published checkpoint round trip differs",
     )?;
+    if record_format == CheckpointRecordFormatV1::V2 {
+        // Design section 3: the restored state equals the published one item
+        // for item (Adam step, anchor, every tensor's name, shape and bits),
+        // beyond the state digest.
+        let back = restored.snapshot_v1().map_err(err)?;
+        let same = |got: &[NativeNamedParameterV1], saved: &[ParameterBitsV1]| {
+            got.len() == saved.len()
+                && got
+                    .iter()
+                    .zip(saved)
+                    .all(|(g, s)| ParameterBitsV1::from_native(g) == *s)
+        };
+        ensure(
+            back.adam_step == checkpoint.adam_step
+                && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
+                && same(&back.parameters, &checkpoint.parameters)
+                && same(&back.first_moments, &checkpoint.first_moments)
+                && same(&back.second_moments, &checkpoint.second_moments),
+            "published checkpoint container round trip differs",
+        )?;
+    }
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
     if let Some(mut exploration) = exploration_report {
         let gauge = &update.scorer_bias_gauge;
@@ -5009,8 +5603,30 @@ fn execute_update_inner_v1(
             "searches_failed":receipt["searches_failed"],"cap":exposure["cap"],
             "adam_steps":exposure["adam_steps"],"teacher_seconds":teacher_seconds});
     }
+    #[cfg(test)]
+    if take_crash_point_for_test_v1() {
+        return Err("crash point: the checkpoint is published, update.json is not".into());
+    }
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Bookkeeping design 2.3's crash point, for tests: the next update on
+    /// this thread stops after its checkpoint's publication and readback and
+    /// before `update.json`.
+    static CRASH_POINT_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn arm_crash_point_for_test_v1() {
+    CRASH_POINT_FOR_TEST_V1.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+fn take_crash_point_for_test_v1() -> bool {
+    CRASH_POINT_FOR_TEST_V1.with(|flag| flag.replace(false))
 }
 
 fn seat(p: PlayerSeatV1) -> u8 {
@@ -5054,9 +5670,28 @@ fn read_trajectory_batch_v1(
     Ok(episodes)
 }
 
+/// A pinned JSON document. A checkpoint container is read through its
+/// exported v1 JSON (design 4.1, the JSON-compatibility interface), so every
+/// typed reader of a checkpoint accepts either format with unchanged
+/// semantics; hot paths use [`read_checkpoint_v1`] instead.
 fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, String> {
     let bytes = read_pinned_bytes(pin)?;
-    serde_json::from_slice(&bytes).map_err(err)
+    serde_json::from_slice(&checkpoint_container_v1::json_document_v1(&bytes)?).map_err(err)
+}
+
+/// A pinned checkpoint, from either format, decoded directly (design 4.1,
+/// the direct-decode interface).
+fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
+    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_bytes(pin)?)
+}
+
+/// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
+/// container's small JSON document, never from its tensor sections.
+fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
+    pin: &PinnedFileV1,
+) -> Result<T, String> {
+    let bytes = read_pinned_bytes(pin)?;
+    serde_json::from_slice(checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
@@ -5123,6 +5758,85 @@ fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, Str
         lengths.insert(name.to_owned(), bytes.len());
     }
     Ok(bytes)
+}
+
+/// Converts the v1 JSON checkpoint of `source` (its `checkpoint` pin) into a
+/// checkpoint container at `output` (design section 5): admits only a
+/// canonical v1 checkpoint; restores it through the continuation loader,
+/// which checks its dimensions and recomputes its state digest; publishes the
+/// container; loads the published container through the same loader; and
+/// refuses unless the two restored states are equal item for item, with the
+/// same digest and math, and the container exports exactly the v1 bytes.
+/// `output` must not exist; its directory must.
+pub fn convert_checkpoint_v1_to_v2(
+    source: &ExpandedModelSourceV1,
+    output: &Path,
+) -> Result<Value, String> {
+    let v1 = source
+        .checkpoint
+        .as_ref()
+        .ok_or("conversion requires a source with a checkpoint")?;
+    let bytes = read_pinned_bytes(v1)?;
+    let container = checkpoint_container_v1::convert_v1_bytes(&bytes)?;
+    let (_, before) = initialize_any_math_v1(source)?;
+    let written = publish_checkpoint_file_v1(output, &container)?;
+    let converted = ExpandedModelSourceV1 {
+        checkpoint: Some(written.clone()),
+        ..source.clone()
+    };
+    let (_, after) = initialize_any_math_v1(&converted)?;
+    let before_snapshot = before.snapshot_v1().map_err(err)?;
+    let after_snapshot = after.snapshot_v1().map_err(err)?;
+    let bits = |rows: &[NativeNamedParameterV1]| -> Vec<ParameterBitsV1> {
+        rows.iter().map(ParameterBitsV1::from_native).collect()
+    };
+    let state_sha256 = hex(&before_snapshot.state_sha256_v1().map_err(err)?);
+    ensure(
+        before_snapshot.adam_step == after_snapshot.adam_step
+            && before_snapshot.scorer_bias_anchor_bits == after_snapshot.scorer_bias_anchor_bits
+            && bits(&before_snapshot.parameters) == bits(&after_snapshot.parameters)
+            && bits(&before_snapshot.first_moments) == bits(&after_snapshot.first_moments)
+            && bits(&before_snapshot.second_moments) == bits(&after_snapshot.second_moments)
+            && hex(&after_snapshot.state_sha256_v1().map_err(err)?) == state_sha256
+            && before.training_math_v1() == after.training_math_v1(),
+        "converted checkpoint restores a different state",
+    )?;
+    Ok(
+        json!({"schema":"mtg-kernel-checkpoint-container-conversion/v1",
+        "direction":"v1-to-v2","source":source,"input":v1,"output":written,
+        "state_sha256":state_sha256,"git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD")}),
+    )
+}
+
+/// Exports a pinned checkpoint container as its v1 JSON checkpoint at
+/// `output`: the bytes `publish_json` writes for the same checkpoint.
+pub fn export_checkpoint_v2_to_v1(v2: &PinnedFileV1, output: &Path) -> Result<Value, String> {
+    let bytes = read_pinned_bytes(v2)?;
+    ensure(
+        checkpoint_container_v1::is_container_v1(&bytes),
+        "the input is not a checkpoint container",
+    )?;
+    let saved = checkpoint_container_v1::decode_v1(&bytes)?;
+    let v1 = serde_json::to_vec(&saved).map_err(err)?;
+    let written = publish_checkpoint_file_v1(output, &v1)?;
+    Ok(
+        json!({"schema":"mtg-kernel-checkpoint-container-conversion/v1",
+        "direction":"v2-to-v1","input":v2,"output":written,
+        "state_sha256":saved.state_sha256,"git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD")}),
+    )
+}
+
+fn publish_checkpoint_file_v1(output: &Path, bytes: &[u8]) -> Result<PinnedFileV1, String> {
+    ensure(
+        output.is_absolute() && !output.exists(),
+        "a fresh absolute output path is required",
+    )?;
+    let directory = output.parent().ok_or("output has no directory")?;
+    let name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("output has no file name")?;
+    publish_json_bytes_v1(directory, name, bytes)
 }
 
 /// `publish_json` for a document already serialized to `bytes`.
@@ -5639,6 +6353,7 @@ pub(crate) mod tests {
                 path: "test-opponent.json".into(),
                 sha256: "b".repeat(64),
             }),
+            s_learner: None,
         };
         ExpandedSeatBehaviorV1 {
             identity: inference_identity_v1(&source, policy, &test_state(policy)).unwrap(),
@@ -5706,6 +6421,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         }
     }
 
@@ -5776,6 +6493,8 @@ pub(crate) mod tests {
             learner_sampler: None,
             training_math: TrainingMathV1::PlatformLibm,
             input_contract: None,
+            opening_record: None,
+            search_played: None,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -6196,6 +6915,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let error = match load_expanded_inference_v1(&source) {
             Ok(_) => panic!("mismatched source pin accepted"),
@@ -6235,6 +6955,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -6343,6 +7065,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -6418,6 +7142,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "e66cbb478196b24a1c47123a0bda3bae505307c8e505a13bfec4f5037c4c9e9a".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -6426,6 +7151,7 @@ pub(crate) mod tests {
             },
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -6477,6 +7203,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -6561,6 +7289,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "502ca59eba7552626be4ca36a55c7eb33f2d8cf8c52390046c12320c0bcb9b5f".into(),
             }),
+            s_learner: None,
         };
         let learner_source = shared_source.clone();
         let opponent_source = shared_source;
@@ -6614,6 +7343,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -6689,6 +7420,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "4f3cfdaed698e5d6cad84299072d468e36c339d6f0f11414e536015e7c3397b9".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -6697,6 +7429,7 @@ pub(crate) mod tests {
             },
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -6747,6 +7480,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -6805,6 +7540,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "0a8f4228d22184c65a7e225f7425a9b6ccbb1b36617fc3d2c67ebe83b09ac464".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -6813,6 +7549,7 @@ pub(crate) mod tests {
             },
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -6863,6 +7600,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -6941,6 +7680,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "eba59f2ad70ce5e132fde3e6dc527dcd36705c02f73218c8f94747d2a1bc1ad3".into(),
             }),
+            s_learner: None,
         };
         let learner_source = shared_source.clone();
         let opponent_source = shared_source;
@@ -6994,6 +7734,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7071,6 +7813,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "7ab89dea50edbe10a546849a1dd71a39c8781264c0d82871008fd1c748a717c3".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7085,6 +7828,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "8519bd678cd9f4a09056176ae3821374476fabfa5100d0e078f4993028543d80".into(),
             }),
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7135,6 +7879,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7202,6 +7948,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "1ba4135e286529be44cabe35357423fb794965854e9ec5f8b6f0eca8ff425d0e".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7216,6 +7963,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "97ac8aa60017c46d3e9c45688ca19e7fdf67a923a67d3c9d3a661563546c9299".into(),
             }),
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7266,6 +8014,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7346,6 +8096,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "382b5d3c259baa81ddfede7b76296ccbcf5b4746e8e4d6c107119689c065b1e3".into(),
             }),
+            s_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7360,6 +8111,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "a5c66d7c17f6cfd7a8491ca6cdf747dc821474d70046ce8b344299177a8ec941".into(),
             }),
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7414,6 +8166,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7496,6 +8250,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "1917db9d1a132b9180ff638e991a7f2570f74577933cb10ce199125426da42c1".into(),
             }),
+            s_learner: None,
         };
         // Seat 0 (Burn), the opponent: this episode's `opponent.kind` is
         // "initial", i.e. the run config's own `initial_source` checkpoint
@@ -7514,6 +8269,7 @@ pub(crate) mod tests {
                 .into(),
                 sha256: "7af505e551efa5f524bc969a96f6fd00e0ab19d0e24570268a1fff1ae1906cc1".into(),
             }),
+            s_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7564,6 +8320,8 @@ pub(crate) mod tests {
             max_policy_steps: 200_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7604,6 +8362,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         }
     }
 
@@ -7647,11 +8407,13 @@ pub(crate) mod tests {
                 run: "ex1-hook-test".into(),
                 update,
                 budget: 1_500,
+                w5: None,
             };
             assert!(options.validate_v1().is_err(), "only B = 64k is admitted");
-            let mut hook =
-                ex1_collect_v1::Ex1EpisodeHookV1::with_test_budget_v1(&options, &policy, &episode)
-                    .unwrap();
+            let mut hook = ex1_collect_v1::Ex1EpisodeHookV1::with_test_budget_v1(
+                &options, &policy, &episode, 0,
+            )
+            .unwrap();
             let hooked =
                 collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
                     .unwrap();
@@ -7726,6 +8488,367 @@ pub(crate) mod tests {
             }
         }
         assert!(searched > 0, "no update of the test triggered a search");
+    }
+
+    /// W5 (`w5-xact-v1`): one search per seat-episode at the drawn eligible
+    /// index; at a root with a target the played action is q's draw, which
+    /// the trajectory records, and the trajectory equals the unhooked one up
+    /// to that decision; burst rows keep the learner's own action.
+    #[test]
+    fn w5_hook_searches_once_and_plays_the_move_drawn_from_q() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-hook", 2_026_110_201, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let w5_memo = |key_memo_mib: u64| {
+            Some(ex1_collect_v1::W5CollectOptionsV1 {
+                recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                key_memo_mib,
+                capture_0b: None,
+            })
+        };
+        let w5 = w5_memo(512);
+        let mut acted_rows = 0;
+        for slot in 0..48_usize {
+            let options = ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "w5-hook-test".into(),
+                update: 3,
+                budget: 1_500,
+                w5: w5.clone(),
+            };
+            assert!(options.validate_v1().is_ok(), "W5 admits its own budget");
+            let mut hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::new(&options, &policy, &episode, slot).unwrap();
+            let hooked =
+                collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
+                    .unwrap();
+            let record = hook.finish_v1(&episode, true);
+            // The exact key memo off gives the same trajectory, searches and
+            // targets (wall time and the recorded memo setting aside).
+            let off = ex1_collect_v1::Ex1CollectOptionsV1 {
+                w5: w5_memo(0),
+                ..options.clone()
+            };
+            let mut off_hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::new(&off, &policy, &episode, slot).unwrap();
+            let off_trajectory = collect_episode_hooked_v1(
+                &mut policy,
+                &learner,
+                None,
+                &episode,
+                Some(&mut off_hook),
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_vec(&hooked).unwrap(),
+                serde_json::to_vec(&off_trajectory).unwrap(),
+                "slot {slot}: the key memo changed the trajectory"
+            );
+            let off_record = off_hook.finish_v1(&episode, true);
+            let strip = |record: &Value| {
+                let mut record = record.clone();
+                record["options"] = Value::Null;
+                for search in record["searches"].as_array_mut().unwrap() {
+                    search["wall"] = Value::Null;
+                    search["key_memo_bytes"] = Value::Null;
+                }
+                record
+            };
+            assert_eq!(strip(&record), strip(&off_record), "slot {slot}");
+            if let Some(search) = record["searches"].as_array().unwrap().first() {
+                assert_eq!(search["key_memo_bytes"], 512 << 20);
+                assert!(off_record["searches"][0]["key_memo_bytes"].is_null());
+            }
+            let placement = &record["w5"];
+            let searches = record["searches"].as_array().unwrap();
+            assert!(searches.len() <= 1, "at most one search per episode");
+            assert_eq!(
+                searches.len() as u64,
+                placement["attempted"].as_u64().unwrap()
+            );
+            assert_eq!(placement["reached"], json!(!searches.is_empty()));
+            let hash = crate::w5_xact_v1::w5_placement_hash_v1(
+                "w5-hook-test",
+                3,
+                episode.seed,
+                slot as u64,
+            );
+            assert_eq!(
+                placement["placement_index"],
+                json!(crate::w5_xact_v1::w5_placement_index_v1(hash))
+            );
+            let Some(search) = searches.first() else {
+                assert_eq!(
+                    serde_json::to_vec(&plain).unwrap(),
+                    serde_json::to_vec(&hooked).unwrap()
+                );
+                continue;
+            };
+            assert_eq!(search["eligible_index"], placement["placement_index"]);
+            let root_step = search["step"].as_u64().unwrap();
+            let prefix = plain
+                .decisions
+                .iter()
+                .take_while(|d| d.step < root_step)
+                .count();
+            assert_eq!(
+                serde_json::to_vec(&plain.decisions[..prefix]).unwrap(),
+                serde_json::to_vec(&hooked.decisions[..prefix]).unwrap(),
+                "slot {slot}: the hook changed the trajectory before its root"
+            );
+            for row in record["rows"].as_array().unwrap() {
+                let d = hooked
+                    .decisions
+                    .iter()
+                    .find(|d| json!(d.step) == row["step"])
+                    .unwrap();
+                assert_eq!(row["selected"], json!(d.selected));
+                if row["kind"] == "root" {
+                    assert_eq!(row["acted"], true);
+                    let q_bits: Vec<u64> = serde_json::from_value(row["q_bits"].clone()).unwrap();
+                    let q: Vec<f64> = q_bits.into_iter().map(f64::from_bits).collect();
+                    let played = crate::w5_xact_v1::w5_played_action_v1(
+                        &q,
+                        "w5-hook-test",
+                        3,
+                        episode.seed,
+                        slot as u64,
+                    )
+                    .unwrap();
+                    assert_eq!(d.selected as usize, played);
+                    let entry = hooked
+                        .search_played
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .find(|r| json!(r.step) == row["step"])
+                        .unwrap();
+                    assert_eq!(json!(entry.policy_selected), row["policy_selected"]);
+                    acted_rows += 1;
+                } else {
+                    assert_eq!(row["acted"], false);
+                    assert_eq!(row["policy_selected"], row["selected"]);
+                }
+            }
+            if acted_rows > 0 {
+                break;
+            }
+        }
+        assert!(acted_rows > 0, "no slot reached a root with a target");
+    }
+
+    /// W5 Stage 0b capture mode: at the placed decision the hook records
+    /// every candidate search and the Q_ref continuations, and the learner
+    /// plays its own draw throughout (the trajectory equals the unhooked one).
+    #[test]
+    fn w5_capture_0b_records_candidates_and_qref_without_touching_the_episode() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-capture", 2_026_110_202, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let mut reached = 0;
+        for slot in 0..48_usize {
+            let options = ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "w5/0b".into(),
+                update: 0,
+                budget: 600,
+                w5: Some(ex1_collect_v1::W5CollectOptionsV1 {
+                    recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                    key_memo_mib: 64,
+                    capture_0b: Some(ex1_collect_v1::W5CaptureOptionsV1 {
+                        budgets: vec![300, 600],
+                        search_seeds: vec![0, 1],
+                        rollouts: 4,
+                        value_leaf: None,
+                    }),
+                }),
+            };
+            options.validate_v1().unwrap();
+            let mut hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::new(&options, &policy, &episode, slot).unwrap();
+            let hooked =
+                collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
+                    .unwrap();
+            assert_eq!(
+                serde_json::to_vec(&plain).unwrap(),
+                serde_json::to_vec(&hooked).unwrap(),
+                "slot {slot}: capture changed the episode"
+            );
+            let record = hook.finish_v1(&episode, true);
+            let capture = &record["capture_0b"];
+            assert_eq!(capture["reached"], record["w5"]["reached"]);
+            assert!(record["rows"].as_array().unwrap().is_empty());
+            if capture["reached"] != true {
+                continue;
+            }
+            reached += 1;
+            let candidates = capture["candidates"].as_array().unwrap();
+            assert_eq!(candidates.len(), 4);
+            let roots: std::collections::BTreeSet<&str> = candidates
+                .iter()
+                .map(|c| c["seed_root"].as_str().unwrap())
+                .collect();
+            assert_eq!(roots.len(), 4);
+            assert!(!roots.contains(capture["qref"]["seed_root"].as_str().unwrap()));
+            let d = hooked
+                .decisions
+                .iter()
+                .find(|d| json!(d.step) == capture["step"])
+                .unwrap();
+            assert_eq!(capture["policy"]["logit_bits"], json!(d.logits));
+            let actions: Vec<usize> =
+                serde_json::from_value(capture["qref"]["actions"].clone()).unwrap();
+            let z: Vec<f64> = d
+                .logits
+                .iter()
+                .map(|&b| f64::from(f32::from_bits(b)))
+                .collect();
+            let p = crate::line_b_teacher_target_v1::line_b_softmax_v1(&z)
+                .unwrap()
+                .probabilities;
+            let argmax = (0..p.len()).fold(0, |b, a| if p[a] > p[b] { a } else { b });
+            assert!(actions.contains(&argmax));
+            for c in candidates.iter().filter(|c| c["status"] == "ok") {
+                let n: Vec<u64> = serde_json::from_value(c["n"].clone()).unwrap();
+                for (a, &count) in n.iter().enumerate() {
+                    if count >= 8 {
+                        assert!(actions.contains(&a));
+                    }
+                }
+            }
+            let n: Vec<u64> = serde_json::from_value(capture["qref"]["n"].clone()).unwrap();
+            let wins: Vec<u64> = serde_json::from_value(capture["qref"]["wins"].clone()).unwrap();
+            let draws: Vec<u64> = serde_json::from_value(capture["qref"]["draws"].clone()).unwrap();
+            assert!(n.iter().all(|&x| x == 4));
+            assert!((0..n.len()).all(|i| wins[i] + draws[i] <= n[i]));
+            if reached >= 1 {
+                break;
+            }
+        }
+        assert!(reached > 0, "no slot reached its placed decision");
+    }
+
+    /// W5 Stage 2a capture: adding the value-leaf searches leaves the episode,
+    /// the Stage 0b candidates and every shared Q_ref value unchanged (parity),
+    /// records every horizon x count x seed search with its primary hash, and
+    /// extends Q_ref to the value-leaf supported actions.
+    #[test]
+    fn w5_capture_2a_value_leaf_keeps_the_0b_record_and_extends_qref() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-capture", 2_026_110_202, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let options = |value_leaf: Option<ex1_collect_v1::W5ValueLeafCaptureV1>| {
+            ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "w5/0b".into(),
+                update: 0,
+                budget: 600,
+                w5: Some(ex1_collect_v1::W5CollectOptionsV1 {
+                    recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                    key_memo_mib: 64,
+                    capture_0b: Some(ex1_collect_v1::W5CaptureOptionsV1 {
+                        budgets: vec![300],
+                        search_seeds: vec![0],
+                        rollouts: 2,
+                        value_leaf,
+                    }),
+                }),
+            }
+        };
+        let vl = ex1_collect_v1::W5ValueLeafCaptureV1 {
+            horizons: vec!["h0".into(), "t0".into()],
+            sims: vec![12],
+            search_seeds: vec![0, 1],
+        };
+        let mut bad = vl.clone();
+        bad.horizons = vec!["t1".into()];
+        assert!(options(Some(bad)).validate_v1().is_err());
+        let mut done = false;
+        for slot in 0..48_usize {
+            let mut records = Vec::new();
+            for value_leaf in [None, Some(vl.clone())] {
+                let options = options(value_leaf);
+                options.validate_v1().unwrap();
+                let mut hook =
+                    ex1_collect_v1::Ex1EpisodeHookV1::new(&options, &policy, &episode, slot)
+                        .unwrap();
+                let hooked = collect_episode_hooked_v1(
+                    &mut policy,
+                    &learner,
+                    None,
+                    &episode,
+                    Some(&mut hook),
+                )
+                .unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&plain).unwrap(),
+                    serde_json::to_vec(&hooked).unwrap(),
+                    "slot {slot}: capture changed the episode"
+                );
+                records.push(hook.finish_v1(&episode, true)["capture_0b"].clone());
+            }
+            let (a, b) = (&records[0], &records[1]);
+            assert_eq!(a["reached"], b["reached"]);
+            if a["reached"] != true {
+                continue;
+            }
+            assert!(a.get("value_leaf").is_none());
+            assert_eq!((&a["step"], &a["policy"]), (&b["step"], &b["policy"]));
+            let strip = |c: &Value| {
+                let mut c = c.clone();
+                for x in c.as_array_mut().unwrap() {
+                    x.as_object_mut().unwrap().remove("cpu_s");
+                    x["search"].as_object_mut().unwrap().remove("wall");
+                }
+                c
+            };
+            assert_eq!(strip(&a["candidates"]), strip(&b["candidates"]));
+            let qref = |r: &Value| -> std::collections::BTreeMap<u64, (u64, u64)> {
+                let q = &r["qref"];
+                let actions: Vec<u64> = serde_json::from_value(q["actions"].clone()).unwrap();
+                let wins: Vec<u64> = serde_json::from_value(q["wins"].clone()).unwrap();
+                let draws: Vec<u64> = serde_json::from_value(q["draws"].clone()).unwrap();
+                (0..actions.len())
+                    .map(|i| (actions[i], (wins[i], draws[i])))
+                    .collect()
+            };
+            assert_eq!(a["qref"], b["qref"], "the 0b Q_ref moved");
+            let mut qb = qref(b);
+            let extra = json!({"qref": b["qref_extra"].clone()});
+            for (action, value) in qref(&extra) {
+                assert!(
+                    qb.insert(action, value).is_none(),
+                    "extra repeats a 0b action"
+                );
+            }
+            assert_ne!(b["qref_extra"]["seed_root"], b["qref"]["seed_root"]);
+            let rows = b["value_leaf"].as_array().unwrap();
+            assert_eq!(rows.len(), 4);
+            let width = b["policy"]["logit_bits"].as_array().unwrap().len();
+            let roots: std::collections::BTreeSet<&str> = rows
+                .iter()
+                .map(|r| r["seed_root"].as_str().unwrap())
+                .collect();
+            assert_eq!(roots.len(), 4);
+            for r in rows {
+                assert_eq!(r["primary_sha256"].as_str().unwrap().len(), 64);
+                if r["status"] != "ok" {
+                    continue;
+                }
+                let n: Vec<u64> = serde_json::from_value(r["n"].clone()).unwrap();
+                let units: Vec<u64> = serde_json::from_value(r["value_units"].clone()).unwrap();
+                assert_eq!((n.len(), units.len()), (width, width));
+                assert!(n.iter().zip(&units).all(|(&n, &u)| u <= n << 20));
+                for (action, &count) in n.iter().enumerate() {
+                    if count >= 8 {
+                        assert!(qb.contains_key(&(action as u64)));
+                    }
+                }
+            }
+            done = true;
+            break;
+        }
+        assert!(done, "no slot reached its placed decision");
     }
 
     #[test]
@@ -8044,6 +9167,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let episodes: Vec<_> = (0..4u64)
             .map(|index| {
@@ -8192,6 +9316,8 @@ pub(crate) mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -8250,6 +9376,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -8291,6 +9419,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -8413,6 +9543,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -8469,6 +9601,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -8511,6 +9645,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -8568,6 +9704,8 @@ pub(crate) mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -8640,6 +9778,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -8674,6 +9814,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -8726,6 +9868,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -8761,6 +9905,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -8825,6 +9971,39 @@ pub(crate) mod tests {
         loss_selection: ExpandedLossSelectionV1,
         training_math: TrainingMathV1,
     ) -> Result<(String, String, String), String> {
+        run_two_iteration_fixture_declared_v1(
+            feature_identity,
+            None,
+            label,
+            mutate,
+            decks,
+            backward_execution,
+            update_backend,
+            loss_selection,
+            training_math,
+        )
+    }
+
+    /// [`run_ordinary_two_iteration_fixture_with_math_v1`] whose source
+    /// declares `declared` (a FlatV7 transfer of the V4 descriptor, with
+    /// London openings when `opening`) instead of the descriptor's own
+    /// identity.
+    #[allow(clippy::too_many_arguments)]
+    fn run_two_iteration_fixture_declared_v1(
+        feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+        declared: Option<(
+            crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+            bool,
+        )>,
+        label: &str,
+        mutate: impl FnOnce(&mut Vec<NativeNamedParameterV1>),
+        decks: [ExpandedDeckListV1; 2],
+        backward_execution: UpdateBackwardExecutionV1,
+        update_backend: ExpandedUpdateBackendV1,
+        loss_selection: ExpandedLossSelectionV1,
+        training_math: TrainingMathV1,
+    ) -> Result<(String, String, String), String> {
+        let opening = declared.is_some_and(|(_, opening)| opening);
         let root = std::env::temp_dir().join(format!(
             "ordinary-two-iteration-{label}-{}",
             std::process::id()
@@ -8842,14 +10021,16 @@ pub(crate) mod tests {
             path: descriptor_path.canonicalize().unwrap(),
             sha256: sha(&descriptor_bytes),
         };
+        let declared_identity = declared.map_or(feature_identity, |(identity, _)| identity);
         let feature_transfer = FrozenPlayObservationTransferV3 {
-            expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
-            expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            expected_feature_contract_digest: declared_identity.feature_contract_digest.into(),
+            expected_feature_encoding_digest: declared_identity.feature_encoding_digest.into(),
         };
         let mut source = ExpandedModelSourceV1 {
             play_import,
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let mut final_contract = String::new();
         let mut final_encoding = String::new();
@@ -8870,6 +10051,9 @@ pub(crate) mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: opening.then_some(PauperOpeningV1::LondonV1),
+                mulligan_modes: opening
+                    .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -8892,6 +10076,7 @@ pub(crate) mod tests {
                 update_backward_execution: backward_execution,
                 loss_selection,
                 training_math,
+                record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
                 output_directory: root.join(format!("update-{iteration}")),
             })?;
             // Engineering timing note only (never a claim): visible in the
@@ -8975,6 +10160,74 @@ pub(crate) mod tests {
             state, ORDINARY_SEQUENTIAL_STATE_SHA256_V1,
             "the V4 ordinary-trainer path over real constructed decks must stay reproducible"
         );
+    }
+
+    /// FlatV7 training without London: the V4 descriptor under a FlatV7
+    /// source collects, updates, saves a FlatV7 checkpoint, and the second
+    /// iteration resumes from it as FlatV7 (no second transfer). In-game V7
+    /// tensors and arithmetic are V4's, so the state equals the V4 sibling's
+    /// pinned state bit for bit.
+    #[test]
+    fn flat_v7_training_without_london_equals_v4_and_resumes_as_v7() {
+        use crate::native_flat_tensorizer_v7::{
+            FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+        };
+        let (contract, encoding, state) = run_two_iteration_fixture_declared_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            Some((
+                crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V7,
+                false,
+            )),
+            "v7-in-game",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cpu,
+            ExpandedLossSelectionV1::default(),
+            TrainingMathV1::PlatformLibm,
+        )
+        .unwrap();
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V7);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V7);
+        assert_eq!(state, ORDINARY_SEQUENTIAL_STATE_SHA256_V1);
+    }
+
+    /// FlatV7 training with London pregame rows (Spy against Burn, both
+    /// seats learned): collect, update, save and resume through two
+    /// iterations of the GAE recipe under the fixed-partition backward.
+    #[test]
+    #[ignore = "root-owned native qualification: two real London games"]
+    fn flat_v7_london_training_updates_saves_and_resumes() {
+        use crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7;
+        let deck = |id: &str| {
+            let registered =
+                crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+            ExpandedDeckListV1 {
+                label: id.into(),
+                mainboard: registered.registered_configuration().mainboard().to_vec(),
+                sideboard: registered.registered_configuration().sideboard().to_vec(),
+            }
+        };
+        let (contract, _, _) = run_two_iteration_fixture_declared_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            Some((
+                crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V7,
+                true,
+            )),
+            "v7-london",
+            |_parameters| {},
+            [deck("Spy"), deck("Burn")],
+            UpdateBackwardExecutionV1::FixedPartition4,
+            ExpandedUpdateBackendV1::Cpu,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.95,
+                entropy_coefficient: 0.0,
+            },
+            TrainingMathV1::PlatformLibm,
+        )
+        .unwrap();
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V7);
     }
 
     /// Pinned against the value this exact fixture (same seeds, decks,
@@ -9154,6 +10407,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let collect = |learner: &ExpandedModelSourceV1,
@@ -9177,6 +10431,8 @@ pub(crate) mod tests {
                     max_policy_steps: 1_000_000,
                     runtime_rules: None,
                     reset: None,
+                    opening: None,
+                    mulligan_modes: None,
                 }],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
@@ -9196,6 +10452,7 @@ pub(crate) mod tests {
                 update_backward_execution: UpdateBackwardExecutionV1::Sequential,
                 loss_selection: ExpandedLossSelectionV1::default(),
                 training_math: math,
+                record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
                 output_directory: root.join(name),
             })
         };
@@ -9580,6 +10837,7 @@ pub(crate) mod tests {
                         .into(),
                 },
                 checkpoint: None,
+                s_learner: None,
             };
             let initial_source = source.clone();
             let decks = [list("Affinity"), list("Terror")];
@@ -9600,6 +10858,8 @@ pub(crate) mod tests {
                     max_policy_steps: 1_000_000,
                     runtime_rules: None,
                     reset: None,
+                    opening: None,
+                    mulligan_modes: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -9622,6 +10882,7 @@ pub(crate) mod tests {
                     loss_selection: gae_loss_selection_v1(),
                     line_b: line_b.clone(),
                     training_math: TrainingMathV1::PlatformLibm,
+                    record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
                     output_directory: root.join(format!("update-{iteration}")),
                 })
                 .unwrap();
@@ -9745,6 +11006,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -9867,6 +11130,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -10315,6 +11580,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
@@ -10332,6 +11598,8 @@ pub(crate) mod tests {
             max_policy_steps: 1_000_000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -10374,6 +11642,7 @@ pub(crate) mod tests {
                     teacher,
                 }),
                 training_math: TrainingMathV1::PlatformLibm,
+                record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
                 output_directory: root.join(format!("update-{label}")),
             })
         };
@@ -10786,6 +12055,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
@@ -10803,6 +12073,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -10836,6 +12108,7 @@ pub(crate) mod tests {
             loss_selection: gae_loss_selection_v1(),
             line_b: None,
             training_math: TrainingMathV1::PlatformLibm,
+            record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
             output_directory: root.join("ordinary"),
         })
         .unwrap();
@@ -10931,6 +12204,7 @@ pub(crate) mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
@@ -10948,6 +12222,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000000,
             runtime_rules: None,
             reset: None,
+            opening: None,
+            mulligan_modes: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -11037,6 +12313,8 @@ pub(crate) mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    mod pauper_opening_tests;
     mod reset_start_tests;
+    mod v8_inclusion_tests;
     mod widening_b512_tests;
 }

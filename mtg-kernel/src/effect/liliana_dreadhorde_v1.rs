@@ -1196,10 +1196,15 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
-    let visible=state.objects.iter().any(|(id,o)|
-        crate::optional_trigger_public_v1::reference(state,id,viewer).is_some_and(|r|matches!(r.identity,
-            crate::optional_trigger_public_v1::IdentityV1::Known{card_id}if definition(card_id)||token_definition(card_id)))
-        || viewer.is_some_and(|p|o.v4.face_down_v1.is_some_and(|f|f.lookers&(1<<p.index())!=0)&&definition(o.card_def)));
+    let visible = state.objects.iter().any(|(id, o)| {
+        crate::optional_trigger_public_v1::visible_known(state, id, viewer, |card_id| {
+            definition(card_id) || token_definition(card_id)
+        }) || viewer.is_some_and(|p| {
+            o.v4.face_down_v1
+                .is_some_and(|f| f.lookers & (1 << p.index()) != 0)
+                && definition(o.card_def)
+        })
+    });
     if visible || rows(state).next().is_some() {
         Err("Liliana native source requires a complete V73 consumer".into())
     } else {

@@ -66,6 +66,10 @@ where
                 .name(format!("expanded-collector-{worker}"))
                 .stack_size(8 * 1024 * 1024)
                 .spawn_scoped(scope, move || {
+                    // Policy forwards on this thread may use the exact GPU
+                    // service when the run installed one (same bits).
+                    #[cfg(feature = "gpu-exact-v1")]
+                    let _gpu = crate::gpu_exact_v1::service::enter_collector_v1();
                     let mut results = Vec::new();
                     let mut busy_seconds = 0.0;
                     let mut episode_seconds = Vec::new();
@@ -182,30 +186,34 @@ pub(super) fn collect_parallel_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
-    let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
-    bind_training_math_v1(
-        &source,
-        transfer.as_ref(),
-        training_math,
-        &mut policy,
-        &mut state,
-    )?;
-    collection_sampler.apply_to_learner_v1(&mut policy);
-    if let Some(context) = &transfer {
-        context.validate_batch(&episodes)?;
-    }
-    let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
-    let learner = ExpandedSeatBehaviorV1 {
-        source: source.clone(),
-        identity: inference_identity_with_state_sha256_v1(
+    let (policy, learner, state_hash) = if source.s_learner.is_some() {
+        super::s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
+    } else {
+        let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+        bind_training_math_v1(
             &source,
-            &policy,
-            &state,
-            state_hash.clone(),
-        ),
+            transfer.as_ref(),
+            training_math,
+            &mut policy,
+            &mut state,
+        )?;
+        collection_sampler.apply_to_learner_v1(&mut policy);
+        if let Some(context) = &transfer {
+            context.validate_batch(&episodes)?;
+        }
+        let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
+        let learner = ExpandedSeatBehaviorV1 {
+            source: source.clone(),
+            identity: inference_identity_with_state_sha256_v1(
+                &source,
+                &policy,
+                &state,
+                state_hash.clone(),
+            ),
+        };
+        (policy, learner, state_hash)
     };
     let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
-    drop(state);
     let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
     let worker_count = workers.min(episodes.len());
     let contexts = (0..worker_count)
@@ -506,6 +514,7 @@ mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -534,6 +543,8 @@ mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             })
             .collect();
         let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
@@ -657,6 +668,7 @@ mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -685,6 +697,8 @@ mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             })
             .collect();
 
@@ -760,6 +774,7 @@ mod tests {
                 expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let mut model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -798,6 +813,8 @@ mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             })
             .collect();
         let context = || {
@@ -824,6 +841,250 @@ mod tests {
                 ordered_parallel_jobs_v1(contexts, episodes.len(), collect, || ()).unwrap();
             assert_eq!(parallel, serial, "worker count {workers}");
         }
+    }
+
+    /// The same four games with every collector forward served by the exact
+    /// GPU service (`gpu_exact_v1`): byte-identical trajectories, and the
+    /// service really answered the forwards.
+    #[cfg(feature = "gpu-exact-v1")]
+    #[test]
+    #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL) and native engine compute"]
+    fn phase1_parallel_episodes_with_gpu_inference_match_serial_cpu() {
+        let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+            .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+            .parse()
+            .unwrap();
+        let template = FrozenPlayPolicyV1::training_fixture_v3();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: "fixture-only-import.json".into(),
+                sha256: "a".repeat(64),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            },
+            checkpoint: None,
+            s_learner: None,
+        };
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        model
+            .replace_parameter_snapshot_v1(&template.training_parameters_v3())
+            .unwrap();
+        let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            identity: inference_identity_v1(&source, &template, &state).unwrap(),
+            source: source.clone(),
+        };
+        drop(state);
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episodes: Vec<_> = (0..6)
+            .map(|index| ExpandedEpisodeV1 {
+                id: format!("gpu-exact-parallel-fixture-{index}"),
+                seed: 2_026_103_101 + index,
+                starting_player: (index % 2) as u8,
+                learner_seat: (index % 2) as u8,
+                opponent: (index >= 3).then(|| source.clone()),
+                opponent_kind: None,
+                opponent_search: None,
+                registered: [deck.clone(), deck.clone()],
+                selected: [deck.clone(), deck.clone()],
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
+                opening: None,
+                mulligan_modes: None,
+            })
+            .collect();
+        // The separate opponent seat gets its own parameters, so the service
+        // serves two models in the same batches.
+        let mut opponent_parameters = template.training_parameters_v3();
+        for parameter in &mut opponent_parameters {
+            if parameter.name == "object_encoder.0.weight" {
+                for value in parameter.values.iter_mut().step_by(3) {
+                    *value *= 1.5;
+                }
+            }
+        }
+        let context = || {
+            let mut opponent = template.fork_for_collection_v3().unwrap();
+            opponent
+                .replace_training_parameters_v3(&opponent_parameters)
+                .unwrap();
+            (
+                template.fork_for_collection_v3().unwrap(),
+                LoadedOpponentV1 {
+                    policy: opponent,
+                    behavior: learner.clone(),
+                },
+            )
+        };
+        let collect = |context: &mut (FrozenPlayPolicyV1, LoadedOpponentV1), index: usize| {
+            let opponent = episodes[index].opponent.as_ref().map(|_| &mut context.1);
+            let trajectory = collect_episode(&mut context.0, &learner, opponent, &episodes[index])?;
+            serde_json::to_vec(&trajectory).map_err(err)
+        };
+        // CPU reference on this thread, before any service exists.
+        let mut serial_context = context();
+        let serial: Vec<_> = (0..episodes.len())
+            .map(|index| collect(&mut serial_context, index).unwrap())
+            .collect();
+        if crate::gpu_exact_v1::inference_receipt_v1().is_none() {
+            crate::gpu_exact_v1::install_inference_service_v1(ordinal, 200).unwrap();
+        }
+        let before = crate::gpu_exact_v1::inference_receipt_v1().unwrap();
+        for workers in [1, 3, 6] {
+            let contexts = (0..workers).map(|_| context()).collect();
+            let (parallel, _) =
+                ordered_parallel_jobs_v1(contexts, episodes.len(), collect, || ()).unwrap();
+            assert_eq!(parallel, serial, "GPU inference, worker count {workers}");
+        }
+        let after = crate::gpu_exact_v1::inference_receipt_v1().unwrap();
+        let served = after["requests"].as_u64().unwrap() - before["requests"].as_u64().unwrap();
+        assert!(
+            served > 100,
+            "the service answered only {served} forwards: {after}"
+        );
+        assert!(
+            after["model_uploads"].as_u64().unwrap() >= 2,
+            "learner and opponent are distinct models: {after}"
+        );
+        eprintln!("{after}");
+    }
+
+    /// RT1's default `collection_workers: 1` dispatches the serial `Collect`
+    /// command, which plays on the calling thread. With the exact GPU service
+    /// installed, that command must send its forwards to the service (it
+    /// once ran every forward on the CPU), and publish the same trajectories
+    /// as `CollectParallel` with two workers. The request count is the
+    /// process's, so run device tests one at a time (`--test-threads 1`).
+    #[cfg(feature = "gpu-exact-v1")]
+    #[test]
+    #[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL) and native engine compute"]
+    fn serial_collect_command_uses_the_gpu_service() {
+        let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+            .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+            .parse()
+            .unwrap();
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root = std::env::temp_dir().join(format!(
+            "expanded-collect-gpu-serial-{}",
+            std::process::id()
+        ));
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+            s_learner: None,
+        };
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episodes: Vec<_> = (0..3u64)
+            .map(|index| ExpandedEpisodeV1 {
+                id: format!("gpu-serial-{index}"),
+                seed: 2_026_110_101 + index,
+                starting_player: (index % 2) as u8,
+                learner_seat: (index % 2) as u8,
+                opponent: None,
+                opponent_search: None,
+                opponent_kind: None,
+                registered: [deck.clone(), deck.clone()],
+                selected: [deck.clone(), deck.clone()],
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
+                opening: None,
+                mulligan_modes: None,
+            })
+            .collect();
+        let run = |label: &str, workers: usize| {
+            let output_directory = root.join(label);
+            let command = if workers == 1 {
+                ExpandedTrainingCommandV1::Collect {
+                    source: source.clone(),
+                    episodes: episodes.clone(),
+                    max_non_natural_episode_fraction: 0.0,
+                    collection_sampler: CollectionSamplerV1::Legacy,
+                    training_math: TrainingMathV1::PlatformLibm,
+                    ex1: None,
+                    output_directory,
+                }
+            } else {
+                ExpandedTrainingCommandV1::CollectParallel {
+                    source: source.clone(),
+                    episodes: episodes.clone(),
+                    workers,
+                    max_non_natural_episode_fraction: 0.0,
+                    collection_sampler: CollectionSamplerV1::Legacy,
+                    training_math: TrainingMathV1::PlatformLibm,
+                    ex1: None,
+                    output_directory,
+                }
+            };
+            let result = execute_v1(command).unwrap();
+            let pins: Vec<PinnedFileV1> =
+                serde_json::from_value(result["trajectories"].clone()).unwrap();
+            pins.iter()
+                .map(|pin| read_pinned_bytes(pin).unwrap())
+                .collect::<Vec<_>>()
+        };
+        // CPU reference, when no earlier test in this process installed the
+        // (process-wide) service.
+        let cpu = crate::gpu_exact_v1::inference_receipt_v1()
+            .is_none()
+            .then(|| run("cpu", 1));
+        if crate::gpu_exact_v1::inference_receipt_v1().is_none() {
+            crate::gpu_exact_v1::install_inference_service_v1(ordinal, 200).unwrap();
+        }
+        let requests = || {
+            crate::gpu_exact_v1::inference_receipt_v1().unwrap()["requests"]
+                .as_u64()
+                .unwrap()
+        };
+        let before = requests();
+        let serial = run("serial", 1);
+        let served = requests() - before;
+        assert!(
+            served > 100,
+            "serial Collect sent only {served} forwards to the GPU service"
+        );
+        if let Some(cpu) = cpu {
+            assert_eq!(serial, cpu, "serial Collect on the GPU against the CPU");
+        }
+        assert_eq!(run("parallel", 2), serial);
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// Line (b) collection sampler end to end through the real commands:
@@ -857,6 +1118,7 @@ mod tests {
                 expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
             },
             checkpoint: None,
+            s_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -885,6 +1147,8 @@ mod tests {
                 max_policy_steps: 1_000_000,
                 runtime_rules: None,
                 reset: None,
+                opening: None,
+                mulligan_modes: None,
             })
             .collect();
         let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {

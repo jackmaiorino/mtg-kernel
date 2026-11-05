@@ -945,3 +945,118 @@ mod guard_audit {
         }
     }
 }
+
+#[test]
+fn a_prefix_copy_resumes_its_chain_and_digests_like_a_plain_copy() {
+    let mut history = EventHistoryV1::new();
+    for id in 0..60 {
+        history.push(tap(id));
+        if id % 3 == 0 {
+            history.chain_digest_v2();
+        }
+    }
+    history.chain_digest_v2();
+    assert_eq!(history.chain.get().len(), CHAIN_V2_PREFIXES);
+    for len in [0, 1, 4, 10, 37, 59, 60, 61] {
+        let prefix = history.prefix_v1(len);
+        let plain = EventHistoryV1::from(history.events[..len.min(60)].to_vec());
+        assert_eq!(*prefix, *plain);
+        assert!(counted(&prefix));
+        assert!(prefix
+            .chain
+            .get()
+            .iter()
+            .all(|(covered, _)| *covered <= len));
+        assert_eq!(prefix.chain_digest_v2(), plain.chain_digest_v2());
+    }
+    // A kept prefix state is resumed, not recomputed from the first event.
+    let prefix = history.prefix_v1(37);
+    assert_eq!(
+        prefix.chain.longest(37).map(|(covered, _)| covered),
+        Some(37)
+    );
+}
+
+#[test]
+fn a_long_digest_keeps_stride_prefixes_for_any_earlier_copy() {
+    let mut history = EventHistoryV1::new();
+    for id in 0..300 {
+        history.push(tap(id));
+    }
+    history.chain_digest_v2();
+    // Recent digests past the stride never evict a stride prefix.
+    for id in 300..340 {
+        history.push(tap(id));
+        history.chain_digest_v2();
+    }
+    for len in [0, 63, 64, 65, 150, 299, 301] {
+        let prefix = history.prefix_v1(len);
+        let covered = prefix.chain.longest(len).map_or(0, |(covered, _)| covered);
+        assert!(
+            len - covered < CHAIN_V2_STRIDE,
+            "{len} resumes at {covered}"
+        );
+        let plain = EventHistoryV1::from(history.events[..len].to_vec());
+        assert_eq!(prefix.chain_digest_v2(), plain.chain_digest_v2());
+    }
+}
+
+#[test]
+fn a_prefix_memo_lasts_exactly_while_its_events_are_unchanged() {
+    let memo = |history: &EventHistoryV1| history.prefix_memo_v1().map(|(covered, _)| covered);
+    let mut history = EventHistoryV1::from((0..10).map(tap).collect::<Vec<_>>());
+    assert_eq!(memo(&history), None);
+    history.set_prefix_memo_v1(11, Arc::new(()));
+    assert_eq!(memo(&history), None, "a memo past the end is never left");
+    history.set_prefix_memo_v1(6, Arc::new(()));
+    assert_eq!(memo(&history), Some(6));
+
+    // Appending and changing only later events keep it; clones carry it.
+    history.push(tap(10));
+    history.insert(6, tap(11));
+    history.remove(6);
+    history.truncate(8);
+    history.pop();
+    assert_eq!(memo(&history), Some(6));
+    assert_eq!(memo(&history.clone()), Some(6));
+    assert_eq!(memo(&history.prefix_v1(6)), Some(6));
+    assert_eq!(memo(&history.prefix_v1(5)), None);
+
+    // Never part of what the history is.
+    let plain = EventHistoryV1::from(history.events.clone());
+    assert_eq!(history, plain);
+    assert_eq!(
+        serde_json::to_vec(&history).unwrap(),
+        serde_json::to_vec(&plain).unwrap()
+    );
+    let restored: EventHistoryV1 =
+        serde_json::from_slice(&serde_json::to_vec(&history).unwrap()).unwrap();
+    assert_eq!(memo(&restored), None);
+
+    // Any change to the covered events drops it.
+    type Change = fn(&mut EventHistoryV1);
+    let changes: [Change; 7] = [
+        |h| h.insert(5, tap(20)),
+        |h| {
+            h.remove(5);
+        },
+        |h| h.truncate(5),
+        |h| h.retain(|_| true),
+        |h| h.clear(),
+        |h| h[0] = tap(21),
+        |h| {
+            for _ in h.iter_mut() {}
+        },
+    ];
+    for change in changes {
+        let mut changed = history.clone();
+        change(&mut changed);
+        assert_eq!(memo(&changed), None);
+        assert_eq!(memo(&history), Some(6));
+    }
+    let mut short = history.clone();
+    short.truncate(6);
+    assert_eq!(memo(&short), Some(6));
+    short.pop();
+    assert_eq!(memo(&short), None);
+}

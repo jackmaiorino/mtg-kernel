@@ -339,8 +339,11 @@ class ReleaseVerificationTests(Base):
         lease.write(root / "lease/create-ambiguous.json", {})
         lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
         self.assertFalse(self.check(root, World([])))
+        visible = World([pod("Z")]); fake = FakeClock(1000.0)
         with self.assertRaisesRegex(ValueError, "still visible"):
-            lease.resolve_ambiguous(root, "operator checked console 12:00", key="k", pods=World([pod("Z")]).list)
+            lease.resolve_ambiguous(root, "operator checked console 12:00", key="k", pods=visible.list,
+                                    provider=visible.provider, clock=fake, sleep=fake.advance)
+        self.assertNotIn("Z", visible.pods)       # after completion the check releases what it finds itself
         with self.assertRaisesRegex(ValueError, "state who checked"):
             lease.resolve_ambiguous(root, "short", key="k", pods=World([]).list)
         self.assertTrue(lease.resolve_ambiguous(root, "operator checked console 12:00", key="k",
@@ -520,10 +523,10 @@ class ResponsibilityTests(Base):
     def create_with(self, root, world, poster, failing_ids=(), **options):
         real = lease.external_guard.handoff_in
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id in failing_ids:
                 raise OSError("read-only store")
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         prepared = lease.read(root / "lease/lease.json")
         clock = FakeClock(prepared["created_epoch"] + 10)
 
@@ -631,10 +634,10 @@ class RoundFiveTests(Base):
         clock = FakeClock(prepared["created_epoch"] + 10)
         real = lease.external_guard.handoff_in
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id == "B":
                 raise OSError("read-only store")
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
 
         def funds(key):   # the funding read happens just before the census; move near the deadline there
             clock.t = prepared["deadline_epoch"] - 60
@@ -657,11 +660,10 @@ class RoundFiveTests(Base):
             return lease.verify_absent(root, key="k", pods=world.list, provider=world.provider, clock=clock,
                                        sleep=clock.advance)
         self.assertFalse(check())                       # B discovered by the census
-        self.assertEqual(lease.external_guard.known_pods(root)["B"], "census")
-        world.census = lambda current: []                # the retry's census omits B
-        self.assertFalse(check())                       # B is still GET-checked and present
-        self.assertTrue(lease.read(root / "verify-absent.json")["observations"][0]["present_by_id"]["B"])
-        world.pods.clear()
+        # after completion nothing is handed off: the check deleted B itself and verified it absent
+        self.assertIn("B", world.deletes)
+        self.assertNotIn("B", world.pods)
+        self.assertNotIn("B", lease.external_guard.known_pods(root))
         self.assertTrue(check())
 
 
@@ -671,10 +673,10 @@ class StatusCommandTests(Base):
     def run_status(self, root, world, failing=("B",), late=True, **patches):
         real = lease.external_guard.handoff_in
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id in failing:
                 raise OSError("read-only store")
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         prepared = lease.read(root / "lease/lease.json")
         clock = FakeClock(prepared["deadline_epoch"] - 60 if late else 1000.0)
         out = io.StringIO()
@@ -710,11 +712,11 @@ class CreateInterruptTests(Base):
         clock = FakeClock(prepared["created_epoch"] + 10)
         real = lease.external_guard.handoff_in; fired = []
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id == "A" and not fired:
                 fired.append(pod_id)
                 raise KeyboardInterrupt()
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
 
         def poster(body):
             world.pods["A"] = pod("A"); clock.t = prepared["deadline_epoch"] - 60
@@ -737,7 +739,7 @@ class StatusInterruptTests(Base):
         prepared = lease.read(root / "lease/lease.json")
         clock = FakeClock(prepared["deadline_epoch"] - 60)
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             raise KeyboardInterrupt()
         with patch.object(sys, "argv", ["cloud_lease.py", "status", "--control", str(root)]), \
                 patch.object(lease.external_guard, "api_key", return_value="k"), \

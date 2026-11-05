@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import tarfile
-from common import encoded, pin, read, relative, require, sha, write
+from common import encoded, pin, read, read_checkpoint, relative, require, sha, write
 from throughput import training_contract, preparation_workers
 from fresh_source import SOURCE_SCHEMA, inspect_source, initial_state, validate_checkpoint_origin
 
@@ -95,7 +95,7 @@ class Packager:
         if checkpoint is not None:
             if fresh:
                 pin(checkpoint['path'], checkpoint['sha256'])
-                validate_checkpoint_origin(read(checkpoint['path']), verified['origin'])
+                validate_checkpoint_origin(read_checkpoint(checkpoint['path'], checkpoint['sha256']), verified['origin'])
             result['checkpoint'] = self.put(checkpoint['path'],
                 'checkpoints/' + checkpoint['sha256'] + '.json', checkpoint['sha256'])
         row = {'original': copy.deepcopy(source), 'relocated': copy.deepcopy(result),
@@ -168,6 +168,8 @@ def prepare(spec, output):
                  'workload.py', 'parity_evidence.py', 'runtime_compatibility.py', 'production_check.py',
                  'runtime_observation.py', 'fresh_source.py'):
         p.put(Path(__file__).with_name(name), 'tools/' + name)
+    # common.read_checkpoint decodes a checkpoint container with this helper.
+    p.put(Path(__file__).resolve().parents[1] / 'checkpoint_container_v1.py', 'tools/checkpoint_container_v1.py')
     semantics = copy.deepcopy(original)
     semantics.pop('initial_source'); semantics.pop('opponents'); semantics.pop('output_directory')
     manifest = {'schema': 'phase1-cloud-payload/v1', 'source_commit': spec['source_commit'],

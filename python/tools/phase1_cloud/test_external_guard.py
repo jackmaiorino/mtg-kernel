@@ -3,7 +3,10 @@
 Every run uses a fake clock with a hard sleep cap and a fake provider with a hard
 call cap (lease_test_support); a guard that never finishes ends the test with Stop.
 """
+import contextlib
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -20,18 +23,26 @@ def pod(pid='pod1', **changes):
     return {'id': pid, 'name': NAME, 'costPerHr': 0.96, **changes}
 
 
+def wait_for(path, seconds=5.0):
+    """Real time, for a record a helper thread writes."""
+    end = time.monotonic() + seconds
+    while not path.exists() and time.monotonic() < end:
+        time.sleep(0.01)
+    return path.exists()
+
+
 def failing_handoff(ids, first=None, first_only_once=False):
     """Handoffs of `ids` fail with OSError; with `first`, the first such call per ID (or, with
     `first_only_once`, only the very first call) raises that instead."""
     real = eg.handoff_in; fired = []
 
-    def handoff(folder, pod_id, role, epoch):
+    def handoff(folder, pod_id, role, epoch, **options):
         if pod_id in ids:
             if first is not None and pod_id not in fired and not (first_only_once and fired):
                 fired.append(pod_id)
                 raise first()
             raise OSError('read-only store')
-        return real(folder, pod_id, role, epoch)
+        return real(folder, pod_id, role, epoch, **options)
     return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
 
 
@@ -134,7 +145,9 @@ class ExternalGuardTests(Base):
         world = World([pod()])
         self.once(world)
         self.assertGreater(world.calls, 0)
-        self.assertEqual(world.deletes, ['pod1'])
+        # the completion record closes the store, so this pass verifies the release itself (repeated DELETEs)
+        self.assertEqual(set(world.deletes), {'pod1'})
+        self.assertNotIn('pod1', world.pods)
 
 
 class DuplicateTests(Base):
@@ -350,6 +363,771 @@ class UnresolvedCreateTests(Base):
         self.assertIsNone(self.completion())
         write(self.root / 'lease/create-pod-failure.json', {'definite': True})
         self.assertEqual(self.loop(World([]), polls=10), 'returned')
+
+
+class QuietCreateTests(Base):
+    """A create that named no Pod is never resolved by the guard: after unbroken quiet it writes diagnostic
+    evidence and an ALERT for the operator and keeps supervising."""
+
+    def ambiguous(self, operator=False):
+        write(self.root / 'lease/create-attempt.json', {})
+        write(self.root / 'lease/create-ambiguous.json', {'error_type': 'RuntimeError', 'pod_id': None})
+        write(self.root / 'lease/create-pod-failure.json', {'definite': False})
+        write(self.root / 'lease/funding-at-create.json', {'account_spend_usd_hour': 0.05})
+        write(self.root / 'completion.json', {'complete': False})
+        if operator:
+            write(self.root / eg.OPERATOR_RESOLUTION, {'checked_by': 'operator'})
+
+    def polls(self):
+        return int(eg.AMBIGUOUS_QUIET_SECONDS / eg.POLL_SECONDS) + 20
+
+    def steady(self, step=eg.POLL_SECONDS):
+        """A monotonic clock that advances `step` per pass, whatever the wall clock does."""
+        ticks = iter(range(0, 10**9, int(step)))
+        return lambda: float(next(ticks))
+
+    def test_quiet_writes_evidence_and_an_alert_and_never_completes(self):
+        self.ambiguous()
+        world = World([])
+        funds = world.provider('k', 'funding').funds
+        self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=funds, monotonic=self.clock), 'running')
+        quiet = read(self.root / eg.QUIET_NOTE)
+        self.assertGreaterEqual(quiet['quiet_seconds'], eg.AMBIGUOUS_QUIET_SECONDS)
+        self.assertEqual((quiet['retained_ids'], quiet['account_now']), ([], eg.QUIET_FUNDS))
+        self.assertTrue(wait_for(self.root / eg.QUIET_FUNDS))
+        self.assertEqual(read(self.root / eg.QUIET_FUNDS)['account_now']['account_spend_usd_hour'], 0.05)
+        self.assertEqual(quiet['account_before_create'], {'account_spend_usd_hour': 0.05})
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertIsNone(self.completion())
+        self.assertFalse((self.root / eg.OPERATOR_RESOLUTION).exists())
+        self.assertEqual(world.funds_calls, 1)                   # once per quiet window, diagnostic only
+        self.assertTrue(self.status()['create_unresolved'])
+
+    def census_failing_at(self, world, calls):
+        count = [0]
+
+        def census(current):
+            count[0] += 1
+            if count[0] in calls:
+                raise RuntimeError('census HTTP 503')
+            return current
+        world.census = census
+
+    def test_a_failed_census_inside_one_run_starts_the_window_again(self):
+        self.ambiguous()
+        world = World([])
+        self.census_failing_at(world, {self.polls() - 30})
+        self.assertEqual(self.loop(world, polls=self.polls() + 60, monotonic=self.clock), 'running')
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())
+        self.assertEqual(self.loop(world, polls=self.polls(), monotonic=self.clock), 'running')
+        self.assertTrue((self.root / eg.QUIET_NOTE).exists())    # a fresh unbroken window does note
+
+    def test_gaps_and_wall_clock_jumps_never_shorten_the_window(self):
+        self.ambiguous()
+        world = World([])
+        jumps = [0]
+
+        def census(current):                                       # the wall clock leaps an hour each pass
+            jumps[0] += 1; self.clock.t += 3600
+            return current
+        world.census = census
+        self.loop(world, polls=10, monotonic=self.steady())
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())
+        world.census = None
+        self.loop(world, polls=self.polls() + 40, monotonic=self.steady(eg.QUIET_GAP_SECONDS + 1))
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())   # every observation follows a gap
+
+    def test_an_unnamed_census_entry_is_malformed_never_quiet(self):
+        self.ambiguous()
+        world = World([])
+        world.census = lambda current: [{'id': 'ours'}]
+        self.assertEqual(self.loop(world, polls=self.polls() + 20, monotonic=self.clock), 'running')
+        self.assertIn('census:malformed', self.status()['failures'])
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())
+        self.assertEqual(eg.census_entries([{'id': 'ours'}], NAME), ([], {'ours'}, True))
+        for blank in ('', '   '):
+            self.assertEqual(eg.census_entries([{'id': 'ours', 'name': blank}], NAME), ([], {'ours'}, True))
+        self.assertEqual(eg.census_entries([{'id': 'theirs', 'name': 'other-lane'}], NAME), ([], {'theirs'}, False))
+        world.census = lambda current: [{'id': 'ours', 'name': ''}]
+        self.assertEqual(self.loop(world, polls=self.polls() + 20, monotonic=self.clock), 'running')
+        self.assertFalse(self.status()['absent_now'])
+        self.assertFalse((self.root / eg.QUIET_NOTE).exists())
+
+    def test_the_alert_never_waits_for_the_account_read(self):
+        self.ambiguous()
+        world = World([])
+        release, returned = threading.Event(), threading.Event()
+
+        def funds():                                      # a hung account read
+            release.wait(10); returned.set()
+            return {'account_spend_usd_hour': 0.07}
+        self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=funds, monotonic=self.clock), 'running')
+        self.assertFalse(returned.is_set())               # every pass ran while the read was held
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertEqual(read(self.root / eg.QUIET_NOTE)['account_now'], eg.QUIET_FUNDS)
+        self.assertFalse((self.root / eg.QUIET_FUNDS).exists())
+        release.set()
+        self.assertTrue(wait_for(self.root / eg.QUIET_FUNDS))
+        self.assertEqual(read(self.root / eg.QUIET_FUNDS)['account_now'], {'account_spend_usd_hour': 0.07})
+
+    def test_a_failed_thread_start_never_ends_supervision(self):
+        self.ambiguous()
+        world = World([])
+
+        class Unstartable:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError('cannot start new thread')
+        with mock.patch.object(eg, 'threading', mock.Mock(Thread=Unstartable)):
+            self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=world.provider('k', 'funding').funds,
+                                       monotonic=self.clock), 'running')
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertEqual(read(self.root / eg.QUIET_FUNDS)['error_type'], 'RuntimeError')
+
+    def test_a_failed_alert_write_is_retried_without_a_second_account_read(self):
+        self.ambiguous()
+        world = World([])
+        real = eg.write; failed = []
+
+        def flaky(path, value, replace=False):
+            if Path(path).name == eg.QUIET_ALERT and not failed:
+                failed.append(path)
+                raise OSError('disk busy')
+            return real(path, value, replace)
+        with mock.patch.object(eg, 'write', side_effect=flaky):
+            self.assertEqual(self.loop(world, polls=self.polls() + 40, funds=world.provider('k', 'funding').funds,
+                                       monotonic=self.clock), 'running')
+        self.assertTrue(failed)
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertTrue(wait_for(self.root / eg.QUIET_FUNDS))
+        self.assertEqual(world.funds_calls, 1)
+
+
+class StoreClosureTests(Base):
+    """Completion is the store's closure, written under the lock every handoff and create attempt takes (I4)."""
+
+    def complete(self, at_deadline=False):
+        if at_deadline:
+            self.clock.t = lease()['deadline_epoch']
+        else:                                             # an unused lease, well before its deadline
+            write(self.root / 'completion.json', {})
+            self.clock.t = lease()['created_epoch'] + eg.CONTROLLER_DONE_SECONDS + 1
+        self.assertEqual(self.loop(World([])), 'returned')
+        self.clock.max_sleeps = 400; self.clock.sleeps = 0
+        return self.completion()
+
+    def injecting(self, inject):
+        """complete_store, with `inject(root, epoch)` run once just before its first final check."""
+        real = eg.complete_store; injected = []
+
+        def complete(root, memory, basis, settled, errors, record):
+            if not injected:
+                injected.append(inject(root, record['epoch']))
+            return real(root, memory, basis, settled, errors, record)
+        return mock.patch.object(eg, 'complete_store', side_effect=complete), injected
+
+    def test_completion_rereads_the_store_under_its_lock(self):
+        QuietCreateTests.ambiguous(self, operator=True)
+        world = World([])
+        patch, injected = self.injecting(lambda root, epoch: eg.remember(root, 'late', 'census', epoch))
+        with patch:
+            self.assertEqual(self.loop(world, polls=200, monotonic=self.clock), 'returned')
+        self.assertEqual(len(injected), 1)
+        self.assertIn('late', self.completion()['known_pods'])     # completed only after confirming it absent
+        self.assertIn(('GET', 'late'), world.log)
+
+    def test_renewed_presence_of_a_known_id_voids_its_confirmations(self):
+        self.clock.t = lease()['deadline_epoch']
+        eg.remember(self.root, 'a', 'census', 1.0)
+        world = World([])
+
+        def seen_alive(root, epoch):                      # another process saw 'a' alive and handed it off
+            eg.handoff(root, 'a', 'census', epoch)
+            return len(world.log)
+        patch, injected = self.injecting(seen_alive)
+        with patch:
+            self.assertEqual(self.loop(world, polls=200), 'returned')
+        self.assertGreaterEqual(world.log[injected[0]:].count(('GET', 'a')), 2)   # two fresh absences
+        self.assertEqual(self.completion()['presence_revisions']['a'], 1)
+
+    def test_a_receipt_written_before_the_final_check_blocks_completion(self):
+        write(self.root / 'completion.json', {})
+        self.clock.t = lease()['created_epoch'] + eg.CONTROLLER_DONE_SECONDS + 1
+        world = World([])
+
+        def receipt_only(root, epoch):                    # the creator's handoff failed, its receipt landed
+            write(root / 'lease/create-attempt.json', {'epoch': epoch})
+            write(root / 'lease/created-pod.json', {'id': 'r', 'name': NAME})
+        patch, injected = self.injecting(receipt_only)
+        with patch:
+            self.assertEqual(self.loop(world, polls=200), 'returned')
+        self.assertIn('r', self.completion()['known_pods'])
+        self.assertIn(('GET', 'r'), world.log)
+
+    def store_failing_inside_complete(self, failure):
+        real_complete, real_known = eg.complete_store, eg.known_pods; inside = [False]
+
+        def complete(*args):
+            inside[0] = True
+            try:
+                return real_complete(*args)
+            finally:
+                inside[0] = False
+
+        def known(root, errors=None):
+            if inside[0] and failure == 'raise':
+                raise OSError('store unreadable')
+            result = real_known(root, errors)
+            if inside[0] and errors is not None:
+                errors.append('late:ValueError')          # an unreadable record seen by the final check
+            return result
+        return mock.patch.object(eg, 'complete_store', side_effect=complete), \
+            mock.patch.object(eg, 'known_pods', side_effect=known)
+
+    def test_a_store_error_at_the_final_check_blocks_completion(self):
+        self.clock.t = lease()['deadline_epoch']
+        for failure, error in (('raise', 'complete:OSError'), ('record', 'late:ValueError')):
+            first, second = self.store_failing_inside_complete(failure)
+            with first, second:
+                self.assertEqual(self.loop(World([]), polls=20), 'running')
+            self.assertIsNone(self.completion())
+            self.assertIn(error, self.status()['store_errors'])
+            self.assertFalse(eg.store_closed(self.root / eg.KNOWN_DIR))
+
+    def test_a_failed_completion_write_leaves_the_store_open_and_is_retried(self):
+        real = eg.write; failed = []
+
+        def flaky(path, value, replace=False):
+            if Path(path).name == eg.COMPLETION and not failed:
+                failed.append(path)
+                raise OSError('disk busy')
+            return real(path, value, replace)
+        with mock.patch.object(eg, 'write', side_effect=flaky):
+            self.complete()
+        self.assertTrue(failed)
+        self.assertTrue(self.completion()['provider_absent'])
+
+    def test_a_handoff_or_create_attempt_after_completion_is_refused(self):
+        self.complete()
+        self.assertTrue(eg.store_closed(self.root / eg.KNOWN_DIR))
+        with self.assertRaises(eg.StoreClosed):
+            eg.handoff(self.root, 'late', 'census', 1.0)
+        self.assertFalse((self.root / eg.KNOWN_DIR / 'late.json').exists())
+        with self.assertRaises(eg.StoreClosed):
+            eg.record_create_attempt(self.root / 'lease', {'epoch': 1.0})
+        self.assertFalse((self.root / 'lease/create-attempt.json').exists())
+
+    def test_a_watchdog_pass_after_completion_releases_what_it_finds(self):
+        before = self.complete()
+        world = World([pod('late')])
+        self.once(world)
+        self.assertIn(('DELETE', 'late'), world.log)
+        self.assertNotIn('late', world.pods)
+        self.assertFalse((self.root / eg.KNOWN_DIR / 'late.json').exists())
+        self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+        self.assertEqual(self.completion(), before)                 # the completion record stands
+
+    def test_a_watchdog_pass_after_completion_that_cannot_delete_alerts(self):
+        self.complete(at_deadline=True)                   # the release bound is then this pass's own
+        world = World([pod('late')]); world.delete_failures = -1
+        with self.assertRaises(eg.AlertError):
+            self.once(world)
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['late'])
+
+    def test_a_closed_pass_must_verify_every_stored_id_it_cannot_see(self):
+        self.complete(at_deadline=True)
+        eg.remember(self.root, 'a', 'census', 1.0)        # a record from before the closure
+        world = World([]); world.get_failures = -1; world.delete_failures = -1
+        with self.assertRaises(eg.AlertError):
+            self.once(world)
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
+
+    def test_a_cached_handoff_is_void_once_the_store_closes(self):
+        eg.remember(self.root, 'a', 'census', 1.0)
+        world = World([pod('a')])
+        with no_network(), eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list,
+                                          self.clock, self.clock.sleep, self.root / 'ALERT-pod-not-released.json',
+                                          min_release_seconds=180) as client:
+            self.assertNotIn('a', client.unpersisted)     # handed off before the closure
+            write(self.root / eg.COMPLETION, {'provider_absent': True})
+            client.census()
+            self.assertIn('a', client.unpersisted)        # presence after closure is this process's again
+        self.assertIn(('DELETE', 'a'), world.log)
+        self.assertNotIn('a', world.pods)
+
+    def test_a_continuous_guard_started_after_completion_releases_and_ends(self):
+        self.complete()
+        world = World([pod('new')])
+        self.assertEqual(self.loop(world), 'returned')
+        self.assertNotIn('new', world.pods)
+        self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+
+    def lease_client(self, world):
+        return eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list, self.clock,
+                              self.clock.sleep, self.root / 'ALERT-pod-not-released.json', min_release_seconds=180)
+
+    def test_closure_inside_a_presence_handoff_keeps_the_obligation(self):
+        eg.remember(self.root, 'a', 'census', 1.0)        # handed off earlier; the client caches it
+        world = World([pod('a')])
+        real = eg.handoff_in
+
+        def completion_wins(folder, pod_id, role, epoch, **options):
+            write(self.root / eg.COMPLETION, {'provider_absent': True})   # completion takes the lock first
+            return real(folder, pod_id, role, epoch, **options)
+        with no_network(), self.lease_client(world) as client, \
+                mock.patch.object(eg, 'handoff_in', side_effect=completion_wins):
+            client.census()
+            self.assertIn('a', client.unpersisted)
+        self.assertIn(('DELETE', 'a'), world.log)
+        self.assertNotIn('a', world.pods)
+
+    def test_a_failed_presence_refresh_degrades_to_main_and_alerts(self):
+        # without its synchronization the handoff is main's: the record lands, the Pod is never
+        # deleted, and ALERT-sync-degraded.json tells the operator the refresh was not published
+        for failure in ('presence write', 'lock timeout'):
+            with self.subTest(failure=failure):
+                eg.remember(self.root, 'a', 'census', 1.0)
+                world = World([pod('a')])
+                real_write = eg.write
+
+                def no_presence(path, value, replace=False):
+                    if Path(path).name.endswith('.presence.json'):
+                        raise OSError('disk full')
+                    return real_write(path, value, replace)
+                if failure == 'presence write':
+                    failing = mock.patch.object(eg, 'write', side_effect=no_presence)
+                else:
+                    failing = mock.patch.object(eg, 'STORE_LOCK_SECONDS', 0.1)
+                lock = eg.StoreLock(self.root / eg.KNOWN_DIR) if failure == 'lock timeout' else mock.MagicMock()
+                with no_network(), failing, lock, self.lease_client(world) as client:
+                    client.census()
+                    self.assertTrue(client.durable_now('a'))
+                self.assertNotIn('a', world.deletes)
+                self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+                self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+                (self.root / eg.SYNC_ALERT).unlink()
+
+    def test_a_corrupt_stored_record_is_held_on_a_closed_store(self):
+        self.complete(at_deadline=True)
+        (self.root / eg.KNOWN_DIR).mkdir(parents=True, exist_ok=True)
+        (self.root / eg.KNOWN_DIR / 'a.json').write_text('{not json')
+        world = World([]); world.get_failures = -1; world.delete_failures = -1
+        with self.assertRaises(eg.AlertError):
+            self.once(world)
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
+
+    def test_a_forged_completion_never_ends_supervision_of_an_unresolved_create(self):
+        write(self.root / 'lease/create-attempt.json', {'epoch': 1.0})
+        write(self.root / eg.COMPLETION, {'provider_absent': True, 'forged': True})
+        world = World([])
+        self.assertEqual(self.loop(world, polls=20), 'running')
+        world.pods['late'] = pod('late')                    # the pending POST materializes
+        self.assertEqual(self.loop(world, polls=20), 'running')
+        self.assertIn(('DELETE', 'late'), world.log)
+
+    def test_a_closure_seen_mid_run_ends_the_guard_through_the_bounded_exit(self):
+        for case in ('another guard completed', 'readback failed'):
+            with self.subTest(case=case):
+                temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+                self.root = Path(temporary.name); write(self.root / 'lease/lease.json', lease())
+                self.clock = FakeClock(lease()['deadline_epoch'])
+                world = World([])
+                if case == 'another guard completed':
+                    calls = [0]
+
+                    def census(current):
+                        calls[0] += 1
+                        if calls[0] == 2:
+                            write(self.root / eg.COMPLETION, {'provider_absent': True, 'by': 'other'})
+                        return current
+                    world.census = census
+                    self.assertEqual(self.loop(world, polls=20), 'returned')
+                    self.assertEqual(self.completion()['by'], 'other')     # never overwritten
+                else:
+                    real_read = eg.read; failed = []
+
+                    def flaky(path):
+                        if Path(path).name == eg.COMPLETION and not failed:
+                            failed.append(path)
+                            raise OSError('read failed')
+                        return real_read(path)
+                    with mock.patch.object(eg, 'read', side_effect=flaky):
+                        self.assertEqual(self.loop(world, polls=20), 'returned')
+                    self.assertTrue(failed)
+
+    def test_an_interrupt_while_classifying_a_census_loses_no_id(self):
+        eg.remember(self.root, 'a', 'census', 1.0)        # named already; 'n' is brand new
+        world = World([pod('a'), pod('n')])
+        real = eg.LeaseClient.receipt_ids; fired = []
+
+        def interrupted(client):
+            if not fired:
+                fired.append(True)
+                raise KeyboardInterrupt()
+            return real(client)
+        with self.assertRaises(KeyboardInterrupt), no_network(), failing_handoff({'a', 'n'}), \
+                self.lease_client(world) as client:
+            with mock.patch.object(eg.LeaseClient, 'receipt_ids', interrupted):   # inside the census only
+                client.census()
+        self.assertEqual(fired, [True])
+        self.assertIn('n', world.deletes)                 # brand new and never handed off: released
+        self.assertNotIn('a', world.deletes)              # named: never deleted here, reported instead
+        self.assertIn('refresh of a', read(self.root / eg.SYNC_ALERT)['what'])
+
+    def test_a_closure_mid_pass_holds_stored_ids_the_census_omits(self):
+        self.clock.t = lease()['deadline_epoch']
+        eg.remember(self.root, 'a', 'census', 1.0)
+        world = World([pod('a')]); world.get_failures = -1; world.delete_failures = -1
+
+        def census(current):                              # another guard completes during this census
+            write(self.root / eg.COMPLETION, {'provider_absent': True, 'by': 'other'})
+            return []
+        world.census = census
+        with self.assertRaises(eg.AlertError):
+            self.loop(world, polls=200)                   # the closed exit's own 180 s release bound
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['a'])
+
+    def test_a_failed_closure_probe_never_loses_a_new_id(self):
+        world = World([pod('n')])
+        real = eg.store_closed; fired = []
+
+        def probe(folder):
+            if not fired:
+                fired.append(True)
+                raise PermissionError('store unreadable')
+            return real(folder)
+        with self.assertRaises(PermissionError), no_network(), failing_handoff({'n'}), \
+                self.lease_client(world) as client:
+            with mock.patch.object(eg, 'store_closed', side_effect=probe):   # inside the census only
+                client.census()
+        self.assertEqual(fired, [True])
+        self.assertIn('n', world.deletes)                 # held, then released by the exit
+        self.assertNotIn('n', world.pods)
+
+    def test_quiet_after_a_delayed_pod_was_deleted_still_alerts(self):
+        QuietCreateTests.ambiguous(self)
+        world = World([pod('late')])                      # the pending create's Pod appears, then is deleted
+        self.assertEqual(self.loop(world, polls=QuietCreateTests.polls(self) + 40, monotonic=self.clock), 'running')
+        self.assertIn(('DELETE', 'late'), world.log)
+        quiet = read(self.root / eg.QUIET_NOTE)
+        self.assertEqual(quiet['retained_ids'], ['late'])
+        self.assertTrue((self.root / eg.QUIET_ALERT).exists())
+        self.assertIsNone(self.completion())
+
+    def failing_completion_probe(self):
+        real = Path.exists
+
+        def failing(path, *args, **kwargs):
+            if path.name == eg.COMPLETION:
+                raise PermissionError('stat denied')
+            return real(path, *args, **kwargs)
+        return mock.patch.object(Path, 'exists', failing)
+
+    def test_a_persistently_failing_closure_probe_degrades_a_post_handoff_to_main(self):
+        world = World([])
+
+        def poster(body):                                 # a valid ID under an unexpected name
+            world.pods['w'] = {'id': 'w', 'name': 'someone-else', 'costPerHr': 0.5}
+            return dict(world.pods['w'])
+        with no_network(), self.failing_completion_probe(), self.lease_client(world) as client:
+            client.post({'name': NAME}, poster=poster)    # the fault persists through the exit
+            self.assertEqual(eg.store_state(self.root / eg.KNOWN_DIR), 'unknown')
+        self.assertEqual(eg.known_pods(self.root)['w'], 'receipt')   # durably handed off, as main does
+        self.assertEqual(world.deletes, [])
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+
+    def test_a_first_handoff_blocked_by_synchronization_never_deletes_a_healthy_pod(self):
+        # round 11: lock setup, a lock timeout or a failed probe before a POST ID's first handoff
+        for fault in ('probe', 'lock setup', 'lock timeout'):
+            with self.subTest(fault=fault):
+                temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+                self.root = Path(temporary.name); write(self.root / 'lease/lease.json', lease())
+                world = World([])
+
+                def poster(body):
+                    world.pods['p'] = pod('p')
+                    return pod('p')
+                if fault == 'probe':
+                    failing = self.failing_completion_probe()
+                elif fault == 'lock setup':
+                    failing = mock.patch.object(eg.StoreLock, '__enter__', side_effect=eg.LockError('setup'))
+                else:
+                    failing = mock.patch.object(eg.StoreLock, '__enter__', side_effect=eg.LockTimeout('held'))
+                with no_network(), self.lease_client(world) as client, failing:
+                    client.post({'name': NAME}, poster=poster)
+                self.assertEqual(world.deletes, [])       # main keeps it, and so does this
+                self.assertEqual(eg.known_pods(self.root)['p'], 'receipt')
+                self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+
+    def test_an_unknown_closure_degrades_a_raced_handoff_to_main_and_alerts(self):
+        world = World([pod('late')])
+        with no_network(), self.lease_client(world) as client:
+            write(self.root / eg.COMPLETION, {'provider_absent': True, 'by': 'other'})   # completion lands
+            with self.failing_completion_probe():          # and every later probe fails
+                client.census()
+        self.assertEqual(world.deletes, [])               # main's behavior: the record is written
+        self.assertIn('late', eg.known_pods(self.root))
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())   # and the operator is told
+
+    def test_a_lock_setup_failure_never_deletes_a_healthy_primary(self):
+        world = self.healthy_primary()
+        real = Path.mkdir
+
+        def denied(path, *args, **kwargs):
+            if path.name == 'lease':
+                raise PermissionError('mkdir denied')
+            return real(path, *args, **kwargs)
+        with mock.patch.object(Path, 'mkdir', denied):
+            self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertEqual(world.deletes, [])               # main takes no lock and keeps it too
+        self.assertIsNone(self.status()['reason'])
+
+    def test_a_lock_teardown_failure_never_undoes_the_work_inside_it(self):
+        with mock.patch.object(eg.StoreLock, '_release', side_effect=OSError('unlock failed')):
+            eg.record_create_attempt(self.root / 'lease', {'epoch': 1.0})   # the create goes on to its POST
+            self.assertTrue(eg.handoff(self.root, 'a', 'census', 1.0))
+        self.assertTrue((self.root / 'lease/create-attempt.json').exists())
+        self.assertEqual(eg.known_pods(self.root)['a'], 'census')
+        lock = eg.StoreLock(self.root / eg.KNOWN_DIR)
+        lock.handle = mock.Mock(close=mock.Mock(side_effect=OSError('close failed')))
+        lock._close()                                     # a failing close is swallowed: the OS releases it
+
+    def test_a_failed_startup_closure_read_never_skips_deadline_cleanup(self):
+        self.complete(at_deadline=True)
+        eg.remember(self.root, 'a', 'census', 1.0)
+        write(self.root / 'lease/create-attempt.json', {'epoch': 1.0})
+        write(self.root / 'lease/created-pod.json', {'id': 'a', 'name': NAME})
+        world = World([pod('a')])
+        real = Path.exists
+
+        def failing(path, *args, **kwargs):
+            if path.name == 'create-attempt.json':
+                raise PermissionError('stat denied')
+            return real(path, *args, **kwargs)
+        with mock.patch.object(Path, 'exists', failing):
+            try:
+                self.loop(world, polls=60)
+            except PermissionError:
+                pass                                      # main raises too, after deleting the Pod
+        self.assertIn(('DELETE', 'a'), world.log)
+        self.assertNotIn('a', world.pods)
+
+    def test_a_full_disk_never_deletes_a_healthy_recorded_primary(self):
+        self.record('pod1'); self.started()
+        eg.remember(self.root, 'pod1', 'receipt', 1.0)
+        world = World([pod('pod1')])
+        real = eg.write
+
+        def no_presence(path, value, replace=False):      # metadata writes fail; existing records read back
+            if Path(path).name.endswith('.presence.json'):
+                raise OSError(28, 'No space left on device')
+            return real(path, value, replace)
+        with mock.patch.object(eg, 'write', side_effect=no_presence):
+            self.assertEqual(self.loop(world, polls=20), 'running')
+            self.assertEqual(world.deletes, [])               # main keeps it too
+            self.assertIsNone(self.status()['reason'])
+            self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+            write(self.root / 'release-authorized.json', {})  # an independent release reason
+            self.assertEqual(self.loop(world, polls=40), 'returned')
+        self.assertIn('pod1', world.deletes)
+        self.assertTrue(self.completion()['provider_absent'])  # the lease still completes
+
+    def healthy_primary(self):
+        self.record('pod1'); self.started()
+        eg.remember(self.root, 'pod1', 'receipt', 1.0)
+        return World([pod('pod1')])
+
+    def test_a_failed_presence_read_never_deletes_a_healthy_primary(self):
+        world = self.healthy_primary()
+        real = eg.read_presence; fired = []
+
+        def flaky(folder, pod_id):
+            if len(fired) < 3:
+                fired.append(pod_id)
+                raise PermissionError('presence file locked')
+            return real(folder, pod_id)
+        with mock.patch.object(eg, 'read_presence', side_effect=flaky):
+            self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertTrue(fired)
+        self.assertEqual(world.deletes, [])               # main ignores presence files and keeps it too
+        self.assertIsNone(self.status()['reason'])
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+
+    def test_a_store_lock_timeout_never_deletes_a_healthy_primary(self):
+        world = self.healthy_primary()
+        real = eg.StoreLock.__enter__; fired = []
+
+        def contended(lock):
+            if len(fired) < 3:
+                fired.append(True)
+                raise eg.LockTimeout('held by another process')
+            return real(lock)
+        with mock.patch.object(eg.StoreLock, '__enter__', contended):
+            self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertEqual(len(fired), 3)
+        self.assertEqual(world.deletes, [])               # main takes no lock and keeps it too
+        self.assertIsNone(self.status()['reason'])
+
+    def test_cached_ownership_survives_an_unreadable_record(self):
+        eg.remember(self.root, 'pod1', 'census', 1.0)     # loaded as handed off on entry; no receipt
+        real_reads_back, real_handoff = eg.LeaseClient.record_reads_back, eg.handoff_in
+        for persistent in (False, True):
+            with self.subTest(persistent=persistent):
+                world = World([pod('pod1')]); armed = [False]
+
+                def reads_back(client, pod_id):
+                    return False if armed[0] else real_reads_back(client, pod_id)
+
+                def handoff(folder, pod_id, role, epoch, **options):
+                    if armed[0]:
+                        raise OSError('record unreadable')
+                    return real_handoff(folder, pod_id, role, epoch, **options)
+                with no_network(), mock.patch.object(eg.LeaseClient, 'record_reads_back', reads_back), \
+                        mock.patch.object(eg, 'handoff_in', side_effect=handoff), self.lease_client(world) as client:
+                    self.assertIn('pod1', client.persisted)
+                    armed[0] = True
+                    client.census()                       # the refresh cannot land and the record reads fail
+                    self.assertTrue(client.guardian_owns('pod1'))
+                    armed[0] = persistent                 # a lasting fault spans the exit's retries
+                self.assertEqual(world.deletes, [])       # main keeps it too; a lasting fault is reported
+                self.assertIn('pod1', world.pods)
+                self.assertEqual((self.root / eg.SYNC_ALERT).exists(), persistent)
+                if persistent:
+                    (self.root / eg.SYNC_ALERT).unlink()
+
+    def test_deadline_deletes_come_before_any_store_lock_wait(self):
+        world = self.healthy_primary()
+        self.clock.t = lease()['deadline_epoch']
+        real = eg.StoreLock.__enter__
+
+        def contended(lock):
+            world.log.append(('LOCK', None))
+            raise eg.LockTimeout('held by another process')
+        with mock.patch.object(eg.StoreLock, '__enter__', contended):
+            self.once(world)
+        first_delete = world.log.index(('DELETE', 'pod1'))
+        self.assertLess(first_delete, world.log.index(('LOCK', None)))
+
+    def test_a_failing_quiet_clock_never_ends_supervision(self):
+        world = self.healthy_primary()
+
+        def broken():
+            raise OSError('clock unavailable')
+        self.assertEqual(self.loop(world, polls=10, monotonic=broken), 'running')
+        self.assertEqual(world.deletes, [])
+        self.assertTrue((self.root / 'external-quiet-clock-error.json').exists())
+
+    def test_a_fallback_id_is_kept_after_its_first_deadline_delete_fails(self):
+        self.clock.t = lease()['deadline_epoch']
+        write(self.root / 'lease/create-attempt.json', {'epoch': 1.0})
+        write(self.root / 'lease/create-ambiguous.json', {'pod_id': 'pod1'})
+        world = World([pod('pod1')]); world.delete_failures = 1
+        world.census = lambda current: []                 # the census never lists it
+        real = eg.read
+
+        def unreadable_after_the_failed_delete(path):
+            if Path(path).name == 'create-ambiguous.json' and 'pod1' in world.deletes:
+                raise PermissionError('record unreadable')
+            return real(path)
+        with mock.patch.object(eg, 'read', side_effect=unreadable_after_the_failed_delete):
+            self.loop(world, polls=8)
+        self.assertGreaterEqual(world.deletes.count('pod1'), 2)   # retried after the failed first DELETE
+        self.assertNotIn('pod1', world.pods)
+
+    def test_a_contended_lock_never_delays_a_release(self):
+        world = self.healthy_primary()
+        write(self.root / 'release-authorized.json', {})
+        started = time.monotonic()
+        with eg.StoreLock(self.root / eg.KNOWN_DIR):      # another process holds the lock throughout
+            self.once(world)
+        self.assertIn('pod1', world.deletes)
+        self.assertLess(time.monotonic() - started, eg.STORE_LOCK_SECONDS / 4)   # main's handoff never waits
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+
+    def test_a_creator_never_waits_on_the_lock_before_releasing_an_unguarded_pod(self):
+        world = World([])
+        real = eg.write
+
+        def unwritable_record(path, value, replace=False):   # the known-Pod record cannot be written
+            if Path(path).name == 'p.json':
+                raise PermissionError('store unwritable')
+            return real(path, value, replace)
+
+        def poster(body):
+            world.pods['p'] = pod('p')
+            return pod('p')
+        started = time.monotonic()
+        with eg.StoreLock(self.root / eg.KNOWN_DIR), no_network(), \
+                mock.patch.object(eg, 'write', side_effect=unwritable_record), \
+                eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list, self.clock,
+                               self.clock.sleep, self.root / 'ALERT-pod-not-released.json') as client:
+            client.post({'name': NAME}, poster=poster)        # the default client, as creators build it
+        self.assertLess(time.monotonic() - started, eg.STORE_LOCK_SECONDS / 4)   # main's cleanup starts at once
+        self.assertIn(('DELETE', 'p'), world.log)
+        self.assertNotIn('p', world.pods)
+
+    def test_closed_store_cleanup_retries_to_the_lease_deadline(self):
+        write(self.root / eg.COMPLETION, {'provider_absent': True})   # completed earlier
+        clock = FakeClock(0.0)
+        world = World([pod('p')]); world.delete_failures = 36       # DELETE recovers at about 180 s
+        with no_network(), eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list, clock,
+                                          clock.sleep, self.root / 'ALERT-pod-not-released.json',
+                                          lease_deadline=600.0, min_release_seconds=120) as client:
+            client.census()                                # a fresh Pod found after completion
+        self.assertNotIn('p', world.pods)                  # main's horizon: retried until it went away
+        self.assertGreater(clock.t, 150)
+        self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+
+    def test_an_unlanded_refresh_never_delays_a_creator_cleanup(self):
+        world = World([])
+        clock = FakeClock(0.0)
+        real = eg.LeaseClient.record_reads_back; failing = [False]
+
+        def poster(body):                                 # a Pod above the rate ceiling
+            world.pods['p'] = pod('p', costPerHr=9.0)
+            return dict(world.pods['p'])
+
+        def reads_back(client, pod_id):
+            return False if failing[0] else real(client, pod_id)
+
+        def unreadable(folder, pod_id, role, epoch, **options):
+            raise PermissionError('record unreadable')
+        with no_network(), mock.patch.object(eg.LeaseClient, 'record_reads_back', reads_back), \
+                eg.LeaseClient(self.root / eg.KNOWN_DIR, NAME, 'k', world.provider, world.list, clock, clock.sleep,
+                               self.root / 'ALERT-pod-not-released.json', lease_deadline=600.0) as client:
+            client.post({'name': NAME}, poster=poster)    # the initial handoff succeeds
+            failing[0] = True                             # then reads of its record fail
+            with mock.patch.object(eg, 'handoff_in', side_effect=unreadable):
+                client.census()                           # a refresh that cannot land
+
+                def slow_census(current):                 # every further census takes 15 s (round 17)
+                    clock.advance(15)
+                    return current
+                world.census = slow_census
+                calls = world.log.count(('LIST', None))
+                eg.resolve_or_alert(client, client.release_deadline(), self.root / 'ALERT-pod-not-released.json',
+                                    clock.sleep)          # the creator's finish() step
+                self.assertEqual(clock.t, 0.0)            # nothing waited on the refresh
+                self.assertEqual(world.log.count(('LIST', None)), calls)   # and no census was made for it
+            client.delete('p')                            # the creator's own price DELETE follows at once
+        self.assertEqual(world.deletes, ['p'])
+        self.assertTrue((self.root / eg.SYNC_ALERT).exists())
+
+    def test_a_handoff_waits_for_the_store_lock_and_degrades_after_the_bound(self):
+        folder = self.root / eg.KNOWN_DIR; done = []
+        with eg.StoreLock(folder):
+            worker = threading.Thread(target=lambda: done.append(eg.handoff(self.root, 'late', 'census', 1.0)))
+            worker.start(); worker.join(0.3)
+            self.assertEqual(done, [])
+            self.assertFalse((folder / 'late.json').exists())
+        worker.join(5)
+        self.assertEqual(done, [True])
+        with eg.StoreLock(folder), mock.patch.object(eg, 'STORE_LOCK_SECONDS', 0.2):
+            self.assertTrue(eg.handoff(self.root, 'later', 'census', 1.0))   # past the bound: main's handoff
+        self.assertEqual(read(folder / 'later.json')['id'], 'later')
+        self.assertIn('store lock', read(self.root / eg.SYNC_ALERT)['what'])
 
 
 class CensusAbsenceTests(Base):
@@ -578,13 +1356,13 @@ class PersistenceTests(Base):
         world = World([pod('pod1'), pod('dup2')])
         real = eg.handoff_in; failures = [6]; durable_at = []
 
-        def flaky(root, pod_id, role, epoch):
+        def flaky(root, pod_id, role, epoch, **options):
             if pod_id == 'dup2' and failures[0]:
                 failures[0] -= 1
                 raise OSError('disk full')
             if pod_id == 'dup2' and not durable_at:
                 durable_at.append(self.clock.t)
-            return real(root, pod_id, role, epoch)
+            return real(root, pod_id, role, epoch, **options)
         with mock.patch.object(eg, 'handoff_in', side_effect=flaky):
             self.assertEqual(self.loop(world, polls=40), 'returned')       # one process: retried until durable
         # both Pods were absent from the second pass (1115 s), so only the unpersisted dup2 delayed completion
@@ -598,10 +1376,10 @@ class PersistenceTests(Base):
         world = World([pod('pod1'), pod('dup2')])
         real = eg.handoff_in
 
-        def never_dup2(root, pod_id, role, epoch):
+        def never_dup2(root, pod_id, role, epoch, **options):
             if pod_id == 'dup2':
                 raise OSError('disk full')
-            return real(root, pod_id, role, epoch)
+            return real(root, pod_id, role, epoch, **options)
         with mock.patch.object(eg, 'handoff_in', side_effect=never_dup2):
             self.assertEqual(self.loop(world, polls=10), 'running')
         self.assertIsNone(self.completion())
@@ -649,10 +1427,10 @@ class OnceEndingTests(Base):
     def failing_dup2(self):
         real = eg.handoff_in
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id == 'dup2':
                 raise OSError('read-only store')
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
 
     def test_once_releases_an_unpersisted_duplicate_and_verifies_it(self):
@@ -735,10 +1513,10 @@ class ReleaseReappearanceTests(unittest.TestCase):
         world = World([pod('A'), pod('B')])
         real = eg.handoff_in
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id == 'B':
                 raise OSError('read-only store')
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         with no_network(), mock.patch.object(eg, 'handoff_in', side_effect=handoff), \
                 self.client(world, clock) as client:
             pending = eg.release_unhanded(client, ['A'], 1300., clock.sleep)
@@ -880,11 +1658,11 @@ class InterruptTests(unittest.TestCase):
     def interrupting(self, ids):
         real = eg.handoff_in; fired = []
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id in ids and not fired:
                 fired.append(pod_id)
                 raise KeyboardInterrupt()
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
 
     @staticmethod
@@ -965,8 +1743,8 @@ class ReconcileTests(unittest.TestCase):
         world = World([pod('B')]); clock = FakeClock(1000.)
         real = eg.handoff_in
 
-        def write_then_interrupt(folder, pod_id, role, epoch):
-            real(folder, pod_id, role, epoch)
+        def write_then_interrupt(folder, pod_id, role, epoch, **options):
+            real(folder, pod_id, role, epoch, **options)
             raise KeyboardInterrupt()
         with self.assertRaises(KeyboardInterrupt), no_network(), \
                 mock.patch.object(eg, 'handoff_in', side_effect=write_then_interrupt), \
@@ -980,11 +1758,11 @@ class ReconcileTests(unittest.TestCase):
         world = World([pod('B')]); clock = FakeClock(1000.)
         real = eg.handoff_in; fired = []
 
-        def interrupt_once(folder, pod_id, role, epoch):
+        def interrupt_once(folder, pod_id, role, epoch, **options):
             if not fired:
                 fired.append(pod_id)
                 raise KeyboardInterrupt()
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         with self.assertRaises(KeyboardInterrupt), no_network(), \
                 mock.patch.object(eg, 'handoff_in', side_effect=interrupt_once), \
                 self.client(world, clock) as client:
@@ -1013,13 +1791,13 @@ class ReconcileTests(unittest.TestCase):
         world.census = census
         real = eg.handoff_in; fired = []
 
-        def handoff(folder, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch, **options):
             if pod_id in ('A', 'B') and pod_id not in fired:
                 fired.append(pod_id)
                 raise KeyboardInterrupt('first' if pod_id == 'A' else 'second')
             if pod_id == 'A':
                 raise OSError('read-only store')
-            return real(folder, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch, **options)
         with self.assertRaises(KeyboardInterrupt) as raised, no_network(), \
                 mock.patch.object(eg, 'handoff_in', side_effect=handoff), self.client(world, clock) as client:
             client.census()
@@ -1053,12 +1831,15 @@ class RecheckTests(unittest.TestCase):
                 return call(method)
             api.call = wrapped
             return api
+        # B was seen alive and its presence handoff never lands: the guardian's Pod is never deleted
+        # here; the unlanded refresh is reported and discharged, as main holds none (round 16)
         with no_network(), failing_handoff({'A', 'B'}), \
                 eg.LeaseClient(self.folder, NAME, 'k', provider, world.list, clock, clock.sleep,
                                self.root / 'ALERT-pod-not-released.json') as client:
             pending = eg.release_unhanded(client, ['A', 'B'], 1300., clock.sleep)
         self.assertEqual(published, ['DELETE'])
         self.assertEqual(pending, [])
+        self.assertIn('refresh of B', read(self.root / eg.SYNC_ALERT)['what'])
         self.assertNotIn('B', world.deletes)
         self.assertIn('B', world.pods)
         self.assertIn('A', world.deletes)

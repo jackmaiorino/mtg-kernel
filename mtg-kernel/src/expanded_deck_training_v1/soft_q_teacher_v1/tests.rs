@@ -190,6 +190,8 @@ fn worlds_do_not_read_the_true_opponent_deck() {
         max_policy_steps: 1_000_000,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     };
     let original = episode_session_v1(&episode, &episode.configurations().unwrap()).unwrap();
     let FastActorResponseV1::Decision(d) = original.current_response() else {

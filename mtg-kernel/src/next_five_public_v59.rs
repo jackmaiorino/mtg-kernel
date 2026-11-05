@@ -145,18 +145,21 @@ pub(crate) fn require_legacy_visible(
     state: &GameState,
     viewer: Option<PlayerId>,
 ) -> Result<(), String> {
-    let ids = FamilyV59::ALL
-        .into_iter()
-        .filter_map(|f| card_def::card_id_by_name(f.name()))
-        .collect::<std::collections::BTreeSet<_>>();
+    // The registry is fixed at build time, so the family's ids are computed once.
+    static IDS: std::sync::OnceLock<std::collections::BTreeSet<u16>> = std::sync::OnceLock::new();
+    let ids = IDS.get_or_init(|| {
+        FamilyV59::ALL
+            .into_iter()
+            .filter_map(|f| card_def::card_id_by_name(f.name()))
+            .collect()
+    });
     if ids.is_empty() {
         return Ok(());
     }
-    let visible = state.objects.iter().any(|(id, _)| {
-        public::reference(state, id, viewer).is_some_and(
-            |r| matches!(r.identity,public::IdentityV1::Known{card_id}if ids.contains(&card_id)),
-        )
-    });
+    let visible = state
+        .objects
+        .iter()
+        .any(|(id, _)| public::visible_known(state, id, viewer, |card_id| ids.contains(&card_id)));
     let item_selected = |item: &crate::state::StackItem| {
         item.v4
             .ability_source_contract

@@ -8,6 +8,13 @@ name: CI
       - '*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_runner:
+        # The hosted fallback (job `hosted-fallback`) sets this to GitHub's
+        # hosted Windows image when a self-hosted runner could not admit a job.
+        description: Windows runs-on override as JSON, for example '"windows-2025"'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -105,9 +112,25 @@ jobs:
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # Three concurrent rustc processes, not four, to limit the peak.
+      # Lints are unchanged.
+      CARGO_BUILD_JOBS: "3"
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      # The Limited Clippy step needs more than the runner's 16 GB: its two
+      # whole-crate checks run at about 8.8 and 6.5 GB at once, and main
+      # itself (a7f3f92) was killed there with 8 MB left. With 8 GB of swap
+      # it passes, using about 5.6 GB of it (PR #486).
+      - name: Add swap space for the whole-crate checks
+        run: |
+          sudo fallocate -l 8G /mnt/lint.swap
+          sudo chmod 600 /mnt/lint.swap
+          sudo mkswap /mnt/lint.swap
+          sudo swapon /mnt/lint.swap
+          free -m
 
       - name: Install pinned Rust in a fresh toolchain directory
         shell: bash
@@ -187,7 +210,7 @@ jobs:
       # under the local merge protocol; this step still fails closed on any
       # merged change that breaks the CUDA feature's compilation or lints.
       - name: Run CUDA backend feature Clippy (compile gate, no device)
-        run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1 -- -D warnings
+        run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1,gpu-exact-v1 -- -D warnings
 
       - name: Save compiled quality output
         if: success()
@@ -242,7 +265,7 @@ jobs:
           # repository variable routes them elsewhere, for example
           # '["self-hosted", "mtg-ci-windows"]' for the local pool.
           - os: windows-2025
-            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
+            runner: ${{ inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
     # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
@@ -407,7 +430,9 @@ jobs:
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'
         run: |
-          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1 --lib experimental_burn_net8_packed_v1::
+          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1,gpu-exact-v1 --lib experimental_burn_net8_packed_v1::
+          # The exact GPU path's host tests; its device tests are ignored here.
+          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1,gpu-exact-v1 --lib gpu_exact_v1::
 
       - name: Save compiled test output
         if: success() && runner.environment == 'github-hosted'
@@ -539,7 +564,7 @@ jobs:
           - limited-model-7
     # Linux uses hosted runners. Windows follows the routing variable of the
     # other groups; pull requests from forks never run on self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     steps:
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
@@ -855,22 +880,28 @@ jobs:
     if: needs.detect-changes.outputs.python_relevant == 'true'
     # Includes waiting for the same low-priority CPU admission as Rust jobs.
     timeout-minutes: 120
+    # Windows' default pwsh fails a step only on its last command's exit code, so an earlier failing command in a
+    # multi-line step passes silently. Bash (-eo pipefail) stops at the first failure on both systems.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         # Windows runs the suite about twice as slowly, so it gets one more
         # shard to finish alongside the Ubuntu shards.
         include:
-          - {os: ubuntu-24.04, shard: 0, shard_count: 2, kernel_bin: target/release/kernel_rl_env}
-          - {os: ubuntu-24.04, shard: 1, shard_count: 2, kernel_bin: target/release/kernel_rl_env}
-          - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
-          - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
-          - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
+          - {os: ubuntu-24.04, shard: 0, shard_count: 2, kernel_bin: target/release/kernel_rl_env, agent_bridge_bin: target/release/agent_bridge_v1}
+          - {os: ubuntu-24.04, shard: 1, shard_count: 2, kernel_bin: target/release/kernel_rl_env, agent_bridge_bin: target/release/agent_bridge_v1}
+          - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
+          - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
+          - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
+      MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/${{ matrix.agent_bridge_bin }}
     steps:
       - name: Use Git Bash for bash steps on Windows
         if: runner.os == 'Windows'
@@ -960,6 +991,26 @@ jobs:
           cd python/tools/tests && PYTHONPATH=.. uv run --no-sync python -m unittest -v \
             test_nine_deck_cloud_v1.PackageTests.test_tooling_closure_is_complete_from_a_copy
 
+      # G(i) campaign, qualification, lease and archive tools: fakes and local processes, no provider or network.
+      - name: G(i) tools tests
+        if: matrix.shard == 0
+        shell: bash
+        run: |
+          cd python/tools/tests && PYTHONPATH=.. uv run --no-sync python -m unittest -v \
+            test_g_references_campaign_v1 test_g_references_qualify_v1 test_g_references_cloud_v1 \
+            test_g_references_archive_v1
+
+      # Tests that live beside top-level tools/ scripts (no Rust binary, no network).
+      - name: Top-level tools tests
+        if: matrix.shard == 0
+        shell: bash
+        run: |
+          uv run --no-sync python -m unittest discover -v -s tools/search_experiment/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/stage4a/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/t1_diagnosis -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/ci/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/w5/tests -p 'test_*.py'
+
       - name: Use the runner's persistent Python environment build
         if: runner.environment == 'self-hosted'
         shell: bash
@@ -983,7 +1034,11 @@ jobs:
           scope: python-env
 
       - name: Build release JSONL environment
-        run: cargo build --release --locked --bin kernel_rl_env
+        run: cargo build --release --locked --bin kernel_rl_env --bin agent_bridge_v1
+
+      - name: Validate agent bridge v1 golden transcripts
+        if: matrix.shard == 0
+        run: uv run --no-sync python python/tools/generate_agent_bridge_goldens.py --check --repo-root .
 
       # Shards of one system build the same output; the first one saves it.
       - name: Save compiled Python environment
@@ -995,3 +1050,29 @@ jobs:
 
       - name: Run Python test shard against the real Rust environment
         run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.shard_count }}
+
+  # A self-hosted runner's job-started hook waits for host_slots CPU admission
+  # at most MTG_CI_ADMISSION_TIMEOUT seconds and then fails the job before any
+  # step, logging MTG_CI_ADMISSION_TIMEOUT. A job cannot move to another runner
+  # once one accepted it, so this hosted job dispatches the workflow again on
+  # the same branch with Windows on hosted runners. Real failures are not
+  # rerun, and a dispatched run never dispatches again. It runs only while the
+  # routing variable sends Windows jobs to the self-hosted pool.
+  hosted-fallback:
+    name: Hosted fallback for self-hosted admission timeouts
+    needs: [rust-test-groups, rust-limited-groups, python-tests]
+    if: always() && contains(needs.*.result, 'failure') && contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Rerun admission timeouts on hosted runners
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FALLBACK_REF: ${{ github.head_ref || github.ref_name }}
+        run: python3 tools/ci/hosted_fallback.py

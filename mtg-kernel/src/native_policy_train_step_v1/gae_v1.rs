@@ -817,10 +817,31 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         let mut group_tapes = Vec::with_capacity(groups.len());
         let mut policy_sum = 0.0f32;
         let mut value_sum = 0.0f32;
+        // W5's policy-gradient mask (`w5-xact-v1`), only through an external
+        // auxiliary input; every other update has none.
+        let policy_mask = match &line_b {
+            Some(AuxiliaryTermsSourceV1::External(input)) => {
+                archive_distillation_v1::policy_mask_v1(input, groups)?
+            }
+            _ => None,
+        };
+        if policy_mask.is_some()
+            && (exploration.is_some()
+                || imitation
+                || !matches!(backward_execution, BackwardExecutionV1::Sequential))
+        {
+            return Err(NativePolicyTrainErrorV1::LineBAuxiliary {
+                code: "policy-mask-requires-sequential-gae",
+            });
+        }
+        let policy_count = policy_mask.as_ref().map(|mask| mask.policy_count);
         for (group_index, group) in groups.iter().enumerate() {
             let substep_count = physical_substep_count_u32_v1(group_index, group.substeps.len())?;
             let mut tapes = Vec::with_capacity(group.substeps.len());
             let mut joint_log_probability = None;
+            let masked = policy_mask.as_ref().map(|mask| &mask.masked[group_index]);
+            // The policy term's joint log-probability over unmasked substeps.
+            let mut policy_joint = None;
             for (substep_index, substep) in group.substeps.iter().enumerate() {
                 let NativePolicyForwardInputV1::Encoded(encoded) = &substep.forward else {
                     unreachable!("canonical input checked before forward");
@@ -862,6 +883,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                     None => selected_log_probability,
                     Some(active) => active + selected_log_probability,
                 });
+                if masked.is_some_and(|m| !m[substep_index]) {
+                    policy_joint = Some(match policy_joint {
+                        None => selected_log_probability,
+                        Some(active) => active + selected_log_probability,
+                    });
+                }
                 selected_outputs.push(NativeSelectedOutputV1 {
                     group_index,
                     substep_index,
@@ -880,7 +907,10 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             let value = tapes[0].tape.value_v1();
             let advantage = advantages[group_index];
             let value_target = value_targets[group_index];
-            let policy_term = -joint_log_probability * advantage;
+            let policy_term = match masked {
+                None => -joint_log_probability * advantage,
+                Some(_) => -policy_joint.unwrap_or(0.0) * advantage,
+            };
             let value_error = value - value_target;
             #[cfg(test)]
             record_train_step_v1(|capture| {
@@ -903,10 +933,22 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 tapes,
                 advantage,
                 value_error,
+                policy_mask: match (masked, policy_count) {
+                    (Some(masked), Some(denominator)) => Some(GroupPolicyMaskV1 {
+                        masked: masked.clone(),
+                        denominator,
+                    }),
+                    _ => None,
+                },
             });
         }
         let group_count = exact_group_count_f32(groups.len())?;
-        let mut loss = (policy_sum + value_coefficient * value_sum) / group_count;
+        let mut loss = match policy_count {
+            None => (policy_sum + value_coefficient * value_sum) / group_count,
+            Some(denominator) => {
+                policy_sum / denominator + value_coefficient * value_sum / group_count
+            }
+        };
         let beta = exploration.map_or(0.0, |e| e.0);
         let regularizer_sum = if exploration.is_some() {
             group_tapes
@@ -956,7 +998,27 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         let backward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
         // Without the exploration regularizer the sequential backward has an
         // exact parallel form; it runs on the update's forward workers.
+        // An installed exact GPU learner gives the same gradients and gauge.
+        #[cfg(feature = "gpu-exact-v1")]
+        let gpu = match backward_execution {
+            BackwardExecutionV1::Sequential if beta == 0.0 && policy_mask.is_none() => {
+                gpu_exact_backward_v1::gpu_exact_backward_dims_v1::<D>(
+                    &parameters,
+                    &group_tapes,
+                    groups,
+                    group_count,
+                    value_coefficient,
+                    input_config,
+                    math,
+                    self.no_state_digest_columns.is_some(),
+                )
+            }
+            _ => None,
+        };
+        #[cfg(not(feature = "gpu-exact-v1"))]
+        let gpu = None;
         let parallel = match backward_execution {
+            _ if gpu.is_some() => gpu,
             BackwardExecutionV1::Sequential if beta == 0.0 => {
                 exact_parallel_backward_v1::exact_parallel_backward_dims_v1::<D>(
                     &parameters,
@@ -986,9 +1048,10 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 // Same reverse group/substep/action order as
                 // `train_step_with_input_config_v1`'s Sequential arm.
                 for group in group_tapes.into_iter().rev() {
-                    let d_joint_log_probability = -group.advantage / group_count;
                     let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
                     for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
+                        let d_joint_log_probability =
+                            group.d_joint_log_probability_v1(substep_index, group_count);
                         resize_zeroed_v1(
                             &mut reverse_workspace.grad_output,
                             selected.log_probabilities.len(),

@@ -106,6 +106,7 @@ impl NativeRegistrationNetV1 {
             None,
             None,
             Some((&self.weights, rows)),
+            None,
         )
     }
 }

@@ -1,0 +1,442 @@
+//! One CUDA device with the exact kernels loaded: NVRTC compile with an
+//! on-disk cache, and the activation proof.
+
+use cudarc::driver::{CudaContext, CudaFunction, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions, Ptx};
+use sha2::{Digest, Sha256};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+/// Version of the kernel source and its compile options; part of every
+/// cache and proof key.
+const PROGRAM_V1: &str = "mtg-kernel-gpu-exact-v1";
+
+const TANH_SOURCE: &str = include_str!("tanh.cuh");
+const NET8_SOURCE: &str = include_str!("net8_forward.cu");
+const NET8_BACKWARD_SOURCE: &str = include_str!("net8_backward.cu");
+const NET8_V2_SOURCE: &str = include_str!("net8_forward_v2.cu");
+
+/// What a result depends on beyond its inputs: the program and options, the
+/// NVRTC that compiled it and the device that runs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeviceIdentityV1 {
+    pub(crate) ordinal: usize,
+    pub(crate) name: String,
+    pub(crate) compute_capability: (i32, i32),
+    pub(crate) driver_version: i32,
+    pub(crate) nvrtc_version: (i32, i32),
+    /// SHA-256 of the program name, source and options.
+    pub(crate) program_sha256: String,
+    /// `vector_tanh_v1`'s key over the loaded `tanhf` image and CPU features.
+    pub(crate) host_tanhf_identity: String,
+    /// The proof record's key: the program, this device and the host tanhf.
+    pub(crate) tanh_proof_key: String,
+}
+
+/// Which forward kernel a device runs. Both give the CPU's bits; v1 stays
+/// for one release as the A/B baseline (design `gpu_exact_kernels_s3b_v1.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KernelsV1 {
+    V1,
+    V2,
+}
+
+/// Process-wide execution options, set before any device opens. Neither
+/// changes a result bit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ExactOptionsV1 {
+    pub(crate) kernels: KernelsV1,
+    /// The host thread sleeps on GPU completion instead of spinning
+    /// (`CU_CTX_SCHED_BLOCKING_SYNC`).
+    pub(crate) blocking_wait: bool,
+}
+
+impl Default for ExactOptionsV1 {
+    fn default() -> Self {
+        Self {
+            kernels: KernelsV1::V2,
+            blocking_wait: false,
+        }
+    }
+}
+
+static OPTIONS: std::sync::OnceLock<ExactOptionsV1> = std::sync::OnceLock::new();
+
+/// Sets the process's options once; devices opened later use them.
+pub(crate) fn configure_v1(options: ExactOptionsV1) -> Result<(), String> {
+    OPTIONS
+        .set(options)
+        .map_err(|_| "GPU exact options are already set".to_owned())
+}
+
+pub(crate) fn options_v1() -> ExactOptionsV1 {
+    OPTIONS.get().copied().unwrap_or_default()
+}
+
+/// The v2 tile shape (`MTG_V2_KT`, `MTG_V2_ROWS`): it decides which thread
+/// computes an output, never that output's order. Tests compile a second
+/// shape to prove that.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TileShapeV1 {
+    pub(crate) k_tile: u32,
+    pub(crate) rows: u32,
+}
+
+impl TileShapeV1 {
+    pub(crate) const DEFAULT: Self = Self {
+        k_tile: 64,
+        rows: 32,
+    };
+
+    /// Two weight tiles of `k_tile x 64` and two input tiles of `rows x k_tile`.
+    fn shared_bytes(self) -> u32 {
+        4 * (2 * self.k_tile * 64 + 2 * self.rows * self.k_tile)
+    }
+}
+
+pub(crate) struct ExactDeviceV1 {
+    pub(crate) identity: DeviceIdentityV1,
+    pub(crate) stream: Arc<CudaStream>,
+    pub(crate) net8_forward: CudaFunction,
+    /// None below sm_80: the v2 source (cp.async) is not compiled there.
+    pub(crate) net8_forward_v2: Option<CudaFunction>,
+    /// Dynamic shared memory of one `mtg_net8_forward_v2` block.
+    pub(crate) v2_shared_bytes: u32,
+    pub(crate) options: ExactOptionsV1,
+    pub(crate) net8_reverse: CudaFunction,
+    pub(crate) net8_param_grad: CudaFunction,
+    pub(crate) net8_embedding_grad: CudaFunction,
+    tanh_proof: CudaFunction,
+    #[cfg_attr(
+        not(any(test, feature = "gpu-exact-fault-injection-v1")),
+        allow(dead_code)
+    )]
+    fault_trap: CudaFunction,
+    /// Kept alive for the functions above; also allocates pinned host memory.
+    pub(crate) ctx: Arc<CudaContext>,
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The fault-injection kernel, which the v2 source also defines.
+const FAULT_TRAP_SOURCE: &str = "extern \"C\" __global__ void mtg_fault_trap() { __trap(); }\n";
+
+/// The program for `tile`. The v2 source uses `cp.async` (sm_80 and newer),
+/// so without `with_v2` it is left out (keeping its fault-trap kernel) and
+/// the program holds v1 only; the source with v2 is unchanged, and so is its
+/// program hash.
+pub(super) fn source_and_options(tile: TileShapeV1, with_v2: bool) -> (String, Vec<String>) {
+    let v2 = if with_v2 {
+        NET8_V2_SOURCE
+    } else {
+        FAULT_TRAP_SOURCE
+    };
+    let source = format!(
+        "#define MTG_HIDDEN 64\n#define MTG_V2_KT {}\n#define MTG_V2_ROWS {}\n{TANH_SOURCE}\n{NET8_SOURCE}\n{NET8_BACKWARD_SOURCE}\n{v2}",
+        tile.k_tile, tile.rows
+    );
+    // --fmad=false: no contraction of a separate multiply and add, so every
+    // `a * b + c` the source does not spell as an FMA stays two roundings.
+    let options = vec![
+        "--fmad=false".to_owned(),
+        "--ftz=false".to_owned(),
+        "--prec-div=true".to_owned(),
+        "--prec-sqrt=true".to_owned(),
+    ];
+    (source, options)
+}
+
+/// Where compiled PTX and proof records live: `MTG_KERNEL_GPU_EXACT_DIR`,
+/// else `%LOCALAPPDATA%\mtg-kernel\gpu-exact`.
+fn record_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("MTG_KERNEL_GPU_EXACT_DIR") {
+        return Some(dir.into());
+    }
+    std::env::var_os("LOCALAPPDATA")
+        .map(|base| PathBuf::from(base).join("mtg-kernel").join("gpu-exact"))
+}
+
+fn write_atomically(path: &std::path::Path, bytes: &[u8]) {
+    // Best effort: an unwritable record only means the next process redoes it.
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+    if std::fs::write(&temp, bytes).is_ok() && std::fs::rename(&temp, path).is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+}
+
+fn nvrtc_version() -> Result<(i32, i32), String> {
+    let (mut major, mut minor) = (0, 0);
+    // SAFETY: valid out pointers; NVRTC is loaded dynamically by cudarc.
+    let status = unsafe { cudarc::nvrtc::sys::nvrtcVersion(&mut major, &mut minor) };
+    if status != cudarc::nvrtc::sys::nvrtcResult::NVRTC_SUCCESS {
+        return Err(format!("nvrtcVersion: {status:?}"));
+    }
+    Ok((major, minor))
+}
+
+fn driver_version() -> Result<i32, String> {
+    let mut version = 0;
+    // SAFETY: a valid out pointer; the driver is initialized by the context.
+    let status = unsafe { cudarc::driver::sys::cuDriverGetVersion(&mut version) };
+    if status != cudarc::driver::sys::CUresult::CUDA_SUCCESS {
+        return Err(format!("cuDriverGetVersion: {status:?}"));
+    }
+    Ok(version)
+}
+
+impl ExactDeviceV1 {
+    /// Opens device `ordinal`, loads the program (compiling it once per
+    /// program, NVRTC and compute capability) and proves the activation
+    /// equal to the host `tanhf` (once per device and host libm).
+    pub(crate) fn open_v1(ordinal: usize) -> Result<Self, String> {
+        Self::open_with_tile_v1(ordinal, TileShapeV1::DEFAULT)
+    }
+
+    /// [`Self::open_v1`] with the v2 kernel compiled for `tile`.
+    pub(crate) fn open_with_tile_v1(ordinal: usize, tile: TileShapeV1) -> Result<Self, String> {
+        // Above 48 KB a launch needs the opt-in attribute; no shape needs it.
+        if tile.shared_bytes() > 48 * 1024
+            || !tile.rows.is_multiple_of(4)
+            || !(tile.k_tile * 64).is_multiple_of(256)
+        {
+            return Err(format!("unsupported v2 tile shape {tile:?}"));
+        }
+        let execution = options_v1();
+        let ctx = CudaContext::new(ordinal).map_err(|e| format!("CUDA device {ordinal}: {e:?}"))?;
+        if execution.blocking_wait {
+            ctx.set_blocking_synchronize()
+                .map_err(|e| format!("blocking wait: {e:?}"))?;
+        }
+        let stream = ctx.default_stream();
+        let name = ctx.name().map_err(|e| format!("device name: {e:?}"))?;
+        let compute_capability = ctx
+            .compute_capability()
+            .map_err(|e| format!("compute capability: {e:?}"))?;
+        // v2 stages tiles with cp.async (sm_80 and newer); older devices run v1.
+        let execution = if compute_capability.0 < 8 {
+            ExactOptionsV1 {
+                kernels: KernelsV1::V1,
+                ..execution
+            }
+        } else {
+            execution
+        };
+        let with_v2 = compute_capability.0 >= 8;
+        let (source, options) = source_and_options(tile, with_v2);
+        let mut h = Sha256::new();
+        h.update(PROGRAM_V1.as_bytes());
+        h.update(source.as_bytes());
+        for option in &options {
+            h.update(option.as_bytes());
+        }
+        let identity = DeviceIdentityV1 {
+            ordinal,
+            name,
+            compute_capability,
+            driver_version: driver_version()?,
+            nvrtc_version: nvrtc_version()?,
+            program_sha256: hex(&h.finalize()),
+            host_tanhf_identity: String::new(),
+            tanh_proof_key: String::new(),
+        };
+        let ptx = load_or_compile_v1(&identity, &source, &options)?;
+        let module = ctx
+            .load_module(ptx)
+            .map_err(|e| format!("load module: {e:?}"))?;
+        let load = |name: &str| {
+            module
+                .load_function(name)
+                .map_err(|e| format!("{name}: {e:?}"))
+        };
+        let device = Self {
+            net8_forward: load("mtg_net8_forward")?,
+            net8_forward_v2: if with_v2 {
+                Some(load("mtg_net8_forward_v2")?)
+            } else {
+                None
+            },
+            v2_shared_bytes: tile.shared_bytes(),
+            options: execution,
+            net8_reverse: load("mtg_net8_reverse")?,
+            net8_param_grad: load("mtg_net8_param_grad")?,
+            net8_embedding_grad: load("mtg_net8_embedding_grad")?,
+            tanh_proof: load("mtg_tanh_proof")?,
+            fault_trap: load("mtg_fault_trap")?,
+            identity,
+            stream,
+            ctx,
+        };
+        let mut device = device;
+        device.identity.host_tanhf_identity =
+            crate::vector_tanh_v1::host_tanhf_identity_v1().unwrap_or_default();
+        device.identity.tanh_proof_key = device.tanh_proof_key_v1()?;
+        device.ensure_tanh_proved_v1()?;
+        Ok(device)
+    }
+
+    /// Launches a kernel that traps: a real device fault, after which the
+    /// context fails every operation (feature gpu-exact-fault-injection-v1).
+    #[cfg(any(test, feature = "gpu-exact-fault-injection-v1"))]
+    pub(crate) fn inject_fault_v1(&self) {
+        eprintln!(
+            "gpu-exact: injecting a device fault on {}",
+            self.identity.name
+        );
+        let mut launch = self.stream.launch_builder(&self.fault_trap);
+        let config = LaunchConfig {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        // SAFETY: the kernel takes no arguments; it traps by design.
+        let _ = unsafe { launch.launch(config) };
+        let _ = self.stream.synchronize();
+    }
+
+    /// Free and total device memory in bytes.
+    pub(crate) fn memory_v1(&self) -> Result<(usize, usize), String> {
+        self.ctx
+            .mem_get_info()
+            .map_err(|e| format!("memory query: {e:?}"))
+    }
+
+    /// The proof record's key: the program, this device and NVRTC, and the
+    /// host `tanhf` (`vector_tanh_v1`'s key over the loaded images).
+    fn tanh_proof_key_v1(&self) -> Result<String, String> {
+        let host = crate::vector_tanh_v1::host_tanhf_identity_v1().ok_or_else(|| {
+            "GPU exact kernels require the Windows UCRT FMA3 tanhf in the default MXCSR state"
+                .to_owned()
+        })?;
+        let id = &self.identity;
+        let mut h = Sha256::new();
+        h.update(b"tanh-proof-v1");
+        h.update(id.program_sha256.as_bytes());
+        h.update(id.name.as_bytes());
+        h.update(format!(
+            "{:?}{:?}{}",
+            id.compute_capability, id.nvrtc_version, id.driver_version
+        ));
+        h.update(host.as_bytes());
+        Ok(hex(&h.finalize()))
+    }
+
+    fn ensure_tanh_proved_v1(&self) -> Result<(), String> {
+        let key = self.identity.tanh_proof_key.clone();
+        let record = record_dir().map(|dir| dir.join("tanh-proof").join(format!("{key}.proved")));
+        if let Some(path) = &record {
+            if std::fs::read_to_string(path).is_ok_and(|s| s.trim() == key) {
+                return Ok(());
+            }
+        }
+        if let Some(first) = self.tanh_mismatch_v1()? {
+            return Err(format!(
+                "GPU tanh differs from the host tanhf at input bits {first:#010x}"
+            ));
+        }
+        if let Some(path) = record {
+            write_atomically(&path, key.as_bytes());
+        }
+        Ok(())
+    }
+
+    /// Evaluates the kernel's tanh on all 2^32 inputs and compares each with
+    /// the host's (`vector_tanh_v1::libm_tanh_in_place_v1`, the production
+    /// activation). NaN inputs are skipped: every caller fails closed on a
+    /// non-finite output. Returns the first mismatching input, if any.
+    pub(crate) fn tanh_mismatch_v1(&self) -> Result<Option<u32>, String> {
+        const CHUNK: u32 = 1 << 24;
+        let mut device_out = self
+            .stream
+            .alloc_zeros::<u32>(CHUNK as usize)
+            .map_err(|e| format!("alloc: {e:?}"))?;
+        let mut gpu = vec![0u32; CHUNK as usize];
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+        let mut first = 0u32;
+        loop {
+            let mut launch = self.stream.launch_builder(&self.tanh_proof);
+            launch.arg(&first).arg(&CHUNK).arg(&mut device_out);
+            let config = LaunchConfig {
+                grid_dim: (1024, 1, 1),
+                block_dim: (256, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            // SAFETY: the kernel writes CHUNK u32 values into a CHUNK buffer.
+            unsafe { launch.launch(config) }.map_err(|e| format!("tanh proof launch: {e:?}"))?;
+            self.stream
+                .memcpy_dtoh(&device_out, &mut gpu)
+                .map_err(|e| format!("tanh proof download: {e:?}"))?;
+            let span = (CHUNK as usize).div_ceil(threads);
+            let mismatch = std::thread::scope(|s| {
+                let workers: Vec<_> = gpu
+                    .chunks(span)
+                    .enumerate()
+                    .map(|(t, part)| {
+                        s.spawn(move || {
+                            let base = first + (t * span) as u32;
+                            let mut host: Vec<f32> = (0..part.len())
+                                .map(|i| f32::from_bits(base + i as u32))
+                                .collect();
+                            crate::vector_tanh_v1::libm_tanh_in_place_v1(&mut host);
+                            part.iter()
+                                .zip(&host)
+                                .enumerate()
+                                .find_map(|(i, (&g, &c))| {
+                                    let input = f32::from_bits(base + i as u32);
+                                    (!input.is_nan() && g != c.to_bits()).then_some(base + i as u32)
+                                })
+                        })
+                    })
+                    .collect();
+                workers
+                    .into_iter()
+                    .filter_map(|w| w.join().expect("proof worker"))
+                    .min()
+            });
+            if mismatch.is_some() {
+                return Ok(mismatch);
+            }
+            match first.checked_add(CHUNK) {
+                Some(next) => first = next,
+                None => return Ok(None),
+            }
+        }
+    }
+}
+
+fn load_or_compile_v1(
+    identity: &DeviceIdentityV1,
+    source: &str,
+    options: &[String],
+) -> Result<Ptx, String> {
+    let (major, minor) = identity.compute_capability;
+    let arch: &'static str = Box::leak(format!("compute_{major}{minor}").into_boxed_str());
+    let mut h = Sha256::new();
+    h.update(identity.program_sha256.as_bytes());
+    h.update(format!("{:?}{arch}", identity.nvrtc_version));
+    let key = hex(&h.finalize());
+    let path = record_dir().map(|dir| dir.join("ptx").join(format!("{key}.ptx")));
+    if let Some(path) = &path {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            return Ok(Ptx::from_src(text));
+        }
+    }
+    let ptx = compile_ptx_with_opts(
+        source,
+        CompileOptions {
+            arch: Some(arch),
+            options: options.to_vec(),
+            name: Some("mtg_gpu_exact_v1.cu".into()),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| format!("NVRTC: {e:?}"))?;
+    if let Some(path) = &path {
+        write_atomically(path, ptx.to_src().as_bytes());
+    }
+    Ok(ptx)
+}

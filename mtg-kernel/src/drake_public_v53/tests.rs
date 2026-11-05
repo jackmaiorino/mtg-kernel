@@ -361,10 +361,14 @@ fn actual_paid_prowess_current_temporary_form_final_damage_activation_restore_an
                     _ => None,
                 })
                 .unwrap();
-            match &mut row.value {
+            match &mut std::sync::Arc::make_mut(row).value {
                 J::Debit { count, .. } => *count = 2,
                 J::Paid { original, .. } => {
-                    original.objects.get_mut(drake).counters.incubation += 1
+                    std::sync::Arc::make_mut(original)
+                        .objects
+                        .get_mut(drake)
+                        .counters
+                        .incubation += 1
                 }
                 _ => unreachable!(),
             }
@@ -543,12 +547,18 @@ fn public_tamper_and_erased_private_originals_refuse_before_recapture_both_seats
                         _ => None,
                     })
                     .unwrap();
-                match &mut row.value {
+                match &mut std::sync::Arc::make_mut(row).value {
                     J::Captured { amount, .. } => *amount = 1,
                     J::CombatInput { world, .. } => {
-                        world.objects.get_mut(drake).counters.incubation = 99
+                        std::sync::Arc::make_mut(world)
+                            .objects
+                            .get_mut(drake)
+                            .counters
+                            .incubation = 99
                     }
-                    J::Enclosing { original, .. } => original.players[actor.index()].life -= 1,
+                    J::Enclosing { original, .. } => {
+                        std::sync::Arc::make_mut(original).players[actor.index()].life -= 1
+                    }
                     _ => unreachable!(),
                 }
             }

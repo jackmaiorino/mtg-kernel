@@ -1,0 +1,125 @@
+{
+ "schema": "mtg-kernel-v8-inclusion-conversion-summary/v1",
+ "description": "OH2 r2 b512 doses converted to the V8 inclusion net (native_policy_train_step_v1::v8_inclusion_v1) by examples/v8_inclusion_convert_v1.rs, with the preservation check of 24 real games per chain (the converted policy as both seats, 4 of them London; f32 bits (to_bits) of every logit and the value against the parent on the same decisions, the include column adding only nonzero products). Bulk receipt and checkpoints: D:/e-scratch/w4-combat-20261030/v8-convert (not committed).",
+ "receipt": {
+  "path": "D:/e-scratch/w4-combat-20261030/v8-convert/receipt.json",
+  "sha256": "7d4b7625c20937fb582b5de0f87fc7bfe99fad737eacdaf4adb6c0367f2142cd"
+ },
+ "definition": "a mismatch is any logit or the value whose f32 bits differ (to_bits, so a signed-zero change counts), or any nonfinite parent output",
+ "init_law": "torch_default_uniform_v1",
+ "seed_rule": "2026103100 + chain number",
+ "chains": [
+  {
+   "chain": "r2-s1",
+   "parent_sha256": "8a52be51b92d9f7bbca211c5f0a20c7f291c1c78a74f1dd83fb71c1cb27c8837",
+   "output_sha256": "9d0f1690c15299d0b410eed38ec863927721fbec54b21d39d3887d307585f225",
+   "seed": 2026103101,
+   "adam_step": 118584,
+   "rows": 4214,
+   "include_active_rows": 702,
+   "pairing_active_rows": 79,
+   "pairing_relation_rows": 102,
+   "london_pregame_rows": 280,
+   "mismatches": 0
+  },
+  {
+   "chain": "r2-s2",
+   "parent_sha256": "40ab50bfd74043364f643da11d488547dba74b72a9a410dd3589a303e4caac29",
+   "output_sha256": "78d809b3aa9da9fe8d76587efedd10237122834dfc2e22de25d43e0a04b1d775",
+   "seed": 2026103102,
+   "adam_step": 118584,
+   "rows": 3374,
+   "include_active_rows": 561,
+   "pairing_active_rows": 40,
+   "pairing_relation_rows": 50,
+   "london_pregame_rows": 280,
+   "mismatches": 0
+  },
+  {
+   "chain": "r2-s3",
+   "parent_sha256": "acd5b487709294d31f9b9aa53a91e30a8a5eb00f5a25de194a5aedc3b54967ef",
+   "output_sha256": "a36c4e8bd0ab649d9f729dc1551800a60630329a944778055c46a73bd03d22e4",
+   "seed": 2026103103,
+   "adam_step": 118584,
+   "rows": 3659,
+   "include_active_rows": 585,
+   "pairing_active_rows": 38,
+   "pairing_relation_rows": 46,
+   "london_pregame_rows": 280,
+   "mismatches": 0
+  },
+  {
+   "chain": "r2-s4",
+   "parent_sha256": "b8ffe7c013eb697b4586b21e5058f967087f09b678fe633587b9e496335fcd03",
+   "output_sha256": "7ce41d4fd6e253cc7d53616c0f7f74842c4eb776519785869b991dc1df70e3ad",
+   "seed": 2026103104,
+   "adam_step": 118584,
+   "rows": 4972,
+   "include_active_rows": 777,
+   "pairing_active_rows": 67,
+   "pairing_relation_rows": 97,
+   "london_pregame_rows": 280,
+   "mismatches": 0
+  },
+  {
+   "chain": "r2-s5",
+   "parent_sha256": "cd08845aefa69abfa24e59b37cde11166906479a18d7ce27fd81fba5d2df7d15",
+   "output_sha256": "6203db325f1cddb63dd3aa23f05b60f7f3dc0c41d31f667712252b969da19d7f",
+   "seed": 2026103105,
+   "adam_step": 118584,
+   "rows": 3780,
+   "include_active_rows": 513,
+   "pairing_active_rows": 23,
+   "pairing_relation_rows": 24,
+   "london_pregame_rows": 280,
+   "mismatches": 0
+  },
+  {
+   "chain": "r2-s6",
+   "parent_sha256": "15f582d65c367c98ca2caa4691b6e754057ae93de9aeafa82e6389f8d3f7fa0d",
+   "output_sha256": "8060ab6439c3df3552809bc8531abd27210617900173a2087ba35cdc12e287db",
+   "seed": 2026103106,
+   "adam_step": 118584,
+   "rows": 3424,
+   "include_active_rows": 543,
+   "pairing_active_rows": 40,
+   "pairing_relation_rows": 49,
+   "london_pregame_rows": 280,
+   "mismatches": 0
+  },
+  {
+   "chain": "r2-s7",
+   "parent_sha256": "a991b72b88df2b2c01ebe17ad006113c0e6461098d17fc56597e4f0802ad9ebd",
+   "output_sha256": "2bfaf13b1a3cb5e12e78f16f207509d916283831d58807adf2735c3e3d50baeb",
+   "seed": 2026103107,
+   "adam_step": 118584,
+   "rows": 4093,
+   "include_active_rows": 620,
+   "pairing_active_rows": 57,
+   "pairing_relation_rows": 75,
+   "london_pregame_rows": 280,
+   "mismatches": 0
+  },
+  {
+   "chain": "r2-s8",
+   "parent_sha256": "c4d2b6499135fd0a74b73fb8e2a82b53af83b021f15d35c33452fd412e2a4967",
+   "output_sha256": "8ee7cac3ddaf1bcfb9e7a30832dbaa7aabbc0726f8600ecc9396e65617b169c5",
+   "seed": 2026103108,
+   "adam_step": 118584,
+   "rows": 3596,
+   "include_active_rows": 576,
+   "pairing_active_rows": 32,
+   "pairing_relation_rows": 42,
+   "london_pregame_rows": 246,
+   "mismatches": 0
+  }
+ ],
+ "totals": {
+  "rows": 31112,
+  "include_active_rows": 4877,
+  "pairing_active_rows": 376,
+  "pairing_relation_rows": 485,
+  "london_pregame_rows": 2206,
+  "mismatches": 0
+ }
+}

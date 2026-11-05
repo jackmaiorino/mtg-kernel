@@ -139,6 +139,30 @@ pub(crate) fn reference(
         ),
     })
 }
+
+/// Whether `reference(state, id, viewer)` is visible with a known identity that `selected` accepts. A known
+/// identity is the object's own card and exists only face up, so the card test runs first and only a face-up
+/// object of a selected card pays for the visibility check. Debug builds compare every answer with the
+/// `reference` form.
+pub(crate) fn visible_known(
+    state: &GameState,
+    id: ObjectId,
+    viewer: Option<PlayerId>,
+    selected: impl Fn(u16) -> bool,
+) -> bool {
+    let fast = state
+        .objects
+        .try_get(id)
+        .is_some_and(|o| o.v4.face_down_v1.is_none() && selected(o.card_def))
+        && reference(state, id, viewer).is_some();
+    debug_assert_eq!(
+        fast,
+        reference(state, id, viewer).is_some_and(
+            |r| matches!(r.identity, IdentityV1::Known { card_id } if selected(card_id))
+        )
+    );
+    fast
+}
 pub(crate) fn root(
     state: &GameState,
     s: AbilitySourceContractV4,

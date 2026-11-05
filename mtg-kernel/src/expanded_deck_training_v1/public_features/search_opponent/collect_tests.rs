@@ -34,6 +34,7 @@ fn source(checkpoint: &str) -> ExpandedModelSourceV1 {
             expected_feature_encoding_digest: "27".repeat(32),
         },
         checkpoint: Some(pin("checkpoint.json", checkpoint)),
+        s_learner: None,
     }
 }
 
@@ -76,6 +77,8 @@ fn episode(learner_seat: u8) -> ExpandedEpisodeV1 {
         max_policy_steps: 1_000_000,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

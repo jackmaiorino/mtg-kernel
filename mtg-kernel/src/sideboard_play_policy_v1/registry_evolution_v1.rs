@@ -442,10 +442,14 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             input_contract: None,
             no_digest_check: None,
+            s_model: None,
+            s_state_digest_off: false,
             training_math: crate::training_math_v1::TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
+            #[cfg(feature = "gpu-exact-v1")]
+            gpu_exact: Default::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]

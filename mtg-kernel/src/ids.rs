@@ -7,8 +7,48 @@ use std::fmt;
 use std::sync::Arc;
 
 /// Index into `GameState::objects`. Stable for the lifetime of the game.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 pub struct ObjectId(pub u32);
+
+thread_local! {
+    static OBJECT_ID_TAGGING_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Prefix of a tagged object id (see [`ObjectIdTaggingV1`]).
+pub(crate) const OBJECT_ID_TAG_PREFIX_V1: &str = "\u{1}obj:";
+
+/// While alive on this thread, every [`ObjectId`] serializes as the string
+/// `"\u{1}obj:<id>"` instead of its number, so the object references of a
+/// serialized state can be found by value without a per-type registry (the
+/// W1 information-set export, `infoset_v1`). Without a guard the
+/// serialization is the derived one, byte for byte.
+pub(crate) struct ObjectIdTaggingV1 {
+    previous: bool,
+}
+
+impl ObjectIdTaggingV1 {
+    pub(crate) fn begin() -> Self {
+        let previous = OBJECT_ID_TAGGING_V1.with(|t| t.replace(true));
+        Self { previous }
+    }
+}
+
+impl Drop for ObjectIdTaggingV1 {
+    fn drop(&mut self) {
+        let previous = self.previous;
+        OBJECT_ID_TAGGING_V1.with(|t| t.set(previous));
+    }
+}
+
+impl Serialize for ObjectId {
+    #[inline]
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if OBJECT_ID_TAGGING_V1.with(std::cell::Cell::get) {
+            return serializer.serialize_str(&format!("{OBJECT_ID_TAG_PREFIX_V1}{}", self.0));
+        }
+        serializer.serialize_newtype_struct("ObjectId", &self.0)
+    }
+}
 
 impl fmt::Display for ObjectId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

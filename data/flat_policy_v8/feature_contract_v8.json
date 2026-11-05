@@ -1,0 +1,27 @@
+{
+  "additions": {
+    "include_column_195": "1.0 on the include:true row of an attacker- or blocker-inclusion decision, else 0.0",
+    "pairing_node_indices": "(blocker node, attacker node) per block already chosen in the pending blocker declaration"
+  },
+  "design": "collab LANES/w4-combat-20261030/DESIGN.md (v5.1), section 5: V8 inclusion contract",
+  "dimensions": {
+    "action": 196,
+    "action_ref": 25,
+    "edge": 41,
+    "object": 98,
+    "object_groups": 20,
+    "state": 219
+  },
+  "feature_contract_digest": "2d50ceca2610a25f13d267be25477f5caccf480de2e491e5492eafa84a4bf7b5",
+  "feature_encoding_digest": "88d0e0e8e0f19e619edd8477583e065f7019dcaca0f5b18c81ab6b4a27ab9a4c",
+  "feature_registry_version": "rust-observation-v11-action-v7-registry-1",
+  "feature_schema_version": "actor-relative-v11-python-1",
+  "features_source_path": "python/mtg_kernel_rl/features_v11.py",
+  "features_source_sha256": "e8b95d393f4f4ac96c666fe72b5660fc5244085769780333a2f1b0926df95d7e",
+  "legal_action_schema": 5,
+  "model_contract_version": "kernel-policy-value-net-9",
+  "predecessor_features_source_path": "python/mtg_kernel_rl/features_v10.py",
+  "rich_observation_schema": 7,
+  "schema": "flat-policy-v8-feature-contract-1",
+  "transfer": "A FlatV7 (or V4) checkpoint converts to the V8 net by the function-preserving V8 conversion (zero include column, zero pairing output projection). Every other tensor equals FlatV7's."
+}

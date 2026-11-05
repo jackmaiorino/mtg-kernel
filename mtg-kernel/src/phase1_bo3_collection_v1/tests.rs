@@ -50,6 +50,7 @@ fn package(policy: &FrozenPlayPolicyV1, choice: PlayDrawChoiceV1) -> CompleteAge
                     expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
                     expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
                 },
+                s_learner: None,
             },
             identity: ExpandedInferenceIdentityV1 {
                 schema: "mtg-kernel-expanded-deck-inference/v1".into(),
@@ -308,6 +309,7 @@ pub(crate) fn package_v4(
                     expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
                     expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
                 },
+                s_learner: None,
             },
             identity: ExpandedInferenceIdentityV1 {
                 schema: "mtg-kernel-expanded-deck-inference/v1".into(),

@@ -1481,6 +1481,8 @@ fn real_episode(id: &str, seed: u64, learner_seat: u8) -> ExpandedEpisodeV1 {
         max_policy_steps: 200_000,
         runtime_rules: Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1),
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 
@@ -1528,6 +1530,7 @@ fn anchor_input<'a>(
         denominator: rows.len(),
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: rows
             .iter()
             .zip(targets)
@@ -1822,6 +1825,7 @@ fn extraction_binds_rows_to_the_recorded_game_and_drops_any_mismatch() {
                     expected_feature_encoding_digest: String::new(),
                 },
                 checkpoint: None,
+                s_learner: None,
             })
         }),
     ];
@@ -2138,6 +2142,7 @@ fn world_v1(label: &str) -> WorldV1 {
             expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
         },
         checkpoint: None,
+        s_learner: None,
     };
     let trajectories = collect_pins(
         &parent,
@@ -2158,6 +2163,7 @@ fn world_v1(label: &str) -> WorldV1 {
         },
         line_b: None,
         training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         output_directory: root.join("parent-update"),
     })
     .unwrap();
@@ -2913,6 +2919,7 @@ fn retention_run_config_v1(
             expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
         },
         checkpoint: None,
+        s_learner: None,
     };
     // `real_episode` seats Spy at its seat argument.
     let scheduled = |id: &str, seed: u64, learner_seat: u8, spy_learner: bool| {
@@ -2954,6 +2961,7 @@ fn retention_run_config_v1(
         initial_source,
         opponents: vec![],
         iterations,
+        record_format: Default::default(),
         learning_rate: 0.0001,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -2975,6 +2983,7 @@ fn retention_run_config_v1(
         search_targets: None,
         ex1: None,
         record_process_cpu: false,
+        chain_ledger: None,
         output_directory: root.join("run"),
     }
 }

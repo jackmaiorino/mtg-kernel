@@ -17,6 +17,15 @@ sections 3, 4 and 6, and FROZEN.md):
 * Every block config is refused unless all 1,620 episodes carry
   ``runtime_rules: "resolution-boundary-v1"`` (AMENDMENT-1.md); each attempt
   records its config pin, which the run manifest pins.
+* Block scratch (AMENDMENT-2.md): with ``scratch`` and ``storage.scratch_roots``
+  the native trees are outside the 120 GB cap. A block is admitted only when
+  every in-flight tree (at least the measured peak times the factor) fits the
+  scratch volume's free space less the margin, and retained plus every
+  in-flight block's projection stays within the cap; otherwise it waits while
+  another block is in flight, else stops at the block boundary. A slot frees
+  only once its tree's prune is verified; a tree left behind latches dispatch.
+  A storage refusal or kill, or an attempt whose native process never started,
+  is not one of the block's three attempts.
 * Failure: an interrupted block reruns from its starting checkpoint, up to
   three attempts; a block classified ``invalid`` (the baseline driver's
   INVALIDITY_MARKERS and classify_failure) or one with non-finite losses ends
@@ -55,6 +64,7 @@ import sys
 import threading
 import time
 
+import checkpoint_container_v1
 import g_references_v1 as g
 import host_reservation_v1 as reservations
 import native_expanded_dispatch_v1 as native_dispatch
@@ -75,6 +85,31 @@ ITEM5_SCHEMA = "g-references-v1/qualification-5"  # the Spellbench scorer loads 
 STUDY_CAP_BYTES = 120 * 10**9  # DESIGN section 6: the study's artifact usage, on either host
 STUDY_WALL_SECONDS = 60 * 3600  # DESIGN section 6: wall hours of training claim time on Jack's PC
 now, pin, sha256_file, write_json, append_jsonl = base.now, base.pin, base.sha256_file, base.write_json, base.append_jsonl
+# AMENDMENT-2.md: block scratch admission, the prune latch and uncounted storage attempts.
+SCRATCH_LOCK = threading.Lock()
+SCRATCH_INFLIGHT: set[str] = set()  # admitted blocks' native trees, for every campaign of this driver process
+SCRATCH_LATCH = "SCRATCH-LATCH.json"
+SCRATCH_LATCHED: list[str] = []  # set once in this process by a failed prune
+ADMISSION_WAIT_SECONDS = 30
+UNCOUNTED = ("unspawned", "storage-refused", "storage-interrupted")
+MAX_UNCOUNTED_PER_LEASE = 3  # a block's uncounted storage attempts in one driver session, then a resumable stop
+STORAGE_MARKERS = ("retained plus projected storage exceeds allowance", "target-volume reserve unavailable",
+                   "storage emergency", "no space left on device", "[errno 28]")
+RECORDS_SCHEMA = "g-references-v1/block-records"
+# Lease 1613's post-run storage kills (clean native exits, no report, no failure.json), by dispatch root.
+LEASE_1613_ROOT = "/workspace/g-references-v1/campaign/"
+STORAGE_KILLED_1613 = frozenset(f"hot/{run}/b001-a1/dispatch" for run in ("G3", "G4", "G5", "G7", "G8"))
+DRIVER_STARTED = time.time()  # the copy-back stall clock starts no earlier than this driver
+DRAIN_IDLE_SECONDS = 180  # a drain stops without a move in this long: polled each 30 s, it ends inside the
+# guard's 300 s work-idle bound with margin for the stop's own writes
+DRAIN = {"moved": -1, "at": DRIVER_STARTED}
+SESSION = f"{os.getpid()}-{DRIVER_STARTED:.0f}"  # this driver session, on its attempts
+VOLUME_WALK_SECONDS = 600  # how long one walk of the accounting trees serves admission (a walk takes minutes)
+VOLUME_REWALK_SECONDS = 60  # a refusal resting on blocks finished since an older walk walks again first
+WALK_HEARTBEAT_SECONDS = 30
+WALK_HEARTBEAT_LIMIT_SECONDS = 1800  # a walk still running past this records no more work: a hung walk goes idle
+VOLUMES: dict = {}  # the shared walks (volume), per accounting roots, under SCRATCH_LOCK
+SHARED_WALK = "volume-walk.json"  # each walk, published for the dispatchers (native_expanded_dispatch_v1)
 
 
 def read_pinned(item: dict) -> dict:
@@ -116,6 +151,27 @@ class Campaign(base.Campaign):
         cap = self.raw["storage"].get("max_logical_bytes")
         if type(cap) is not int or not 0 < cap <= STUDY_CAP_BYTES:
             raise SystemExit("the storage allowance must be at most the study's 120 GB")
+        # AMENDMENT-2.md: native trees outside the cap only as admitted block scratch (roots.native under
+        # storage.scratch_roots, with the measured peak, its factor and the margin).
+        spec, scratch = self.raw.get("scratch"), self.raw["storage"].get("scratch_roots")
+        if spec is not None or scratch is not None:
+            native = self.raw["roots"].get("native")
+            valid = (isinstance(spec, dict) and set(spec) == {"block_peak_bytes", "factor", "margin_fraction"}
+                     and type(spec["block_peak_bytes"]) is int and spec["block_peak_bytes"] > 0
+                     and isinstance(spec["factor"], (int, float)) and spec["factor"] >= 1
+                     and isinstance(spec["margin_fraction"], (int, float)) and 0 <= spec["margin_fraction"] < 1
+                     and isinstance(scratch, list) and native is not None
+                     and any(Path(native).is_relative_to(Path(root)) for root in scratch))
+            if not valid:
+                raise SystemExit("block scratch needs roots.native under storage.scratch_roots and a scratch spec")
+        records = self.raw.get("records")
+        if records is not None:  # AMENDMENT-2.md: the copy-back window of sealed block records
+            roots = [Path(self.raw["roots"][name]) for name in ("state", "cold", "retained", "checkpoints",
+                                                                 "exposure", "hot", "doses")]
+            if not (isinstance(records, dict) and set(records) == {"window_blocks", "stall_seconds"}
+                    and all(type(records[key]) is int and records[key] > 0 for key in records)
+                    and len({root.parent for root in roots}) == 1 and not self.raw["roots"]["hot_by_run"]):
+                raise SystemExit("records needs window_blocks, stall_seconds and one campaign tree")
 
     def admits(self, block: int) -> str | None:
         """None when block may run, else why not.
@@ -269,18 +325,159 @@ def completed_updates(native: Path) -> int:
 
 
 class LeaseProgress(base.LeaseProgress):
-    """progress.json for the pod's resident lease guard, advanced by completed work only.
+    """progress.json for the pod's resident lease guard.
 
     Activity is a newly completed native update (each run's ``iterations/*/update.json``
-    count), or a driver step finishing (``touch``: a dispatch, a collection, a
-    retention, a block). A run stuck outside its native part therefore goes idle
-    and the guard's work_idle_seconds bound releases the pod. ``completed_updates``
+    count), a driver step finishing (``touch``: a dispatch, a collection, a
+    retention, a block), or the base's CPU-time evidence (``observe``: the driver
+    computing, as in the exposure collection, and an in-flight attempt's
+    fingerprints and archive after its native part). On 2026-10-30 those two steps
+    ran over five minutes between touches after a block's last update, and the
+    guard released a working Pod. A run stuck without CPU work still goes idle, and
+    the guard's work_idle_seconds bound releases the pod. ``completed_updates``
     counts this driver's updates for the lease adapter's session.
+
+    Watched dispatches (``watch``) are observed like in-flight attempts. A qualification trial runs under a
+    detached reservation supervisor, no child of this driver: during its native part (its root's started.json
+    without execution.json) only the native child's CPU counts, so a stalled native run still goes idle; outside
+    it, CPU time under the supervisor counts, while the supervisor is the same process (its token and its start
+    time). A pack qualification's trials are observed through their requests (``<pack root>/*.request.json``):
+    during a native part its native child's ticks; outside it, CPU under the supervisor whose command line names
+    the request (the dispatcher's preparation, admission walk, fingerprints and archive; the supervisor's own
+    polling is left out, as for an attempt). The pack process's own CPU counts at PACK_BUSY_SHARE of a core since
+    the last beat (its volume walk and launches; its 5 s polling stays below it). For any watched root, a newly written started.json, execution.json, report.json or failure.json
+    is activity, so a step shorter than a beat is seen. On 2026-11-01 item 6's history trial ran over five
+    minutes with nothing else to observe, and the guard released the Pod mid-qualification; on 2026-11-02 the
+    history pack's trials prepared for about 80 s and ran natively for 4 s, between beats, and it latched again.
     """
 
     def __init__(self, campaign: Campaign):
         super().__init__(campaign)
         self.counts, self.total = {}, 0
+        self.watched, self.marks, self.busy = {}, {}, {}
+
+    def watch(self, key: str, pid: int | None = None, token: str | None = None, root: str | None = None,
+              pack: str | None = None) -> None:
+        """Observe a detached dispatch until ``unwatch``: a trial (its supervisor ``pid`` naming ``token``, its
+        ``root``) or a pack qualification (its ``pack`` root)."""
+        start = base.process_start_unix(pid) if isinstance(pid, int) else None
+        with self.lock:
+            self.watched[key] = {"pid": pid, "token": token, "start": start, "root": root, "pack": pack,
+                                 "child": None}
+
+    def exclude_child(self, key: str, pid: int) -> None:
+        """The watched pack's own process, a child of this driver: its polling is not activity, its trials'
+        native parts are."""
+        with self.lock:
+            if key in self.watched:
+                self.watched[key]["child"] = pid
+
+    def excluded_children(self) -> frozenset:
+        return frozenset(entry["child"] for entry in self.watched.values() if isinstance(entry.get("child"), int))
+
+    def unwatch(self, key: str) -> None:
+        with self.lock:
+            self.watched.pop(key, None)
+            for store in (self.ticks, self.marks, self.busy):
+                for name in [name for name in store if name.startswith("watched:" + key + ":")]:
+                    store.pop(name, None)
+
+    def marked(self, name: str, root: Path, stamp: float) -> None:
+        """A watched root's step records: a new one is activity (a step can start and end between beats)."""
+        marks = tuple(record for record in WATCHED_RECORDS if (root / record).exists())
+        if marks != self.marks.get(name, ()):
+            self.activity = stamp
+        self.marks[name] = marks
+
+    def busy_since(self, name: str, ticks: int, stamp: float, share: float) -> None:
+        """CPU ``ticks`` (cumulative) count as activity at ``share`` of a core since the last beat."""
+        last = self.busy.get(name)
+        if last is not None and (ticks - last[1]) / CLOCK_TICKS >= share * (stamp - last[0]) > 0:
+            self.activity = stamp
+        self.busy[name] = (stamp, ticks)
+
+    def observe_pack(self, key: str, entry: dict, stamp: float, table: dict) -> bool:
+        alive, requests = False, []
+        for request in sorted(Path(entry["pack"]).glob("*.request.json")):
+            try:
+                value = json.loads(request.read_text(encoding="utf-8"))
+                requests.append((str(request), Path(value["root"]), value.get("start_barrier")))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        commands = process_commands(table) if requests else {}
+        for request, root, barrier in requests:
+            self.marked(f"watched:{key}:{root}:marks", root, stamp)
+            ticks = base.native_ticks(root)
+            processes = f"watched:{key}:{root}:processes"
+            if ticks is not None:  # its native part: the native child only
+                alive = alive or ticks >= 0
+                name = f"watched:{key}:{root}"
+                if ticks > self.ticks.get(name, -1):
+                    self.activity = stamp
+                self.ticks[name] = ticks
+                self.ticks.pop(processes, None)
+                continue
+            finished = any((root / record).exists() for record in ("report.json", "failure.json"))
+            waiting = (isinstance(barrier, dict) and isinstance(barrier.get("ready"), str)
+                       and Path(barrier["ready"]).exists() and not (root / "started.json").exists())
+            # The trial's own supervisor (its command line: supervise --token <token> -- ... <request>), identified
+            # by PID and start time; an orphan dispatcher, a finished trial or one waiting at its start barrier
+            # (polling every 20 ms) is not activity.
+            tops = sorted((pid, base.process_start_unix(pid)) for pid, args in commands.items()
+                          if pid in table and supervises(args, request))
+            if finished or waiting or not tops:
+                self.ticks.pop(processes, None)
+                self.marks.pop(processes, None)
+                continue
+            ticks = sum(max(0, base.descendant_ticks(table, pid)) for pid, _ in tops)
+            if self.marks.get(processes) == tuple(tops) and ticks > self.ticks.get(processes, ticks):
+                self.activity = stamp
+            self.ticks[processes], self.marks[processes] = ticks, tuple(tops)
+        child = entry.get("child")
+        if isinstance(child, int) and child in table:  # the pack's own work (a volume walk, launches), not its polling
+            self.busy_since(f"watched:{key}:pack", table[child][1], stamp, PACK_BUSY_SHARE)
+        return alive
+
+    @staticmethod
+    def same_supervisor(entry: dict) -> bool:
+        """The watched PID is still the supervisor it was: its token on its command line and, where /proc can
+        say, its start time. A reused PID, even one under the same reservation, never credits."""
+        if not isinstance(entry["pid"], int) or not base.supervisor_owned(entry["pid"], entry["token"]):
+            return False
+        if not proc_readable():
+            return True
+        return entry["start"] is not None and base.process_start_unix(entry["pid"]) == entry["start"]
+
+    def observe(self, stamp: float) -> bool:
+        alive = super().observe(stamp)
+        table = None
+        for key, entry in list(self.watched.items()):
+            if entry["pack"]:
+                table = base.process_table() if table is None else table
+                alive = self.observe_pack(key, entry, stamp, table) or alive
+                continue
+            roots = [Path(entry["root"])] if entry["root"] else []
+            native = False
+            for root in roots:
+                self.marked(f"watched:{key}:{root}:marks", root, stamp)
+                ticks = base.native_ticks(root)
+                if ticks is None:
+                    continue
+                native, alive = True, alive or ticks >= 0
+                name = f"watched:{key}:{root}"
+                if ticks > self.ticks.get(name, -1):
+                    self.activity = stamp
+                self.ticks[name] = ticks
+            name = f"watched:{key}:supervised"
+            if native or not self.same_supervisor(entry):  # during a native part only the native child counts
+                self.ticks.pop(name, None)
+                continue
+            table = base.process_table() if table is None else table
+            ticks = base.descendant_ticks(table, entry["pid"])
+            if ticks > self.ticks.get(name, ticks):
+                self.activity = stamp
+            self.ticks[name] = ticks
+        return alive
 
     def touch(self) -> None:
         with self.lock:
@@ -288,13 +485,12 @@ class LeaseProgress(base.LeaseProgress):
 
     def beat(self, finished: bool = False) -> None:
         with self.lock:
-            stamp, alive = time.time(), False
+            stamp = time.time()
+            alive = self.observe(stamp)  # native_alive from in-flight attempts' own processes
             for run, entry in list(self.active.items()):
                 attempt = entry["attempts"][-1] if entry["attempts"] else None
-                if attempt is None or "outcome" in attempt:
+                if attempt is None or "outcome" in attempt or "finished" in attempt:
                     continue
-                ticks = base.native_ticks(Path(attempt["root"]))
-                alive = alive or (ticks is not None and ticks >= 0)
                 count = completed_updates(Path(attempt["native"]))
                 key = attempt["native"]
                 if count > self.counts.get(key, 0):
@@ -309,6 +505,64 @@ class LeaseProgress(base.LeaseProgress):
 def touch(campaign: Campaign) -> None:
     if campaign.lease:
         campaign.lease.touch()
+
+
+def proc_readable() -> bool:
+    """Whether /proc can tell a process's start time (Linux, as on a Pod)."""
+    return Path("/proc/self/stat").exists()
+
+
+WATCHED_RECORDS = ("started.json", "execution.json", "report.json", "failure.json")
+PACK_BUSY_SHARE = 0.02  # the pack process: a volume walk is mostly I/O wait, its polling a few file reads per 5 s
+CLOCK_TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+
+
+def supervises(args: list[str], request: str) -> bool:
+    """Whether a command line is a reservation supervisor (host_reservation_v1.supervisor_command) whose work
+    names ``request``."""
+    try:
+        at, token = args.index("supervise"), args.index("--token")
+        work = args.index("--", token)
+    except ValueError:
+        return False
+    return at < token < work and token + 1 < work and bool(args[token + 1]) and request in args[work + 1:]
+
+
+def process_commands(table: dict) -> dict:
+    """pid -> command-line arguments, for the processes in ``table`` (/proc; empty off Linux)."""
+    commands = {}
+    for pid in table:
+        try:
+            commands[pid] = [arg.decode(errors="replace") for arg in
+                             Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if arg]
+        except OSError:
+            continue
+    return commands
+
+
+class watching:
+    """``with watching(campaign, key, ...):`` observes a detached dispatch (``LeaseProgress.watch``) as lease
+    activity while the block runs; a no-op without a lease."""
+
+    def __init__(self, campaign: Campaign, key: str, dispatched: dict | None = None, root=None, pack=None):
+        self.lease, self.key = getattr(campaign, "lease", None), key
+        dispatched = dispatched or {}
+        self.fields = {"pid": dispatched.get("pid"), "token": dispatched.get("token"),
+                       "root": None if root is None else str(root), "pack": None if pack is None else str(pack)}
+
+    def __enter__(self):
+        if self.lease:
+            self.lease.watch(self.key, **self.fields)
+        return self
+
+    def exclude_child(self, pid: int) -> None:
+        if self.lease:
+            self.lease.exclude_child(self.key, pid)
+
+    def __exit__(self, *exc):
+        if self.lease:
+            self.lease.unwatch(self.key)
+        return False
 
 
 def discard(campaign: Campaign, run: str, block: int, attempt: dict, reason: str) -> None:
@@ -337,6 +591,567 @@ def discard(campaign: Campaign, run: str, block: int, attempt: dict, reason: str
                                           "retained_records": attempt["failed_records"]})
 
 
+FINISH_KEYS = ("exposure", "final_checkpoint", "final_adam_step", "final_state_sha256", "checkpoint_state",
+               "embedding_gate", "embedding_gate_pass")
+
+
+def native_lost(campaign: Campaign, run: str, block: int, entry: dict, record: dict) -> bool:
+    """A completed attempt's native tree is gone while a finishing step still reads it (collection, the kept
+    checkpoint, retention)."""
+    if Path(record["native"]).exists():
+        return False
+    retained = "retained" in entry or (campaign.retained / run / f"b{block:02d}" / "RETAINED.json").exists()
+    return not ("exposure" in entry and "final_checkpoint" in entry and retained)
+
+
+def storage_failure(root: Path) -> bool:
+    """The attempt failed on the launcher's storage check (or a full disk), not in its block."""
+    texts = []
+    for name in ("failure.json", "execution.json", "stderr.log"):
+        if (root / name).exists():
+            texts.append((root / name).read_text(encoding="utf-8", errors="replace")[-20000:].lower())
+    return any(marker in text for text in texts for marker in STORAGE_MARKERS)
+
+
+def counts(attempt: dict) -> bool:
+    """Whether the attempt is one of its block's three (AMENDMENT-2.md item 5): a storage refusal or kill, and
+    an attempt whose native process never started, are the dispatcher's, not the block's. So are the five
+    lease-1613 attempts the launcher's post-run storage check ended before failure.json existed
+    (STORAGE_KILLED_1613, from evidence/lease-1613-storage-attempts.json), and only those."""
+    outcome = attempt.get("outcome")
+    if outcome in UNCOUNTED:
+        return False
+    if outcome != "interrupted":
+        return True
+    root = Path(attempt["root"])
+    if not (root / "started.json").exists() or storage_failure(root):
+        return False
+    if root.as_posix().removeprefix(LEASE_1613_ROOT) not in STORAGE_KILLED_1613 \
+            or (root / "report.json").exists() or (root / "failure.json").exists() \
+            or not (root / "execution.json").exists():
+        return True
+    record = json.loads((root / "execution.json").read_text(encoding="utf-8"))
+    return not (record.get("exit_code") == 0 and record.get("error") is None)  # the evidence's signature
+
+
+def counted(entry: dict) -> int:
+    return sum(counts(attempt) for attempt in entry["attempts"])
+
+
+def tree_bytes(path: Path) -> int:
+    total = 0
+    for item in path.rglob("*") if path.exists() else []:
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except FileNotFoundError:  # pruned mid-walk: freed
+            pass
+    return total
+
+
+def largest_pruned(campaign: Campaign) -> int:
+    """The largest native tree a retention pruned so far (PRUNE.jsonl), so admission follows trees that
+    outgrow the qualified peak."""
+    if not campaign.prune_log.exists():
+        return 0
+    rows = (json.loads(line) for line in campaign.prune_log.read_text(encoding="utf-8").splitlines() if line.strip())
+    return max((row.get("bytes") or 0 for row in rows if "retained_manifest" in row), default=0)
+
+
+def records_root(campaign: Campaign) -> Path:
+    """The campaign tree the records' paths are relative to (every root's common parent)."""
+    return Path(campaign.raw["roots"]["state"]).parent
+
+
+def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
+    """Seal a finished block's records for the copy-back (AMENDMENT-2.md): its retained and failed-attempt
+    records, dispatch folders, exposure rows, configs and requests, each hashed on its raw bytes, in
+    state/seals/<run>-<label>.json. Qualification's blocks 1 and 2 stay on the volume."""
+    entry = state["blocks"][str(block)]
+    if not campaign.raw.get("records") or block <= QUALIFICATION_BLOCKS or "sealed" in entry or not entry.get("done"):
+        return
+    root, name = records_root(campaign), label(block)
+    published = campaign.state / "seals" / f"{run}-{name}.json"
+    if published.exists():  # published before a stopped driver saved its pin: adopt it, never rebuild it
+        value = json.loads(published.read_text(encoding="utf-8"))
+        if value.get("schema") != RECORDS_SCHEMA or value.get("run") != run or value.get("block") != block:
+            raise RuntimeError(f"a different seal is published at {published}")
+        entry["sealed"] = pin(published)
+        campaign.save_state(run, state)
+        return
+    sources = seal_sources(campaign, run, block)
+    files = []
+    for source in sources:
+        for path in [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file()):
+            files.append({"path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size,
+                          "sha256": sha256_file(path)})
+    entry["sealed"] = write_json(published, {"schema": RECORDS_SCHEMA, "run": run, "block": block, "root": str(root),
+                                        "files": files, "bytes": sum(item["bytes"] for item in files),
+                                        "sealed_at": now(), "epoch": time.time()})
+    campaign.save_state(run, state)
+    touch(campaign)
+
+
+def seal_sources(campaign: Campaign, run: str, block: int) -> list[Path]:
+    """A finished block's record sources, as ``seal`` hashes them: its retained and failed-attempt folders,
+    dispatch folders, exposure rows, configs and requests."""
+    name = label(block)
+    return [campaign.retained / run / f"b{block:02d}",
+            *sorted((campaign.retained / run).glob(f"{name}-a*-failed")),
+            *sorted((campaign.hot(run) / run).glob(f"{name}-a*")),
+            campaign.exposure / f"{run}-{name}-episodes.jsonl",
+            *sorted((campaign.state / "configs").glob(f"{run}-{name}-a*.json")),
+            *sorted((campaign.state / "requests").glob(f"{run}-{name}-a*.json"))]
+
+
+def pending_seals(campaign: Campaign) -> int:
+    seals, markers = campaign.state / "seals", campaign.state / "moved"
+    return sum(not moved(markers / path.name) for path in seals.glob("*.json")) if seals.exists() else 0
+
+
+def moved(path: Path) -> bool:
+    """The copy-back verified this block's archive and confirmed its volume copy gone."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("deleted") is True
+    except (FileNotFoundError, ValueError):
+        return False
+
+
+def records_hold(campaign: Campaign, in_flight: int = 0) -> str | None:
+    """None, or why no block may start (AMENDMENT-2.md item 4): the copy-back moved nothing for
+    ``stall_seconds`` while sealed blocks wait (stalled), or the window is full: sealed blocks not yet moved
+    plus the blocks in flight, each of which will be sealed, reach ``window_blocks`` per lineage."""
+    spec = campaign.raw.get("records")
+    if not spec:
+        return None
+    seals, markers = campaign.state / "seals", campaign.state / "moved"
+    pending = [path for path in sorted(seals.glob("*.json")) if not moved(markers / path.name)] \
+        if seals.exists() else []
+    if pending:
+        done = [path.stat().st_mtime for path in markers.glob("*.json") if moved(path)] if markers.exists() else []
+        if time.time() - max(done + [DRIVER_STARTED]) > spec["stall_seconds"]:
+            return f"records: copy-back stalled, {len(pending)} sealed blocks wait"
+    window = spec["window_blocks"] * len(g.RUNS)
+    if len(pending) + in_flight >= window:
+        return f"records: window full, {len(pending)} sealed and {in_flight} in flight (window {window})"
+    return None
+
+
+def volume(campaign: Campaign) -> dict:
+    """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since,
+    and the file where each walk is published for the dispatchers (the first campaign's state folder)."""
+    key = tuple(campaign.raw["storage"]["accounting_roots"])
+    return VOLUMES.setdefault(key, {"logical": None, "started": 0.0, "walked": 0.0, "finished": 0,
+                                    "shared": str(campaign.state / SHARED_WALK)})
+
+
+# The incremental accounting walk. A sealed block's record folders (the retained, failed-attempt and dispatch
+# folders its seal lists files under, state/seals) hold exactly the seal's files until the copy-back deletes
+# them, and nothing writes there after the seal; once the copy-back confirms them gone (state/moved, deleted
+# true) they hold nothing. A static root (the campaign's static_roots: the qualification folder, which production
+# never writes) is fixed. A walk counts a sealed folder by its seal only after a walk of this process measured
+# it equal to its seal, and for at most REVERIFY_SECONDS after that measurement (then it is measured again); a
+# moved block's folders count nothing once a walk measured them empty (the copy-back writes nothing there and
+# deletes only the seal's files); a static root counts its last measurement for REVERIFY_SECONDS. Every
+# other folder, a folder the seal does not list (a later attempt) included, is walked. Any sealed folder that
+# measures other than its seal latches this process's walks of that volume full (an event), for good.
+WALK_LOCK = threading.Lock()
+WALK_SERIAL = threading.Lock()  # one walk at a time per process (admission walk, background walker)
+WALK_STATE: dict = {}  # accounting roots -> {"latched", "folders": {key: (seal bytes, measured at)}, "static", "static_at"}
+REVERIFY_SECONDS = 6 * 3600
+
+
+def folder_key(path) -> str:
+    """A walked folder's key: its path as the walk lists it under the resolved accounting roots."""
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def resolved_key(path) -> str:
+    """A sealed or static folder's key, resolved as the accounting roots are (links, short-name aliases)."""
+    return os.path.normcase(os.path.realpath(str(path)))
+
+
+def seal_folders(campaign: Campaign, value: dict) -> dict[str, int]:
+    """The record folders a seal lists files under (relative to the records root), each with its seal bytes."""
+    run, name = value["run"], label(value["block"])
+    root = records_root(campaign)
+    hot = (campaign.hot(run) / run).relative_to(root).as_posix()
+    retained = (campaign.retained / run).relative_to(root).as_posix()
+    folders: dict[str, int] = {}
+    for item in value["files"]:
+        path = item["path"]
+        for parent in (retained, hot):
+            if not path.startswith(parent + "/"):
+                continue
+            folder = path[len(parent) + 1:].split("/", 1)[0]
+            listed = (parent == retained and (folder == f"b{value['block']:02d}"
+                                              or folder.startswith(f"{name}-a") and folder.endswith("-failed"))
+                      or parent == hot and folder.startswith(f"{name}-a"))
+            if listed and "/" in path[len(parent) + 1:]:
+                key = f"{parent}/{folder}"
+                folders[key] = folders.get(key, 0) + item["bytes"]
+    return folders
+
+
+def sealed_folders(campaign: Campaign) -> tuple[dict[str, int], dict[str, int]]:
+    """(sealed folders not yet moved: folder -> seal bytes, moved blocks' folders: folder -> 0), existing ones."""
+    seals, markers, root = campaign.state / "seals", campaign.state / "moved", records_root(campaign)
+    held, gone = {}, {}
+    for path in sorted(seals.glob("*.json")) if seals.exists() else []:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if value.get("schema") != RECORDS_SCHEMA:
+            continue
+        target = gone if moved(markers / path.name) else held
+        for folder, size in seal_folders(campaign, value).items():
+            if (root / folder).is_dir():
+                target[resolved_key(root / folder)] = 0 if target is gone else size
+    return held, gone
+
+
+def walk_trees(roots, counted: dict[str, int], measure: set[str]) -> tuple[int, dict[str, int]]:
+    """native_expanded_dispatch_v1.accounting_bytes, except that a folder in ``measure`` is walked and its own
+    bytes returned too, and any other folder in ``counted`` adds its given bytes unwalked."""
+    logical, measured = 0, {}
+
+    def walk(top, inside=None):
+        nonlocal logical
+        pending = [top]
+        while pending:
+            folder = pending.pop()
+            key = folder_key(folder)
+            if key != inside and key in measure:
+                measured[key] = walk_one(folder, key)
+                logical += measured[key]
+                continue
+            if key != inside and key in counted:
+                logical += counted[key]
+                continue
+            try:
+                with os.scandir(folder) as entries:
+                    listed = list(entries)
+            except FileNotFoundError:  # a folder removed mid-walk
+                continue
+            for entry in listed:
+                native_dispatch.require(not entry.is_symlink() and not entry.is_junction(),
+                                        "accounting tree contains a link")
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        logical += entry.stat(follow_symlinks=False).st_size
+                except FileNotFoundError:  # deleted by its owner mid-walk: freed
+                    pass
+
+    def walk_one(folder, key):
+        nonlocal logical
+        before = logical
+        walk(folder, inside=key)
+        size, logical = logical - before, before
+        return size
+
+    for root in roots:
+        if root.exists():
+            native_dispatch.require(not root.is_symlink() and not root.is_junction(), "accounting root is a link")
+            walk(str(root))
+    return logical, measured
+
+
+def accounted_bytes(campaign: Campaign, publish=None) -> int:
+    """The accounting trees' logical bytes: the incremental walk (above), or the full walk (accounting_bytes)
+    when nothing is sealed or static, or once a sealed folder disagreed with its seal. Walks of one process run
+    one at a time (WALK_SERIAL), each with its ``publish``, so no walk returns or publishes a total after a later
+    walk found a mismatch."""
+    with WALK_SERIAL:
+        started = time.time()  # the measurement's own start, inside its turn: published walks stay in order
+        logical = accounted_bytes_serial(campaign)
+        if publish is not None:
+            publish(logical, started)
+        return logical
+
+
+def accounted_bytes_serial(campaign: Campaign) -> int:
+    storage = campaign.raw["storage"]
+    held, gone = sealed_folders(campaign)
+    static = {resolved_key(path) for path in campaign.raw.get("static_roots", []) if Path(path).is_dir()}
+    if not held and not gone and not static:
+        return native_dispatch.accounting_bytes(storage)[1]
+    key = tuple(storage["accounting_roots"])
+    now = time.time()
+    with WALK_LOCK:
+        state = WALK_STATE.setdefault(key, {"latched": False, "folders": {}, "moved": set(), "static": {},
+                                            "static_at": 0.0})
+        latched = state["latched"]
+        trusted = {folder: size for folder, size in held.items()
+                   if (entry := state["folders"].get(folder)) and entry[0] == size and now - entry[1] < REVERIFY_SECONDS}
+        moved_known = {folder for folder in gone if folder in state["moved"]}
+        static_known = dict(state["static"]) if now - state["static_at"] < REVERIFY_SECONDS else {}
+    if latched:
+        return native_dispatch.accounting_bytes(storage)[1]
+    # A moved block's folders are measured once, empty, before they count nothing: the copy-back deletes only
+    # the seal's files, so anything else left there is found (and latches) rather than hidden.
+    expected = {**held, **{folder: 0 for folder in gone}}
+    measure = ({folder for folder in held if folder not in trusted} | {folder for folder in gone if folder not in moved_known}
+               | {folder for folder in static if folder not in static_known})
+    counted = {**{folder: 0 for folder in moved_known}, **trusted,
+               **{folder: static_known[folder] for folder in static if folder in static_known}}
+    logical, measured = walk_trees(native_dispatch.accounting_roots(storage), counted, measure)
+    wrong = {folder: (measured[folder], size) for folder, size in expected.items()
+             if folder in measured and measured[folder] != size}
+    with WALK_LOCK:
+        if wrong:
+            state["latched"] = True
+        else:
+            state["folders"].update({folder: (held[folder], now) for folder in held if folder in measured})
+            state["moved"].update(folder for folder in gone if folder in measured)
+            if static and not static_known and all(folder in measured for folder in static):
+                state["static"], state["static_at"] = {folder: measured[folder] for folder in static}, now
+    if wrong:
+        campaign.event(kind="volume-walk-seal-mismatch", count=len(wrong),
+                       folders={folder: list(sizes) for folder, sizes in sorted(wrong.items())[:20]})
+    return logical
+
+
+def walk_volume(campaign: Campaign) -> None:
+    """Walk the accounting trees once. On the network volume a walk takes minutes (at least 325 s on
+    2026-11-01, when walks per admission under the lock let the lease guard's 300 s idle bound release the
+    Pod), so it runs in a helper thread while this thread records driver work every WALK_HEARTBEAT_SECONDS,
+    for at most WALK_HEARTBEAT_LIMIT_SECONDS, so a hung walk still goes idle. Each walk is an event, so its
+    time is measured. The caller holds SCRATCH_LOCK (release, which counts finished blocks, waits for it)."""
+    result, started, started_unix = {}, time.monotonic(), time.time()
+    record = volume(campaign)
+
+    def publish(logical, measured):  # in order with the other walks of this process (WALK_SERIAL)
+        record.update(logical=logical, started=measured, walked=time.time(), finished=0)
+        try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
+            Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
+            native_dispatch.publish_walk(record["shared"], logical, measured, record["walked"], "driver",
+                                         len(SCRATCH_INFLIGHT))  # the caller holds SCRATCH_LOCK
+        except OSError:
+            pass  # only a shortcut: the background walker publishes too
+
+    def walk():
+        try:
+            result["logical"] = accounted_bytes(campaign, publish)
+        except BaseException as error:
+            result["error"] = error
+    thread = threading.Thread(target=walk, name="volume-walk", daemon=True)
+    thread.start()
+    while thread.is_alive():
+        thread.join(WALK_HEARTBEAT_SECONDS)
+        if thread.is_alive() and time.monotonic() - started < WALK_HEARTBEAT_LIMIT_SECONDS:
+            touch(campaign)  # the walk is the admission's work in progress
+    if "error" in result:
+        raise result["error"]
+    seconds = round(time.monotonic() - started, 1)
+    touch(campaign)
+    campaign.event(kind="volume-walk", seconds=seconds, logical=result["logical"])
+
+
+def admission_record(campaign: Campaign, native: Path | None = None) -> dict | None:
+    """The admission walk a dispatch request carries (native_expanded_dispatch_v1.admitted_bytes): the last
+    walk's logical bytes and times, the blocks finished since it, the other blocks in flight (besides ``native``)
+    and the shared walk file. The caller holds SCRATCH_LOCK."""
+    record = volume(campaign)
+    if record["logical"] is None:
+        return None
+    return {"schema": native_dispatch.ADMISSION_SCHEMA, "logical_bytes": record["logical"],
+            "walked_unix": record["started"], "completed_unix": record["walked"], "finished_since": record["finished"],
+            "shared_walk": record["shared"], "in_flight": len(SCRATCH_INFLIGHT - {str(native)})}
+
+
+WALKERS: dict = {}  # accounting roots -> (thread, stop event): this process's one background walker per volume
+WALKER_POLL_SECONDS = 30
+
+
+def start_walker(campaign: Campaign) -> None:
+    """Start this process's background walker of the campaign's accounting trees, once per volume, for the
+    dispatchers' emergency samples (AMENDMENT-2 item 6; mtg-kernel#463: eight attempts each walking the network
+    volume took 40 min a walk). While blocks are in flight it walks when the published walk completed over
+    EMERGENCY_WALK_SECONDS ago and publishes each walk; the dispatchers read it and walk only if it goes stale.
+    It records no driver work: its walk is not the lease's progress, so a stalled driver still goes idle."""
+    storage = campaign.raw["storage"]
+    if not storage.get("emergency") or not storage.get("accounting_roots"):
+        return
+    key = tuple(storage["accounting_roots"])
+    with SCRATCH_LOCK:  # registered and started under the lock: two admissions start one walker
+        if key in WALKERS and WALKERS[key][0].is_alive():
+            return
+        stop = threading.Event()
+        thread = threading.Thread(target=walker, args=(campaign, volume(campaign)["shared"], stop),
+                                  name="volume-walker", daemon=True)
+        WALKERS[key] = (thread, stop)
+        thread.start()
+
+
+def stop_walkers() -> None:
+    """Stop and forget the background walkers (tests; a driver's ends with its process)."""
+    with SCRATCH_LOCK:
+        walkers = list(WALKERS.values())
+        WALKERS.clear()
+    for thread, stop in walkers:
+        stop.set()
+        thread.join(60)
+
+
+def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
+    storage = campaign.raw["storage"]
+    while not stop.wait(WALKER_POLL_SECONDS):
+        with SCRATCH_LOCK:
+            in_flight = len(SCRATCH_INFLIGHT)
+        found = native_dispatch.shared_walk(shared)
+        if not in_flight or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
+            continue
+        started = time.time()
+        def publish(logical, measured):  # in order with the other walks of this process (WALK_SERIAL)
+            Path(shared).parent.mkdir(parents=True, exist_ok=True)
+            native_dispatch.publish_walk(shared, logical, measured, time.time(), "driver-background", in_flight)
+        try:
+            logical = accounted_bytes(campaign, publish)
+        except Exception as error:  # the dispatchers walk for themselves once the record is stale
+            if stop.is_set():
+                return
+            campaign.event(kind="volume-walk-error", error=f"{type(error).__name__}: {error}")
+            stop.wait(native_dispatch.EMERGENCY_WALK_SECONDS)
+            continue
+        if stop.is_set():
+            return
+        campaign.event(kind="volume-walk", seconds=round(time.time() - started, 1), logical=logical,
+                       walker="background")
+
+
+def admitted(campaign: Campaign, walk: bool = False, native: Path | None = None) -> dict | None:
+    """admission_record under SCRATCH_LOCK; with ``walk``, after walking when the last walk is stale (a check
+    that precedes admission, such as the qualification's choice check, then serves the admissions after it)."""
+    if not campaign.raw["storage"].get("accounting_roots"):
+        return None
+    with SCRATCH_LOCK:
+        if walk:
+            volume_logical(campaign)
+        return admission_record(campaign, native)
+
+
+def volume_logical(campaign: Campaign) -> tuple[int, int]:
+    """(the accounting trees' logical bytes at the last walk, blocks finished since it). One walk serves every
+    admission of this process for VOLUME_WALK_SECONDS. A block finished since the walk adds at most
+    projected_additional_bytes, which admission counts, so the cap check stays a bound. The caller holds
+    SCRATCH_LOCK."""
+    record = volume(campaign)
+    if record["logical"] is None or time.time() - record["walked"] > VOLUME_WALK_SECONDS:
+        walk_volume(campaign)
+    return record["logical"], record["finished"]
+
+
+def admit(campaign: Campaign, native: Path) -> str | None:
+    """Register ``native`` as an admitted block's scratch tree (None), or say why the block waits
+    (AMENDMENT-2.md item 2): every in-flight tree, each at no less than the measured peak times the factor,
+    fits the scratch volume's free space less the margin, and retained plus each in-flight block's projected
+    retained bytes stays within the cap. Checked under one lock for every campaign of this process."""
+    with SCRATCH_LOCK:
+        latch = campaign.state / SCRATCH_LATCH
+        if latch.exists():
+            return "latched: " + json.loads(latch.read_text(encoding="utf-8"))["reason"]
+        if SCRATCH_LATCHED:
+            return "latched: " + SCRATCH_LATCHED[0]
+        others = sorted(SCRATCH_INFLIGHT)
+        reason = records_hold(campaign, len(others))
+        if reason:
+            return reason
+        storage = campaign.raw["storage"]
+        logical, finished = volume_logical(campaign)
+        projected = (finished + len(others) + 1) * storage["projected_additional_bytes"]
+        if logical + projected > storage["max_logical_bytes"] and finished \
+                and time.time() - volume(campaign)["walked"] > VOLUME_REWALK_SECONDS:
+            walk_volume(campaign)  # refuse on blocks finished since the walk only after measuring them
+            logical, finished = volume_logical(campaign)
+            projected = (finished + len(others) + 1) * storage["projected_additional_bytes"]
+        if logical + projected > storage["max_logical_bytes"]:
+            return (f"retained: {logical} B at the last walk plus {projected} B projected exceeds the "
+                    f"{storage['max_logical_bytes']} B allowance")
+        spec = campaign.raw.get("scratch")
+        if spec:
+            peak = math.ceil(max(spec["block_peak_bytes"], largest_pruned(campaign)) * spec["factor"])
+            sizes = [tree_bytes(Path(path)) for path in others]
+            anchor = Path(campaign.raw["roots"]["native"])
+            while not anchor.exists():
+                anchor = anchor.parent
+            disk = shutil.disk_usage(anchor)
+            available = disk.free + sum(sizes) - spec["margin_fraction"] * disk.total
+            need = sum(max(peak, size) for size in sizes) + peak
+            if need > available:
+                return f"scratch: {len(others) + 1} blocks need {need} B, {math.floor(available)} B available"
+        SCRATCH_INFLIGHT.add(str(native))
+    return None
+
+
+def release(campaign: Campaign, run: str, block: int, native: Path) -> None:
+    """A block's scratch slot frees only once its tree is verified gone (AMENDMENT-2.md item 3); a tree
+    still present latches the campaign, so no block is admitted until the latch is cleared."""
+    with SCRATCH_LOCK:
+        if native.exists():
+            reason = f"scratch tree not pruned: {native}"
+            SCRATCH_LATCHED.append(reason)  # every campaign of this process (qualification's scratch copies)
+            write_json(campaign.state / SCRATCH_LATCH, {"at": now(), "run": run, "block": block, "reason": reason})
+            campaign.event(run=run, block=block, kind="scratch-latch", native=str(native))
+            return
+        if str(native) in SCRATCH_INFLIGHT:
+            volume(campaign)["finished"] += 1  # its retained bytes may postdate the last walk
+        SCRATCH_INFLIGHT.discard(str(native))
+
+
+def drain_idle(campaign: Campaign) -> float:
+    """Seconds since this driver saw the copy-back move a block. A move it sees is driver work for the lease
+    guard (touch), so a drain that progresses keeps the Pod; one that does not is stopped in time."""
+    markers = campaign.state / "moved"
+    count = sum(moved(path) for path in markers.glob("*.json")) if markers.exists() else 0
+    with SCRATCH_LOCK:
+        progressed = count != DRAIN["moved"]
+        if progressed:
+            DRAIN.update(moved=count, at=time.time())
+        idle = time.time() - DRAIN["at"]
+    if progressed:
+        touch(campaign)
+    return idle
+
+
+def hold(campaign: Campaign, run: str, block: int, state: dict, reason: str, announce: bool) -> bool:
+    """After a storage refusal: wait (True) while another admitted block can free space, else stop the run
+    at this block boundary with the reason (False). A full copy-back window also waits with nothing in flight
+    (the follower drains it, as at a lease's start) until the copy-back is stalled; a latch or a stall stops."""
+    with SCRATCH_LOCK:
+        idle = not SCRATCH_INFLIGHT
+    # a full window, or a retained refusal while sealed blocks wait: the copy-back frees the volume
+    draining = reason.startswith("records: window full") or (
+        reason.startswith("retained:") and campaign.raw.get("records") and pending_seals(campaign) > 0)
+    if draining and drain_idle(campaign) > DRAIN_IDLE_SECONDS and idle:
+        reason = f"{reason}; no copy-back progress in {DRAIN_IDLE_SECONDS} s"  # before the guard's idle bound
+        draining = False
+    if reason.startswith(("latched", "records: copy-back stalled")) or (idle and not draining):
+        state["stop_reason"] = "storage admission: " + reason
+        campaign.save_state(run, state)
+        campaign.event(run=run, block=block, kind="admission-stop", reason=reason)
+        return False
+    if announce:
+        campaign.event(run=run, block=block, kind="admission-wait", reason=reason)
+    time.sleep(ADMISSION_WAIT_SECONDS)
+    return True
+
+
+def discarded(campaign: Campaign, run: str, block: int, record: dict, reason: str) -> None:
+    try:
+        discard(campaign, run, block, record, reason)
+    finally:  # a tree the discard left behind keeps its slot and latches admission
+        release(campaign, run, block, Path(record["native"]))
+
+
+def finished(campaign: Campaign, run: str, block: int, state: dict, entry: dict, record: dict) -> str:
+    try:
+        result = finish_block(campaign, run, block, state, entry, record)
+        seal(campaign, run, block, state)  # before the slot frees, so the window never undercounts
+    finally:  # a tree a raised finishing step left behind keeps its slot and latches admission
+        release(campaign, run, block, Path(record["native"]))
+    return result
+
+
 def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
     """The baseline's run_block with this recipe's config, request and failure rules."""
     entry = state["blocks"].setdefault(str(block), {"attempts": []})
@@ -344,14 +1159,32 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         campaign.lease.active[run] = entry
     if entry["attempts"]:
         last = entry["attempts"][-1]
-        if last.get("outcome") == "complete":
-            return finish_block(campaign, run, block, state, entry, last)
-        if "outcome" not in last:
-            # The driver (and with it the reservation's whole job) ended mid-block.
-            last["outcome"] = "interrupted"
-            discard(campaign, run, block, last, "partial output of an interrupted attempt")
+        if last.get("outcome") == "complete" and native_lost(campaign, run, block, entry, last):
+            # A pod's container disk (roots.native) went with a released pod before the block was retained:
+            # an interruption, so the block reruns from its block-start checkpoint (design section 4).
+            last["outcome"] = "lost"
+            for key in FINISH_KEYS:
+                entry.pop(key, None)
+            release(campaign, run, block, Path(last["native"]))  # gone: its reservation frees
             campaign.save_state(run, state)
-    while len(entry["attempts"]) < MAX_ATTEMPTS:
+            campaign.event(run=run, block=block, attempt=last["attempt"], kind="native-lost")
+        elif last.get("outcome") == "complete":
+            return finished(campaign, run, block, state, entry, last)
+        if "outcome" not in last:
+            # The driver (and with it the reservation's whole job) ended mid-block; an attempt whose native
+            # process never started was refused at dispatch.
+            started = (Path(last["root"]) / "started.json").exists()
+            last["outcome"] = "interrupted" if started else "unspawned"
+            discarded(campaign, run, block, last, "partial output of an interrupted attempt")
+            campaign.save_state(run, state)
+    waiting = False
+    while counted(entry) < MAX_ATTEMPTS:
+        if sum(attempt.get("outcome") in UNCOUNTED and attempt.get("session") == SESSION
+               for attempt in entry["attempts"]) >= MAX_UNCOUNTED_PER_LEASE:
+            state["stop_reason"] = "storage admission: repeated storage refusals or kills this session"
+            campaign.save_state(run, state)
+            campaign.event(run=run, block=block, kind="admission-stop", reason=state["stop_reason"])
+            return "stopped"
         estimate = None
         if campaign.host() == "runpod":
             estimate = block_estimate(campaign)
@@ -371,24 +1204,53 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         folder = campaign.hot(run) / run / f"{label(block)}-a{attempt}"
         native, root = campaign.native(run) / run / f"{label(block)}-a{attempt}" / "native", folder / "dispatch"
         cold = campaign.cold / run / f"{label(block)}-a{attempt}"
-        config = g.block_config(block_spec(campaign, run, block, state, native))
-        g.require_runtime_rules(config)  # amendment 1: refuse a block with any episode outside the profile
-        config_path = campaign.state / "configs" / f"{run}-{label(block)}-a{attempt}.json"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
-        request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json",
-                                 request_for(campaign, run, pin(config_path), root, cold, estimate))
+        reason = admit(campaign, native)
+        if reason:  # no attempt is made
+            if not hold(campaign, run, block, state, reason, not waiting):
+                return "stopped"
+            waiting = True
+            continue
+        waiting = False
+        start_walker(campaign)  # the dispatchers' emergency samples read its walks
+        try:
+            config = g.block_config(block_spec(campaign, run, block, state, native))
+            g.require_runtime_rules(config)  # amendment 1: refuse a block with any episode outside the profile
+            config_path = campaign.state / "configs" / f"{run}-{label(block)}-a{attempt}.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
+            request = request_for(campaign, run, pin(config_path), root, cold, estimate)
+            admission = admitted(campaign, native=native)  # the walk this block was admitted on
+            if admission is not None:
+                request["admission"] = admission
+            request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json", request)
+        except BaseException:
+            release(campaign, run, block, native)  # admitted, never dispatched
+            raise
         record = {"attempt": attempt, "root": str(root), "native": str(native), "cold": str(cold),
-                  "config": pin(config_path), "request": request_pin, "started": now()}
+                  "config": pin(config_path), "request": request_pin, "started": now(), "session": SESSION}
         entry["attempts"].append(record)
         campaign.save_state(run, state)
         campaign.event(run=run, block=block, attempt=attempt, kind="dispatch")
         started = time.monotonic()
-        result = base.dispatch_block(Path(request_pin["path"]), campaign.raw.get("compute_host_name"))
+        try:
+            result = base.dispatch_block(Path(request_pin["path"]), campaign.raw.get("compute_host_name"))
+        except RuntimeError as error:
+            release(campaign, run, block, native)
+            if not any(marker in str(error).lower() for marker in STORAGE_MARKERS):
+                record["outcome"] = "unspawned"
+                campaign.save_state(run, state)
+                raise
+            record["outcome"] = "storage-refused"  # uncounted
+            campaign.save_state(run, state)
+            campaign.event(run=run, block=block, attempt=attempt, kind="storage-refused")
+            if not hold(campaign, run, block, state, "the launcher's storage check refused the dispatch", True):
+                return "stopped"
+            continue
         touch(campaign)
         record["dispatch"] = result
         if result.get("state") != "dispatched":
             record["outcome"] = "spawn-" + str(result.get("state"))
+            release(campaign, run, block, native)
             campaign.save_state(run, state)
             return "stopped"
         outcome = base.wait_block(root, result["pid"])
@@ -398,15 +1260,22 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             record["report"] = pin(root / "report.json")
             record["seconds"], record["host"] = time.monotonic() - started, campaign.host()
             campaign.save_state(run, state)
-            return finish_block(campaign, run, block, state, entry, record)
+            return finished(campaign, run, block, state, entry, record)
         kind = base.classify_failure(root)
+        if kind == "interrupted" and not (root / "started.json").exists():
+            kind = "unspawned"  # the launcher failed before the native process started: uncounted
+        elif kind == "interrupted" and storage_failure(root):
+            kind = "storage-interrupted"  # uncounted: the block waits for admission and reruns
         record["outcome"] = kind
-        discard(campaign, run, block, record, "partial output of a failed attempt (design: discarded and logged)")
+        discarded(campaign, run, block, record, "partial output of a failed attempt (design: discarded and logged)")
         campaign.save_state(run, state)
         campaign.event(run=run, block=block, attempt=attempt, kind=kind)
         if kind == "invalid":
             entry["disposition"] = "failed: invalid block (non-natural, non-finite or NaN marker)"
             campaign.save_state(run, state)
+            return "stopped"
+        if kind == "storage-interrupted" and not hold(campaign, run, block, state,
+                                                      "the launcher's storage check ended the attempt", True):
             return "stopped"
     entry["disposition"] = "technical: interrupted three times"
     campaign.save_state(run, state)
@@ -452,12 +1321,12 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
             raise RuntimeError("retained checkpoint copy differs")
         entry["final_checkpoint"] = {"path": str(kept), "sha256": update["checkpoint"]["sha256"]}
         entry["final_adam_step"] = update["adam_step"]
-        entry["final_state_sha256"] = json.loads(kept.read_bytes())["state_sha256"]
+        entry["final_state_sha256"] = checkpoint_container_v1.read_document(kept)["state_sha256"]
         entry["checkpoint_state"] = "kept"
         campaign.save_state(run, state)
     if block == 1 and "embedding_gate" not in entry:
         gate = collector.embedding_gate(fresh_embedding(campaign.raw["play_imports"][run]),
-                                        json.loads(Path(entry["final_checkpoint"]["path"]).read_bytes()),
+                                        checkpoint_container_v1.read_document(entry["final_checkpoint"]["path"]),
                                         g.ndb.load_decks(Path(campaign.raw["decks"])))
         entry["embedding_gate"] = write_json(campaign.exposure / f"{run}-b001-embedding-gate.json", gate)
         entry["embedding_gate_pass"] = gate["pass"]
@@ -557,6 +1426,9 @@ def retire_one(campaign: Campaign, run: str, end: int, entry: dict, proof: dict 
     nearest = max(block for block in g.PERMANENT_BLOCKS if block <= end)
     regenerate = {"from_permanent_block": nearest, "blocks_to_replay": end - nearest,
                   "configs": f"state/configs/{run}-b{nearest + 1:03d}..b{end:03d}", "runtime": campaign.raw["runtime"]}
+    if campaign.raw.get("records"):  # sealed blocks' configs leave the volume (AMENDMENT-2.md item 4)
+        regenerate["configs_moved_to"] = ("the record copy-back's archives: MOVED.jsonl rows by run and block, "
+                                          f"<dest>/{run}/{run}-b<block>.tar.zst, member state/configs/...")
     if entry["checkpoint_state"] in ("kept", "compressed") and proof is None:
         partial = packed.with_name(packed.name + ".partial")
         partial.unlink(missing_ok=True)
@@ -605,6 +1477,7 @@ def drive(campaign: Campaign, run: str) -> None:
         for block in range(1, campaign.stop_after + 1):
             entry = state["blocks"].get(str(block))
             if entry and entry.get("done"):
+                seal(campaign, run, block, state)  # a driver stopped between the block's end and its seal
                 continue
             if entry and entry.get("disposition"):
                 state["status"] = "stopped"
@@ -633,10 +1506,26 @@ def drive(campaign: Campaign, run: str) -> None:
         campaign.event(run=run, kind="run-" + state["status"])
 
 
+def reconcile(campaign: Campaign, runs: list[str]) -> None:
+    """Before any lineage thread admits work (AMENDMENT-2.md item 4, exact window): seal every finished block a
+    stopped driver left unsealed, and reserve a slot for every completed attempt still to be finished, so
+    the window counts it before a fresh block can enter."""
+    for run in runs:
+        state = campaign.run_state(run)
+        for key, entry in sorted(state["blocks"].items(), key=lambda item: int(item[0])):
+            if entry.get("done"):
+                seal(campaign, run, int(key), state)
+            elif entry.get("attempts") and entry["attempts"][-1].get("outcome") == "complete" \
+                    and not entry.get("disposition"):  # the driver resumes it (a terminal block it skips)
+                with SCRATCH_LOCK:
+                    SCRATCH_INFLIGHT.add(entry["attempts"][-1]["native"])  # freed by its finishing step
+
+
 def run(campaign: Campaign, runs: list[str]) -> int:
     token = os.environ.get(reservations.TOKEN_ENV)
     if not token or reservations.status(token).get("token_fate") != "holds":
         raise SystemExit("the campaign driver runs only inside a held host reservation")
+    reconcile(campaign, runs)
     clock = None
     if campaign.host() == "runpod":
         campaign.lease = LeaseProgress(campaign)

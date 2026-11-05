@@ -856,7 +856,7 @@ impl KeyMemo {
         Self::with_max_bytes(key_memo_max_bytes(QUIET_KEY_MEMO_BYTES))
     }
 
-    fn with_max_bytes(max_bytes: usize) -> Self {
+    pub(crate) fn with_max_bytes(max_bytes: usize) -> Self {
         Self {
             max_bytes,
             ..Self::default()

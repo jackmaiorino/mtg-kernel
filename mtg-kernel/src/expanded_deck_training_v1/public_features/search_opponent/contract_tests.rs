@@ -28,6 +28,7 @@ fn g115() -> ExpandedModelSourceV1 {
             expected_feature_encoding_digest: "27".repeat(32),
         },
         checkpoint: Some(pin("checkpoint.json", G115_CHECKPOINT_SHA256)),
+        s_learner: None,
     }
 }
 
@@ -53,6 +54,8 @@ fn episode(search: bool) -> ExpandedEpisodeV1 {
         max_policy_steps: 80_000,
         runtime_rules: None,
         reset: None,
+        opening: None,
+        mulligan_modes: None,
     }
 }
 

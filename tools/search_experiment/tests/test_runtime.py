@@ -192,6 +192,34 @@ class QualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "same observed core pool"):
                 launch.qualify(paths, Path(directory) / "receipt.json")
 
+    def test_pool_reason_is_passed_only_to_allocators_that_require_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = self.calibrated_spec(directory)
+            manifest = Path(directory) / "manifest.json"
+            manifest.write_text("{}", encoding="utf-8")
+            args = type("Args", (), {"label": "l", "manifest": str(manifest), "phase": "qualify", "workers": 1})()
+            command = launch.slots_command(spec, args)
+            pool = command.index("--core-pool")
+            self.assertEqual(command[pool:pool + 4], ["--core-pool", "0-1", "--pool-reason", "determinism"])
+            helper = launch.allocator(spec)   # the current allocator accepts that placement
+            self.assertIsNone(helper._check_placement(helper.parse_cores("0-1"), "determinism", False, None,
+                                                      False, False))
+            # An older pinned allocator (no POOL_REASONS) would reject the option, so it is not passed.
+            older = Path(directory) / "older" / "host_slots_v1.py"
+            older.parent.mkdir()
+            older.write_text("def parse_cores(spec):\n    return [int(c) for c in spec.split('-')]\n",
+                             encoding="utf-8")
+            spec["host_slots"] = {"path": str(older), "sha256": launch.digest(older)}
+            saved = sys.modules.pop("host_slots_v1", None)
+            try:
+                command = launch.slots_command(spec, args)
+            finally:
+                sys.modules.pop("host_slots_v1", None)
+                if saved is not None:
+                    sys.modules["host_slots_v1"] = saved
+            self.assertIn("--core-pool", command)
+            self.assertNotIn("--pool-reason", command)
+
     def test_legacy_certification_preserves_sources_and_rejects_claim_drift(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -297,7 +325,10 @@ class QualificationTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows final CPU handle")
     def test_final_cpu_after_exit_and_power(self):
-        child = subprocess.Popen([sys.executable, "-c", "sum(range(2000000))"], creationflags=0x4)
+        # Enough work to register above the CPU clock tick on a fast runner. In a Windows venv sys.executable is a
+        # launcher that runs the interpreter as its own child, so the clock would time only the launcher.
+        python = getattr(sys, "_base_executable", sys.executable)
+        child = subprocess.Popen([python, "-c", "sum(range(30000000))"], creationflags=0x4)
         clock = launch.ProcessClock(child)
         try:
             power = clock.qualify_power()

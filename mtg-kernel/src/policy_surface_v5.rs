@@ -382,9 +382,514 @@ pub struct PolicySurfaceV5 {
     scan: Option<CombatScanV5>,
     hunter_order_enabled_v45: bool,
     hunter_order_v45: Option<hunter_order_v45::TriggerOrderV45>,
+    /// W1 producer (lead ruling 7 (a)): where each presented decision fell
+    /// in the committed stream, as (seat, event-history length, observation
+    /// journal length), oldest first. A seat's marks bound the batches its
+    /// bot-facing transcript receives. Bookkeeping only: no transition,
+    /// observation or hash reads it.
+    infoset_marks_v1: std::sync::Arc<Vec<(u8, u32, u32)>>,
+}
+
+/// The session surface's public context, carried by the W1 information-set
+/// payload so an imported session flows like the live one. Id-free except
+/// `combat`, whose objects the producer writes as canonical arena indices.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceContextV1 {
+    pub scalars: crate::surface_v2::HarnessSurfaceScalarsV1,
+    pub hunter_order_enabled_v45: bool,
+    /// A live combat declaration's progress (amendment 43.1); absent at
+    /// every other decision, so those payloads keep their bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combat: Option<CombatContextV1>,
+    /// A live discard reshape's progress (amendment 43.1 part 2); absent at
+    /// every other decision, so those payloads keep their bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discard: Option<DiscardContextV1>,
+}
+
+/// A live discard reshape (amendment 43.1 part 2): the discarding player,
+/// the cards picked so far in pick order, and how many are still needed.
+/// The remaining choices are not carried: the import recomputes them from
+/// the imported state's pending discard, so no hand order travels. All of
+/// it is V's transcript (V's own picks at V's own discard).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiscardContextV1 {
+    pub player: PlayerId,
+    pub chosen: Vec<ObjectId>,
+    pub remaining_needed: u32,
+}
+
+impl DiscardContextV1 {
+    /// Every picked card renamed through `f`; None if any has no image.
+    pub(crate) fn rename(&self, f: impl Fn(ObjectId) -> Option<ObjectId>) -> Option<Self> {
+        Some(Self {
+            player: self.player,
+            chosen: self
+                .chosen
+                .iter()
+                .map(|x| f(*x))
+                .collect::<Option<Vec<_>>>()?,
+            remaining_needed: self.remaining_needed,
+        })
+    }
+
+    /// The import's fail-closed check against the imported state; returns
+    /// the remaining choices (the pending discard's choices not yet picked,
+    /// in the imported hand's order). The state must hold the pending
+    /// discard of `player`, who is the payload's viewer; the picks are
+    /// distinct tracked (`C:`) choices of it; picks plus the count still
+    /// needed equal the decision's count; at least one card is still
+    /// needed and the remaining choices cover it.
+    pub(crate) fn validate_in_state(
+        &self,
+        state: &GameState,
+        handles: &[String],
+        viewer: PlayerId,
+    ) -> Result<Vec<ObjectId>, String> {
+        let Some((player, count, choices)) = engine::pending_discard_decision_v1(state) else {
+            return Err("discard context: no pending discard".into());
+        };
+        if self.player != player || self.player != viewer {
+            return Err("discard context: player".into());
+        }
+        let tracked = |o: &ObjectId| {
+            handles
+                .get(o.0 as usize)
+                .is_some_and(|h| h.starts_with("C:"))
+        };
+        let mut distinct = self.chosen.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() != self.chosen.len()
+            || !self
+                .chosen
+                .iter()
+                .all(|x| tracked(x) && choices.contains(x))
+        {
+            return Err("discard context: picks".into());
+        }
+        let remaining: Vec<ObjectId> = choices
+            .iter()
+            .copied()
+            .filter(|x| !self.chosen.contains(x))
+            .collect();
+        if self.remaining_needed == 0
+            || self.chosen.len() as u64 + u64::from(self.remaining_needed) != u64::from(count)
+            || (remaining.len() as u64) < u64::from(self.remaining_needed)
+        {
+            return Err("discard context: progress".into());
+        }
+        Ok(remaining)
+    }
+}
+
+/// A live combat inclusion scan with the blocker reshape around it
+/// (amendment 43.1): the candidates in the scan's own order, the cursor,
+/// the answered inclusions, and for blocks the per-attacker reshape. All of
+/// it is V's transcript: the order is the order of V's inclusion points,
+/// and the progress is V's own answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CombatContextV1 {
+    pub kind: CombatScanKindV1,
+    pub player: PlayerId,
+    /// The attacker being blocked (blocker scans only).
+    pub attacker: Option<ObjectId>,
+    pub candidates: Vec<ObjectId>,
+    pub cursor: usize,
+    pub selected: Vec<ObjectId>,
+    /// The surface's blocker reshape (blocker scans only).
+    pub blockers: Option<crate::surface_v2::BlockersReshapePublicV2>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CombatScanKindV1 {
+    Attackers,
+    Blockers,
+}
+
+impl CombatContextV1 {
+    /// Every object renamed through `f`; None if any has no image.
+    pub(crate) fn rename(&self, f: impl Fn(ObjectId) -> Option<ObjectId>) -> Option<Self> {
+        let all = |xs: &[ObjectId]| xs.iter().map(|x| f(*x)).collect::<Option<Vec<_>>>();
+        let blockers = match &self.blockers {
+            None => None,
+            Some(b) => Some(crate::surface_v2::BlockersReshapePublicV2 {
+                current_attacker: match b.current_attacker {
+                    None => None,
+                    Some(a) => Some(f(a)?),
+                },
+                accumulated: b
+                    .accumulated
+                    .iter()
+                    .map(|(x, y)| Some((f(*x)?, f(*y)?)))
+                    .collect::<Option<Vec<_>>>()?,
+                remaining: b
+                    .remaining
+                    .iter()
+                    .map(|(a, xs)| Some((f(*a)?, all(xs)?)))
+                    .collect::<Option<Vec<_>>>()?,
+            }),
+        };
+        Some(Self {
+            kind: self.kind,
+            player: self.player,
+            attacker: match self.attacker {
+                None => None,
+                Some(a) => Some(f(a)?),
+            },
+            candidates: all(&self.candidates)?,
+            cursor: self.cursor,
+            selected: all(&self.selected)?,
+            blockers,
+        })
+    }
+
+    /// The import's fail-closed check: objects inside the arena, a presented
+    /// (unexhausted) scan whose selection is a subset of its answered
+    /// prefix, and a blocker scan inside a reshape whose current attacker
+    /// it names.
+    pub(crate) fn validate(&self, arena_len: usize) -> Result<(), String> {
+        let inside = |x: &ObjectId| (x.0 as usize) < arena_len;
+        if !self.objects().iter().all(inside) {
+            return Err("combat context names an object outside the arena".into());
+        }
+        if self.player.0 > 1 {
+            return Err("combat context player".into());
+        }
+        let mut distinct = self.candidates.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() != self.candidates.len() {
+            return Err("combat context repeats a candidate".into());
+        }
+        if self.candidates.is_empty()
+            || self.cursor >= self.candidates.len()
+            || self.selected.len() > self.cursor
+        {
+            return Err("combat context progress".into());
+        }
+        // The selection is the included candidates of the answered prefix
+        // in scan order: a distinct, ordered subsequence of it.
+        let mut from = 0;
+        for x in &self.selected {
+            match self.candidates[from..self.cursor]
+                .iter()
+                .position(|c| c == x)
+            {
+                Some(k) => from += k + 1,
+                None => return Err("combat context progress".into()),
+            }
+        }
+        match (self.kind, self.attacker, &self.blockers) {
+            (CombatScanKindV1::Attackers, None, None) => Ok(()),
+            (CombatScanKindV1::Blockers, Some(a), Some(b)) if b.current_attacker == Some(a) => {
+                Ok(())
+            }
+            _ => Err("combat context kind".into()),
+        }
+    }
+
+    /// Every object the record names.
+    fn objects(&self) -> Vec<ObjectId> {
+        let mut ids: Vec<ObjectId> = self
+            .candidates
+            .iter()
+            .chain(&self.selected)
+            .copied()
+            .collect();
+        ids.extend(self.attacker);
+        if let Some(b) = &self.blockers {
+            ids.extend(b.current_attacker);
+            ids.extend(b.accumulated.iter().flat_map(|(x, y)| [*x, *y]));
+            ids.extend(
+                b.remaining
+                    .iter()
+                    .flat_map(|(a, xs)| std::iter::once(*a).chain(xs.iter().copied())),
+            );
+        }
+        ids
+    }
+
+    /// The import's check against the imported state (amendment 43.1):
+    /// `validate`, every object a tracked (`C:`) object, and the record a
+    /// declaration the surface itself would be presenting there: the step
+    /// and the scanning player, the attacker scan's candidates exactly the
+    /// engine's eligible attackers, and for blocks the current candidates
+    /// exactly the attacker's legal blockers not yet assigned, every queued
+    /// attacker's blockers exactly its legal blockers, and every assignment
+    /// a legal block by a distinct blocker.
+    pub(crate) fn validate_in_state(
+        &self,
+        state: &GameState,
+        handles: &[String],
+    ) -> Result<(), String> {
+        use std::collections::BTreeSet;
+        self.validate(state.objects.len())?;
+        let tracked = |o: &ObjectId| {
+            handles
+                .get(o.0 as usize)
+                .is_some_and(|h| h.starts_with("C:"))
+        };
+        if !self.objects().iter().all(tracked) {
+            return Err("combat context names an untracked object".into());
+        }
+        let set = |xs: &[ObjectId]| xs.iter().copied().collect::<BTreeSet<_>>();
+        let combat = &state.engine.combat;
+        match self.kind {
+            CombatScanKindV1::Attackers => {
+                if state.step != crate::state::Step::DeclareAttackers
+                    || combat.attackers_declared
+                    || self.player != state.active_player
+                {
+                    return Err("combat context: no attacker declaration".into());
+                }
+                if set(&self.candidates) != set(&engine::eligible_attackers(state)) {
+                    return Err("combat context: candidates are not the eligible attackers".into());
+                }
+            }
+            CombatScanKindV1::Blockers => {
+                let (Some(attacker), Some(b)) = (self.attacker, &self.blockers) else {
+                    return Err("combat context kind".into());
+                };
+                if state.step != crate::state::Step::DeclareBlockers
+                    || !combat.attackers_declared
+                    || combat.blockers_declared
+                    || self.player == state.active_player
+                {
+                    return Err("combat context: no blocker declaration".into());
+                }
+                // An attacker that left the battlefield left combat (the
+                // engine's own declaration filter).
+                let attacking = |a: &ObjectId| {
+                    combat.attackers.contains(a)
+                        && state.objects.get(*a).zone == crate::state::Zone::Battlefield
+                };
+                let legal = |a: ObjectId| set(&engine::legal_blockers_for(state, a));
+                let used: Vec<ObjectId> = b.accumulated.iter().map(|(x, _)| *x).collect();
+                if set(&used).len() != used.len()
+                    || !b
+                        .accumulated
+                        .iter()
+                        .all(|(x, a)| attacking(a) && legal(*a).contains(x))
+                {
+                    return Err("combat context: assigned blocks".into());
+                }
+                let mut current = legal(attacker);
+                current.retain(|x| !used.contains(x));
+                if !attacking(&attacker) || set(&self.candidates) != current {
+                    return Err("combat context: candidates are not the legal blockers".into());
+                }
+                let queued: Vec<ObjectId> = b.remaining.iter().map(|(a, _)| *a).collect();
+                if set(&queued).len() != queued.len()
+                    || queued.contains(&attacker)
+                    || !b.remaining.iter().all(|(a, xs)| {
+                        attacking(a)
+                            && !xs.is_empty()
+                            && set(xs).len() == xs.len()
+                            && set(xs) == legal(*a)
+                    })
+                {
+                    return Err("combat context: queued attackers".into());
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PolicySurfaceV5 {
+    /// Records that a decision of `seat` is presented with `events` committed
+    /// events and `notes` journal notes (lead ruling 7 (a)).
+    pub(crate) fn push_infoset_mark_v1(&mut self, seat: PlayerId, events: usize, notes: usize) {
+        let mark = (seat.0, events as u32, notes as u32);
+        if self.infoset_marks_v1.last() != Some(&mark) {
+            std::sync::Arc::make_mut(&mut self.infoset_marks_v1).push(mark);
+        }
+    }
+
+    /// The (event-history length, journal length) of every decision
+    /// presented to `seat`, oldest first.
+    pub(crate) fn infoset_marks_v1(&self, seat: PlayerId) -> Vec<(usize, usize)> {
+        self.infoset_marks_v1
+            .iter()
+            .filter(|m| m.0 == seat.0)
+            .map(|m| (m.1 as usize, m.2 as usize))
+            .collect()
+    }
+
+    /// Carries another surface's marks (a session restarted on the same
+    /// committed stream).
+    pub(crate) fn carry_infoset_marks_v1(&mut self, from: &PolicySurfaceV5) {
+        self.infoset_marks_v1 = from.infoset_marks_v1.clone();
+    }
+
+    /// None while the surface holds object-naming progress (a combat scan,
+    /// a blocker reshape, a Hunter trigger order).
+    pub(crate) fn infoset_context_v1(&self) -> Option<SurfaceContextV1> {
+        if self.scan.is_some() || self.hunter_order_v45.is_some() {
+            return None;
+        }
+        Some(SurfaceContextV1 {
+            scalars: self.inner.infoset_context_v1()?,
+            hunter_order_enabled_v45: self.hunter_order_enabled_v45,
+            combat: None,
+            discard: None,
+        })
+    }
+
+    /// As `infoset_context_v1`, and during a combat scan the context with
+    /// its combat record in native object ids (the producer renames them).
+    /// None while a Hunter trigger order or another reshape names objects.
+    pub(crate) fn infoset_context_with_combat_v1(&self) -> Option<SurfaceContextV1> {
+        let public = self.inner.public_context();
+        // A live discard reshape (amendment 43.1 part 2) travels as the
+        // discard record, in native ids (the producer renames them).
+        let discard = public.discard.as_ref().map(|d| DiscardContextV1 {
+            player: d.player,
+            chosen: d.chosen.clone(),
+            remaining_needed: d.remaining_needed,
+        });
+        let Some(scan) = &self.scan else {
+            if discard.is_none() || self.hunter_order_v45.is_some() || public.blockers.is_some() {
+                return self.infoset_context_v1();
+            }
+            return Some(SurfaceContextV1 {
+                scalars: self.inner.infoset_scalars_with_reshapes_v1()?,
+                hunter_order_enabled_v45: self.hunter_order_enabled_v45,
+                combat: None,
+                discard,
+            });
+        };
+        if self.hunter_order_v45.is_some() || discard.is_some() {
+            return None;
+        }
+        let blockers = public.blockers;
+        let combat = match scan {
+            CombatScanV5::Attackers {
+                player,
+                ordered_candidates,
+                cursor,
+                selected,
+                ..
+            } => CombatContextV1 {
+                kind: CombatScanKindV1::Attackers,
+                player: *player,
+                attacker: None,
+                candidates: ordered_candidates.clone(),
+                cursor: *cursor,
+                selected: selected.clone(),
+                blockers,
+            },
+            CombatScanV5::Blockers {
+                player,
+                attacker,
+                ordered_candidates,
+                cursor,
+                selected,
+                ..
+            } => CombatContextV1 {
+                kind: CombatScanKindV1::Blockers,
+                player: *player,
+                attacker: Some(*attacker),
+                candidates: ordered_candidates.clone(),
+                cursor: *cursor,
+                selected: selected.clone(),
+                blockers,
+            },
+        };
+        Some(SurfaceContextV1 {
+            scalars: self.inner.infoset_scalars_with_reshapes_v1()?,
+            hunter_order_enabled_v45: self.hunter_order_enabled_v45,
+            combat: Some(combat),
+            discard: None,
+        })
+    }
+
+    /// Why a payload cannot carry this surface: the R2 subclass the bridge
+    /// sends with the refusal (amendment 43.1 part 2). A fixed name of the
+    /// surface state V's own decision presents.
+    pub(crate) fn payload_refusal_detail_v1(&self, viewer: PlayerId) -> &'static str {
+        if self.hunter_order_v45.is_some() {
+            return "hunter_trigger_order";
+        }
+        let p = self.inner.public_context();
+        if p.optional_cost.is_some() {
+            "optional_cost_reshape"
+        } else if p.madness_cast_reprompt_exemption.is_some() {
+            "madness_reprompt"
+        } else if p.discard.as_ref().is_some_and(|d| d.player != viewer) {
+            "opponent_discard"
+        } else if p.discard.is_some() {
+            "discard_untracked"
+        } else if self.scan.is_some() || p.blockers.is_some() {
+            "combat_untracked"
+        } else {
+            "other_surface"
+        }
+    }
+
+    /// Restores a carried discard record (amendment 43.1 part 2) with the
+    /// remaining choices its import check computed from the imported state.
+    pub(crate) fn set_discard_context_v1(
+        &mut self,
+        discard: &DiscardContextV1,
+        remaining: Vec<ObjectId>,
+    ) {
+        self.inner.set_discard_reshape_v1(
+            discard.player,
+            discard.chosen.clone(),
+            remaining,
+            discard.remaining_needed,
+        );
+    }
+
+    /// A restored combat scan (amendment 43.1) must still admit a legal
+    /// declaration: including or excluding the current candidate keeps a
+    /// completion the engine accepts (the scan's own answer rule).
+    pub(crate) fn validate_restored_combat_scan_v1(&self, state: &GameState) -> Result<(), String> {
+        let Some(scan) = &self.scan else {
+            return Ok(());
+        };
+        scan.validate_shape()?;
+        scan.answer_keeps_a_legal_completion(state, &self.inner, true)
+            .or_else(|_| scan.answer_keeps_a_legal_completion(state, &self.inner, false))
+            .map_err(|e| format!("combat context admits no legal declaration: {e}"))
+    }
+
+    /// Restores a carried (validated) combat record, amendment 43.1, before
+    /// the imported session presents its first decision, bound to that
+    /// session's environment revision.
+    pub(crate) fn set_combat_context_v1(&mut self, combat: &CombatContextV1, revision: u64) {
+        self.inner.set_blockers_reshape_v1(combat.blockers.as_ref());
+        let binding = CombatScanBindingV5::OwnedEnvironmentRevision(revision);
+        self.scan = Some(match (combat.kind, combat.attacker) {
+            (CombatScanKindV1::Blockers, Some(attacker)) => CombatScanV5::Blockers {
+                player: combat.player,
+                attacker,
+                ordered_candidates: combat.candidates.clone(),
+                cursor: combat.cursor,
+                selected: combat.selected.clone(),
+                binding,
+            },
+            _ => CombatScanV5::Attackers {
+                player: combat.player,
+                ordered_candidates: combat.candidates.clone(),
+                cursor: combat.cursor,
+                selected: combat.selected.clone(),
+                binding,
+            },
+        });
+    }
+
+    pub(crate) fn set_infoset_context_v1(&mut self, context: SurfaceContextV1) {
+        self.inner.set_infoset_context_v1(context.scalars);
+        self.hunter_order_enabled_v45 = context.hunter_order_enabled_v45;
+    }
+
     pub fn new() -> Self {
         Self::new_with_suppression_audit_mode(SuppressionAuditMode::Full)
     }
@@ -407,6 +912,7 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
+            infoset_marks_v1: Default::default(),
         }
     }
 
@@ -419,6 +925,7 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
+            infoset_marks_v1: Default::default(),
         }
     }
 

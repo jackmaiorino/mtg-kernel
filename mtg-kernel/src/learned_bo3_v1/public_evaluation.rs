@@ -95,7 +95,7 @@ pub struct Command {
     clippy::large_enum_variant,
     reason = "retains the existing inline policy and report layout during merge preparation"
 )]
-enum Play {
+pub(crate) enum Play {
     Search(Box<SearchPlayV3>),
     Legacy {
         policy: FrozenPlayPolicyV1,
@@ -109,6 +109,13 @@ enum Play {
 }
 
 impl Play {
+    /// The frozen policy of a Legacy source, for measurement-only scoring.
+    pub(crate) fn legacy_policy_mut(&mut self) -> Option<&mut FrozenPlayPolicyV1> {
+        match self {
+            Self::Legacy { policy, .. } => Some(policy),
+            _ => None,
+        }
+    }
     fn base(&mut self) -> &mut dyn PairedBo1PolicyV1 {
         match self {
             Self::Search(policy) => policy.as_mut(),
@@ -220,7 +227,7 @@ fn hash(bytes: &[u8]) -> String {
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
-fn load(source: &ModelSource) -> Result<(Play, Value), String> {
+pub(crate) fn load(source: &ModelSource) -> Result<(Play, Value), String> {
     match source {
         ModelSource::InformationSetSearchV3 { source, descriptor } => {
             let (policy, identity) = load_expanded_inference_v1(source)?;
