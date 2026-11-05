@@ -23,7 +23,8 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   from), `workers`, `memory_max_bytes`, `bytes_per_update`, optional `segment_updates`, `base` and `throughput`
   (a `w5-box-throughput/v1` record), and for X arms `budget`, `coefficient`, `dose`;
 - `chains`: name to `{arm, slot, seed_root, pair}` (F chains: no pair; XS in Stage 1b: `partner`, the Stage 1a C
-  chain in the same root).
+  chain in the same root; Stage 0 chains may omit the pair, e.g. a box throughput run with every box on one
+  seed root, since a `w5-box-throughput/v1` record binds the arm file and needs identical work per box).
 Stage 1 rules checked: seed roots `w5/chain<i>` (pair i) and `w5/filler<slot>`; 1a pairs C with X8 and 1b XS with
 F, every box used, half per arm; F starts from C's parent; X chain i's configs share every iteration (episode ids,
 deal seeds, seats, opponents) with C chain i's and differ only in the search block and resource keys (XS: the same
@@ -43,23 +44,27 @@ A chain has no planned length: C stops at its wall, X at R_i (or the cap), a fil
 
 **In-box driver** (`_drive`, the chain process w5box meters; its own CPU, a few configs and hashes per segment,
 is part of the chain's ledger in every arm). Per segment: END, STOP (`<root>/STOP` or `chains/<name>/STOP`: stop
-at the next segment boundary; `w5box.py kill` stops at once) and the byte guard verdict; an interrupted iteration
+at the next segment boundary; `w5box.py kill` stops at once) and byte guard admission (a fresh verdict, at most
+GUARD_SEGMENTS segments of this chain per verdict, which reserved that many); an interrupted iteration
 is moved aside (mtg-kernel#336). C: from `launched_unix` (the first start) plus the C wall, the trainer is killed
 and the chain ends at its last completed boundary (END `c-wall`). X: a trainer that stops at the ledger source's
 `stop_at_usec` (resume to R_i) ends the chain (END `x-stop-at`). Any other failure writes FAILURE.json and exits 8;
 whether it is a chain failure (section 7.4) is the lead's call (`end`), except an OOM kill, which `run` records.
 
 **Supervise** (per node, off the boxes; one at a time). Each cycle: index every measured chain; the 50% R_nom
-look boundary (when `r_nom_usec` is set) is recorded and protected from every prune; for each pair, before C ends,
-`retention.decide` (projection over the C wall): snapshot (from the first boundary at 0.85 R-hat, cut with the
-container tool), pause (`w5box.py pause --now` once), stop at the X cap (END `x-cap`, kill); once C ends (END),
+look boundary (`r_nom_usec`, frozen in Stage 1) is recorded and protected from every prune; for each pair, before C
+ends, `retention.decide` (projection over the C wall): the snapshot window (from the first boundary at 0.85 R-hat,
+cut with the container tool, kept open until R_i is final or 30 GB of snapshots), pause (`w5box.py pause --now`
+once), stop at the X cap (END `x-cap`, kill; enforced before X's first update too); once C ends (END),
 R_i = the ledger at its last valid boundary: a paused X resumes with `{"stop_at_usec": R_i}`, a running X without
 that stop is paused and resumed with it, an X past R_i ends (END `reached-r`, kill). When both chains have ended
 and no instance is open: endpoints (C: its last valid boundary; X: the first valid boundary at or past R_i, else
 its last valid one, labelled under budget), `retention.select`, a replay where the state is gone (run detached by
 `_replay`, then `verify-replay`), the PRUNE manifest (look checkpoints kept), and the pruned files moved to the
 same-volume hold folder `<root>/hold` with a move manifest, purged after `hold_days`. Then the rolling retention of
-running chains (`retention.plan` / `apply`) and the byte guard verdict (`<root>/GUARD.json`, read by the drivers).
+running chains (`retention.plan` / `apply`); kills retried for ended chains still running; occupancy (a box whose
+measured chain has ended holds the frozen filler `fill<slot>` while another measured chain runs, and every F chain
+is killed once all measured chains have ended); the byte guard verdict (`<root>/GUARD.json`).
 
 **Implementation choices** (not design constants):
 - Segment lengths: C 256, X8 and XS 16, F 64 updates (C's hot trajectories over 64 segments stay near 16k updates;
@@ -73,8 +78,10 @@ running chains (`retention.plan` / `apply`) and the byte guard verdict (`<root>/
   are about half a second).
 - Cadences: driver trainer poll 1 s (C only), guard verdict valid 15 minutes, a driver waits up to 30 minutes for
   one (then exits 7); supervise default 60 s. One running plan per node (the guard counts its chains).
-- Fillers (paused-box `_filler` and Stage 1b F chains) start fresh from the C parent at update 0 and delete each
-  segment once the next one finishes; their trees go with `clean-fillers` at Stage 1b's end.
+- Fillers (paused-box `_filler`, Stage 1b F chains, `fill<slot>`) start fresh from the C parent at update 0 and
+  delete each segment once the next one finishes; their trees go with `clean-fillers` at the stage's end. A box
+  left by an ended chain is refilled within one supervise cycle (the gap is in LOG.jsonl).
+- Byte guard: each verdict reserves GUARD_SEGMENTS = 4 segments per running chain.
 """
 import argparse
 import copy
@@ -114,6 +121,9 @@ LOOK_FRACTION = 0.5
 GUARD_MAX_AGE = 900.0
 GUARD_WAIT = 1800.0
 GUARD_POLL = 30.0
+GUARD_SEGMENTS = 4
+END_KILL_GRACE = 30.0
+FILL_START_GRACE = 60.0
 TRAINER_POLL = 1.0
 SUPERVISE_EVERY = 60.0
 REPLAY_START_GRACE = 120.0
@@ -336,8 +346,13 @@ def pair_difference(a, b, allowed=PAIR_ONLY_KEYS):
 
 
 def check_pair(x_arm, c_arm, seed_root, scratch):
-    """X chain i and C chain i: identical iterations (episode ids, deal seeds, seats, opponents) at two offsets;
-    X8 differs from C only in the search block and resource keys. Returns XS's other differences (reported)."""
+    """X chain i and C chain i: the same repeating schedule (the bases' iterations and opponent rosters, which with
+    the seed root and the global update fix every episode id, deal seed, seat and opponent), and identical
+    generated iterations at two offsets; X8 differs from C only in the search block and resource keys. Returns
+    XS's other differences (reported)."""
+    x_base, c_base = read(x_arm['base']['path']), read(c_arm['base']['path'])
+    require(x_base['iterations'] == c_base['iterations'] and x_base.get('opponents') == c_base.get('opponents'),
+            f'{x_arm["arm"]} and C use different opponent schedules for {seed_root}')
     other = set()
     for offset in (0, 1_000_003):
         x_cfg = arm_config(x_arm, seed_root, offset, 2, scratch / 'x')
@@ -373,6 +388,7 @@ def make_plan(inputs_path):
     require(x_cap > 0, 'x_cap_seconds must be positive')
     r_nom = inputs.get('r_nom_usec')
     require(r_nom is None or (type(r_nom) is int and r_nom > 0), 'r_nom_usec must be a positive integer')
+    require(stage == '0' or r_nom is not None, 'Stage 1 needs the frozen R_nom (r_nom_usec)')
     byte_cap = int(inputs.get('byte_cap', BYTE_CAP))
     arms_in, chains_in = inputs['arms'], inputs['chains']
     used = {c['arm'] for c in chains_in.values()} | {'F'}
@@ -434,6 +450,8 @@ def make_plan(inputs_path):
         if a == 'F':
             require('pair' not in c, f'{name}: a filler has no pair')
             require(stage == '0' or seed_root == f'w5/filler{slot}', f'{name}: filler seed root is w5/filler<slot>')
+        elif c.get('pair') is None:  # Stage 0 only: e.g. a box throughput run, every box on one seed root
+            require(stage == '0' and not c.get('partner'), f'{name}: a Stage 1 chain belongs to a pair')
         else:
             p = c['pair']
             require(type(p) is int and p >= 1, f'{name}: pair must be a positive integer')
@@ -451,7 +469,7 @@ def make_plan(inputs_path):
                         'manifest': None if a == 'F' else (root / 'chains' / name / 'chain.json').as_posix()}
     seeds = {}
     for name, c in chains.items():
-        if c['arm'] != 'F':
+        if c['pair'] is not None:
             seeds.setdefault(c['seed_root'], set()).add(c['pair'])
     require(all(len(v) == 1 for v in seeds.values()), 'two pairs share a seed root')
     if stage != '0':
@@ -460,6 +478,12 @@ def make_plan(inputs_path):
             counts[c['arm']] = counts.get(c['arm'], 0) + 1
         require(len(chains) == boxes and len(set(counts.values())) == 1,
                 f'Stage {stage} uses every box, half per arm: {counts} on {boxes} boxes')
+    for name, c in sorted(chains.items()):  # a box filler per measured box, for when its chain has ended
+        if c['arm'] in MEASURED:
+            fill = f'fill{c["slot"]}'
+            require(fill not in chains_in, f'{fill} is reserved for the box filler of slot {c["slot"]}')
+            chains[fill] = {'arm': 'F', 'slot': c['slot'], 'seed_root': f'w5/filler{c["slot"]}', 'pair': None,
+                            'manifest': None, 'fill_for': name}
     scratch = root / 'plan' / label / '_paircheck'
     xs_other = {}
     plan_pairs = {}
@@ -508,6 +532,7 @@ def make_plan(inputs_path):
                 require(have.get(k) == header[k], f'{name}: the manifest has another {k}')
             require(not have['segments'] or have['recipe'] == header['recipe'],
                     f'{name}: the recipe changed after the chain started')
+            require(have.get('r_nom_usec') in (None, r_nom), f'{name}: R_nom is frozen in the manifest')
             have.update(recipe=header['recipe'], arm_file=pin(arm_paths[c['arm']]), r_nom_usec=r_nom)
             write(path, have)
         else:
@@ -543,6 +568,7 @@ def make_plan(inputs_path):
             'hold_days': float(inputs.get('hold_days', HOLD_DAYS)),
             'x_cap_seconds': x_cap, 'c_wall_seconds': c_wall, 'r_nom_usec': r_nom, **common, 'tools': tools,
             'arms': {a: {'file': pin(arm_paths[a]), 'w5box_plan': w5plans.get(a),
+                         'throughput': bool(arms_in[a].get('throughput')),
                          'segment_updates': arms[a]['segment_updates'],
                          'bytes_per_update': arms[a]['bytes_per_update']} for a in arms},
             'chains': chains, 'pairs': plan_pairs, 'xs_recipe_differences': xs_other}
@@ -609,14 +635,25 @@ def end_doc(name, arm_name, reason, boundary, receipt, by, **detail):
             'unix': round(time.time(), 3), 'detail': detail}
 
 
-def guard_ok(root):
+def guard_admit(root, cdir):
+    """Admission for one segment: a fresh `ok` verdict from supervise, which reserved GUARD_SEGMENTS segments per
+    chain; each verdict admits at most that many segments of this chain (counted in GUARD-USE.json), so a stopped
+    supervise cannot let drivers write past the cap."""
     path = Path(root) / 'GUARD.json'
     if not path.exists():
         return False, 'no guard verdict'
     g = read(path)
     if time.time() - g.get('unix', 0) > GUARD_MAX_AGE:
         return False, 'the guard verdict is stale (is supervise running?)'
-    return bool(g.get('ok')), 'ok' if g.get('ok') else f'the byte guard refuses ({g.get("used_bytes")} used)'
+    if not g.get('ok'):
+        return False, f'the byte guard refuses ({g.get("used_bytes")} used)'
+    use_path = Path(cdir) / 'GUARD-USE.json'
+    use = read(use_path) if use_path.exists() else {}
+    used = use.get('used', 0) if use.get('id') == g['id'] else 0
+    if used >= g['segments_per_chain']:
+        return False, 'this verdict\'s segment allowance is used (is supervise running?)'
+    write(use_path, {'id': g['id'], 'used': used + 1})
+    return True, 'ok'
 
 
 def reached_stop(man, ledger_source):
@@ -705,7 +742,9 @@ def drive_locked(a, arm, root, cdir, man_path):
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
-        ok, why = guard_ok(root)
+        if reached_stop(man, a.ledger_source):  # a stop at a segment's last update, or a restart past it
+            return end_at_stop(a, arm, root, cdir, man)
+        ok, why = guard_admit(root, cdir)
         if not ok:
             if waiting is None:
                 waiting = time.time()
@@ -716,8 +755,6 @@ def drive_locked(a, arm, root, cdir, man_path):
             time.sleep(GUARD_POLL)
             continue
         waiting = None
-        if reached_stop(man, a.ledger_source):  # a stop at a segment's last update, or a restart past it
-            return end_at_stop(a, arm, root, cdir, man)
         s, path, native = current_segment(arm, man, man_path, a.ledger_source)
         moved = quarantine(native, cdir)
         log(root, chain=a.chain, event='segment', segment=s, config=pin(path), moved=moved)
@@ -921,20 +958,33 @@ def look(info, r_nom):
     return doc
 
 
+def end_x(plan, x, reason, **detail):
+    """Ends X (once) and asks w5box to kill a live instance; a kill that does not land is retried every cycle."""
+    top = x['records'][-1] if x['records'] else None
+    doc = end_doc(x['name'], plan['chains'][x['name']]['arm'], reason, None, None, 'supervise', **detail)
+    doc['ledger_usec'] = top and top['ledger_usec']
+    if write_once(x['path'].parent / 'END.json', doc) and x['live']:
+        request(plan, x['name'], 'kill')
+
+
 def pair_decide(plan, info_c, info_x, st, now):
     """Before both chains end: the section 2.2 actions for X."""
     root = Path(plan['root'])
     x, c = info_x, info_c
     c_valid = valid_records(c)
     c_ended = c['end'] is not None
+    running = running_seconds(x['ledger'], now)
+    x_cap = float(x['chain'].get('x_cap_seconds', retention.X_CAP_SECONDS))
     if c_ended and not c_valid:
-        doc = end_doc(x['name'], plan['chains'][x['name']]['arm'], 'c-failed-before-update', 0, None, 'supervise')
-        if write_once(x['path'].parent / 'END.json', doc) and x['live']:
-            request(plan, x['name'], 'kill')
+        end_x(plan, x, 'c-failed-before-update')
         return {'action': 'stop', 'why': 'C ended before its first update'}
+    if not c_valid:  # C has no ledger yet: no projection, but the X cap still holds
+        if running >= x_cap:
+            end_x(plan, x, 'x-cap', x_running_seconds=running)
+            return {'action': 'stop_under_budget', 'x_running_seconds': running}
+        return {'action': 'wait-for-c', 'x_running_seconds': running}
     made = retention.snapshots(x['path'])
     size = max(s['bytes'] for s in made.values()) if made else st.get('probe_bytes')
-    running = running_seconds(x['ledger'], now)
     out = retention.decide(x['chain'], x['records'], c['chain'], c_valid, c_ended, running, now, size)
     if size is None and out['action'] == 'run' and 'snapshot_fits' in out:
         size = retention.probe_snapshot_bytes(x['records'], plan['container_tool']['path'])
@@ -946,7 +996,13 @@ def pair_decide(plan, info_c, info_x, st, now):
     if action == 'snapshot' and st.get('snapshot_from') is None:
         rhat = out['projection']['r_hat_usec']
         st['snapshot_from'] = retention.first_at_or_past(x['records'], retention.SNAPSHOT_TRIGGER * rhat)['boundary']
-    st['snapshotting'] = action in ('snapshot', 'pause') and st.get('snapshot_from') is not None
+        st['snapshot_window'] = {'r_hat_usec': rhat, 'snapshot_bytes': size,
+                                 'projected_updates': out.get('snapshot_window_updates')}
+    # Once open, the window stays open while R_i is not final, up to the 30 GB of snapshots per chain.
+    if st.get('snapshot_from') is not None and sum(s['bytes'] for s in made.values()) >= \
+            retention.SNAPSHOT_CAP_BYTES:
+        st['snapshot_capped'] = True
+    st['snapshotting'] = st.get('snapshot_from') is not None and not c_ended and not st.get('snapshot_capped')
     if st['snapshotting']:
         out['snapshots_made'] = len(retention.snapshot(x['path'], plan['container_tool']['path'],
                                                        st['snapshot_from']))
@@ -962,13 +1018,8 @@ def pair_decide(plan, info_c, info_x, st, now):
         elif x['stop_at'] != r and not (control / 'pause.now').exists():
             request(plan, x['name'], 'pause', {'reason': 'install stop_at_usec = R_i'})
     elif action in ('select', 'stop_under_budget'):
-        reason = 'reached-r' if action == 'select' else 'x-cap'
-        top = x['records'][-1] if x['records'] else None
-        doc = end_doc(x['name'], plan['chains'][x['name']]['arm'], reason, None, None, 'supervise',
-                      r_usec=out.get('r_usec'), x_running_seconds=running)
-        doc['ledger_usec'] = top and top['ledger_usec']
-        if write_once(x['path'].parent / 'END.json', doc) and x['live']:
-            request(plan, x['name'], 'kill')
+        end_x(plan, x, 'reached-r' if action == 'select' else 'x-cap', r_usec=out.get('r_usec'),
+              x_running_seconds=running)
     log(root, chain=x['name'], event='decide', action=action, x_ledger_usec=out.get('x_ledger_usec'),
         r_usec=out.get('r_usec'))
     return out
@@ -1143,6 +1194,58 @@ def pair_finalize(plan, plan_path, c, x, st, looks):
     return st
 
 
+def enforce_ends(plan, root):
+    """An ended measured chain must not keep running: a kill that did not land (a supervise crash between END and
+    the request, or a lost request) is requested again once the END is older than END_KILL_GRACE."""
+    kills = []
+    for n, c in sorted(plan['chains'].items()):
+        end = read_end(root, n) if c['arm'] in MEASURED else None
+        control = Path(root) / 'state' / n / 'control'
+        if end is not None and live(root, n) and time.time() - end['unix'] > END_KILL_GRACE and \
+                not (control / 'kill.request').exists():
+            request(plan, n, 'kill')
+            kills.append(n)
+    return kills
+
+
+def occupancy(plan, plan_path, root):
+    """Section 2.1 and amendment A1: a box whose measured chain has ended (END, instance closed) holds the frozen
+    filler (`fill<slot>`, C-recipe RT1 from C's parent, seed root w5/filler<slot>) while another measured chain on
+    the node runs; once every measured chain has ended and closed, the plan's F chains are killed. Starts are
+    detached `run`s (qualification runs when arm F has no box throughput record)."""
+    measured = [n for n, c in plan['chains'].items() if c['arm'] in MEASURED]
+    closed = {n: read_end(root, n) is not None and not live(root, n) for n in measured}
+    out = {'started': [], 'killed': []}
+    if all(closed.values()):
+        for n, c in sorted(plan['chains'].items()):
+            if c['arm'] == 'F' and live(root, n) and not (Path(root) / 'state' / n / 'control' /
+                                                          'kill.request').exists():
+                request(plan, n, 'kill')
+                out['killed'].append(n)
+        return out
+    if not any(live(root, n) for n in measured):
+        return out
+    marks = Path(root) / 'plan' / plan['label'] / 'fills'
+    for n in sorted(n for n in measured if closed[n]):
+        fill = f'fill{plan["chains"][n]["slot"]}'
+        mark = marks / f'{fill}.json'
+        if live(root, fill) or (mark.exists() and time.time() - read(mark)['unix'] < FILL_START_GRACE):
+            continue
+        cmd = [sys.executable, str(HERE / 'chains.py'), 'run', '--plan', str(plan_path), '--chain', fill]
+        if not plan['arms']['F'].get('throughput'):
+            cmd += ['--qualification', f'{plan["label"]}-fill', '--max-wall-seconds',
+                    str(w5box.UNQUALIFIED_MAX_WALL)]
+        kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
+            {'start_new_session': True}
+        marks.mkdir(parents=True, exist_ok=True)
+        with open(marks / f'{fill}.log', 'ab') as log_file:
+            subprocess.Popen(cmd, stdout=log_file, stderr=log_file, stdin=subprocess.DEVNULL, **kwargs)
+        write(mark, {'unix': time.time(), 'for': n})
+        log(root, event='fill-start', chain=fill, slot=plan['chains'][n]['slot'], ended=n)
+        out['started'].append(fill)
+    return out
+
+
 def cycle(plan, plan_path, now=None):
     now = time.time() if now is None else now
     root = Path(plan['root'])
@@ -1158,7 +1261,7 @@ def cycle(plan, plan_path, now=None):
             'schema': PAIR_SCHEMA, 'c': pair['C'], 'x': pair['X'], 'pair': int(key)}
         if not st.get('done'):
             try:
-                if x['end'] is None and (c['records'] or c['end'] is not None) and x['records']:
+                if x['end'] is None and (x['records'] or x['live']):
                     st['last_decision'] = pair_decide(plan, c, x, st, now)
                     x['end'] = read_end(root, x['name'])
                 if c['end'] is not None and x['end'] is not None and not c['live'] and not x['live']:
@@ -1188,12 +1291,17 @@ def cycle(plan, plan_path, now=None):
         removed = retention.apply(doc, root / 'retention' / f'{n}.jsonl')
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
+    report['kills'] = enforce_ends(plan, root)
+    report['fills'] = occupancy(plan, plan_path, root)
     report['purged'] = purge_hold(root, plan['hold_days'], now)
-    next_bytes = sum(plan['arms'][c['arm']]['segment_updates'] * plan['arms'][c['arm']]['bytes_per_update']
-                     for n, c in plan['chains'].items() if read_end(root, n) is None)
+    next_bytes = GUARD_SEGMENTS * sum(
+        plan['arms'][c['arm']]['segment_updates'] * plan['arms'][c['arm']]['bytes_per_update']
+        for n, c in plan['chains'].items()
+        if (c['arm'] in MEASURED and read_end(root, n) is None) or (c['arm'] == 'F' and live(root, n)))
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests)
-    write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label']))
+    write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], id=time.time_ns(),
+                                    segments_per_chain=GUARD_SEGMENTS))
     report['guard'] = {k: g[k] for k in ('ok', 'used_bytes', 'next_bytes', 'cap_bytes')}
     write(root / 'plan' / plan['label'] / 'SUPERVISE.json', report)
     return report
