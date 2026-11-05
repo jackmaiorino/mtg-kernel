@@ -340,6 +340,13 @@ struct WalkV1<'a> {
     /// than reveals of that hand: a reveal of that name then shows the card
     /// that just arrived, not an aborted cast.
     entry_mark: Option<u16>,
+    /// The search run's moves (Sol round 12 on 43.7, finding 3): how many
+    /// cards it moved that V did not know, and the names of those V knew
+    /// at their library positions (already known facts). A reveal in the run
+    /// shows one of them: a known one changes nothing; otherwise it is a
+    /// new card (each card the run moved is revealed once), its own fact.
+    search_unknown: usize,
+    search_known: Vec<u16>,
 }
 
 /// Projects V's history from the native stream.
@@ -390,6 +397,8 @@ pub(crate) fn project_v1(
         stamps: Vec::new(),
         search_mark: None,
         entry_mark: None,
+        search_unknown: 0,
+        search_known: Vec::new(),
     };
     let events = &state.engine.event_history;
     let mut event_items = Vec::with_capacity(events.len());
@@ -789,7 +798,12 @@ impl WalkV1<'_> {
                 to: Zone::Hand,
                 ..
             } => {
-                self.search_mark = Some(self.owner(*object));
+                let owner = self.owner(*object);
+                if self.search_mark != Some(owner) {
+                    self.search_unknown = 0;
+                    self.search_known.clear();
+                }
+                self.search_mark = Some(owner);
                 self.entry_mark = None;
             }
             CommittedEvent::Draw {
@@ -1106,13 +1120,25 @@ impl WalkV1<'_> {
                 if search {
                     self.survivors.taint_name(card_def);
                     self.seams.push((self.item, card_def));
+                    if let Some(pos) = self.search_known.iter().position(|d| *d == card_def) {
+                        self.search_known.remove(pos);
+                    } else if self.search_unknown > 0 {
+                        self.search_unknown -= 1;
+                        self.hand.push(HandFactV1 {
+                            card_def,
+                            how: FactHowV1::Revealed,
+                            known: true,
+                        });
+                    } else {
+                        self.revealed_in_hand(card_def);
+                    }
                 } else {
                     self.search_mark = None;
                     if self.entry_mark != Some(card_def) && !self.revealed.contains(&card_def) {
                         self.revealed.push(card_def);
                     }
+                    self.revealed_in_hand(card_def);
                 }
-                self.revealed_in_hand(card_def);
                 // The opponent's hand is opaque (43.7): the reveal names a
                 // card, never a copy V follows.
                 self.settle(&[]);
@@ -1191,6 +1217,13 @@ impl WalkV1<'_> {
             .removed
             .iter()
             .any(|(o, captured)| *o == owner && *captured == Some(id));
+        if self.search_mark == Some(owner) {
+            if known {
+                self.search_known.push(self.card_def(id));
+            } else {
+                self.search_unknown += 1;
+            }
+        }
         if known {
             let card_def = self.card_def(id);
             self.hand.push(HandFactV1 {
