@@ -995,7 +995,8 @@ mod tests {
             let game = native_of(&script);
             checked += all_realizable("fable-bounce", &records, &game, PlayerId::P1);
             // Decisions where L12's output differs from P's (after the
-            // bounce): L12 must fail at every one, either by an export
+            // bounce): L12 must fail at every one where its claims are not
+            // F's (revision c: P claims none), either by an export
             // proven unrealizable or by a refusal of the ledger's own
             // consistency check (R4: its allocation contradicts the
             // tracker-rule facts), which is how it fails while a count fact
@@ -1026,12 +1027,19 @@ mod tests {
                         l12_r4 += 1;
                     }
                     Ok(_) => {
-                        assert!(
-                            unrealizable(&game, r.step, PlayerId::P1, MutantV1::L12),
-                            "L12 is not proven unrealizable at step {} ({hawks} Hawks returned): {:?}",
-                            r.step,
-                            realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12))
-                        );
+                        // Revision c (lead ruling 15, fallback D): P claims no
+                        // hand names, so L12 also differs from P where its
+                        // claims agree with F's. Such an export must realize;
+                        // every other one must be proven unrealizable.
+                        if !unrealizable(&game, r.step, PlayerId::P1, MutantV1::L12) {
+                            let got = realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12));
+                            assert!(
+                                matches!(got, Ok(Ok(_))),
+                                "L12 neither realizes nor is proven unrealizable at step {} ({hawks} Hawks returned): {got:?}",
+                                r.step
+                            );
+                            continue;
+                        }
                     }
                 }
                 l12 += 1;
@@ -1039,7 +1047,7 @@ mod tests {
             eprintln!(
                 "L12 fails at {l12} post-bounce decisions ({l12_r4} by R4) ({hawks} Hawks returned)"
             );
-            assert!(l12 > 0, "L12 differs from P after the bounce");
+            assert!(l12 > 0, "L12 fails after the bounce");
         }
 
         // CawGates Lorien: realizable up to the R8b refusal (every export).
