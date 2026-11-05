@@ -1249,3 +1249,66 @@ fn optional_cost_and_madness_records_travel_and_import() {
     }
     assert!(seen.iter().all(|&n| n > 0), "witnesses (optional cost, madness): {seen:?}");
 }
+
+/// Amendment 43.9, cut 1 (`same_name_batch`): the move of the spell being
+/// announced is walked after the committed stream, with the committed
+/// lengths V's cast decision was presented at. It belongs to the open batch
+/// (after every decision mark), never to the batch that the cast decision
+/// closes: otherwise an earlier same-name copy that left the same zone in
+/// that batch (a first Lightning Bolt cast and resolved before the second
+/// was cast) made every reference to the announced copy's origin epoch
+/// refuse. At every V decision with a pending cast in these mirrors, the
+/// spell's last span end lies in the open batch; witnesses are the
+/// decisions where a same-name copy of the owner left the same zone in the
+/// batch just before.
+#[test]
+fn the_announced_spell_moves_in_the_open_batch() {
+    use crate::card_def::CARD_DEFS;
+    let mut pending = 0;
+    let mut witnesses = 0;
+    for (decks, seeds) in [(["Burn", "Burn"], 0..30_u64), (["Faeries", "Faeries"], 0..30), (["Rally", "Rally"], 0..30)] {
+        for seed in seeds {
+            play(decks, 9_100 + seed, 500, |s, v| {
+                let st = s.game_state();
+                let Some(cast) = st.engine.pending_cast.as_ref() else {
+                    return;
+                };
+                let p = super::projection::project_v1(st, st.observation_journal.notes(), v);
+                let marks = s.infoset_marks_v1(v);
+                let bounds = p.batch_bounds(Some(&marks));
+                let Some(end) = p.objects[cast.spell.0 as usize]
+                    .spans
+                    .iter()
+                    .filter_map(|x| x.end)
+                    .filter(|e| e.zone != crate::state::Zone::Stack)
+                    .last()
+                else {
+                    return;
+                };
+                if end.item + 1 != p.items {
+                    return;
+                }
+                pending += 1;
+                let open = super::projection::ProjectionV1::batch_of(&bounds, end.item);
+                assert_eq!(open, bounds.len(), "seed {seed}: the announcement is in a closed batch");
+                let name = CARD_DEFS[st.objects.get(cast.spell).card_def as usize].name;
+                let owner = st.objects.get(cast.spell).owner;
+                let before = open.checked_sub(1);
+                if p.objects.iter().enumerate().any(|(i, o)| {
+                    let other = st.objects.get(crate::ids::ObjectId(i as u32));
+                    i != cast.spell.0 as usize
+                        && other.owner == owner
+                        && CARD_DEFS[other.card_def as usize].name == name
+                        && o.spans.iter().filter_map(|x| x.end).any(|e| {
+                            e.from == end.from
+                                && Some(super::projection::ProjectionV1::batch_of(&bounds, e.item))
+                                    == before
+                        })
+                }) {
+                    witnesses += 1;
+                }
+            });
+        }
+    }
+    assert!(pending > 50 && witnesses > 0, "pending casts {pending}, witnesses {witnesses}");
+}

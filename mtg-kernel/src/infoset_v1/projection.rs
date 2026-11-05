@@ -348,6 +348,12 @@ struct WalkV1<'a> {
     /// (events, notes) committed so far, and each item's stamp.
     committed: (usize, usize),
     stamps: Vec<(usize, usize)>,
+    /// Amendment 43.9 (cut 1): the walk is moving the spell of the
+    /// announcement in progress. That move began at or after the decision
+    /// that shares its committed lengths (the caster's cast decision, or a
+    /// later pass), so its stamp lies past every decision mark: it belongs
+    /// to the open batch, never to the batch before that decision.
+    open: bool,
     /// Amendment 43.8, the search mark: the owner of the card a `zone_move`
     /// from library to hand moved, when that was the latest wire event V
     /// received other than reveals of that owner's hand. A reveal while it
@@ -409,6 +415,7 @@ pub(crate) fn project_v1(
         last_observed: Vec::new(),
         committed: (0, 0),
         stamps: Vec::new(),
+        open: false,
         search_mark: None,
         search_unknown: 0,
         search_known: Vec::new(),
@@ -467,7 +474,9 @@ pub(crate) fn project_v1(
         w.note(note);
     }
     // A spell being cast sits on the stack before its SpellCast commits:
-    // the announcement is public, so the walk moves it as observed.
+    // the announcement is public, so the walk moves it as observed, in the
+    // open batch (amendment 43.9, cut 1).
+    w.open = true;
     if let Some(pending) = &state.engine.pending_cast {
         let id = pending.spell;
         let true_zone = state.objects.get(id).zone;
@@ -479,6 +488,7 @@ pub(crate) fn project_v1(
             w.settle(&[id]);
         }
     }
+    w.open = false;
     // Every object's native generation must equal the moves V's walk counted
     // (hidden moves included): otherwise the walk missed a zone change and
     // its epochs cannot be trusted.
@@ -769,7 +779,13 @@ impl WalkV1<'_> {
             }
         }
         self.survivors.assert_laminar();
-        self.stamps.push(self.committed);
+        // The announcement's move lies after every decision mark (amendment
+        // 43.9, cut 1): see `open`.
+        self.stamps.push(if self.open {
+            (usize::MAX, usize::MAX)
+        } else {
+            self.committed
+        });
         self.item += 1;
     }
 
