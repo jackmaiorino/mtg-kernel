@@ -971,7 +971,7 @@ fn repeat_reveal_world(world1: bool) -> Result<Vec<u8>, String> {
         .filter(|x| st.objects.get(*x).card_def == def)
         .take(6)
         .collect();
-    let c6 = vec![c6[1], c6[2], c6[3], c6[4], c6[5], c6[0]];
+    let c6 = [c6[1], c6[2], c6[3], c6[4], c6[5], c6[0]];
     let (e, f, u, a, b, c) = (c6[0], c6[1], c6[2], c6[3], c6[4], c6[5]);
     let mut marks = s.infoset_marks_v1(v);
     let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
