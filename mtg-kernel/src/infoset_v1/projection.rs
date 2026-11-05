@@ -361,7 +361,8 @@ struct WalkV1<'a> {
     search_known: Vec<u16>,
     /// Sol code review 1 on 43.8, finding 1: the opponent's hand cards V
     /// already holds a fact for since they entered the hand (revealed, or
-    /// entered in V's sight). A reveal of one is a re-reveal (an aborted
+    /// entered from a public zone), until an unidentified departure unbinds
+    /// every fact. A reveal of one is a re-reveal (an aborted
     /// cast's), never a search outcome, as the bot-facing transcript's
     /// known hand names read it (the adapter's `_revealed_in_hand` adds no
     /// name for a card it already lists).
@@ -1137,6 +1138,23 @@ impl WalkV1<'_> {
                     self.seams.push((self.item, card_def));
                     if let Some(pos) = self.search_known.iter().position(|d| *d == card_def) {
                         self.search_known.remove(pos);
+                    } else if let Some(pos) = self
+                        .hand
+                        .iter()
+                        .position(|f| !f.known && f.card_def == card_def)
+                    {
+                        // A count fact of the name may be this card (the
+                        // adapter binds the reveal to an unbound fact of the
+                        // name and adds no name): it becomes a known fact,
+                        // the claims stay the same multiset, and the run's
+                        // moves stay unidentified (Sol code review 2 on 43.8).
+                        self.hand.remove(pos);
+                        self.survivors.tracked_in_place(card_def);
+                        self.hand.push(HandFactV1 {
+                            card_def,
+                            how: FactHowV1::Revealed,
+                            known: true,
+                        });
                     } else if self.search_unknown > 0 {
                         self.search_unknown -= 1;
                         self.entries.push((self.item, card_def));
@@ -1246,7 +1264,6 @@ impl WalkV1<'_> {
             }
         }
         if known {
-            self.shown.insert(id);
             let card_def = self.card_def(id);
             self.hand.push(HandFactV1 {
                 card_def,
@@ -1338,7 +1355,9 @@ impl WalkV1<'_> {
         }
         // An unidentified card left to a hidden zone: each name loses one
         // fact, every remaining fact becomes a count fact, and the survivor
-        // tree takes the known names as T (6.4).
+        // tree takes the known names as T (6.4). No card stays tied to a
+        // fact (the adapter unbinds every fact here; Sol code review 2).
+        self.shown.clear();
         let known_names: Vec<u16> = self
             .hand
             .iter()
