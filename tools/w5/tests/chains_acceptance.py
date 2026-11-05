@@ -161,7 +161,7 @@ def main():
         supervise = None
         pa = json.loads(pair_a.read_text())
         c_rec, x_rec = records(root, 'c1'), records(root, 'x1')
-        r = c_rec[-1]['ledger_usec']
+        r = pa['r_usec']
         x_ledger = w5box.Ledger(root / 'state' / 'x1' / 'ledger.jsonl').records()
         pause = [e for e in x_ledger if e['event'] == 'pause']
         close = [e for e in x_ledger if e['event'] == 'close']
@@ -177,6 +177,8 @@ def main():
                              'filler_runs': [p.as_posix() for p in (root / 'fillers').glob('slot*/run-*')]}
         checks = {
             'a_c_ended_at_its_wall': end(root, 'c1')['reason'] == 'c-wall' and codes_a['c1'] == 0,
+            'a_r_is_cs_final_ledger': r == w5box.Ledger(root / 'state' / 'c1' / 'ledger.jsonl').summary()
+            ['closed_total_usec'] >= c_rec[-1]['ledger_usec'],
             'a_x_paused_once_by_the_controller': len(pause) == 1 and pause[0]['request'].get('at') == 'controller',
             'a_filler_ran_in_the_paused_box': bool(receipt['pair_a']['filler_runs']),
             'a_ledger_unchanged_while_paused': len(pause) == 1 and all(v == pause[0]['usage_usec'] for v in samples)
@@ -217,7 +219,7 @@ def main():
                         and e.get('chain') == 'c2' and e.get('handoff')]
         restored = {e['outage_id']: e for e in node_log if e['event'] == 'restored'}
         verified = [restored[o['id']] for o in fill_outages if restored.get(o['id'], {}).get('how') == 'fill-verified']
-        r2 = records(root, 'c2')[-1]['ledger_usec']
+        r2 = pb['r_usec']
         x2_rec = records(root, 'x2')
         x2_ledger = w5box.Ledger(root / 'state' / 'x2' / 'ledger.jsonl').records()
         resumes = [e for e in x2_ledger if e['event'] == 'resume']

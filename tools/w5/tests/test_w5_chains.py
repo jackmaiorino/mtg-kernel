@@ -435,12 +435,18 @@ class ChainTests(unittest.TestCase):
             chains.pair_decide(plan, c, x, st, now, self.budget)
             self.assertEqual(self.control(), ['pause.now'])
             (self.node.root / 'state' / 'x1' / 'control' / 'pause.now').unlink()
-            # C ended at R = 50e6: a paused X below R resumes with stop_at_usec = R.
+            # C ended at its wall: R_i is its final (closed) ledger, here 50e6 plus an update cut at the wall.
             c_end = {'reason': 'c-wall', 'last_valid_boundary': 50}
+            led = w5box.Ledger(self.node.root / 'state' / 'c1' / 'ledger.jsonl')
+            led.append({'event': 'open', 'instance': 0, 'base_usec': 0, 'cgroup': 'c', 'cgroup_inode': 0,
+                        'manifest_sha256': '0'})
+            c, x, now = self.synthetic(plan, c_end, x_ledgers=[40e6], paused=True)
+            self.assertEqual(chains.pair_decide(plan, c, x, {}, now, self.budget)['action'], 'wait-for-c-close')
+            led.append({'event': 'close', 'instance': 0, 'final_usec': 50_400_000, 'closed_total_usec': 50_400_000})
             c, x, now = self.synthetic(plan, c_end, x_ledgers=[40e6], paused=True)
             self.assertEqual(chains.pair_decide(plan, c, x, {}, now, self.budget)['action'], 'resume_to')
             req = json.loads((self.node.root / 'state' / 'x1' / 'control' / 'resume.request').read_text())
-            self.assertEqual(req['stop_at_usec'], 50_000_000)
+            self.assertEqual(req['stop_at_usec'], 50_400_000)
             (self.node.root / 'state' / 'x1' / 'control' / 'resume.request').unlink()
             (self.node.root / 'state' / 'x1' / 'paused.json').unlink()
             # A running X without that stop: paused, to be resumed with it; with it: left alone.
@@ -448,7 +454,7 @@ class ChainTests(unittest.TestCase):
             chains.pair_decide(plan, c, x, {}, now, self.budget)
             self.assertEqual(self.control(), ['pause.now'])
             (self.node.root / 'state' / 'x1' / 'control' / 'pause.now').unlink()
-            c, x, now = self.synthetic(plan, c_end, x_ledgers=[40e6], stop_at=50_000_000)
+            c, x, now = self.synthetic(plan, c_end, x_ledgers=[40e6], stop_at=50_400_000)
             chains.pair_decide(plan, c, x, {}, now, self.budget)
             self.assertEqual(self.control(), [])
             # An open window stays open while R_i is not final, even when the projection rises.
@@ -524,6 +530,7 @@ class ChainTests(unittest.TestCase):
     def test_failed_x_keeps_its_last_valid_boundary(self):
         _, plan = self.node.stage0()
         recs = [{'boundary': b, 'ledger_usec': v} for b, v in ((1, 90), (2, 110), (3, 130))]
+        self.node.ledger('c1', 'open', 'close')
         c = {'name': 'c1', 'records': [{'boundary': 1, 'ledger_usec': 100}], 'end': {'reason': 'c-wall'}}
         for reason, endpoint, label in (('x-cap', 2, 'matched'), ('chain-failure', 3, 'under-budget'),
                                         ('operator', 3, 'under-budget')):
@@ -620,6 +627,7 @@ class ChainTests(unittest.TestCase):
         hit = retention.first_at_or_past(x_records, r)
         self.assertLess(hit['boundary'], x_records[-1]['boundary'])
         Path(hit['checkpoint']['path']).unlink()  # as a rolling prune leaves it: the endpoint needs a replay
+        self.node.ledger('c1', 'open', 'close')  # C's w5box instance has closed: R_i is final
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             report = chains.cycle(chains.load_plan(path), path)

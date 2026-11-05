@@ -61,9 +61,9 @@ without an END keeps its box held until it reruns or the lead ends it.
 look boundary (`r_nom_usec`, frozen in Stage 1) is recorded and protected from every prune; for each pair, before C
 ends, `retention.decide` (projection over the C wall): the snapshot window (from the first boundary at 0.85 R-hat,
 cut with the container tool, kept open until R_i is final or 30 GB of snapshots), pause (`w5box.py pause --now`
-once), stop at the X cap (END `x-cap`, kill; enforced before X's first update too); once C ends (END),
-R_i = the ledger at its last valid boundary: a paused X resumes with `{"stop_at_usec": R_i}`, a running X without
-that stop is paused and resumed with it, an X past R_i ends (END `reached-r`, kill). When both chains have ended
+once), stop at the X cap (END `x-cap`, kill; enforced before X's first update too); once C ends (END) and its
+instance closes, R_i = its final closed ledger (at its wall) or the ledger at its last valid boundary (an early
+end): a paused X resumes with `{"stop_at_usec": R_i}`, a running X without that stop is paused and resumed with it, an X past R_i ends (END `reached-r`, kill). When both chains have ended
 and no instance is open: endpoints (C: its last valid boundary; X: the first valid boundary at or past R_i, else
 its last valid one, labelled under budget; a failed or lead-ended X: its recorded last valid boundary, under
 budget), `retention.select`, a replay where the state is gone (run detached by
@@ -420,8 +420,9 @@ def make_plan(inputs_path):
         bpu = int(spec['bytes_per_update'])
         require(bpu > 0 and int(spec['memory_max_bytes']) > 0 and int(spec['workers']) >= 1,
                 f'{a}: bytes_per_update, memory_max_bytes and workers are required')
-        require(a == 'F' or retention.TRAJECTORY_SEGMENTS * length * bpu <= HOT_CAP_BYTES,
-                f'{a}: 64 segments of {length} updates at {bpu} bytes pass the 60 GB per-chain hot cap')
+        require(a == 'F' or (retention.TRAJECTORY_SEGMENTS + 1) * length * bpu <= HOT_CAP_BYTES,
+                f'{a}: 64 kept segments and the live one, of {length} updates at {bpu} bytes, pass the 60 GB '
+                'per-chain hot cap')
         base = pin(spec.get('base', inputs['base']))
         require(not history_relative(read(base['path'])), f'{a}: the base uses history-relative opponents, which '
                 'segments would change')
@@ -1051,6 +1052,11 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
     if c_ended and not c_valid:
         end_x(plan, x, 'c-failed-before-update')
         return {'action': 'stop', 'why': 'C ended before its first update'}
+    if c_ended:  # R_i is final once C's instance has closed
+        r = r_i(root, c)
+        if r is None:
+            return {'action': 'wait-for-c-close', 'x_running_seconds': running}
+        c_valid = [dict(c_valid[-1], ledger_usec=r)]
     if not c_valid:  # C has no ledger yet: no projection, but the X cap still holds
         if running >= x_cap:
             end_x(plan, x, 'x-cap', x_running_seconds=running)
@@ -1305,10 +1311,26 @@ def prune_chain(root, info, sel, look_doc):
     return doc
 
 
+def r_i(root, c):
+    """Section 2.2: a C chain that ended at its wall gives R_i = its final ledger value, the closed total of its
+    w5box ledger once every instance has closed (the CPU of an update cut at the wall included); a C chain that
+    ended early gives the ledger at its last valid checkpoint (0 before its first update). None while C's END is
+    written but its instance is still open."""
+    c_valid = valid_records(c)
+    if c['end']['reason'] != 'c-wall':
+        return c_valid[-1]['ledger_usec'] if c_valid else 0
+    path = ledger_path(root, c['name'])
+    summary = w5box.Ledger(path).summary() if path.exists() else None
+    if summary is None or summary['open'] is not None:
+        return None
+    return max(summary['closed_total_usec'], c_valid[-1]['ledger_usec'] if c_valid else 0)
+
+
 def pair_finalize(plan, plan_path, c, x, st, looks, budget):
     """Both chains ended and closed: endpoints, selection (replays), PRUNE."""
     c_valid, x_valid = valid_records(c), valid_records(x)
-    r = c_valid[-1]['ledger_usec'] if c_valid else 0
+    r = r_i(plan['root'], c)
+    require(r is not None, f'{c["name"]} has not closed')
     c_b = c_valid[-1]['boundary'] if c_valid else 0
     under = []
     if c['end']['reason'] != 'c-wall':

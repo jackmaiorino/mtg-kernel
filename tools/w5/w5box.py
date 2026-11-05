@@ -1220,7 +1220,7 @@ def recover_chain(plan: dict, plan_sha: str, chain: str, layout: dict, detected:
     try:
         killed = False
         if sup.chain_cg.exists() and sup.chain_cg.populated():  # unsupervised: nothing reads its requests
-            sup.chain_cg.freeze(False)
+            # Killed as it is: a paused (frozen) chain never runs again beside its box's filler.
             sup.chain_cg.kill()
             require(sup.chain_cg.wait_empty(SETTLE_SECONDS), f"{sup.chain_cg.path} did not empty")
             killed = True
