@@ -635,8 +635,10 @@ def receipt_at(man, boundary):
 
 
 def handoff(state):
-    """Marks the chain's w5box state: when its instance closes, w5box opens its box's outage at once (held handoff
-    to the filler, amendment A1)."""
+    """Marks the chain's w5box state: when its instance closes, w5box opens its box's outage at once, so the node's
+    other measured chains hold until the box is occupied again by a verified filler (an ended chain) or by the
+    chain's restart (amendment A1). Every END, a failure and a guard refusal mark it; an operator STOP (a planned
+    restart) does not, and a driver's start removes it."""
     Path(state).mkdir(parents=True, exist_ok=True)
     (Path(state) / 'HANDOFF').write_text('')
 
@@ -742,6 +744,7 @@ def drive_locked(a, arm, root, cdir, man_path):
     if (cdir / 'END.json').exists():
         log(root, chain=a.chain, event='ended-already')
         return 0
+    (Path(a.state) / 'HANDOFF').unlink(missing_ok=True)  # a restart: this instance occupies the box again
     if man['launched_unix'] is None:
         man['launched_unix'] = time.time()
         write(man_path, man)
@@ -769,6 +772,7 @@ def drive_locked(a, arm, root, cdir, man_path):
                 log(root, chain=a.chain, event='guard-wait', reason=why)
             if time.time() - waiting >= GUARD_WAIT:
                 log(root, chain=a.chain, event='no-room', reason=why)
+                handoff(a.state)  # the box empties until an operator acts: the node holds (amendment A1)
                 return EXIT_ROOM
             time.sleep(GUARD_POLL)
             continue
@@ -790,6 +794,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             return end_at_stop(a, arm, root, cdir, man)
         write(cdir / 'FAILURE.json', {'segment': s, 'exit': code, 'boundary': boundary, 'unix': time.time()})
         log(root, chain=a.chain, event='segment-failed', segment=s, exit=code, boundary=boundary)
+        handoff(a.state)  # the box stays an outage until the lead restarts or ends the chain
         return EXIT_FAILED
 
 
@@ -1020,7 +1025,7 @@ def end_x(plan, x, reason, **detail):
         request(plan, x['name'], 'kill')
 
 
-def pair_decide(plan, info_c, info_x, st, now):
+def pair_decide(plan, info_c, info_x, st, now, budget):
     """Before both chains end: the section 2.2 actions for X."""
     root = Path(plan['root'])
     x, c = info_x, info_c
@@ -1053,6 +1058,7 @@ def pair_decide(plan, info_c, info_x, st, now):
                                  'projected_updates': out.get('snapshot_window_updates')}
     # Once open, the window stays open while R_i is not final, up to 30 GB of snapshots per chain: each cycle cuts
     # at most as many as the remaining bytes allow at the measured snapshot size.
+    # Snapshots are node bytes too: each cycle also stays within the last guard verdict's headroom (`budget`).
     room = None
     if st.get('snapshot_from') is not None and size:
         room = int((retention.SNAPSHOT_CAP_BYTES - sum(s['bytes'] for s in made.values())) // size)
@@ -1060,8 +1066,11 @@ def pair_decide(plan, info_c, info_x, st, now):
             st['snapshot_capped'] = True
     st['snapshotting'] = st.get('snapshot_from') is not None and not c_ended and not st.get('snapshot_capped')
     if st['snapshotting'] and room:
-        out['snapshots_made'] = len(retention.snapshot(x['path'], plan['container_tool']['path'],
-                                                       st['snapshot_from'], max_new=room))
+        room = min(room, int(budget['headroom'] // size))
+        made_now = retention.snapshot(x['path'], plan['container_tool']['path'], st['snapshot_from'], max_new=room) \
+            if room > 0 else []
+        budget['headroom'] -= sum(m['bytes'] for m in made_now)
+        out['snapshots_made'] = len(made_now)
     if action == 'pause' and x['live'] and not x['paused'] and not (control / 'pause.now').exists():
         request(plan, x['name'], 'pause', {'reason': '1.10 R-hat', 'r_hat_usec': out['projection']['r_hat_usec']})
     elif action == 'resume_to':
@@ -1422,7 +1431,7 @@ def cycle(plan, plan_path, now=None):
         if not st.get('done'):
             try:
                 if x['end'] is None and (x['records'] or x['live']):
-                    st['last_decision'] = pair_decide(plan, c, x, st, now)
+                    st['last_decision'] = pair_decide(plan, c, x, st, now, budget)
                     x['end'] = read_end(root, x['name'])
                 if c['end'] is not None and x['end'] is not None and not c['live'] and not x['live']:
                     x = infos[pair['X']] = chain_info(root, pair['X'])

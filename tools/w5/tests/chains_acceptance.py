@@ -187,7 +187,7 @@ def main():
         wait_for(lambda: not fills_running(), 120, 'the fills of pair B to stop')
         pb = json.loads(pair_b.read_text())
         log_b = [json.loads(line) for line in (root / 'LOG.jsonl').read_text().splitlines()]
-        fill_starts = [e for e in log_b if e.get('event') == 'fill-start' and e.get('ended') == 'c2']
+        fill_starts = [e for e in log_b if e.get('event') == 'fill-start' and e.get('box_of') == 'c2']
         node_log = w5box.NodeLog(root / 'state').read()[0]
         fill_outages = [e for e in node_log if e['event'] == 'outage-start' and e['box_slot'] == 0
                         and e.get('chain') == 'c2' and e.get('handoff')]

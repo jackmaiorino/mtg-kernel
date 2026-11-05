@@ -122,6 +122,7 @@ class ChainTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.node = Node(self.tmp.name)
+        self.budget = {'headroom': 10**15}
         env = mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(STEP_C), 'FAKE_CPU_STEP_X': str(STEP_X),
                                            'FAKE_SLEEP': '0.01'})
         env.start()
@@ -266,11 +267,13 @@ class ChainTests(unittest.TestCase):
             self.assertEqual(self.node.drive(plan, 'x1'), chains.EXIT_FAILED)
         cdir = self.node.root / 'chains' / 'x1'
         self.assertEqual(json.loads((cdir / 'FAILURE.json').read_text())['boundary'], 5)
+        self.assertTrue((self.node.root / 'state' / 'x1' / 'HANDOFF').exists())  # the failed box holds the node
         self.node.ledger_source('x1', stop=8 * STEP_X)
         self.assertEqual(self.node.drive(plan, 'x1'), 0)
         end = json.loads((cdir / 'END.json').read_text())
         self.assertEqual((end['reason'], end['last_valid_boundary'], end['ledger_usec']), ('x-stop-at', 8, 8 * STEP_X))
         self.assertTrue(list((cdir / 'interrupted').iterdir()))  # the crashed iteration was moved aside
+        self.assertTrue((self.node.root / 'state' / 'x1' / 'HANDOFF').exists())  # ended again, at R
         _, records = retention.index(plan['chains']['x1']['manifest'])
         self.assertEqual(len(records), 8)
         cfg = json.loads(Path(json.loads(Path(plan['chains']['x1']['manifest']).read_text())
@@ -285,6 +288,7 @@ class ChainTests(unittest.TestCase):
         self.node.guard()
         (self.node.root / 'STOP').write_text('')
         self.assertEqual(self.node.drive(plan, 'c1'), chains.EXIT_STOP)
+        self.assertFalse((self.node.root / 'state' / 'c1' / 'HANDOFF').exists())  # a planned stop
         (self.node.root / 'STOP').unlink()
         self.node.guard(ok=False)
         with mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
@@ -408,41 +412,41 @@ class ChainTests(unittest.TestCase):
             # R-hat = 50e6 + 1e6/s x 50 s = 100e6. Inside the snapshot window (0.85 to 1.10 R-hat):
             st = {'probe_bytes': 10}
             c, x, now = self.synthetic(plan, x_ledgers=[40e6, 80e6, 90e6])
-            self.assertEqual(chains.pair_decide(plan, c, x, st, now)['action'], 'snapshot')
+            self.assertEqual(chains.pair_decide(plan, c, x, st, now, self.budget)['action'], 'snapshot')
             self.assertEqual((st['snapshot_from'], st['snapshotting']), (3, True))
             self.assertEqual(self.control(), [])
             # Past 1.10 R-hat: one controller pause.
             c, x, now = self.synthetic(plan, x_ledgers=[40e6, 112e6])
-            self.assertEqual(chains.pair_decide(plan, c, x, st, now)['action'], 'pause')
+            self.assertEqual(chains.pair_decide(plan, c, x, st, now, self.budget)['action'], 'pause')
             self.assertEqual(self.control(), ['pause.now'])
-            chains.pair_decide(plan, c, x, st, now)
+            chains.pair_decide(plan, c, x, st, now, self.budget)
             self.assertEqual(self.control(), ['pause.now'])
             (self.node.root / 'state' / 'x1' / 'control' / 'pause.now').unlink()
             # C ended at R = 50e6: a paused X below R resumes with stop_at_usec = R.
             c_end = {'reason': 'c-wall', 'last_valid_boundary': 50}
             c, x, now = self.synthetic(plan, c_end, x_ledgers=[40e6], paused=True)
-            self.assertEqual(chains.pair_decide(plan, c, x, {}, now)['action'], 'resume_to')
+            self.assertEqual(chains.pair_decide(plan, c, x, {}, now, self.budget)['action'], 'resume_to')
             req = json.loads((self.node.root / 'state' / 'x1' / 'control' / 'resume.request').read_text())
             self.assertEqual(req['stop_at_usec'], 50_000_000)
             (self.node.root / 'state' / 'x1' / 'control' / 'resume.request').unlink()
             (self.node.root / 'state' / 'x1' / 'paused.json').unlink()
             # A running X without that stop: paused, to be resumed with it; with it: left alone.
             c, x, now = self.synthetic(plan, c_end, x_ledgers=[40e6])
-            chains.pair_decide(plan, c, x, {}, now)
+            chains.pair_decide(plan, c, x, {}, now, self.budget)
             self.assertEqual(self.control(), ['pause.now'])
             (self.node.root / 'state' / 'x1' / 'control' / 'pause.now').unlink()
             c, x, now = self.synthetic(plan, c_end, x_ledgers=[40e6], stop_at=50_000_000)
-            chains.pair_decide(plan, c, x, {}, now)
+            chains.pair_decide(plan, c, x, {}, now, self.budget)
             self.assertEqual(self.control(), [])
             # An open window stays open while R_i is not final, even when the projection rises.
             st = {'probe_bytes': 10, 'snapshot_from': 3}
             c, x, now = self.synthetic(plan, x_ledgers=[40e6])
-            self.assertEqual(chains.pair_decide(plan, c, x, st, now)['action'], 'run')
+            self.assertEqual(chains.pair_decide(plan, c, x, st, now, self.budget)['action'], 'run')
             self.assertTrue(st['snapshotting'])
             # A C failure sets R at its last valid boundary: X is past it, so X ends and is killed.
             c, x, now = self.synthetic(plan, {'reason': 'operator', 'last_valid_boundary': 30},
                                        x_ledgers=[20e6, 40e6])
-            self.assertEqual(chains.pair_decide(plan, c, x, {}, now)['r_usec'], 30_000_000)
+            self.assertEqual(chains.pair_decide(plan, c, x, {}, now, self.budget)['r_usec'], 30_000_000)
             self.assertEqual(self.control(), ['kill.request'])
             end = json.loads((self.node.root / 'chains' / 'x1' / 'END.json').read_text())
             self.assertEqual(end['reason'], 'reached-r')
@@ -452,7 +456,7 @@ class ChainTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             # The X cap while C runs: X stops, labelled later.
             c, x, now = self.synthetic(plan, x_ledgers=[10e6], x_cap=40.0)
-            self.assertEqual(chains.pair_decide(plan, c, x, {}, now)['action'], 'stop_under_budget')
+            self.assertEqual(chains.pair_decide(plan, c, x, {}, now, self.budget)['action'], 'stop_under_budget')
             self.assertEqual(json.loads((self.node.root / 'chains' / 'x1' / 'END.json').read_text())['reason'],
                              'x-cap')
 
@@ -462,7 +466,7 @@ class ChainTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             c, x, now = self.synthetic(plan, x_ledgers=[], x_cap=40.0)
             c['records'] = []
-            self.assertEqual(chains.pair_decide(plan, c, x, {}, now)['action'], 'stop_under_budget')
+            self.assertEqual(chains.pair_decide(plan, c, x, {}, now, self.budget)['action'], 'stop_under_budget')
             self.assertEqual(self.control(), ['kill.request'])
             (self.node.root / 'state' / 'x1' / 'control' / 'kill.request').unlink()
             # The kill did not land (X still open): it is requested again once the END is old enough.
