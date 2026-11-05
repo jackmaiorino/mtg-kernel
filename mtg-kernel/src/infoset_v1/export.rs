@@ -528,25 +528,27 @@ fn tracked_order(
 /// when that copy entered the hand, is not V's information). With no
 /// epoch: the stack item it sits in bounds it, from the span at which V
 /// tracked the item's source at the epoch the item records (or the source's
-/// current span when the item records none); else game start; and it does
-/// not cross when V has followed the object without a break since that
-/// bound. Several epochs take the earliest bound.
+/// current span when the item records none); else game start. The item's
+/// own `source` field, when V tracked the source there, does not cross. A
+/// zone's membership list never crosses. Several epochs take the earliest
+/// bound.
 pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usize> {
+    if r.membership {
+        return None;
+    }
     if r.generations.is_empty() {
-        let bound = r
-            .container
-            .and_then(|(source, g)| match g {
-                Some(g) => projection.tracked_at(source, g),
-                None => projection.current_span(source),
-            })
-            .map_or(0, |s| s.start_item);
-        if projection
-            .chain_start(r.object)
-            .is_some_and(|start| start <= bound)
-        {
+        let span = r.container.and_then(|(source, g)| match g {
+            Some(g) => projection.tracked_at(source, g),
+            None => projection.current_span(source),
+        });
+        // The item's own `source` field names the object at the epoch the
+        // item records, which V tracked: as a reference to that epoch, it
+        // does not cross (Sol design review 2: no other continuity is
+        // read).
+        if span.is_some() && r.container.is_some_and(|(source, _)| source == r.object) {
             return None;
         }
-        return Some(bound);
+        return Some(span.map_or(0, |s| s.start_item));
     }
     let mut bound: Option<usize> = None;
     for &g in &r.generations {
@@ -616,7 +618,7 @@ pub(crate) fn export_v1(
             // known copies tracked, in fact order) and L8 (count facts too,
             // invented continuity) bind facts to the true copies of their
             // name, in hand order: mutants may read the truth.
-            let mut bind = |facts: &mut dyn Iterator<Item = u16>, out: &mut Vec<ObjectId>| {
+            let bind = |facts: &mut dyn Iterator<Item = u16>, out: &mut Vec<ObjectId>| {
                 for def in facts {
                     if let Some(&id) = p.hand.iter().find(|id| {
                         state.objects.get(**id).card_def == def && !out.contains(id)
@@ -729,9 +731,7 @@ pub(crate) fn export_v1(
     // refuses `same_name_hand` when a card of its name entered or left the
     // opponent's hand in V's transcript after the reference's creation
     // bound. It reads V's transcript only and runs before every test that
-    // reads spans. (43.7's name-level desync rule is gone: it read the walk's
-    // lag behind native generations; reconciled spans now cover the
-    // generations the walk missed.)
+    // reads spans.
     for (r, region) in &refs {
         if *region != "live" {
             continue;
@@ -741,6 +741,26 @@ pub(crate) fn export_v1(
             continue;
         }
         let name = card_name(o.card_def);
+        // Moves without committed events (an aborted cast back to the hand)
+        // put a copy's native epochs ahead of the walk's, so a reference to
+        // an earlier incarnation of it cannot be placed by the spans. The
+        // engine reveals such a card in the hand; any reveal of a card of
+        // the name in the opponent's hand that is not a search outcome may
+        // be one (the wire cannot tell), so by name, after one, a live
+        // reference to an incarnation of an opponent object of that name
+        // before its current span (or with none) refuses alike (43.7's
+        // desync rule, triggered from V's transcript; Sol design review 1,
+        // finding 2).
+        if !r.membership
+            && projection.revealed.iter().any(|d| card_name(*d) == name)
+            && r.generations.iter().any(|&g| {
+                projection
+                    .current_span(r.object)
+                    .is_none_or(|s| g < s.start_gen)
+            })
+        {
+            return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
+        }
         if let Some(b) = seam_bound_v1(&projection, r) {
             if projection
                 .seams
@@ -1448,6 +1468,7 @@ pub(crate) fn export_v1(
                 self_object: Some(*id),
                 item_self_paid: None,
                 container: None,
+                membership: false,
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1756,6 +1777,7 @@ fn collect_refs(
             self_object: None,
             item_self_paid: None,
             container: None,
+            membership: false,
         };
         for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
@@ -1801,6 +1823,7 @@ fn rewrite_state(
         self_object: None,
         item_self_paid: None,
         container: None,
+        membership: false,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1816,7 +1839,10 @@ fn rewrite_state(
                             if pk == "hand" || pk == "library" {
                                 continue;
                             }
-                            walker.walk(pf, ClassV1::Live, pk)?;
+                            walker.membership = pk == "battlefield" || pk == "graveyard";
+                            let walked = walker.walk(pf, ClassV1::Live, pk);
+                            walker.membership = false;
+                            walked?;
                         }
                     }
                 }
@@ -1855,7 +1881,10 @@ fn rewrite_state(
             record += 1;
             continue;
         }
-        walker.walk(field, ClassV1::Live, k)?;
+        walker.membership = k == "exile" || k == "command";
+        let walked = walker.walk(field, ClassV1::Live, k);
+        walker.membership = false;
+        walked?;
     }
     Ok(())
 }
@@ -1878,6 +1907,7 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         self_object: None,
         item_self_paid: None,
         container: None,
+        membership: false,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {

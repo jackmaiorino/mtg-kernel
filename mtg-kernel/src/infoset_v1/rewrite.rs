@@ -51,6 +51,11 @@ pub(crate) struct RefV1 {
     /// source and the source's epoch the item records (its ability source
     /// contract), for the creation bound of a reference with no epoch.
     pub container: Option<(ObjectId, Option<u32>)>,
+    /// Amendment 43.8 (Sol design review 2): the reference is a zone's
+    /// membership list (a player's battlefield or graveyard, the exile or
+    /// command zone), not a record about the object: tracking and the slot
+    /// layout decide it, never the seam predicate.
+    pub membership: bool,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -129,6 +134,8 @@ pub(crate) struct WalkerV1<'a> {
     pub item_self_paid: Option<(ObjectId, u32)>,
     /// The enclosing stack item, if any (see [`RefV1::container`]).
     pub container: Option<(ObjectId, Option<u32>)>,
+    /// Walking a zone's membership list (see [`RefV1::membership`]).
+    pub membership: bool,
 }
 
 /// A stack item whose source activated it from the hand at epoch g and paid
@@ -205,6 +212,7 @@ impl WalkerV1<'_> {
                             cast_receipt: false,
                             item_self_paid: self.item_self_paid,
                             container: self.container,
+                            membership: self.membership,
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -227,6 +235,7 @@ impl WalkerV1<'_> {
                     cast_receipt: false,
                     item_self_paid: self.item_self_paid,
                     container: self.container,
+                    membership: self.membership,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -340,6 +349,7 @@ impl WalkerV1<'_> {
                 cast_receipt: parent == "spell_cast_origin" && k.is_none(),
                 item_self_paid: self.item_self_paid,
                 container: self.container,
+                membership: self.membership,
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -367,6 +377,7 @@ impl WalkerV1<'_> {
                 cast_receipt: false,
                 item_self_paid: self.item_self_paid,
                 container: self.container,
+                membership: self.membership,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;

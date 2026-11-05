@@ -138,6 +138,10 @@ pub(crate) struct ProjectionV1 {
     /// hand in V's transcript (named on the wire, or a reveal that may be a
     /// search outcome). Unnamed transfers are not seam events.
     pub seams: Vec<(usize, u16)>,
+    /// Amendment 43.8: names of cards revealed in the opponent's hand other
+    /// than as possible search outcomes (an aborted cast back to the hand is
+    /// revealed this way; the export's moves-without-events rule).
+    pub revealed: Vec<u16>,
     /// Harness only (the realizability proof): the departures from the
     /// opponent's hand V saw, (stream item, card definition).
     pub departures: Vec<(usize, u16)>,
@@ -198,35 +202,14 @@ impl ProjectionV1 {
                 }
         })
     }
-    /// Amendment 43.8: where V's unbroken tracking of `id` began, for the
-    /// span of `id` that begins after V saw it leave generation `g` (the span
-    /// covers `g` below its start): that span's start followed back through
-    /// 43.3 splits. Item-based, so generations a reconciled span covers
-    /// (moves without committed events) give the same item as in step.
+    /// Amendment 43.8: the stream item at which V saw `id` leave generation
+    /// `g`: the start of the span that began with that move (it covers `g`).
     pub(crate) fn left_seen(&self, id: ObjectId, g: u32) -> Option<usize> {
         let o = self.objects.get(id.0 as usize)?;
-        let k = o
-            .spans
+        o.spans
             .iter()
-            .position(|s| s.cover_gen <= g && g < s.start_gen)?;
-        Some(Self::chain_back(&o.spans[..=k]))
-    }
-    fn chain_back(spans: &[SpanV1]) -> usize {
-        let mut start = spans.last().map_or(0, |s| s.start_item);
-        for s in spans.iter().rev().skip(1) {
-            match s.end {
-                Some(e) if e.split && e.item == start => start = s.start_item,
-                _ => break,
-            }
-        }
-        start
-    }
-    /// Amendment 43.8: where V's current, unbroken tracking of `id` began:
-    /// the start of its current span, followed back through 43.3 splits.
-    pub(crate) fn chain_start(&self, id: ObjectId) -> Option<usize> {
-        let o = self.objects.get(id.0 as usize)?;
-        o.spans.last().filter(|s| s.end.is_none())?;
-        Some(Self::chain_back(&o.spans))
+            .find(|s| s.cover_gen == g && g < s.start_gen)
+            .map(|s| s.start_item)
     }
     pub(crate) fn tracked(&self, id: ObjectId) -> bool {
         self.objects.get(id.0 as usize).is_some_and(|o| o.tracked)
@@ -313,6 +296,7 @@ struct WalkV1<'a> {
     hand: Vec<HandFactV1>,
     seams: Vec<(usize, u16)>,
     departures: Vec<(usize, u16)>,
+    revealed: Vec<u16>,
     departure_known: Vec<(usize, Vec<u16>)>,
     removed: Vec<(PlayerId, Option<ObjectId>)>,
     survivors: SurvivorTreeV1,
@@ -376,6 +360,7 @@ pub(crate) fn project_v1(
         hand: Vec::new(),
         seams: Vec::new(),
         departures: Vec::new(),
+        revealed: Vec::new(),
         departure_known: Vec::new(),
         removed: Vec::new(),
         survivors: SurvivorTreeV1::default(),
@@ -497,14 +482,9 @@ pub(crate) fn project_v1(
                         entered: false,
                     });
                 }
-                // Amendment 43.8 (Sol review of the design, finding 2): the
-                // new span covers the generations the walk never saw (the
-                // moves without events), so a reference to one of them (a
-                // cast receipt naming its native origin) resolves here as it
-                // would in step, instead of reading the walk's lag.
                 o.spans.push(SpanV1 {
                     start_gen: object.zone_change_count,
-                    cover_gen: (last_gen + 1).min(object.zone_change_count),
+                    cover_gen: object.zone_change_count,
                     start_item: item,
                     start_pos: u32::MAX,
                     start_event: state.engine.event_history.len(),
@@ -555,6 +535,7 @@ pub(crate) fn project_v1(
         hand_facts: w.hand,
         seams: w.seams,
         departures: w.departures,
+        revealed: w.revealed,
         survivors: w.survivors,
         transfers: w.transfers,
         arrivals: w.arrivals,
@@ -1100,6 +1081,9 @@ impl WalkV1<'_> {
                     self.seams.push((self.item, card_def));
                 } else {
                     self.search_mark = None;
+                    if !self.revealed.contains(&card_def) {
+                        self.revealed.push(card_def);
+                    }
                 }
                 self.revealed_in_hand(card_def);
                 // The opponent's hand is opaque (43.7): the reveal names a
