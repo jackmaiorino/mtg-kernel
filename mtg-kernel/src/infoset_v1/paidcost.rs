@@ -1039,14 +1039,14 @@ enum HandRefAtV1 {
     D,
 }
 
-/// As [`reference_world`]; `at` picks the copy the re-made record names,
+/// As [`reference_world`]; `named_at` picks the copy the re-made record names,
 /// and with `twin` a second Lembas B also returns to the hand from the
 /// graveyard before C is drawn (equal 43.4 keys with D, Sol round 3
 /// finding 2).
 fn reference_world_with(
     paid_is_d: bool,
     discard_d: bool,
-    at: HandRefAtV1,
+    named_at: HandRefAtV1,
     twin: bool,
 ) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
@@ -1113,7 +1113,11 @@ fn reference_world_with(
     st.engine.pending_triggers.clear();
     let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
     if !paid_is_d {
-        let named = if at == HandRefAtV1::Gone { gone } else { d };
+        let named = if named_at == HandRefAtV1::Gone {
+            gone
+        } else {
+            d
+        };
         // The epoch it had in the hand: one below its graveyard epoch if it
         // left, its current epoch if it stayed.
         let zcc = st.objects.get(named).zone_change_count;
@@ -1200,4 +1204,88 @@ fn equal_keys_and_an_unseen_copy_agree() {
     let (a, b) = (run(true), run(false));
     eprintln!("equal keys and an unseen copy: D discarded {a:?} / C discarded {b:?}");
     assert_eq!(a, b, "P agrees whichever copy was discarded");
+}
+
+/// Sol round 4 on ruling 11: Lembas A and B are drawn unseen; A is
+/// revealed; an unrelated card is put back unidentified (A's fact lapses,
+/// A stays); then A (`reveal_a`) or B is revealed and discarded, and the
+/// Shaman's record is re-made to name it at its hand epoch (a cast
+/// receipt's shape). A's lapse precedes the span the reference resolves
+/// to, so it exempts nothing: P agrees. Returns P.
+fn stale_lapse_world(reveal_a: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    st.stack
+        .retain(|it| st.objects.get(it.source).card_def != lembas);
+    st.engine.pending_triggers.clear();
+    let in_library: Vec<ObjectId> = st.players[o.index()]
+        .library
+        .iter()
+        .copied()
+        .filter(|x| st.objects.get(*x).card_def == lembas)
+        .collect();
+    assert!(
+        in_library.len() >= 2,
+        "two Lembas in the opponent's library"
+    );
+    let (a, b) = (in_library[0], in_library[1]);
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    for x in [a, b] {
+        let lib = &mut st.players[o.index()].library;
+        let at = lib.iter().position(|y| *y == x).expect("in the library");
+        let moved = lib.remove(at);
+        lib.insert(0, moved);
+        propose_and_commit(&mut st, ProposedEvent::draw(o));
+    }
+    mark(&st, &mut marks);
+    st.reveal_hand_card(v, o, a).expect("reveal A");
+    mark(&st, &mut marks);
+    let other = st.players[o.index()]
+        .hand
+        .iter()
+        .copied()
+        .find(|x| st.objects.get(*x).card_def != lembas)
+        .expect("another card in the hand");
+    st.clear_nonowner_hand_knowledge(o);
+    propose_and_commit(&mut st, ProposedEvent::private_top_library_insert(other));
+    mark(&st, &mut marks);
+    let shown = if reveal_a { a } else { b };
+    st.reveal_hand_card(v, o, shown).expect("reveal a Lembas");
+    mark(&st, &mut marks);
+    propose_and_commit(&mut st, ProposedEvent::zone_change(shown, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+    let zcc = st.objects.get(shown).zone_change_count;
+    let r = &mut st.stack[i].v4.paid_cost_refs[0];
+    r.object = shown;
+    r.zone_change_count = zcc - 1;
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+#[test]
+fn a_stale_lapse_exempts_nothing() {
+    let (a, b) = (stale_lapse_world(true), stale_lapse_world(false));
+    eprintln!("stale lapse: A revealed {a:?} / B revealed {b:?}");
+    assert_eq!(a, b, "P agrees whichever copy was revealed");
 }

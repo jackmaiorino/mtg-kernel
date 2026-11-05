@@ -704,16 +704,21 @@ pub(crate) fn export_v1(
         // A reference with no epoch is current membership (a zone vector,
         // an attachment), not a historical link across the hand (Sol r1).
         // If the referenced object lapsed after the reference's epoch at a
-        // stream item before the ambiguous departure, which copy V later saw
-        // in the hand is not V's to pair (R1b's question), so the candidate
-        // does not cross (lead ruling 11, Sol rounds 2 and 3).
+        // stream item before the ambiguous departure, inside or after the
+        // span the reference resolves to, which copy V later saw in the hand
+        // is not V's to pair (R1b's question), so the candidate does not
+        // cross (lead ruling 11, Sol rounds 2 to 4). A lapse before that
+        // span is history the reference does not cross (Sol round 4).
         let track = projection.objects.get(r.object.0 as usize);
         let lapsed_before = |g: u32, item: usize| {
+            let Some(start) = projection.span_of(r.object, g).map(|s| s.start_item) else {
+                return false;
+            };
             track.is_some_and(|t| {
                 t.spans
                     .iter()
                     .filter_map(|s| s.end)
-                    .any(|e| !e.split && e.last_gen >= g && e.item < item)
+                    .any(|e| !e.split && e.last_gen >= g && e.item < item && e.item >= start)
             })
         };
         let crossed = projection.hand_ambiguities.iter().any(|a| {
