@@ -665,7 +665,7 @@ pub(crate) fn realize(
     target: &ContentsV1,
     export_w: Option<&[u8]>,
 ) -> Result<RealizedV1, String> {
-    const MAX_NODES: usize = 400;
+    const MAX_NODES: usize = 2000;
     let owner = viewer.opponent();
     let base = replay(game, &[], &[], d, owner, viewer)?;
     let context = {
@@ -755,7 +755,7 @@ pub(crate) fn realize(
             }
             return Ok(RealizedV1 { moves, deal });
         }
-        if moves.len() >= 4 {
+        if moves.len() >= 6 {
             last = format!("{moves:?}: {} objects still misplaced", wrong.len());
             continue;
         }

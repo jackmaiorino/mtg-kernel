@@ -536,7 +536,7 @@ fn tracked_order(
 /// zone's membership list never crosses. Several epochs take the earliest
 /// bound.
 pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usize> {
-    if r.membership || (r.discarded && projection.last_span(r.object).is_some()) {
+    if r.membership {
         return None;
     }
     if r.generations.is_empty() {
