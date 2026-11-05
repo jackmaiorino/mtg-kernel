@@ -83,8 +83,12 @@ def checkpoint_document(data: bytes) -> dict:
     return checkpoint_container_v1.document_from_bytes(data)
 
 
-def read_checkpoint(path) -> dict:
-    return checkpoint_document(Path(path).read_bytes())
+def read_checkpoint(path, expected_sha256=None) -> dict:
+    """The checkpoint at `path`; with `expected_sha256`, the buffer that is hashed is the one that is decoded."""
+    data = Path(path).read_bytes()
+    require(expected_sha256 is None or hashlib.sha256(data).hexdigest() == expected_sha256,
+            f"checkpoint differs from its pin: {path}")
+    return checkpoint_document(data)
 
 
 def write_json(path, value) -> dict:

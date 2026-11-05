@@ -73,6 +73,36 @@ class CheckpointContainerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     cc.document_from_bytes(data)
 
+    def test_a_section_table_the_rust_decoder_would_refuse_is_refused(self):
+        container = (FIXTURES / 'checkpoint.ckpt').read_bytes()
+        _, _, document_length, table_length = struct.unpack_from('<IIQQ', container, 8)
+        document = container[32:32 + document_length]
+        table_text = container[32 + document_length:32 + document_length + table_length].decode()
+        data_start = -(-(32 + document_length + table_length) // 256) * 256
+        data = container[data_start:]
+
+        def rebuilt(table_bytes):
+            head = cc.MAGIC + struct.pack('<IIQQ', 1, 0, len(document), len(table_bytes)) + document + table_bytes
+            return head + bytes(-(-len(head) // 256) * 256 - len(head)) + data
+
+        self.assertEqual(cc.document_from_bytes(rebuilt(table_text.encode())), cc.document_from_bytes(container))
+        first = json.loads(table_text)['sections'][0]
+        cases = {
+            'float offset': table_text.replace('"offset":0,', '"offset":0.0,', 1),
+            'bool ordinal': table_text.replace('"ordinal":0,', '"ordinal":false,', 1),
+            'oversized shape': table_text.replace(json.dumps(first['shape'], separators=(',', ':')),
+                                                  '[18446744073709551616,0]', 1),
+            'repeated key': table_text.replace('{"state_format"', '{"state_format":"x","state_format"', 1),
+            'spaces': table_text.replace(',"sections"', ', "sections"', 1),
+            'key order': table_text.replace('"state_format":"mtgts-sections-v1",', '', 1)[:-1]
+                         + ',"state_format":"mtgts-sections-v1"}',
+        }
+        for name, text in cases.items():
+            self.assertNotEqual(text, table_text, name)
+            with self.subTest(name):
+                with self.assertRaises(ValueError):
+                    cc.document_from_bytes(rebuilt(text.encode()))
+
     def test_export_v1_of_a_container_fails_by_name_without_the_rust_exporter(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'checkpoint.json'

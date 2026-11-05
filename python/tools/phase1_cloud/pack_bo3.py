@@ -242,7 +242,7 @@ def validate_package(package, fields, card_hash, registry_sha, checkpoint_cache)
     checkpoint_pin = checked(source['checkpoint'], 64 * MIB)
     key = checkpoint_pin['sha256']
     if key not in checkpoint_cache:
-        complete = read_checkpoint(checkpoint_pin['path'])
+        complete = read_checkpoint(checkpoint_pin['path'], key)
         require(complete['schema'] == expected_checkpoint_schema and 'registry_transfer' not in complete,
             'existing BO3 or registry-transfer checkpoint transport is unsupported')
         if fresh:

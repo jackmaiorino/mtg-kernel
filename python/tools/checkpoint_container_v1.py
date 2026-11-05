@@ -37,6 +37,22 @@ _HEADER = 32
 _ALIGN = 256
 _STATE_FORMAT = 'mtgts-sections-v1'
 _SECTIONS = ('parameters', 'first_moments', 'second_moments')
+_TABLE_KEYS = ['state_format', 'sections']
+_ENTRY_KEYS = ['section', 'ordinal', 'name', 'shape', 'offset', 'byte_length']
+_USIZE = 1 << 64
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('checkpoint container table repeats a key: ' + key)
+        result[key] = value
+    return result
+
+
+def _count(value):
+    return type(value) is int and 0 <= value < _USIZE
 
 
 def is_container(data: bytes) -> bool:
@@ -60,32 +76,40 @@ def decode_container(data: bytes, **json_kwargs) -> dict:
     if data_start > len(data):
         raise ValueError('checkpoint container is truncated')
     document = json.loads(data[_HEADER:document_end], **json_kwargs)
-    table = json.loads(data[document_end:table_end])
+    table_bytes = bytes(data[document_end:table_end])
+    table = json.loads(table_bytes, object_pairs_hook=_unique_pairs)
     if not isinstance(document, dict) or any(document.get(name) != [] for name in _SECTIONS):
         raise ValueError('checkpoint container document is not a checkpoint with empty tensor lists')
-    if (not isinstance(table, dict) or set(table) != {'state_format', 'sections'}
+    if (not isinstance(table, dict) or list(table) != _TABLE_KEYS
             or table['state_format'] != _STATE_FORMAT or not isinstance(table['sections'], list)):
         raise ValueError('checkpoint container section table differs')
+    # The table holds only strings and non-negative integers, so Python re-serializes it exactly as the writer
+    # does (compact, fixed key order, no spaces); anything else is not the canonical table.
+    if json.dumps(table, separators=(',', ':'), ensure_ascii=False).encode() != table_bytes:
+        raise ValueError('checkpoint container is not in canonical form')
     if any(data[table_end:data_start]):
         raise ValueError('checkpoint container padding is not zero')
     body = memoryview(data)[data_start:]
     expected_offset = data_end = section_index = ordinal = 0
     for entry in table['sections']:
-        if (not isinstance(entry, dict)
-                or set(entry) != {'section', 'ordinal', 'name', 'shape', 'offset', 'byte_length'}):
+        if not isinstance(entry, dict) or list(entry) != _ENTRY_KEYS:
             raise ValueError('checkpoint container section entry differs')
         while section_index < len(_SECTIONS) and entry['section'] != _SECTIONS[section_index]:
             section_index += 1
             ordinal = 0
         shape = entry['shape']
         if (section_index >= len(_SECTIONS) or not isinstance(entry['name'], str) or not isinstance(shape, list)
-                or not all(type(dim) is int and dim >= 0 for dim in shape)):
+                or not all(_count(dim) for dim in shape)):
             raise ValueError('checkpoint container sections are out of order')
         count = 1
         for dim in shape:
             count *= dim
+            if count >= _USIZE:
+                raise ValueError('checkpoint container tensor shape overflows')
         end = expected_offset + 4 * count
-        if (entry['ordinal'] != ordinal or entry['offset'] != expected_offset or entry['byte_length'] != 4 * count
+        if (not (_count(entry['ordinal']) and _count(entry['offset']) and _count(entry['byte_length']))
+                or entry['ordinal'] != ordinal or entry['offset'] != expected_offset
+                or entry['byte_length'] != 4 * count or end >= _USIZE
                 or end > len(body) or any(body[data_end:expected_offset])):
             raise ValueError('checkpoint container section layout differs')
         values = list(struct.unpack_from(f'<{count}I', body, expected_offset))

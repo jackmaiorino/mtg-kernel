@@ -1,5 +1,6 @@
 """Readers outside python/tools take a checkpoint container (the default record format) with the values of the v1
 file it came from, with no exporter binary."""
+import hashlib
 import json
 import os
 import sys
@@ -32,6 +33,10 @@ class CheckpointContainerConsumerTests(unittest.TestCase):
             sys.path.pop(0)
         self.assertEqual(distill_common.checkpoint_document(self.container), json.loads(self.v1_bytes))
         self.assertEqual(distill_common.read_checkpoint(FIXTURES / 'checkpoint.ckpt'), json.loads(self.v1_bytes))
+        pin = hashlib.sha256(self.container).hexdigest()
+        self.assertEqual(distill_common.read_checkpoint(FIXTURES / 'checkpoint.ckpt', pin), json.loads(self.v1_bytes))
+        with self.assertRaises(ValueError):
+            distill_common.read_checkpoint(FIXTURES / 'checkpoint.ckpt', '0' * 64)
 
 
 if __name__ == '__main__':

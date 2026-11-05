@@ -30,16 +30,23 @@ def read(path):
                       parse_constant=invalid)
 
 
-def read_checkpoint(path):
+def read_checkpoint(path, expected_sha256=None):
     """`read` for a checkpoint file in either record format: v1 JSON, or a checkpoint container (the default
-    record format for ordinary fresh checkpoints), decoded in Python with no binary. Same strictness as `read`."""
+    record format for ordinary fresh checkpoints), decoded in Python with no binary. Same strictness as `read`.
+    With `expected_sha256` the one buffer that is decoded is the one that is hashed."""
     def invalid(value):
         raise ValueError('non-finite JSON number')
-    tools = str(Path(__file__).resolve().parents[1])
-    if tools not in sys.path:
-        sys.path.append(tools)
-    import checkpoint_container_v1
-    return checkpoint_container_v1.document_from_bytes(Path(path).read_bytes(), object_pairs_hook=unique_pairs,
+    data = Path(path).read_bytes()
+    require(expected_sha256 is None or hashlib.sha256(data).hexdigest() == expected_sha256,
+            'input SHA256 differs: ' + str(path))
+    if not data.startswith(b'MTGCKPT'):
+        return json.loads(data, object_pairs_hook=unique_pairs, parse_constant=invalid)
+    try:
+        import checkpoint_container_v1
+    except ImportError:  # run from the repository: the helper sits beside this directory
+        sys.path.append(str(Path(__file__).resolve().parents[1]))
+        import checkpoint_container_v1
+    return checkpoint_container_v1.document_from_bytes(data, object_pairs_hook=unique_pairs,
                                                        parse_constant=invalid)
 
 

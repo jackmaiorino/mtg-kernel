@@ -80,7 +80,7 @@ def validate_model_source_relocations(payload_pin, manifest):
             require(relocated['checkpoint']['sha256'] == original['checkpoint']['sha256'],
                     'checkpoint changed during relocation')
             checkpoint = payload_file(payload_pin, manifest, relocated['checkpoint'])
-            if fresh: validate_checkpoint_origin(read_checkpoint(checkpoint),verified['origin'])
+            if fresh: validate_checkpoint_origin(read_checkpoint(checkpoint,relocated['checkpoint']['sha256']),verified['origin'])
             expected_source['checkpoint'] = relocated['checkpoint']
         require(expected_source == relocated, 'model source changed beyond exact file references')
     return rows

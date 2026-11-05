@@ -61,7 +61,9 @@ class Artifacts:
 
     def checked(self,reference):return read(self.local_pin(reference)['path'])
 
-    def checked_checkpoint(self,reference):return read_checkpoint(self.local_pin(reference)['path'])
+    def checked_checkpoint(self,reference):
+        path=self.local_pin(reference)['path']
+        return read_checkpoint(path,reference['sha256'])
 
     def expected(self,reference,path):
         require(normal(reference['path'])==normal(path),'artifact belongs to a different native run')

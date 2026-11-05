@@ -32,9 +32,13 @@ def read_pin(item):
 
 
 def read_checkpoint_pin(item):
-    """`read_pin` for a checkpoint pin: v1 JSON or a checkpoint container (the default record format)."""
+    """`read_pin` for a checkpoint pin: v1 JSON or a checkpoint container (the default record format). The bytes
+    that are hashed against the pin are the bytes that are decoded."""
     import checkpoint_container_v1
-    return checkpoint_container_v1.document_from_bytes(checked(item).read_bytes())
+    data = Path(item['path']).read_bytes()
+    if hashlib.sha256(data).hexdigest() != item['sha256']:
+        raise ValueError('pinned input changed')
+    return checkpoint_container_v1.document_from_bytes(data)
 
 
 def write(path, value):
@@ -73,7 +77,7 @@ def admission(plan, host):
     configs = [read_pin(j['template']) for j in workload['jobs']]
     validate_panel(workload, configs)
     for source in [*workload['sources'].values(), workload['opponent']]:
-        read_pin(source['checkpoint'])
+        read_checkpoint_pin(source['checkpoint'])
         descriptor = read_pin(source['play_import'])
         for key in ('initialization', 'parameters'):
             checked(descriptor[key])

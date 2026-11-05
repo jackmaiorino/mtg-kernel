@@ -20,8 +20,7 @@ def checked(reference):
 
 
 def checked_checkpoint(reference):
-    pin(reference['path'],reference['sha256'])
-    return read_checkpoint(reference['path'])
+    return read_checkpoint(reference['path'],reference['sha256'])
 
 
 def build(config_pin, result_pin, build_pin, payload_pin=None, inspection_pin=None):
