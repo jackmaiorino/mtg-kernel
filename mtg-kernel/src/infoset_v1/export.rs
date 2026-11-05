@@ -1528,7 +1528,6 @@ pub(crate) fn export_v1(
                 membership: false,
                 turn_scoped: false,
                 announcing: false,
-                discarded: false,
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1841,7 +1840,6 @@ fn collect_refs(
             membership: false,
             turn_scoped: false,
             announcing: false,
-            discarded: false,
         };
         for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
@@ -1897,7 +1895,6 @@ fn rewrite_state(
         membership: false,
         turn_scoped: false,
         announcing: false,
-        discarded: false,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1996,7 +1993,6 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         membership: false,
         turn_scoped: false,
         announcing: false,
-        discarded: false,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {
