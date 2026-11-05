@@ -6,7 +6,11 @@ manifest (schema `w5-chain/v1`):
   {"schema": "w5-chain/v1", "chain": "w5/chain1", "arm": "X" | "C", "launched_unix": 1.0e9,
    "x_cap_seconds": 907200.0,  (optional; the X cap frozen at Stage 0, default 10.5 days)
    "snapshot_dir": "/abs/dir",  (optional; default <manifest stem>-snapshots beside the manifest)
+   "c_wall_seconds": 604800.0,  (optional, C manifests; the projection horizon, default the 7-day C wall)
    "segments": [{"config": "/abs/seg-000.json", "offset": 0}, ...]}
+
+A segment entry may also carry `root` and `updates` (the chain driver, tools/w5/chains.py, writes them from the
+config it wrote); then the config is not read again, which keeps a long C chain's manifest cheap to load.
 
 `offset` is the global update index of the segment's first iteration. Boundary b is the state after b updates
 (b = 0 is the parent). Every segment receipt records the update's after-state hash; with `chain_ledger` it also
@@ -131,9 +135,10 @@ def load_chain(path):
     for seg in chain['segments']:
         if seg['offset'] != offset:
             raise SystemExit('stop: segment offsets are not contiguous from 0')
-        cfg = read(seg['config'])
-        seg['root'] = cfg['output_directory']
-        seg['updates'] = len(cfg['iterations'])
+        if 'root' not in seg or 'updates' not in seg:
+            cfg = read(seg['config'])
+            seg['root'] = cfg['output_directory']
+            seg['updates'] = len(cfg['iterations'])
         offset += seg['updates']
     return chain
 
@@ -222,10 +227,10 @@ def snapshots(chain_path):
     return {b: r for b, r in out.items() if Path(r['path']).exists()}
 
 
-def snapshot(chain_path, binary, snapshot_from):
+def snapshot(chain_path, binary, snapshot_from, max_new=None):
     """Cuts a weights-only snapshot of every unpruned checkpoint at or past `snapshot_from` that keeps no full
-    state and has none yet (the binary verifies the checkpoint against its pin). Each snapshot must have been
-    cut from the recorded after-state."""
+    state and has none yet (the binary verifies the checkpoint against its pin), earliest first and at most
+    `max_new` of them. Each snapshot must have been cut from the recorded after-state."""
     chain, records = index(chain_path)
     latest = records[-1]['boundary'] if records else 0
     have = snapshots(chain_path)
@@ -234,6 +239,8 @@ def snapshot(chain_path, binary, snapshot_from):
     made = []
     for rec in records:
         b = rec['boundary']
+        if max_new is not None and len(made) >= max_new:
+            break
         if b < snapshot_from or b in have or keeps_full_state(chain['arm'], b, latest):
             continue
         if not Path(rec['checkpoint']['path']).exists():
@@ -353,8 +360,9 @@ def ledger_series(records):
             if r.get('unix_seconds') is not None and r.get('ledger_usec') is not None]
 
 
-def project(c_records, launched, now=None):
-    """R-hat_i(t) = CPU(t) + rate(last 24 h, or since launch if shorter) x (7 days - t), in microseconds."""
+def project(c_records, launched, now=None, horizon=HORIZON):
+    """R-hat_i(t) = CPU(t) + rate(last 24 h, or since launch if shorter) x (7 days - t), in microseconds (the
+    horizon is the C wall: 7 days in Stage 1, a Stage 0 qualification chain's own wall)."""
     series = ledger_series(c_records)
     if not series:
         raise SystemExit('stop: the C chain has no ledger records')
@@ -365,7 +373,7 @@ def project(c_records, launched, now=None):
     base = [(t, c) for t, c in series if t <= window_start]
     t0, c0 = base[-1] if base and window_start > launched else (launched, 0)
     rate = (cpu - c0) / (t_now - t0) if t_now > t0 else 0.0
-    rhat = cpu + rate * max(0.0, HORIZON - elapsed)
+    rhat = cpu + rate * max(0.0, horizon - elapsed)
     return {'cpu_usec': cpu, 'rate_usec_per_s': rate, 'elapsed_s': elapsed, 'r_hat_usec': rhat,
             'window_s': t_now - t0}
 
@@ -395,7 +403,8 @@ def decide(x_chain, x_records, c_chain, c_records, c_ended, x_running_s=None, no
         if x_running_s is not None and x_running_s >= x_cap:
             return dict(out, action='stop_under_budget')
         return dict(out, action='resume_to', stop_at_usec=r)
-    proj = project(c_records, c_chain['launched_unix'], now)
+    horizon = float(c_chain.get('c_wall_seconds') or HORIZON)
+    proj = project(c_records, c_chain['launched_unix'], now, horizon)
     out['projection'] = proj
     rhat = proj['r_hat_usec']
     if x_running_s is not None and x_running_s >= x_cap:
@@ -654,7 +663,7 @@ def main(argv=None):
         out = {'removed': apply(read(a.plan), a.log, a.hold)}
     elif a.cmd == 'project':
         chain, records = index(a.chain)
-        out = project(records, chain['launched_unix'], a.now)
+        out = project(records, chain['launched_unix'], a.now, float(chain.get('c_wall_seconds') or HORIZON))
     elif a.cmd == 'decide':
         x_chain, x_records = index(a.x_chain)
         c_chain, c_records = index(a.c_chain)

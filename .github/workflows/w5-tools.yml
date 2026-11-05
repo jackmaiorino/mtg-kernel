@@ -62,7 +62,7 @@ jobs:
   cgroup-acceptance:
     name: W5 launcher cgroup v2 acceptance
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Host facts
@@ -75,6 +75,8 @@ jobs:
         run: sudo python3 tools/w5/tests/cgroup_acceptance.py --receipt w5box-acceptance.json
       - name: Occupancy acceptance (faults, refill, node freeze and thaw)
         run: sudo python3 tools/w5/tests/occupancy_acceptance.py --receipt w5box-occupancy.json
+      - name: Chain controller acceptance (segments, pause with the filler, stop at R_i, selection)
+        run: sudo python3 tools/w5/tests/chains_acceptance.py --receipt w5box-chains.json
       - name: Keep the receipt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
