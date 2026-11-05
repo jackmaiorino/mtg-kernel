@@ -96,6 +96,32 @@ class IndexCacheTests(unittest.TestCase):
         self.advance(plan, 'c1', 1)
         self.assertEqual(cache.refresh()[1], retention.index(path)[1])
 
+    def test_a_last_line_without_its_newline(self):
+        """An interrupted append can leave a complete record without its newline, which index() reads: the cache
+        reads it the same way, and no later append joins it."""
+        _, plan = self.node.stage0(c_wall=600.0)
+        path = plan['chains']['c1']['manifest']
+        self.advance(plan, 'c1', 1)
+        cache = retention.IndexCache(path)
+        cache.refresh()
+        self.advance(plan, 'c1', 1)
+        retention.index(path)
+        index_file = retention.index_path(path)
+        index_file.write_bytes(index_file.read_bytes().rstrip(b'\n'))
+        self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+        self.advance(plan, 'c1', 1)
+        for _ in range(2):
+            self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+        lines = index_file.read_bytes().split(b'\n')
+        self.assertEqual(lines[-1], b'')
+        self.assertEqual([json.loads(x)['boundary'] for x in lines[:-1]], list(range(1, len(lines))))
+        # index() itself no longer joins a new line to an unterminated one.
+        index_file.write_bytes(index_file.read_bytes().rstrip(b'\n'))
+        self.advance(plan, 'c1', 1)
+        records = retention.index(path)[1]
+        self.assertEqual([r['boundary'] for r in records], list(range(1, len(records) + 1)))
+        self.assertEqual(cache.refresh()[1], records)
+
     def history(self, plan, name, snapshot_at=None, binary=None):
         """A scripted history: segments in irregular bursts, a rolling prune after most of them, a snapshot window
         opening part way; at every step the cached plan and guard equal the uncached ones."""

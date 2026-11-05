@@ -199,10 +199,21 @@ def index(chain_path):
         os.replace(tmp, cache)
     new = scan(chain, len(records))
     if new:
-        with open(cache, 'a', encoding='utf-8') as f:
-            for rec in new:
-                f.write(json.dumps(rec) + '\n')
+        with open(cache, 'ab') as f:
+            terminate(f)
+            f.write(''.join(json.dumps(rec) + '\n' for rec in new).encode('utf-8'))
     return chain, records + new
+
+
+def terminate(f):
+    """Before an append (`f` open in 'ab'): a last line left without its newline (an interrupted append whose record
+    is complete, which `index` reads as a line) gets one, so the new lines never join it."""
+    size = os.fstat(f.fileno()).st_size
+    if size:
+        with open(f.name, 'rb') as r:
+            r.seek(size - 1)
+            if r.read(1) != b'\n':
+                f.write(b'\n')
 
 
 class IndexCache:
@@ -248,6 +259,12 @@ class IndexCache:
                 data = f.read()
             self.ident = (st.st_dev, st.st_ino)
             cut = data.rfind(b'\n') + 1
+            if data[cut:].strip():  # a last line without its newline, which index() reads: read as index() does
+                chain, records = index(self.chain_path)
+                with open(cache, 'ab') as f:
+                    terminate(f)  # so the next refresh can read from a cursor again
+                self.records = None
+                return chain, records
             added = [json.loads(line) for line in data[:cut].decode('utf-8').splitlines() if line]
             if any('state' not in r for r in added) or any('state' not in r for r in self.records):
                 index(self.chain_path)  # the S-container migration rewrites the file; read it again whole
@@ -262,6 +279,7 @@ class IndexCache:
             text = ''.join(json.dumps(r) + '\n' for r in new).encode('utf-8')
             with open(cache, 'ab') as f:
                 before = os.fstat(f.fileno())
+                terminate(f)
                 f.write(text)
                 f.flush()
                 after = os.fstat(f.fileno())
