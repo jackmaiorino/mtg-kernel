@@ -374,7 +374,7 @@ pub(crate) fn mixed_batch_fixture(source_to_library: bool) -> ScriptV1 {
 }
 
 /// AC1 over the mixed-batch fixture: P agrees across the worlds at every
-/// compared V decision, and the decisions while the ability waits refuse R1
+/// compared V decision, and the first V decision after the batch refuses R1
 /// `same_name_batch` in both worlds. Strict-view dumps
 /// `fx-mixedbatch-v0/v1`.
 #[test]
@@ -407,13 +407,19 @@ fn mixed_batch_fixture_in_both_worlds() {
         report.compared > 0,
         "the pair compares decisions: {report:?}"
     );
-    assert!(
-        report
-            .p_refusals
-            .get("R1:same_name_batch")
-            .copied()
-            .unwrap_or(0)
-            > 0,
-        "the waiting decisions refuse R1 same_name_batch in both worlds: {report:?}"
-    );
+    // The raw view differs from the edit on (arena ids), so the lockstep
+    // comparison stops there, as for the scripted same-name fixture; the
+    // strict view compares the later decisions from the dumps. Here: the
+    // first V decision after the edit refuses R1 `same_name_batch` in both
+    // worlds, with equal outcomes.
+    let first = |records: &[AtV1]| {
+        records
+            .iter()
+            .find(|at| at.p.as_ref().is_err_and(|e| e == "R1:same_name_batch"))
+            .map(|at| (at.step, at.p.clone()))
+    };
+    let (a, b) = (first(&runs[0].0), first(&runs[1].0));
+    eprintln!("first same_name_batch refusal: {a:?} / {b:?}");
+    assert!(a.is_some(), "the split world refuses same_name_batch");
+    assert_eq!(a, b, "both worlds refuse at the same decision");
 }
