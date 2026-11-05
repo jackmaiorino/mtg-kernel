@@ -94,6 +94,10 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
   records the chain's close, so the unfrozen gap of at most one cycle is on record).
 - Byte guard: each verdict reserves 5 segments per measured chain (one in flight, GUARD_SEGMENTS = 4 admitted)
   and two F segments per box (fillers do not wait on the guard; their hot set is bounded).
+- `supervise --loop` keeps each chain's index in memory across cycles (`retention.IndexCache`): a cycle reads only
+  the index file's new lines and the receipts past them, and the rolling plan and the guard skip records whose
+  full-state files are all gone and old segments whose trajectories are gone (nothing writes into a completed
+  iteration again), with the same decisions as reading everything. A one-shot `supervise` reads everything.
 
 **Box throughput** (`throughput`, Stage 0, COMPUTE-POLICY items 2 to 5): writes the `w5-box-throughput/v1` record
 w5box's guard requires for one arm of a plan. Each phase (default: one box, then every box of the layout) is a
@@ -1026,10 +1030,25 @@ def ledger_at(records, boundary):
     return next(r['ledger_usec'] for r in records if r['boundary'] == boundary)
 
 
-def chain_info(root, name):
+def index_cache(caches, path):
+    """The chain's `retention.IndexCache` kept across supervise cycles (None: read the index file whole)."""
+    if caches is None:
+        return None
+    key = Path(path).as_posix()
+    if key not in caches:
+        caches[key] = retention.IndexCache(path)
+    return caches[key]
+
+
+def chain_index(path, caches=None):
+    cache = index_cache(caches, path)
+    return retention.index(path) if cache is None else cache.refresh()
+
+
+def chain_info(root, name, caches=None):
     path = chain_dir(root, name) / 'chain.json'
     end = read_end(root, name)  # before the index: an ended chain's index is final
-    chain, records = retention.index(path)
+    chain, records = chain_index(path, caches)
     state = Path(root) / 'state' / name
     return {'name': name, 'path': path, 'chain': chain, 'records': records, 'end': end, 'live': live(root, name),
             'paused': (state / 'paused.json').exists(), 'state': state,
@@ -1631,14 +1650,17 @@ def occupancy(plan, root):
     return out
 
 
-def cycle(plan, plan_path, now=None, fills=True):
+def cycle(plan, plan_path, now=None, caches=None, fills=True):
+    """One supervise cycle. `caches` (manifest path to `retention.IndexCache`, kept by `supervise --loop` across
+    cycles) gives the same decisions without reading every index record and file again; `fills=False` (the box
+    throughput command) starts no fillers."""
     now = time.time() if now is None else now
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
     names |= {p['C'] for p in plan['pairs'].values()}
     recovered = recover_unsupervised(plan, root)  # before anything reads the chains: dead supervisors' instances
     oom_failures = end_oom_failures(plan, root)  # close, and OOM closes become chain failures, first
-    infos = {n: chain_info(root, n) for n in sorted(names)}
+    infos = {n: chain_info(root, n, caches) for n in sorted(names)}
     looks = {n: look(i, plan['r_nom_usec']) for n, i in infos.items()}
     report = {'unix': now, 'pairs': {}, 'retention': {}, 'recovered': recovered, 'oom_failures': oom_failures}
     budget = load_budget(root)
@@ -1653,7 +1675,7 @@ def cycle(plan, plan_path, now=None, fills=True):
                     st['last_decision'] = pair_decide(plan, c, x, st, now, budget)
                     x['end'] = read_end(root, x['name'])
                 if c['end'] is not None and x['end'] is not None and not c['live'] and not x['live']:
-                    x = infos[pair['X']] = chain_info(root, pair['X'])
+                    x = infos[pair['X']] = chain_info(root, pair['X'], caches)
                     st = pair_finalize(plan, plan_path, c, x, st, looks, budget)
                 st.pop('blocked', None)
             except (Stop, SystemExit) as exc:
@@ -1688,10 +1710,10 @@ def cycle(plan, plan_path, now=None, fills=True):
             continue
         st = pair_state.get(n, {})
         snap_from = st.get('snapshot_from') if st.get('snapshotting') else None
-        doc = retention.plan(info['path'], snap_from)
+        doc = retention.plan(info['path'], snap_from, index_cache(caches, info['path']))
         # The look is found again on an index at least as new as the plan's, so a look boundary the plan already
         # saw is recorded and kept before anything is deleted.
-        _, fresh = retention.index(info['path'])
+        _, fresh = chain_index(info['path'], caches)
         info = dict(info, records=fresh)
         looks[n] = look(info, plan['r_nom_usec'])
         keep = protected_paths(info, {looks[n]['boundary']} if looks.get(n) else set())
@@ -1705,7 +1727,8 @@ def cycle(plan, plan_path, now=None, fills=True):
     report['purged'] = purge_hold(root, plan['hold_days'], now)
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
-    g = retention.guard([root], plan['byte_cap'], next_bytes, manifests)
+    g = retention.guard([root], plan['byte_cap'], next_bytes, manifests,
+                        None if caches is None else {Path(m).as_posix(): index_cache(caches, m) for m in manifests})
     write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], ceilings=ceilings, id=time.time_ns(),
                                     headroom=g['cap_bytes'] - g['used_bytes'] - g['next_bytes']))
     report['guard'] = {k: g[k] for k in ('ok', 'used_bytes', 'next_bytes', 'cap_bytes')}
@@ -1719,8 +1742,9 @@ def supervise(a):
     held = lock(root / 'SUPERVISE.lock')
     require(held is not None, 'another supervise holds this node')
     try:
+        caches = {}  # each chain's index records and settled state, kept across cycles
         while True:
-            report = cycle(plan, Path(a.plan).resolve())
+            report = cycle(plan, Path(a.plan).resolve(), caches=caches)
             print(json.dumps(report, sort_keys=True), flush=True)
             if not a.loop:
                 return 0
