@@ -1750,18 +1750,17 @@ fn a_hand_epoch_reference_and_a_ninjutsu_departure_agree() {
         "the hand-epoch reference refuses same_name_hand"
     );
     // The control: the record names D at its graveyard epoch, from before
-    // the hand (not a hand epoch); the refusal is not this rule's.
+    // the hand (not a hand epoch). The construction reveals D right after
+    // its public return, which the moves-without-events rule now reads as
+    // any reveal of the name (Sol code review 1 on 43.8: no suppression
+    // after a public entry, an aborted cast of an older copy looks the
+    // same), so both worlds refuse alike by that rule.
     let before =
         |d_leaves| reference_world_to(true, d_leaves, HandRefAtV1::D, false, Zone::Battlefield);
     let (x, y) = (before(true), before(false));
     eprintln!("ninjutsu control (graveyard epoch): D left {x:?} / C left {y:?}");
     assert_eq!(x, y, "P agrees whichever copy left");
-    assert!(
-        x.as_ref()
-            .err()
-            .is_none_or(|e| !e.contains("same-name copies in the opponent's hand")),
-        "a reference outside the hand is not refused by the hand rule: {x:?}"
-    );
+    assert_eq!(x, a, "the reveal of the name refuses the earlier epoch alike");
 }
 
 /// Sol round 3 on ruling 11, finding 2: equal-key bound D and B, unseen C;

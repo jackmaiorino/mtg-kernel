@@ -73,6 +73,14 @@ fn named_object(v: &Value) -> Option<u32> {
         .as_u64()
         .or_else(|| v["candidate"]["arena_id"].as_u64())
         .or_else(|| v["card"]["arena_id"].as_u64())
+        // A one-card discard (cleanup, an effect's discard) names its card
+        // in `cards` (ruling 13 (5): the Elves/Affinity discards).
+        .or_else(|| {
+            v["cards"]
+                .as_array()
+                .filter(|c| c.len() == 1)
+                .and_then(|c| c[0]["arena_id"].as_u64())
+        })
         .map(|n| n as u32)
 }
 
