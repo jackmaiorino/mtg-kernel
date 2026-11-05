@@ -421,9 +421,11 @@ def make_plan(inputs_path):
         bpu = int(spec['bytes_per_update'])
         require(bpu > 0 and int(spec['memory_max_bytes']) > 0 and int(spec['workers']) >= 1,
                 f'{a}: bytes_per_update, memory_max_bytes and workers are required')
-        require(a == 'F' or (retention.TRAJECTORY_SEGMENTS + 1) * length * bpu <= HOT_CAP_BYTES,
-                f'{a}: 64 kept segments and the live one, of {length} updates at {bpu} bytes, pass the 60 GB '
-                'per-chain hot cap')
+        # Between two prunes a chain holds its 64 kept segments, the one in flight at the census and the
+        # GUARD_SEGMENTS its verdict admits.
+        require(a == 'F' or (retention.TRAJECTORY_SEGMENTS + 1 + GUARD_SEGMENTS) * length * bpu <= HOT_CAP_BYTES,
+                f'{a}: {retention.TRAJECTORY_SEGMENTS + 1 + GUARD_SEGMENTS} segments of {length} updates at {bpu} '
+                'bytes pass the 60 GB per-chain hot cap')
         base = pin(spec.get('base', inputs['base']))
         require(not history_relative(read(base['path'])), f'{a}: the base uses history-relative opponents, which '
                 'segments would change')
@@ -841,6 +843,7 @@ def run(a):
                if f['arm'] == 'F' and not fill_ready(root, f['slot'], fill_stop(plan))]
     require(not waiting, f'filler boxes {waiting} hold no verified filler yet (supervise starts them)')
     require(read_end(root, a.chain) is None, f'{a.chain} has ended')
+    require(not oom_closed(root, a.chain), f'{a.chain} was OOM-killed: a chain failure (section 2.1)')
     require(not stopped(root, chain_dir(root, a.chain)), 'a STOP file is present')
     for p in plan['pairs'].values():
         if p['X'] == a.chain and p['c_external']:
@@ -1050,14 +1053,14 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
             evidence[rec['instance']] = max(evidence.get(rec['instance'], 0), rec['unix_seconds'])
     running = running_seconds(x['ledger'], now, frozen_intervals(root, now), x['state'], evidence)
     x_cap = float(x['chain'].get('x_cap_seconds', retention.X_CAP_SECONDS))
-    if c_ended and not c_valid:
-        end_x(plan, x, 'c-failed-before-update')
-        return {'action': 'stop', 'why': 'C ended before its first update'}
     if c_ended:  # R_i is final once C's instance has closed
         r = r_i(root, c)
         if r is None:
             return {'action': 'wait-for-c-close', 'x_running_seconds': running}
-        c_valid = [dict(c_valid[-1], ledger_usec=r)]
+        if r == 0:  # C ended early before its first update: X's endpoint is its parent
+            end_x(plan, x, 'c-failed-before-update')
+            return {'action': 'stop', 'why': 'C ended before its first update'}
+        c_valid = [dict(c_valid[-1] if c_valid else {'boundary': 0}, ledger_usec=r)]
     if not c_valid:  # C has no ledger yet: no projection, but the X cap still holds
         if running >= x_cap:
             end_x(plan, x, 'x-cap', x_running_seconds=running)
@@ -1337,7 +1340,7 @@ def pair_finalize(plan, plan_path, c, x, st, looks, budget):
     if c['end']['reason'] != 'c-wall':
         under.append(f'C ended early ({c["end"]["reason"]}): R_i is the ledger at its last valid boundary')
     last = x_valid[-1]['boundary'] if x_valid else 0
-    if not c_valid:  # C ended before its first update: R_i = 0, reached at X's boundary 0 (its parent)
+    if r == 0:  # C ended early before its first update: R_i = 0, reached at X's boundary 0 (its parent)
         x_b = 0
     elif x['end']['reason'] in FAILED_ENDS and c['end']['reason'] == 'c-wall':
         x_b = last  # section 7.4: a failed (or lead-stopped) chain's last valid checkpoint
@@ -1402,6 +1405,26 @@ def supervised(root, name):
             return True
         fcntl.flock(f, fcntl.LOCK_UN)
         return False
+
+
+def oom_closed(root, name):
+    """w5box closed an instance of the chain after an OOM kill (`chain_failure`), by its supervisor or a recovery."""
+    path = ledger_path(root, name)
+    return path.exists() and any(r['event'] == 'close' and r.get('chain_failure') for r in w5box.Ledger(path).records())
+
+
+def end_oom_failures(plan, root):
+    """Section 2.1: an OOM kill is a chain failure; its last valid checkpoint is its endpoint (END, once)."""
+    ended = []
+    for n, c in sorted(plan['chains'].items()):
+        if c['arm'] in MEASURED and read_end(root, n) is None and oom_closed(root, n):
+            man = read(chain_dir(root, n) / 'chain.json')
+            boundary, receipt = latest(man)
+            if write_once(chain_dir(root, n) / 'END.json',
+                          end_doc(n, c['arm'], 'chain-failure', boundary, receipt, 'supervise', cause='oom kill')):
+                log(root, chain=n, event='end', reason='chain-failure', cause='oom kill', boundary=boundary)
+                ended.append(n)
+    return ended
 
 
 def recover_unsupervised(plan, root):
@@ -1634,6 +1657,7 @@ def cycle(plan, plan_path, now=None):
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
     report['recovered'] = recover_unsupervised(plan, root)
+    report['oom_failures'] = end_oom_failures(plan, root)
     report['kills'] = enforce_ends(plan, root)
     report['fills'] = occupancy(plan, root)
     report['purged'] = purge_hold(root, plan['hold_days'], now)

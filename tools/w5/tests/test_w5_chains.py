@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -358,6 +359,18 @@ class ChainTests(unittest.TestCase):
         end = json.loads((self.node.root / 'chains' / 'c1' / 'END.json').read_text())
         self.assertEqual((end['reason'], end['last_valid_boundary'], end['detail']), ('chain-failure', 3,
                                                                                        {'cause': 'oom kill'}))
+        # A recovered OOM close (no `run` saw it) ends the chain at supervise's next look, and `run` refuses it.
+        self.node.ledger('x1', 'open')
+        w5box.Ledger(self.node.root / 'state' / 'x1' / 'ledger.jsonl').append(
+            {'event': 'close', 'instance': 0, 'final_usec': 0, 'closed_total_usec': 0, 'chain_failure': True,
+             'recovered': 'cgroup'})
+        self.assertEqual(chains.end_oom_failures(plan, self.node.root), ['x1'])
+        self.assertEqual(json.loads((self.node.root / 'chains' / 'x1' / 'END.json').read_text())['reason'],
+                         'chain-failure')
+        (self.node.root / 'chains' / 'x1' / 'END.json').unlink()
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'x1']), w5box.EXIT_REFUSED)
+        shutil.rmtree(self.node.root / 'state' / 'x1')
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_REFUSED)
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '2'}):
@@ -547,6 +560,17 @@ class ChainTests(unittest.TestCase):
                 mock.patch.object(chains, 'prune_chain', lambda *a: {}):
             st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
         self.assertEqual((st['r_usec'], st['endpoints'], st['label']), (0, {'c1': 0, 'x1': 0}, 'under-budget'))
+        # C reached its wall before its first update: R_i is still its final ledger.
+        c = {'name': 'c1', 'records': [], 'end': {'reason': 'c-wall', 'last_valid_boundary': 0}}
+        led = w5box.Ledger(self.node.root / 'state' / 'c1' / 'ledger.jsonl')
+        led.append({'event': 'open', 'instance': 1, 'base_usec': 0, 'cgroup': 'c', 'cgroup_inode': 0,
+                    'manifest_sha256': '0'})
+        led.append({'event': 'close', 'instance': 1, 'final_usec': 100, 'closed_total_usec': 100})
+        x = {'name': 'x1', 'records': recs, 'end': {'reason': 'reached-r', 'last_valid_boundary': None}}
+        with mock.patch.object(chains, 'select_endpoint', lambda *a: {'boundary': a[3], 'kind': 'checkpoint'}), \
+                mock.patch.object(chains, 'prune_chain', lambda *a: {}):
+            st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
+        self.assertEqual((st['r_usec'], st['endpoints'], st['label']), (100, {'c1': 0, 'x1': 2}, 'matched'))
         # C failing early at R_i = 100 with X failed later: the first boundary at or past R_i.
         c = {'name': 'c1', 'records': [{'boundary': 1, 'ledger_usec': 100}], 'end': {'reason': 'operator',
                                                                                     'last_valid_boundary': 1}}
