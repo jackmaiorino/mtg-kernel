@@ -96,7 +96,7 @@ class Node:
 
     def guard(self, ok=True, ceilings=None):
         jwrite(self.root / 'GUARD.json', {'ok': ok, 'unix': time.time(), 'used_bytes': 0, 'cap_bytes': 1,
-                                          'ceilings': ceilings or {'c1': 10**6, 'x1': 10**6}})
+                                          'ceilings': ceilings or {'c1': 10**6, 'x1': 10**6}, 'headroom': 10**15})
 
     def ledger(self, name, *events):
         led = w5box.Ledger(self.root / 'state' / name / 'ledger.jsonl')
@@ -355,6 +355,7 @@ class ChainTests(unittest.TestCase):
             self.assertEqual(chains.main(['end', '--plan', str(path), '--chain', 'x1', '--reason', 'again']), 1)
         end = json.loads((self.node.root / 'chains' / 'x1' / 'END.json').read_text())
         self.assertEqual((end['reason'], end['last_valid_boundary'], end['ledger_usec']), ('operator', 1, STEP_X))
+        self.assertFalse(retention.index_path(plan['chains']['x1']['manifest']).exists())  # supervise's to write
 
     # ------------------------------------------------------------ supervise
 
@@ -363,6 +364,15 @@ class ChainTests(unittest.TestCase):
                   {'event': 'close', 'unix': 30}, {'event': 'open', 'unix': 100}, {'event': 'pause', 'unix': 104}]
         self.assertEqual(chains.running_seconds(events, 200), 15 + 4)
         self.assertEqual(chains.running_seconds(events[:5], 110), 15 + 10)
+        # Node freezes (amendment A1 enforcement) are not running time either.
+        log = self.node.root / 'state' / 'occupancy.jsonl'
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(''.join(json.dumps(e) + '\n' for e in (
+            {'event': 'enforced', 'frozen': True, 'unix': 5}, {'event': 'enforced', 'frozen': False, 'unix': 27},
+            {'event': 'enforced', 'frozen': True, 'unix': 105})))
+        frozen = chains.frozen_intervals(self.node.root, 110)
+        self.assertEqual(frozen, [(5, 27), (105, 110)])
+        self.assertEqual(chains.running_seconds(events[:5], 110, frozen), (5 + 3) + 5)
 
     def synthetic(self, plan, c_end=None, x_ledgers=(), paused=False, stop_at=None, x_cap=1e6, opened=0.0):
         t0 = 1.0e9
@@ -488,6 +498,8 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(chains.guard_reservation(plan, self.node.root), 5 * x + 2 * 3 * f)
         self.node.ledger('c1', 'open')  # ended but still open: it may still write
         self.assertEqual(chains.guard_reservation(plan, self.node.root), 5 * (c + x) + 2 * 3 * f)
+        jwrite(self.node.root / 'chains' / 'x1' / 'replay' / 'b000000009' / 'spec.json', {'replay': {'updates': 7}})
+        self.assertEqual(chains.guard_reservation(plan, self.node.root), 5 * (c + x) + 2 * 3 * f + 7 * 1000)
 
     def test_supervise_selects_replays_and_prunes_a_pair(self):
         path, plan = self.node.stage0(c_wall=1.5, r_nom_usec=10_000_000)

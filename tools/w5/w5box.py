@@ -1189,11 +1189,10 @@ class Supervisor:
 def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, stop_path: Path) -> int:
     """`w5box.py fill`: the frozen filler in an ended chain's box, with the paused-box filler's outage, verification,
     replacement and fault rules (module docstring, "Ended boxes")."""
-    if stop_path.exists():  # the stage has ended: nothing waits on this box
-        return 0
     state_root = Path(plan["state_root"])
     slot = layout["boxes"][index]
     node = NodeLog(state_root)
+    stop_key = str(stop_path)  # each outage names its stage's stop file: only that stage's fills close it
     root = Cgroup(plan["cgroup_root"])
     with node.locked():
         prepare_root(root, layout, plan["isolation"])
@@ -1214,17 +1213,23 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, st
             records, torn = node.read()
             if index not in NodeLog.state(records, torn)["open_outages"]:
                 node.append(dict({"event": "outage-start", "id": f"fill{index}/{time.time_ns()}", "box_slot": index,
-                                  "chain": None, "reason": reason, "affected": node_chains(state_root)}, **extra))
+                                  "chain": None, "reason": reason, "stop": stop_key,
+                                  "affected": node_chains(state_root)}, **extra))
         enforce_node(plan, node, "fill-outage")
 
     def close_outage(how: str, **extra) -> None:
+        """Closes this box's open outage if this stage's fill opened it."""
         with node.locked():
             records, torn = node.read()
             outage = NodeLog.state(records, torn)["open_outages"].get(index)
-            if outage is not None:
+            if outage is not None and outage.get("stop") == stop_key:
                 node.append(dict({"event": "restored", "outage_id": outage["id"], "box_slot": index, "chain": None,
                                   "how": how}, **extra))
         enforce_node(plan, node, how)
+
+    if stop_path.exists():  # the stage has ended: nothing waits on this box (an outage left by this stage closes)
+        close_outage("fill-stopped")
+        return 0
 
     def clear(pid: int | None) -> None:
         if filler_cg.exists():
@@ -1242,12 +1247,18 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, st
     open_outage("ended box: waiting for the frozen filler", empty_since=empty_since)
     deadline = time.monotonic() + SETTLE_SECONDS
     while True:
+        if stop_path.exists():
+            close_outage("fill-stopped")
+            return 0
         try:
             lock = flock(state_root / f"box{index}.lock", f"Box {index}")
             break
         except Refusal:
-            if time.monotonic() > deadline:
+            if chain_cg.exists() and chain_cg.populated():  # another chain took the box: it is not empty
+                close_outage("box-occupied-by-a-chain")
                 raise
+            if time.monotonic() > deadline:
+                raise  # the box stays an outage; the next start retries
             time.sleep(0.5)
     if chain_cg.exists() and chain_cg.populated():
         close_outage("box-occupied-by-a-chain")

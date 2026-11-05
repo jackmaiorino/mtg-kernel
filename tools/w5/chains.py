@@ -625,6 +625,12 @@ def latest(man):
     return 0, None
 
 
+def receipt_at(man, boundary):
+    """The completed iteration receipt of boundary b (update b - 1)."""
+    seg = next(s for s in reversed(man['segments']) if s['offset'] < boundary)
+    return read(Path(seg['root']) / 'iterations' / f'{boundary - 1 - seg["offset"]:06d}' / 'complete.json')
+
+
 def end_doc(name, arm_name, reason, boundary, receipt, by, **detail):
     return {'schema': END_SCHEMA, 'chain': name, 'arm': arm_name, 'reason': reason, 'last_valid_boundary': boundary,
             'ledger_usec': ((receipt or {}).get('chain_ledger') or {}).get('usec'), 'by': by,
@@ -868,15 +874,11 @@ def end_cmd(a):
     plan = load_plan(a.plan, check=False)
     require(a.chain in plan['chains'] and plan['chains'][a.chain]['arm'] in MEASURED, 'not a measured chain')
     root = Path(plan['root'])
-    man_path = chain_dir(root, a.chain) / 'chain.json'
-    _, records = retention.index(man_path)
-    top = records[-1]['boundary'] if records else 0
+    man = read(chain_dir(root, a.chain) / 'chain.json')
+    top, _ = latest(man)  # receipts only: the index cache is supervise's to write
     boundary = top if a.boundary is None else a.boundary
     require(0 <= boundary <= top, f'boundary must be 0 to {top}')
-    receipt = None
-    if boundary:
-        rec = records[boundary - 1]
-        receipt = {'chain_ledger': {'usec': rec['ledger_usec']}}
+    receipt = receipt_at(man, boundary) if boundary else None
     doc = end_doc(a.chain, plan['chains'][a.chain]['arm'], 'operator', boundary, receipt, 'operator',
                   note=a.reason)
     if not write_once(chain_dir(root, a.chain) / 'END.json', doc):
@@ -890,23 +892,55 @@ def end_cmd(a):
 
 # ---------------------------------------------------------------- supervise
 
-def running_seconds(records, now):
-    """Wall time of open w5box instances minus the chain's own paused intervals."""
-    total, opened, paused = 0.0, None, None
+def running_intervals(records, now):
+    """Open w5box instances minus the chain's own paused intervals, as (start, end) wall intervals."""
+    out, opened, start = [], False, None
     for r in records:
         event, t = r['event'], r['unix']
         if event == 'open':
-            opened, paused = t, None
-        elif event == 'pause' and opened is not None:
-            paused = t
-        elif event == 'resume' and paused is not None:
-            total -= t - paused
-            paused = None
-        elif event == 'close' and opened is not None:
-            total += t - opened - (t - paused if paused is not None else 0.0)
-            opened, paused = None, None
-    if opened is not None:
-        total += now - opened - (now - paused if paused is not None else 0.0)
+            opened, start = True, t
+        elif event == 'pause' and start is not None:
+            out.append((start, t))
+            start = None
+        elif event == 'resume' and opened and start is None:
+            start = t
+        elif event == 'close':
+            if start is not None:
+                out.append((start, t))
+            opened, start = False, None
+    if start is not None:
+        out.append((start, now))
+    return out
+
+
+def frozen_intervals(root, now):
+    """Wall intervals in which w5box's node enforcement held the node's measured chains frozen (amendment A1), from
+    its `enforced` events (read without the node lock; a torn last line is ignored)."""
+    path = Path(root) / 'state' / 'occupancy.jsonl'
+    out, since = [], None
+    if not path.exists():
+        return out
+    for line in path.read_bytes().split(b'\n')[:-1]:
+        r = json.loads(line)
+        if r.get('event') != 'enforced':
+            continue
+        if r['frozen'] and since is None:
+            since = r['unix']
+        elif not r['frozen'] and since is not None:
+            out.append((since, r['unix']))
+            since = None
+    if since is not None:
+        out.append((since, now))
+    return out
+
+
+def running_seconds(records, now, frozen=()):
+    """X's own running wall (the cap): its open instances minus its pauses and minus node freezes."""
+    total = 0.0
+    for a, b in running_intervals(records, now):
+        total += b - a
+        for fa, fb in frozen:
+            total -= max(0.0, min(b, fb) - max(a, fa))
     return total
 
 
@@ -974,7 +1008,7 @@ def pair_decide(plan, info_c, info_x, st, now):
     x, c = info_x, info_c
     c_valid = valid_records(c)
     c_ended = c['end'] is not None
-    running = running_seconds(x['ledger'], now)
+    running = running_seconds(x['ledger'], now, frozen_intervals(root, now))
     x_cap = float(x['chain'].get('x_cap_seconds', retention.X_CAP_SECONDS))
     if c_ended and not c_valid:
         end_x(plan, x, 'c-failed-before-update')
@@ -1029,7 +1063,9 @@ def pair_decide(plan, info_c, info_x, st, now):
     return out
 
 
-def launch_replay(plan_path, rdir):
+def launch_replay(plan, plan_path, rdir, arm):
+    """Starts `_replay` detached once the last guard verdict's headroom holds its bytes (the replay is reserved by
+    every later verdict until its receipt)."""
     held = lock(rdir / 'REPLAY.lock')
     if held is None:
         return 'running'
@@ -1037,6 +1073,11 @@ def launch_replay(plan_path, rdir):
     launched = rdir / 'LAUNCHED.json'
     if launched.exists() and time.time() - read(launched)['unix'] < REPLAY_START_GRACE:
         return 'starting'
+    need = read(rdir / 'spec.json')['replay']['updates'] * plan['arms'][arm]['bytes_per_update']
+    guard_path = Path(plan['root']) / 'GUARD.json'
+    headroom = read(guard_path).get('headroom', 0) if guard_path.exists() else 0
+    if not guard_path.exists() or not read(guard_path).get('ok') or headroom < need:
+        return f'waiting for {need} bytes of guard headroom'
     kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
         {'start_new_session': True}
     with open(rdir / 'replay.log', 'ab') as out:
@@ -1087,7 +1128,7 @@ def select_endpoint(plan, plan_path, info, boundary):
     spec = read(rdir / 'spec.json')
     if not (rdir / 'RECEIPT.json').exists():
         if not (rdir / 'EXIT.json').exists():
-            return f'pending ({launch_replay(plan_path, rdir)})'
+            return f'pending ({launch_replay(plan, plan_path, rdir, plan["chains"][info["name"]]["arm"])})'
         write(rdir / 'RECEIPT.json', retention.verify_replay(spec, rdir / 'native'))
     receipt = read(rdir / 'RECEIPT.json')
     if not receipt['equal']:
@@ -1211,7 +1252,14 @@ def guard_reservation(plan, root):
         return plan['arms'][arm]['segment_updates'] * plan['arms'][arm]['bytes_per_update']
     measured = sum(segment(c['arm']) for n, c in plan['chains'].items() if c['arm'] in MEASURED and writing(root, n))
     boxes = len({c['slot'] for c in plan['chains'].values()})
-    return (GUARD_SEGMENTS + 1) * measured + 2 * boxes * segment('F')
+    replays = 0  # a replay writes until its receipt
+    for n, c in plan['chains'].items():
+        if c['arm'] in MEASURED:
+            for rdir in (chain_dir(root, n) / 'replay').glob('b*'):
+                if (rdir / 'spec.json').exists() and not (rdir / 'RECEIPT.json').exists():
+                    updates = read(rdir / 'spec.json')['replay']['updates']
+                    replays += updates * plan['arms'][c['arm']]['bytes_per_update']
+    return (GUARD_SEGMENTS + 1) * measured + 2 * boxes * segment('F') + replays
 
 
 def enforce_ends(plan, root):
@@ -1334,6 +1382,11 @@ def cycle(plan, plan_path, now=None):
         st = pair_state.get(n, {})
         snap_from = st.get('snapshot_from') if st.get('snapshotting') else None
         doc = retention.plan(info['path'], snap_from)
+        # The look is found again on an index at least as new as the plan's, so a look boundary the plan already
+        # saw is recorded and kept before anything is deleted.
+        _, fresh = retention.index(info['path'])
+        info = dict(info, records=fresh)
+        looks[n] = look(info, plan['r_nom_usec'])
         keep = protected_paths(info, {looks[n]['boundary']} if looks.get(n) else set())
         doc['checkpoints'] = [i for i in doc['checkpoints'] if i['path'] not in keep]
         (root / 'retention').mkdir(parents=True, exist_ok=True)
@@ -1350,7 +1403,8 @@ def cycle(plan, plan_path, now=None):
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests)
-    write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], ceilings=ceilings))
+    write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], ceilings=ceilings,
+                                    headroom=g['cap_bytes'] - g['used_bytes'] - g['next_bytes']))
     report['guard'] = {k: g[k] for k in ('ok', 'used_bytes', 'next_bytes', 'cap_bytes')}
     write(root / 'plan' / plan['label'] / 'SUPERVISE.json', report)
     return report
