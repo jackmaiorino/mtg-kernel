@@ -631,11 +631,17 @@ def end_doc(name, arm_name, reason, boundary, receipt, by, **detail):
             'unix': round(time.time(), 3), 'detail': detail}
 
 
-def guard_admit(root, chain, index):
-    """Admission for segment `index`: a fresh `ok` verdict from supervise whose ceiling for this chain is above
-    `index`. Supervise reads every manifest before it counts bytes and sets each ceiling to the segments started
-    then plus GUARD_SEGMENTS, so whatever any verdict admits after a census (one segment in flight and the next
-    GUARD_SEGMENTS) is inside that verdict's reservation, and a stopped supervise admits nothing more."""
+def admitted(cdir):
+    path = Path(cdir) / 'ADMITTED.json'
+    return read(path)['count'] if path.exists() else 0
+
+
+def guard_admit(root, cdir, chain):
+    """Admission for one segment run (a new segment or a rerun of an unfinished one): a fresh `ok` verdict from
+    supervise whose ceiling for this chain is above the chain's admissions so far (ADMITTED.json, counted here).
+    Supervise reads every chain's count before it counts bytes and sets the ceiling to it plus GUARD_SEGMENTS, so
+    whatever any verdict admits after a census (one run in flight and GUARD_SEGMENTS more, retries and their moved
+    aside attempts included) is inside that verdict's reservation, and a stopped supervise admits nothing more."""
     path = Path(root) / 'GUARD.json'
     if not path.exists():
         return False, 'no guard verdict'
@@ -644,8 +650,10 @@ def guard_admit(root, chain, index):
         return False, 'the guard verdict is stale (is supervise running?)'
     if not g.get('ok'):
         return False, f'the byte guard refuses ({g.get("used_bytes")} used)'
-    if index >= g.get('ceilings', {}).get(chain, 0):
-        return False, f'segment {index} is past this verdict\'s ceiling (is supervise running?)'
+    count = admitted(cdir)
+    if count >= g.get('ceilings', {}).get(chain, 0):
+        return False, f'admission {count} is past this verdict\'s ceiling (is supervise running?)'
+    write(Path(cdir) / 'ADMITTED.json', {'count': count + 1})
     return True, 'ok'
 
 
@@ -737,9 +745,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             return 0
         if reached_stop(man, a.ledger_source):  # a stop at a segment's last update, or a restart past it
             return end_at_stop(a, arm, root, cdir, man)
-        segs = man['segments']
-        index = len(segs) - 1 if segs and not (Path(segs[-1]['root']) / 'completion.json').exists() else len(segs)
-        ok, why = guard_admit(root, a.chain, index)
+        ok, why = guard_admit(root, cdir, a.chain)
         if not ok:
             if waiting is None:
                 waiting = time.time()
@@ -1192,14 +1198,18 @@ def pair_finalize(plan, plan_path, c, x, st, looks):
     return st
 
 
+def writing(root, name):
+    """A measured chain may still write: it has not ended, or its END is written but its instance is open."""
+    return read_end(root, name) is None or live(root, name)
+
+
 def guard_reservation(plan, root):
     """Bytes the verdict reserves: per measured chain that has not ended, the segment possibly in flight at the
     census plus the GUARD_SEGMENTS its ceiling admits; per box, a filler's whole hot set (two F segments: a filler
     keeps at most its live segment and its source, and does not wait on the guard, which would break occupancy)."""
     def segment(arm):
         return plan['arms'][arm]['segment_updates'] * plan['arms'][arm]['bytes_per_update']
-    measured = sum(segment(c['arm']) for n, c in plan['chains'].items()
-                   if c['arm'] in MEASURED and read_end(root, n) is None)
+    measured = sum(segment(c['arm']) for n, c in plan['chains'].items() if c['arm'] in MEASURED and writing(root, n))
     boxes = len({c['slot'] for c in plan['chains'].values()})
     return (GUARD_SEGMENTS + 1) * measured + 2 * boxes * segment('F')
 
@@ -1245,16 +1255,17 @@ def occupancy(plan, root):
     filler while another measured chain on the node runs. `w5box.py fill` (started detached here) runs it under the
     paused-box filler's rules: the box is an outage in the node log, so the node's measured chains stay frozen,
     until a verified filler runs; exits are replaced and repeated failures fault the box. Once every measured chain
-    has ended and closed, each fill is stopped (`box<k>.fill.stop`) and the plan's F chains are killed."""
+    has ended and closed, the plan's fill STOP file is written and its F chains are killed."""
     measured = [n for n, c in plan['chains'].items() if c['arm'] in MEASURED]
     closed = {n: read_end(root, n) is not None and not live(root, n) for n in measured}
     out = {'started': [], 'stopped': [], 'killed': []}
-    slots = sorted({plan['chains'][n]['slot'] for n in measured})
+    marks = Path(root) / 'plan' / plan['label'] / 'fills'
+    stop = marks / 'STOP'  # the plan's fills end with its stage; a fill started late sees it and exits at once
     if measured and all(closed.values()):
-        for slot in slots:
-            if fill_running(root, slot) and not (Path(root) / 'state' / f'box{slot}.fill.stop').exists():
-                (Path(root) / 'state' / f'box{slot}.fill.stop').write_text('')
-                out['stopped'].append(slot)
+        if not stop.exists():
+            marks.mkdir(parents=True, exist_ok=True)
+            stop.write_text('')
+            out['stopped'] = sorted(k for k in {plan['chains'][n]['slot'] for n in measured} if fill_running(root, k))
         for n, c in sorted(plan['chains'].items()):
             if c['arm'] == 'F' and live(root, n) and not (Path(root) / 'state' / n / 'control' /
                                                           'kill.request').exists():
@@ -1263,14 +1274,14 @@ def occupancy(plan, root):
         return out
     if not any(live(root, n) for n in measured):
         return out
-    marks = Path(root) / 'plan' / plan['label'] / 'fills'
     for n in sorted(n for n in measured if closed[n]):
         slot = plan['chains'][n]['slot']
         mark = marks / f'box{slot}.json'
         if fill_running(root, slot) or (mark.exists() and time.time() - read(mark)['unix'] < FILL_START_GRACE):
             continue
         since = closed_unix(root, n)
-        cmd = [sys.executable, str(HERE / 'w5box.py'), 'fill', '--plan', w5box_plan(plan, n), '--slot', str(slot)]
+        cmd = [sys.executable, str(HERE / 'w5box.py'), 'fill', '--plan', w5box_plan(plan, n), '--slot', str(slot),
+               '--stop', str(stop)]
         if since is not None:
             cmd += ['--empty-since', repr(since)]
         kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
@@ -1332,10 +1343,10 @@ def cycle(plan, plan_path, now=None):
     report['kills'] = enforce_ends(plan, root)
     report['fills'] = occupancy(plan, root)
     report['purged'] = purge_hold(root, plan['hold_days'], now)
-    ceilings = {}  # read before the byte census: segments started later are inside the reservation
+    ceilings = {}  # read before the byte census: runs admitted later are inside the reservation
     for n, c in plan['chains'].items():
-        if c['arm'] in MEASURED and read_end(root, n) is None:
-            ceilings[n] = len(read(c['manifest'])['segments']) + GUARD_SEGMENTS
+        if c['arm'] in MEASURED and writing(root, n):
+            ceilings[n] = admitted(chain_dir(root, n)) + GUARD_SEGMENTS
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests)

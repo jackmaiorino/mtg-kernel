@@ -55,10 +55,12 @@ chain copies every node event into its ledger exactly once (a durable watermark)
 
 **Ended boxes.** A box whose chain has ended holds the frozen filler while the node's other measured chains run
 (`w5box.py fill`, started by tools/w5/chains.py supervise), under the same rules: the box is an outage from the
-command's start (`--empty-since` records when the chain closed) until a verified filler runs in its filler cgroup; a
-filler that exits opens a new outage at once and is replaced, and FILLER_RESTARTS failed replacements fault the box
-(SIGTERM leaves it open for an operator; the next start retries). `box<k>.fill.stop` ends it once every measured
-chain has ended: the filler goes and the box's open outage closes.
+command's start (`--empty-since` records when the chain closed), opened before it waits for the box lock, until a
+verified filler runs in its filler cgroup; a filler that exits opens a new outage at once and is replaced, and
+FILLER_RESTARTS failed replacements fault the box. Any other exit (SIGTERM, an error) opens the box's outage before
+the filler goes, so an operator's restart retries with the node held. The `--stop` file (written once every
+measured chain has ended; never removed here, so a late start exits at once) ends it: the filler goes and the box's
+open outage closes.
 
 **Guard (COMPUTE-POLICY item 5).** `run` refuses before any spawn unless the plan's pins hold (host class, the
 complete detected box layout, binary and config hashes, `argv[0]` is the pinned binary and the config is in
@@ -71,7 +73,7 @@ scaling checks only).
     w5box.py host-class
     w5box.py run --plan PLAN.json --chain CHAIN [--qualification LABEL --max-wall-seconds S]
     w5box.py pause|resume|kill|refill --plan PLAN.json --chain CHAIN [--payload JSON]
-    w5box.py fill --plan PLAN.json --slot K [--empty-since UNIX]  an ended chain's box holds the frozen filler
+    w5box.py fill --plan PLAN.json --slot K --stop FILE [--empty-since UNIX]   an ended box holds the filler
     w5box.py node-freeze|node-thaw --plan PLAN.json --reason TEXT    operator freeze or thaw of the node's chains
     w5box.py occupancy --plan PLAN.json                           open faults, freeze state and outages
     w5box.py ledger --plan PLAN.json --chain CHAIN       current ledger value (closed + live)
@@ -1184,12 +1186,13 @@ class Supervisor:
 
 # ---------------------------------------------------------------- an ended chain's box
 
-def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None) -> int:
+def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, stop_path: Path) -> int:
     """`w5box.py fill`: the frozen filler in an ended chain's box, with the paused-box filler's outage, verification,
     replacement and fault rules (module docstring, "Ended boxes")."""
+    if stop_path.exists():  # the stage has ended: nothing waits on this box
+        return 0
     state_root = Path(plan["state_root"])
     slot = layout["boxes"][index]
-    lock = flock(state_root / f"box{index}.lock", f"Box {index}")
     node = NodeLog(state_root)
     root = Cgroup(plan["cgroup_root"])
     with node.locked():
@@ -1202,9 +1205,7 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None) ->
     env = dict(BASE_ENV)
     env.update(plan.get("env", {}))
     env.update({"W5_FILLER_SEED_ROOT": seed_root, "W5_BOX_SLOT": str(index)})
-    stop_path, mark = state_root / f"box{index}.fill.stop", state_root / f"box{index}.fill.json"
-    stop_path.unlink(missing_ok=True)
-    write_json_atomic(mark, {"pid": os.getpid(), "unix": time.time(), "empty_since": empty_since}, durable=True)
+    mark = state_root / f"box{index}.fill.json"
     stop = {"flag": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("flag", True))
 
@@ -1236,7 +1237,23 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None) ->
                     pass
             filler_cg.rmdir()
 
+    # The box is empty: the outage opens before the wait for the box lock (the ended chain's supervisor may still
+    # hold it for a moment after its ledger closes), and stays open if the lock never comes.
     open_outage("ended box: waiting for the frozen filler", empty_since=empty_since)
+    deadline = time.monotonic() + SETTLE_SECONDS
+    while True:
+        try:
+            lock = flock(state_root / f"box{index}.lock", f"Box {index}")
+            break
+        except Refusal:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.5)
+    if chain_cg.exists() and chain_cg.populated():
+        close_outage("box-occupied-by-a-chain")
+        lock.close()
+        raise Refusal(f"Box {index} holds a running chain")
+    write_json_atomic(mark, {"pid": os.getpid(), "unix": time.time(), "empty_since": empty_since}, durable=True)
     pid, seq, failures, faulted, ended = None, 0, 0, False, False
     try:
         while not stop["flag"]:
@@ -1274,10 +1291,12 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None) ->
             enforce_node(plan, node, "fill")  # escalation of an outage left open
             time.sleep(FILL_POLL_SECONDS)
     finally:
-        clear(pid)
         if ended:  # every measured chain has ended: nothing waits on this box any more
+            clear(pid)
             close_outage("fill-stopped")
-        stop_path.unlink(missing_ok=True)
+        else:  # a signal or an error: the box is about to be empty, so the node holds first
+            open_outage("the box fill stopped")
+            clear(pid)
         mark.unlink(missing_ok=True)
         lock.close()
     return 0
@@ -1347,6 +1366,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("fill")
     p.add_argument("--plan", required=True)
     p.add_argument("--slot", type=int, required=True)
+    p.add_argument("--stop", type=Path, required=True)
     p.add_argument("--empty-since", type=float, default=None)
     for name in ("pause", "resume", "kill", "refill", "ledger", "verify-ledger"):
         p = sub.add_parser(name)
@@ -1383,7 +1403,7 @@ def main(argv=None) -> int:
             filler = plan["filler"]
             check_launch(filler, filler_argv(filler, filler["seed_root_template"].format(j=args.slot), args.slot, 0),
                          "filler")
-            return fill_box(plan, args.slot, layout, args.empty_since)
+            return fill_box(plan, args.slot, layout, args.empty_since, args.stop)
         if args.command == "pause":  # --now: freeze at once; else an intent the trainer takes at a boundary
             return request(args, "pause.now" if args.now else "pause.intent")
         if args.command in ("resume", "kill", "refill"):

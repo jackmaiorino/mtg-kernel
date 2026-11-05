@@ -301,10 +301,15 @@ class ChainTests(unittest.TestCase):
 
     def test_a_guard_verdict_admits_a_bounded_number_of_segments(self):
         _, plan = self.node.stage0(c_wall=600.0)
-        self.node.guard(ceilings={'c1': 2})
+        self.node.guard(ceilings={'c1': 2, 'x1': 1})
         with mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
             self.assertEqual(self.node.drive(plan, 'c1'), chains.EXIT_ROOM)
-        self.assertEqual(len(json.loads(Path(plan['chains']['c1']['manifest']).read_text())['segments']), 2)
+            self.assertEqual(len(json.loads(Path(plan['chains']['c1']['manifest']).read_text())['segments']), 2)
+            # A rerun of an unfinished segment is an admission too (its moved-aside attempt stays on disk).
+            with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '1'}):
+                self.assertEqual(self.node.drive(plan, 'x1'), chains.EXIT_FAILED)
+                self.assertEqual(self.node.drive(plan, 'x1'), chains.EXIT_ROOM)
+            self.assertEqual(chains.admitted(self.node.root / 'chains' / 'x1'), 1)
 
     def test_filler_keeps_only_the_live_segment(self):
         _, plan = self.node.stage0()
@@ -460,9 +465,10 @@ class ChainTests(unittest.TestCase):
         with mock.patch.object(chains.subprocess, 'Popen') as popen, contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(chains.occupancy(plan, root), {'started': [0], 'stopped': [], 'killed': []})
             cmd = popen.call_args[0][0]
-            self.assertEqual(cmd[1:7], [str(chains.HERE / 'w5box.py'), 'fill', '--plan',
-                                        plan['arms']['C']['w5box_plan']['path'], '--slot', '0'])
-            self.assertEqual(cmd[7], '--empty-since')
+            stop = root / 'plan' / 'stage0' / 'fills' / 'STOP'
+            self.assertEqual(cmd[1:9], [str(chains.HERE / 'w5box.py'), 'fill', '--plan',
+                                        plan['arms']['C']['w5box_plan']['path'], '--slot', '0', '--stop', str(stop)])
+            self.assertEqual(cmd[9], '--empty-since')
             self.assertEqual(chains.occupancy(plan, root)['started'], [])  # starting
             # Every measured chain ended and closed: the fill stops and the F chains go.
             (root / 'state' / 'box0.fill.json').write_text(json.dumps({'pid': 1, 'unix': time.time()}))
@@ -471,7 +477,7 @@ class ChainTests(unittest.TestCase):
             self.node.ledger('f2', 'open')
             with mock.patch.object(chains, 'fill_running', lambda root, slot: slot == 0):
                 self.assertEqual(chains.occupancy(plan, root), {'started': [], 'stopped': [0], 'killed': ['f2']})
-        self.assertTrue((root / 'state' / 'box0.fill.stop').exists())
+        self.assertTrue(stop.exists())
         self.assertTrue((root / 'state' / 'f2' / 'control' / 'kill.request').exists())
 
     def test_guard_reservation(self):
@@ -480,6 +486,8 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(chains.guard_reservation(plan, self.node.root), 5 * (c + x) + 2 * 3 * f)
         chains.write_once(self.node.root / 'chains' / 'c1' / 'END.json', {'reason': 'c-wall'})
         self.assertEqual(chains.guard_reservation(plan, self.node.root), 5 * x + 2 * 3 * f)
+        self.node.ledger('c1', 'open')  # ended but still open: it may still write
+        self.assertEqual(chains.guard_reservation(plan, self.node.root), 5 * (c + x) + 2 * 3 * f)
 
     def test_supervise_selects_replays_and_prunes_a_pair(self):
         path, plan = self.node.stage0(c_wall=1.5, r_nom_usec=10_000_000)
