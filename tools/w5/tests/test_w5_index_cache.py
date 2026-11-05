@@ -72,6 +72,30 @@ class IndexCacheTests(unittest.TestCase):
         self.assertEqual(cache.refresh()[1], retention.index(path)[1])
         self.assertEqual(len(cache.refresh()[1]), len(lines))  # the receipts past the kept lines are found again
 
+    def test_another_writer_between_the_read_and_the_append(self):
+        """An index() elsewhere appends the same receipts while the cache scans them: the cache's own append no
+        longer starts at its cursor, so it reads the file whole next time and matches index() again."""
+        _, plan = self.node.stage0(c_wall=600.0)
+        path = plan['chains']['c1']['manifest']
+        self.advance(plan, 'c1', 1)
+        cache = retention.IndexCache(path)
+        self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+        self.advance(plan, 'c1', 1)
+        real, raced = retention.scan, []
+
+        def racing(chain, known):
+            new = real(chain, known)
+            if not raced:
+                raced.append(1)
+                retention.index(path)  # the other writer appends these receipts first
+            return new
+        with mock.patch.object(retention, 'scan', racing):
+            cache.refresh()
+        self.assertIsNone(cache.records)
+        self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+        self.advance(plan, 'c1', 1)
+        self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+
     def history(self, plan, name, snapshot_at=None, binary=None):
         """A scripted history: segments in irregular bursts, a rolling prune after most of them, a snapshot window
         opening part way; at every step the cached plan and guard equal the uncached ones."""

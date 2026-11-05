@@ -220,44 +220,40 @@ class IndexCache:
 
     def __init__(self, chain_path):
         self.chain_path = Path(chain_path)
-        self.records = None
-        self.active = []
-        self.settled = set()
-        self.complete = set()
-        self.swept = set()
-        self.offset, self.ident = 0, None
+        self.records, self.active, self.offset, self.ident = None, [], 0, None
+        self.settled, self.complete, self.swept = set(), set(), set()
 
-    def _stat(self):
-        try:
-            return index_path(self.chain_path).stat()
-        except FileNotFoundError:
-            return None
-
-    def _reload(self):
-        chain, records = index(self.chain_path)
-        st = self._stat()
-        self.records = records
-        self.active = [r for r in records if r['boundary'] not in self.settled]
-        self.offset, self.ident = (st.st_size, (st.st_dev, st.st_ino)) if st else (0, None)
-        return chain
+    def _reset(self):
+        self.records, self.active, self.offset, self.ident = [], [], 0, None
 
     def refresh(self):
-        """(chain, records), equal to `index(chain_path)` at the same moment."""
-        st = self._stat()
-        if self.records is None or st is None or (st.st_dev, st.st_ino) != self.ident or st.st_size < self.offset:
-            chain = self._reload()
-            return chain, list(self.records)
+        """(chain, records), equal to `index(chain_path)` at the same moment. The cursor always counts exactly the
+        bytes of the lines held (read, and checked as their file's, through one open handle)."""
         chain = load_chain(self.chain_path)
         cache = index_path(self.chain_path)
-        with open(cache, 'rb') as f:
-            f.seek(self.offset)
-            data = f.read()
-        cut = data.rfind(b'\n') + 1
-        added = [json.loads(line) for line in data[:cut].decode('utf-8').splitlines() if line]
-        if any('state' not in r for r in added):
-            chain = self._reload()
-            return chain, list(self.records)
-        self.offset += cut
+        if self.records is None:
+            self._reset()
+        added = []
+        try:
+            f = open(cache, 'rb')
+        except FileNotFoundError:
+            if self.ident is not None:  # the file went away: as index(), nothing is cached
+                self._reset()
+        else:
+            with f:
+                st = os.fstat(f.fileno())
+                if self.ident is not None and ((st.st_dev, st.st_ino) != self.ident or st.st_size < self.offset):
+                    self._reset()  # replaced or shortened: read whole
+                f.seek(self.offset)
+                data = f.read()
+            self.ident = (st.st_dev, st.st_ino)
+            cut = data.rfind(b'\n') + 1
+            added = [json.loads(line) for line in data[:cut].decode('utf-8').splitlines() if line]
+            if any('state' not in r for r in added) or any('state' not in r for r in self.records):
+                index(self.chain_path)  # the S-container migration rewrites the file; read it again whole
+                self.records = None
+                return self.refresh()
+            self.offset += cut
         new = scan(chain, len(self.records) + len(added))
         self.records.extend(added + new)
         self.active.extend(r for r in added + new if r['boundary'] not in self.settled)
@@ -265,11 +261,14 @@ class IndexCache:
         if new:
             text = ''.join(json.dumps(r) + '\n' for r in new).encode('utf-8')
             with open(cache, 'ab') as f:
+                before = os.fstat(f.fileno())
                 f.write(text)
-            after = self._stat()
-            if after is not None and after.st_size == self.offset + len(text) and \
-                    (after.st_dev, after.st_ino) == self.ident:
-                self.offset += len(text)
+                f.flush()
+                after = os.fstat(f.fileno())
+            mine = (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)
+            if mine and before.st_size == self.offset and after.st_size == self.offset + len(text) and \
+                    self.ident in (None, (after.st_dev, after.st_ino)):
+                self.offset, self.ident = after.st_size, (after.st_dev, after.st_ino)
             else:  # another writer appended meanwhile: the file is read whole next time
                 self.records = None
         return chain, out
