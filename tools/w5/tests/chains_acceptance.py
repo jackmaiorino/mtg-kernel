@@ -8,8 +8,10 @@ chain ledger from the chain cgroup's cpu.stat) in two one-core boxes:
   1.10 R-hat (`pause --now`: the chain cgroup freezes and the frozen filler runs in X's box), C ends at its wall,
   X is past R_i, so X ends and is killed; the pair selects X's first boundary at or past R_i, and the PRUNE moves
   go to the hold folder. X's chain cgroup does not move while it is paused and the filler burns.
-- pair B (c2, x2): C ends first; X runs alone; supervise pauses it and resumes it with `stop_at_usec = R_i`, and
-  X stops at the first boundary at or past R_i.
+- pair B (c2, x2): X runs slower than C, so it is below R_i when C ends; C's closing box holds the node until its
+  filler is verified; supervise pauses X and resumes it with `stop_at_usec = R_i`, and X stops at the first boundary
+  at or past R_i.
+Both stages are launched first (`chains.py launch`), so the first chain to start waits frozen for the other.
 
   sudo python3 chains_acceptance.py --receipt OUT.json
 """
@@ -62,14 +64,13 @@ def layout():
     raise RuntimeError('this host has no two one-core boxes')
 
 
-def inputs(t, root, cgroup_root, lay, label, specs, c_wall):
+def inputs(t, root, cgroup_root, lay, label, specs, c_wall, fake):
     ck = t / 'b512.ckpt'
     ck.write_text('b512 weights')
     dose = jwrite(t / 'b512-dose.json', {'source': {'checkpoint': chains.pin(ck), 'play_import': {
         'path': '/imports/flat-v4.json', 'sha256': '1' * 64}}})
-    base = jwrite(t / 'base.json', {
-        'schema': 'acceptance-base', 'opponents': [{'id': 'd6107922'}],
-        'fake': {'burn': 0.15, 'sleep': 0.15, 'burn_x': 0.4, 'sleep_x': 0.0},
+    base = jwrite(t / f'base-{label}.json', {
+        'schema': 'acceptance-base', 'opponents': [{'id': 'd6107922'}], 'fake': fake,
         'iterations': [{'episodes': [{'episode': {'learner_seat': 0}, 'opponent': {'kind': 'current'}}]}]})
     lay_path = jwrite(t / 'layout.json', dict(lay, host_class=w5box.host_class()))
     arm = {'parent': str(dose), 'workers': 1, 'memory_max_bytes': 1 << 30, 'bytes_per_update': 10_000}
@@ -117,10 +118,12 @@ def main():
         # ---- pair A: snapshot window, pause with the filler, C ends, X past R_i is selected
         plan_a = inputs(t, root, cgroup_root, lay, 'acc-a', {
             'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/acc1'},
-            'x1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/acc1'}}, 40.0)
+            'x1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/acc1'}}, 40.0,
+            {'burn': 0.15, 'sleep': 0.15, 'burn_x': 0.4, 'sleep_x': 0.0})
         supervise = subprocess.Popen(tool('supervise', '--plan', str(plan_a), '--loop', '1'),
                                      stdout=open(t / 'supervise-a.log', 'w'))
         wait_for(lambda: (root / 'GUARD.json').exists(), 60, 'the first guard verdict')
+        subprocess.run(tool('launch', '--plan', str(plan_a)), check=True)
         c1, x1 = run_chain(plan_a, 'c1'), run_chain(plan_a, 'x1')
         x_ledger_path = root / 'state' / 'x1' / 'ledger.jsonl'
         wait_for(lambda: x_ledger_path.exists() and any(e['event'] == 'pause' for e in
@@ -175,12 +178,15 @@ def main():
         # ---- pair B: C ends first; X is paused and resumed with stop_at_usec = R_i
         plan_b = inputs(t, root, cgroup_root, lay, 'acc-b', {
             'c2': {'arm': 'C', 'slot': 0, 'pair': 2, 'seed_root': 'w5/acc2'},
-            'x2': {'arm': 'X8', 'slot': 1, 'pair': 2, 'seed_root': 'w5/acc2'}}, 30.0)
+            'x2': {'arm': 'X8', 'slot': 1, 'pair': 2, 'seed_root': 'w5/acc2'}}, 24.0,
+            {'burn': 0.15, 'sleep': 0.15, 'burn_x': 0.08, 'sleep_x': 0.32})
         supervise = subprocess.Popen(tool('supervise', '--plan', str(plan_b), '--loop', '1'),
                                      stdout=open(t / 'supervise-b.log', 'w'))
-        c2 = run_chain(plan_b, 'c2')
+        wait_for(lambda: (root / 'GUARD.json').exists() and json.loads((root / 'GUARD.json').read_text())
+                 .get('plan') == 'acc-b', 60, 'pair B\'s first guard verdict')
+        subprocess.run(tool('launch', '--plan', str(plan_b)), check=True)
+        c2, x2 = run_chain(plan_b, 'c2'), run_chain(plan_b, 'x2')
         codes_b = {'c2': c2.wait(timeout=300)}
-        x2 = run_chain(plan_b, 'x2')
         pair_b = root / 'pairs' / 'c2--x2' / 'PAIR.json'
         wait_for(lambda: pair_b.exists() and json.loads(pair_b.read_text()).get('done'), 300, 'pair B')
         codes_b['x2'] = x2.wait(timeout=120)
@@ -209,8 +215,12 @@ def main():
             'b_matched': pb['label'] == 'matched' and pb['done'] and pb['endpoints']['x2'] == x2_rec[-1]['boundary'],
             'b_ended_box_was_an_outage_from_close_until_its_filler_was_verified': bool(fill_starts) and
             len(fill_outages) == 1 and bool(verified) and verified[0]['unix'] < end(root, 'x2')['unix'],
-            'b_x_never_ran_beside_the_empty_box': bool(verified) and all(
-                e['started_frozen'] or e['unix'] >= verified[0]['unix'] for e in x2_ledger if e['event'] == 'start'),
+            'b_node_frozen_while_the_box_was_empty': bool(verified) and any(
+                e['event'] == 'enforced' and e['frozen'] and fill_outages[0]['unix'] <= e['unix'] <= verified[0]['unix']
+                for e in node_log),
+            'b_first_chain_started_held_until_both_boxes_were_full': min(
+                (e for n in ('c2', 'x2') for e in w5box.Ledger(root / 'state' / n / 'ledger.jsonl').records()
+                 if e['event'] == 'start'), key=lambda e: e['unix'])['started_frozen'] is True,
             'b_fill_stopped_after_the_stage': not (root / 'state' / 'box0.fill.json').exists() and
             not (cgroup_root / f'box{lay["boxes"][0]["slot"]}' / 'filler').exists(),
         })

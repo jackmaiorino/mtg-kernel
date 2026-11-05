@@ -348,6 +348,9 @@ class ChainTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):  # another stage's fill does not count
             self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_REFUSED)
         jwrite(self.node.root / 'state' / 'box2.fill.json', {'pid': 1, 'unix': time.time(), 'stop': str(stop)})
+        with contextlib.redirect_stderr(io.StringIO()):  # the stage was not launched
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_REFUSED)
+        jwrite(self.node.root / 'plan' / 'stage0' / 'LAUNCHED.json', {'unix': time.time()})
         with mock.patch.object(chains.subprocess, 'call', return_value=w5box.EXIT_OOM) as call:
             self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_OOM)
         self.assertEqual(call.call_args[0][0][2:7], ['run', '--plan', plan['arms']['C']['w5box_plan']['path'],

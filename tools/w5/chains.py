@@ -5,6 +5,7 @@ budget and selection rules (`retention.py`, E7). Stage 0 qualification chains, S
 Stage 1b (XS, paired with Stage 1a's C chains, beside the frozen filler) all go through it.
 
   chains.py plan --inputs INPUTS.json        arm files, w5box launch plans, `w5-chain/v1` manifests (idempotent)
+  chains.py launch --plan PLAN.json          box outages that hold the stage's first chains until every box is full
   chains.py run --plan PLAN.json --chain NAME [--qualification LABEL --max-wall-seconds S] [--accept-lower-bound R]
   chains.py supervise --plan PLAN.json [--loop SECONDS]
   chains.py status --plan PLAN.json
@@ -832,6 +833,8 @@ def run(a):
     root = Path(plan['root'])
     c = plan['chains'][a.chain]
     require(c['arm'] in MEASURED, f'{a.chain} is a filler box: supervise runs it through `w5box.py fill`')
+    require((root / 'plan' / plan['label'] / 'LAUNCHED.json').exists(),
+            'launch the stage first (`chains.py launch`): its chains then start held until every box is occupied')
     waiting = [f['slot'] for f in plan['chains'].values()
                if f['arm'] == 'F' and not fill_ready(root, f['slot'], fill_stop(plan))]
     require(not waiting, f'filler boxes {waiting} hold no verified filler yet (supervise starts them)')
@@ -1032,9 +1035,16 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
     size = max(s['bytes'] for s in made.values()) if made else st.get('probe_bytes')
     out = retention.decide(x['chain'], x['records'], c['chain'], c_valid, c_ended, running, now, size)
     if size is None and out['action'] == 'run' and 'snapshot_fits' in out:
-        size = retention.probe_snapshot_bytes(x['records'], plan['container_tool']['path'])
-        st['probe_bytes'] = size
-        out = retention.decide(x['chain'], x['records'], c['chain'], c_valid, c_ended, running, now, size)
+        # The probe's temporary snapshot is cut from a full state and is smaller than it: reserved at twice the
+        # largest full state on disk among the latest boundaries, and returned once the probe file is gone.
+        bound = 2 * max([Path(p['path']).stat().st_size for r in x['records'][-65:] for p in retention.record_parts(r)
+                         if Path(p['path']).exists()] or [0])
+        if bound and budget['headroom'] >= bound:
+            spend(budget, bound)
+            size = retention.probe_snapshot_bytes(x['records'], plan['container_tool']['path'])
+            spend(budget, -bound)
+            st['probe_bytes'] = size
+            out = retention.decide(x['chain'], x['records'], c['chain'], c_valid, c_ended, running, now, size)
     out['x_running_seconds'] = running
     action = out['action']
     control = x['state'] / 'control'
@@ -1059,14 +1069,9 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
     elif action in ('select', 'stop_under_budget'):
         end_x(plan, x, 'reached-r' if action == 'select' else 'x-cap', r_usec=out.get('r_usec'),
               x_running_seconds=running)
-    # Snapshots after the actions (a snapshot problem never delays a pause or an END).
+    # Snapshots are cut by the cycle after every pair's requests (a snapshot backlog never delays a pause or END).
     st['snapshotting'] = st.get('snapshot_from') is not None and not c_ended and not st.get('snapshot_capped')
-    if st['snapshotting'] and size:
-        try:
-            out['snapshots_made'] = cut_snapshots(plan, x, st, size, budget)
-            st.pop('snapshot_error', None)
-        except (Stop, SystemExit) as exc:
-            st['snapshot_error'] = str(exc)
+    st['snapshot_size'] = size
     log(root, chain=x['name'], event='decide', action=action, x_ledger_usec=out.get('x_ledger_usec'),
         r_usec=out.get('r_usec'))
     return out
@@ -1083,10 +1088,12 @@ def cut_snapshots(plan, x, st, size, budget):
     chain = retention.load_chain(x['path'])
     directory = retention.snapshot_dir(x['path'], chain)
     index_file = retention.snapshot_index_path(x['path'])
-    indexed = {json.loads(line)['path'] for line in index_file.read_text(encoding='utf-8').splitlines() if line} \
+    def key(path):
+        return os.path.normcase(str(Path(path).resolve()))
+    indexed = {key(json.loads(line)['path']) for line in index_file.read_text(encoding='utf-8').splitlines() if line} \
         if index_file.exists() else set()
     for orphan in sorted(directory.glob('b*.weights')) if directory.exists() else []:
-        if orphan.as_posix() not in indexed:
+        if key(orphan) not in indexed:
             orphan.unlink()
             log(plan['root'], chain=x['name'], event='snapshot-orphan-removed', path=orphan.as_posix())
     have = retention.snapshots(x['path'])
@@ -1385,6 +1392,33 @@ def fill_running(root, slot, stop=None):
     return True
 
 
+def launch(a):
+    """Opens a launch outage in w5box's node log on every box of the plan that has no live chain, so the stage's
+    first chains start frozen (w5box holds a chain while another box's outage is open) and the node thaws once each
+    box is occupied: a chain's start restores its own box, a verified filler a filler box."""
+    plan = load_plan(a.plan)
+    root = Path(plan['root'])
+    node = w5box.NodeLog(root / 'state')
+    opened = []
+    with node.locked():
+        records, torn = node.read()
+        open_now = w5box.NodeLog.state(records, torn)['open_outages']
+        for slot in sorted({c['slot'] for c in plan['chains'].values()}):
+            owner = root / 'state' / f'box{slot}.owner.json'
+            if slot in open_now or (owner.exists() and live(root, read(owner)['chain'])):
+                continue
+            node.append({'event': 'outage-start', 'id': f'launch/{plan["label"]}/{slot}/{time.time_ns()}',
+                         'box_slot': slot, 'chain': None, 'launch': True, 'plan': plan['label'],
+                         'source': 'w5-chains', 'reason': 'stage launch: the box waits for its chain or filler',
+                         'affected': w5box.node_chains(root / 'state')})
+            opened.append(slot)
+    w5box.enforce_node(read(fill_plan(plan)), node, 'launch')
+    write(root / 'plan' / plan['label'] / 'LAUNCHED.json', {'unix': time.time(), 'opened': opened})
+    log(root, event='launch', plan=plan['label'], opened=opened)
+    print(json.dumps({'launched': plan['label'], 'outages_opened': opened}))
+    return 0
+
+
 def close_handoffs(plan, root):
     """At the stage's end: the handoff outages w5box opened for this plan's boxes as their chains closed (no
     measured chain remains to hold) are closed, so the next stage starts clear."""
@@ -1396,7 +1430,8 @@ def close_handoffs(plan, root):
     with node.locked():
         records, torn = node.read()
         for slot, outage in sorted(w5box.NodeLog.state(records, torn)['open_outages'].items()):
-            if outage.get('handoff') and slot in slots and outage.get('chain') in plan['chains']:
+            if slot in slots and ((outage.get('handoff') and outage.get('chain') in plan['chains'])
+                                  or (outage.get('launch') and outage.get('plan') == plan['label'])):
                 node.append({'event': 'restored', 'outage_id': outage['id'], 'box_slot': slot,
                              'chain': outage['chain'], 'how': 'stage-ended', 'source': 'w5-chains'})
                 closed.append(slot)
@@ -1480,6 +1515,18 @@ def cycle(plan, plan_path, now=None):
             write(pdir / 'PAIR.json', st)
         report['pairs'][key] = {k: st.get(k) for k in ('label', 'r_usec', 'endpoints', 'done', 'waiting', 'blocked')}
         report['pairs'][key]['action'] = (st.get('last_decision') or {}).get('action')
+    for key, pair in sorted(plan['pairs'].items()):  # snapshots, once every pair's requests are out
+        pdir = root / 'pairs' / f'{pair["C"]}--{pair["X"]}'
+        st = read(pdir / 'PAIR.json') if (pdir / 'PAIR.json').exists() else {}
+        if st.get('done') or not st.get('snapshotting') or not st.get('snapshot_size'):
+            continue
+        try:
+            report['pairs'][key]['snapshots_made'] = cut_snapshots(plan, infos[pair['X']], st, st['snapshot_size'],
+                                                                   budget)
+            st.pop('snapshot_error', None)
+        except (Stop, SystemExit) as exc:
+            st['snapshot_error'] = str(exc)
+        write(pdir / 'PAIR.json', st)
     pair_state = {}
     for pair in plan['pairs'].values():
         pdir = root / 'pairs' / f'{pair["C"]}--{pair["X"]}'
@@ -1635,6 +1682,7 @@ def main(argv=None):
     p.add_argument('--qualification')
     p.add_argument('--max-wall-seconds', type=float)
     p.add_argument('--accept-lower-bound')
+    sub.add_parser('launch').add_argument('--plan', required=True)
     p = sub.add_parser('supervise')
     p.add_argument('--plan', required=True)
     p.add_argument('--loop', type=float, nargs='?', const=SUPERVISE_EVERY, default=None)
@@ -1669,8 +1717,9 @@ def main(argv=None):
             print(json.dumps({'plan': path.as_posix(), 'chains': sorted(plan['chains']), 'pairs': plan['pairs'],
                               'xs_recipe_differences': plan['xs_recipe_differences']}, indent=1))
             return 0
-        return {'run': run, 'supervise': supervise, 'status': status, 'end': end_cmd, 'segcheck': segcheck,
-                'clean-fillers': clean_fillers, '_drive': drive, '_filler': filler, '_replay': replay_cmd}[a.cmd](a)
+        return {'run': run, 'launch': launch, 'supervise': supervise, 'status': status, 'end': end_cmd,
+                'segcheck': segcheck, 'clean-fillers': clean_fillers, '_drive': drive, '_filler': filler,
+                '_replay': replay_cmd}[a.cmd](a)
     except Stop as exc:
         print(f'refused: {exc}', file=sys.stderr)
         return w5box.EXIT_REFUSED
