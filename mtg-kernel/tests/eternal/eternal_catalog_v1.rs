@@ -187,9 +187,9 @@ const PLAYABLE: [(&str, &str); 124] = [
 ];
 
 /// Fully supported decks that are not in `PLAYABLE`: the schema 4 public-session
-/// observation has no public keyword representation for shroud, so a session
-/// refuses a game where Argothian Enchantress, Sterling Grove or Solitary
-/// Confinement grants it. Representing it is a protocol change.
+/// observation has no public keyword representation for a permanent's shroud,
+/// so a session refuses a game where Argothian Enchantress or Sterling Grove
+/// grants it. Representing it is a protocol change.
 const KNOWN_GAP: [(&str, &str); 1] = [("premodern", "premodern-enchantress")];
 
 fn read_json(relative: &str) -> Value {

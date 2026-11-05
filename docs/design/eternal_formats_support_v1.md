@@ -450,7 +450,7 @@ reporting as E1 to E9:
 | --- | --- | ---: | --- |
 | P0 | Snapshot, capture tool, the catalog reads both snapshots | 0 | Premodern 0% |
 | P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
-| P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% |
+| P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census, 62% playable through sessions (Enchantress is a known gap) |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -484,9 +484,11 @@ yield, and Skycloud Expanse is a paid additional mana ability adding a fixed bun
 Known gaps:
 - Premodern Enchantress is fully supported by the catalog but is not in `PLAYABLE` (it is
   `KNOWN_GAP` in `tests/eternal/eternal_catalog_v1.rs`). The schema 4 public-session observation
-  cannot represent shroud granted by Argothian Enchantress, Sterling Grove or Solitary
-  Confinement, so a session refuses such a game (`refuse_unrepresented_shroud`). Representing
-  it is a protocol change outside P1b.
+  cannot represent a battlefield permanent's shroud, as granted by Argothian Enchantress or
+  Sterling Grove, so a session refuses such a game (`refuse_unrepresented_shroud`; Solitary
+  Confinement's player shroud is not checked by that guard). Representing it is a protocol
+  change outside P1b. The census counts the deck as Full (Premodern 70%); excluding it, 62% of
+  the field (11 decks) plays through sessions.
 - Fade, treasure and depletion counters live in module state: effects that read or move
   counters generally (none in the catalog) and policy observations don't see them.
 - Replenish leaves in the graveyard an Aura whose enchant rule neither `AttachmentDef` nor
