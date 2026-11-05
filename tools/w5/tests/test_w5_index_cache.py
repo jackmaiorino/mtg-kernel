@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -72,27 +73,49 @@ class IndexCacheTests(unittest.TestCase):
         self.assertEqual(cache.refresh()[1], retention.index(path)[1])
         self.assertEqual(len(cache.refresh()[1]), len(lines))  # the receipts past the kept lines are found again
 
-    def test_another_writer_between_the_read_and_the_append(self):
-        """An index() elsewhere appends the same receipts while the cache scans them: the cache's own append no
-        longer starts at its cursor, so it reads the file whole next time and matches index() again."""
+    def test_writers_take_turns_and_never_append_twice(self):
+        """index() in another process waits while a refresh holds the index lock, so it reads the refresh's lines
+        instead of appending the same records; a line appended outside the lock while the cache scans makes the
+        cache append nothing and read the file whole."""
         _, plan = self.node.stage0(c_wall=600.0)
         path = plan['chains']['c1']['manifest']
         self.advance(plan, 'c1', 1)
         cache = retention.IndexCache(path)
         self.assertEqual(cache.refresh()[1], retention.index(path)[1])
         self.advance(plan, 'c1', 1)
-        real, raced = retention.scan, []
+        real, other = retention.scan, []
+        code = ('import sys; sys.path.insert(0, sys.argv[1]); import retention; '
+                'print(len(retention.index(sys.argv[2])[1]))')
+
+        def scanning(chain, known):
+            new = real(chain, known)
+            if not other:  # a second writer starts while this refresh holds the lock, and must wait for it
+                other.append(subprocess.Popen([sys.executable, '-c', code, str(HERE.parent), str(path)],
+                                              stdout=subprocess.PIPE, text=True))
+                time.sleep(1.0)
+                self.assertIsNone(other[0].poll())
+            return new
+        with mock.patch.object(retention, 'scan', scanning):
+            got = cache.refresh()[1]
+        out, _ = other[0].communicate(timeout=60)
+        self.assertEqual(int(out), len(got))
+        lines = retention.index_path(path).read_text().splitlines()
+        self.assertEqual([json.loads(x)['boundary'] for x in lines], list(range(1, len(lines) + 1)))
+        # A writer that ignores the lock appends while the cache scans: the cache appends nothing and reads whole.
+        self.advance(plan, 'c1', 1)
+        raced = []
 
         def racing(chain, known):
             new = real(chain, known)
             if not raced:
                 raced.append(1)
-                retention.index(path)  # the other writer appends these receipts first
+                with open(retention.index_path(path), 'ab') as f:
+                    f.write(b''.join(json.dumps(r).encode() + b'\n' for r in new))
             return new
         with mock.patch.object(retention, 'scan', racing):
-            cache.refresh()
-        self.assertIsNone(cache.records)
-        self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+            self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+        lines = retention.index_path(path).read_text().splitlines()
+        self.assertEqual([json.loads(x)['boundary'] for x in lines], list(range(1, len(lines) + 1)))
         self.advance(plan, 'c1', 1)
         self.assertEqual(cache.refresh()[1], retention.index(path)[1])
 
@@ -108,7 +131,11 @@ class IndexCacheTests(unittest.TestCase):
         retention.index(path)
         index_file = retention.index_path(path)
         index_file.write_bytes(index_file.read_bytes().rstrip(b'\n'))
-        self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+        cache.settle([1])
+        got = cache.refresh()[1]
+        self.assertEqual(got, retention.index(path)[1])
+        # The same cycle's plan sees every unsettled record of that whole read.
+        self.assertEqual([r['boundary'] for r in cache.active], [r['boundary'] for r in got][1:])
         self.advance(plan, 'c1', 1)
         for _ in range(2):
             self.assertEqual(cache.refresh()[1], retention.index(path)[1])

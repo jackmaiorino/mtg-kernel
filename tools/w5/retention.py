@@ -55,6 +55,7 @@ Commands:
   retention.py guard --cap-bytes N [--next-bytes M] [--chain CHAIN.json ...] ROOT [ROOT ...]
 """
 import argparse
+import contextlib
 import hashlib
 import math
 import json
@@ -179,8 +180,42 @@ def scan(chain, known):
     return new
 
 
+@contextlib.contextmanager
+def index_lock(chain_path):
+    """The chain index file's writers (`index`, `IndexCache.refresh`) take turns: each reads, scans and appends under
+    this lock, so no two append the same records."""
+    path = Path(chain_path).with_suffix('.index.lock')
+    with open(path, 'a+b') as f:
+        if os.name == 'nt':
+            import msvcrt
+            f.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 def index(chain_path):
     """One record per completed update: update, boundary, segment, after-state hash, checkpoint pin, ledger."""
+    with index_lock(chain_path):
+        return index_locked(chain_path)
+
+
+def index_locked(chain_path):
     chain = load_chain(chain_path)
     cache = index_path(chain_path)
     records = []
@@ -217,15 +252,16 @@ def terminate(f):
 
 
 class IndexCache:
-    """`index` with the records kept in memory across calls (`chains.py supervise --loop`): a refresh reads only the
-    cache file's new lines and the receipts past them, and appends what it finds as `index` does, so it returns the
-    same records. A cache file that was replaced, shortened or appended to by another writer meanwhile is read whole
-    again.
+    """`index` with the records kept in memory across calls (`chains.py supervise --loop`): under the index lock, a
+    refresh reads only the cache file's new lines and the receipts past them, and appends what it finds as `index`
+    does, so it returns the same records. A cache file that was replaced or shortened, whose last line lacks its
+    newline, or that does not end at the cursor, is read whole through `index` instead.
 
     It also keeps what `plan` and `guard` need not look at again:
     - `settled`: boundaries every file of whose full state was found absent. Nothing writes into a completed
       iteration again, so they stay absent; an absent file is never a plan item or a guard count, and it cannot
-      shadow an existing one in `plan`'s set of files surviving states use. `active` is the other records.
+      shadow an existing one in `plan`'s set of files surviving states use. `active` is the other records, rebuilt
+      whenever the records are read whole.
     - `complete`: segments found with completion.json (never removed).
     - `swept`: complete segments older than the trajectory window whose trajectories were found gone."""
 
@@ -234,62 +270,60 @@ class IndexCache:
         self.records, self.active, self.offset, self.ident = None, [], 0, None
         self.settled, self.complete, self.swept = set(), set(), set()
 
-    def _reset(self):
-        self.records, self.active, self.offset, self.ident = [], [], 0, None
+    def _whole(self):
+        """Every record as `index` reads them (the lock is held); the cursor is then the file's end."""
+        chain, records = index_locked(self.chain_path)
+        cache = index_path(self.chain_path)
+        if cache.exists():
+            with open(cache, 'ab') as f:
+                terminate(f)
+                st = os.fstat(f.fileno())
+            self.offset, self.ident = st.st_size, (st.st_dev, st.st_ino)
+        else:
+            self.offset, self.ident = 0, None
+        self.records = records
+        self.active = [r for r in records if r['boundary'] not in self.settled]
+        return chain, list(records)
 
     def refresh(self):
-        """(chain, records), equal to `index(chain_path)` at the same moment. The cursor always counts exactly the
-        bytes of the lines held (read, and checked as their file's, through one open handle)."""
-        chain = load_chain(self.chain_path)
+        """(chain, records), equal to `index(chain_path)` at the same moment."""
+        with index_lock(self.chain_path):
+            return self._refresh()
+
+    def _refresh(self):
         cache = index_path(self.chain_path)
         if self.records is None:
-            self._reset()
-        added = []
+            return self._whole()
         try:
             f = open(cache, 'rb')
         except FileNotFoundError:
-            if self.ident is not None:  # the file went away: as index(), nothing is cached
-                self._reset()
-        else:
-            with f:
-                st = os.fstat(f.fileno())
-                if self.ident is not None and ((st.st_dev, st.st_ino) != self.ident or st.st_size < self.offset):
-                    self._reset()  # replaced or shortened: read whole
-                f.seek(self.offset)
-                data = f.read()
-            self.ident = (st.st_dev, st.st_ino)
-            cut = data.rfind(b'\n') + 1
-            if data[cut:].strip():  # a last line without its newline, which index() reads: read as index() does
-                chain, records = index(self.chain_path)
-                with open(cache, 'ab') as f:
-                    terminate(f)  # so the next refresh can read from a cursor again
-                self.records = None
-                return chain, records
-            added = [json.loads(line) for line in data[:cut].decode('utf-8').splitlines() if line]
-            if any('state' not in r for r in added) or any('state' not in r for r in self.records):
-                index(self.chain_path)  # the S-container migration rewrites the file; read it again whole
-                self.records = None
-                return self.refresh()
-            self.offset += cut
+            return self._whole()
+        with f:
+            st = os.fstat(f.fileno())
+            if (st.st_dev, st.st_ino) != self.ident or st.st_size < self.offset:
+                return self._whole()  # replaced or shortened
+            f.seek(self.offset)
+            data = f.read()
+        if data and not data.endswith(b'\n'):
+            return self._whole()  # a last line without its newline: read as index() reads it
+        added = [json.loads(line) for line in data.decode('utf-8').splitlines() if line]
+        if any('state' not in r for r in added):
+            return self._whole()  # index() migrates the file first
+        chain = load_chain(self.chain_path)
         new = scan(chain, len(self.records) + len(added))
-        self.records.extend(added + new)
-        self.active.extend(r for r in added + new if r['boundary'] not in self.settled)
-        out = list(self.records)
         if new:
             text = ''.join(json.dumps(r) + '\n' for r in new).encode('utf-8')
             with open(cache, 'ab') as f:
                 before = os.fstat(f.fileno())
-                terminate(f)
+                if (before.st_dev, before.st_ino) != self.ident or before.st_size != self.offset + len(data):
+                    return self._whole()  # not the file just read (a writer outside the lock): append nothing
                 f.write(text)
                 f.flush()
-                after = os.fstat(f.fileno())
-            mine = (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)
-            if mine and before.st_size == self.offset and after.st_size == self.offset + len(text) and \
-                    self.ident in (None, (after.st_dev, after.st_ino)):
-                self.offset, self.ident = after.st_size, (after.st_dev, after.st_ino)
-            else:  # another writer appended meanwhile: the file is read whole next time
-                self.records = None
-        return chain, out
+            data += text
+        self.offset += len(data)
+        self.records.extend(added + new)
+        self.active.extend(r for r in added + new if r['boundary'] not in self.settled)
+        return chain, list(self.records)
 
     def settle(self, boundaries):
         """Records whose full-state files were all found absent leave `active`."""
