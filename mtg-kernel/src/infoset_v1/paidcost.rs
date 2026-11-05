@@ -757,6 +757,13 @@ fn same_name_hand_controls_export() {
 /// fourth (true). No live reference remains. V's records agree whichever
 /// copy went. Returns P for V.
 fn mixed_hand_world(discard_bound: bool) -> Result<Vec<u8>, String> {
+    mixed_hand_world_with(discard_bound, false)
+}
+
+/// As [`mixed_hand_world`]; with `again`, the discarded copy then returns
+/// to the hand from the graveyard and the fourth copy is discarded (Sol
+/// round 1: the mark must survive which fact that departure ends).
+fn mixed_hand_world_with(discard_bound: bool, again: bool) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let s = opponent_payment();
@@ -819,6 +826,15 @@ fn mixed_hand_world(discard_bound: bool) -> Result<Vec<u8>, String> {
     let gone = if discard_bound { fourth } else { copies[2] };
     propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
     st.engine.pending_triggers.clear();
+    if again {
+        mark(&st, &mut marks);
+        propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Hand));
+        st.reveal_hand_card(v, o, gone)
+            .expect("reveal the returned copy");
+        mark(&st, &mut marks);
+        propose_and_commit(&mut st, ProposedEvent::zone_change(fourth, Zone::Graveyard));
+        st.engine.pending_triggers.clear();
+    }
     let lists = decklists(&s);
     export_v1(
         &ExportInputV1 {
@@ -872,4 +888,129 @@ fn mixed_bound_and_count_hand_facts_agree() {
             && e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)),
         "R1 same_name_hand in both worlds: {unbound:?}"
     );
+}
+
+/// Sol round 1 on ruling 11 (R2), finding 2: after the mixed departure, the
+/// discarded copy returns and the fourth copy is discarded again. One world
+/// ends the marked bound fact, the other a fresh one; both must refuse.
+#[test]
+fn mixed_hand_mark_survives_a_second_departure() {
+    let (a, b) = (
+        mixed_hand_world_with(false, true),
+        mixed_hand_world_with(true, true),
+    );
+    eprintln!(
+        "mixed hand, second departure: {:?} / {:?}",
+        a.as_ref().map(Vec::len),
+        b.as_ref().map(Vec::len)
+    );
+    assert_eq!(a, b, "P agrees after the second departure");
+    assert!(
+        a.as_ref()
+            .is_err_and(|e| e.contains(super::export::R1_SAME_NAME_HAND_DETAIL)),
+        "R1 same_name_hand in both worlds: {a:?}"
+    );
+}
+
+/// Sol round 1 on ruling 11 (R2), finding 3: a copy D returns from the
+/// graveyard to the opponent's hand (a bound fact) and a same-name copy C
+/// is drawn unseen (no fact); then D or C is discarded. The adapter's
+/// tracker drops D's fact in both worlds (kernel_history_v2.py
+/// `_hand_move`: own fact, else an unbound fact of the name, else any fact
+/// of the name). Returns P for V.
+fn bound_and_unknown_world(discard_bound: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    st.stack.retain(|it| {
+        it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
+    });
+    st.engine.pending_triggers.clear();
+    let lib = st.players[o.index()].library.clone();
+    let mut defs: Vec<u16> = lib.iter().map(|x| st.objects.get(*x).card_def).collect();
+    defs.sort_unstable();
+    defs.dedup();
+    let def = defs
+        .into_iter()
+        .find(|d| {
+            lib.iter()
+                .filter(|x| st.objects.get(**x).card_def == *d)
+                .count()
+                >= 2
+        })
+        .expect("a name with two copies in the opponent's library");
+    let copies: Vec<ObjectId> = lib
+        .iter()
+        .copied()
+        .filter(|x| st.objects.get(*x).card_def == def)
+        .take(2)
+        .collect();
+    let (d, c) = (copies[0], copies[1]);
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(d, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    propose_and_commit(&mut st, ProposedEvent::zone_change(d, Zone::Hand));
+    st.reveal_hand_card(v, o, d).expect("reveal D");
+    mark(&st, &mut marks);
+    // C on top, then an unseen draw.
+    let lib = &mut st.players[o.index()].library;
+    let at = lib.iter().position(|x| *x == c).expect("C in the library");
+    let c_id = lib.remove(at);
+    lib.insert(0, c_id);
+    propose_and_commit(&mut st, ProposedEvent::draw(o));
+    assert_eq!(st.objects.get(c).zone, Zone::Hand, "C was drawn");
+    mark(&st, &mut marks);
+    let gone = if discard_bound { d } else { c };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// Finding 3's two worlds: discard the bound copy D or the unseen copy C.
+#[test]
+fn bound_and_unknown_hand_copies_agree() {
+    let (unknown, bound) = (
+        bound_and_unknown_world(false),
+        bound_and_unknown_world(true),
+    );
+    eprintln!(
+        "bound and unknown copies: unknown discarded {:?} / bound discarded {:?}",
+        unknown.as_ref().map(Vec::len),
+        bound.as_ref().map(Vec::len)
+    );
+    if let (Ok(a), Ok(b)) = (&unknown, &bound) {
+        if let Some(at) = (0..a.len().min(b.len())).find(|&i| a[i] != b[i]) {
+            let window = |x: &[u8]| {
+                String::from_utf8_lossy(&x[at.saturating_sub(200)..(at + 200).min(x.len())])
+                    .to_string()
+            };
+            eprintln!(
+                "first difference at byte {at}\n--- unknown discarded:\n{}\n--- bound discarded:\n{}",
+                window(a),
+                window(b)
+            );
+        }
+    }
+    assert_eq!(unknown, bound, "P agrees whichever copy was discarded");
 }

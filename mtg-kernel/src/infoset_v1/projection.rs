@@ -1203,8 +1203,11 @@ impl WalkV1<'_> {
             // a different object does not end that copy's span (6.1). The
             // engine's own knowledge rows keep it too (R5 compares them).
             let named_facts = || self.hand.iter().filter(|f| f.card_def == card_def);
-            let mixed = named_facts().any(|f| f.native.is_some())
-                && named_facts().any(|f| f.native.is_none());
+            // A marked fact keeps the ambiguity: which fact this departure
+            // ends may again differ between the worlds (Sol round 1).
+            let mixed = (named_facts().any(|f| f.native.is_some())
+                && named_facts().any(|f| f.native.is_none()))
+                || named_facts().any(|f| f.ambiguous);
             let pos = self
                 .hand
                 .iter()

@@ -728,11 +728,20 @@ pub(crate) fn export_v1(
             // V's sight) as much as a split (lead ruling 11, R1): a twin's
             // departure counts either way, so skipping the reference's own
             // lapses let the world where it lapsed export while the world
-            // where it split refused.
-            for end in track.spans.iter().filter_map(|s| s.end) {
-                if end.last_gen < g {
-                    continue;
+            // where it split refused. The scan stops after the first lapse:
+            // which later spans belong to the referenced copy is not V's
+            // information there, and R1b decides (Sol round 1).
+            let ends = track
+                .spans
+                .iter()
+                .filter_map(|s| s.end)
+                .filter(|e| e.last_gen >= g);
+            let mut lapsed = false;
+            for end in ends {
+                if lapsed {
+                    break;
                 }
+                lapsed = !end.split;
                 let batch = ProjectionV1::batch_of(&bounds, end.item);
                 let twin = projection.objects.iter().enumerate().any(|(i, other)| {
                     let other_obj = state.objects.get(ObjectId(i as u32));
