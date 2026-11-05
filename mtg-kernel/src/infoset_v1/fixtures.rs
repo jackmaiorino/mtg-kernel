@@ -1370,7 +1370,7 @@ fn cawgates_lorien_engine_fixture() {
             .position(|r| r.nodes.contains(&node))
             .expect("the node ({Hawk x3, Island}, 2) appears");
         // Amendment 43.8 revision c (lead ruling 15, fallback D): R8b
-        // guarded the survivor tree's claims, which P no longer makes; P
+        // guards the survivor tree's claims, which P no longer makes; P
         // exports (or refuses R3) while the node lives, also after the second
         // Lorien finds the Island.
         assert!(
@@ -1379,6 +1379,31 @@ fn cawgates_lorien_engine_fixture() {
                 .filter(|r| r.nodes.contains(&node))
                 .all(|r| r.p.is_ok() || r.p == Err("R3".into())),
             "exports while the node lives"
+        );
+        // The search still taints the node: mutant L8 claims the tree's
+        // names and refuses R8b from the second Lorien while the node lives.
+        let l8 = |r: &AtV1| {
+            r.mutants
+                .iter()
+                .find(|(m, _)| *m == MutantV1::L8)
+                .map(|(_, o)| o.clone())
+        };
+        let first_refusal = rec[i..]
+            .iter()
+            .position(|r| l8(r) == Some(Err("R8b".to_string())))
+            .map(|k| i + k)
+            .expect("L8 refuses R8b once the second Lorien finds the Island");
+        assert!(
+            rec[i..first_refusal]
+                .iter()
+                .all(|r| matches!(l8(r), Some(Ok(_))) || l8(r) == Some(Err("R3".into()))),
+            "L8 exports up to the second Lorien"
+        );
+        assert!(
+            rec[first_refusal..]
+                .iter()
+                .all(|r| l8(r) == Some(Err("R8b".into())) || !r.nodes.contains(&node)),
+            "L8's R8b holds while the node lives (the node is tainted)"
         );
     }
     // The worlds' hands differ after the Brainstorm, so later default
