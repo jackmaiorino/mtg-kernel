@@ -22,10 +22,11 @@ Pinned from the W7 pilot (collab LANES/bignet-pilot-20261031; files under code/ 
 - losses: the soft policy term (checks-code/train_checks.py lines 118 to 121, written here as the KL, which has the
   same gradient) and the value subsample (train_checks.py lines 40 and 145 to 155: 8 seeded decisions per training
   game per epoch, all of a shorter game; the value term divided by the batch's selected count, line 248); value plus
-  policy at unit weight (line 249).
+  policy at unit weight (line 249). The subsample is drawn over the decisions an epoch uses (the pilot's epoch
+  drops the remainder after whole batches) that have a value target (a naturally finished game).
 - evaluation and stopping: every max(steps per epoch // 4, 1563) steps (train.py lines 242 and 448); validation
-  value = value log loss on every validation decision, averaged within each game and then over games (train.py
-  lines 396 to 400 and 524); the saved state is the lowest validation value (line 533); stop after 8 evaluations
+  value = value log loss on every validation decision with a value target, averaged within each game and then
+  over games (train.py lines 396 to 400 and 524); the saved state is the lowest validation value (line 533); stop after 8 evaluations
   without improvement (lines 243 and 537 to 541) or at the epoch cap.
 - precision and determinism: bf16 autocast on CUDA with the residual stream and heads in fp32 (train.py line 367,
   models.py lines 167 to 201), fp32 on CPU; deterministic algorithms, no TF32 (train.py lines 411 to 418).

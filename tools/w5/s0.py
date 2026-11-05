@@ -15,8 +15,8 @@ S0 is a distillation of b512 into S. This tool covers every step except the trai
       contend), keeping a failed attempt's files under an attempt suffix.
   s0.py index --plan ROOT/plan.json
       the canonical store index (ROOT/index.npz, index.games.json, manifest.json): every chunk finished, every
-      game exactly once, each row on the plan's runtime and limits, block and file hashes; games without a
-      natural winner are excluded and counted (the pilot's rule, code/index_data.py lines 74 to 79).
+      game exactly once, each row on the plan's runtime and limits, block and file hashes. Every recorded
+      decision has a policy target; only a naturally finished game has a value target (counted).
   s0.py config --plan ROOT/plan.json --out CFG.json --grad-clip-norm {none|X} [--smoke ...]
       the frozen S0 recipe (section 6.2) bound to the store's hashes; s0_train.py trains from it.
   s0.py export --config CFG.json --run RUN_DIR --binary s_transformer_v1 [--parity-decisions 10000]
@@ -46,7 +46,10 @@ Pinned choices (design 6.2 names them or defers to the W7 pilot, collab LANES/bi
   decision with two or more legal actions is recorded for the acting seat (both seats), with b512's logits.
 - split: game g is in validation iff the first 8 bytes (big-endian) of SHA256(json(["w5/s0/split", g])),
   over 2^64, are below 0.05 (the placement rule's `SHA256(json([...]))` form, section 3).
-- outcome: the acting seat's natural win (1) or loss (0); index_data.py's exclusion of other games.
+- outcome: the acting seat's natural win (1), loss (0) or natural draw (0.5). A game that did not finish
+  naturally (a limit) has no outcome: its decisions keep their policy target (design 6.2, "every decision") and
+  carry no value target (`has_value` false), so they are never in the value subsample or the validation value.
+  The pilot dropped such games whole (code/index_data.py lines 74 to 79); its store had none.
 The trainer's choices are listed in s0_train.py.
 """
 from __future__ import annotations
@@ -386,9 +389,10 @@ def index_store(plan_path) -> dict:
     every planned game appears exactly once on the plan's runtime and limits."""
     plan, root = load_plan(plan_path)
     store = root / "store"
-    cols = {k: [] for k in ("fid", "offset", "length", "outcome", "game", "actor", "turn", "actions")}
+    cols = {k: [] for k in ("fid", "offset", "length", "outcome", "has_value", "game", "actor", "turn",
+                            "actions")}
     games_out, files, chunks_out = [], [], []
-    excluded = {"non_natural_or_draw": 0}
+    value_targets = {"not_natural": 0, "natural_draws": 0}
     decisions_total = 0
     for fid, chunk in enumerate(plan["chunks"]):
         stem = store / chunk["name"]
@@ -417,7 +421,7 @@ def index_store(plan_path) -> dict:
                 fb.seek(row["bin_offset"])
                 block = fb.read(row["bin_bytes"])
                 require(len(block) == row["bin_bytes"], f"game {g}: short block")
-                natural = row["winner"] is not None and row["classification"] == "Natural"
+                natural = row["classification"] == "Natural"
                 pos, decoded = 0, []
                 for d in row["decisions"]:
                     step, actor, legal, selected, turn, start, length = d
@@ -432,38 +436,74 @@ def index_store(plan_path) -> dict:
                 games_out.append({"game": g, "decks": row["decks"], "focal_seat": row["focal_seat"],
                                   "starting_player": row["starting_player"], "winner": row["winner"],
                                   "classification": row["classification"], "decisions": len(decoded),
-                                  "block_sha256": sha256_bytes(block), "validation": val, "indexed": natural})
+                                  "block_sha256": sha256_bytes(block), "validation": val, "has_value": natural})
                 decisions_total += len(decoded)
                 if not natural:
-                    excluded["non_natural_or_draw"] += 1
-                    continue
+                    value_targets["not_natural"] += 1
+                elif row["winner"] is None:
+                    value_targets["natural_draws"] += 1
                 for actor, turn, start, length, legal in decoded:
                     cols["fid"].append(fid)
                     cols["offset"].append(row["bin_offset"] + start)
                     cols["length"].append(length)
-                    cols["outcome"].append(1.0 if actor == row["winner"] else 0.0)
+                    cols["has_value"].append(natural)
+                    cols["outcome"].append(0.0 if not natural else 0.5 if row["winner"] is None
+                                           else 1.0 if actor == row["winner"] else 0.0)
                     cols["game"].append(g)
                     cols["actor"].append(actor)
                     cols["turn"].append(turn)
                     cols["actions"].append(legal)
-    dtypes = {"fid": np.int32, "offset": np.int64, "length": np.int32, "outcome": np.float32, "game": np.int64,
+    dtypes = {"fid": np.int32, "offset": np.int64, "length": np.int32, "outcome": np.float32, "has_value": bool,
+              "game": np.int64,
               "actor": np.uint8, "turn": np.int32, "actions": np.int32}
     arrays = {k: np.asarray(v, dtypes[k]) for k, v in cols.items()}
     arrays["validation"] = np.asarray([is_validation(int(g)) for g in arrays["game"]], bool)
     arrays["files"] = np.asarray(files)
     np.savez(root / "index.npz", **arrays)
     games_pin = write_json(root / "index.games.json", {"games": games_out})
-    val_games = sum(1 for g in games_out if g["validation"] and g["indexed"])
+    val_games = sum(1 for g in games_out if g["validation"])
     manifest = {"schema": INDEX_SCHEMA, "plan": pin(plan_path), "index": pin(root / "index.npz"),
                 "games_file": games_pin, "chunks": chunks_out,
-                "counts": {"games": len(games_out), "indexed_games": len(games_out) - excluded["non_natural_or_draw"],
+                "counts": {"games": len(games_out), "games_with_value": len(games_out) - value_targets["not_natural"],
                            "validation_games": val_games, "decisions_recorded": decisions_total,
                            "decisions_indexed": int(arrays["game"].size),
+                           "decisions_with_value": int(arrays["has_value"].sum()),
                            "validation_decisions": int(arrays["validation"].sum()),
                            "store_bytes": sum(c["bytes"] for c in chunks_out)},
-                "excluded": excluded}
+                "value_targets": value_targets}
     write_json(root / "manifest.json", manifest)
     return manifest
+
+
+def verify_store(manifest_path) -> dict:
+    """Every chunk's tensor file against its manifest pin, in the index's file order (once, before training)."""
+    index, manifest, _ = load_index(manifest_path)
+    require([str(f) for f in index["files"]] == [f"store/{c['name']}.bin" for c in manifest["chunks"]],
+            "index files differ from the manifest")
+    for chunk in manifest["chunks"]:
+        checked(chunk["bin"], f"{chunk['name']} tensors")
+    return {"chunks": len(manifest["chunks"]), "bytes": sum(c["bytes"] for c in manifest["chunks"])}
+
+
+def verify_games(index: dict, root: Path, rows) -> int:
+    """The blocks of the games holding `rows` against their recorded block hashes (index.games.json)."""
+    games = {g["game"]: g for g in read_json(root / "index.games.json")["games"]}
+    plan = read_json(root / "plan.json")
+    wanted = sorted({int(index["game"][r]) for r in rows})
+    rows_of = {}
+    for chunk in plan["chunks"]:
+        if any(chunk["first_game"] <= g < chunk["first_game"] + chunk["games"] for g in wanted):
+            for line in (root / "store" / f"{chunk['name']}.jsonl").read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    row = json.loads(line)
+                    rows_of[row["game"]] = (chunk["name"], row)
+    for g in wanted:
+        name, row = rows_of[g]
+        with open(root / "store" / f"{name}.bin", "rb") as f:
+            f.seek(row["bin_offset"])
+            require(sha256_bytes(f.read(row["bin_bytes"])) == games[g]["block_sha256"],
+                    f"game {g}: block differs from the index")
+    return len(wanted)
 
 
 def load_index(manifest_path, verify: bool = True) -> tuple[dict, dict, Path]:
@@ -539,6 +579,8 @@ def parity_states(index: dict, root: Path, count: int, out: Path) -> dict:
 def export(config_path, run_dir, binary, parity_decisions: int = PARITY_DECISIONS) -> dict:
     config = read_json(config_path)
     require(config.get("schema") == CONFIG_SCHEMA, "not an S0 config")
+    require(config["smoke"] or parity_decisions == PARITY_DECISIONS,
+            f"a production export checks exactly {PARITY_DECISIONS} validation decisions")
     run_dir = Path(run_dir)
     train = read_json(run_dir / "train.json")
     require(train["config_sha256"] == sha256_file(config_path), "the run was trained from another config")
@@ -557,6 +599,7 @@ def export(config_path, run_dir, binary, parity_decisions: int = PARITY_DECISION
                          f"names={out / 'names.json'}", f"out={container}"])
     require(imported["adam_step"] == 0, "the native S0 must carry a fresh optimizer")
     states = parity_states(index, root, parity_decisions, out / "parity-states.td")
+    states["game_blocks_verified"] = verify_games(index, root, np.nonzero(index["validation"])[0][:parity_decisions])
     native = run_json([*launcher(binary), "logits-dump", f"out={out / 'native.logits'}",
                        f"model=s-checkpoint:{container}", f"states=td:{out / 'parity-states.td'}"])
     torch_side = run_json([py, str(REFERENCE), "torch-logits", "--state-dict", str(best),
@@ -566,7 +609,7 @@ def export(config_path, run_dir, binary, parity_decisions: int = PARITY_DECISION
                            "--bar", str(PARITY_BAR)], capture_output=True, text=True)
     parity = read_json(out / "parity.json")
     receipt = {"schema": EXPORT_SCHEMA, "design": "W5-DESIGN.md v1.3 section 6.2 (export)",
-               "config": pin(config_path), "run": {"train": pin(run_dir / "train.json"), "best_pt": pin(best),
+               "config": pin(config_path), "smoke": bool(config["smoke"]), "run": {"train": pin(run_dir / "train.json"), "best_pt": pin(best),
                                                     "best_step": train["best_step"]},
                "values": values, "import": imported, "container": pin(container),
                "parity": {"bar": PARITY_BAR, "decisions_required": parity_decisions, "states": states,
@@ -598,11 +641,14 @@ def start_extras(seed_roots=XS_SEED_ROOTS, first_update: int = XS_FIRST_UPDATE) 
             ["cursor/first_update", struct.pack("<Q", first_update).hex()]]
 
 
-def freeze_start(export_path, binary, out) -> dict:
+def freeze_start(export_path, binary, out, smoke: bool = False) -> dict:
     out = Path(out)
     require(not out.exists(), f"{out} exists: XS's start is frozen once")
     exp = read_json(export_path)
     require(exp.get("schema") == EXPORT_SCHEMA and exp["passed"], "a passing S0 export receipt is required")
+    require(exp["smoke"] == smoke, "a smoke export is frozen only with --smoke, a production one only without it")
+    require(smoke or exp["parity"]["states"]["decisions"] == PARITY_DECISIONS,
+            f"a production start needs the {PARITY_DECISIONS}-decision parity")
     container = checked(exp["container"], "S0 container")
     extras = out.with_suffix(".extras.json")
     extras.write_text(json.dumps(start_extras()), encoding="utf-8", newline="\n")
@@ -615,6 +661,7 @@ def freeze_start(export_path, binary, out) -> dict:
                               "cursor/first_update": "the first global update, u64 little-endian"},
            "adam": "reset: zero first and second moments, step 0 (ruling 6)", "native": native,
            "starting_state_sha256": native["starting_state_sha256"], "binary_sha256": sha256_file(binary),
+           "smoke": bool(smoke),
            "frozen_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     write_json(out, doc)
     return doc
@@ -660,7 +707,9 @@ def floor_plan(s0_source, b512_source, panel_def, xs_start, evaluator, out) -> d
     require(not (out / "floor.json").exists(), f"{out} already holds a floor plan")
     start = read_json(xs_start)
     require(start.get("schema") == START_SCHEMA, "XS's frozen start must be written before the floor")
+    require(start.get("smoke") is False, "the floor qualifies a production S0 only, not a smoke start")
     s0 = read_json(s0_source)
+    require(s0.get("checkpoint") is None, "the floor plays S0 itself: an S source without a checkpoint record")
     require(s0.get("s_learner", {}).get("initial", {}).get("sha256") == start["container"]["sha256"],
             "the S0 source does not load the frozen start's container")
     checked(s0["s_learner"]["initial"], "S0 container")
@@ -826,6 +875,7 @@ def main(argv=None) -> int:
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--parity-decisions", type=int, default=PARITY_DECISIONS)
     p = sub.add_parser("freeze-start")
+    p.add_argument("--smoke", action="store_true", help="freeze a smoke export (the floor never admits it)")
     p.add_argument("--export", type=Path, required=True)
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
@@ -859,7 +909,7 @@ def main(argv=None) -> int:
         elif a.command == "export":
             result = export(a.config, a.run, a.binary, a.parity_decisions)
         elif a.command == "freeze-start":
-            result = freeze_start(a.export, a.binary, a.out)
+            result = freeze_start(a.export, a.binary, a.out, a.smoke)
         elif a.command == "source":
             result = make_source(a.shell, a.container, a.out)
         elif a.command == "floor-plan":

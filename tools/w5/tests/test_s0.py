@@ -165,10 +165,24 @@ class RecordAndIndexTests(unittest.TestCase):
             self.assertEqual(summary["remaining"], 0)
             counts = manifest["counts"]
             self.assertEqual(counts["games"], 96)
-            excluded = sum(1 for g in range(96) if g % 17 == 5)
-            self.assertEqual(manifest["excluded"]["non_natural_or_draw"], excluded)
+            not_natural = sorted(g for g in range(96) if g % 17 == 5)
+            self.assertEqual(manifest["value_targets"]["not_natural"], len(not_natural))
             ix, _, root = s0.load_index(Path(tmp) / "root" / "manifest.json")
             self.assertEqual(int(ix["game"].size), counts["decisions_indexed"])
+            # Every recorded decision is indexed (policy target); unfinished games carry no value target.
+            self.assertEqual(counts["decisions_indexed"], counts["decisions_recorded"])
+            self.assertEqual(sorted(set(ix["game"][~ix["has_value"]].tolist())), not_natural)
+            self.assertEqual(s0.verify_store(Path(tmp) / "root" / "manifest.json")["chunks"], 3)
+            rows = np.nonzero(ix["validation"])[0]
+            self.assertEqual(s0.verify_games(ix, root, rows), len(set(ix["game"][rows].tolist())))
+            store_bin = root / "store" / "chunk-000032.bin"
+            data = bytearray(store_bin.read_bytes())
+            data[100] ^= 1
+            store_bin.write_bytes(bytes(data))
+            with self.assertRaises(s0.S0Error):
+                s0.verify_store(Path(tmp) / "root" / "manifest.json")
+            data[100] ^= 1
+            store_bin.write_bytes(bytes(data))
             self.assertTrue(np.all(np.diff(ix["game"]) >= 0))
             self.assertTrue(np.array_equal(ix["validation"], [s0.is_validation(int(g)) for g in ix["game"]]))
             # Every indexed record decodes at its offset with its row's outcome.
@@ -181,7 +195,9 @@ class RecordAndIndexTests(unittest.TestCase):
                 record, end = s0.decode_record(buf)
                 self.assertEqual(end, len(buf))
                 self.assertEqual(record["actor"], int(ix["actor"][r]))
-                self.assertEqual(ix["outcome"][r], float(record["actor"] == games[int(ix["game"][r])]["winner"]))
+                game = games[int(ix["game"][r])]
+                if game["has_value"]:
+                    self.assertEqual(ix["outcome"][r], float(record["actor"] == game["winner"]))
             # A second record pass does nothing.
             self.assertEqual(s0.record(rec.plan_path, rec.fake, 2)["chunks_run"], 0)
 
@@ -271,9 +287,21 @@ class TrainerTests(unittest.TestCase):
         self.assertEqual(self.T.params_sha(a), self.T.params_sha(b))
         self.assertNotEqual(self.T.params_sha(a), self.T.params_sha(self.T.build_model(1)))
         self.assertEqual(sum(p.numel() for p in a.parameters()), 460_346)
-        self.assertAlmostEqual(float(a.blocks[0].qkv.weight.std()), 0.02, delta=0.002)
+        self.assertAlmostEqual(float(a.blocks[0].qkv.weight.detach().std()), 0.02, delta=0.002)
         self.assertTrue(torch.all(a.blocks[0].qkv.bias == 0))
         self.assertTrue(torch.all(a.ln.weight == 1))
+
+    def test_vsub_mask_over_the_epoch_rows_keeps_eight_per_game(self):
+        game = np.repeat(np.arange(30), 9)[:257]
+        ix_len = np.ones(257, np.int32)
+        rng, vrng = np.random.default_rng(20261102), np.random.default_rng(20261102 + 104729)
+        batches = self.T.epoch_batches(np.arange(257), ix_len, 1, rng)
+        used = np.sort(np.concatenate(batches))
+        self.assertEqual(used.size, 256)
+        m = self.T.vsub_mask(257, used, game, vrng)
+        for g in range(30):
+            self.assertEqual(int(m[game == g].sum()), min(8, int(np.isin(np.nonzero(game == g)[0], used).sum())))
+        self.assertFalse(m[np.setdiff1d(np.arange(257), used)].any())
 
     def test_vsub_mask_takes_eight_per_game(self):
         game = np.repeat(np.arange(5), [3, 8, 12, 20, 1])
@@ -368,6 +396,35 @@ class StartAndSourceTests(unittest.TestCase):
             self.assertEqual(npp.candidate_pin_sha256(s0.read_json(parent_source(tmp))),
                              s0.read_json(parent_source(tmp))["checkpoint"]["sha256"])
 
+    def test_freeze_start_needs_a_production_export_unless_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            container = tmp / "s0.bin"
+            container.write_bytes(b"S0")
+            fake = tmp / "fake_s.py"
+            fake.write_text("import json,sys,hashlib\n"
+                            "a=dict(x.split('=',1) for x in sys.argv[2:])\n"
+                            "b=open(a['checkpoint'],'rb').read()\n"
+                            "print(json.dumps({'checkpoint_sha256':hashlib.sha256(b).hexdigest(),'adam_step':0,"
+                            "'state_sha256':'s','starting_state_sha256':hashlib.sha256(b+open(a['extras'],'rb').read()).hexdigest()}))\n")
+            exp = {"schema": "w5-s0-export/v1", "passed": True, "smoke": True, "container": s0.pin(container),
+                   "parity": {"states": {"decisions": 500}}}
+            (tmp / "exp.json").write_text(json.dumps(exp))
+            with self.assertRaises(s0.S0Error):
+                s0.freeze_start(tmp / "exp.json", fake, tmp / "start.json")
+            doc = s0.freeze_start(tmp / "exp.json", fake, tmp / "start.json", smoke=True)
+            self.assertTrue(doc["smoke"])
+            exp.update(smoke=False)
+            (tmp / "exp2.json").write_text(json.dumps(exp))
+            with self.assertRaisesRegex(s0.S0Error, "10000-decision"):
+                s0.freeze_start(tmp / "exp2.json", fake, tmp / "start2.json")
+            exp["parity"]["states"]["decisions"] = 10_000
+            (tmp / "exp3.json").write_text(json.dumps(exp))
+            doc = s0.freeze_start(tmp / "exp3.json", fake, tmp / "start3.json")
+            self.assertFalse(doc["smoke"])
+            with self.assertRaises(s0.S0Error):
+                s0.freeze_start(tmp / "exp3.json", fake, tmp / "start3.json")
+
     def test_floor_plan_needs_the_frozen_start_of_this_s0(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -376,9 +433,21 @@ class StartAndSourceTests(unittest.TestCase):
             src = tmp / "s0-source.json"
             s0.make_source(parent_source(tmp), container, src)
             start = tmp / "xs-start.json"
-            start.write_text(json.dumps({"schema": "w5-xs-start/v1", "container": {"sha256": "0" * 64}}))
+            start.write_text(json.dumps({"schema": "w5-xs-start/v1", "smoke": False, "container": {"sha256": "0" * 64}}))
             with self.assertRaisesRegex(s0.S0Error, "frozen start"):
                 s0.floor_plan(src, parent_source(tmp), tmp / "panel.json", start, tmp / "eval.exe", tmp / "f")
+            start.write_text(json.dumps({"schema": "w5-xs-start/v1", "smoke": True,
+                                         "container": s0.pin(container)}))
+            with self.assertRaisesRegex(s0.S0Error, "smoke"):
+                s0.floor_plan(src, parent_source(tmp), tmp / "panel.json", start, tmp / "eval.exe", tmp / "f")
+            start.write_text(json.dumps({"schema": "w5-xs-start/v1", "smoke": False,
+                                         "container": s0.pin(container)}))
+            continued = s0.read_json(src)
+            continued["checkpoint"] = {"path": "record.json", "sha256": "1" * 64}
+            (tmp / "continued.json").write_text(json.dumps(continued))
+            with self.assertRaisesRegex(s0.S0Error, "checkpoint record"):
+                s0.floor_plan(tmp / "continued.json", parent_source(tmp), tmp / "panel.json", start,
+                              tmp / "eval.exe", tmp / "f")
             start.write_text(json.dumps({"schema": "other"}))
             with self.assertRaisesRegex(s0.S0Error, "before the floor"):
                 s0.floor_plan(src, parent_source(tmp), tmp / "panel.json", start, tmp / "eval.exe", tmp / "f")

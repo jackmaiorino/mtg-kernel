@@ -317,7 +317,8 @@ def eval_batches(rows, length):
 
 
 def vsub_mask(n_rows, rows, game_key, rng):
-    """checks-code/train_checks.py lines 145 to 155: VSUB_K seeded decisions per training game."""
+    """checks-code/train_checks.py lines 145 to 155: VSUB_K seeded decisions per training game. `rows` are the
+    epoch's batched rows that have a value target, so every game gets exactly min(VSUB_K, its rows)."""
     u = rng.random(len(rows))
     g = game_key[rows]
     order = np.lexsort((u, g))
@@ -409,6 +410,7 @@ def train(config_path, out, device="cpu", workers=0) -> dict:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     s0.require(not (out / "train.json").exists(), f"{out} already holds a finished run")
+    store_check = s0.verify_store(manifest_path)
     setup_determinism()
     dev = torch.device(device)
     model = build_model(rec["seed"]).to(dev)
@@ -417,7 +419,7 @@ def train(config_path, out, device="cpu", workers=0) -> dict:
     ix, _, _ = s0.load_index(manifest_path)
     train_rows = np.nonzero(~ix["validation"])[0]
     val_rows = np.nonzero(ix["validation"])[0]
-    s0.require(len(train_rows) >= R.BATCH and len(val_rows) > 0, "too few decisions to train")
+    s0.require(len(train_rows) >= R.BATCH and bool(ix["has_value"][val_rows].any()), "too few decisions to train")
     steps_per_epoch = len(train_rows) // R.BATCH
     overrides = rec.get("smoke_overrides") or {}
     total = R.EPOCHS_MAX * steps_per_epoch
@@ -431,6 +433,7 @@ def train(config_path, out, device="cpu", workers=0) -> dict:
     rng = np.random.default_rng(seed)
     vrng = np.random.default_rng(seed + R.VSUB_SEED_OFFSET)
     meta = {"config_sha256": s0.sha256_file(config_path), "store_manifest_sha256": s0.sha256_file(manifest_path),
+            "store_verified": store_check, "smoke": bool(config["smoke"]),
             "train_decisions": int(len(train_rows)), "train_games": int(len(np.unique(ix["game"][train_rows]))),
             "val_decisions": int(len(val_rows)), "val_games": int(len(np.unique(ix["game"][val_rows]))),
             "steps_per_epoch": steps_per_epoch, "total_steps": total, "warmup_steps": warm, "eval_every": every,
@@ -457,7 +460,10 @@ def train(config_path, out, device="cpu", workers=0) -> dict:
     done = False
     while not done:
         batches = epoch_batches(train_rows, ix["length"], steps_per_epoch, rng)
-        vmask = vsub_mask(len(ix["game"]), train_rows, ix["game"], vrng)
+        # The pilot's epoch drops the remainder after whole batches (train.py line 347); the value subsample is
+        # drawn over the rows this epoch uses, so no selected decision falls in the dropped remainder.
+        used = np.sort(np.concatenate(batches))
+        vmask = vsub_mask(len(ix["game"]), used[ix["has_value"][used]], ix["game"], vrng)
         for parts in loader(manifest_path, batches, workers, vmask, dev.type == "cuda"):
             n = sum(int(bt["state"].shape[0]) for bt in parts)
             nv = sum(float(bt["vmask"].sum()) for bt in parts)
@@ -487,7 +493,9 @@ def train(config_path, out, device="cpu", workers=0) -> dict:
                 log.flush()
             if step % every == 0:
                 v, k, c = evaluate(model, manifest_path, val_rows, ix, dev, amp, workers)
-                vm, km, cm = (float(game_means(ix["game"], val_rows, x).mean()) for x in (v, k, c))
+                hv = ix["has_value"][val_rows]
+                vm = float(game_means(ix["game"], val_rows[hv], v[hv]).mean())
+                km, cm = (float(game_means(ix["game"], val_rows, x).mean()) for x in (k, c))
                 rec_eval = {"kind": "val", "step": step, "epoch": step / steps_per_epoch, "value": vm, "kl": km,
                             "policy_ce": cm, "sec": time.time() - t0}
                 history.append(rec_eval)
