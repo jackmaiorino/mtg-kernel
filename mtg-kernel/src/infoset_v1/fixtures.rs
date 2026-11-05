@@ -1276,7 +1276,9 @@ fn spy_versus_terror_engine_fixture() {
     );
     for r in &after {
         assert!(r.p.is_ok(), "exported while the node holds: {:?}", r.p);
-        assert_eq!(r.known.len(), 1, "one known_name survivor: {:?}", r.known);
+        // Amendment 43.8 revision c (lead ruling 15, fallback D): P claims
+        // no opponent-hand names; the reducer still keeps the node.
+        assert!(r.known.is_empty(), "no known_name occupant: {:?}", r.known);
     }
     // Terror's next draw takes a put-back card back: the draw-back
     // amendment to 6.4 undoes that put-back's removal, so the node is
@@ -1292,7 +1294,7 @@ fn spy_versus_terror_engine_fixture() {
     );
     for r in &back {
         assert!(r.p.is_ok(), "exported after the draw-back: {:?}", r.p);
-        assert_eq!(r.known.len(), 2, "two known_name survivors: {:?}", r.known);
+        assert!(r.known.is_empty(), "no known_name occupant: {:?}", r.known);
     }
     assert!(
         records[0].iter().all(|r| r.p != Err("R8".to_string())),
@@ -1330,14 +1332,14 @@ fn fable_bounce_engine_fixture() {
         .rev()
         .find(|r| r.p.is_ok())
         .expect("an export while the node holds");
-    // Amendment 43.7: the bounced Hawk is no longer a tracked copy in the
-    // opponent's hand; its bound fact is a known-name occupant beside the
-    // survivor node's Hawk. Before 43.7 the bounced Hawk took a `C:` handle
-    // and only the survivor was a known name.
-    assert_eq!(
-        last.known,
-        vec!["Squadron Hawk".to_string(); 2],
-        "the bounced Hawk's fact and one untracked Hawk survivor are known names after the bounce"
+    // Amendment 43.8 revision c (lead ruling 15, fallback D): P claims no
+    // opponent-hand names. Under 43.7 and 43.8 the bounced Hawk's fact and
+    // the survivor node's Hawk were two known-name occupants; before 43.7
+    // the bounced Hawk took a `C:` handle.
+    assert!(
+        last.known.is_empty(),
+        "no known-name occupant after the bounce: {:?}",
+        last.known
     );
     assert!(reports.iter().all(|r| r.compared > 0));
 }
@@ -1367,29 +1369,23 @@ fn cawgates_lorien_engine_fixture() {
             .iter()
             .position(|r| r.nodes.contains(&node))
             .expect("the node ({Hawk x3, Island}, 2) appears");
-        let first_refusal = rec[i..]
-            .iter()
-            .position(|r| r.p == Err("R8b".to_string()))
-            .map(|k| i + k)
-            .expect("R8b refuses once the second Lorien finds the Island");
+        // Amendment 43.8 revision c (lead ruling 15, fallback D): R8b
+        // guarded the survivor tree's claims, which P no longer makes; P
+        // exports (or refuses R3) while the node lives, also after the second
+        // Lorien finds the Island.
         assert!(
-            rec[i..first_refusal]
+            rec[i..]
                 .iter()
+                .filter(|r| r.nodes.contains(&node))
                 .all(|r| r.p.is_ok() || r.p == Err("R3".into())),
-            "exports up to the second Lorien"
-        );
-        assert!(
-            rec[first_refusal..]
-                .iter()
-                .all(|r| r.p == Err("R8b".into()) || !r.nodes.contains(&node)),
-            "R8b holds while the node lives"
+            "exports while the node lives"
         );
     }
     // The worlds' hands differ after the Brainstorm, so later default
-    // answers may diverge publicly: the pair truncates there, after R8b.
+    // answers may diverge publicly: the pair truncates there.
     assert!(reports
         .iter()
-        .all(|r| r.compared > 0 && r.p_refusals.get("R8b").copied().unwrap_or(0) > 0));
+        .all(|r| r.compared > 0 && r.p_refusals.get("R8b").copied().unwrap_or(0) == 0));
 }
 
 #[test]
@@ -1722,7 +1718,6 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
     })
     .collect();
     let (records, reports) = pairs(&format!("l8-bound-copies seed {seed}"), runs);
-    let hawks = vec!["Squadron Hawk".to_string(); 2];
     let mut shown = false;
     // Compared decisions after the Brainstorm (P exports two `known_name`
     // Hawks, equal bytes, in both worlds): (L8 differs, L8 agrees).
@@ -1732,7 +1727,8 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
             if x.view != y.view {
                 break;
             }
-            if !(x.p.is_ok() && x.p == y.p && x.known == hawks && y.known == hawks) {
+            // Revision c: P claims no hand names (before it, two Hawks).
+            if !(x.p.is_ok() && x.p == y.p && x.known.is_empty() && y.known.is_empty()) {
                 continue;
             }
             let l8 = |r: &AtV1| {

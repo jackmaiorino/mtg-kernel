@@ -344,6 +344,10 @@ pub(crate) struct ContentsV1 {
     pub hand: BTreeMap<u16, u32>,
     pub library: BTreeMap<u16, u32>,
     pub pins: Vec<(u16, bool)>,
+    /// Amendment 43.8 revision c (lead ruling 15, fallback D): the unpinned
+    /// hand and library fills are not claims, so a W* may hold any unpinned
+    /// contents; only the pins are compared.
+    pub free: bool,
 }
 
 fn add(m: &mut BTreeMap<u16, u32>, d: u16) {
@@ -466,7 +470,7 @@ fn take(m: &mut BTreeMap<u16, u32>, d: u16) -> bool {
 fn misplaced(t: &TruthV1, target: &ContentsV1) -> Vec<(ObjectId, bool)> {
     let (mut hand, mut library) = (target.hand.clone(), target.library.clone());
     let mut out = Vec::new();
-    for (id, def, in_hand) in &t.seen {
+    for (id, def, in_hand) in t.seen.iter().filter(|_| !target.free) {
         let room = if *in_hand { &mut hand } else { &mut library };
         if !take(room, *def) {
             out.push((*id, *in_hand));
@@ -625,6 +629,9 @@ pub(crate) fn impossible_v1(
 /// The deal exchanges that give the never-tracked objects the target's
 /// remaining definitions, or None if the multisets disagree.
 fn deal_for(t: &TruthV1, target: &ContentsV1) -> Option<Vec<(ObjectId, ObjectId)>> {
+    if target.free {
+        return Some(Vec::new());
+    }
     let mut need = target.hand.clone();
     for (_, def, in_hand) in &t.seen {
         if *in_hand && !take(&mut need, *def) {
@@ -725,7 +732,7 @@ pub(crate) fn realize(
                 continue;
             }
             let got = truth(star.s.game_state(), viewer, owner).contents;
-            if got != *target {
+            if (target.free && got.pins != target.pins) || (!target.free && got != *target) {
                 last = format!("{moves:?}: W* contents {got:?} differ from {target:?}");
                 continue;
             }
@@ -870,12 +877,10 @@ pub(crate) fn realize_at(
     if mutant.is_none() {
         // Amendment 43.8 revision c (lead ruling 15, fallback D): P claims
         // no opponent-hand names, so its hand and library fills are not
-        // claims a W* must hold; only the pins (and V's views and P) are
-        // compared. Validity mutants still claim names and keep the exact
-        // target.
-        let t = truth(s.game_state(), viewer, viewer.opponent());
-        target.hand = t.contents.hand;
-        target.library = t.contents.library;
+        // claims a W* must hold: its unpinned contents may vary; the pins,
+        // V's views and P are compared. Validity mutants still claim names
+        // and keep the exact target.
+        target.free = true;
     }
     let p = match mutant {
         None => Some(super::harness::p_outcome(&s, viewer)?),
