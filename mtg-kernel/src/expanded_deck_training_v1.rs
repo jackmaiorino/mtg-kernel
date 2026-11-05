@@ -451,10 +451,13 @@ pub fn load_expanded_inference_v1(
 /// under the portable math (`training_math_v1`): it would run that
 /// checkpoint's forwards, priors or statistics under other math. Training
 /// commands bind the math instead ([`bind_training_math_v1`],
-/// [`bind_opponent_math_v1`]).
+/// [`bind_opponent_math_v1`]). Native S passes: its forward reads no
+/// training math (`s_transformer_v1` computes its transcendentals from IEEE
+/// operations only), and an S record's math is that of the net-8 opponents
+/// it trained against.
 fn refuse_portable_math_v1(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     ensure(
-        policy.training_math_v1().is_platform_libm(),
+        policy.s_model_v1().is_some() || policy.training_math_v1().is_platform_libm(),
         "this reader does not run checkpoints trained under portable-math-v1",
     )
 }

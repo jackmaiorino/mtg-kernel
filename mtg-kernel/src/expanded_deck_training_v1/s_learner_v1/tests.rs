@@ -1194,3 +1194,379 @@ fn s_search_digest_skip_timing_v1() {
     }
     let _ = fs::remove_dir_all(&root);
 }
+
+/// W5 E5: S sources serve the Spellbench scorer (`spellbench_scorer_v1`)
+/// under net-8's contract. The initial state, a full checkpoint record, a
+/// materialized weights snapshot and a record under the portable math each
+/// load; the ready record names S's identity, state hash and architecture
+/// with net-8's feature digests, sampler and float encoding; every choice
+/// carries S's own forward on the request tensor, bit for bit (and the
+/// policy's in-game forward), with net-8's sampler and completion scoring;
+/// a second run gives the same bytes; refusals stay explicit.
+#[test]
+fn s_sources_serve_the_spellbench_scorer() {
+    on_large_stack(s_scorer_v1);
+}
+
+/// The scorer's JSON tensor (u32 bits for floats) of a V4 input.
+fn scorer_tensor_v1(t: &NativeFlatDecisionTensorV2) -> Value {
+    let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<u32>>();
+    json!({
+        "state": bits(&t.state),
+        "object_features": bits(&t.object_features),
+        "object_card_ids": t.object_card_ids,
+        "object_groups": t.object_groups,
+        "object_node_ids": t.object_node_ids,
+        "edge_features": bits(&t.edge_features),
+        "edge_source_indices": t.edge_source_indices,
+        "edge_target_indices": t.edge_target_indices,
+        "action_features": bits(&t.action_features),
+        "action_ref_features": bits(&t.action_ref_features),
+        "action_ref_card_ids": t.action_ref_card_ids,
+        "action_ref_action_indices": t.action_ref_action_indices,
+        "action_ref_node_indices": t.action_ref_node_indices,
+    })
+}
+
+/// The scorer's JSONL output records.
+fn scorer_records_v1(output: &[u8]) -> Vec<Value> {
+    output
+        .split(|b| *b == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice(line).unwrap())
+        .collect()
+}
+
+/// The scorer's output for a config file of `source` over `requests`.
+fn run_scorer_v1(
+    root: &Path,
+    name: &str,
+    source: &Value,
+    selection: &str,
+    requests: &[u8],
+) -> Vec<u8> {
+    use crate::spellbench_scorer_v1::{
+        run_spellbench_scorer_config_path_v1, SCORER_CONFIG_SCHEMA_V1,
+    };
+    let path = root.join(format!("{name}.scorer.json"));
+    let config =
+        json!({"schema": SCORER_CONFIG_SCHEMA_V1, "source": source, "selection": selection});
+    fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+    let mut output = Vec::new();
+    let _ = run_spellbench_scorer_config_path_v1(
+        &path,
+        &mut std::io::Cursor::new(requests.to_vec()),
+        &mut output,
+    );
+    output
+}
+
+/// One request line per element, newline-terminated.
+fn lines_v1(requests: &[Value]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for request in requests {
+        bytes.extend_from_slice(&serde_json::to_vec(request).unwrap());
+        bytes.push(b'\n');
+    }
+    bytes
+}
+
+fn s_scorer_v1() {
+    use super::super::weights_snapshot_v1::{materialize_weights_snapshot_v1, weights_snapshot_v1};
+    use crate::fast_sampler::WideCategoricalScratchV1;
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    use crate::spellbench_scorer_v1::{
+        SCORER_CHOICE_SCHEMA_V1, SCORER_PROPOSAL_SCHEMA_V1, SCORER_READY_SCHEMA_V1,
+        SCORER_REQUEST_SCHEMA_V1, SELECTION_ARGMAX_FIRST_V1, SELECTION_SAMPLED_WIDE_V1,
+    };
+    use sha2::{Digest, Sha256};
+
+    let root = temp_root("scorer");
+    let net8 = net8_source(&root);
+    let s = s_source(&root, &net8);
+    let collection = collect(
+        &s,
+        vec![episode("scorer-self", 2_026_110_501, None)],
+        root.join("collect"),
+    )
+    .unwrap();
+    let trajectories: Vec<PinnedFileV1> =
+        serde_json::from_value(collection["trajectories"].clone()).unwrap();
+    let updated = update(
+        &s,
+        trajectories,
+        gae(),
+        CheckpointRecordFormatV1::V1,
+        root.join("update"),
+    )
+    .unwrap();
+    let full: PinnedFileV1 = serde_json::from_value(updated["checkpoint"].clone()).unwrap();
+    let receipt = weights_snapshot_v1(&full, &root.join("snapshot.bin")).unwrap();
+    let snapshot: PinnedFileV1 = serde_json::from_value(receipt["output"].clone()).unwrap();
+    let made =
+        materialize_weights_snapshot_v1(&s, &snapshot, &root.join("materialized.json")).unwrap();
+    let materialized: PinnedFileV1 = serde_json::from_value(made["output"].clone()).unwrap();
+    // The same record as if its net-8 opponents had played under the portable
+    // math: S's forward reads no training math, so it serves.
+    let mut portable_record: Value = read_pinned(&full).unwrap();
+    portable_record["training_math"] = json!("portable-math-v1");
+    let portable_bytes = serde_json::to_vec(&portable_record).unwrap();
+    let portable_path = root.join("portable.json");
+    fs::write(&portable_path, &portable_bytes).unwrap();
+    let portable = PinnedFileV1 {
+        path: portable_path,
+        sha256: sha(&portable_bytes),
+    };
+    let with = |checkpoint: Option<&PinnedFileV1>| ExpandedModelSourceV1 {
+        checkpoint: checkpoint.cloned(),
+        ..s.clone()
+    };
+    let sources = [
+        ("initial", with(None)),
+        ("full", with(Some(&full))),
+        ("materialized", with(Some(&materialized))),
+        ("portable", with(Some(&portable))),
+    ];
+
+    // Live Rally decisions with at least two candidates.
+    let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+        4242,
+        17,
+        400,
+        40_000,
+        ["Rally".to_string(), "Rally".to_string()],
+    )
+    .unwrap();
+    let mut sessions = Vec::new();
+    while sessions.len() < 6 {
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("game ended")
+        };
+        if decision.legal_action_count >= 2 {
+            sessions.push(session.clone());
+        }
+        session.step(decision.episode_id, decision.step, 0).unwrap();
+    }
+
+    // Net-8's ready record on the same shell: every field but the model's own
+    // identity is the contract the bot pins.
+    let net8_ready = scorer_records_v1(&run_scorer_v1(
+        &root,
+        "net8",
+        &serde_json::to_value(&net8).unwrap(),
+        SELECTION_SAMPLED_WIDE_V1,
+        b"",
+    ))
+    .remove(0);
+    assert_eq!(net8_ready["schema"], SCORER_READY_SCHEMA_V1);
+    assert!(net8_ready.get("model_architecture").is_none());
+    let contract_of = |ready: &Value| {
+        let mut contract = ready.clone();
+        let fields = contract.as_object_mut().unwrap();
+        for field in ["model", "model_state_sha256", "model_architecture"] {
+            fields.remove(field);
+        }
+        contract
+    };
+
+    let mut states = BTreeSet::new();
+    for (name, source) in &sources {
+        let source_value = serde_json::to_value(source).unwrap();
+        let (mut policy, identity) = super::super::load_expanded_inference_v1(source)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let model = policy.s_model_v1().unwrap().clone();
+        let mut requests = Vec::new();
+        let mut expected = Vec::new();
+        for (index, live) in sessions.iter().enumerate() {
+            let scores = policy.score_fast_session_v1(live).unwrap();
+            let tensor = policy
+                .last_scored_training_tensor_v4()
+                .unwrap()
+                .common
+                .clone();
+            let (logits, value) = model.score_tensor_v1(&tensor).unwrap();
+            // S's forward on the request tensor is the policy's in-game one.
+            let bits = |xs: &[f32]| xs.iter().map(|x| x.to_bits()).collect::<Vec<u32>>();
+            assert_eq!(bits(&logits), bits(&scores.logits), "{name}");
+            assert_eq!(value.to_bits(), scores.value.to_bits(), "{name}");
+            let rows: Vec<u32> = (0..logits.len() as u32).map(|row| 100 + row).collect();
+            let seed = 77 + index as u64;
+            requests.push(json!({
+                "schema": SCORER_REQUEST_SCHEMA_V1,
+                "request_id": format!("g0:{index}"), "game_id": "g0",
+                "seat": "p0", "step": index,
+                "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V4,
+                "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V4,
+                "row_candidate_ids": rows, "sample_seed": seed,
+                "tensor": scorer_tensor_v1(&tensor),
+            }));
+            expected.push((logits, value, rows, seed, tensor));
+        }
+        let bytes = lines_v1(&requests);
+        let output = run_scorer_v1(
+            &root,
+            name,
+            &source_value,
+            SELECTION_SAMPLED_WIDE_V1,
+            &bytes,
+        );
+        // Deterministic: a second load and run gives the same bytes.
+        assert_eq!(
+            run_scorer_v1(
+                &root,
+                &format!("{name}-again"),
+                &source_value,
+                SELECTION_SAMPLED_WIDE_V1,
+                &bytes
+            ),
+            output,
+            "{name}"
+        );
+        let records = scorer_records_v1(&output);
+        assert_eq!(records.len(), 1 + expected.len(), "{name}: {records:?}");
+        let ready = &records[0];
+        assert_eq!(ready["model_state_sha256"], json!(identity.state_sha256));
+        assert_eq!(ready["model"], serde_json::to_value(&identity).unwrap());
+        assert_eq!(
+            ready["model"]["model"]["weights_sha256"],
+            json!(model.parameter_sha256_v1())
+        );
+        assert_eq!(ready["model_architecture"], S_ARCHITECTURE_V1, "{name}");
+        assert_eq!(contract_of(ready), contract_of(&net8_ready), "{name}");
+        assert_eq!(ready["feature_contract_digest"], FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(ready["feature_encoding_digest"], FEATURE_ENCODING_DIGEST_V4);
+        states.insert(identity.state_sha256.clone());
+        for (index, (choice, (logits, value, rows, seed, _))) in
+            records[1..].iter().zip(&expected).enumerate()
+        {
+            let line = serde_json::to_vec(&requests[index]).unwrap();
+            assert_eq!(choice["schema"], SCORER_CHOICE_SCHEMA_V1);
+            assert_eq!(
+                choice["request_sha256"],
+                format!("{:x}", Sha256::digest(&line))
+            );
+            assert_eq!(choice["model_state_sha256"], json!(identity.state_sha256));
+            assert_eq!(
+                choice["logits_bits"],
+                json!(logits.iter().map(|x| x.to_bits()).collect::<Vec<_>>()),
+                "{name}"
+            );
+            assert_eq!(choice["value_bits"], json!(value.to_bits()), "{name}");
+            let row = WideCategoricalScratchV1::default()
+                .sample(logits, *seed)
+                .unwrap();
+            assert_eq!(choice["selected_row"], json!(row));
+            assert_eq!(choice["selected_candidate_id"], json!(rows[row]));
+        }
+        // Argmax selection: the first maximum of S's logits.
+        let unseeded: Vec<Value> = requests
+            .iter()
+            .map(|request| {
+                let mut request = request.clone();
+                request["sample_seed"] = Value::Null;
+                request
+            })
+            .collect();
+        let argmax = scorer_records_v1(&run_scorer_v1(
+            &root,
+            &format!("{name}-argmax"),
+            &source_value,
+            SELECTION_ARGMAX_FIRST_V1,
+            &lines_v1(&unseeded),
+        ));
+        assert_eq!(argmax.len(), 1 + expected.len(), "{name}");
+        for (choice, (logits, ..)) in argmax[1..].iter().zip(&expected) {
+            let first = (0..logits.len()).fold(0, |best, row| {
+                if logits[row] > logits[best] {
+                    row
+                } else {
+                    best
+                }
+            });
+            assert_eq!(choice["selected_row"], json!(first), "{name}");
+        }
+        // Completion proposals: each candidate's one-step completion scored
+        // by S's log probability of its row, then net-8's sampler.
+        let (logits, _, _, _, tensor) = &expected[0];
+        let maximum = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max) as f64;
+        let total = logits
+            .iter()
+            .map(|x| (*x as f64 - maximum).exp())
+            .sum::<f64>()
+            .ln();
+        let log_probabilities: Vec<f32> = logits
+            .iter()
+            .map(|x| (*x as f64 - maximum - total) as f32)
+            .collect();
+        let proposals: Vec<Value> = (0..logits.len())
+            .map(|row| json!([{"tensor": scorer_tensor_v1(tensor), "selected_row": row}]))
+            .collect();
+        let rows: Vec<u32> = (0..logits.len() as u32).collect();
+        let proposal = json!({
+            "schema": SCORER_PROPOSAL_SCHEMA_V1, "request_id": "proposal-1",
+            "game_id": "g0", "seat": "p1", "step": 0,
+            "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V4,
+            "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V4,
+            "sample_seed": 123, "row_candidate_ids": rows, "proposals": proposals,
+        });
+        let answered = scorer_records_v1(&run_scorer_v1(
+            &root,
+            &format!("{name}-proposal"),
+            &source_value,
+            SELECTION_SAMPLED_WIDE_V1,
+            &lines_v1(&[proposal]),
+        ));
+        assert_eq!(answered.len(), 2, "{name}: {answered:?}");
+        assert_eq!(
+            answered[1]["mapping"],
+            "deterministic-completion-logprob/v1"
+        );
+        assert_eq!(
+            answered[1]["logits_bits"],
+            json!(log_probabilities
+                .iter()
+                .map(|x| x.to_bits())
+                .collect::<Vec<_>>()),
+            "{name}"
+        );
+        let row = WideCategoricalScratchV1::default()
+            .sample(&log_probabilities, 123)
+            .unwrap();
+        assert_eq!(answered[1]["selected_row"], json!(row), "{name}");
+    }
+    // The initial, full and materialized states are three states; the
+    // portable record names the full state.
+    assert_eq!(states.len(), 3);
+
+    // Refusals stay explicit, one error record each: an S source on another
+    // feature contract, an initial state that is not the pinned one, and an
+    // S weights snapshot pinned as a checkpoint record.
+    let mut other_contract = serde_json::to_value(&sources[1].1).unwrap();
+    other_contract["feature_transfer"]["expected_feature_contract_digest"] = json!("0".repeat(64));
+    let mut wrong_pin = serde_json::to_value(&sources[0].1).unwrap();
+    wrong_pin["s_learner"]["initial"]["sha256"] = json!("0".repeat(64));
+    let as_record = serde_json::to_value(with(Some(&snapshot))).unwrap();
+    for (name, source) in [
+        ("other-contract", other_contract),
+        ("wrong-pin", wrong_pin),
+        ("snapshot", as_record),
+    ] {
+        let records = scorer_records_v1(&run_scorer_v1(
+            &root,
+            name,
+            &source,
+            SELECTION_SAMPLED_WIDE_V1,
+            b"",
+        ));
+        assert_eq!(
+            records,
+            vec![json!({
+                "schema": "mtg-kernel-spellbench-scorer-error/v1",
+                "code": "checkpoint_load",
+                "service_continues": false,
+            })],
+            "{name}"
+        );
+    }
+    let _ = fs::remove_dir_all(&root);
+}

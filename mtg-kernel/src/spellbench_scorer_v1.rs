@@ -2,12 +2,21 @@
 //! c12). Loads one pinned model source, answers JSONL requests carrying the
 //! `x_kernel_flat_v4` tensor, and returns the chosen row and candidate id.
 //! Owns no game state. `xmage_observed_inference_v1` (V3 only) is unchanged.
+//!
+//! A W5 native S source (`ExpandedModelSourceV1::s_learner`: an S checkpoint
+//! record and its container, a materialized weights snapshot, or the initial
+//! state alone) is served on its plain FlatV4 shell with the same request,
+//! choice and ready contract, feature digests and sampler: every forward is
+//! S's. Requests still carry the state digest features, which S does not
+//! read. Its ready record adds `model_architecture`; net-8 ready records are
+//! unchanged.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::expanded_deck_training_v1::{load_expanded_inference_v1, ExpandedModelSourceV1};
 use crate::fast_sampler::{WideCategoricalScratchV1, WIDE_CATEGORICAL_SAMPLER_VERSION_V1};
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v4::NativeFlatDecisionTensorV4;
+use crate::s_transformer_v1::S_ARCHITECTURE_V1;
 use crate::sideboard_play_policy_v1::{
     FreshFeatureIdentityV1, FreshLineageGenerationV1, FrozenPlayPolicyV1,
 };
@@ -340,6 +349,8 @@ pub(crate) struct SpellbenchScorerV1 {
     feature_identity: FreshFeatureIdentityV1,
     model: Value,
     model_state_sha256: String,
+    /// `Some(S_ARCHITECTURE_V1)` when native S is installed.
+    architecture: Option<&'static str>,
     selection: &'static str,
     sampler: WideCategoricalScratchV1,
 }
@@ -356,18 +367,20 @@ impl SpellbenchScorerV1 {
         if feature_identity.generation != FreshLineageGenerationV1::V4 {
             return Err("model_generation_unsupported");
         }
+        let architecture = policy.s_model_v1().map(|_| S_ARCHITECTURE_V1);
         Ok(Self {
             policy,
             feature_identity,
             model,
             model_state_sha256,
+            architecture,
             selection,
             sampler: WideCategoricalScratchV1::default(),
         })
     }
 
     pub(crate) fn ready_record(&self) -> Value {
-        json!({
+        let mut ready = json!({
             "schema": SCORER_READY_SCHEMA_V1,
             "model": self.model,
             "model_state_sha256": self.model_state_sha256,
@@ -379,7 +392,11 @@ impl SpellbenchScorerV1 {
             "float_encoding": "ieee754-binary32-u32-bits",
             "max_request_bytes": MAX_SCORER_REQUEST_BYTES_V1,
             "game_state_owned": false,
-        })
+        });
+        if let Some(architecture) = self.architecture {
+            ready["model_architecture"] = json!(architecture);
+        }
+        ready
     }
 
     /// Scores one request line, writing a rejection's cause to stderr. The
