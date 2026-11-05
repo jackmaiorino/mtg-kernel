@@ -298,12 +298,14 @@ class IndexCache:
             f = open(cache, 'rb')
         except FileNotFoundError:
             return self._whole()
-        with f:
+        with f:  # every fallback below runs with no handle open (a migration replaces the file)
             st = os.fstat(f.fileno())
-            if (st.st_dev, st.st_ino) != self.ident or st.st_size < self.offset:
-                return self._whole()  # replaced or shortened
-            f.seek(self.offset)
-            data = f.read()
+            moved = (st.st_dev, st.st_ino) != self.ident or st.st_size < self.offset
+            if not moved:
+                f.seek(self.offset)
+                data = f.read()
+        if moved:
+            return self._whole()  # replaced or shortened
         if data and not data.endswith(b'\n'):
             return self._whole()  # a last line without its newline: read as index() reads it
         added = [json.loads(line) for line in data.decode('utf-8').splitlines() if line]
@@ -315,10 +317,12 @@ class IndexCache:
             text = ''.join(json.dumps(r) + '\n' for r in new).encode('utf-8')
             with open(cache, 'ab') as f:
                 before = os.fstat(f.fileno())
-                if (before.st_dev, before.st_ino) != self.ident or before.st_size != self.offset + len(data):
-                    return self._whole()  # not the file just read (a writer outside the lock): append nothing
-                f.write(text)
-                f.flush()
+                moved = (before.st_dev, before.st_ino) != self.ident or before.st_size != self.offset + len(data)
+                if not moved:
+                    f.write(text)
+                    f.flush()
+            if moved:
+                return self._whole()  # not the file just read (a writer outside the lock): append nothing
             data += text
         self.offset += len(data)
         self.records.extend(added + new)

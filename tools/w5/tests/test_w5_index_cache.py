@@ -73,6 +73,29 @@ class IndexCacheTests(unittest.TestCase):
         self.assertEqual(cache.refresh()[1], retention.index(path)[1])
         self.assertEqual(len(cache.refresh()[1]), len(lines))  # the receipts past the kept lines are found again
 
+    def test_a_legacy_index_restored_under_an_initialized_cache(self):
+        """A cache file without S-container pins (as written before they were tracked) replaces the current one:
+        the cache migrates it as index() does, with no handle of its own open (Windows refuses the replace)."""
+        _, plan = self.node.stage0(c_wall=600.0)
+        path = plan['chains']['c1']['manifest']
+        self.advance(plan, 'c1', 2)
+        cache = retention.IndexCache(path)
+        cache.refresh()
+        index_file = retention.index_path(path)
+        legacy = [{k: v for k, v in json.loads(x).items() if k != 'state'} for x in index_file.read_text().splitlines()]
+        index_file.unlink()
+        index_file.write_text(''.join(json.dumps(r) + '\n' for r in legacy))
+        got = cache.refresh()[1]
+        self.assertTrue(all('state' in r for r in got))
+        self.assertEqual(got, retention.index(path)[1])
+        # Appended legacy lines past the cursor take the same path.
+        self.advance(plan, 'c1', 1)
+        retention.index(path)
+        lines = index_file.read_text().splitlines()
+        last = {k: v for k, v in json.loads(lines[-1]).items() if k != 'state'}
+        index_file.write_text(''.join(x + '\n' for x in lines[:-1]) + json.dumps(last) + '\n')
+        self.assertEqual(cache.refresh()[1], retention.index(path)[1])
+
     def test_writers_take_turns_and_never_append_twice(self):
         """index() in another process waits while a refresh holds the index lock, so it reads the refresh's lines
         instead of appending the same records; a line appended outside the lock while the cache scans makes the
