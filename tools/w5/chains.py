@@ -51,6 +51,10 @@ is moved aside (mtg-kernel#336). C: from `launched_unix` (the first start) plus 
 and the chain ends at its last completed boundary (END `c-wall`). X: a trainer that stops at the ledger source's
 `stop_at_usec` (resume to R_i) ends the chain (END `x-stop-at`). Any other failure writes FAILURE.json and exits 8;
 whether it is a chain failure (section 7.4) is the lead's call (`end`), except an OOM kill, which `run` records.
+Every close of a chain's instance (END, failure, STOP, kill, a qualification wall cap) leaves its box an outage in
+w5box's node log (the plan marks each chain spec `handoff: true`), so the node's other measured chains hold until
+the chain restarts in its box or, once it has ended, a verified filler takes the box; a Stage 0 run that stops
+without an END keeps its box held until it reruns or the lead ends it.
 
 **Supervise** (per node, off the boxes; one at a time). Each cycle: index every measured chain; the 50% R_nom
 look boundary (`r_nom_usec`, frozen in Stage 1) is recorded and protected from every prune; for each pair, before C
@@ -554,8 +558,7 @@ def make_plan(inputs_path):
                'cgroup_root': inputs['cgroup_root'], 'state_root': (root / 'state').as_posix(),
                'isolation': inputs.get('isolation', 'partition-root'), 'stage': stage,
                'env': {'PYTHONDONTWRITEBYTECODE': '1'}, 'filler': filler,
-               'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'],
-                                  end_file=(root / 'chains' / n / 'END.json').as_posix())
+               'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'], handoff=True)
                           for n, c in sorted(chains.items()) if c['arm'] == a}}
         if arms_in[a].get('throughput'):
             doc['throughput'] = pin(arms_in[a]['throughput'])
@@ -635,16 +638,6 @@ def receipt_at(man, boundary):
     return read(Path(seg['root']) / 'iterations' / f'{boundary - 1 - seg["offset"]:06d}' / 'complete.json')
 
 
-def handoff(state):
-    """Marks the chain's w5box state: when its instance closes, w5box opens its box's outage at once, so the node's
-    other measured chains hold until the box is occupied again by a verified filler (an ended chain) or by the
-    chain's restart (amendment A1). A failure and a guard refusal mark it (an END is a handoff by itself: w5box
-    reads the chain's `end_file`, which nothing removes); an operator STOP (a planned restart) does not, and a
-    driver's start removes it."""
-    Path(state).mkdir(parents=True, exist_ok=True)
-    (Path(state) / 'HANDOFF').write_text('')
-
-
 def end_doc(name, arm_name, reason, boundary, receipt, by, **detail):
     return {'schema': END_SCHEMA, 'chain': name, 'arm': arm_name, 'reason': reason, 'last_valid_boundary': boundary,
             'ledger_usec': ((receipt or {}).get('chain_ledger') or {}).get('usec'), 'by': by,
@@ -691,7 +684,6 @@ def reached_stop(man, ledger_source):
 
 def end_at_stop(a, arm, root, cdir, man):
     boundary, receipt = latest(man)
-    handoff(a.state)
     write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'x-stop-at', boundary, receipt, 'driver',
                                           stop_at_usec=read(a.ledger_source)['stop_at_usec']))
     log(root, chain=a.chain, event='end', reason='x-stop-at', boundary=boundary)
@@ -746,7 +738,6 @@ def drive_locked(a, arm, root, cdir, man_path):
     if (cdir / 'END.json').exists():
         log(root, chain=a.chain, event='ended-already')
         return 0
-    (Path(a.state) / 'HANDOFF').unlink(missing_ok=True)  # a restart: this instance occupies the box again
     if man['launched_unix'] is None:
         man['launched_unix'] = time.time()
         write(man_path, man)
@@ -761,7 +752,6 @@ def drive_locked(a, arm, root, cdir, man_path):
             return EXIT_STOP
         if deadline is not None and time.time() >= deadline:
             boundary, receipt = latest(man)
-            handoff(a.state)
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
@@ -774,7 +764,6 @@ def drive_locked(a, arm, root, cdir, man_path):
                 log(root, chain=a.chain, event='guard-wait', reason=why)
             if time.time() - waiting >= GUARD_WAIT:
                 log(root, chain=a.chain, event='no-room', reason=why)
-                handoff(a.state)  # the box empties until an operator acts: the node holds (amendment A1)
                 return EXIT_ROOM
             time.sleep(GUARD_POLL)
             continue
@@ -788,7 +777,6 @@ def drive_locked(a, arm, root, cdir, man_path):
             continue
         boundary, receipt = latest(man)
         if killed:
-            handoff(a.state)
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
@@ -796,7 +784,6 @@ def drive_locked(a, arm, root, cdir, man_path):
             return end_at_stop(a, arm, root, cdir, man)
         write(cdir / 'FAILURE.json', {'segment': s, 'exit': code, 'boundary': boundary, 'unix': time.time()})
         log(root, chain=a.chain, event='segment-failed', segment=s, exit=code, boundary=boundary)
-        handoff(a.state)  # the box stays an outage until the lead restarts or ends the chain
         return EXIT_FAILED
 
 
@@ -904,7 +891,6 @@ def end_cmd(a):
     receipt = receipt_at(man, boundary) if boundary else None
     doc = end_doc(a.chain, plan['chains'][a.chain]['arm'], 'operator', boundary, receipt, 'operator',
                   note=a.reason)
-    handoff(root / 'state' / a.chain)
     if not write_once(chain_dir(root, a.chain) / 'END.json', doc):
         print(json.dumps(read_end(root, a.chain), indent=1))
         return 1
@@ -1022,7 +1008,6 @@ def end_x(plan, x, reason, **detail):
     top = x['records'][-1] if x['records'] else None
     doc = end_doc(x['name'], plan['chains'][x['name']]['arm'], reason, None, None, 'supervise', **detail)
     doc['ledger_usec'] = top and top['ledger_usec']
-    handoff(x['state'])
     if write_once(x['path'].parent / 'END.json', doc) and x['live']:
         request(plan, x['name'], 'kill')
 
@@ -1060,19 +1045,6 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
                                  'projected_updates': out.get('snapshot_window_updates')}
     # Once open, the window stays open while R_i is not final, up to 30 GB of snapshots per chain: each cycle cuts
     # at most as many as the remaining bytes allow at the measured snapshot size.
-    # Snapshots are node bytes too: each cycle also stays within the last guard verdict's headroom (`budget`).
-    room = None
-    if st.get('snapshot_from') is not None and size:
-        room = int((retention.SNAPSHOT_CAP_BYTES - sum(s['bytes'] for s in made.values())) // size)
-        if room <= 0:
-            st['snapshot_capped'] = True
-    st['snapshotting'] = st.get('snapshot_from') is not None and not c_ended and not st.get('snapshot_capped')
-    if st['snapshotting'] and room:
-        room = min(room, int(budget['headroom'] // size))
-        if room > 0:
-            spend(budget, room * size)  # reserved before the cut
-            out['snapshots_made'] = len(retention.snapshot(x['path'], plan['container_tool']['path'],
-                                                           st['snapshot_from'], max_new=room))
     if action == 'pause' and x['live'] and not x['paused'] and not (control / 'pause.now').exists():
         request(plan, x['name'], 'pause', {'reason': '1.10 R-hat', 'r_hat_usec': out['projection']['r_hat_usec']})
     elif action == 'resume_to':
@@ -1087,9 +1059,56 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
     elif action in ('select', 'stop_under_budget'):
         end_x(plan, x, 'reached-r' if action == 'select' else 'x-cap', r_usec=out.get('r_usec'),
               x_running_seconds=running)
+    # Snapshots after the actions (a snapshot problem never delays a pause or an END).
+    st['snapshotting'] = st.get('snapshot_from') is not None and not c_ended and not st.get('snapshot_capped')
+    if st['snapshotting'] and size:
+        try:
+            out['snapshots_made'] = cut_snapshots(plan, x, st, size, budget)
+            st.pop('snapshot_error', None)
+        except (Stop, SystemExit) as exc:
+            st['snapshot_error'] = str(exc)
     log(root, chain=x['name'], event='decide', action=action, x_ledger_usec=out.get('x_ledger_usec'),
         r_usec=out.get('r_usec'))
     return out
+
+
+SNAPSHOT_MARGIN = 1.05  # a weights-only container's size varies only by its metadata
+
+
+def cut_snapshots(plan, x, st, size, budget):
+    """Weights-only snapshots one at a time, each reserved first at the largest size seen plus a margin and
+    reconciled with its actual bytes, while the chain's snapshots stay within 30 GB and the cycle's guard budget
+    holds one more. A snapshot file left without its index record (a supervise that died mid-cut) is regenerable
+    and is removed first."""
+    chain = retention.load_chain(x['path'])
+    directory = retention.snapshot_dir(x['path'], chain)
+    index_file = retention.snapshot_index_path(x['path'])
+    indexed = {json.loads(line)['path'] for line in index_file.read_text(encoding='utf-8').splitlines() if line} \
+        if index_file.exists() else set()
+    for orphan in sorted(directory.glob('b*.weights')) if directory.exists() else []:
+        if orphan.as_posix() not in indexed:
+            orphan.unlink()
+            log(plan['root'], chain=x['name'], event='snapshot-orphan-removed', path=orphan.as_posix())
+    have = retention.snapshots(x['path'])
+    total = sum(v['bytes'] for v in have.values())
+    est = int(max([size] + [v['bytes'] for v in have.values()]) * SNAPSHOT_MARGIN) + 1
+    made = 0
+    while True:
+        if total + est > retention.SNAPSHOT_CAP_BYTES:
+            st['snapshot_capped'] = True
+            break
+        if budget['headroom'] < est:
+            break
+        spend(budget, est)
+        new = retention.snapshot(x['path'], plan['container_tool']['path'], st['snapshot_from'], max_new=1)
+        if not new:
+            spend(budget, -est)
+            break
+        spend(budget, new[0]['bytes'] - est)
+        total += new[0]['bytes']
+        est = max(est, int(new[0]['bytes'] * SNAPSHOT_MARGIN) + 1)
+        made += 1
+    return made
 
 
 def load_budget(root):

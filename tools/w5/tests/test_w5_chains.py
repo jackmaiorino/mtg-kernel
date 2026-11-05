@@ -143,7 +143,7 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(spec['argv'][0], Path(sys.executable).as_posix())
         self.assertEqual(spec['binary']['sha256'], chains.sha(sys.executable))
         self.assertEqual(spec['config'], plan['arms']['X8']['file'])
-        self.assertEqual(spec['end_file'], (self.node.root / 'chains' / 'x1' / 'END.json').as_posix())
+        self.assertIs(spec['handoff'], True)  # w5box holds the box on every close of this chain's instance
         self.assertIn(plan['arms']['X8']['file']['path'], spec['argv'])
         self.assertEqual(box['filler']['config'], plan['arms']['F']['file'])
         # w5box's own pin check accepts the launch (argv[0] is the pinned binary, the arm file is in argv)
@@ -168,7 +168,7 @@ class ChainTests(unittest.TestCase):
                                        for k in range(4)}, c_wall_seconds=60.0)
         self.assertEqual(plan['pairs'], {})
         box = json.loads(Path(plan['arms']['C']['w5box_plan']['path']).read_text())
-        self.assertEqual(len({json.dumps(dict(spec, box_slot=None, end_file=None))
+        self.assertEqual(len({json.dumps(dict(spec, box_slot=None))
                               for spec in box['chains'].values()}), 1)
         with self.assertRaises(chains.Stop):  # paired chains keep their own seed roots
             self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
@@ -245,7 +245,6 @@ class ChainTests(unittest.TestCase):
         end = json.loads((root / 'chains' / 'c1' / 'END.json').read_text())
         chain, records = retention.index(plan['chains']['c1']['manifest'])
         self.assertEqual(end['reason'], 'c-wall')
-        self.assertTrue((root / 'state' / 'c1' / 'HANDOFF').exists())  # w5box holds the box at the close
         self.assertGreaterEqual(len(records), 8)
         self.assertEqual(end['last_valid_boundary'], records[-1]['boundary'])
         self.assertEqual(end['ledger_usec'], records[-1]['ledger_usec'])
@@ -269,13 +268,11 @@ class ChainTests(unittest.TestCase):
             self.assertEqual(self.node.drive(plan, 'x1'), chains.EXIT_FAILED)
         cdir = self.node.root / 'chains' / 'x1'
         self.assertEqual(json.loads((cdir / 'FAILURE.json').read_text())['boundary'], 5)
-        self.assertTrue((self.node.root / 'state' / 'x1' / 'HANDOFF').exists())  # the failed box holds the node
         self.node.ledger_source('x1', stop=8 * STEP_X)
         self.assertEqual(self.node.drive(plan, 'x1'), 0)
         end = json.loads((cdir / 'END.json').read_text())
         self.assertEqual((end['reason'], end['last_valid_boundary'], end['ledger_usec']), ('x-stop-at', 8, 8 * STEP_X))
         self.assertTrue(list((cdir / 'interrupted').iterdir()))  # the crashed iteration was moved aside
-        self.assertTrue((self.node.root / 'state' / 'x1' / 'HANDOFF').exists())  # ended again, at R
         _, records = retention.index(plan['chains']['x1']['manifest'])
         self.assertEqual(len(records), 8)
         cfg = json.loads(Path(json.loads(Path(plan['chains']['x1']['manifest']).read_text())
@@ -290,7 +287,6 @@ class ChainTests(unittest.TestCase):
         self.node.guard()
         (self.node.root / 'STOP').write_text('')
         self.assertEqual(self.node.drive(plan, 'c1'), chains.EXIT_STOP)
-        self.assertFalse((self.node.root / 'state' / 'c1' / 'HANDOFF').exists())  # a planned stop
         (self.node.root / 'STOP').unlink()
         self.node.guard(ok=False)
         with mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
@@ -452,7 +448,6 @@ class ChainTests(unittest.TestCase):
             self.assertEqual(self.control(), ['kill.request'])
             end = json.loads((self.node.root / 'chains' / 'x1' / 'END.json').read_text())
             self.assertEqual(end['reason'], 'reached-r')
-            self.assertTrue((self.node.root / 'state' / 'x1' / 'HANDOFF').exists())
         (self.node.root / 'chains' / 'x1' / 'END.json').unlink()
         (self.node.root / 'state' / 'x1' / 'control' / 'kill.request').unlink()
         with contextlib.redirect_stdout(out):
@@ -533,6 +528,33 @@ class ChainTests(unittest.TestCase):
                 mock.patch.object(chains, 'prune_chain', lambda *a: {}):
             st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
         self.assertEqual((st['endpoints']['x1'], st['label']), (2, 'under-budget'))
+
+    def test_snapshots_one_at_a_time_within_both_budgets(self):
+        _, plan = self.node.stage0()
+        self.node.guard()
+        self.node.ledger_source('x1', stop=8 * STEP_X)
+        self.node.drive(plan, 'x1')
+        info = chains.chain_info(self.node.root, 'x1')
+        snapdir = self.node.root / 'chains' / 'x1' / 'snapshots'
+        snapdir.mkdir(parents=True)
+        (snapdir / 'b000000003.weights').write_bytes(b'half-written')  # a supervise died mid-cut
+        real = retention.subprocess.run
+
+        def fake_run(args, **kw):
+            if str(args[0]).endswith('.py'):
+                args = [sys.executable] + list(args)
+            return real(args, **kw)
+        size = 40  # fake_container writes 40 bytes
+        est = int(size * chains.SNAPSHOT_MARGIN) + 1
+        st = {'snapshot_from': 2}
+        budget = {'headroom': 3 * est}
+        with mock.patch.object(retention.subprocess, 'run', fake_run), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.cut_snapshots(plan, info, st, size, budget), 3)
+            self.assertEqual(sorted(retention.snapshots(info['path'])), [2, 3, 4])  # orphan removed, 3 cut again
+            self.assertEqual(budget['headroom'], 3 * est - 3 * size)
+            with mock.patch.object(retention, 'SNAPSHOT_CAP_BYTES', 3 * size + 10):  # no room for one more
+                self.assertEqual(chains.cut_snapshots(plan, info, st, size, {'headroom': 10**9}), 0)
+        self.assertTrue(st['snapshot_capped'])
 
     def test_replays_in_one_cycle_share_the_headroom(self):
         _, plan = self.node.stage0()
