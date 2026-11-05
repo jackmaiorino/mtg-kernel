@@ -53,11 +53,11 @@ thaw when no outage, fault, operator freeze or torn log tail remains. A new chai
 node is not clear. Escalation (`ESCALATE.json`): any outage open for 2 hours, or a fault at once in Stage 1b. Each
 chain copies every node event into its ledger exactly once (a durable watermark).
 
-**Ended boxes.** When a chain instance closes after its chain has ended (`<state>/<chain>/HANDOFF`, written with the
-chain's END) or after an OOM kill, its supervisor opens the box's outage before the box is released, so the node's
-other measured chains freeze at once. A box whose chain has ended holds the frozen filler while the node's other
-measured chains run
-(`w5box.py fill`, started by tools/w5/chains.py supervise), under the same rules: the box is an outage from the
+**Ended boxes.** When a chain instance closes after its chain has ended (the chain spec's `end_file` exists) or
+left its box for another unplanned reason (`<state>/<chain>/HANDOFF`), or after an OOM kill, its supervisor opens
+the box's outage before the box is released, so the node's other measured chains freeze at once. A box whose chain
+has ended holds the frozen filler while the node's other measured chains run (`w5box.py fill`, started by
+tools/w5/chains.py supervise), under the same rules: the box is an outage from the
 command's start (`--empty-since` records when the chain closed), opened before it waits for the box lock, until a
 verified filler runs in its filler cgroup; a filler that exits opens a new outage at once and is replaced, and
 FILLER_RESTARTS failed replacements fault the box. Any other exit (SIGTERM, an error) opens the box's outage before
@@ -1157,7 +1157,8 @@ class Supervisor:
                                   durable=True)
             time.sleep(POLL_SECONDS)
         events_now = self.chain_cg.keyed("memory.events")
-        if (self.state / "HANDOFF").exists() or \
+        end_file = self.spec.get("end_file")
+        if (self.state / "HANDOFF").exists() or (end_file and Path(end_file).exists()) or \
                 int(events_now.get("oom_kill", 0)) + int(events_now.get("oom_group_kill", 0)):
             # The chain has ended or failed: its box is an outage, with the node's other measured chains frozen, from
             # now (before a paused filler goes or the box is released) until a verified filler holds it.

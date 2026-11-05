@@ -143,6 +143,7 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(spec['argv'][0], Path(sys.executable).as_posix())
         self.assertEqual(spec['binary']['sha256'], chains.sha(sys.executable))
         self.assertEqual(spec['config'], plan['arms']['X8']['file'])
+        self.assertEqual(spec['end_file'], (self.node.root / 'chains' / 'x1' / 'END.json').as_posix())
         self.assertIn(plan['arms']['X8']['file']['path'], spec['argv'])
         self.assertEqual(box['filler']['config'], plan['arms']['F']['file'])
         # w5box's own pin check accepts the launch (argv[0] is the pinned binary, the arm file is in argv)
@@ -167,7 +168,8 @@ class ChainTests(unittest.TestCase):
                                        for k in range(4)}, c_wall_seconds=60.0)
         self.assertEqual(plan['pairs'], {})
         box = json.loads(Path(plan['arms']['C']['w5box_plan']['path']).read_text())
-        self.assertEqual(len({json.dumps(dict(spec, box_slot=None)) for spec in box['chains'].values()}), 1)
+        self.assertEqual(len({json.dumps(dict(spec, box_slot=None, end_file=None))
+                              for spec in box['chains'].values()}), 1)
         with self.assertRaises(chains.Stop):  # paired chains keep their own seed roots
             self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
                                  'c2': {'arm': 'C', 'slot': 1, 'pair': 2, 'seed_root': 'w5/q1'}})
@@ -544,6 +546,13 @@ class ChainTests(unittest.TestCase):
             self.assertEqual(chains.launch_replay(plan, 'p', dirs[0], 'X8', budget), 'launched')
             self.assertIn('waiting', chains.launch_replay(plan, 'p', dirs[1], 'X8', budget))
         self.assertEqual((popen.call_count, budget['headroom']), (1, 3000))
+        # What a cycle spends from a verdict is on disk: a restarted supervise starts from what is left.
+        jwrite(self.node.root / 'GUARD.json', {'ok': True, 'id': 7, 'headroom': 10_000})
+        budget = chains.load_budget(self.node.root)
+        chains.spend(budget, 7_000)
+        self.assertEqual(chains.load_budget(self.node.root)['headroom'], 3_000)
+        jwrite(self.node.root / 'GUARD.json', {'ok': True, 'id': 8, 'headroom': 10_000})
+        self.assertEqual(chains.load_budget(self.node.root)['headroom'], 10_000)
 
     def test_guard_reservation(self):
         _, plan = self.node.stage0()

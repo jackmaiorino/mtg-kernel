@@ -554,7 +554,8 @@ def make_plan(inputs_path):
                'cgroup_root': inputs['cgroup_root'], 'state_root': (root / 'state').as_posix(),
                'isolation': inputs.get('isolation', 'partition-root'), 'stage': stage,
                'env': {'PYTHONDONTWRITEBYTECODE': '1'}, 'filler': filler,
-               'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'])
+               'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'],
+                                  end_file=(root / 'chains' / n / 'END.json').as_posix())
                           for n, c in sorted(chains.items()) if c['arm'] == a}}
         if arms_in[a].get('throughput'):
             doc['throughput'] = pin(arms_in[a]['throughput'])
@@ -637,8 +638,9 @@ def receipt_at(man, boundary):
 def handoff(state):
     """Marks the chain's w5box state: when its instance closes, w5box opens its box's outage at once, so the node's
     other measured chains hold until the box is occupied again by a verified filler (an ended chain) or by the
-    chain's restart (amendment A1). Every END, a failure and a guard refusal mark it; an operator STOP (a planned
-    restart) does not, and a driver's start removes it."""
+    chain's restart (amendment A1). A failure and a guard refusal mark it (an END is a handoff by itself: w5box
+    reads the chain's `end_file`, which nothing removes); an operator STOP (a planned restart) does not, and a
+    driver's start removes it."""
     Path(state).mkdir(parents=True, exist_ok=True)
     (Path(state) / 'HANDOFF').write_text('')
 
@@ -1067,10 +1069,10 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
     st['snapshotting'] = st.get('snapshot_from') is not None and not c_ended and not st.get('snapshot_capped')
     if st['snapshotting'] and room:
         room = min(room, int(budget['headroom'] // size))
-        made_now = retention.snapshot(x['path'], plan['container_tool']['path'], st['snapshot_from'], max_new=room) \
-            if room > 0 else []
-        budget['headroom'] -= sum(m['bytes'] for m in made_now)
-        out['snapshots_made'] = len(made_now)
+        if room > 0:
+            spend(budget, room * size)  # reserved before the cut
+            out['snapshots_made'] = len(retention.snapshot(x['path'], plan['container_tool']['path'],
+                                                           st['snapshot_from'], max_new=room))
     if action == 'pause' and x['live'] and not x['paused'] and not (control / 'pause.now').exists():
         request(plan, x['name'], 'pause', {'reason': '1.10 R-hat', 'r_hat_usec': out['projection']['r_hat_usec']})
     elif action == 'resume_to':
@@ -1090,6 +1092,24 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
     return out
 
 
+def load_budget(root):
+    """The cycle's byte budget: the last ok verdict's headroom less what earlier cycles already spent from that
+    verdict (GUARD-SPENT.json, written before each spend, so a supervise restart cannot spend it again)."""
+    root = Path(root)
+    verdict = read(root / 'GUARD.json') if (root / 'GUARD.json').exists() else {}
+    path = root / 'GUARD-SPENT.json'
+    spent = read(path).get('spent', 0) if path.exists() and read(path).get('id') == verdict.get('id') else 0
+    headroom = verdict.get('headroom', 0) if verdict.get('ok') else 0
+    return {'id': verdict.get('id'), 'headroom': headroom - spent, 'spent': spent, 'path': path}
+
+
+def spend(budget, amount):
+    budget['headroom'] -= amount
+    budget['spent'] = budget.get('spent', 0) + amount
+    if budget.get('path'):
+        write(budget['path'], {'id': budget['id'], 'spent': budget['spent']})
+
+
 def launch_replay(plan, plan_path, rdir, arm, budget):
     """Starts `_replay` detached once the cycle's budget (the last guard verdict's headroom, less the replays this
     cycle has already started) holds its bytes; every later verdict reserves it until its receipt."""
@@ -1103,7 +1123,7 @@ def launch_replay(plan, plan_path, rdir, arm, budget):
     need = read(rdir / 'spec.json')['replay']['updates'] * plan['arms'][arm]['bytes_per_update']
     if budget['headroom'] < need:
         return f'waiting for {need} bytes of guard headroom'
-    budget['headroom'] -= need
+    spend(budget, need)
     kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
         {'start_new_session': True}
     with open(rdir / 'replay.log', 'ab') as out:
@@ -1421,8 +1441,7 @@ def cycle(plan, plan_path, now=None):
     infos = {n: chain_info(root, n) for n in sorted(names)}
     looks = {n: look(i, plan['r_nom_usec']) for n, i in infos.items()}
     report = {'unix': now, 'pairs': {}, 'retention': {}}
-    verdict = read(root / 'GUARD.json') if (root / 'GUARD.json').exists() else {}
-    budget = {'headroom': verdict.get('headroom', 0) if verdict.get('ok') else 0}
+    budget = load_budget(root)
     for key, pair in sorted(plan['pairs'].items()):
         c, x = infos[pair['C']], infos[pair['X']]
         pdir = root / 'pairs' / f'{pair["C"]}--{pair["X"]}'
@@ -1475,7 +1494,7 @@ def cycle(plan, plan_path, now=None):
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests)
-    write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], ceilings=ceilings,
+    write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], ceilings=ceilings, id=time.time_ns(),
                                     headroom=g['cap_bytes'] - g['used_bytes'] - g['next_bytes']))
     report['guard'] = {k: g[k] for k in ('ok', 'used_bytes', 'next_bytes', 'cap_bytes')}
     write(root / 'plan' / plan['label'] / 'SUPERVISE.json', report)
