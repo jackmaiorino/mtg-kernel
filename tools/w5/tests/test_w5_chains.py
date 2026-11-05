@@ -473,22 +473,48 @@ class ChainTests(unittest.TestCase):
         self.node.ledger('c1', 'open', 'close')
         self.node.ledger('x1', 'open')
         with mock.patch.object(chains.subprocess, 'Popen') as popen, contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(chains.occupancy(plan, root), {'started': [0], 'stopped': [], 'killed': []})
+            # The filler box (f2, slot 2) first, then the ended chain's box.
+            self.assertEqual(chains.occupancy(plan, root), {'started': [2, 0], 'stopped': []})
             cmd = popen.call_args[0][0]
             stop = root / 'plan' / 'stage0' / 'fills' / 'STOP'
             self.assertEqual(cmd[1:9], [str(chains.HERE / 'w5box.py'), 'fill', '--plan',
                                         plan['arms']['C']['w5box_plan']['path'], '--slot', '0', '--stop', str(stop)])
             self.assertEqual(cmd[9], '--empty-since')
             self.assertEqual(chains.occupancy(plan, root)['started'], [])  # starting
-            # Every measured chain ended and closed: the fill stops and the F chains go.
-            (root / 'state' / 'box0.fill.json').write_text(json.dumps({'pid': 1, 'unix': time.time()}))
+            # Every measured chain ended and closed: the stage's fills stop.
             chains.write_once(root / 'chains' / 'x1' / 'END.json', {'reason': 'x', 'unix': time.time()})
             self.node.ledger('x1', 'close')
-            self.node.ledger('f2', 'open')
-            with mock.patch.object(chains, 'fill_running', lambda root, slot: slot == 0):
-                self.assertEqual(chains.occupancy(plan, root), {'started': [], 'stopped': [0], 'killed': ['f2']})
+            with mock.patch.object(chains, 'fill_running', lambda root, slot: slot in (0, 2)):
+                self.assertEqual(chains.occupancy(plan, root), {'started': [], 'stopped': [0, 2]})
         self.assertTrue(stop.exists())
-        self.assertTrue((root / 'state' / 'f2' / 'control' / 'kill.request').exists())
+        with contextlib.redirect_stderr(io.StringIO()):  # a filler box is not a chain
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'f2']), w5box.EXIT_REFUSED)
+
+    def test_failed_x_keeps_its_last_valid_boundary(self):
+        _, plan = self.node.stage0()
+        recs = [{'boundary': b, 'ledger_usec': v} for b, v in ((1, 90), (2, 110), (3, 130))]
+        c = {'name': 'c1', 'records': [{'boundary': 1, 'ledger_usec': 100}], 'end': {'reason': 'c-wall'}}
+        for reason, endpoint, label in (('x-cap', 2, 'matched'), ('chain-failure', 3, 'under-budget'),
+                                        ('operator', 3, 'under-budget')):
+            x = {'name': 'x1', 'records': recs, 'end': {'reason': reason, 'last_valid_boundary': 3}}
+            with mock.patch.object(chains, 'select_endpoint', lambda *a: {'boundary': a[3], 'kind': 'checkpoint'}), \
+                    mock.patch.object(chains, 'prune_chain', lambda *a: {}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
+            self.assertEqual((st['endpoints']['x1'], st['label']), (endpoint, label), reason)
+
+    def test_replays_in_one_cycle_share_the_headroom(self):
+        _, plan = self.node.stage0()
+        budget = {'headroom': 10_000}
+        dirs = []
+        for b in (5, 9):
+            d = self.node.root / 'chains' / 'x1' / 'replay' / f'b{b:09d}'
+            jwrite(d / 'spec.json', {'replay': {'updates': 7}})
+            dirs.append(d)
+        with mock.patch.object(chains.subprocess, 'Popen') as popen:
+            self.assertEqual(chains.launch_replay(plan, 'p', dirs[0], 'X8', budget), 'launched')
+            self.assertIn('waiting', chains.launch_replay(plan, 'p', dirs[1], 'X8', budget))
+        self.assertEqual((popen.call_count, budget['headroom']), (1, 3000))
 
     def test_guard_reservation(self):
         _, plan = self.node.stage0()
@@ -557,7 +583,7 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(self.node.drive(plan, 'x1'), 0)
         (self.node.root / 'chains' / 'x1' / 'END.json').unlink()  # as if still running
         _, records = retention.index(plan['chains']['x1']['manifest'])
-        with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(chains.subprocess, 'Popen'):
             chains.cycle(chains.load_plan(path), path)
         present = {r['boundary'] for r in records if Path(r['checkpoint']['path']).exists()}
         # Segments of 3: a segment's checkpoints go once the next segment is complete, so only the last segment
