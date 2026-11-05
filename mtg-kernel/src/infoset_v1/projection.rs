@@ -180,6 +180,16 @@ pub(crate) struct ProjectionV1 {
     /// running maxima (lead ruling 7 (a)): a decision presented at (h, j)
     /// follows exactly the items stamped at most (h, j).
     pub stamps: Vec<(usize, usize)>,
+    /// Amendment 43.9 (cut 1): the item that moved the spell of the
+    /// announcement in progress, walked after the committed stream. The
+    /// announcement began at or after V's latest decision at its committed
+    /// lengths (the caster's own cast decision, or a later V decision), so it
+    /// shares a batch with no other item: not with the committed items those
+    /// decisions follow (which used to make a first same-name copy, cast and
+    /// resolved before the second, its twin), and not with event-less moves,
+    /// whose time relative to those decisions is unknown and which keep the
+    /// closed batch they had.
+    pub open_item: Option<usize>,
     /// Internal consistency failures (a projection bug): R5.
     pub inconsistencies: Vec<String>,
     /// Harness only (the realizability proof): at each unidentified
@@ -256,25 +266,36 @@ impl ProjectionV1 {
     /// length, journal length), ascending. A mark with no stamped item after
     /// it separates nothing (the current decision). With no marks known the
     /// whole stream is one batch (fail closed).
+    /// The open item (amendment 43.9) takes no part: bounds count the other
+    /// items, in stream order, so they are positions among those.
     pub(crate) fn batch_bounds(&self, marks: Option<&[(usize, usize)]>) -> Vec<usize> {
+        let closed = || {
+            self.stamps
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| Some(*i) != self.open_item)
+                .map(|(_, s)| s)
+        };
+        let len = closed().count();
         let mut out: Vec<usize> = marks
             .unwrap_or(&[])
             .iter()
-            .map(|&(h, j)| {
-                self.stamps
-                    .iter()
-                    .take_while(|&&(e, n)| e <= h && n <= j)
-                    .count()
-            })
-            .filter(|&b| b < self.stamps.len())
+            .map(|&(h, j)| closed().take_while(|&&(e, n)| e <= h && n <= j).count())
+            .filter(|&b| b < len)
             .collect();
         out.sort_unstable();
         out.dedup();
         out
     }
-    /// The batch of stream item `item`: how many bounds lie at or before it.
-    pub(crate) fn batch_of(bounds: &[usize], item: usize) -> usize {
-        bounds.partition_point(|&b| b <= item)
+    /// The batch of stream item `item`: how many bounds lie at or before its
+    /// position among the closed items. The open item (amendment 43.9) is a
+    /// batch of its own, after every other.
+    pub(crate) fn batch_of(&self, bounds: &[usize], item: usize) -> usize {
+        match self.open_item {
+            Some(open) if item == open => usize::MAX,
+            Some(open) if item > open => bounds.partition_point(|&b| b < item),
+            _ => bounds.partition_point(|&b| b <= item),
+        }
     }
     /// Where V's tracking of `id` lapsed at or after `span` (the first end
     /// from `span` on that is not an amendment 43.3 split): the object left
@@ -349,11 +370,9 @@ struct WalkV1<'a> {
     committed: (usize, usize),
     stamps: Vec<(usize, usize)>,
     /// Amendment 43.9 (cut 1): the walk is moving the spell of the
-    /// announcement in progress. That move began at or after the decision
-    /// that shares its committed lengths (the caster's cast decision, or a
-    /// later pass), so its stamp lies past every decision mark: it belongs
-    /// to the open batch, never to the batch before that decision.
+    /// announcement in progress; the item it settles is the open item.
     open: bool,
+    open_item: Option<usize>,
     /// Amendment 43.8, the search mark: the owner of the card a `zone_move`
     /// from library to hand moved, when that was the latest wire event V
     /// received other than reveals of that owner's hand. A reveal while it
@@ -416,6 +435,7 @@ pub(crate) fn project_v1(
         committed: (0, 0),
         stamps: Vec::new(),
         open: false,
+        open_item: None,
         search_mark: None,
         search_unknown: 0,
         search_known: Vec::new(),
@@ -590,6 +610,7 @@ pub(crate) fn project_v1(
         event_observed,
         items,
         stamps: w.stamps,
+        open_item: w.open_item,
         inconsistencies: w.inconsistencies,
         departure_known: w.departure_known,
     }
@@ -779,13 +800,10 @@ impl WalkV1<'_> {
             }
         }
         self.survivors.assert_laminar();
-        // The announcement's move lies after every decision mark (amendment
-        // 43.9, cut 1): see `open`.
-        self.stamps.push(if self.open {
-            (usize::MAX, usize::MAX)
-        } else {
-            self.committed
-        });
+        if self.open {
+            self.open_item = Some(self.item);
+        }
+        self.stamps.push(self.committed);
         self.item += 1;
     }
 

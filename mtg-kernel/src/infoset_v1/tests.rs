@@ -1252,20 +1252,33 @@ fn optional_cost_and_madness_records_travel_and_import() {
 
 /// Amendment 43.9, cut 1 (`same_name_batch`): the move of the spell being
 /// announced is walked after the committed stream, with the committed
-/// lengths V's cast decision was presented at. It belongs to the open batch
-/// (after every decision mark), never to the batch that the cast decision
-/// closes: otherwise an earlier same-name copy that left the same zone in
-/// that batch (a first Lightning Bolt cast and resolved before the second
-/// was cast) made every reference to the announced copy's origin epoch
-/// refuse. At every V decision with a pending cast in these mirrors, the
-/// spell's last span end lies in the open batch; witnesses are the
-/// decisions where a same-name copy of the owner left the same zone in the
-/// batch just before.
+/// lengths V's cast decision was presented at; it is the open item, a batch
+/// of its own, while every other item keeps the batch it had (bounds over
+/// the closed items, so event-less moves after it stay in the closed batch).
+/// At every V decision with a pending cast in these mirrors: the open item
+/// is the announced spell's move and has its own batch; every closed item
+/// keeps the batch the former placement gave it (recomputed here with the
+/// open item stamped like the others), the open item excepted; witnesses
+/// are decisions where the former placement put a same-name copy of the
+/// owner, leaving the same zone, in the open item's batch (the refusal
+/// the cut removes).
 #[test]
 fn the_announced_spell_moves_in_the_open_batch() {
     use crate::card_def::CARD_DEFS;
+    use super::projection::ProjectionV1;
+    let former = |p: &ProjectionV1, marks: &[(usize, usize)]| -> Vec<usize> {
+        let mut out: Vec<usize> = marks
+            .iter()
+            .map(|&(h, j)| p.stamps.iter().take_while(|&&(e, n)| e <= h && n <= j).count())
+            .filter(|&b| b < p.stamps.len())
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    };
     let mut pending = 0;
     let mut witnesses = 0;
+    let mut closed_checked = 0;
     for (decks, seeds) in [(["Burn", "Burn"], 0..30_u64), (["Faeries", "Faeries"], 0..30), (["Rally", "Rally"], 0..30)] {
         for seed in seeds {
             play(decks, 9_100 + seed, 500, |s, v| {
@@ -1274,35 +1287,43 @@ fn the_announced_spell_moves_in_the_open_batch() {
                     return;
                 };
                 let p = super::projection::project_v1(st, st.observation_journal.notes(), v);
+                let Some(open) = p.open_item else {
+                    return;
+                };
+                pending += 1;
                 let marks = s.infoset_marks_v1(v);
                 let bounds = p.batch_bounds(Some(&marks));
-                let Some(end) = p.objects[cast.spell.0 as usize]
+                let old = former(&p, &marks);
+                let old_batch = |item: usize| old.partition_point(|&b| b <= item);
+                let end = p.objects[cast.spell.0 as usize]
                     .spans
                     .iter()
                     .filter_map(|x| x.end)
-                    .filter(|e| e.zone != crate::state::Zone::Stack)
-                    .last()
-                else {
-                    return;
-                };
-                if end.item + 1 != p.items {
-                    return;
+                    .find(|e| e.item == open)
+                    .unwrap_or_else(|| panic!("seed {seed}: the open item is not the spell's move"));
+                assert_eq!(p.batch_of(&bounds, open), usize::MAX, "seed {seed}");
+                // Batches are runs of consecutive items: every two
+                // consecutive closed items keep their former relation.
+                let closed: Vec<usize> = (0..p.items).filter(|&a| a != open).collect();
+                for w in closed.windows(2) {
+                    assert_eq!(
+                        p.batch_of(&bounds, w[0]) == p.batch_of(&bounds, w[1]),
+                        old_batch(w[0]) == old_batch(w[1]),
+                        "seed {seed}: items {} and {}",
+                        w[0],
+                        w[1]
+                    );
+                    closed_checked += 1;
                 }
-                pending += 1;
-                let open = super::projection::ProjectionV1::batch_of(&bounds, end.item);
-                assert_eq!(open, bounds.len(), "seed {seed}: the announcement is in a closed batch");
                 let name = CARD_DEFS[st.objects.get(cast.spell).card_def as usize].name;
                 let owner = st.objects.get(cast.spell).owner;
-                let before = open.checked_sub(1);
                 if p.objects.iter().enumerate().any(|(i, o)| {
                     let other = st.objects.get(crate::ids::ObjectId(i as u32));
                     i != cast.spell.0 as usize
                         && other.owner == owner
                         && CARD_DEFS[other.card_def as usize].name == name
                         && o.spans.iter().filter_map(|x| x.end).any(|e| {
-                            e.from == end.from
-                                && Some(super::projection::ProjectionV1::batch_of(&bounds, e.item))
-                                    == before
+                            e.from == end.from && e.item != open && old_batch(e.item) == old_batch(open)
                         })
                 }) {
                     witnesses += 1;
@@ -1310,5 +1331,8 @@ fn the_announced_spell_moves_in_the_open_batch() {
             });
         }
     }
-    assert!(pending > 50 && witnesses > 0, "pending casts {pending}, witnesses {witnesses}");
+    assert!(
+        pending > 50 && witnesses > 0 && closed_checked > 0,
+        "pending casts {pending}, witnesses {witnesses}, closed pairs {closed_checked}"
+    );
 }
