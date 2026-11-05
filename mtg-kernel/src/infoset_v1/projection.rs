@@ -126,6 +126,10 @@ pub(crate) struct ProjectionV1 {
     pub library: [BTreeMap<u32, ObjectId>; 2],
     /// Tracker-rule facts about the opponent's hand, in tracker order.
     pub hand_facts: Vec<HandFactV1>,
+    /// Amendment 43.7: copies whose bound fact an identified departure of
+    /// another copy of the name ended (the adapter's rule). The engine's
+    /// knowledge rows may still list them; R5 allows that, for them only.
+    pub released: Vec<ObjectId>,
     pub survivors: SurvivorTreeV1,
     pub transfers: Vec<TransferV1>,
     pub arrivals: Vec<ArrivalV1>,
@@ -250,6 +254,7 @@ struct WalkV1<'a> {
     objs: Vec<ObjectTrackV1>,
     library: [BTreeMap<u32, ObjectId>; 2],
     hand: Vec<HandFactV1>,
+    released: Vec<ObjectId>,
     removed: Vec<(PlayerId, Option<ObjectId>)>,
     survivors: SurvivorTreeV1,
     transfers: Vec<TransferV1>,
@@ -309,6 +314,7 @@ pub(crate) fn project_v1(
         objs,
         library: [BTreeMap::new(), BTreeMap::new()],
         hand: Vec::new(),
+        released: Vec::new(),
         removed: Vec::new(),
         survivors: SurvivorTreeV1::default(),
         transfers: Vec::new(),
@@ -479,6 +485,7 @@ pub(crate) fn project_v1(
             .collect(),
         library: w.library,
         hand_facts: w.hand,
+        released: w.released,
         survivors: w.survivors,
         transfers: w.transfers,
         arrivals: w.arrivals,
@@ -1124,13 +1131,16 @@ impl WalkV1<'_> {
         if from != Zone::Hand || to == Zone::Hand {
             return;
         }
-        let tracked = self.objs[id.0 as usize].tracked;
         if is_public(to) || named {
-            // Identified as it leaves: drop its own fact, else one count fact
-            // with its name. A fact bound to another copy stays: V tells the
-            // copies apart by their public object ids, and the departure of
-            // a different object does not end that copy's span (6.1). The
-            // engine's own knowledge rows keep it too (R5 compares them).
+            // Identified as it leaves. Amendment 43.7 (lead ruling 12, Sol
+            // round 7): the adapter's rule (kernel_history_v2.py
+            // `_hand_move`): drop the copy's own fact, else an unbound fact
+            // of its name, else any fact of its name. Hand cards carry no
+            // id, so which copy left is not V's information; a bound fact of
+            // another copy that ends here releases that copy (the engine's
+            // rows may still list it; R5 allows it). The survivor tree loses
+            // the name only when no bound fact ended (a bound fact's copy
+            // was outside F, as before 43.7).
             let pos = self
                 .hand
                 .iter()
@@ -1139,11 +1149,19 @@ impl WalkV1<'_> {
                     self.hand
                         .iter()
                         .position(|f| f.native.is_none() && f.card_def == card_def)
-                });
+                })
+                .or_else(|| self.hand.iter().position(|f| f.card_def == card_def));
+            let mut bound_ended = false;
             if let Some(pos) = pos {
-                self.hand.remove(pos);
+                let fact = self.hand.remove(pos);
+                if let Some(other) = fact.native {
+                    bound_ended = true;
+                    if other != id {
+                        self.released.push(other);
+                    }
+                }
             }
-            if !tracked {
+            if !bound_ended {
                 self.survivors.identified_departure(card_def);
             }
             return;

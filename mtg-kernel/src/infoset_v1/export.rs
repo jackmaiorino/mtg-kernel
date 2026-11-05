@@ -441,7 +441,19 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
         .iter()
         .map(|k| (k.object.0, k.zone_change_count))
         .collect();
-    if projected != native {
+    // Amendment 43.7: a copy released by another copy's identified
+    // departure (the adapter's rule) may stay in the engine's rows.
+    let released: BTreeSet<(u32, u32)> = projection
+        .released
+        .iter()
+        .filter(|id| state.players[opp.index()].hand.contains(id))
+        .map(|id| (id.0, state.objects.get(*id).zone_change_count))
+        .collect();
+    if !projected.is_subset(&native)
+        || !native
+            .iter()
+            .all(|k| projected.contains(k) || released.contains(k))
+    {
         return Err(refuse(
             RefusalCodeV1::R5,
             "hand physical facts differ from native rows",
@@ -686,9 +698,14 @@ pub(crate) fn export_v1(
             // departure counts either way. The scan stops after the first
             // lapse: which later spans belong to the referenced copy is not
             // V's information there, and R1b decides.
+            // From the span the reference resolves to (Sol round 7: an
+            // older span ending at the same generation is history the
+            // reference does not name); without one, every end at or after g.
+            let from_span = projection.span_of(r.object, g).map(|s| s.start_item);
             let ends = track
                 .spans
                 .iter()
+                .filter(|s| from_span.is_none_or(|start| s.start_item >= start))
                 .filter_map(|s| s.end)
                 .filter(|e| e.last_gen >= g);
             let mut lapsed = false;

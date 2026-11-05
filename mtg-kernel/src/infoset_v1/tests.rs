@@ -660,10 +660,10 @@ fn a_reveal_never_links_the_unidentified_draw_before_it() {
 
 /// R5 regression (bridge, Wildfire seed 6): the opponent's hand holds a
 /// revealed copy A and an unrevealed copy B of one card; B leaves publicly.
-/// V's fact about A stays, as the engine's own knowledge rows do, so the
-/// export is not refused R5. Amendment 43.7 (lead ruling 12): A is no longer
-/// tracked in the hand (formerly it kept its `C:` handle); it stays known by
-/// name, as a known-name occupant with V's hand row. The name is kept for
+/// Formerly V's fact about A stayed and A kept its `C:` handle. Amendment
+/// 43.7 (lead ruling 12): A is not tracked in the hand, and B's departure
+/// ends V's fact of the name, as the adapter does; the engine's row for A is
+/// allowed, so the export is not refused R5. The name is kept for
 /// traceability.
 #[test]
 fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
@@ -711,8 +711,10 @@ fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
             ExportOptionsV1::default(),
         )
         .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
-        // Amendment 43.7: the revealed copy is not tracked in the hand; it
-        // stays known by name (a known-name occupant with V's hand row).
+        // Amendment 43.7: the revealed copy is not tracked in the hand, and
+        // B's identified departure ends V's only fact of the name (the
+        // adapter's rule: V cannot tell which copy left), so no known-name
+        // occupant of it remains; the engine's row for A is allowed (R5).
         assert!(
             !x.tracked_natives.contains(&a),
             "no opponent-hand copy is tracked"
@@ -721,7 +723,10 @@ fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
             .iter()
             .filter(|k| x.state.objects.get(k.object).card_def == st.objects.get(a).card_def)
             .count();
-        assert_eq!(known, 1, "the revealed copy stays known by name");
+        assert_eq!(
+            known, 0,
+            "the fact ended with the departure of a copy of its name"
+        );
         return;
     }
     panic!("no seed deals the opponent two copies of one card");
