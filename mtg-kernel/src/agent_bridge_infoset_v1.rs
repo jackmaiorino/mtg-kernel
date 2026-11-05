@@ -278,7 +278,8 @@ fn log_refusal_v1(
 /// The wire subclass of an export refusal: R3 names whose plan is pending
 /// (`opponent`, the design 6.7 predicate; `plan_error`, a search the planner
 /// could not read), R3b `own_library_search`, R1 `same_name_batch` (lead
-/// ruling 7 (a)), every other code `export`.
+/// ruling 7 (a)) and `same_name_hand` (amendment 43.6), every other code
+/// `export`.
 pub(crate) fn export_refusal_subclass_v1(error: &ExportErrorV1) -> &'static str {
     match error {
         ExportErrorV1::Refused {
@@ -299,6 +300,12 @@ pub(crate) fn export_refusal_subclass_v1(error: &ExportErrorV1) -> &'static str 
             code: crate::infoset_v1::RefusalCodeV1::R1,
             detail,
         } if detail == crate::infoset_v1::export::R1_SAME_NAME_BATCH_DETAIL => "same_name_batch",
+        // Amendment 43.6 (lead ruling 9 (b)): equal-key copies in the
+        // opponent's hand, one left V's tracking. A C5 fault, tallied apart.
+        ExportErrorV1::Refused {
+            code: crate::infoset_v1::RefusalCodeV1::R1,
+            detail,
+        } if detail == crate::infoset_v1::export::R1_SAME_NAME_HAND_DETAIL => "same_name_hand",
         _ => "export",
     }
 }

@@ -103,6 +103,13 @@ pub(crate) const R3_UNREADABLE_DETAIL: &str = "library-search plan unreadable";
 pub(crate) const R1_SAME_NAME_BATCH_DETAIL: &str =
     "a live reference names one of two same-name objects that left in one batch V cannot order";
 
+/// R1's detail for a live reference to a copy that sat in the opponent's
+/// hand beside another copy with equal 43.4 keys when one of them left V's
+/// tracking (amendment 43.6, lead ruling 9 (b)): the wire subclass
+/// `same_name_hand`, a C5 fault.
+pub(crate) const R1_SAME_NAME_HAND_DETAIL: &str =
+    "a live reference names one of two same-name copies in the opponent's hand that V cannot tell apart";
+
 fn refuse(code: RefusalCodeV1, detail: impl Into<String>) -> ExportErrorV1 {
     ExportErrorV1::refuse(code, detail)
 }
@@ -659,6 +666,28 @@ pub(crate) fn export_v1(
                 if projection.span_of(r.object, *g).is_some()
                     && unread_paid.contains(&(r.object, *g)))
     };
+
+    // Amendment 43.6 (lead ruling 9 (b)), first of the R1 family: a live
+    // reference (contract, binding, receipt or paid-cost record) to a copy
+    // that sat in the opponent's hand beside another copy with equal 43.4
+    // keys when one of them left V's tracking, made at or before the
+    // copy's epoch in that hand (or carrying no epoch), refuses. The
+    // candidate set is the same whichever copy left, so this runs before
+    // every test that reads which copy V still tracks.
+    for (r, region) in &refs {
+        if *region != "live" {
+            continue;
+        }
+        let crossed = projection.hand_ambiguities.iter().any(|a| {
+            a.candidates.iter().any(|&(o, g_hand)| {
+                o == r.object
+                    && (r.generations.is_empty() || r.generations.iter().any(|&g| g <= g_hand))
+            })
+        });
+        if crossed {
+            return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
+        }
+    }
 
     // R1b first (a name-level, public-event predicate), then R1 and R2.
     for (r, region) in &refs {
