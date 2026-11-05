@@ -434,6 +434,8 @@ pub enum Subtype {
     Nomad,
     Scarecrow,
     Peasant,
+    /// Appended for the eternal catalog's Premodern wave P1b (Psychatog).
+    Atog,
     /// Appended for the eternal catalog's Premodern wave P1a (Jackal Pup,
     /// Hypnotic Specter, Nantuko Shade and Mystic Enforcer).
     Jackal,
@@ -805,6 +807,8 @@ impl Subtype {
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Peasant,
         #[cfg(feature = "eternal-fixtures")]
+        Subtype::Atog,
+        #[cfg(feature = "eternal-fixtures")]
         Subtype::Jackal,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Specter,
@@ -1046,10 +1050,11 @@ impl Subtype {
             201 => Subtype::Nomad,
             202 => Subtype::Scarecrow,
             203 => Subtype::Peasant,
-            204 => Subtype::Jackal,
-            205 => Subtype::Specter,
-            206 => Subtype::Shade,
-            207 => Subtype::Mystic,
+            204 => Subtype::Atog,
+            205 => Subtype::Jackal,
+            206 => Subtype::Specter,
+            207 => Subtype::Shade,
+            208 => Subtype::Mystic,
             _ => return None,
         })
     }
@@ -1263,6 +1268,7 @@ impl Subtype {
             Subtype::Nomad => true,
             Subtype::Scarecrow => true,
             Subtype::Peasant => true,
+            Subtype::Atog => true,
             Subtype::Jackal => true,
             Subtype::Specter => true,
             Subtype::Shade => true,
@@ -1365,6 +1371,7 @@ impl Subtype {
                     | Subtype::Nomad
                     | Subtype::Scarecrow
                     | Subtype::Peasant
+                    | Subtype::Atog
                     | Subtype::Jackal
                     | Subtype::Specter
                     | Subtype::Shade
@@ -2529,6 +2536,9 @@ pub enum DynamicValueDef {
     /// Undermountain Adventurer: 2, or 6 once the evaluating controller has
     /// completed a dungeon. Appended for the eternal catalog.
     SixIfDungeonCompletedElseTwoV1,
+    /// The cards in all graveyards named as the definition with this id
+    /// (Accumulated Knowledge). Appended for the eternal catalog.
+    GraveyardCardsNamedV1(u16),
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -3848,7 +3858,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x0732_c6e2_1c93_8e36;
+        const EXPECTED_ETERNAL: u64 = 0xbaca_d3c1_a636_ec7d;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

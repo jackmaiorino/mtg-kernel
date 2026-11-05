@@ -334,6 +334,12 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::GraveyardCardsNamedV1(_) => {
+            // Cards with one name in all graveyards.
+            // Vocabulary gap: no name-class read.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicValueDef::SixIfDungeonCompletedElseTwoV1 => {
             // Two, or six once the controller completed a dungeon.
             // Vocabulary gap: no dungeon read.

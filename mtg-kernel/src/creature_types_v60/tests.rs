@@ -97,17 +97,18 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
         (Subtype::Nomad, 201, CreatureTypeV60::Nomad),
         (Subtype::Scarecrow, 202, CreatureTypeV60::Scarecrow),
         (Subtype::Peasant, 203, CreatureTypeV60::Peasant),
-        (Subtype::Jackal, 204, CreatureTypeV60::Jackal),
-        (Subtype::Specter, 205, CreatureTypeV60::Specter),
-        (Subtype::Shade, 206, CreatureTypeV60::Shade),
-        (Subtype::Mystic, 207, CreatureTypeV60::Mystic),
+        (Subtype::Atog, 204, CreatureTypeV60::Atog),
+        (Subtype::Jackal, 205, CreatureTypeV60::Jackal),
+        (Subtype::Specter, 206, CreatureTypeV60::Specter),
+        (Subtype::Shade, 207, CreatureTypeV60::Shade),
+        (Subtype::Mystic, 208, CreatureTypeV60::Mystic),
     ] {
         assert_eq!(subtype.stable_id(), id);
         assert_eq!(canonical_native_type(subtype), Some(kind));
     }
-    assert_eq!(canonical.len(), 151);
-    assert!(native_subtype(208).is_none());
-    assert!(Subtype::from_stable_id(208).is_none());
+    assert_eq!(canonical.len(), 152);
+    assert!(native_subtype(209).is_none());
+    assert!(Subtype::from_stable_id(209).is_none());
     assert!(Subtype::from_stable_id(u16::MAX).is_none());
     for (alias, normal, expected) in [
         (Subtype::BirdAllCaps, Subtype::Bird, CreatureTypeV60::Bird),

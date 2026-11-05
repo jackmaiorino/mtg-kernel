@@ -12,6 +12,8 @@ Stage 1b (XS, paired with Stage 1a's C chains, beside the frozen filler) all go 
   chains.py end --plan PLAN.json --chain NAME --reason TEXT [--boundary B]
   chains.py segcheck --plan PLAN.json --arm ARM --out RECEIPT.json
   chains.py clean-fillers --plan PLAN.json [--apply]
+  chains.py throughput --plan PLAN.json --arm ARM --label L --updates N --out RECORD.json [--counts 1,6]
+  chains.py stage0-exit --record RECORD.json [--record ...] [--r-nom-usec R] --out REPORT.json
   internal: `_drive` and `_filler` (started by w5box inside a box), `_replay` (started by supervise)
 
 **Inputs** (`w5-chains-inputs/v1`, written by the lead at freeze): `stage` (0, 1a, 1b), `label` (default
@@ -96,10 +98,33 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
   the index file's new lines and the receipts past them, and the rolling plan and the guard skip records whose
   full-state files are all gone and old segments whose trajectories are gone (nothing writes into a completed
   iteration again), with the same decisions as reading everything. A one-shot `supervise` reads everything.
+
+**Box throughput** (`throughput`, Stage 0, COMPUTE-POLICY items 2 to 5): writes the `w5-box-throughput/v1` record
+w5box's guard requires for one arm of a plan. Each phase (default: one box, then every box of the layout) is a
+Stage 0 plan derived from the plan's own inputs, so the arm file, filler, environment and w5box launch
+specification are byte-identical and the phase binds what the plan launches (checked: equal throughput bindings).
+Its chains (`<label>-<arm>-p<count>-s<slot>`, slots 0 to count - 1, all on one seed root, default
+`w5/throughput`) run fresh through `chains.py run` in qualification mode, under this command's own supervise
+cycles without fills; the node runs whole until every box has completed N updates (so each box's window has every
+other box busy), then every chain ends at once (STOP files, then w5box kills: a chain ended alone would leave a
+handoff outage freezing the rest), and a chain that exits before every box is done fails the phase.
+Per box: updates N, the ledger at boundary N (in-box CPU), the in-box wall from the instance's start to boundary
+N less node-frozen intervals (a phase's first chains start held until every box is occupied), and identity rows
+(the after-state hash of every boundary 1 to N), which must be equal in every box of every phase. The record also
+carries rates, in-box utilization (CPU per wall over the box's threads), each box's chain `memory.peak` and the
+node's lowest MemAvailable and highest Committed_AS while the phase ran. A passing record goes to `--out` and the
+qualification chains' segment trees (regenerable bulk) are removed; a failing one goes to `<out>.failed.json`
+with every tree kept. `stage0-exit` reads records of several arms and reports, without deciding, the Stage 0 exit
+numbers of section 6: per arm in-box utilization, R_nom (given, else provisional: the C record's mean full-node box
+CPU rate x 7 days), each X arm's projected days to R_nom, and where the worst X arm falls in the declared
+response (launch; cap ceil(1.2 x days); 3-core boxes; stop). Choices (not design constants): N is whole segments,
+at least two (so per-segment startup is in the window); a projection uses the arm's mean full-node box rate (the
+slowest box is reported beside it); a single-arm full node stands in for Stage 1's mixed node.
 """
 import argparse
 import copy
 import json
+import math
 import os
 import re
 import shutil
@@ -1625,9 +1650,10 @@ def occupancy(plan, root):
     return out
 
 
-def cycle(plan, plan_path, now=None, caches=None):
+def cycle(plan, plan_path, now=None, caches=None, fills=True):
     """One supervise cycle. `caches` (manifest path to `retention.IndexCache`, kept by `supervise --loop` across
-    cycles) gives the same decisions without reading every index record and file again."""
+    cycles) gives the same decisions without reading every index record and file again; `fills=False` (the box
+    throughput command) starts no fillers."""
     now = time.time() if now is None else now
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
@@ -1697,7 +1723,7 @@ def cycle(plan, plan_path, now=None, caches=None):
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
     report['kills'] = enforce_ends(plan, root)
-    report['fills'] = occupancy(plan, root)
+    report['fills'] = occupancy(plan, root) if fills else None
     report['purged'] = purge_hold(root, plan['hold_days'], now)
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
@@ -1814,6 +1840,398 @@ def clean_fillers(a):
     return 0
 
 
+# ---------------------------------------------------------------- box throughput (Stage 0)
+
+THROUGHPUT_SEED_ROOT = 'w5/throughput'
+THROUGHPUT_QUALIFICATION = 'w5-box-throughput'
+THROUGHPUT_POLL = 0.5
+THROUGHPUT_CYCLE = 10.0
+THROUGHPUT_STOP_GRACE = 600.0
+STAGE0_EXIT_SCHEMA = 'w5-stage0-exit/v1'
+X_CAP_DAYS = retention.X_CAP_SECONDS / retention.DAY  # 10.5: section 6's launch bound and default cap
+RESPONSE_CAP_DAYS = 14.0  # section 6: the cap response applies up to 14 projected days
+RESPONSE_CAP_FACTOR = 1.2
+
+
+def arm_binding(plan, arm):
+    """w5box's throughput binding of the arm's launch plan (arm-level: any of its chains gives the same)."""
+    spec = (plan['arms'].get(arm) or {}).get('w5box_plan')
+    require(spec is not None, f'the plan has no w5box launch plan for arm {arm}')
+    box = read(spec['path'])
+    require(box['chains'], f'the {arm} launch plan has no chains')
+    return w5box.throughput_binding(box, next(iter(box['chains'].values())))
+
+
+def throughput_inputs(plan, arm, label, count, seed_root):
+    """A phase's Stage 0 inputs: the plan's own inputs (so arm file, filler and launch specification are the same
+    bytes) with `count` chains of `arm` on slots 0 to count - 1, all on one seed root, and no throughput records
+    (a stale one would make w5box check it)."""
+    check_pin(plan['inputs'], 'the plan inputs')
+    doc = copy.deepcopy(read(plan['inputs']['path']))
+    doc['stage'], doc['label'] = '0', f'{label}-{arm.lower()}-p{count}'
+    require(NAME.fullmatch(f'{doc["label"]}-s{count - 1}') is not None,
+            f'label {label}: phase and chain names must be lowercase letters, digits and dashes (32 at most)')
+    for spec in doc['arms'].values():
+        spec.pop('throughput', None)
+    doc['chains'] = {f'{doc["label"]}-s{k}': {'arm': arm, 'slot': k, 'seed_root': seed_root} for k in range(count)}
+    return doc
+
+
+def throughput_plans(plan_path, arm, label, counts, seed_root=THROUGHPUT_SEED_ROOT):
+    """The phase plans, each checked to bind exactly what the plan launches for the arm, with fresh chains."""
+    plan = load_plan(plan_path)
+    require(arm in MEASURED, f'{arm} is not a measured arm')
+    binding = arm_binding(plan, arm)
+    require(counts and counts[0] == 1 and counts[-1] == binding['boxes'] and counts == sorted(set(counts)),
+            f'phase box counts must rise from 1 to every box ({binding["boxes"]}): {counts}')
+    root = Path(plan['root'])
+    out = []
+    for count in counts:
+        doc = throughput_inputs(plan, arm, label, count, seed_root)
+        for name in doc['chains']:
+            require(not chain_dir(root, name).exists(), f'{name} exists: a throughput label is used once')
+        inputs_path = root / 'plan' / doc['label'] / 'INPUTS.json'
+        write(inputs_path, doc)
+        path, phase = make_plan(inputs_path)
+        require(arm_binding(phase, arm) == binding, f'phase {doc["label"]} binds another launch specification')
+        out.append((path, phase))
+    return plan, binding, out
+
+
+def node_idle(root):
+    """No chain, fill or open outage, fault or freeze on the node: the phases measure the boxes alone."""
+    state = Path(root) / 'state'
+    owners = [p.name for p in state.glob('box*.owner.json')]
+    fills = [p.name for p in state.glob('box*.fill.json')]
+    records, torn = w5box.NodeLog(state).read()
+    node = w5box.NodeLog.state(records, torn)
+    require(not owners and not fills, f'the node runs chains or fills: {owners + fills}')
+    require(not node['frozen'], 'the node log has an open outage, fault, freeze or torn tail')
+
+
+def meminfo():
+    try:
+        rows = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines() if ':' in line)
+    except OSError:
+        return {}
+    return {k: int(rows[k].split()[0]) * 1024 for k in ('MemAvailable', 'Committed_AS') if k in rows}
+
+
+def sample_memory(plan, peaks, node):
+    """Each running chain cgroup's `memory.peak` (else `memory.current`), and the node's MemAvailable and
+    Committed_AS, folded into the phase's extremes."""
+    for name, c in plan['chains'].items():
+        cg = Path(plan['cgroup_root']) / f'box{c["slot"]}' / 'chain'
+        for f in ('memory.peak', 'memory.current'):
+            try:
+                value = int((cg / f).read_text().split()[0])
+            except (OSError, ValueError, IndexError):
+                continue
+            peaks[name] = max(peaks.get(name) or 0, value)
+            break
+    info = meminfo()
+    if 'MemAvailable' in info:
+        node['mem_available_min_bytes'] = min(node.get('mem_available_min_bytes') or info['MemAvailable'],
+                                              info['MemAvailable'])
+    if 'Committed_AS' in info:
+        node['committed_as_max_bytes'] = max(node.get('committed_as_max_bytes') or 0, info['Committed_AS'])
+
+
+def box_threads(plan, slot):
+    return len(read(plan['layout']['path'])['boxes'][slot]['cpus'])
+
+
+def box_measurement(plan, name, updates, threads, memory_peak=None):
+    """One box's completed work over its first `updates` updates (module docstring, "Box throughput")."""
+    root = Path(plan['root'])
+    c = plan['chains'][name]
+    _, records = retention.index(c['manifest'])
+    require(len(records) >= updates, f'{name} completed {len(records)} of {updates} updates')
+    recs = records[:updates]
+    require(all(r['ledger_usec'] is not None and r['unix_seconds'] is not None for r in recs),
+            f'{name}: an update receipt lacks its chain ledger')
+    require({r['instance'] for r in recs} == {0}, f'{name}: the window spans a launcher restart')
+    led = w5box.Ledger(ledger_path(root, name)).records() if ledger_path(root, name).exists() else []
+    starts = [r['unix'] for r in led if r['event'] == 'start' and r['instance'] == 0]
+    require(starts, f'{name}: no launcher start in its ledger')
+    start, end = starts[0], recs[-1]['unix_seconds']
+    held = sum(max(0.0, min(end, b) - max(start, a)) for a, b in frozen_intervals(root, end))
+    seconds, usec = end - start - held, recs[-1]['ledger_usec']
+    require(seconds > 0 and usec > 0, f'{name}: no in-box wall or CPU over the window')
+    cpu_per_wall = usec / 1e6 / seconds
+    return {'chain': name, 'slot': c['slot'], 'updates': updates, 'seconds': seconds, 'ledger_usec': usec,
+            'start_unix': start, 'end_unix': end, 'held_seconds': held,
+            'updates_per_wall_second': updates / seconds, 'updates_per_cpu_second': updates / (usec / 1e6),
+            'in_box_cpu_per_wall': cpu_per_wall, 'in_box_utilization': cpu_per_wall / threads,
+            'memory_peak_bytes': memory_peak,
+            'identity': {f'b{r["boundary"]:09d}': r['after_state_sha256'] for r in recs}}
+
+
+def throughput_record(binding, phases, meta):
+    """The `w5-box-throughput/v1` record, checked by w5box's own guard rule before it is returned."""
+    record = {'schema': w5box.THROUGHPUT_SCHEMA, 'binding': binding, 'phases': phases, 'qualification': meta}
+    try:
+        guard = w5box.require_throughput(record, binding)
+    except (w5box.Refusal, KeyError, IndexError) as exc:
+        raise Stop(f'the record fails the launcher guard: {exc}')
+    serial = phases[0]['boxes'][0]['updates_per_wall_second']
+    full = phases[-1]['boxes']
+    record['summary'] = dict(guard, serial_updates_per_second=serial,
+                             full_node_speedup=guard['full_node_updates_per_second'] / serial,
+                             per_box_rate_vs_serial=guard['full_node_updates_per_second'] / len(full) / serial,
+                             in_box_utilization=[b['in_box_utilization'] for b in full])
+    record['pass'] = True
+    return record
+
+
+def identity_differences(phases):
+    ref = phases[0]['boxes'][0]['identity'] if phases and phases[0]['boxes'] else {}
+    out = []
+    for phase in phases:
+        for b in phase['boxes']:
+            diff = sorted(k for k in set(ref) | set(b['identity']) if ref.get(k) != b['identity'].get(k))
+            if diff:
+                out.append({'chain': b['chain'], 'first': diff[0], 'count': len(diff)})
+    return out
+
+
+def spawn_run(plan_path, name, max_wall):
+    """The chain through `chains.py run` (and so the guarded w5box launcher) in qualification mode."""
+    return subprocess.Popen([sys.executable, str(HERE / 'chains.py'), 'run', '--plan', str(plan_path), '--chain',
+                             name, '--qualification', THROUGHPUT_QUALIFICATION, '--max-wall-seconds',
+                             str(max_wall)], stdin=subprocess.DEVNULL)
+
+
+def launch_phase(plan_path):
+    old, sys.stdout = sys.stdout, open(os.devnull, 'w')
+    try:
+        return launch(argparse.Namespace(plan=str(plan_path)))
+    finally:
+        sys.stdout.close()
+        sys.stdout = old
+
+
+def stop_chains(plan, names):
+    for n in names:
+        p = chain_dir(plan['root'], n) / 'STOP'
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text('throughput window complete\n')
+
+
+def reached(plan, name, updates):
+    """The chain has completed update N - 1 (boundary N): its receipt exists (N is whole segments)."""
+    length = plan['arms'][plan['chains'][name]['arm']]['segment_updates']
+    return (chain_dir(plan['root'], name) / f'seg-{updates // length - 1:05d}' / 'iterations' /
+            f'{length - 1:06d}' / 'complete.json').exists()
+
+
+def end_phase(plan, procs, poll):
+    """Every chain of the phase goes at once: STOP files (no new segment, no rerun), then w5box kills. A chain
+    stopped alone would leave its box a handoff outage that freezes the rest of the node. Returns the chains still
+    running after the grace."""
+    stop_chains(plan, procs)
+    for n, p in procs.items():
+        if p.poll() is None and live(plan['root'], n):
+            try:
+                request(plan, n, 'kill')
+            except Stop as exc:
+                log(plan['root'], chain=n, event='throughput-kill-failed', reason=str(exc))
+    deadline = time.monotonic() + THROUGHPUT_STOP_GRACE
+    for p in procs.values():
+        while p.poll() is None and time.monotonic() < deadline:
+            time.sleep(poll)
+    return sorted(n for n, p in procs.items() if p.poll() is None)
+
+
+def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=launch_phase, poll=THROUGHPUT_POLL):
+    """One phase: a guard verdict, the launch hold and every chain started; the node runs whole until every box has
+    completed N updates (so each box's window has every other box busy), then all chains end together. Supervise
+    cycles run throughout without fills (a qualification box holds no filler). A chain that exits before every box
+    is done fails the phase."""
+    names = sorted(plan['chains'])
+    cycle(plan, plan_path, fills=False)  # a guard verdict and admission ceilings before any driver starts
+    launcher(plan_path)
+    procs, peaks, node, short, last = {}, {}, {}, None, time.monotonic()
+    try:
+        for n in names:
+            procs[n] = spawn(plan_path, n, max_wall)
+        while True:
+            done = {n for n in names if reached(plan, n, updates)}
+            if len(done) == len(names):
+                break
+            # Any exit before every box is done ends the phase: the exited box's handoff outage freezes its peers
+            # (one that exits after its own N included).
+            gone = sorted(n for n in names if procs[n].poll() is not None)
+            if gone:
+                short = {n: procs[n].returncode for n in gone}
+                break
+            sample_memory(plan, peaks, node)
+            if time.monotonic() - last >= THROUGHPUT_CYCLE:
+                cycle(plan, plan_path, fills=False)
+                last = time.monotonic()
+            time.sleep(poll)
+    finally:
+        running = end_phase(plan, procs, poll)
+    exits = {n: p.returncode for n, p in procs.items()}
+    if short:
+        raise Stop(f'{sorted(short)} exited {short} before every box completed {updates} updates')
+    require(not running, f'{running} did not end within {THROUGHPUT_STOP_GRACE:g} s of the kill')
+    boxes = [box_measurement(plan, n, updates, box_threads(plan, plan['chains'][n]['slot']), peaks.get(n))
+             for n in names]
+    return {'concurrent_boxes': len(names), 'label': plan['label'], 'plan': pin(plan_path), 'exits': exits,
+            'node_memory': node, 'boxes': sorted(boxes, key=lambda b: b['slot'])}
+
+
+def drop_trees(plan):
+    """A passing record's qualification chains: their segment trees (regenerable bulk) are removed."""
+    removed = 0
+    for n in plan['chains']:
+        for seg in sorted(chain_dir(plan['root'], n).glob('seg-*')):
+            if seg.is_dir() and not is_link(seg):
+                removed += retention.tree_bytes(seg)
+                shutil.rmtree(seg)
+    return removed
+
+
+def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5box.UNQUALIFIED_MAX_WALL,
+                   seed_root=THROUGHPUT_SEED_ROOT, spawn=spawn_run, launcher=launch_phase, poll=THROUGHPUT_POLL,
+                   keep_trees=False):
+    """`chains.py throughput` (module docstring): phases, measurements, the record. Returns (passed, record)."""
+    target = load_plan(plan_path)
+    require(arm in target['arms'], f'the plan has no arm {arm}')
+    boxes = len(read(target['layout']['path'])['boxes'])
+    counts = counts or [1, boxes]
+    length = target['arms'][arm]['segment_updates']
+    require(updates % length == 0 and updates >= 2 * length,
+            f'N must be whole {arm} segments of {length} updates, at least two')
+    require(0 < max_wall <= w5box.UNQUALIFIED_MAX_WALL, 'a phase wall cap is at most the unqualified 6 hours')
+    root = Path(target['root'])
+    require(not (root / 'STOP').exists(), 'a node STOP file is present')
+    held = lock(root / 'SUPERVISE.lock')
+    require(held is not None, 'another supervise holds this node')
+    phases, plans, started, failure = [], [], time.time(), None
+    try:
+        node_idle(root)
+        target, binding, derived = throughput_plans(plan_path, arm, label, counts, seed_root)
+        for path, phase in derived:
+            plans.append(phase)
+            phases.append(run_phase(path, phase, updates, max_wall, spawn, launcher, poll))
+    except Stop as exc:
+        if not plans:  # refused before any chain ran
+            raise
+        failure = f'phase {plans[-1]["label"]}: {exc}'
+    finally:
+        for phase in plans:
+            close_handoffs(phase, root)
+        unlock(held)
+    uname = os.uname() if hasattr(os, 'uname') else None
+    meta = {'plan': pin(plan_path), 'label': label, 'arm': arm, 'updates': updates, 'seed_root': seed_root,
+            'counts': counts, 'segment_updates': length, 'box_threads': box_threads(target, 0),
+            'host_class': target['host_class'], 'hostname': uname and uname.nodename,
+            'kernel': uname and uname.release, 'tools': tools_shas(), 'started_unix': started,
+            'finished_unix': time.time()}
+    try:
+        require(failure is None, failure)
+        record = throughput_record(binding, phases, meta)
+        passed = True
+    except Stop as exc:
+        record = {'schema': w5box.THROUGHPUT_SCHEMA, 'binding': binding, 'phases': phases, 'qualification': meta,
+                  'pass': False, 'why': str(exc), 'identity_differences': identity_differences(phases)}
+        passed = False
+    if passed:
+        record['qualification']['removed_tree_bytes'] = 0 if keep_trees else sum(drop_trees(p) for p in plans)
+        write(out, record)
+    else:
+        write(Path(f'{out}.failed.json'), record)
+    log(root, event='throughput', arm=arm, label=label, passed=passed, out=str(out))
+    return passed, record
+
+
+def throughput(a):
+    require(sys.platform.startswith('linux'), 'the box throughput qualification runs the W5 launcher (Linux only)')
+    counts = [int(x) for x in a.counts.split(',')] if a.counts else None
+    passed, record = throughput_run(a.plan, a.arm, a.label, a.updates, a.out, counts, a.max_wall_seconds,
+                                    a.seed_root, keep_trees=a.keep_trees)
+    print(json.dumps({'pass': passed, 'summary': record.get('summary'), 'why': record.get('why'),
+                      'out': a.out if passed else f'{a.out}.failed.json'}, indent=1))
+    return 0 if passed else 1
+
+
+def stage0_exit(records, r_nom_usec=None):
+    """Section 6's Stage 0 exit numbers from box throughput records (reported, never decided here)."""
+    arms, shapes = {}, set()
+    for rec in records:
+        try:
+            w5box.require_throughput(rec, rec['binding'])
+            threads = rec['qualification']['box_threads']
+        except (w5box.Refusal, KeyError, TypeError, IndexError) as exc:
+            raise Stop(f'not a passing w5-box-throughput/v1 record: {exc}')
+        b = rec['binding']
+        require(b['arm'] in MEASURED and b['arm'] not in arms, f'a second record of arm {b["arm"]}, or not an arm')
+        shapes.add((b['host_class'], b['positions_sha256'], b['cores_per_box'], b['boxes']))
+        full, serial = rec['phases'][-1]['boxes'], rec['phases'][0]['boxes'][0]
+        rates = [x['ledger_usec'] / x['seconds'] for x in full]
+        arms[b['arm']] = {
+            'box_cpu_usec_per_wall_second_mean': sum(rates) / len(rates),
+            'box_cpu_usec_per_wall_second_min': min(rates),
+            'in_box_utilization_mean': sum(rates) / len(rates) / 1e6 / threads,
+            'in_box_utilization_min': min(rates) / 1e6 / threads,
+            'in_box_utilization_serial': serial['ledger_usec'] / serial['seconds'] / 1e6 / threads,
+            'updates_per_wall_second_per_box': sum(x['updates'] / x['seconds'] for x in full) / len(full),
+            'updates_per_cpu_second': sum(x['updates'] / (x['ledger_usec'] / 1e6) for x in full) / len(full),
+            'box_threads': threads, 'boxes': b['boxes'], 'cores_per_box': b['cores_per_box'],
+            'memory_peak_bytes_max': max([x.get('memory_peak_bytes') or 0 for x in full]) or None,
+            'node_mem_available_min_bytes': (rec['phases'][-1].get('node_memory') or {}).get('mem_available_min_bytes'),
+            'binding': b}
+    require(len(shapes) == 1, 'the records measure different hosts or box layouts')
+    host, _, cores, boxes = shapes.pop()
+    if r_nom_usec is None:
+        require('C' in arms, 'R_nom needs --r-nom-usec or a C record')
+        r_nom_usec = arms['C']['box_cpu_usec_per_wall_second_mean'] * C_WALL
+        r_source = 'provisional: the C record\'s mean full-node box CPU rate x the 7-day C wall'
+    else:
+        require(r_nom_usec > 0, 'R_nom must be positive')
+        r_source = 'given'
+    days = {}
+    for name, arm in sorted(arms.items()):
+        if name == 'C':
+            continue
+        arm['projected_days_to_r_nom'] = r_nom_usec / arm['box_cpu_usec_per_wall_second_mean'] / retention.DAY
+        arm['projected_days_slowest_box'] = r_nom_usec / arm['box_cpu_usec_per_wall_second_min'] / retention.DAY
+        days[name] = arm['projected_days_to_r_nom']
+    reading = None
+    if days:
+        worst = max(days.values())
+        if worst <= X_CAP_DAYS:
+            reading = {'branch': 'launch', 'text': f'every measured X arm projects at most {X_CAP_DAYS:g} days'}
+        elif worst <= RESPONSE_CAP_DAYS:
+            cap = math.ceil(RESPONSE_CAP_FACTOR * worst)
+            reading = {'branch': 'cap', 'x_cap_days': cap,
+                       'text': f'the X cap becomes ceil({RESPONSE_CAP_FACTOR:g} x {worst:.3f}) = {cap} days'}
+        elif cores == 2:
+            reading = {'branch': 'widen', 'text': 'every box widens to 3 cores (4 boxes per node); Stage 0 '
+                                                  'remeasures'}
+        else:
+            reading = {'branch': 'stop', 'text': f'the worst X arm projects {worst:.3f} days at {cores}-core boxes: '
+                                                 'W5 stops for a design amendment'}
+        reading.update(worst_arm=max(days, key=days.get), worst_days=worst)
+    return {'schema': STAGE0_EXIT_SCHEMA, 'host_class': host, 'cores_per_box': cores, 'boxes': boxes,
+            'r_nom_usec': r_nom_usec, 'r_nom_source': r_source, 'arms': arms, 'declared_response_reading': reading,
+            'x_arms_not_measured': [a for a in ('X8', 'XS') if a not in arms],
+            'note': 'Reported for the lead, who applies the declared response at freeze. A single-arm full node '
+                    'stands in for Stage 1\'s mixed node.'}
+
+
+def stage0_exit_cmd(a):
+    report = stage0_exit([read(p) for p in a.record], a.r_nom_usec)
+    report['records'] = [pin(p) for p in a.record]
+    write(a.out, report)
+    print(json.dumps({k: report[k] for k in ('r_nom_usec', 'r_nom_source', 'declared_response_reading',
+                                             'x_arms_not_measured')}, indent=1))
+    return 0
+
+
 # ---------------------------------------------------------------- main
 
 def main(argv=None):
@@ -1843,6 +2261,20 @@ def main(argv=None):
     p = sub.add_parser('clean-fillers')
     p.add_argument('--plan', required=True)
     p.add_argument('--apply', action='store_true')
+    p = sub.add_parser('throughput')
+    p.add_argument('--plan', required=True)
+    p.add_argument('--arm', required=True, choices=MEASURED)
+    p.add_argument('--label', required=True)
+    p.add_argument('--updates', type=int, required=True)
+    p.add_argument('--out', required=True)
+    p.add_argument('--counts')
+    p.add_argument('--max-wall-seconds', type=float, default=w5box.UNQUALIFIED_MAX_WALL)
+    p.add_argument('--seed-root', default=THROUGHPUT_SEED_ROOT)
+    p.add_argument('--keep-trees', action='store_true')
+    p = sub.add_parser('stage0-exit')
+    p.add_argument('--record', action='append', required=True)
+    p.add_argument('--r-nom-usec', type=int)
+    p.add_argument('--out', required=True)
     p = sub.add_parser('_drive')
     for flag in ('--arm-file', '--chain', '--seed-root', '--state', '--ledger-source'):
         p.add_argument(flag, required=True)
@@ -1862,7 +2294,8 @@ def main(argv=None):
                               'xs_recipe_differences': plan['xs_recipe_differences']}, indent=1))
             return 0
         return {'run': run, 'launch': launch, 'supervise': supervise, 'status': status, 'end': end_cmd,
-                'segcheck': segcheck, 'clean-fillers': clean_fillers, '_drive': drive, '_filler': filler,
+                'segcheck': segcheck, 'clean-fillers': clean_fillers, 'throughput': throughput,
+                'stage0-exit': stage0_exit_cmd, '_drive': drive, '_filler': filler,
                 '_replay': replay_cmd}[a.cmd](a)
     except Stop as exc:
         print(f'refused: {exc}', file=sys.stderr)

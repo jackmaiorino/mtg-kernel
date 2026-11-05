@@ -5557,6 +5557,12 @@ fn materialize_event_v1(
         }
         ProposedEvent::Tap(t) => {
             state.objects.get_mut(t.object).tapped = true;
+            // City of Brass's trigger keeps its source if the land then
+            // leaves before triggers are collected (Premodern wave P1b).
+            #[cfg(feature = "eternal-fixtures")]
+            if !mode.is_scene() {
+                crate::eternal_premodern_p1b_v1::city_tapped(state, t.object);
+            }
             CommittedEvent::Tap { object: t.object }
         }
         ProposedEvent::ManaAdd(m) => {

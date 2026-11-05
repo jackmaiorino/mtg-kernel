@@ -365,6 +365,12 @@ pub enum StandardTargetV1 {
     /// "Up to one target permanent card in your graveyard that was put there
     /// from the battlefield this turn" (Samwise the Stouthearted).
     UpToOnePermanentCardDiedThisTurnV1,
+    /// "Target creature with power less than or equal to the number of
+    /// treasure counters on this enchantment" (Legacy's Allure). Premodern
+    /// wave P1b's filters follow (`eternal_premodern_p1b_v1::targets`).
+    CreaturePowerAtMostTreasureCountersV1,
+    /// "Target Assembly-Worker creature" (Mishra's Factory).
+    AssemblyWorkerCreatureV1,
     /// "2 damage divided as you choose among one or two targets" (Fire):
     /// two picks among creatures, planeswalkers and players, one point of
     /// damage each; a target may be picked twice. Premodern wave P1a's
@@ -380,6 +386,9 @@ impl StandardTargetV1 {
     /// How many targets this filter takes, and how many at least.
     pub(crate) fn counts(self) -> (u8, u8) {
         if let Some(counts) = crate::eternal_legacy_e9a_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p1b_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
@@ -784,6 +793,11 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_premodern_p1b_v1::targets::legal_targets(target, source, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_premodern_p1a_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -1001,6 +1015,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_premodern_p1b_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_premodern_p1a_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1191,6 +1210,9 @@ pub(crate) fn target_matches(
         | StandardTargetV1::DividedXDamageUpToTwoV1
         | StandardTargetV1::UpToOnePlayerV1
         | StandardTargetV1::UpToOnePermanentCardDiedThisTurnV1 => false,
+        // Answered by `eternal_premodern_p1b_v1::targets` above.
+        StandardTargetV1::CreaturePowerAtMostTreasureCountersV1
+        | StandardTargetV1::AssemblyWorkerCreatureV1 => false,
         // Answered by `eternal_premodern_p1a_v1::targets` above.
         StandardTargetV1::DividedTwoDamageAnyTargetsV1
         | StandardTargetV1::CreatureManaValueAtMostV1(_)
