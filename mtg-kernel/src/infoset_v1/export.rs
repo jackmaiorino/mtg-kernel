@@ -1058,6 +1058,16 @@ pub(crate) fn export_v1(
             "a put-back card from a hand V knew about was drawn back or reordered",
         ));
     }
+    if !projection.reveal_latch.is_empty() && !is(MutantV1::L11) {
+        // Amendment 43.8 revision b (lead ruling 15): a search-run reveal of
+        // a name V knew in the hand, while the run had an unknown move, may
+        // be a moved card or a re-reveal; refuse alike until no unknown card
+        // is left in the hand.
+        return Err(refuse(
+            RefusalCodeV1::R8,
+            "a search-run reveal may be a moved card or a re-reveal",
+        ));
+    }
     if survivors.tainted() && !is(MutantV1::L11) {
         return Err(refuse(
             RefusalCodeV1::R8b,

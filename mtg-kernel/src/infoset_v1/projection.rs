@@ -13,7 +13,7 @@ use super::ledger::SurvivorTreeV1;
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameState, ObservationNoteKindV1, ObservationNoteV1, Zone};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 pub(crate) fn is_public(zone: Zone) -> bool {
     !matches!(zone, Zone::Hand | Zone::Library)
@@ -138,9 +138,10 @@ pub(crate) struct ProjectionV1 {
     /// hand in V's transcript (named on the wire, or a reveal that may be a
     /// search outcome). Unnamed transfers are not seam events.
     pub seams: Vec<(usize, u16)>,
-    /// Amendment 43.8: names of cards revealed in the opponent's hand other
-    /// than as possible search outcomes (an aborted cast back to the hand is
-    /// revealed this way; the export's moves-without-events rule).
+    /// Amendment 43.8: names of cards revealed in the opponent's hand (an
+    /// aborted cast back to the hand is revealed this way, and no reveal is
+    /// provably not one: revision b; the export's moves-without-events
+    /// rule).
     pub revealed: Vec<u16>,
     /// Amendment 43.8: the stream items at which turns began (upkeeps).
     pub turn_starts: Vec<usize>,
@@ -169,6 +170,12 @@ pub(crate) struct ProjectionV1 {
     /// tree is cleared) and no such put-back card is left in its library
     /// (a shuffle).
     pub r8_latch: bool,
+    /// Amendment 43.8 revision b (lead ruling 15): names a search-run reveal
+    /// showed while V knew a card of that name in the hand and the run still
+    /// had an unknown move, so the reveal may be a moved card or a re-reveal.
+    /// The export refuses R8 while any is latched; cleared when no unknown
+    /// card is left in the opponent's hand.
+    pub reveal_latch: Vec<u16>,
     /// Stream item at which each event-history index was absorbed.
     pub event_items: Vec<usize>,
     /// Objects V identified in each event (move events), by event index.
@@ -338,6 +345,7 @@ struct WalkV1<'a> {
     put_backs_scrambled: [bool; 2],
     top_draws: Vec<(usize, PlayerId)>,
     r8_latch: bool,
+    reveal_latch: Vec<u16>,
     item: usize,
     next_event: usize,
     inconsistencies: Vec<String>,
@@ -359,14 +367,6 @@ struct WalkV1<'a> {
     /// new card (each card the run moved is revealed once), its own fact.
     search_unknown: usize,
     search_known: Vec<u16>,
-    /// Sol code review 1 on 43.8, finding 1: the opponent's hand cards V
-    /// already holds a fact for since they entered the hand (revealed, or
-    /// entered from a public zone), until an unidentified departure unbinds
-    /// every fact. A reveal of one is a re-reveal (an aborted
-    /// cast's), never a search outcome, as the bot-facing transcript's
-    /// known hand names read it (the adapter's `_revealed_in_hand` adds no
-    /// name for a card it already lists).
-    shown: BTreeSet<ObjectId>,
 }
 
 /// Projects V's history from the native stream.
@@ -409,6 +409,7 @@ pub(crate) fn project_v1(
         put_backs_scrambled: [false, false],
         top_draws: Vec::new(),
         r8_latch: false,
+        reveal_latch: Vec::new(),
         item: 0,
         next_event: 0,
         inconsistencies: Vec::new(),
@@ -419,7 +420,6 @@ pub(crate) fn project_v1(
         search_mark: None,
         search_unknown: 0,
         search_known: Vec::new(),
-        shown: BTreeSet::new(),
     };
     let events = &state.engine.event_history;
     let mut event_items = Vec::with_capacity(events.len());
@@ -584,6 +584,7 @@ pub(crate) fn project_v1(
         reorders: w.reorders,
         top_draws: w.top_draws,
         r8_latch: w.r8_latch,
+        reveal_latch: w.reveal_latch,
         event_items,
         event_observed,
         items,
@@ -769,6 +770,7 @@ impl WalkV1<'_> {
         let opp_hand = self.state_hand_untracked(opp);
         if opp_hand == 0 {
             self.survivors.clear();
+            self.reveal_latch.clear();
             if !self.put_backs_on_top[opp.index()]
                 .iter()
                 .any(|x| x.informative)
@@ -1123,31 +1125,36 @@ impl WalkV1<'_> {
                 }
                 let id = *object;
                 let card_def = self.card_def(id);
-                // Amendment 43.8: a reveal while the search mark is set may
-                // be a search outcome: it may locate a card outside the hand
-                // (R8b, applied before the reveal's own update; ruling 44)
-                // and it may be a card entering the hand (a seam event). Read
-                // from the wire order alone; consecutive reveals keep the
-                // mark.
-                // A card V already holds a fact for is re-revealed (an
-                // aborted cast), never a search outcome (Sol code review 1,
-                // finding 1; the transcript's known hand names agree).
-                let search = self.search_mark == Some(*owner) && !self.shown.contains(&id);
-                if search {
+                // Amendment 43.8 revision b (lead ruling 15): reveals are read
+                // by name only. No reveal is provably not an aborted cast's,
+                // so every one triggers the moves-without-events rule.
+                if !self.revealed.contains(&card_def) {
+                    self.revealed.push(card_def);
+                }
+                if self.search_mark == Some(*owner) {
+                    // In a search run the reveal may be a search outcome: it
+                    // may locate a card outside the hand (R8b, applied before
+                    // the reveal's own update; ruling 44) and may be a card
+                    // entering the hand (a seam event).
                     self.survivors.taint_name(card_def);
                     self.seams.push((self.item, card_def));
+                    let known = self
+                        .hand
+                        .iter()
+                        .filter(|f| f.known && f.card_def == card_def)
+                        .count();
                     if let Some(pos) = self.search_known.iter().position(|d| *d == card_def) {
+                        // (a) The run's known move of the name and a
+                        // re-revealed card of the name claim the same.
                         self.search_known.remove(pos);
                     } else if let Some(pos) = self
                         .hand
                         .iter()
                         .position(|f| !f.known && f.card_def == card_def)
                     {
-                        // A count fact of the name may be this card (the
-                        // adapter binds the reveal to an unbound fact of the
-                        // name and adds no name): it becomes a known fact,
-                        // the claims stay the same multiset, and the run's
-                        // moves stay unidentified (Sol code review 2 on 43.8).
+                        // (b) A count fact of the name becomes a known fact
+                        // (the adapter binds a reveal to an unbound fact):
+                        // the claims stay the same multiset.
                         self.hand.remove(pos);
                         self.survivors.tracked_in_place(card_def);
                         self.hand.push(HandFactV1 {
@@ -1155,29 +1162,34 @@ impl WalkV1<'_> {
                             how: FactHowV1::Revealed,
                             known: true,
                         });
+                    } else if known == 0 {
+                        // (c) A moved card or a re-reveal of a card V did not
+                        // know: both claim exactly one of the name. The run's
+                        // unknown moves are not lowered.
+                        if self.search_unknown > 0 {
+                            self.entries.push((self.item, card_def));
+                            self.hand.push(HandFactV1 {
+                                card_def,
+                                how: FactHowV1::Revealed,
+                                known: true,
+                            });
+                        } else {
+                            self.revealed_in_hand(card_def);
+                        }
                     } else if self.search_unknown > 0 {
-                        self.search_unknown -= 1;
-                        self.entries.push((self.item, card_def));
-                        self.hand.push(HandFactV1 {
-                            card_def,
-                            how: FactHowV1::Revealed,
-                            known: true,
-                        });
-                    } else {
-                        self.revealed_in_hand(card_def);
+                        // (d) A moved card or a re-reveal of a known card:
+                        // claiming may be unsound, not claiming may be
+                        // unrealizable. Nothing is claimed; the name latches.
+                        if !self.reveal_latch.contains(&card_def) {
+                            self.reveal_latch.push(card_def);
+                        }
                     }
+                    // (e) Otherwise every move of the run is accounted for:
+                    // a re-reveal, nothing changes.
                 } else {
                     self.search_mark = None;
-                    // Any reveal outside a search run, also one right after
-                    // a public move of the name to the hand (Sol code review
-                    // 1 on 43.8: an aborted cast of an older copy looks the
-                    // same).
-                    if !self.revealed.contains(&card_def) {
-                        self.revealed.push(card_def);
-                    }
                     self.revealed_in_hand(card_def);
                 }
-                self.shown.insert(id);
                 // The opponent's hand is opaque (43.7): the reveal names a
                 // card, never a copy V follows.
                 self.settle(&[]);
@@ -1305,12 +1317,8 @@ impl WalkV1<'_> {
             return;
         }
         let card_def = self.card_def(id);
-        if from == Zone::Hand && to != Zone::Hand {
-            self.shown.remove(&id);
-        }
         if to == Zone::Hand && from != Zone::Hand {
             if is_public(from) {
-                self.shown.insert(id);
                 self.hand.push(HandFactV1 {
                     card_def,
                     how: FactHowV1::FromPublicZone,
@@ -1357,7 +1365,6 @@ impl WalkV1<'_> {
         // fact, every remaining fact becomes a count fact, and the survivor
         // tree takes the known names as T (6.4). No card stays tied to a
         // fact (the adapter unbinds every fact here; Sol code review 2).
-        self.shown.clear();
         let known_names: Vec<u16> = self
             .hand
             .iter()
