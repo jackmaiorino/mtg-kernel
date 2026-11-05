@@ -579,32 +579,46 @@ def run_chunks(plan: dict, binary: Path, items: list[tuple[Path, int, int]], par
     plan's store codec, a recorded chunk is packed in the same slot before its `rc` line is written."""
     codec = plan.get("store_codec")
     pending, running, results = list(items), [], []
-    while pending or running:
-        while pending and len(running) < parallel:
-            stem, first, games = pending.pop(0)
-            proc, log, t0, lock = start_chunk(plan, binary, stem, first, games)
-            running.append({"proc": proc, "log": log, "stem": stem, "first": first, "games": games, "t0": t0,
-                            "phase": "record", "lock": lock})
-        time.sleep(0.05)
-        for job in list(running):
-            if job["proc"].poll() is None:
-                continue
-            stem, first, games = job["stem"], job["first"], job["games"]
-            if job["phase"] == "record":
-                rc = close_census(job["proc"], job["log"], stem, first, games)
-                if job["lock"] is not None:   # the packer takes the lock over
-                    job["lock"].close()
-                if rc == 0 and codec is not None:
-                    job["proc"], job["log"] = start_pack(stem, codec)
-                    job["phase"] = "pack"
+    try:
+        while pending or running:
+            while pending and len(running) < parallel:
+                stem, first, games = pending.pop(0)
+                proc, log, t0, lock = start_chunk(plan, binary, stem, first, games)
+                running.append({"proc": proc, "log": log, "stem": stem, "first": first, "games": games, "t0": t0,
+                                "phase": "record", "lock": lock})
+            time.sleep(0.05)
+            for job in list(running):
+                if job["proc"].poll() is None:
                     continue
-            else:
-                rc = job["proc"].wait()
-                job["log"].close()
-                rc = 0 if rc == 0 else -101
-            running.remove(job)
-            end_chunk(stem, first, games, rc)
-            results.append({"chunk": stem.name, "rc": rc, "games": games, "seconds": time.time() - job["t0"]})
+                stem, first, games = job["stem"], job["first"], job["games"]
+                if job["phase"] == "record":
+                    rc = close_census(job["proc"], job["log"], stem, first, games)
+                    if job["lock"] is not None:   # the packer takes the lock over
+                        job["lock"].close()
+                        job["lock"] = None
+                    if rc == 0 and codec is not None:
+                        job["proc"], job["log"] = start_pack(stem, codec)
+                        job["phase"] = "pack"
+                        continue
+                else:
+                    rc = job["proc"].wait()
+                    job["log"].close()
+                    rc = 0 if rc == 0 else -101
+                running.remove(job)
+                end_chunk(stem, first, games, rc)
+                results.append({"chunk": stem.name, "rc": rc, "games": games, "seconds": time.time() - job["t0"]})
+    except BaseException:
+        # A refused start (a locked chunk, a changed teacher) or an interrupt: stop and reap every child before the
+        # driver's locks are released, so no recorder or packer outlives the run unprotected. Their chunks have no
+        # `rc` line and rerun.
+        for job in running:
+            if job["proc"].poll() is None:
+                job["proc"].kill()
+            job["proc"].wait()
+            job["log"].close()
+            if job["lock"] is not None:
+                job["lock"].close()
+        raise
     return results
 
 

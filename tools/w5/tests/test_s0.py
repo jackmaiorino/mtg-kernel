@@ -51,6 +51,9 @@ sys.path.insert(0, os.environ["S0_TOOLS"])
 import s0
 from test_s0 import synthetic_record
 args = dict(a.split("=", 1) for a in sys.argv[1:])
+if os.environ.get("FAKE_SLEEP"):
+    import time
+    time.sleep(float(os.environ["FAKE_SLEEP"]))
 first, games, seed = int(args["first_game"]), int(args["games"]), int(args["base_seed"])
 fail = os.environ.get("FAKE_FAIL_GAME")
 error_game = os.environ.get("FAKE_ERROR_GAME")
@@ -284,6 +287,7 @@ class PackedStoreTests(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("FAKE_TRAILING", None)
         os.environ.pop("FAKE_EMPTY", None)
+        os.environ.pop("FAKE_SLEEP", None)
 
     def test_games_without_decisions_index_like_the_raw_store(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -334,6 +338,29 @@ class PackedStoreTests(unittest.TestCase):
             finally:
                 held.close()
             self.assertEqual(s0.record(rec.plan_path, rec.fake, 1)["failed"], [])
+
+    def test_a_refused_start_stops_the_running_recorders(self):
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Recorded(Path(tmp), games=64, codec=s0.STORE_CODEC)
+            store = Path(tmp) / "root" / "store"
+            store.mkdir(parents=True)
+            os.environ["FAKE_SLEEP"] = "60"
+            held = s0.chunk_lock(store / "chunk-000032")
+            t0 = time.time()
+            try:
+                with self.assertRaisesRegex(s0.S0Error, "still running"):
+                    s0.record(rec.plan_path, rec.fake, 2)   # chunk 0 starts, then chunk 32 is refused
+            finally:
+                held.close()
+            self.assertLess(time.time() - t0, 30)   # chunk 0's recorder was stopped and reaped, not left running
+            self.assertIsNotNone(lock := s0.chunk_lock(store / "chunk-000000"))
+            lock.close()
+            self.assertFalse(s0.finished(store / "chunk-000000", 0, 32, rec.plan["store_codec"]))
+            os.environ.pop("FAKE_SLEEP")
+            self.assertEqual(s0.record(rec.plan_path, rec.fake, 2)["failed"], [])
+            self.assertTrue((store / "chunk-000000.attempt-1.log").exists())
+            self.assertEqual(s0.index_store(rec.plan_path)["counts"]["games"], 64)
 
     def pair(self, tmp: Path, games=96, chunk=32):
         """The same fake games recorded raw and packed."""
