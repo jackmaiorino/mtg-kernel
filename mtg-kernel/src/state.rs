@@ -1361,6 +1361,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
                         | crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1
                         | crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1
+                        | crate::standard_cards_v1::StandardTargetV1::DividedTwoDamageAnyTargetsV1
                 ) || filter.slot_kind(target_index) == Some(None)
             }
         };

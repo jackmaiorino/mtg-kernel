@@ -196,7 +196,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Shuko" => &SHUKO,
         "Simian Spirit Guide" => &SIMIAN_SPIRIT_GUIDE,
         "Tolaria" => &TOLARIA,
-        _ => &[],
+        _ => super::build_eternal_p1a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -249,7 +249,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::Land",
             "crate::eternal_legacy_e9a_v1::sundering_eruption",
         ),
-        _ => return None,
+        _ => return super::build_eternal_p1a_v1::special_for(name),
     })
 }
 
@@ -268,7 +268,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Undermountain Adventurer" => &["Keywords::VIGILANCE"],
         "Goblin Haste Token" => &["Keywords::HASTE"],
         "Black Insect Token" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_p1a_v1::keywords_for(name),
     }
 }
 
@@ -279,7 +279,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Fury" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::R)], condition: AltCostCondition::Always })",
         "Endurance" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::G)], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_p1a_v1::alt_cost_for(name),
     }
 }
 
@@ -301,7 +301,7 @@ pub(super) fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_p1a_v1::flashback_for(name),
     }
 }
 
@@ -337,7 +337,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         "Cephalid Coliseum" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
         "Eumidian Hatchery" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfPayLife(1), amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_p1a_v1::mana_ability_def_for(name),
     }
 }
 
@@ -463,6 +463,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Super Shredder" => "another_permanent_leaves_battlefield:plus_one_counter",
         "Tolaria" => "activated:upkeep_only:target_creature_loses_banding",
         "Undermountain Adventurer" => "etb:take_initiative;mana:gg_or_six_if_completed_dungeon",
-        _ => "none",
+        _ => super::build_eternal_p1a_v1::trigger_recipe_for(name),
     }
 }

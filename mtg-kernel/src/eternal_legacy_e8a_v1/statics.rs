@@ -19,7 +19,7 @@ use crate::mana::ManaColor;
 use crate::state::{GameState, ObjectLinkV4, Zone};
 
 /// The land types a nonbasic land loses under Harbinger of the Seas.
-const LAND_TYPES: [Subtype; 18] = [
+pub(crate) const LAND_TYPES: [Subtype; 18] = [
     Subtype::Plains,
     Subtype::Island,
     Subtype::Swamp,
@@ -104,14 +104,12 @@ fn land_type_setter(state: &GameState, object: ObjectId) -> Option<(u64, Subtype
         .map(|timestamp| (timestamp, Subtype::Island, ManaColor::U));
     let mountains = crate::eternal_legacy_e9a_v1::statics::moon_timestamp(state, object)
         .map(|timestamp| (timestamp, Subtype::Mountain, ManaColor::R));
-    match (islands, mountains) {
-        (Some(islands), Some(mountains)) => Some(if mountains.0 > islands.0 {
-            mountains
-        } else {
-            islands
-        }),
-        (islands, mountains) => islands.or(mountains),
-    }
+    // Vision Charm's chosen basic land type (wave P1a).
+    let charmed = crate::eternal_premodern_p1a_v1::statics::land_type_setter(state, object);
+    [islands, mountains, charmed]
+        .into_iter()
+        .flatten()
+        .max_by_key(|(timestamp, _, _)| *timestamp)
 }
 
 /// Harbinger of the Seas and the moons (305.7: such a land loses its land

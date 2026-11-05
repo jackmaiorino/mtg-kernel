@@ -18658,6 +18658,1709 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectToken.java",
    "is_token": true
+  },
+  {
+   "name": "Anurid Brushhopper",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Frog",
+    "Beast"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "discard_cost",
+    "flicker",
+    "delayed_end_step_return"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AnuridBrushhopper.java"
+  },
+  {
+   "name": "Armageddon",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-grow"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_all",
+    "land_destruction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/Armageddon.java"
+  },
+  {
+   "name": "Ball Lightning",
+   "engine_capability": "full",
+   "mana_cost": "{R}{R}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "trample",
+    "haste",
+    "end_step_sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BallLightning.java"
+  },
+  {
+   "name": "Barbarian Ring",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R"
+   ],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "painland",
+    "threshold",
+    "sacrifice_cost",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BarbarianRing.java"
+  },
+  {
+   "name": "Call of the Herd",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-rg-aggro",
+    "premodern-oath-of-druids",
+    "premodern-the-rock",
+    "premodern-grow"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "token_creation",
+    "flashback"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CallOfTheHerd.java"
+  },
+  {
+   "name": "Cursed Scroll",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-rg-aggro",
+    "premodern-white-weenie",
+    "premodern-mono-black-control",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "name_a_card",
+    "random_reveal",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CursedScroll.java"
+  },
+  {
+   "name": "Diabolic Edict",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "edict",
+    "sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DiabolicEdict.java"
+  },
+  {
+   "name": "Disenchant",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-white-weenie",
+    "premodern-landstill-uw-control",
+    "premodern-bw-control",
+    "premodern-replenish"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Disenchant.java"
+  },
+  {
+   "name": "Exalted Angel",
+   "engine_capability": "full",
+   "mana_cost": "{4}{W}{W}",
+   "mana_value": 6,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Angel"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-white-weenie",
+    "premodern-landstill-uw-control",
+    "premodern-bw-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "lifelink",
+    "morph"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/ExaltedAngel.java"
+  },
+  {
+   "name": "Fire // Ice",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 4,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-grow",
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "split_card",
+    "divided_damage",
+    "tap",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FireIce.java"
+  },
+  {
+   "name": "Flash of Insight",
+   "engine_capability": "full",
+   "mana_cost": "{X}{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stiflenought",
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "x_cost",
+    "look_at_library",
+    "flashback",
+    "exile_from_graveyard_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FlashOfInsight.java"
+  },
+  {
+   "name": "Foil",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-psychatog",
+    "premodern-grow",
+    "premodern-stiflenought"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "alt_cost",
+    "discard_cost",
+    "counterspell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/Foil.java"
+  },
+  {
+   "name": "Funeral Charm",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "modal",
+    "discard",
+    "pump",
+    "swampwalk"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FuneralCharm.java"
+  },
+  {
+   "name": "Gempalm Incinerator",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cycling",
+    "cycle_trigger",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GempalmIncinerator.java"
+  },
+  {
+   "name": "Gemstone Mine",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-grow",
+    "premodern-full-english-breakfast",
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "mining_counters",
+    "sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GemstoneMine.java"
+  },
+  {
+   "name": "Goblin Goon",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Mutant"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "attack_restriction",
+    "block_restriction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinGoon.java"
+  },
+  {
+   "name": "Goblin Lackey",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "damage_trigger",
+    "put_onto_battlefield"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinLackey.java"
+  },
+  {
+   "name": "Goblin Matron",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "tutor"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinMatron.java"
+  },
+  {
+   "name": "Goblin Piledriver",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "protection_from_color",
+    "attack_trigger",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinPiledriver.java"
+  },
+  {
+   "name": "Goblin Ringleader",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "haste",
+    "etb_trigger",
+    "reveal",
+    "bottom_any_order"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinRingleader.java"
+  },
+  {
+   "name": "Goblin Sharpshooter",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins",
+    "premodern-elves",
+    "premodern-survival"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "doesnt_untap",
+    "dies_trigger",
+    "untap",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinSharpshooter.java"
+  },
+  {
+   "name": "Goblin Vandal",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-rg-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "attack_trigger",
+    "unblocked",
+    "destroy_target",
+    "no_combat_damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinVandal.java"
+  },
+  {
+   "name": "Goblin Warchief",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_reduction",
+    "grant_haste"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinWarchief.java"
+  },
+  {
+   "name": "Graveborn Muse",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "upkeep_trigger",
+    "draw_card",
+    "lose_life"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GravebornMuse.java"
+  },
+  {
+   "name": "Grim Lavamancer",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-rg-aggro",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "exile_from_graveyard_cost",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GrimLavamancer.java"
+  },
+  {
+   "name": "Hypnotic Specter",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Specter"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "damage_trigger",
+    "random_discard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HypnoticSpecter.java"
+  },
+  {
+   "name": "Incinerate",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-rg-aggro",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "damage",
+    "cant_be_regenerated"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/Incinerate.java"
+  },
+  {
+   "name": "Jackal Pup",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Jackal"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-rg-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "dealt_damage_trigger",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/j/JackalPup.java"
+  },
+  {
+   "name": "Knight of Stromgald",
+   "engine_capability": "full",
+   "mana_cost": "{B}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Knight"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "protection_from_color",
+    "first_strike",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KnightOfStromgald.java"
+  },
+  {
+   "name": "Mogg Fanatic",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-goblins",
+    "premodern-rg-aggro",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "sacrifice_cost",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoggFanatic.java"
+  },
+  {
+   "name": "Mystic Enforcer",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Nomad",
+    "Mystic"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "protection_from_color",
+    "threshold",
+    "flying",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MysticEnforcer.java"
+  },
+  {
+   "name": "Nantuko Shade",
+   "engine_capability": "full",
+   "mana_cost": "{B}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect",
+    "Shade"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NantukoShade.java"
+  },
+  {
+   "name": "Naturalize",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-elves",
+    "premodern-oath-of-druids",
+    "premodern-survival",
+    "premodern-full-english-breakfast",
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/Naturalize.java"
+  },
+  {
+   "name": "Portent",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-psychatog",
+    "premodern-grow",
+    "premodern-stiflenought"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "look_at_library",
+    "reorder",
+    "shuffle",
+    "delayed_upkeep_draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/Portent.java"
+  },
+  {
+   "name": "Powder Keg",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-psychatog",
+    "premodern-mono-black-control",
+    "premodern-stiflenought"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "upkeep_trigger",
+    "fuse_counters",
+    "sacrifice_cost",
+    "destroy_all"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PowderKeg.java"
+  },
+  {
+   "name": "Price of Progress",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "damage",
+    "nonbasic_lands"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PriceOfProgress.java"
+  },
+  {
+   "name": "Rishadan Port",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-goblins",
+    "premodern-oath-of-druids",
+    "premodern-mono-black-control",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "activated_ability",
+    "tap"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RishadanPort.java"
+  },
+  {
+   "name": "Rith's Grove",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Lair"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R",
+    "G",
+    "W"
+   ],
+   "decks": [
+    "premodern-terrageddon"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "lair",
+    "return_land",
+    "sacrifice",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RithsGrove.java"
+  },
+  {
+   "name": "Seal of Fire",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-rg-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "sacrifice_cost",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SealOfFire.java"
+  },
+  {
+   "name": "Secluded Steppe",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W"
+   ],
+   "decks": [
+    "premodern-terrageddon"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_tapped",
+    "mana_ability",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SecludedSteppe.java"
+  },
+  {
+   "name": "Siege-Gang Commander",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}{R}",
+   "mana_value": 5,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "token_creation",
+    "sacrifice_cost",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SiegeGangCommander.java"
+  },
+  {
+   "name": "Skeletal Scrying",
+   "engine_capability": "full",
+   "mana_cost": "{X}{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-mono-black-control",
+    "premodern-bw-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "x_cost",
+    "exile_from_graveyard_cost",
+    "draw_card",
+    "lose_life"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SkeletalScrying.java"
+  },
+  {
+   "name": "Skirk Prospector",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [
+    "R"
+   ],
+   "decks": [
+    "premodern-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SkirkProspector.java"
+  },
+  {
+   "name": "Smother",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-psychatog",
+    "premodern-the-rock",
+    "premodern-mono-black-control",
+    "premodern-bw-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_target",
+    "cant_be_regenerated"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Smother.java"
+  },
+  {
+   "name": "Sulfuric Vortex",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "upkeep_trigger",
+    "damage",
+    "no_life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SulfuricVortex.java"
+  },
+  {
+   "name": "Sylvan Library",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-madness-threshold",
+    "premodern-rg-aggro",
+    "premodern-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "draw_step_trigger",
+    "draw_card",
+    "pay_life",
+    "put_on_library"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SylvanLibrary.java"
+  },
+  {
+   "name": "Terravore",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Lhurgoyf"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "trample",
+    "characteristic_defining"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/Terravore.java"
+  },
+  {
+   "name": "Thwart",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stiflenought",
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "alt_cost",
+    "return_land_cost",
+    "counterspell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/Thwart.java"
+  },
+  {
+   "name": "Tranquil Thicket",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "G"
+   ],
+   "decks": [
+    "premodern-terrageddon"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_tapped",
+    "mana_ability",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TranquilThicket.java"
+  },
+  {
+   "name": "Vision Charm",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stiflenought"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "modal",
+    "mill",
+    "land_type_change",
+    "phasing"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VisionCharm.java"
+  },
+  {
+   "name": "Weathered Wayfarer",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Nomad",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "tutor",
+    "activation_condition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WeatheredWayfarer.java"
+  },
+  {
+   "name": "Wild Mongrel",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dog"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "discard_cost",
+    "pump",
+    "color_change"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WildMongrel.java"
+  },
+  {
+   "name": "Withered Wretch",
+   "engine_capability": "full",
+   "mana_cost": "{B}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "graveyard_exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WitheredWretch.java"
+  },
+  {
+   "name": "Elephant Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elephant"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/ElephantToken.java",
+   "is_token": true
   }
  ]
 }

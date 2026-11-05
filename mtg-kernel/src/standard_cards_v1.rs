@@ -365,12 +365,24 @@ pub enum StandardTargetV1 {
     /// "Up to one target permanent card in your graveyard that was put there
     /// from the battlefield this turn" (Samwise the Stouthearted).
     UpToOnePermanentCardDiedThisTurnV1,
+    /// "2 damage divided as you choose among one or two targets" (Fire):
+    /// two picks among creatures, planeswalkers and players, one point of
+    /// damage each; a target may be picked twice. Premodern wave P1a's
+    /// filters follow (`eternal_premodern_p1a_v1::targets`).
+    DividedTwoDamageAnyTargetsV1,
+    /// "Target creature with mana value N or less" (Smother).
+    CreatureManaValueAtMostV1(u8),
+    /// "Target artifact defending player controls" (Goblin Vandal).
+    OpponentArtifactV1,
 }
 
 impl StandardTargetV1 {
     /// How many targets this filter takes, and how many at least.
     pub(crate) fn counts(self) -> (u8, u8) {
         if let Some(counts) = crate::eternal_legacy_e9a_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -771,6 +783,11 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
+    if let Some(targets) =
+        crate::eternal_premodern_p1a_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -983,6 +1000,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_premodern_p1a_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1169,6 +1191,10 @@ pub(crate) fn target_matches(
         | StandardTargetV1::DividedXDamageUpToTwoV1
         | StandardTargetV1::UpToOnePlayerV1
         | StandardTargetV1::UpToOnePermanentCardDiedThisTurnV1 => false,
+        // Answered by `eternal_premodern_p1a_v1::targets` above.
+        StandardTargetV1::DividedTwoDamageAnyTargetsV1
+        | StandardTargetV1::CreatureManaValueAtMostV1(_)
+        | StandardTargetV1::OpponentArtifactV1 => false,
     }
 }
 
@@ -3140,6 +3166,19 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
         }
         if let Some(minimum) = crate::eternal_legacy_e9a_v1::statics::minimum_x(def.name, targets) {
             return minimum;
+        }
+        // "Exile X cards from your graveyard" (wave P1a): X is the number
+        // of cards the cast chose to exile.
+        if let Some(pending) = state.engine.pending_cast.as_ref() {
+            if state
+                .objects
+                .try_get(pending.spell)
+                .is_some_and(|spell| std::ptr::eq(&CARD_DEFS[spell.card_def as usize], def))
+            {
+                if let Some(x) = crate::engine::forced_cast_x(pending, def) {
+                    return u8::try_from(x).unwrap_or(u8::MAX);
+                }
+            }
         }
     }
     match (def.name, targets.first()) {

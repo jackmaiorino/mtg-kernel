@@ -613,6 +613,10 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Nomad => Some(CreatureTypeV60::Nomad),
         Subtype::Scarecrow => Some(CreatureTypeV60::Scarecrow),
         Subtype::Peasant => Some(CreatureTypeV60::Peasant),
+        Subtype::Jackal => Some(CreatureTypeV60::Jackal),
+        Subtype::Specter => Some(CreatureTypeV60::Specter),
+        Subtype::Shade => Some(CreatureTypeV60::Shade),
+        Subtype::Mystic => Some(CreatureTypeV60::Mystic),
     }
 }
 

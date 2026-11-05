@@ -351,7 +351,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Bitter Triumph" => "Some(&[CostComponent::DiscardCards(1)])",
-        _ => "None",
+        _ => super::build_eternal_p1a_v1::additional_cost_for(name),
     }
 }
 

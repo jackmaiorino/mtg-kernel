@@ -285,6 +285,15 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             out.cost(CostAtom::PayLife(life));
         }
         ManaAbilityCostDef::None => {}
+        ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
+            // Vocabulary gap: no subtype class.
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Battlefield,
+                to: ZoneF::Graveyard,
+                obj: ObjF::Permanent,
+                amount: AmtF::Unit,
+            });
+        }
         ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
             out.cost(CostAtom::Tap);
             out.cost(CostAtom::MoveObject {
