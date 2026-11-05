@@ -280,8 +280,8 @@ def next_source(native):
 
 def quarantine(native, dest_root):
     """mtg-kernel#336: an iteration without complete.json is moved aside, so the run reruns it fresh. Its bulk
-    (trajectories, checkpoints, S containers) is regenerable and deleted first, so the attempt keeps only its records
-    and moved-aside attempts never grow a chain's hot bytes."""
+    (trajectories, checkpoints, S containers, and any staging file of an unfinished publication) is regenerable and
+    deleted first, so the attempt keeps only its records and moved-aside attempts never grow a chain's hot bytes."""
     moved = []
     iterations = Path(native) / 'iterations'
     if not iterations.exists():
@@ -289,9 +289,10 @@ def quarantine(native, dest_root):
     for d in sorted(p for p in iterations.iterdir() if p.is_dir()):
         if not (d / 'complete.json').exists():
             for f in sorted(d.rglob('*')):
-                if f.is_file() and not f.is_symlink() and (f.name.startswith('episode-') or f.suffix == '.bin'
-                                                             or f.name == 'checkpoint.json'):
-                    f.unlink()
+                base = f.name.lstrip('.')
+                if f.is_file() and not f.is_symlink() and (base.endswith('.stage') or base.startswith('episode-')
+                                                             or f.suffix == '.bin' or base == 'checkpoint.json'):
+                    f.unlink()  # a staging file (`.<name>.stage`) is an unfinished publication: never a record
             dest = Path(dest_root) / 'interrupted' / f'{Path(native).name}-{d.name}-{time.time_ns()}'
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(d), str(dest))
@@ -944,8 +945,8 @@ def running_intervals(records, now, state=None, evidence=None):
         elif event == 'resume' and opened and start is None:
             start = t
         elif event == 'close':
-            if start is not None:
-                end = last_seen(instance, start, t) if r.get('recovered') else t
+            if start is not None:  # a recovery that stopped a running chain: it ran until that close
+                end = last_seen(instance, start, t) if r.get('recovered') and not r.get('killed_running') else t
                 out.append((start, max(start, end)))
             opened, start = False, None
     if start is not None:

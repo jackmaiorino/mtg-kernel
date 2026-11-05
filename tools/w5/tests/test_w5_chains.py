@@ -267,6 +267,8 @@ class ChainTests(unittest.TestCase):
         self.node.guard()
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '5'}):
             self.assertEqual(self.node.drive(plan, 'x1'), chains.EXIT_FAILED)
+        partial = self.node.root / 'chains' / 'x1' / 'seg-00001' / 'iterations' / '000002' / 'attempt-000000'
+        (partial / 'collect' / '.episode-0000.json.stage').write_text('x' * 100)  # an unfinished publication
         cdir = self.node.root / 'chains' / 'x1'
         self.assertEqual(json.loads((cdir / 'FAILURE.json').read_text())['boundary'], 5)
         self.node.ledger_source('x1', stop=8 * STEP_X)
@@ -275,7 +277,7 @@ class ChainTests(unittest.TestCase):
         self.assertEqual((end['reason'], end['last_valid_boundary'], end['ledger_usec']), ('x-stop-at', 8, 8 * STEP_X))
         moved = list((cdir / 'interrupted').iterdir())
         self.assertTrue(moved)  # the crashed iteration was moved aside, its bulk deleted
-        self.assertFalse([f for m in moved for f in m.rglob('episode-*')])
+        self.assertFalse([f for m in moved for f in m.rglob('*') if 'episode-' in f.name or f.name.endswith('.stage')])
         _, records = retention.index(plan['chains']['x1']['manifest'])
         self.assertEqual(len(records), 8)
         cfg = json.loads(Path(json.loads(Path(plan['chains']['x1']['manifest']).read_text())
@@ -411,6 +413,10 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(chains.running_seconds(dead, 160, (), state), 20 + 60)  # its supervisor is alive
         # The driver outlives its supervisor: update receipts after the last live reading are running time too.
         self.assertEqual(chains.running_seconds(dead, 1000, (), state, {0: 300, 1: 900}), 300 + 800)
+        # A recovery that stopped a still running chain: it ran until that close.
+        killed = [{'event': 'open', 'instance': 0, 'unix': 0},
+                  {'event': 'close', 'unix': 500, 'recovered': 'cgroup', 'killed_running': True}]
+        self.assertEqual(chains.running_seconds(killed, 1000, (), state, {0: 300}), 500)
         # An instance that died before its first live reading or receipt ran for no time.
         self.assertEqual(chains.running_seconds([{'event': 'open', 'instance': 5, 'unix': 10}], 1000, (), state), 0)
 
