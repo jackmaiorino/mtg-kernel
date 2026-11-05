@@ -826,6 +826,16 @@ class Supervisor:
                     f"{self.chain_cg.path} is populated but no ledger has an open instance there")
         else:
             instance_dir = self.state / f"instance-{record['instance']:04d}"
+            if self.spec.get("handoff") is True:  # the dead instance's box is empty: held before anything else
+                with self.node.locked():
+                    records, torn = self.node.read()
+                    if self.slot["slot"] not in NodeLog.state(records, torn)["open_outages"]:
+                        self.node.append({"event": "outage-start", "box_slot": self.slot["slot"], "handoff": True,
+                                          "id": f"{self.chain}/recover/handoff/{time.time_ns()}",
+                                          "chain": self.chain, "affected": node_chains(self.state_root),
+                                          "reason": "a dead supervisor's instance closes: its box waits to be "
+                                                    "occupied"})
+                enforce_node(self.plan, self.node, "recover")
             if self.chain_cg.exists() and self.chain_cg.inode() == record["cgroup_inode"]:
                 require(not self.chain_cg.populated(), f"Chain {self.chain} instance is still running")
                 final, lower, how = self.chain_cg.usage_usec(), False, "cgroup"
@@ -1227,16 +1237,7 @@ def recover_chain(plan: dict, plan_sha: str, chain: str, layout: dict, detected:
             sup.chain_cg.kill()
             require(sup.chain_cg.wait_empty(SETTLE_SECONDS), f"{sup.chain_cg.path} did not empty")
             killed = True
-        if sup.spec.get("handoff") is True:
-            with sup.node.locked():
-                records, torn = sup.node.read()
-                if sup.slot["slot"] not in NodeLog.state(records, torn)["open_outages"]:
-                    sup.node.append({"event": "outage-start", "box_slot": sup.slot["slot"], "handoff": True,
-                                     "id": f"{chain}/recover/handoff/{time.time_ns()}", "chain": chain,
-                                     "reason": "a dead supervisor's instance closes: its box waits to be occupied",
-                                     "affected": node_chains(sup.state_root)})
-            enforce_node(plan, sup.node, "recover")
-        sup.recover()
+        sup.recover()  # a handoff chain's box is held there, before the instance closes
         return {"chain": chain, "recovered": True, "killed": killed}
     finally:
         for lock in locks:

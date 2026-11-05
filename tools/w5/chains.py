@@ -279,13 +279,19 @@ def next_source(native):
 
 
 def quarantine(native, dest_root):
-    """mtg-kernel#336: an iteration without complete.json is moved aside, so the run reruns it fresh."""
+    """mtg-kernel#336: an iteration without complete.json is moved aside, so the run reruns it fresh. Its bulk
+    (trajectories, checkpoints, S containers) is regenerable and deleted first, so the attempt keeps only its records
+    and moved-aside attempts never grow a chain's hot bytes."""
     moved = []
     iterations = Path(native) / 'iterations'
     if not iterations.exists():
         return moved
     for d in sorted(p for p in iterations.iterdir() if p.is_dir()):
         if not (d / 'complete.json').exists():
+            for f in sorted(d.rglob('*')):
+                if f.is_file() and not f.is_symlink() and (f.name.startswith('episode-') or f.suffix == '.bin'
+                                                             or f.name == 'checkpoint.json'):
+                    f.unlink()
             dest = Path(dest_root) / 'interrupted' / f'{Path(native).name}-{d.name}-{time.time_ns()}'
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(d), str(dest))
@@ -1315,13 +1321,18 @@ def prune_chain(root, info, sel, look_doc):
     return doc
 
 
+def end_reason(root, info):
+    """The chain's END reason, unless w5box recorded an OOM close: then it is a chain failure (section 2.1)."""
+    return 'chain-failure' if oom_closed(root, info['name']) else info['end']['reason']
+
+
 def r_i(root, c):
     """Section 2.2: a C chain that ended at its wall gives R_i = its final ledger value, the closed total of its
     w5box ledger once every instance has closed (the CPU of an update cut at the wall included); a C chain that
     ended early gives the ledger at its last valid checkpoint (0 before its first update). None while C's END is
     written but its instance is still open."""
     c_valid = valid_records(c)
-    if c['end']['reason'] != 'c-wall':
+    if end_reason(root, c) != 'c-wall':
         return c_valid[-1]['ledger_usec'] if c_valid else 0
     path = ledger_path(root, c['name'])
     summary = w5box.Ledger(path).summary() if path.exists() else None
@@ -1336,20 +1347,21 @@ def pair_finalize(plan, plan_path, c, x, st, looks, budget):
     r = r_i(plan['root'], c)
     require(r is not None, f'{c["name"]} has not closed')
     c_b = c_valid[-1]['boundary'] if c_valid else 0
+    c_reason, x_reason = end_reason(plan['root'], c), end_reason(plan['root'], x)
     under = []
-    if c['end']['reason'] != 'c-wall':
-        under.append(f'C ended early ({c["end"]["reason"]}): R_i is the ledger at its last valid boundary')
+    if c_reason != 'c-wall':
+        under.append(f'C ended early ({c_reason}): R_i is the ledger at its last valid boundary')
     last = x_valid[-1]['boundary'] if x_valid else 0
     if r == 0:  # C ended early before its first update: R_i = 0, reached at X's boundary 0 (its parent)
         x_b = 0
-    elif x['end']['reason'] in FAILED_ENDS and c['end']['reason'] == 'c-wall':
+    elif x_reason in FAILED_ENDS and c_reason == 'c-wall':
         x_b = last  # section 7.4: a failed (or lead-stopped) chain's last valid checkpoint
-        under.append(f'X ended by {x["end"]["reason"]}: its endpoint is its last valid boundary')
+        under.append(f'X ended by {x_reason}: its endpoint is its last valid boundary')
     else:  # section 2.2, C failing early included: the first valid boundary at or past R_i
         hit = retention.first_at_or_past(x_valid, r)
         x_b = hit['boundary'] if hit else last
         if hit is None:
-            under.append(f'X short of R_i ({x["end"]["reason"]})')
+            under.append(f'X short of R_i ({x_reason})')
     st.update(r_usec=r, endpoints={c['name']: c_b, x['name']: x_b},
               label='under-budget' if under else 'matched', under_budget=under)
     sels = {}

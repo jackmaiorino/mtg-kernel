@@ -273,7 +273,9 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(self.node.drive(plan, 'x1'), 0)
         end = json.loads((cdir / 'END.json').read_text())
         self.assertEqual((end['reason'], end['last_valid_boundary'], end['ledger_usec']), ('x-stop-at', 8, 8 * STEP_X))
-        self.assertTrue(list((cdir / 'interrupted').iterdir()))  # the crashed iteration was moved aside
+        moved = list((cdir / 'interrupted').iterdir())
+        self.assertTrue(moved)  # the crashed iteration was moved aside, its bulk deleted
+        self.assertFalse([f for m in moved for f in m.rglob('episode-*')])
         _, records = retention.index(plan['chains']['x1']['manifest'])
         self.assertEqual(len(records), 8)
         cfg = json.loads(Path(json.loads(Path(plan['chains']['x1']['manifest']).read_text())
@@ -571,6 +573,17 @@ class ChainTests(unittest.TestCase):
                 mock.patch.object(chains, 'prune_chain', lambda *a: {}):
             st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
         self.assertEqual((st['r_usec'], st['endpoints'], st['label']), (100, {'c1': 0, 'x1': 2}, 'matched'))
+        # An OOM close of X recorded by w5box overrides an END that said otherwise: the chain failed.
+        c = {'name': 'c1', 'records': [{'boundary': 1, 'ledger_usec': 100}], 'end': {'reason': 'c-wall'}}
+        self.node.ledger('x1', 'open')
+        w5box.Ledger(self.node.root / 'state' / 'x1' / 'ledger.jsonl').append(
+            {'event': 'close', 'instance': 0, 'final_usec': 0, 'closed_total_usec': 0, 'chain_failure': True})
+        x = {'name': 'x1', 'records': recs, 'end': {'reason': 'reached-r', 'last_valid_boundary': None}}
+        with mock.patch.object(chains, 'select_endpoint', lambda *a: {'boundary': a[3], 'kind': 'checkpoint'}), \
+                mock.patch.object(chains, 'prune_chain', lambda *a: {}):
+            st = chains.pair_finalize(plan, 'p', c, x, {}, {}, {'headroom': 0})
+        self.assertEqual((st['endpoints']['x1'], st['label']), (3, 'under-budget'))
+        shutil.rmtree(self.node.root / 'state' / 'x1')
         # C failing early at R_i = 100 with X failed later: the first boundary at or past R_i.
         c = {'name': 'c1', 'records': [{'boundary': 1, 'ledger_usec': 100}], 'end': {'reason': 'operator',
                                                                                     'last_valid_boundary': 1}}
