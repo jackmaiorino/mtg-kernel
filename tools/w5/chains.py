@@ -634,6 +634,13 @@ def receipt_at(man, boundary):
     return read(Path(seg['root']) / 'iterations' / f'{boundary - 1 - seg["offset"]:06d}' / 'complete.json')
 
 
+def handoff(state):
+    """Marks the chain's w5box state: when its instance closes, w5box opens its box's outage at once (held handoff
+    to the filler, amendment A1)."""
+    Path(state).mkdir(parents=True, exist_ok=True)
+    (Path(state) / 'HANDOFF').write_text('')
+
+
 def end_doc(name, arm_name, reason, boundary, receipt, by, **detail):
     return {'schema': END_SCHEMA, 'chain': name, 'arm': arm_name, 'reason': reason, 'last_valid_boundary': boundary,
             'ledger_usec': ((receipt or {}).get('chain_ledger') or {}).get('usec'), 'by': by,
@@ -680,6 +687,7 @@ def reached_stop(man, ledger_source):
 
 def end_at_stop(a, arm, root, cdir, man):
     boundary, receipt = latest(man)
+    handoff(a.state)
     write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'x-stop-at', boundary, receipt, 'driver',
                                           stop_at_usec=read(a.ledger_source)['stop_at_usec']))
     log(root, chain=a.chain, event='end', reason='x-stop-at', boundary=boundary)
@@ -748,6 +756,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             return EXIT_STOP
         if deadline is not None and time.time() >= deadline:
             boundary, receipt = latest(man)
+            handoff(a.state)
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
@@ -773,6 +782,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             continue
         boundary, receipt = latest(man)
         if killed:
+            handoff(a.state)
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
@@ -828,7 +838,8 @@ def run(a):
     root = Path(plan['root'])
     c = plan['chains'][a.chain]
     require(c['arm'] in MEASURED, f'{a.chain} is a filler box: supervise runs it through `w5box.py fill`')
-    waiting = [f['slot'] for f in plan['chains'].values() if f['arm'] == 'F' and not fill_ready(root, f['slot'])]
+    waiting = [f['slot'] for f in plan['chains'].values()
+               if f['arm'] == 'F' and not fill_ready(root, f['slot'], fill_stop(plan))]
     require(not waiting, f'filler boxes {waiting} hold no verified filler yet (supervise starts them)')
     require(read_end(root, a.chain) is None, f'{a.chain} has ended')
     require(not stopped(root, chain_dir(root, a.chain)), 'a STOP file is present')
@@ -886,6 +897,7 @@ def end_cmd(a):
     receipt = receipt_at(man, boundary) if boundary else None
     doc = end_doc(a.chain, plan['chains'][a.chain]['arm'], 'operator', boundary, receipt, 'operator',
                   note=a.reason)
+    handoff(root / 'state' / a.chain)
     if not write_once(chain_dir(root, a.chain) / 'END.json', doc):
         print(json.dumps(read_end(root, a.chain), indent=1))
         return 1
@@ -1003,6 +1015,7 @@ def end_x(plan, x, reason, **detail):
     top = x['records'][-1] if x['records'] else None
     doc = end_doc(x['name'], plan['chains'][x['name']]['arm'], reason, None, None, 'supervise', **detail)
     doc['ledger_usec'] = top and top['ledger_usec']
+    handoff(x['state'])
     if write_once(x['path'].parent / 'END.json', doc) and x['live']:
         request(plan, x['name'], 'kill')
 
@@ -1293,19 +1306,25 @@ def closed_unix(root, name):
     return closes[-1] if closes else None
 
 
-def fill_ready(root, slot):
-    """A filler box holds a verified filler: its `w5box.py fill` runs and the box has no open outage (the fill
-    opens one before it takes the box and closes it only on verification)."""
-    if not fill_running(root, slot):
+def fill_stop(plan):
+    """The stage's fill stop file: every fill of the plan names it; fills of another stage do not count here."""
+    return Path(plan['root']) / 'plan' / plan['label'] / 'fills' / 'STOP'
+
+
+def fill_ready(root, slot, stop):
+    """A filler box holds a verified filler of this stage: its `w5box.py fill` (naming this stage's stop file, which
+    is not written) runs and the box has no open outage (the fill opens one before it takes the box and closes it
+    only on verification)."""
+    if stop.exists() or not fill_running(root, slot, stop):
         return False
     records, torn = w5box.NodeLog(Path(root) / 'state').read()
     return slot not in w5box.NodeLog.state(records, torn)['open_outages']
 
 
-def fill_running(root, slot):
-    """`w5box.py fill` holds the box (its mark names a live process)."""
+def fill_running(root, slot, stop=None):
+    """`w5box.py fill` holds the box (its mark names a live process, and with `stop`, this stage's stop file)."""
     mark = Path(root) / 'state' / f'box{slot}.fill.json'
-    if not mark.exists():
+    if not mark.exists() or (stop is not None and read(mark).get('stop') != str(stop)):
         return False
     if os.name == 'nt':
         return True
@@ -1316,6 +1335,26 @@ def fill_running(root, slot):
     except PermissionError:
         return True
     return True
+
+
+def close_handoffs(plan, root):
+    """At the stage's end: the handoff outages w5box opened for this plan's boxes as their chains closed (no
+    measured chain remains to hold) are closed, so the next stage starts clear."""
+    node = w5box.NodeLog(Path(root) / 'state')
+    if not node.path.exists():
+        return []
+    slots = {c['slot'] for c in plan['chains'].values()}
+    closed = []
+    with node.locked():
+        records, torn = node.read()
+        for slot, outage in sorted(w5box.NodeLog.state(records, torn)['open_outages'].items()):
+            if outage.get('handoff') and slot in slots and outage.get('chain') in plan['chains']:
+                node.append({'event': 'restored', 'outage_id': outage['id'], 'box_slot': slot,
+                             'chain': outage['chain'], 'how': 'stage-ended', 'source': 'w5-chains'})
+                closed.append(slot)
+    if closed:
+        w5box.enforce_node(read(fill_plan(plan)), node, 'stage-ended')
+    return closed
 
 
 def fill_plan(plan):
@@ -1334,19 +1373,21 @@ def occupancy(plan, root):
     measured = [n for n, c in plan['chains'].items() if c['arm'] in MEASURED]
     closed = {n: read_end(root, n) is not None and not live(root, n) for n in measured}
     out = {'started': [], 'stopped': []}
-    marks = Path(root) / 'plan' / plan['label'] / 'fills'
-    stop = marks / 'STOP'  # the plan's fills end with its stage; a fill started late sees it and exits at once
+    stop = fill_stop(plan)  # the plan's fills end with its stage; a fill started late sees it and exits at once
+    marks = stop.parent
     if measured and all(closed.values()):
         if not stop.exists():
             marks.mkdir(parents=True, exist_ok=True)
             stop.write_text('')
-            out['stopped'] = sorted(c['slot'] for c in plan['chains'].values() if fill_running(root, c['slot']))
+            out['stopped'] = sorted(c['slot'] for c in plan['chains'].values() if fill_running(root, c['slot'], stop))
+        out['handoffs_closed'] = close_handoffs(plan, root)
         return out
     boxes = [(c['slot'], n, None) for n, c in sorted(plan['chains'].items()) if c['arm'] == 'F']
     boxes += [(plan['chains'][n]['slot'], n, closed_unix(root, n)) for n in sorted(measured) if closed[n]]
     for slot, n, since in boxes:
         mark = marks / f'box{slot}.json'
-        if fill_running(root, slot) or (mark.exists() and time.time() - read(mark)['unix'] < FILL_START_GRACE):
+        if fill_running(root, slot, stop) or \
+                (mark.exists() and time.time() - read(mark)['unix'] < FILL_START_GRACE):
             continue
         cmd = [sys.executable, str(HERE / 'w5box.py'), 'fill', '--plan', fill_plan(plan), '--slot', str(slot),
                '--stop', str(stop)]

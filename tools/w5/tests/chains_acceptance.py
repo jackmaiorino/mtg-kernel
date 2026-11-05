@@ -189,8 +189,8 @@ def main():
         log_b = [json.loads(line) for line in (root / 'LOG.jsonl').read_text().splitlines()]
         fill_starts = [e for e in log_b if e.get('event') == 'fill-start' and e.get('ended') == 'c2']
         node_log = w5box.NodeLog(root / 'state').read()[0]
-        fill_outages = [e for e in node_log if e['event'] == 'outage-start' and e['id'].startswith('fill0/')
-                        and e['unix'] >= fill_starts[0]['unix'] - 1] if fill_starts else []
+        fill_outages = [e for e in node_log if e['event'] == 'outage-start' and e['box_slot'] == 0
+                        and e.get('chain') == 'c2' and e.get('handoff')]
         restored = {e['outage_id']: e for e in node_log if e['event'] == 'restored'}
         verified = [restored[o['id']] for o in fill_outages if restored.get(o['id'], {}).get('how') == 'fill-verified']
         r2 = records(root, 'c2')[-1]['ledger_usec']
@@ -207,8 +207,10 @@ def main():
             'b_x_stopped_at_r': end(root, 'x2')['reason'] == 'x-stop-at' and codes_b['x2'] == 0 and
             x2_rec[-1]['ledger_usec'] >= r2 and (len(x2_rec) == 1 or x2_rec[-2]['ledger_usec'] < r2),
             'b_matched': pb['label'] == 'matched' and pb['done'] and pb['endpoints']['x2'] == x2_rec[-1]['boundary'],
-            'b_ended_box_was_an_outage_until_its_filler_was_verified': bool(fill_outages) and bool(verified) and
-            fill_outages[0].get('empty_since') is not None and verified[0]['unix'] < end(root, 'x2')['unix'],
+            'b_ended_box_was_an_outage_from_close_until_its_filler_was_verified': bool(fill_starts) and
+            len(fill_outages) == 1 and bool(verified) and verified[0]['unix'] < end(root, 'x2')['unix'],
+            'b_x_never_ran_beside_the_empty_box': bool(verified) and all(
+                e['started_frozen'] or e['unix'] >= verified[0]['unix'] for e in x2_ledger if e['event'] == 'start'),
             'b_fill_stopped_after_the_stage': not (root / 'state' / 'box0.fill.json').exists() and
             not (cgroup_root / f'box{lay["boxes"][0]["slot"]}' / 'filler').exists(),
         })

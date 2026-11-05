@@ -242,6 +242,7 @@ class ChainTests(unittest.TestCase):
         end = json.loads((root / 'chains' / 'c1' / 'END.json').read_text())
         chain, records = retention.index(plan['chains']['c1']['manifest'])
         self.assertEqual(end['reason'], 'c-wall')
+        self.assertTrue((root / 'state' / 'c1' / 'HANDOFF').exists())  # w5box holds the box at the close
         self.assertGreaterEqual(len(records), 8)
         self.assertEqual(end['last_valid_boundary'], records[-1]['boundary'])
         self.assertEqual(end['ledger_usec'], records[-1]['ledger_usec'])
@@ -340,7 +341,11 @@ class ChainTests(unittest.TestCase):
             self.node.drive(plan, 'c1')
         with contextlib.redirect_stderr(io.StringIO()):  # the filler box (f2, slot 2) holds no verified filler
             self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_REFUSED)
-        jwrite(self.node.root / 'state' / 'box2.fill.json', {'pid': 1, 'unix': time.time()})
+        stop = self.node.root / 'plan' / 'stage0' / 'fills' / 'STOP'
+        jwrite(self.node.root / 'state' / 'box2.fill.json', {'pid': 1, 'unix': time.time(), 'stop': 'other stage'})
+        with contextlib.redirect_stderr(io.StringIO()):  # another stage's fill does not count
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_REFUSED)
+        jwrite(self.node.root / 'state' / 'box2.fill.json', {'pid': 1, 'unix': time.time(), 'stop': str(stop)})
         with mock.patch.object(chains.subprocess, 'call', return_value=w5box.EXIT_OOM) as call:
             self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1']), w5box.EXIT_OOM)
         self.assertEqual(call.call_args[0][0][2:7], ['run', '--plan', plan['arms']['C']['w5box_plan']['path'],
@@ -441,6 +446,7 @@ class ChainTests(unittest.TestCase):
             self.assertEqual(self.control(), ['kill.request'])
             end = json.loads((self.node.root / 'chains' / 'x1' / 'END.json').read_text())
             self.assertEqual(end['reason'], 'reached-r')
+            self.assertTrue((self.node.root / 'state' / 'x1' / 'HANDOFF').exists())
         (self.node.root / 'chains' / 'x1' / 'END.json').unlink()
         (self.node.root / 'state' / 'x1' / 'control' / 'kill.request').unlink()
         with contextlib.redirect_stdout(out):
@@ -487,8 +493,9 @@ class ChainTests(unittest.TestCase):
             # Every measured chain ended and closed: the stage's fills stop.
             chains.write_once(root / 'chains' / 'x1' / 'END.json', {'reason': 'x', 'unix': time.time()})
             self.node.ledger('x1', 'close')
-            with mock.patch.object(chains, 'fill_running', lambda root, slot: slot in (0, 2)):
-                self.assertEqual(chains.occupancy(plan, root), {'started': [], 'stopped': [0, 2]})
+            with mock.patch.object(chains, 'fill_running', lambda root, slot, stop=None: slot in (0, 2)):
+                self.assertEqual(chains.occupancy(plan, root), {'started': [], 'stopped': [0, 2],
+                                                                'handoffs_closed': []})
         self.assertTrue(stop.exists())
         with contextlib.redirect_stderr(io.StringIO()):  # a filler box is not a chain
             self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'f2']), w5box.EXIT_REFUSED)

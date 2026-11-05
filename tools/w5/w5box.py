@@ -53,7 +53,10 @@ thaw when no outage, fault, operator freeze or torn log tail remains. A new chai
 node is not clear. Escalation (`ESCALATE.json`): any outage open for 2 hours, or a fault at once in Stage 1b. Each
 chain copies every node event into its ledger exactly once (a durable watermark).
 
-**Ended boxes.** A box whose chain has ended holds the frozen filler while the node's other measured chains run
+**Ended boxes.** When a chain instance closes after its chain has ended (`<state>/<chain>/HANDOFF`, written with the
+chain's END) or after an OOM kill, its supervisor opens the box's outage before the box is released, so the node's
+other measured chains freeze at once. A box whose chain has ended holds the frozen filler while the node's other
+measured chains run
 (`w5box.py fill`, started by tools/w5/chains.py supervise), under the same rules: the box is an outage from the
 command's start (`--empty-since` records when the chain closed), opened before it waits for the box lock, until a
 verified filler runs in its filler cgroup; a filler that exits opens a new outage at once and is replaced, and
@@ -1153,6 +1156,20 @@ class Supervisor:
                                                                "base_usec": self.base, "unix": time.time()},
                                   durable=True)
             time.sleep(POLL_SECONDS)
+        events_now = self.chain_cg.keyed("memory.events")
+        if (self.state / "HANDOFF").exists() or \
+                int(events_now.get("oom_kill", 0)) + int(events_now.get("oom_group_kill", 0)):
+            # The chain has ended or failed: its box is an outage, with the node's other measured chains frozen, from
+            # now (before a paused filler goes or the box is released) until a verified filler holds it.
+            with self.node.locked():
+                records, torn = self.node.read()
+                if self.slot["slot"] not in NodeLog.state(records, torn)["open_outages"]:
+                    self.node.append({"event": "outage-start", "box_slot": self.slot["slot"], "handoff": True,
+                                      "id": f"{self.chain}/{self.instance}/handoff/{time.time_ns()}",
+                                      "chain": self.chain, "instance": self.instance,
+                                      "reason": "the chain ended: its box waits for the frozen filler",
+                                      "affected": node_chains(self.state_root)})
+            enforce_node(self.plan, self.node, "handoff")
         if self.paused_seq is not None or self.chain_cg.frozen():  # the chain died while paused or frozen (a kill)
             self.stop_filler()
             self.paused_path.unlink(missing_ok=True)
@@ -1265,7 +1282,8 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, st
         close_outage("box-occupied-by-a-chain")
         lock.close()
         raise Refusal(f"Box {index} holds a running chain")
-    write_json_atomic(mark, {"pid": os.getpid(), "unix": time.time(), "empty_since": empty_since}, durable=True)
+    write_json_atomic(mark, {"pid": os.getpid(), "unix": time.time(), "empty_since": empty_since, "stop": stop_key},
+                      durable=True)
     pid, seq, failures, faulted, ended = None, 0, 0, False, False
     try:
         while not stop["flag"]:
