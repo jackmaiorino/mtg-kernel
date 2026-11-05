@@ -1304,7 +1304,9 @@ fn the_announced_spell_moves_in_the_open_batch() {
                 assert_eq!(p.batch_of(&bounds, open), usize::MAX, "seed {seed}");
                 // Batches are runs of consecutive items: every two
                 // consecutive closed items keep their former relation.
-                let closed: Vec<usize> = (0..p.items).filter(|&a| a != open).collect();
+                // `p.items` is the reconciliation index (`final_item`) when
+                // event-less moves follow the announcement.
+                let closed: Vec<usize> = (0..=p.items).filter(|&a| a != open).collect();
                 for w in closed.windows(2) {
                     assert_eq!(
                         p.batch_of(&bounds, w[0]) == p.batch_of(&bounds, w[1]),
@@ -1335,4 +1337,43 @@ fn the_announced_spell_moves_in_the_open_batch() {
         pending > 50 && witnesses > 0 && closed_checked > 0,
         "pending casts {pending}, witnesses {witnesses}, closed pairs {closed_checked}"
     );
+}
+
+/// Amendment 43.9, cut 1, the placement rule on its own (Sol design review
+/// round 2): committed items stamped (1, 0) and (2, 0), the announcement
+/// (the open item) and an event-less move after it, both walked at (2, 0),
+/// and the reconciliation index after them; marks at (1, 0) and (2, 0). The
+/// open item is a batch of its own; the event-less move and the
+/// reconciliation index stay in the batch of the committed item before the
+/// announcement, as the former placement had them.
+#[test]
+fn the_open_item_leaves_every_other_batch_alone() {
+    let s = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+        5,
+        5,
+        2_000,
+        20_000,
+        ["Burn".to_string(), "Burn".to_string()],
+    )
+    .expect("reset");
+    let st = s.game_state();
+    let mut p = super::projection::project_v1(st, st.observation_journal.notes(), PlayerId(0));
+    p.stamps = vec![(1, 0), (2, 0), (2, 0), (2, 0)];
+    p.items = 4;
+    let marks = [(1, 0), (2, 0)];
+    p.open_item = None;
+    let former = p.batch_bounds(Some(&marks));
+    let former: Vec<usize> = (0..=4).map(|i| p.batch_of(&former, i)).collect();
+    assert_eq!(former, vec![0, 1, 1, 1, 1]);
+    p.open_item = Some(2);
+    let bounds = p.batch_bounds(Some(&marks));
+    let now: Vec<usize> = (0..=4).map(|i| p.batch_of(&bounds, i)).collect();
+    assert_eq!(now, vec![0, 1, usize::MAX, 1, 1]);
+    // A mark between the event-less move and a later committed item still
+    // separates them.
+    p.stamps = vec![(1, 0), (2, 0), (2, 0), (2, 0), (3, 0)];
+    p.items = 5;
+    let bounds = p.batch_bounds(Some(&[(1, 0), (2, 0), (3, 0)]));
+    let now: Vec<usize> = (0..=5).map(|i| p.batch_of(&bounds, i)).collect();
+    assert_eq!(now, vec![0, 1, usize::MAX, 1, 2, 2]);
 }
