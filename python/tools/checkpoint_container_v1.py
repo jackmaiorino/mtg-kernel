@@ -1,45 +1,150 @@
 """Read checkpoints in either format (v1 JSON or the checkpoint container) from Python tools.
 
 A checkpoint file is either v1 JSON (starts with `{`) or a container (starts with the magic `MTGCKPT\\0`, Rust
-`expanded_deck_training_v1::checkpoint_container_v1`). Tools that read checkpoint fields use this module instead of
-`json.loads` so they accept both:
+`expanded_deck_training_v1::checkpoint_container_v1`). The container is the default record format for ordinary fresh
+V4, FlatV7 and FlatV8 checkpoints. Tools that read checkpoint fields use this module instead of `json.loads` so they
+accept both:
 
-- `export_v1(path)`: the checkpoint's v1 JSON bytes;
-- `read_document(path)`: the checkpoint as a dict, exactly as `json.loads` of its v1 JSON;
+- `document_from_bytes(data, **json_kwargs)`: the checkpoint as a dict from bytes the caller already pinned, exactly
+  as `json.loads` of its v1 JSON (so a pin check and the parse use the same bytes);
+- `read_document(path)`: the same from a file;
 - `has_moments(path)`: whether the Adam moment lists are present and non-empty;
+- `export_v1(path)`: the checkpoint's exact v1 JSON bytes. Only a reader that needs those bytes (a hash of the v1
+  file, a byte comparison) uses it; it runs the Rust exporter, which needs the environment variable
+  MTG_KERNEL_CHECKPOINT_CONTAINER_BIN and fails by name without it;
 - `read_s_document(path)`: a native S train-state container's document (config, step, hashes, parameter names
   and shapes), through the binary's `s-document` mode.
 
-A container is never parsed in Python. Its validation (canonical form, schema, section layout) is the Rust
-loader's, so every container read goes through the Rust exporter, the `checkpoint_container_v1` binary named by the
-environment variable MTG_KERNEL_CHECKPOINT_CONTAINER_BIN, which verifies the file and writes its v1 JSON. Without
-the binary a container is refused, never read with weaker checks.
+A container is read in pure Python, with no binary. Layout (little-endian): magic, version u32 = 1, reserved u32 = 0,
+document length u64, table length u64, the document (the checkpoint's canonical JSON with its three tensor lists
+empty), the section table, zero padding to a multiple of 256, then each tensor's f32 bits, 256-aligned. The decoder
+checks the header, the table and every section's order, offset, length and padding, and that the file ends after the
+last tensor, then fills `parameters`, `first_moments` and `second_moments` with `{name, shape, values}` rows of u32
+bit patterns, which is what the v1 JSON holds. It does not re-serialize the document or recompute `state_sha256`
+(the Rust loader does both); the caller's pin of the file's SHA-256 binds every byte, so use a pinned read.
 """
 import hashlib
 import json
 import os
+import struct
 import subprocess
 import tempfile
 from pathlib import Path
 
 MAGIC = b'MTGCKPT\x00'
 BINARY_ENV = 'MTG_KERNEL_CHECKPOINT_CONTAINER_BIN'
+_HEADER = 32
+_ALIGN = 256
+_STATE_FORMAT = 'mtgts-sections-v1'
+_SECTIONS = ('parameters', 'first_moments', 'second_moments')
+_TABLE_KEYS = ['state_format', 'sections']
+_ENTRY_KEYS = ['section', 'ordinal', 'name', 'shape', 'offset', 'byte_length']
+_USIZE = 1 << 64
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('checkpoint container table repeats a key: ' + key)
+        result[key] = value
+    return result
+
+
+def _count(value):
+    return type(value) is int and 0 <= value < _USIZE
 
 
 def is_container(data: bytes) -> bool:
     return data.startswith(MAGIC)
 
 
+def _align(value: int) -> int:
+    return -(-value // _ALIGN) * _ALIGN
+
+
+def decode_container(data: bytes, **json_kwargs) -> dict:
+    """A checkpoint container's v1 document as a dict (see the module docstring for what is checked)."""
+    if len(data) < _HEADER or not is_container(data):
+        raise ValueError('not a checkpoint container')
+    version, reserved, document_length, table_length = struct.unpack_from('<IIQQ', data, 8)
+    if version != 1 or reserved != 0:
+        raise ValueError('checkpoint container version differs')
+    document_end = _HEADER + document_length
+    table_end = document_end + table_length
+    data_start = _align(table_end)
+    if data_start > len(data):
+        raise ValueError('checkpoint container is truncated')
+    document = json.loads(data[_HEADER:document_end], **json_kwargs)
+    table_bytes = bytes(data[document_end:table_end])
+    table = json.loads(table_bytes, object_pairs_hook=_unique_pairs)
+    if not isinstance(document, dict) or any(document.get(name) != [] for name in _SECTIONS):
+        raise ValueError('checkpoint container document is not a checkpoint with empty tensor lists')
+    if (not isinstance(table, dict) or list(table) != _TABLE_KEYS
+            or table['state_format'] != _STATE_FORMAT or not isinstance(table['sections'], list)):
+        raise ValueError('checkpoint container section table differs')
+    # The table holds only strings and non-negative integers, so Python re-serializes it exactly as the writer
+    # does (compact, fixed key order, no spaces); anything else is not the canonical table.
+    if json.dumps(table, separators=(',', ':'), ensure_ascii=False).encode() != table_bytes:
+        raise ValueError('checkpoint container is not in canonical form')
+    if any(data[table_end:data_start]):
+        raise ValueError('checkpoint container padding is not zero')
+    body = memoryview(data)[data_start:]
+    expected_offset = data_end = section_index = ordinal = 0
+    for entry in table['sections']:
+        if not isinstance(entry, dict) or list(entry) != _ENTRY_KEYS:
+            raise ValueError('checkpoint container section entry differs')
+        while section_index < len(_SECTIONS) and entry['section'] != _SECTIONS[section_index]:
+            section_index += 1
+            ordinal = 0
+        shape = entry['shape']
+        if (section_index >= len(_SECTIONS) or not isinstance(entry['name'], str) or not isinstance(shape, list)
+                or not all(_count(dim) for dim in shape)):
+            raise ValueError('checkpoint container sections are out of order')
+        count = 1
+        for dim in shape:
+            count *= dim
+            if count >= _USIZE:
+                raise ValueError('checkpoint container tensor shape overflows')
+        end = expected_offset + 4 * count
+        if (not (_count(entry['ordinal']) and _count(entry['offset']) and _count(entry['byte_length']))
+                or entry['ordinal'] != ordinal or entry['offset'] != expected_offset
+                or entry['byte_length'] != 4 * count or end >= _USIZE
+                or end > len(body) or any(body[data_end:expected_offset])):
+            raise ValueError('checkpoint container section layout differs')
+        values = list(struct.unpack_from(f'<{count}I', body, expected_offset))
+        document[_SECTIONS[section_index]].append({'name': entry['name'], 'shape': shape, 'values': values})
+        ordinal += 1
+        data_end = end
+        expected_offset = _align(end)
+    if data_end != len(body):
+        raise ValueError('checkpoint container length differs from its sections')
+    return document
+
+
+def document_from_bytes(data: bytes, **json_kwargs) -> dict:
+    """The checkpoint as `json.loads` of its v1 JSON, from bytes in either format."""
+    if is_container(data):
+        return decode_container(data, **json_kwargs)
+    return json.loads(data, **json_kwargs)
+
+
+def read_document(path) -> dict:
+    """The checkpoint as `json.loads` of its v1 JSON, for either format."""
+    return document_from_bytes(Path(path).read_bytes())
+
+
 def export_v1(path) -> bytes:
-    """The v1 JSON bytes of a checkpoint in either format."""
+    """The exact v1 JSON bytes of a checkpoint in either format (a container goes through the Rust exporter)."""
     path = Path(path)
     data = path.read_bytes()
     if not is_container(data):
         return data
     binary = os.environ.get(BINARY_ENV)
     if not binary:
-        raise RuntimeError(f'{path} is a checkpoint container; set {BINARY_ENV} to the checkpoint_container_v1 '
-                           'binary to read it')
+        raise RuntimeError(f'export_v1: {path} is a checkpoint container and its exact v1 JSON bytes need the Rust '
+                           f'exporter; set {BINARY_ENV} to the checkpoint_container_v1 binary (read_document needs '
+                           'no binary)')
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp).resolve() / 'checkpoint.json'
         result = subprocess.run([binary, 'export', '--input', str(path.resolve()), '--sha256',
@@ -48,11 +153,6 @@ def export_v1(path) -> bytes:
         if result.returncode != 0:
             raise ValueError(f'{path}: {result.stderr.strip()}')
         return out.read_bytes()
-
-
-def read_document(path) -> dict:
-    """The checkpoint as `json.loads` of its v1 JSON, for either format."""
-    return json.loads(export_v1(path))
 
 
 def read_s_document(path) -> dict:

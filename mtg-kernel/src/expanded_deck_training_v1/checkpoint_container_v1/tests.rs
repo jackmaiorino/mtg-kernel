@@ -38,6 +38,58 @@ fn parts(bytes: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     )
 }
 
+/// A small checkpoint for the Python reader's fixture: the net-8 fixture's
+/// document with three small tensors per section.
+fn python_fixture_v1() -> ExpandedCheckpointV1 {
+    let mut saved = fixture_v1();
+    let tensors = |seed: f32| -> Vec<ParameterBitsV1> {
+        [
+            ("encoder.w", vec![2, 3]),
+            ("head.b", vec![5]),
+            ("empty", vec![0, 4]),
+        ]
+        .into_iter()
+        .map(|(name, shape)| {
+            let count: usize = shape.iter().product();
+            ParameterBitsV1 {
+                name: name.into(),
+                shape,
+                values: (0..count)
+                    .map(|i| (seed + i as f32 * 0.37 - 1.0).to_bits())
+                    .collect(),
+            }
+        })
+        .collect()
+    };
+    saved.parameters = tensors(0.0);
+    saved.first_moments = tensors(0.25);
+    saved.second_moments = tensors(0.5);
+    saved
+}
+
+/// `python/tools/tests/fixtures/checkpoint_container_v1/` holds a small v1
+/// checkpoint and the container the converter makes from it; the Python
+/// reader's tests decode one and compare it with the other. Set
+/// `MTG_WRITE_CONTAINER_FIXTURE=1` to rewrite them.
+#[test]
+fn the_python_reader_fixture_is_the_converters_output() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../python/tools/tests/fixtures/checkpoint_container_v1");
+    let v1 = json_v1(&python_fixture_v1());
+    let container = convert_v1_bytes(&v1).unwrap();
+    if std::env::var_os("MTG_WRITE_CONTAINER_FIXTURE").is_some() {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("checkpoint-v1.json"), &v1).unwrap();
+        std::fs::write(dir.join("checkpoint.ckpt"), &container).unwrap();
+    }
+    assert_eq!(std::fs::read(dir.join("checkpoint-v1.json")).unwrap(), v1);
+    assert_eq!(
+        std::fs::read(dir.join("checkpoint.ckpt")).unwrap(),
+        container
+    );
+    assert_eq!(export_v1(&container).unwrap(), v1);
+}
+
 #[test]
 fn a_container_decodes_to_its_checkpoint_and_exports_its_v1_bytes() {
     let saved = fixture_v1();

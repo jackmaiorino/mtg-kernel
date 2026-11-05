@@ -68,7 +68,7 @@ def inference_shape(source):
     # Cache only a small derived shape, after checking the current exact bytes.
     # A matching path/size/mtime does not establish immutable contents.
     if item["sha256"] not in _INFERENCE_SHAPES:
-        _INFERENCE_SHAPES[item["sha256"]] = _inference_shape(json.loads(payload))
+        _INFERENCE_SHAPES[item["sha256"]] = _inference_shape(checkpoint_document(payload))
         if len(_INFERENCE_SHAPES) > 16:
             _INFERENCE_SHAPES.popitem(last=False)
     _INFERENCE_SHAPES.move_to_end(item["sha256"])
@@ -122,7 +122,18 @@ def artifact_reader(mappings):
     return resolve
 
 
-def read_pinned_json(item, resolve=checked, validated_files=None):
+def checkpoint_document(payload):
+    """A checkpoint's v1 document from pinned bytes in either record format (v1 JSON or the checkpoint container,
+    the default for ordinary fresh checkpoints). The container is decoded in Python without the Rust binary; the
+    sibling module is imported only when a container appears, so the guard modules copied to a target need not
+    carry it."""
+    if payload.startswith(b"MTGCKPT"):
+        import checkpoint_container_v1
+        return checkpoint_container_v1.document_from_bytes(payload)
+    return json.loads(payload)
+
+
+def read_pinned_json(item, resolve=checked, validated_files=None, parse=json.loads):
     """Hash and parse the same bytes, without a separate full-file hash read.
 
     Recovery resolution remains path-only until these exact bytes are checked.
@@ -134,7 +145,7 @@ def read_pinned_json(item, resolve=checked, validated_files=None):
     payload = path.read_bytes()
     require(hashlib.sha256(payload).hexdigest() == item["sha256"],
             "changed pinned input: " + str(path))
-    document = json.loads(payload)
+    document = parse(payload)
     if validated_files is not None:
         validated_files[str(path.resolve())] = item["sha256"]
     return document
@@ -821,7 +832,7 @@ def iteration_fingerprint(index, item, expected, tolerant, project, resolve=chec
     timing["receipt_read_hash_parse_seconds"] += time.monotonic() - phase_started
     require(update["complete"], "incomplete optimizer update")
     phase_started = time.monotonic()
-    checkpoint = read_pinned_json(update["checkpoint"], resolve, validated_files)
+    checkpoint = read_pinned_json(update["checkpoint"], resolve, validated_files, checkpoint_document)
     timing["checkpoint_read_hash_parse_seconds"] += time.monotonic() - phase_started
     require([t["sha256"] for t in checkpoint["trajectories"]] == trajectories,
             "optimizer used different ordered trajectories")

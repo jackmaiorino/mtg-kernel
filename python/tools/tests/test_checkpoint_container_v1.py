@@ -1,5 +1,6 @@
 import json
 import os
+import struct
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,8 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import checkpoint_container_v1 as cc  # noqa: E402
+
+FIXTURES = Path(__file__).resolve().parent / 'fixtures' / 'checkpoint_container_v1'
 
 V1 = {
     'schema': 'mtg-kernel-expanded-deck-fresh-checkpoint/v1',
@@ -31,15 +34,86 @@ class CheckpointContainerTests(unittest.TestCase):
             path.write_bytes(json.dumps(dict(V1, first_moments=[])).encode())
             self.assertFalse(cc.has_moments(path))
 
-    def test_a_container_is_never_read_without_the_rust_exporter(self):
+    def test_a_container_is_read_in_python_with_the_values_of_the_v1_file_it_came_from(self):
+        """The fixture pair is the Rust converter's output (a Rust test keeps it so): decoding the container
+        gives the v1 document, key order included, with no binary."""
+        v1_bytes = (FIXTURES / 'checkpoint-v1.json').read_bytes()
+        container = (FIXTURES / 'checkpoint.ckpt').read_bytes()
+        self.assertTrue(cc.is_container(container) and not cc.is_container(v1_bytes))
+        expected = json.loads(v1_bytes)
+        with mock.patch.dict(os.environ, {cc.BINARY_ENV: ''}):
+            document = cc.document_from_bytes(container)
+            self.assertEqual(document, expected)
+            self.assertEqual(list(document), list(expected))
+            self.assertEqual(json.dumps(document, separators=(',', ':'), ensure_ascii=False).encode(), v1_bytes)
+            self.assertEqual(cc.document_from_bytes(v1_bytes), expected)
+            self.assertTrue(any(len(row['values']) == 0 for row in document['parameters']))
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'checkpoint.json'
+                path.write_bytes(container)
+                self.assertEqual(cc.read_document(path), expected)
+                self.assertTrue(cc.has_moments(path))
+
+    def test_a_container_that_is_not_the_canonical_layout_is_refused(self):
+        container = (FIXTURES / 'checkpoint.ckpt').read_bytes()
+        header = struct.unpack_from('<IIQQ', container, 8)
+        data_start = -(-(32 + header[2] + header[3]) // 256) * 256
+        cases = {
+            'truncated': container[:-4],
+            'trailing byte': container + b'\x00',
+            'version': container[:8] + struct.pack('<I', 2) + container[12:],
+            'reserved': container[:12] + struct.pack('<I', 1) + container[16:],
+            'header only': container[:20],
+            'table padding': container[:data_start - 1] + b'\x01' + container[data_start:],
+            'tensor padding': container[:data_start + 24] + b'\x01' + container[data_start + 25:],
+            'document with values': cc.MAGIC + container[8:16] + struct.pack('<QQ', 2, 0) + b'{}' + bytes(222),
+        }
+        for name, data in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(ValueError):
+                    cc.document_from_bytes(data)
+
+    def test_a_section_table_the_rust_decoder_would_refuse_is_refused(self):
+        container = (FIXTURES / 'checkpoint.ckpt').read_bytes()
+        _, _, document_length, table_length = struct.unpack_from('<IIQQ', container, 8)
+        document = container[32:32 + document_length]
+        table_text = container[32 + document_length:32 + document_length + table_length].decode()
+        data_start = -(-(32 + document_length + table_length) // 256) * 256
+        data = container[data_start:]
+
+        def rebuilt(table_bytes):
+            head = cc.MAGIC + struct.pack('<IIQQ', 1, 0, len(document), len(table_bytes)) + document + table_bytes
+            return head + bytes(-(-len(head) // 256) * 256 - len(head)) + data
+
+        self.assertEqual(cc.document_from_bytes(rebuilt(table_text.encode())), cc.document_from_bytes(container))
+        first = json.loads(table_text)['sections'][0]
+        cases = {
+            'float offset': table_text.replace('"offset":0,', '"offset":0.0,', 1),
+            'bool ordinal': table_text.replace('"ordinal":0,', '"ordinal":false,', 1),
+            'oversized shape': table_text.replace(json.dumps(first['shape'], separators=(',', ':')),
+                                                  '[18446744073709551616,0]', 1),
+            'repeated key': table_text.replace('{"state_format"', '{"state_format":"x","state_format"', 1),
+            'spaces': table_text.replace(',"sections"', ', "sections"', 1),
+            'key order': table_text.replace('"state_format":"mtgts-sections-v1",', '', 1)[:-1]
+                         + ',"state_format":"mtgts-sections-v1"}',
+        }
+        for name, text in cases.items():
+            self.assertNotEqual(text, table_text, name)
+            with self.subTest(name):
+                with self.assertRaises(ValueError):
+                    cc.document_from_bytes(rebuilt(text.encode()))
+
+    def test_export_v1_of_a_container_fails_by_name_without_the_rust_exporter(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'checkpoint.json'
-            path.write_bytes(cc.MAGIC + b'\x01\x00\x00\x00' + bytes(24))
+            path.write_bytes((FIXTURES / 'checkpoint.ckpt').read_bytes())
             with mock.patch.dict(os.environ, {cc.BINARY_ENV: ''}):
-                with self.assertRaises(RuntimeError):
-                    cc.read_document(path)
-                with self.assertRaises(RuntimeError):
-                    cc.has_moments(path)
+                with self.assertRaisesRegex(RuntimeError, cc.BINARY_ENV):
+                    cc.export_v1(path)
+            v1 = Path(tmp) / 'v1.json'
+            v1.write_bytes((FIXTURES / 'checkpoint-v1.json').read_bytes())
+            with mock.patch.dict(os.environ, {cc.BINARY_ENV: ''}):
+                self.assertEqual(cc.export_v1(v1), v1.read_bytes())
 
     def test_an_s_document_is_read_only_through_the_binary_s_document_mode(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -381,12 +381,15 @@ pub struct NativeExpandedTrainingRunV1 {
     pub value_coefficient: f32,
     #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
     pub update_backend: ExpandedUpdateBackendV1,
-    /// Config-driven; default v1 (JSON checkpoints) keeps every existing
-    /// config, its wire bytes and its run identity byte-identical. v2 writes
-    /// checkpoint containers (`checkpoint_container_v1`, design 4.2).
+    /// Config-driven; absent means `auto` (checkpoint containers where the
+    /// writer's scope gate admits the checkpoint, v1 JSON otherwise), and
+    /// `auto` is never serialized, so every existing config keeps its wire
+    /// bytes and its run identity. An explicit `"v1"` (always JSON) or `"v2"`
+    /// (always the container; refused outside the gate) is serialized. See
+    /// `checkpoint_container_v1` and design 4.2.
     #[serde(
         default,
-        skip_serializing_if = "crate::expanded_deck_training_v1::CheckpointRecordFormatV1::is_v1"
+        skip_serializing_if = "crate::expanded_deck_training_v1::CheckpointRecordFormatV1::is_auto"
     )]
     pub record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1,
     /// Config-driven; default `TerminalReinforceValueV3` keeps every
@@ -544,10 +547,10 @@ impl NativeExpandedTrainingRunV1 {
         self.update_backend.validate_v1()?;
         self.loss_selection.validate_v1()?;
         // The E-supported, SQ1, TP1 Stage B and EX1 updates always write v1
-        // checkpoints (outside the v2 writer's scope gate), so a v2 run must
-        // not select them.
+        // checkpoints (outside the v2 writer's scope gate), so a run that
+        // demands v2 must not select them (the default keeps v1 there).
         check(
-            self.record_format.is_v1()
+            !self.record_format.is_v2()
                 || (self.e_supported.is_none()
                     && self.soft_q.is_none()
                     && self.search_targets.is_none()
@@ -611,7 +614,7 @@ impl NativeExpandedTrainingRunV1 {
             check(
                 self.update_backend.is_cpu()
                     && self.update_backward_execution.is_sequential()
-                    && self.record_format.is_v1()
+                    && !self.record_format.is_v2()
                     && self.collection_sampler.is_legacy()
                     && self.line_b.is_none()
                     && self.e_supported.is_none()
@@ -2517,6 +2520,36 @@ mod tests {
         assert!(validate_preparation_execution(&recorded, 4, 256).is_err());
     }
 
+    /// The default record format (`auto`, an absent field) keeps the config's
+    /// wire bytes and identity: it is never serialized. An explicit `"v1"` or
+    /// `"v2"` is serialized and is a different config.
+    #[test]
+    fn record_format_default_preserves_the_config_wire_and_identity() {
+        use crate::expanded_deck_training_v1::CheckpointRecordFormatV1 as Format;
+        let default = schedule();
+        assert!(default.record_format.is_auto());
+        let default_value = value(&default).unwrap();
+        assert!(default_value.get("record_format").is_none());
+        let restored: NativeExpandedTrainingRunV1 =
+            serde_json::from_value(default_value.clone()).unwrap();
+        assert!(restored.record_format.is_auto());
+        assert_eq!(value(&restored).unwrap(), default_value);
+        assert_eq!(identity(&restored).unwrap(), identity(&default).unwrap());
+        for (format, name) in [(Format::V1, "v1"), (Format::V2, "v2")] {
+            let mut explicit = default.clone();
+            explicit.record_format = format;
+            let explicit_value = value(&explicit).unwrap();
+            assert_eq!(explicit_value["record_format"], name);
+            assert_ne!(identity(&explicit).unwrap(), identity(&default).unwrap());
+            // Without the member it is the default's bytes again.
+            let mut stripped = explicit_value.clone();
+            stripped.as_object_mut().unwrap().remove("record_format");
+            assert_eq!(stripped, default_value);
+            let back: NativeExpandedTrainingRunV1 = serde_json::from_value(explicit_value).unwrap();
+            assert_eq!(back.record_format, format);
+        }
+    }
+
     #[test]
     fn max_non_natural_episode_fraction_preserves_serial_wire_and_validates_range() {
         let serial = schedule();
@@ -3165,8 +3198,16 @@ mod tests {
     }
 
     fn checkpoint_identity_v1(pin: &PinnedFileV1) -> (String, String, u64) {
-        let checkpoint: Value =
-            serde_json::from_str(&fs::read_to_string(&pin.path).unwrap()).unwrap();
+        // The default writes containers for these kinds; read either format.
+        let bytes = fs::read(&pin.path).unwrap();
+        let bytes =
+            if crate::expanded_deck_training_v1::checkpoint_container_v1::is_container_v1(&bytes) {
+                crate::expanded_deck_training_v1::checkpoint_container_v1::export_v1(&bytes)
+                    .unwrap()
+            } else {
+                bytes
+            };
+        let checkpoint: Value = serde_json::from_slice(&bytes).unwrap();
         (
             checkpoint["feature_contract_digest"]
                 .as_str()

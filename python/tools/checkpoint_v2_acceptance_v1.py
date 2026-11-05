@@ -10,6 +10,9 @@ Commands (run on the measurement host, inside one host_slots claim on the pool c
   run --root ROOT --attempt 1|2                 run one attempt to its recorded outcome (RESULT.json)
   summary --root ROOT --attempt N               print the attempt's state, calibration and result
 
+Arm A leaves `record_format` absent, which meant v1 only in builds before PR #525; with a later build arm A would write
+containers (the harness then fails its format check), so this harness needs a build from before #525.
+
 The estimand. Both arms run the same binary (pinned by hash); arm A with `record_format` v1 and its opponents as v1
 checkpoints, arm B with `record_format` v2 and its opponents as v2 containers made by the converter (whose receipts are
 pinned). Every block runs the same 16 start checkpoints for one 18-update segment with the same config seeds, so every

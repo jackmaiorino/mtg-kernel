@@ -169,6 +169,27 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         with self.assertRaisesRegex(ValueError, "changed pinned input"):
             dispatch.read_pinned_json(item, validated_files=validated)
 
+    def test_checkpoint_readers_take_a_container_with_the_values_of_its_v1_file(self):
+        """The default record format is the checkpoint container: the fingerprint's checkpoint read and the
+        inference shape give the same answers for it as for the v1 file it came from, with no exporter binary."""
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "checkpoint_container_v1"
+        v1 = self.root / "v1.json"
+        v1.write_bytes((fixtures / "checkpoint-v1.json").read_bytes())
+        container = self.root / "container.ckpt"
+        container.write_bytes((fixtures / "checkpoint.ckpt").read_bytes())
+        v1_pin, container_pin = dispatch.pin(v1), dispatch.pin(container)
+        with patch.dict(os.environ, {"MTG_KERNEL_CHECKPOINT_CONTAINER_BIN": ""}):
+            validated = {}
+            self.assertEqual(
+                dispatch.read_pinned_json(container_pin, validated_files=validated, parse=dispatch.checkpoint_document),
+                dispatch.read_pinned_json(v1_pin, parse=dispatch.checkpoint_document))
+            self.assertEqual(validated[str(container.resolve())], container_pin["sha256"])
+            self.assertEqual(dispatch.inference_shape({"checkpoint": container_pin}),
+                             dispatch.inference_shape({"checkpoint": v1_pin}))
+        container.write_bytes(container.read_bytes()[:-4])
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            dispatch.read_pinned_json(container_pin, parse=dispatch.checkpoint_document)
+
     def test_inference_shape_rehashes_before_reusing_parsed_shape(self):
         value = {"schema": "test", "source_import": "test", "feature_contract_digest": "a",
                  "feature_encoding_digest": "b", "card_db_hash": "c",

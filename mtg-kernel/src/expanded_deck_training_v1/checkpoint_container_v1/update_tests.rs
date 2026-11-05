@@ -46,13 +46,16 @@ fn update(
     })
 }
 
-#[test]
-fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_identically() {
-    let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-    let root = std::env::temp_dir().join(format!(
-        "checkpoint-container-update-{}",
-        std::process::id()
-    ));
+/// A synthetic fresh source of `feature_identity` and a collector over it.
+fn fixture(
+    feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+    tag: &str,
+) -> (
+    PathBuf,
+    ExpandedModelSourceV1,
+    impl Fn(&ExpandedModelSourceV1, &str) -> Vec<PinnedFileV1>,
+) {
+    let root = std::env::temp_dir().join(format!("{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let descriptor = fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
         &root.join("source"),
@@ -93,7 +96,8 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         opening: None,
         mulligan_modes: None,
     };
-    let collect = |source: &ExpandedModelSourceV1, label: &str| -> Vec<PinnedFileV1> {
+    let collect_root = root.clone();
+    let collect = move |source: &ExpandedModelSourceV1, label: &str| -> Vec<PinnedFileV1> {
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
             episodes: vec![ExpandedEpisodeV1 {
@@ -104,11 +108,20 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
-            output_directory: root.join(label),
+            output_directory: collect_root.join(label),
         })
         .unwrap();
         serde_json::from_value(collection["trajectories"].clone()).unwrap()
     };
+    (root, source, collect)
+}
+
+#[test]
+fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_identically() {
+    let (root, source, collect) = fixture(
+        crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+        "checkpoint-container-update",
+    );
     let trajectories = collect(&source, "collect");
 
     let v1 = update(
@@ -125,6 +138,17 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         root.join("v2"),
     )
     .unwrap();
+    // The default (an absent field) publishes the same container as an
+    // explicit v2 for this in-scope kind.
+    let auto = update(
+        &source,
+        &trajectories,
+        CheckpointRecordFormatV1::default(),
+        root.join("auto"),
+    )
+    .unwrap();
+    assert_eq!(auto["checkpoint"]["sha256"], v2["checkpoint"]["sha256"]);
+    assert_eq!(v1["after_state_sha256"], auto["after_state_sha256"]);
     assert_eq!(v1["after_state_sha256"], v2["after_state_sha256"]);
     let pin_v1: PinnedFileV1 = serde_json::from_value(v1["checkpoint"].clone()).unwrap();
     let pin_v2: PinnedFileV1 = serde_json::from_value(v2["checkpoint"].clone()).unwrap();
@@ -218,6 +242,49 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A real update of a kind outside the gate (the V3 fresh identity): the
+/// default keeps writing v1 JSON, an explicit v1 does the same, and an
+/// explicit v2 is refused by name without publishing anything.
+#[test]
+fn the_default_keeps_v1_outside_the_gate_and_explicit_v2_is_refused() {
+    let (root, source, collect) = fixture(
+        crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3,
+        "checkpoint-container-default-outside-gate",
+    );
+    let trajectories = collect(&source, "collect");
+    let auto = update(
+        &source,
+        &trajectories,
+        CheckpointRecordFormatV1::default(),
+        root.join("auto"),
+    )
+    .unwrap();
+    let explicit = update(
+        &source,
+        &trajectories,
+        CheckpointRecordFormatV1::V1,
+        root.join("v1"),
+    )
+    .unwrap();
+    let pin: PinnedFileV1 = serde_json::from_value(auto["checkpoint"].clone()).unwrap();
+    let bytes = fs::read(&pin.path).unwrap();
+    assert!(!is_container_v1(&bytes) && bytes.starts_with(b"{"));
+    assert_eq!(
+        auto["checkpoint"]["sha256"],
+        explicit["checkpoint"]["sha256"]
+    );
+    let refused = update(
+        &source,
+        &trajectories,
+        CheckpointRecordFormatV1::V2,
+        root.join("v2"),
+    )
+    .unwrap_err();
+    assert!(refused.contains("keeps record_format v1"), "{refused}");
+    assert!(!root.join("v2").join("checkpoint.json").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
 #[test]
 fn the_v2_writer_refuses_kinds_outside_its_whitelist() {
     let (_, _, saved) = crate::expanded_deck_training_v1::tests::checkpoint_fixture_v1();
@@ -245,12 +312,35 @@ fn the_v2_writer_refuses_kinds_outside_its_whitelist() {
     }));
     assert!(refused(|c| c.schema = CHECKPOINT_SCHEMA.into()));
     assert!(refused(|c| c.training_math = TrainingMathV1::PortableV1));
+
+    // The selection resolves on this checkpoint: the default and v1 stay v1
+    // outside the gate, and v2 is refused by name.
+    use CheckpointRecordFormatV1::{Auto, V1, V2};
+    assert_eq!(Auto.resolve_v1(&v4).unwrap(), V2);
+    assert_eq!(V1.resolve_v1(&v4).unwrap(), V1);
+    assert_eq!(V2.resolve_v1(&v4).unwrap(), V2);
+    let mut outside = v4.clone();
+    outside.ex1 = Some(json!({}));
+    assert_eq!(Auto.resolve_v1(&outside).unwrap(), V1);
+    assert_eq!(V1.resolve_v1(&outside).unwrap(), V1);
+    assert!(V2
+        .resolve_v1(&outside)
+        .unwrap_err()
+        .contains("keeps record_format v1"));
 }
 
 #[test]
-fn record_format_v1_serializes_like_absence() {
-    let explicit: CheckpointRecordFormatV1 = serde_json::from_str("\"v1\"").unwrap();
-    assert!(explicit.is_v1());
+fn the_default_record_format_is_never_serialized() {
+    // Absence and an explicit "auto" are the default; "v1" and "v2" are explicit.
+    assert_eq!(
+        serde_json::from_str::<CheckpointRecordFormatV1>("\"auto\"").unwrap(),
+        CheckpointRecordFormatV1::default()
+    );
+    assert!(CheckpointRecordFormatV1::default().is_auto());
+    assert_eq!(
+        serde_json::from_str::<CheckpointRecordFormatV1>("\"v1\"").unwrap(),
+        CheckpointRecordFormatV1::V1
+    );
     assert_eq!(
         serde_json::from_str::<CheckpointRecordFormatV1>("\"v2\"").unwrap(),
         CheckpointRecordFormatV1::V2
@@ -280,10 +370,52 @@ fn record_format_v1_serializes_like_absence() {
         record_format,
         output_directory: "out".into(),
     };
-    let v1 = serde_json::to_string(&command(CheckpointRecordFormatV1::V1)).unwrap();
-    assert!(!v1.contains("record_format"));
+    // The default serializes exactly as the pre-switch absent field did: the
+    // explicit v2 bytes without the member.
+    let auto = serde_json::to_string(&command(CheckpointRecordFormatV1::default())).unwrap();
+    assert!(!auto.contains("record_format"));
     let v2 = serde_json::to_string(&command(CheckpointRecordFormatV1::V2)).unwrap();
     assert!(v2.contains("\"record_format\":\"v2\""));
-    let back: ExpandedTrainingCommandV1 = serde_json::from_str(&v1).unwrap();
-    assert_eq!(serde_json::to_string(&back).unwrap(), v1);
+    assert_eq!(v2.replace("\"record_format\":\"v2\",", ""), auto);
+    // An explicit v1 is serialized (it no longer shares bytes with absence)
+    // and reads back as itself; absence reads back as the default.
+    let v1 = serde_json::to_string(&command(CheckpointRecordFormatV1::V1)).unwrap();
+    assert!(v1.contains("\"record_format\":\"v1\""));
+    assert_eq!(v1.replace("\"record_format\":\"v1\",", ""), auto);
+    for text in [&auto, &v1, &v2] {
+        let back: ExpandedTrainingCommandV1 = serde_json::from_str(text).unwrap();
+        assert_eq!(&serde_json::to_string(&back).unwrap(), text);
+    }
+    // The prepared command follows the same rule.
+    let prepared = |record_format| ExpandedTrainingCommandV1::UpdatePrepared {
+        source: match command(CheckpointRecordFormatV1::default()) {
+            ExpandedTrainingCommandV1::Update { source, .. } => source,
+            _ => unreachable!(),
+        },
+        trajectories: Vec::new(),
+        learning_rate: 0.0001,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: gae(),
+        preparation_workers: 2,
+        max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format,
+        output_directory: "out".into(),
+    };
+    let auto = serde_json::to_string(&prepared(CheckpointRecordFormatV1::default())).unwrap();
+    assert!(!auto.contains("record_format"));
+    for (format, name) in [
+        (CheckpointRecordFormatV1::V1, "v1"),
+        (CheckpointRecordFormatV1::V2, "v2"),
+    ] {
+        let text = serde_json::to_string(&prepared(format)).unwrap();
+        let member = format!("\"record_format\":\"{name}\",");
+        assert!(text.contains(&member));
+        assert_eq!(text.replace(&member, ""), auto);
+        let back: ExpandedTrainingCommandV1 = serde_json::from_str(&text).unwrap();
+        assert_eq!(serde_json::to_string(&back).unwrap(), text);
+    }
 }

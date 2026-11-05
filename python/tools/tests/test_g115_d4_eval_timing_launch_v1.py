@@ -6,7 +6,7 @@ import subprocess
 import sys
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g115_d4_eval_timing_launch_v1 import validate_limits, admission, cpu_seconds
+from g115_d4_eval_timing_launch_v1 import validate_limits, admission, cpu_seconds, read_checkpoint_pin
 
 
 class TimingAdmissionTests(unittest.TestCase):
@@ -41,6 +41,19 @@ class TimingAdmissionTests(unittest.TestCase):
             if child.poll() is None:
                 child.kill()
                 child.wait()
+
+
+class CheckpointPinTests(unittest.TestCase):
+    def test_a_container_reads_as_the_v1_file_it_came_from_and_a_changed_pin_is_refused(self):
+        import hashlib
+        fixtures = Path(__file__).resolve().parent / 'fixtures' / 'checkpoint_container_v1'
+        pins = {}
+        for name in ('checkpoint-v1.json', 'checkpoint.ckpt'):
+            path = fixtures / name
+            pins[name] = dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        self.assertEqual(read_checkpoint_pin(pins['checkpoint.ckpt']), read_checkpoint_pin(pins['checkpoint-v1.json']))
+        with self.assertRaises(ValueError):
+            read_checkpoint_pin(dict(pins['checkpoint.ckpt'], sha256='0' * 64))
 
 
 if __name__ == '__main__':
