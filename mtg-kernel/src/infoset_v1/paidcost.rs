@@ -1036,7 +1036,7 @@ fn repeat_reveal_world(world1: bool) -> Result<Vec<u8>, String> {
 }
 
 #[test]
-#[ignore = "the Lembas fixture has no name with six copies outside the hand; the construction needs another opponent deck"]
+#[ignore = "the Lembas fixture has no name with six copies outside the hand; the reduced construction below runs (repeat_reveal_small_world)"]
 fn a_repeat_reveal_after_a_departure_agrees() {
     let (w1, w2) = (repeat_reveal_world(true), repeat_reveal_world(false));
     eprintln!(
@@ -1045,6 +1045,167 @@ fn a_repeat_reveal_after_a_departure_agrees() {
         w2.as_ref().map(Vec::len)
     );
     assert_eq!(w1, w2, "P agrees whichever copy left and was shown");
+}
+
+/// Sol round 10 on #526, reduced to three copies (amendment 43.8): Lembas C
+/// is drawn unseen; Lembas A and B are milled and return publicly to the
+/// opponent's hand (L holds two Lembas). World 1 discards A and reveals B;
+/// world 2 discards C and reveals A. On the wire both are a Lembas leaving
+/// the hand and a Lembas revealed in it: the departure ends a known fact
+/// and the reveal adds nothing (V knows a Lembas there). Returns P.
+fn repeat_reveal_small_world(world1: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    st.stack.retain(|it| {
+        it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
+    });
+    st.engine.pending_triggers.clear();
+    let in_library = library_lembas(&mut st, ObjectId(u32::MAX), 3);
+    let (c, a, b) = (in_library[0], in_library[1], in_library[2]);
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    let lib = &mut st.players[o.index()].library;
+    let at = lib.iter().position(|x| *x == c).expect("C in the library");
+    let c_id = lib.remove(at);
+    lib.insert(0, c_id);
+    propose_and_commit(&mut st, ProposedEvent::draw(o));
+    assert_eq!(st.objects.get(c).zone, Zone::Hand, "C was drawn");
+    mark(&st, &mut marks);
+    for x in [a, b] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Graveyard));
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    for x in [a, b] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Hand));
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    let (gone, shown) = if world1 { (a, b) } else { (c, a) };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    st.reveal_hand_card(v, o, shown).expect("the repeat reveal");
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+#[test]
+fn a_repeat_reveal_after_a_departure_agrees_small() {
+    let (w1, w2) = (
+        repeat_reveal_small_world(true),
+        repeat_reveal_small_world(false),
+    );
+    eprintln!(
+        "repeat reveal (three copies): world 1 {:?} / world 2 {:?}",
+        w1.as_ref().map(Vec::len),
+        w2.as_ref().map(Vec::len)
+    );
+    assert_eq!(w1, w2, "P agrees whichever copy left and was shown");
+}
+
+/// Sol round 12 on #526, findings 2 and 3 (amendment 43.8). Lembas A and B
+/// are milled and return publicly (L holds two); A is put back unseen (a
+/// survivor node over the two names, one count fact); the library is
+/// shuffled. Then C reaches the hand unseen, by a draw (`search` false,
+/// finding 2) or by a library-to-hand move (`search` true, a search,
+/// finding 3), and a Lembas is revealed: C (`shown_new`) or B. On the wire
+/// both worlds are the same move and a Lembas reveal. Returns P.
+fn reveal_after_unseen_world(search: bool, shown_new: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    st.stack.retain(|it| {
+        it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
+    });
+    st.engine.pending_triggers.clear();
+    let in_library = library_lembas(&mut st, ObjectId(u32::MAX), 3);
+    let (c, a, b) = (in_library[0], in_library[1], in_library[2]);
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    for x in [a, b] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Graveyard));
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    for x in [a, b] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Hand));
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    st.clear_nonowner_hand_knowledge(o);
+    propose_and_commit(&mut st, ProposedEvent::private_top_library_insert(a));
+    mark(&st, &mut marks);
+    st.shuffle_library(o).expect("shuffle");
+    mark(&st, &mut marks);
+    if search {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(c, Zone::Hand));
+    } else {
+        let lib = &mut st.players[o.index()].library;
+        let at = lib.iter().position(|x| *x == c).expect("C in the library");
+        let c_id = lib.remove(at);
+        lib.insert(0, c_id);
+        propose_and_commit(&mut st, ProposedEvent::draw(o));
+    }
+    assert_eq!(st.objects.get(c).zone, Zone::Hand, "C reached the hand");
+    st.engine.pending_triggers.clear();
+    let shown = if shown_new { c } else { b };
+    st.reveal_hand_card(v, o, shown).expect("the reveal");
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+#[test]
+fn a_reveal_after_an_unseen_draw_or_search_agrees() {
+    for search in [false, true] {
+        let (new, old) = (
+            reveal_after_unseen_world(search, true),
+            reveal_after_unseen_world(search, false),
+        );
+        eprintln!(
+            "reveal after an unseen {}: new card {:?} / old card {:?}",
+            if search { "search" } else { "draw" },
+            new.as_ref().map(Vec::len),
+            old.as_ref().map(Vec::len)
+        );
+        assert_eq!(new, old, "P agrees whichever card was shown");
+    }
 }
 
 /// Sol round 9 on #526, finding 1: a reference to a copy whose walk epochs
@@ -1126,8 +1287,10 @@ fn desynced_receipt_world(d_left: bool, desync: bool) -> Result<Vec<u8>, String>
 /// the opponent's hand; C is drawn unseen; then D or C is discarded. The
 /// native case is a trigger's `other_than` naming a creature later bounced
 /// and recast. Before the repair the D world linked the reference to D's
-/// graveyard incarnation (export) and the C world refused R1 (untracked);
-/// both now refuse `same_name_hand`. Returns P.
+/// graveyard incarnation (export) and the C world refused R1 (untracked).
+/// Amendment 43.8: the reference has no epoch; its bound is the Shaman
+/// item's (the Shaman's battlefield span), and D's return and the discard
+/// are Lembas seam events after it: both refuse `same_name_hand`. Returns P.
 fn genless_world(d_left: bool) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
@@ -1186,11 +1349,16 @@ fn genless_world(d_left: bool) -> Result<Vec<u8>, String> {
 }
 
 #[test]
-#[ignore = "open: Sol round 11 finding 1 (an epochless reference across a hand stint); the round 11 guard was reverted after Sol round 12 and AC1 showed it asymmetric; awaiting the lead"]
 fn a_reference_without_an_epoch_across_the_hand_agrees() {
     let (d, c) = (genless_world(true), genless_world(false));
     eprintln!("epochless reference: D left {d:?} / C left {c:?}");
     assert_eq!(d, c, "P agrees whichever copy left");
+    assert!(
+        d.as_ref()
+            .err()
+            .is_some_and(|e| e.contains("same-name copies in the opponent's hand")),
+        "amendment 43.8: the stint's entry and departure are seam events after the bound: {d:?}"
+    );
 }
 
 #[test]

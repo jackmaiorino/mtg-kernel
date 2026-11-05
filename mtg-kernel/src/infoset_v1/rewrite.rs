@@ -47,6 +47,10 @@ pub(crate) struct RefV1 {
     /// item's (source, hand epoch). Its references to that epoch are the
     /// item's own receipt of the departure.
     pub item_self_paid: Option<(ObjectId, u32)>,
+    /// Amendment 43.8: the stack item the reference sits in, if any: its
+    /// source and the source's epoch the item records (its ability source
+    /// contract), for the creation bound of a reference with no epoch.
+    pub container: Option<(ObjectId, Option<u32>)>,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -123,6 +127,8 @@ pub(crate) struct WalkerV1<'a> {
     /// The enclosing self-paid hand activation, if any (see
     /// [`RefV1::item_self_paid`]).
     pub item_self_paid: Option<(ObjectId, u32)>,
+    /// The enclosing stack item, if any (see [`RefV1::container`]).
+    pub container: Option<(ObjectId, Option<u32>)>,
 }
 
 /// A stack item whose source activated it from the hand at epoch g and paid
@@ -139,6 +145,24 @@ fn self_paid_from_hand(map: &Map<String, Value>) -> Option<(ObjectId, u32)> {
     paid.iter()
         .any(|p| p.get("object").and_then(parse_tag) == Some(source))
         .then_some((source, g))
+}
+
+/// A stack item (`state::StackItem`): its source and the source epoch its
+/// ability source contract records, when the contract names that source.
+fn stack_item_container(map: &Map<String, Value>) -> Option<(ObjectId, Option<u32>)> {
+    if !(map.contains_key("is_copy") && map.contains_key("targets")) {
+        return None;
+    }
+    let source = parse_tag(map.get("source")?)?;
+    let g = map
+        .get("v4")
+        .and_then(|v| v.get("ability_source_contract"))
+        .and_then(|c| c.as_object())
+        .filter(|c| c.get("source").and_then(parse_tag) == Some(source))
+        .and_then(|c| c.get("zone_change_count"))
+        .and_then(|g| g.as_u64())
+        .and_then(|g| u32::try_from(g).ok());
+    Some((source, g))
 }
 
 fn r2(detail: String) -> ExportErrorV1 {
@@ -180,6 +204,7 @@ impl WalkerV1<'_> {
                             paid_cost: false,
                             cast_receipt: false,
                             item_self_paid: self.item_self_paid,
+                            container: self.container,
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -201,6 +226,7 @@ impl WalkerV1<'_> {
                     paid_cost: false,
                     cast_receipt: false,
                     item_self_paid: self.item_self_paid,
+                    container: self.container,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -223,12 +249,15 @@ impl WalkerV1<'_> {
         class: ClassV1,
         parent: &str,
     ) -> Result<(), ExportErrorV1> {
-        let enclosing = self.item_self_paid;
+        let enclosing = (self.item_self_paid, self.container);
         if let Some(item) = self_paid_from_hand(map) {
             self.item_self_paid = Some(item);
         }
+        if let Some(c) = stack_item_container(map) {
+            self.container = Some(c);
+        }
         let walked = self.walk_map_inner(map, class, parent);
-        self.item_self_paid = enclosing;
+        (self.item_self_paid, self.container) = enclosing;
         walked
     }
 
@@ -310,6 +339,7 @@ impl WalkerV1<'_> {
                 paid_cost: parent == "paid_cost_refs" && k.as_deref() == Some("object"),
                 cast_receipt: parent == "spell_cast_origin" && k.is_none(),
                 item_self_paid: self.item_self_paid,
+                container: self.container,
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -336,6 +366,7 @@ impl WalkerV1<'_> {
                 paid_cost: false,
                 cast_receipt: false,
                 item_self_paid: self.item_self_paid,
+                container: self.container,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;

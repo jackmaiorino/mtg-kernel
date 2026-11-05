@@ -534,45 +534,34 @@ pub(crate) fn impossible_v1(
             .count()
             .min(on_top);
         for &at in &put_backs {
-            // Amendment 43.7: the copies V knew in the hand are the ones it
-            // held bound facts for right before the put-back (opponent-hand
-            // copies are never tracked, so no span ends at the put-back).
-            let bound: Vec<ObjectId> = p
-                .departure_known
-                .iter()
-                .filter(|(item, _)| *item == at)
-                .flat_map(|(_, ids)| ids.iter().copied())
-                .collect();
-            let known: Vec<ObjectId> = bound
-                .into_iter()
-                .filter(|id| {
-                    state.objects.get(*id).owner == owner
-                        // Not tracked again since (a later public departure
-                        // is not among the put-backs).
-                        && p.objects[id.0 as usize]
-                            .spans
-                            .iter()
-                            .all(|s| s.start_item <= at)
-                        && hidden(*id)
-                })
-                .collect();
-            if known.is_empty() {
+            // Amendment 43.8: the names V knew in the hand right before the
+            // put-back (L). A card of them leaves afterwards only by an
+            // unidentified put-back or by a departure V sees, which names
+            // it: each such departure of a name may take one of them.
+            let mut names: BTreeMap<u16, u32> = BTreeMap::new();
+            for (_, defs) in p.departure_known.iter().filter(|(item, _)| *item == at) {
+                for d in defs {
+                    add(&mut names, *d);
+                }
+            }
+            for (_, d) in p.departures.iter().filter(|(item, _)| *item > at) {
+                if let Some(k) = names.get_mut(d) {
+                    *k = k.saturating_sub(1);
+                }
+            }
+            let known: u32 = names.values().sum();
+            if known == 0 {
                 continue;
             }
             let exits = put_backs.iter().filter(|&&x| x >= at).count();
-            let need = known.len().saturating_sub(exits - draws_back.min(exits));
-            let mut names: BTreeMap<u16, u32> = BTreeMap::new();
-            for id in &known {
-                add(&mut names, state.objects.get(*id).card_def);
-            }
+            let need = (known as usize).saturating_sub(exits - draws_back.min(exits));
             let have: u32 = names
                 .iter()
                 .map(|(d, k)| (*k).min(target.hand.get(d).copied().unwrap_or(0)))
                 .sum();
             if (have as usize) < need {
                 return Some(format!(
-                    "{} hidden objects tracked in the hand until the put-back at item {at}, {exits} put-backs, {draws_back} draws back: at least {need} remain, the target's hand holds {have} of their names",
-                    known.len()
+                    "{known} cards V knew in the hand until the put-back at item {at}, {exits} put-backs, {draws_back} draws back: at least {need} remain, the target's hand holds {have} of their names"
                 ));
             }
         }

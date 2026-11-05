@@ -83,11 +83,6 @@ pub struct InfosetV1 {
     /// Harness diagnostics only, never in the payload: the native object
     /// behind each `C:` handle, in handle order.
     pub(crate) tracked_natives: Vec<ObjectId>,
-    /// Harness diagnostics only, never in the payload: copies in the
-    /// opponent's hand whose bound fact another copy's identified departure
-    /// ended (amendment 43.7, the adapter's rule). The engine's knowledge
-    /// rows may still list them; V's view does not (Sol round 8, finding 3).
-    pub(crate) released_natives: Vec<ObjectId>,
 }
 
 /// R3's detail when the opponent's library-search plan is pending (design
@@ -108,10 +103,10 @@ pub(crate) const R3_UNREADABLE_DETAIL: &str = "library-search plan unreadable";
 pub(crate) const R1_SAME_NAME_BATCH_DETAIL: &str =
     "a live reference names one of two same-name objects that left in one batch V cannot order";
 
-/// R1's detail for a live reference made at an epoch its object spent in the
-/// opponent's hand, other than that object's own cast receipt (amendment
-/// 43.7, Sol round 8 finding 2): the hand is opaque to identity, so such a
-/// reference cannot link to whichever copy later leaves. The wire subclass
+/// R1's detail for a live reference that crosses the opponent's hand seam
+/// (amendment 43.8, lead ruling 13): a card of its object's name entered or
+/// left the opponent's hand in V's transcript after the reference's
+/// creation bound, so V cannot tell which copy it names. The wire subclass
 /// `same_name_hand`, a C5 fault.
 pub(crate) const R1_SAME_NAME_HAND_DETAIL: &str =
     "a live reference names one of two same-name copies in the opponent's hand that V cannot tell apart";
@@ -436,33 +431,20 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
             projection.inconsistencies.join("; "),
         ));
     }
-    let projected: BTreeSet<(u32, u32)> = projection
-        .hand_facts
-        .iter()
-        .filter_map(|f| f.native)
-        .map(|id| (id.0, state.objects.get(id).zone_change_count))
-        .collect();
-    let native: BTreeSet<(u32, u32)> = state
-        .known_hand_cards(v, opp)
-        .iter()
-        .map(|k| (k.object.0, k.zone_change_count))
-        .collect();
-    // Amendment 43.7: a copy released by another copy's identified
-    // departure (the adapter's rule) may stay in the engine's rows.
-    let released: BTreeSet<(u32, u32)> = projection
-        .released
-        .iter()
-        .filter(|id| state.players[opp.index()].hand.contains(id))
-        .map(|id| (id.0, state.objects.get(*id).zone_change_count))
-        .collect();
-    if !projected.is_subset(&native)
-        || !native
+    // Amendment 43.8: V's facts about the opponent's hand are names, never
+    // copies; the check is soundness by name (L and C within the true hand),
+    // which only a projection defect can fail. The engine's copy-level rows
+    // may claim more than V's conservative readings.
+    let mut hand = multiset(
+        state.players[opp.index()]
+            .hand
             .iter()
-            .all(|k| projected.contains(k) || released.contains(k))
-    {
+            .map(|id| state.objects.get(*id).card_def),
+    );
+    if subtract(&mut hand, projection.hand_facts.iter().map(|f| f.card_def)).is_err() {
         return Err(refuse(
             RefusalCodeV1::R5,
-            "hand physical facts differ from native rows",
+            "hand facts claim a card the hand does not hold",
         ));
     }
     for owner in [PlayerId::P0, PlayerId::P1] {
@@ -534,6 +516,53 @@ fn tracked_order(
     Ok(out)
 }
 
+/// Amendment 43.8 (lead ruling 13, rule 2): whether a live reference to an
+/// opponent-owned object crosses the hand seam, and if so its creation
+/// bound, a stream item. A reference with epochs, every one of which V
+/// tracked its object at, does not cross (43.3's spans, R1b and R1 decide
+/// it). For an epoch V did not track: the object's own cast receipt, or a
+/// reference inside an item the object activated from the hand and paid
+/// with itself, is a record its departure wrote, bounded by that departure
+/// when V saw it (where V's unbroken tracking after it began); every other
+/// such epoch is bounded by game start (which hidden copy it names, and
+/// when that copy entered the hand, is not V's information). With no
+/// epoch: the stack item it sits in bounds it, from the span at which V
+/// tracked the item's source at the epoch the item records (or the source's
+/// current span when the item records none); else game start; and it does
+/// not cross when V has followed the object without a break since that
+/// bound. Several epochs take the earliest bound.
+pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usize> {
+    if r.generations.is_empty() {
+        let bound = r
+            .container
+            .and_then(|(source, g)| match g {
+                Some(g) => projection.tracked_at(source, g),
+                None => projection.current_span(source),
+            })
+            .map_or(0, |s| s.start_item);
+        if projection
+            .chain_start(r.object)
+            .is_some_and(|start| start <= bound)
+        {
+            return None;
+        }
+        return Some(bound);
+    }
+    let mut bound: Option<usize> = None;
+    for &g in &r.generations {
+        if projection.tracked_at(r.object, g).is_some() {
+            continue;
+        }
+        let receipt = r.cast_receipt || r.item_self_paid == Some((r.object, g));
+        let b = receipt
+            .then(|| projection.left_seen(r.object, g))
+            .flatten()
+            .unwrap_or(0);
+        bound = Some(bound.map_or(b, |x: usize| x.min(b)));
+    }
+    bound
+}
+
 /// The exported state of one viewer at one decision.
 pub(crate) fn export_v1(
     input: &ExportInputV1<'_>,
@@ -581,34 +610,40 @@ pub(crate) fn export_v1(
     for owner in [PlayerId::P0, PlayerId::P1] {
         let p = &state.players[owner.index()];
         if owner != v {
-            // Amendment 43.7: no opponent-hand object is tracked, so none
-            // takes a `C:` handle; V's facts become known-name occupants
-            // below. Mutant L14 keeps the rule before 43.4 and 43.7 (bound
-            // copies tracked, in fact order).
-            if is(MutantV1::L14) {
-                opp_hand_tracked = projection
-                    .hand_facts
-                    .iter()
-                    .filter_map(|f| f.native)
-                    .filter(|id| p.hand.contains(id))
-                    .collect();
+            // Amendments 43.7 and 43.8: no opponent-hand object is
+            // tracked, so none takes a `C:` handle; V's facts (names) become
+            // known-name occupants below. Mutants L14 (the rule before 43.4:
+            // known copies tracked, in fact order) and L8 (count facts too,
+            // invented continuity) bind facts to the true copies of their
+            // name, in hand order: mutants may read the truth.
+            let mut bind = |facts: &mut dyn Iterator<Item = u16>, out: &mut Vec<ObjectId>| {
+                for def in facts {
+                    if let Some(&id) = p.hand.iter().find(|id| {
+                        state.objects.get(**id).card_def == def && !out.contains(id)
+                    }) {
+                        out.push(id);
+                    }
+                }
+            };
+            if is(MutantV1::L14) || is(MutantV1::L8) {
+                bind(
+                    &mut projection
+                        .hand_facts
+                        .iter()
+                        .filter(|f| f.known)
+                        .map(|f| f.card_def),
+                    &mut opp_hand_tracked,
+                );
             }
             if is(MutantV1::L8) {
-                // Bound facts keep their physical copies (invented continuity).
-                for id in projection.hand_facts.iter().filter_map(|f| f.native) {
-                    if p.hand.contains(&id) && !opp_hand_tracked.contains(&id) {
-                        opp_hand_tracked.push(id);
-                    }
-                }
-                // Count facts bound to the true remaining copies.
-                for f in projection.hand_facts.iter().filter(|f| f.native.is_none()) {
-                    if let Some(&id) = p.hand.iter().find(|id| {
-                        state.objects.get(**id).card_def == f.card_def
-                            && !opp_hand_tracked.contains(id)
-                    }) {
-                        opp_hand_tracked.push(id);
-                    }
-                }
+                bind(
+                    &mut projection
+                        .hand_facts
+                        .iter()
+                        .filter(|f| !f.known)
+                        .map(|f| f.card_def),
+                    &mut opp_hand_tracked,
+                );
             }
             let untracked: Vec<ObjectId> = p
                 .hand
@@ -689,54 +724,30 @@ pub(crate) fn export_v1(
     // information, so the batch test runs before tracking decides. Lead
     // ruling 11 (R1): it runs before R1b and the R1 untracked test, which
     // read tracking, so both worlds refuse with the same subclass.
-    // Amendment 43.7 (Sol round 8, finding 2): the opponent's hand is opaque
-    // to identity, so a live reference made at an epoch its object spent
-    // there names a name-level occupant, not a copy: whichever same-name
-    // copy later leaves the hand, V cannot pair the reference with it (a
-    // ninjutsu paid-cost record naming the returned creature at its hand
-    // epoch is the example). It never links: refuse, whether or not the
-    // copy has left, so the outcome cannot depend on which copy did. The one
-    // exception is the object's own cast receipt (`spell_cast_origin`
-    // paired with the object it describes) at the epoch it left the hand
-    // for the stack: it names the cast copy, the one V saw go to the stack,
-    // in every world. This runs first, before every test that reads spans.
-    // Sol round 9, finding 1: moves without committed events (an aborted
-    // cast, a madness rollback) leave a copy's walk epochs, opponent-hand
-    // epochs included, behind its native ones, so neither the hand test nor
-    // the spans can place a reference to an earlier incarnation of it. Which
-    // same-name copy a later reference names is not V's information, so the
-    // test is by name: while any opponent copy of the name is out of step,
-    // a live reference to an incarnation of an opponent copy of that name
-    // before its current span (or with none) refuses alike.
+    // Amendment 43.8 (lead ruling 13, rule 2): a live reference to an
+    // opponent-owned object that crosses the hand seam ([`seam_bound_v1`])
+    // refuses `same_name_hand` when a card of its name entered or left the
+    // opponent's hand in V's transcript after the reference's creation
+    // bound. It reads V's transcript only and runs before every test that
+    // reads spans. (43.7's name-level desync rule is gone: it read the walk's
+    // lag behind native generations; reconciled spans now cover the
+    // generations the walk missed.)
     for (r, region) in &refs {
         if *region != "live" {
             continue;
         }
         let o = state.objects.get(r.object);
-        let desynced = o.owner == opp
-            && projection
-                .desynced
+        if o.owner != opp {
+            continue;
+        }
+        let name = card_name(o.card_def);
+        if let Some(b) = seam_bound_v1(&projection, r) {
+            if projection
+                .seams
                 .iter()
-                .any(|d| card_name(*d) == card_name(o.card_def));
-        for &g in &r.generations {
-            if desynced
-                && projection
-                    .current_span(r.object)
-                    .is_none_or(|s| g < s.start_gen)
+                .any(|(item, d)| *item > b && card_name(*d) == name)
             {
                 return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
-            }
-            if let Some(epoch) = projection.opp_hand_epoch(r.object, g) {
-                // Its own receipts of the departure: a cast receipt at a
-                // departure to the stack, or a reference inside an item the
-                // object activated from the hand at g and paid with itself
-                // (it left the hand as that cost, in V's sight).
-                let receipt = (r.cast_receipt && epoch.left_to == Some(Zone::Stack))
-                    || (r.item_self_paid == Some((r.object, g))
-                        && epoch.left_to.is_some_and(is_public));
-                if !receipt {
-                    return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
-                }
             }
         }
     }
@@ -890,23 +901,23 @@ pub(crate) fn export_v1(
             format!("pinned {} beyond the decklist", card_name(d)),
         )
     })?;
-    // Amendment 43.7: V's bound facts about the opponent's hand are
-    // known-name occupants, in 43.4 order (name, then V's fact order); they
-    // leave the pool before the survivor allocation, as their copies did when
-    // they were tracked.
-    let mut bound_names: Vec<(NameKeyV1, usize, u16)> = projection
-        .hand_facts
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| {
-            f.native.is_some_and(|id| {
-                state.players[opp.index()].hand.contains(&id) && !opp_hand_tracked.contains(&id)
-            })
-        })
-        .map(|(k, f)| (name_key(f.card_def), k, f.card_def))
-        .collect();
-    bound_names.sort();
-    let bound_names: Vec<u16> = bound_names.into_iter().map(|(_, _, d)| d).collect();
+    // Amendment 43.8: the names V knows in the opponent's hand (L) are
+    // known-name occupants, ordered by name only; they leave the pool before
+    // the survivor allocation. Mutants L8 and L14 hold copies for them
+    // instead.
+    let mut mutant_bound = multiset(
+        opp_hand_tracked
+            .iter()
+            .map(|id| state.objects.get(*id).card_def),
+    );
+    let mut bound_names: Vec<u16> = Vec::new();
+    for f in projection.hand_facts.iter().filter(|f| f.known) {
+        match mutant_bound.get_mut(&f.card_def) {
+            Some(c) if *c > 0 => *c -= 1,
+            _ => bound_names.push(f.card_def),
+        }
+    }
+    bound_names.sort_by_key(|d| name_key(*d));
     subtract(&mut pool5, bound_names.iter().copied()).map_err(|d| {
         fault(
             FaultCodeV1::I4,
@@ -919,7 +930,7 @@ pub(crate) fn export_v1(
         Ok(projection
             .hand_facts
             .iter()
-            .filter(|f| f.native.is_none())
+            .filter(|f| !f.known)
             .map(|f| f.card_def)
             .collect::<Vec<_>>())
     } else if is(MutantV1::L12) {
@@ -979,7 +990,7 @@ pub(crate) fn export_v1(
             projection
                 .hand_facts
                 .iter()
-                .filter(|f| f.native.is_none())
+                .filter(|f| !f.known)
                 .map(|f| f.card_def),
         );
         let placed = multiset(known_names.iter().copied());
@@ -1436,6 +1447,7 @@ pub(crate) fn export_v1(
                 check_pairs: true,
                 self_object: Some(*id),
                 item_self_paid: None,
+                container: None,
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1607,12 +1619,6 @@ pub(crate) fn export_v1(
         sha256,
         handles,
         tracked_natives: tracked,
-        released_natives: projection
-            .released
-            .iter()
-            .copied()
-            .filter(|id| state.players[opp.index()].hand.contains(id))
-            .collect(),
     })
 }
 
@@ -1749,6 +1755,7 @@ fn collect_refs(
             check_pairs: true,
             self_object: None,
             item_self_paid: None,
+            container: None,
         };
         for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
@@ -1793,6 +1800,7 @@ fn rewrite_state(
         check_pairs: true,
         self_object: None,
         item_self_paid: None,
+        container: None,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1869,6 +1877,7 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         check_pairs: false,
         self_object: None,
         item_self_paid: None,
+        container: None,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {
@@ -2007,10 +2016,11 @@ fn allocate_counting_arrivals(
     Ok(placed)
 }
 
-/// Test diagnostics: the live references at an opponent-hand epoch, with
-/// the JSON paths that hold their object.
+/// Test diagnostics (amendment 43.8): the live references to opponent
+/// objects that cross the hand seam, with their creation bound, the seam
+/// events of their name and the JSON paths that hold their object.
 #[cfg(test)]
-pub(crate) fn hand_epoch_refs_v1(state: &GameState, viewer: PlayerId) -> Vec<String> {
+pub(crate) fn seam_refs_v1(state: &GameState, viewer: PlayerId) -> Vec<String> {
     let projection = project_v1(state, state.observation_journal.notes(), viewer);
     let tagged = tagged_value(state);
     let mut refs: Vec<(RefV1, &'static str)> = Vec::new();
@@ -2037,28 +2047,35 @@ pub(crate) fn hand_epoch_refs_v1(state: &GameState, viewer: PlayerId) -> Vec<Str
         }
     }
     let mut out = Vec::new();
+    let opp = viewer.opponent();
     for (r, region) in &refs {
-        if *region != "live" {
+        if *region != "live" || state.objects.get(r.object).owner != opp {
             continue;
         }
-        for &g in &r.generations {
-            if let Some(e) = projection.opp_hand_epoch(r.object, g) {
-                let tag = format!("{}{}", crate::ids::OBJECT_ID_TAG_PREFIX_V1, r.object.0);
-                let mut at = Vec::new();
-                paths(&tagged, &tag, "state".into(), &mut at);
-                at.retain(|p| !p.starts_with("state.engine.event_history"));
-                at.truncate(12);
-                out.push(format!(
-                    "object {} {} g {g} epoch {e:?} receipt {} paid {} slot {} paths {at:?} desynced {:?}",
-                    r.object.0,
-                    card_name(state.objects.get(r.object).card_def),
-                    r.cast_receipt,
-                    r.paid_cost,
-                    r.slot,
-                    projection.desynced
-                ));
-            }
-        }
+        let Some(b) = seam_bound_v1(&projection, r) else {
+            continue;
+        };
+        let name = card_name(state.objects.get(r.object).card_def);
+        let seams: Vec<usize> = projection
+            .seams
+            .iter()
+            .filter(|(_, d)| card_name(*d) == name)
+            .map(|(i, _)| *i)
+            .collect();
+        let tag = format!("{}{}", crate::ids::OBJECT_ID_TAG_PREFIX_V1, r.object.0);
+        let mut at = Vec::new();
+        paths(&tagged, &tag, "state".into(), &mut at);
+        at.retain(|p| !p.starts_with("state.engine.event_history"));
+        at.truncate(12);
+        out.push(format!(
+            "object {} {name} gens {:?} bound {b} seams {seams:?} refuses {} receipt {} paid {} container {:?} paths {at:?}",
+            r.object.0,
+            r.generations,
+            seams.iter().any(|i| *i > b),
+            r.cast_receipt,
+            r.paid_cost,
+            r.container,
+        ));
     }
     out
 }

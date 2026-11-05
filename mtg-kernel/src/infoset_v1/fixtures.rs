@@ -1803,7 +1803,7 @@ fn diag_hand_epoch_refs() {
                     shown += 1;
                     eprintln!(
                         "{name} step {step}: {:#?}",
-                        super::export::hand_epoch_refs_v1(s.game_state(), v)
+                        super::export::seam_refs_v1(s.game_state(), v)
                     );
                 }
             }

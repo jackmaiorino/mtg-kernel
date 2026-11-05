@@ -113,6 +113,46 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
     Some(serde_json::to_vec(&(obs, rows)).expect("view serializes"))
 }
 
+/// Amendment 43.8: V's facts about the opponent's hand are names read
+/// conservatively from the transcript, so the engine's copy-level rows (the
+/// live side) may list more cards than the export claims. Each side's live
+/// rows are kept, per card, only up to the imported side's count; a card the
+/// export claims and the engine does not still differs.
+fn cap_hand_rows(live: &mut serde_json::Value, imported: &serde_json::Value) {
+    fn key(row: &serde_json::Value) -> String {
+        let mut r = row.clone();
+        if let Some(stable) = r.get_mut("stable").and_then(|x| x.as_object_mut()) {
+            stable.remove("arena_id");
+        }
+        r.to_string()
+    }
+    let (Some(a), Some(b)) = (
+        live.pointer_mut("/0/known_hand_cards")
+            .and_then(|x| x.as_array_mut()),
+        imported
+            .pointer("/0/known_hand_cards")
+            .and_then(|x| x.as_array()),
+    ) else {
+        return;
+    };
+    for (side, other) in a.iter_mut().zip(b) {
+        let (Some(rows), Some(other)) = (side.as_array_mut(), other.as_array()) else {
+            continue;
+        };
+        let mut budget: BTreeMap<String, usize> = BTreeMap::new();
+        for row in other {
+            *budget.entry(key(row)).or_default() += 1;
+        }
+        rows.retain(|row| match budget.get_mut(&key(row)) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                true
+            }
+            _ => false,
+        });
+    }
+}
+
 /// AC3's view: the V4 observation and the menu with `arena_id`s renamed
 /// through `ids` (native to canonical for the live session), bookkeeping
 /// fields dropped, and candidate lists and menu rows sorted (the wire
@@ -120,7 +160,6 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
 fn ac3_view(
     s: &FastActorSessionV1,
     ids: Option<&BTreeMap<u64, u64>>,
-    released: &[u64],
 ) -> Option<serde_json::Value> {
     use super::order::canonical_rename_v1 as rename;
     let FastActorResponseV1::Decision(d) = s.current_response() else {
@@ -128,21 +167,6 @@ fn ac3_view(
     };
     let (obs, menu) = s.actor_visible_decision_v4(d).ok()?;
     let mut obs = serde_json::to_value(&obs).ok()?;
-    // Amendment 43.7 (Sol round 8, finding 3): the engine's rows still list
-    // a copy whose bound fact another copy's identified departure ended (the
-    // adapter's rule); V's view holds no fact for it.
-    if let Some(rows) = obs
-        .get_mut("known_hand_cards")
-        .and_then(|x| x.as_array_mut())
-    {
-        for side in rows.iter_mut().filter_map(|x| x.as_array_mut()) {
-            side.retain(|row| {
-                row["stable"]["arena_id"]
-                    .as_u64()
-                    .is_none_or(|n| !released.contains(&n))
-            });
-        }
-    }
     // Timestamps are re-ranked by design (6.5): compare their dense ranks.
     fn timestamps(v: &serde_json::Value, out: &mut std::collections::BTreeSet<u64>) {
         match v {
@@ -1044,15 +1068,11 @@ pub(crate) fn ac3_check(
     let imported_ids: BTreeMap<u64, u64> = (0..export.tracked_natives.len() as u64)
         .map(|n| (n, n))
         .collect();
-    let released: Vec<u64> = export
-        .released_natives
-        .iter()
-        .map(|id| u64::from(id.0))
-        .collect();
-    if let (Some(a), Some(b)) = (
-        ac3_view(live, Some(&ids), &released),
-        ac3_view(&imported, Some(&imported_ids), &[]),
+    if let (Some(mut a), Some(b)) = (
+        ac3_view(live, Some(&ids)),
+        ac3_view(&imported, Some(&imported_ids)),
     ) {
+        cap_hand_rows(&mut a, &b);
         if a != b {
             return Err(format!(
                 "the imported view differs at {:?}",
@@ -1208,7 +1228,7 @@ pub(crate) fn known_hand_casts(s: &FastActorSessionV1, viewer: PlayerId) -> Vec<
             && projection
                 .hand_facts
                 .iter()
-                .any(|f| f.native.is_some() && f.card_def == o.card_def)
+                .any(|f| f.known && f.card_def == o.card_def)
         {
             groups.entry(def).or_default().push(i);
         }
