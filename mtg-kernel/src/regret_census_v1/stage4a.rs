@@ -430,12 +430,17 @@ fn parse_game_limits(
         Err(error) => return Err(format!("invalid S4A_GAME_LIMITS: {error}")),
     };
     if mode != "s4a-tensor-dump" {
-        return Err(format!("S4A_GAME_LIMITS is supported only for s4a-tensor-dump, not {mode}"));
+        return Err(format!(
+            "S4A_GAME_LIMITS is supported only for s4a-tensor-dump, not {mode}"
+        ));
     }
     let parts: Vec<&str> = value.split(',').map(str::trim).collect();
     let parsed: Vec<u64> = parts
         .iter()
-        .map(|t| t.parse::<u64>().map_err(|_| format!("bad S4A_GAME_LIMITS {value}")))
+        .map(|t| {
+            t.parse::<u64>()
+                .map_err(|_| format!("bad S4A_GAME_LIMITS {value}"))
+        })
         .collect::<Result<_, _>>()?;
     match parsed.as_slice() {
         [physical, steps] if *physical > 0 && *steps > 0 => Ok(Some((*physical, *steps))),

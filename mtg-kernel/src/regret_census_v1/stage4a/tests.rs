@@ -220,14 +220,23 @@ fn runtime_setting_refuses_unknown_identity_and_unsupported_modes() {
 #[test]
 fn game_limits_are_tensor_dump_only_and_two_positive_numbers() {
     use std::env::VarError;
-    assert_eq!(parse_game_limits("s4a-tensor-dump", Err(VarError::NotPresent)).unwrap(), None);
-    assert_eq!(parse_game_limits("s4a-corpus", Err(VarError::NotPresent)).unwrap(), None);
+    assert_eq!(
+        parse_game_limits("s4a-tensor-dump", Err(VarError::NotPresent)).unwrap(),
+        None
+    );
+    assert_eq!(
+        parse_game_limits("s4a-corpus", Err(VarError::NotPresent)).unwrap(),
+        None
+    );
     assert_eq!(
         parse_game_limits("s4a-tensor-dump", Ok("100000, 200000".into())).unwrap(),
         Some((100_000, 200_000))
     );
     for bad in ["", "100000", "100000,0", "0,5", "1,2,3", "x,2"] {
-        assert!(parse_game_limits("s4a-tensor-dump", Ok(bad.into())).is_err(), "{bad}");
+        assert!(
+            parse_game_limits("s4a-tensor-dump", Ok(bad.into())).is_err(),
+            "{bad}"
+        );
     }
     assert!(parse_game_limits("s4a-corpus", Ok("100000,200000".into())).is_err());
 }
@@ -250,7 +259,11 @@ fn tensor_dump_session_with_limits_and_profile_plays_to_the_end() {
     let mut steps = 0u64;
     while let Some(d) = play::decision(&limited) {
         let actor = play::acting(&d);
-        let policy = if actor.0 as usize == setup.focal { &mut a } else { &mut b };
+        let policy = if actor.0 as usize == setup.focal {
+            &mut a
+        } else {
+            &mut b
+        };
         let action = if d.legal_action_count < 2 {
             0
         } else {

@@ -314,9 +314,17 @@ fn starting_state_command_needs_a_fresh_optimizer_and_hashes_extras_in_order() {
     );
     assert_eq!(receipt["state_sha256"], fresh.state_sha256_v1());
     assert_eq!(receipt["adam_step"], 0);
-    for bad in [r#"[["rng","0102"],["rng","00"]]"#, r#"[["","00"]]"#, r#"[["rng","0g"]]"#, r#"[["rng","012"]]"#] {
+    for bad in [
+        r#"[["rng","0102"],["rng","00"]]"#,
+        r#"[["","00"]]"#,
+        r#"[["rng","0g"]]"#,
+        r#"[["rng","012"]]"#,
+    ] {
         std::fs::write(&extras, bad).unwrap();
-        assert!(super::tools::starting_state_v1(&checkpoint, &extras).is_err(), "{bad}");
+        assert!(
+            super::tools::starting_state_v1(&checkpoint, &extras).is_err(),
+            "{bad}"
+        );
     }
     std::fs::write(&extras, r#"[["rng","00"]]"#).unwrap();
     let mut stepped = fresh.clone();
