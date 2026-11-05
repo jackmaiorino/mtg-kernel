@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import sys
 import time
 import uuid
 
@@ -27,6 +28,19 @@ def read(path):
         raise ValueError('non-finite JSON number')
     return json.loads(Path(path).read_bytes(), object_pairs_hook=unique_pairs,
                       parse_constant=invalid)
+
+
+def read_checkpoint(path):
+    """`read` for a checkpoint file in either record format: v1 JSON, or a checkpoint container (the default
+    record format for ordinary fresh checkpoints), decoded in Python with no binary. Same strictness as `read`."""
+    def invalid(value):
+        raise ValueError('non-finite JSON number')
+    tools = str(Path(__file__).resolve().parents[1])
+    if tools not in sys.path:
+        sys.path.append(tools)
+    import checkpoint_container_v1
+    return checkpoint_container_v1.document_from_bytes(Path(path).read_bytes(), object_pairs_hook=unique_pairs,
+                                                       parse_constant=invalid)
 
 
 def encoded(value):

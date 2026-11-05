@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 from pathlib import Path, PurePosixPath
-from common import encoded, pin, read, relative, require
+from common import encoded, pin, read, read_checkpoint, relative, require
 from fresh_source import (SOURCE_SCHEMA, inspect_source, is_fresh_origin, origin_key, validate_checkpoint_origin,
                           validate_inference_identity, validate_trajectory)
 
@@ -80,7 +80,7 @@ def validate_model_source_relocations(payload_pin, manifest):
             require(relocated['checkpoint']['sha256'] == original['checkpoint']['sha256'],
                     'checkpoint changed during relocation')
             checkpoint = payload_file(payload_pin, manifest, relocated['checkpoint'])
-            if fresh: validate_checkpoint_origin(read(checkpoint),verified['origin'])
+            if fresh: validate_checkpoint_origin(read_checkpoint(checkpoint),verified['origin'])
             expected_source['checkpoint'] = relocated['checkpoint']
         require(expected_source == relocated, 'model source changed beyond exact file references')
     return rows

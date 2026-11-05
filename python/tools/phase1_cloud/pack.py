@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import tarfile
-from common import encoded, pin, read, relative, require, sha, write
+from common import encoded, pin, read, read_checkpoint, relative, require, sha, write
 from throughput import training_contract, preparation_workers
 from fresh_source import SOURCE_SCHEMA, inspect_source, initial_state, validate_checkpoint_origin
 
@@ -95,7 +95,7 @@ class Packager:
         if checkpoint is not None:
             if fresh:
                 pin(checkpoint['path'], checkpoint['sha256'])
-                validate_checkpoint_origin(read(checkpoint['path']), verified['origin'])
+                validate_checkpoint_origin(read_checkpoint(checkpoint['path']), verified['origin'])
             result['checkpoint'] = self.put(checkpoint['path'],
                 'checkpoints/' + checkpoint['sha256'] + '.json', checkpoint['sha256'])
         row = {'original': copy.deepcopy(source), 'relocated': copy.deepcopy(result),

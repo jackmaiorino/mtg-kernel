@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import hashlib
 import json
 from pathlib import Path
+import sys
 import numpy as np
 import torch
 from torch import nn
@@ -102,11 +103,23 @@ def bit_tensor(record):
     return value
 
 
+def _checkpoint_document(raw):
+    """The checkpoint's v1 document from pinned bytes: v1 JSON, or a checkpoint container (the default record
+    format), decoded in Python with no binary."""
+    if raw.startswith(b"MTGCKPT"):
+        tools = str(Path(__file__).resolve().parents[1] / "tools")
+        if tools not in sys.path:
+            sys.path.append(tools)
+        import checkpoint_container_v1
+        return checkpoint_container_v1.document_from_bytes(raw)
+    return json.loads(raw)
+
+
 def import_checkpoint(path, expected_sha256, structured):
     raw = Path(path).read_bytes()
     if hashlib.sha256(raw).hexdigest() != expected_sha256:
         raise ValueError("checkpoint SHA differs")
-    checkpoint = json.loads(raw)
+    checkpoint = _checkpoint_document(raw)
     if checkpoint["feature_contract_digest"] != base_features.feature_contract_fingerprint() or checkpoint["feature_encoding_digest"] != base_features.encoding_contract_fingerprint():
         raise ValueError("checkpoint is not the V4 source contract")
     if checkpoint["card_db_hash"] != json.loads(CONTRACT.read_text())["card_db_hash"]:

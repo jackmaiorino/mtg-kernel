@@ -18,7 +18,7 @@ import sys
 import tarfile
 
 sys.dont_write_bytecode = True
-from common import encoded, pin, read, require, sha, write
+from common import encoded, pin, read, read_checkpoint, require, sha, write
 from fresh_source import inspect_source, is_fresh_origin, validate_checkpoint_origin, validate_inference_identity
 from pack import Packager
 
@@ -242,7 +242,7 @@ def validate_package(package, fields, card_hash, registry_sha, checkpoint_cache)
     checkpoint_pin = checked(source['checkpoint'], 64 * MIB)
     key = checkpoint_pin['sha256']
     if key not in checkpoint_cache:
-        complete = read(checkpoint_pin['path'])
+        complete = read_checkpoint(checkpoint_pin['path'])
         require(complete['schema'] == expected_checkpoint_schema and 'registry_transfer' not in complete,
             'existing BO3 or registry-transfer checkpoint transport is unsupported')
         if fresh:

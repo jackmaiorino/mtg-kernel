@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import time
 
-from g115_d4_timing_contract_v1 import bind_placement, pinned_json, validate_recipe
+from g115_d4_timing_contract_v1 import bind_placement, pinned_checkpoint, pinned_json, validate_recipe
 from windows_owned_child_policy_v1 import configure_owned_child
 
 
@@ -128,7 +128,7 @@ def audit(config):
     if not final['complete'] or final['completed_iterations'] != 3:
         raise ValueError('incomplete timing prefix')
     source = config['initial_source']
-    state = pinned_json(source['checkpoint'])['state_sha256']
+    state = pinned_checkpoint(source['checkpoint'])['state_sha256']
     states, games = [], 0
     for index, batch in enumerate(config['iterations']):
         receipt = json.loads((root/'iterations'/f'{index:06}'/'complete.json').read_text())
@@ -158,7 +158,7 @@ def audit(config):
             games += 1
         source = dict(config['initial_source'], checkpoint=update['checkpoint'])
         state = update['after_state_sha256']
-        checkpoint = pinned_json(source['checkpoint'])
+        checkpoint = pinned_checkpoint(source['checkpoint'])
         if checkpoint['state_sha256'] != state or checkpoint['adam_step'] != 32401 + index:
             raise ValueError('checkpoint continuation differs')
         states.append(state)

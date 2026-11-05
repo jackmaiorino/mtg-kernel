@@ -47,8 +47,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from distill_common import (O_FINAL_CHECKPOINT_SHA256, PARENT_ID, absolute, check_parent, pilot,  # noqa: E402
-                    read_json, require, write_json)
+from distill_common import (O_FINAL_CHECKPOINT_SHA256, PARENT_ID, absolute, check_parent, checkpoint_document,  # noqa: E402
+                    pilot, read_checkpoint, read_json, require, write_json)
 
 INITIAL = {"kind": "initial"}
 NAMED_PARENT = {"kind": "fixed", "id": PARENT_ID}
@@ -185,7 +185,7 @@ def config(lineage: str, o_config: dict, source: dict | None, workers: int, outp
         # A U collapse diagnostic or BT1 cell's checkpoints are read offline
         # only; a phase 2 from one needs its own reviewed design. SD1's design
         # is that review for its own keep-set cells, under its namespace.
-        saved = read_json(source["checkpoint"]["path"])
+        saved = read_checkpoint(source["checkpoint"]["path"])
         seed = sd1_cell_seed(saved)
         if namespace == SD1_NS:
             require(seed is not None, "SD1's phase 2 starts from an SD1 cell's checkpoint")
@@ -234,13 +234,13 @@ def check(lineage: str, completion: dict, recorded_path: Path, recorded_sha256: 
     require(hashlib.sha256(data).hexdigest() == expected,
             f"not O's recorded {lineage} final checkpoint" if recorded_sha256 is None
             else f"not the recorded {lineage} checkpoint {expected}")
-    recorded = json.loads(data)
+    recorded = checkpoint_document(data)
     require(completion.get("schema") == RUN_SCHEMA and completion.get("complete") is True
             and completion["completed_iterations"] == pilot.UPDATES, "not a complete 162-update run")
     final_pin = completion["source"]["checkpoint"]
     final_bytes = Path(final_pin["path"]).read_bytes()
     require(hashlib.sha256(final_bytes).hexdigest() == final_pin["sha256"], "final checkpoint differs from its pin")
-    final = json.loads(final_bytes)
+    final = checkpoint_document(final_bytes)
     same = final["state_sha256"] == recorded["state_sha256"] and final["adam_step"] == recorded["adam_step"]
     return {"lineage": lineage, "reproduced": same, "state_sha256": final["state_sha256"],
             "recorded_state_sha256": recorded["state_sha256"], "adam_step": final["adam_step"]}

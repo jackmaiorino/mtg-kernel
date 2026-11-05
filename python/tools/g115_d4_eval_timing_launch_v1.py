@@ -31,6 +31,12 @@ def read_pin(item):
     return json.loads(checked(item).read_bytes())
 
 
+def read_checkpoint_pin(item):
+    """`read_pin` for a checkpoint pin: v1 JSON or a checkpoint container (the default record format)."""
+    import checkpoint_container_v1
+    return checkpoint_container_v1.document_from_bytes(checked(item).read_bytes())
+
+
 def write(path, value):
     path = Path(path)
     temp = path.with_suffix(path.suffix + '.partial')
@@ -111,7 +117,7 @@ def audit(config, binary):
     start = json.loads((root/'run-start.json').read_bytes())
     if start['binary']['sha256'] != binary['sha256']:
         raise ValueError('wrong executed binary')
-    checkpoints = [read_pin(s['checkpoint']) for s in config['model_sources']]
+    checkpoints = [read_checkpoint_pin(s['checkpoint']) for s in config['model_sources']]
     stores = []
     for i, match in enumerate(config['matches']):
         path = root/f'match-{i:06}.json'
