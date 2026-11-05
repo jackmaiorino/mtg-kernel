@@ -1775,7 +1775,8 @@ pub(crate) fn refusal_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
         }
     }
     json!({"viewer": input.viewer.0, "items": projection.items, "untracked_live_refs": out,
-           "paid_cost_holders": holders})
+           "paid_cost_holders": holders,
+           "seam_refs": seam_refs_v1(input.state, input.viewer)})
 }
 
 /// Collect pass: every reference with its region.
@@ -2080,10 +2081,10 @@ fn allocate_counting_arrivals(
     Ok(placed)
 }
 
-/// Test diagnostics (amendment 43.8): the live references to opponent
+/// Diagnostics (amendment 43.8; tests and the refusal log, never the
+/// payload): the live references to opponent
 /// objects that cross the hand seam, with their creation bound, the seam
 /// events of their name and the JSON paths that hold their object.
-#[cfg(test)]
 pub(crate) fn seam_refs_v1(state: &GameState, viewer: PlayerId) -> Vec<String> {
     let projection = project_v1(state, state.observation_journal.notes(), viewer);
     let tagged = tagged_value(state);

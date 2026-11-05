@@ -750,8 +750,21 @@ pub(crate) fn realize(
                 .collect()
         };
         let mut next: Vec<MoveV1> = Vec::new();
+        // Amendment 43.8: V's facts about the opponent's hand are names, so
+        // any seen object of a misplaced object's name in its zone may be
+        // the one W* moves (the misplacement is by name; Sol round 12 on
+        // 43.7, the two re-derived realizer failures).
+        let mut candidates: Vec<(u32, bool)> = Vec::new();
         for (m, in_hand) in &wrong {
-            let m = m.0;
+            let def = run.s.game_state().objects.get(*m).card_def;
+            for (o, d, h) in t.seen.iter().chain(std::iter::once(&(*m, def, *in_hand))) {
+                if *d == def && h == in_hand && !candidates.contains(&(o.0, *h)) {
+                    candidates.push((o.0, *h));
+                }
+            }
+        }
+        for (m, in_hand) in &candidates {
+            let m = *m;
             for c in &run.choices {
                 // m is in the hand at d: it must be the one chosen instead
                 // of an object W chose (or the reverse).
