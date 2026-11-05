@@ -987,8 +987,19 @@ pub(crate) fn export_v1(
             .iter()
             .map(|id| state.objects.get(*id).card_def),
     );
+    // Amendment 43.8 revision c (lead ruling 15, fallback D): the export
+    // claims no opponent-hand names, only the hand size (every hand card is
+    // an unknown occupant filled from the pool). The reducer's names (L),
+    // count facts (C) and survivor tree (F) feed only the harness's
+    // soundness check and the validity mutants, which still claim them.
+    let hand_mutant =
+        is(MutantV1::L8) || is(MutantV1::L11) || is(MutantV1::L12) || is(MutantV1::L14);
     let mut bound_names: Vec<u16> = Vec::new();
-    for f in projection.hand_facts.iter().filter(|f| f.known) {
+    for f in projection
+        .hand_facts
+        .iter()
+        .filter(|f| f.known && hand_mutant)
+    {
         match mutant_bound.get_mut(&f.card_def) {
             Some(c) if *c > 0 => *c -= 1,
             _ => bound_names.push(f.card_def),
@@ -1002,7 +1013,9 @@ pub(crate) fn export_v1(
         )
     })?;
     let survivors = &projection.survivors;
-    let allocation = if is(MutantV1::L11) {
+    let allocation = if !hand_mutant {
+        Ok(Vec::new())
+    } else if is(MutantV1::L11) {
         // Tracker-rule facts only.
         Ok(projection
             .hand_facts
@@ -1048,7 +1061,7 @@ pub(crate) fn export_v1(
             ));
         }
     };
-    if projection.r8_latch && !is(MutantV1::L11) {
+    if hand_mutant && projection.r8_latch && !is(MutantV1::L11) {
         // Ruling 40.4's fallback for the draw-back gap of 6.4: a card put
         // back from a hand V knew about was drawn back (or such cards were
         // scried or reordered), so V may know more than the tree keeps;
@@ -1058,24 +1071,14 @@ pub(crate) fn export_v1(
             "a put-back card from a hand V knew about was drawn back or reordered",
         ));
     }
-    if !projection.reveal_latch.is_empty() && !is(MutantV1::L11) {
-        // Amendment 43.8 revision b (lead ruling 15): a search-run reveal of
-        // a name V knew in the hand, while the run had an unknown move, may
-        // be a moved card or a re-reveal; refuse alike until no unknown card
-        // is left in the hand.
-        return Err(refuse(
-            RefusalCodeV1::R8,
-            "a search-run reveal may be a moved card or a re-reveal",
-        ));
-    }
-    if survivors.tainted() && !is(MutantV1::L11) {
+    if hand_mutant && survivors.tainted() && !is(MutantV1::L11) {
         return Err(refuse(
             RefusalCodeV1::R8b,
             "a public event located a survivor-node card outside the hand",
         ));
     }
     // R4: tracker-rule facts implied by the allocation.
-    if !is(MutantV1::L11) && !is(MutantV1::L8) {
+    if hand_mutant && !is(MutantV1::L11) && !is(MutantV1::L8) {
         let facts = multiset(
             projection
                 .hand_facts

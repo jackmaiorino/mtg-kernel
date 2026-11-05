@@ -170,12 +170,6 @@ pub(crate) struct ProjectionV1 {
     /// tree is cleared) and no such put-back card is left in its library
     /// (a shuffle).
     pub r8_latch: bool,
-    /// Amendment 43.8 revision b (lead ruling 15): names a search-run reveal
-    /// showed while V knew a card of that name in the hand and the run still
-    /// had an unknown move, so the reveal may be a moved card or a re-reveal.
-    /// The export refuses R8 while any is latched; cleared when no unknown
-    /// card is left in the opponent's hand.
-    pub reveal_latch: Vec<u16>,
     /// Stream item at which each event-history index was absorbed.
     pub event_items: Vec<usize>,
     /// Objects V identified in each event (move events), by event index.
@@ -345,7 +339,6 @@ struct WalkV1<'a> {
     put_backs_scrambled: [bool; 2],
     top_draws: Vec<(usize, PlayerId)>,
     r8_latch: bool,
-    reveal_latch: Vec<u16>,
     item: usize,
     next_event: usize,
     inconsistencies: Vec<String>,
@@ -409,7 +402,6 @@ pub(crate) fn project_v1(
         put_backs_scrambled: [false, false],
         top_draws: Vec::new(),
         r8_latch: false,
-        reveal_latch: Vec::new(),
         item: 0,
         next_event: 0,
         inconsistencies: Vec::new(),
@@ -584,7 +576,6 @@ pub(crate) fn project_v1(
         reorders: w.reorders,
         top_draws: w.top_draws,
         r8_latch: w.r8_latch,
-        reveal_latch: w.reveal_latch,
         event_items,
         event_observed,
         items,
@@ -770,7 +761,6 @@ impl WalkV1<'_> {
         let opp_hand = self.state_hand_untracked(opp);
         if opp_hand == 0 {
             self.survivors.clear();
-            self.reveal_latch.clear();
             if !self.put_backs_on_top[opp.index()]
                 .iter()
                 .any(|x| x.informative)
@@ -1176,16 +1166,11 @@ impl WalkV1<'_> {
                         } else {
                             self.revealed_in_hand(card_def);
                         }
-                    } else if self.search_unknown > 0 {
-                        // (d) A moved card or a re-reveal of a known card:
-                        // claiming may be unsound, not claiming may be
-                        // unrealizable. Nothing is claimed; the name latches.
-                        if !self.reveal_latch.contains(&card_def) {
-                            self.reveal_latch.push(card_def);
-                        }
                     }
-                    // (e) Otherwise every move of the run is accounted for:
-                    // a re-reveal, nothing changes.
+                    // Otherwise (a known card of the name) nothing is
+                    // claimed: the export claims no opponent-hand names
+                    // (lead ruling 15, fallback D), so these facts feed only
+                    // the harness's soundness check and the mutants.
                 } else {
                     self.search_mark = None;
                     self.revealed_in_hand(card_def);

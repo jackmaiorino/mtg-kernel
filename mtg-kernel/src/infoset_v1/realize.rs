@@ -866,7 +866,17 @@ pub(crate) fn realize_at(
     let s = at_step(game, d, viewer);
     let x =
         export_at(&s, viewer, ExportOptionsV1 { mutant }).map_err(|e| e.code_name().to_string())?;
-    let target = export_contents(&x, viewer.opponent());
+    let mut target = export_contents(&x, viewer.opponent());
+    if mutant.is_none() {
+        // Amendment 43.8 revision c (lead ruling 15, fallback D): P claims
+        // no opponent-hand names, so its hand and library fills are not
+        // claims a W* must hold; only the pins (and V's views and P) are
+        // compared. Validity mutants still claim names and keep the exact
+        // target.
+        let t = truth(s.game_state(), viewer, viewer.opponent());
+        target.hand = t.contents.hand;
+        target.library = t.contents.library;
+    }
     let p = match mutant {
         None => Some(super::harness::p_outcome(&s, viewer)?),
         Some(_) => None,

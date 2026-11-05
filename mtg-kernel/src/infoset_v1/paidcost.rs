@@ -1760,7 +1760,10 @@ fn a_hand_epoch_reference_and_a_ninjutsu_departure_agree() {
     let (x, y) = (before(true), before(false));
     eprintln!("ninjutsu control (graveyard epoch): D left {x:?} / C left {y:?}");
     assert_eq!(x, y, "P agrees whichever copy left");
-    assert_eq!(x, a, "the reveal of the name refuses the earlier epoch alike");
+    assert_eq!(
+        x, a,
+        "the reveal of the name refuses the earlier epoch alike"
+    );
 }
 
 /// Sol round 3 on ruling 11, finding 2: equal-key bound D and B, unseen C;
