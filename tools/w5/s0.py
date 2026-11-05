@@ -266,12 +266,42 @@ def chunk_command(plan: dict, binary: Path, out_stem: Path, first: int, games: i
     return cmd, env
 
 
-def finished(stem: Path) -> bool:
+def roster_complete(stem: Path, first: int, games: int) -> bool:
+    """The chunk's rows are exactly its games, each a recorded game (the recorder writes a per-game failure as an
+    `error` row and still exits 0)."""
+    jsonl = Path(f"{stem}.jsonl")
+    if not jsonl.exists():
+        return False
+    seen = []
+    for line in jsonl.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            return False
+        if row.get("kind") != "td_game":
+            return False
+        seen.append(row.get("game"))
+    return sorted(seen) == list(range(first, first + games))
+
+
+def finished(stem: Path, first: int | None = None, games: int | None = None) -> bool:
+    """The log ends `rc=0` and, given the chunk's range, the rows are exactly its recorded games."""
     log = Path(str(stem) + ".log")
     if not log.exists():
         return False
     lines = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
-    return bool(lines) and lines[-1].startswith("rc=0 ")
+    if not (bool(lines) and lines[-1].startswith("rc=0 ")):
+        return False
+    return first is None or roster_complete(stem, first, games)
+
+
+def check_parent(plan: dict) -> None:
+    """The teacher is the plan's: its source file and checkpoint still hash to the plan's pins."""
+    source = checked(plan["parent"]["source"], "parent source")
+    require(sha256_file(checked(read_json(source)["checkpoint"], "parent checkpoint"))
+            == plan["parent"]["checkpoint_sha256"], "the parent checkpoint differs from the plan's")
 
 
 def set_aside(stem: Path) -> None:
@@ -287,6 +317,7 @@ def set_aside(stem: Path) -> None:
 
 
 def start_chunk(plan: dict, binary: Path, stem: Path, first: int, games: int):
+    check_parent(plan)
     set_aside(stem)
     stem.parent.mkdir(parents=True, exist_ok=True)
     cmd, env = chunk_command(plan, binary, stem, first, games)
@@ -297,8 +328,10 @@ def start_chunk(plan: dict, binary: Path, stem: Path, first: int, games: int):
 def close_chunk(proc, log, stem: Path, first: int, games: int) -> int:
     rc = proc.wait()
     log.close()
+    if rc == 0 and not roster_complete(stem, first, games):
+        rc = -100   # exited 0 with failed or missing games
     with open(str(stem) + ".log", "a", encoding="utf-8") as f:
-        f.write(f"rc={rc} first={first} games={games}\n")
+        f.write(f"rc={rc} first={first} games={games}" + (" (failed or missing games)" if rc == -100 else "") + "\n")
     return rc
 
 
@@ -364,7 +397,8 @@ def record(plan_path, binary, parallel: int | None = None, limit_chunks: int | N
                 "the record qualification covers another binary, plan or host")
         parallel = receipt["selected_processes"] if parallel is None else parallel
     parallel = parallel or 1
-    todo = [c for c in plan["chunks"] if not finished(root / "store" / c["name"])]
+    check_parent(plan)
+    todo = [c for c in plan["chunks"] if not finished(root / "store" / c["name"], c["first_game"], c["games"])]
     if limit_chunks is not None:
         todo = todo[:limit_chunks]
     t0 = time.time()
@@ -372,7 +406,8 @@ def record(plan_path, binary, parallel: int | None = None, limit_chunks: int | N
                          parallel)
     summary = {"chunks_run": len(results), "failed": [r["chunk"] for r in results if r["rc"] != 0],
                "games": sum(r["games"] for r in results), "wall_seconds": time.time() - t0, "parallel": parallel,
-               "remaining": sum(1 for c in plan["chunks"] if not finished(root / "store" / c["name"]))}
+               "remaining": sum(1 for c in plan["chunks"]
+                                if not finished(root / "store" / c["name"], c["first_game"], c["games"]))}
     if summary["wall_seconds"] > 0:
         summary["games_per_second"] = summary["games"] / summary["wall_seconds"]
     with open(root / "record-log.jsonl", "a", encoding="utf-8") as f:
@@ -396,7 +431,7 @@ def index_store(plan_path) -> dict:
     decisions_total = 0
     for fid, chunk in enumerate(plan["chunks"]):
         stem = store / chunk["name"]
-        require(finished(stem), f"{chunk['name']} has not finished (log without rc=0)")
+        require(finished(stem, chunk["first_game"], chunk["games"]), f"{chunk['name']} has not finished")
         bin_path, jsonl = Path(f"{stem}.bin"), Path(f"{stem}.jsonl")
         rows = {}
         for line in jsonl.read_text(encoding="utf-8").splitlines():
@@ -477,11 +512,13 @@ def index_store(plan_path) -> dict:
 
 def verify_store(manifest_path) -> dict:
     """Every chunk's tensor file against its manifest pin, in the index's file order (once, before training)."""
-    index, manifest, _ = load_index(manifest_path)
+    index, manifest, root = load_index(manifest_path)
     require([str(f) for f in index["files"]] == [f"store/{c['name']}.bin" for c in manifest["chunks"]],
             "index files differ from the manifest")
-    for chunk in manifest["chunks"]:
-        checked(chunk["bin"], f"{chunk['name']} tensors")
+    for chunk, name in zip(manifest["chunks"], index["files"]):
+        path = root / str(name)   # the file the trainer reads, wherever the store now lives
+        require(path.exists() and sha256_file(path) == chunk["bin"]["sha256"],
+                f"{chunk['name']} tensors differ from the manifest")
     return {"chunks": len(manifest["chunks"]), "bytes": sum(c["bytes"] for c in manifest["chunks"])}
 
 
@@ -510,8 +547,8 @@ def load_index(manifest_path, verify: bool = True) -> tuple[dict, dict, Path]:
     manifest = read_json(manifest_path)
     require(manifest.get("schema") == INDEX_SCHEMA, "not an S0 store manifest")
     root = Path(manifest_path).parent
-    if verify:
-        checked(manifest["index"], "store index")
+    if verify:   # the index file that is loaded, beside the manifest
+        require(sha256_file(root / "index.npz") == manifest["index"]["sha256"], "store index differs from its pin")
     z = np.load(root / "index.npz", allow_pickle=False)
     return {k: z[k] for k in z.files}, manifest, root
 
@@ -608,7 +645,10 @@ def export(config_path, run_dir, binary, parity_decisions: int = PARITY_DECISION
                            str(out / "torch.logits"), "--receipt", str(out / "parity.json"),
                            "--bar", str(PARITY_BAR)], capture_output=True, text=True)
     parity = read_json(out / "parity.json")
+    plan = read_json(root / "plan.json")
+    require(sha256_file(root / "plan.json") == manifest["plan"]["sha256"], "store plan differs from its pin")
     receipt = {"schema": EXPORT_SCHEMA, "design": "W5-DESIGN.md v1.3 section 6.2 (export)",
+               "teacher": {"label": plan["parent"]["label"], "checkpoint_sha256": plan["parent"]["checkpoint_sha256"]},
                "config": pin(config_path), "smoke": bool(config["smoke"]), "run": {"train": pin(run_dir / "train.json"), "best_pt": pin(best),
                                                     "best_step": train["best_step"]},
                "values": values, "import": imported, "container": pin(container),
@@ -656,7 +696,7 @@ def freeze_start(export_path, binary, out, smoke: bool = False) -> dict:
     require(native["checkpoint_sha256"] == exp["container"]["sha256"] and native["adam_step"] == 0,
             "starting state does not read the exported S0")
     doc = {"schema": START_SCHEMA, "design": "W5-DESIGN.md v1.3 sections 6.2 and 8 (XS's complete starting state)",
-           "export": pin(export_path), "container": exp["container"], "extras": pin(extras),
+           "export": pin(export_path), "container": exp["container"], "extras": pin(extras), "teacher": exp["teacher"],
            "extras_meaning": {"rng/seed_roots": "XS chain seed roots w5/chain1..6 (JSON, UTF-8)",
                               "cursor/first_update": "the first global update, u64 little-endian"},
            "adam": "reset: zero first and second moments, step 0 (ruling 6)", "native": native,
@@ -715,6 +755,8 @@ def floor_plan(s0_source, b512_source, panel_def, xs_start, evaluator, out) -> d
     checked(s0["s_learner"]["initial"], "S0 container")
     b512 = read_json(b512_source)
     require(b512.get("s_learner") is None, "the b512 source is net-8")
+    require(sha256_file(checked(b512["checkpoint"], "b512 checkpoint")) == start["teacher"]["checkpoint_sha256"],
+            "the floor's comparator is not S0's distillation teacher")
     panel = read_json(panel_def)
     anchor_floor_panel(panel)
     opponent = read_json(checked(panel["opponent"], "opponent H"))

@@ -48,6 +48,7 @@ from test_s0 import synthetic_record
 args = dict(a.split("=", 1) for a in sys.argv[1:])
 first, games, seed = int(args["first_game"]), int(args["games"]), int(args["base_seed"])
 fail = os.environ.get("FAKE_FAIL_GAME")
+error_game = os.environ.get("FAKE_ERROR_GAME")
 out = open(args["out"], "w")
 tensors = open(os.environ["TD_BIN"], "ab")
 runtime = os.environ.get("FAKE_RUNTIME", os.environ.get("S4A_RUNTIME"))
@@ -55,6 +56,9 @@ limits = [int(x) for x in os.environ["S4A_GAME_LIMITS"].split(",")]
 for g in range(first, first + games):
     if fail is not None and g == int(fail):
         sys.exit(1)
+    if error_game is not None and g == int(error_game):
+        out.write(json.dumps({"kind": "error", "game": g, "error": "fake"}) + "\n")
+        continue
     rng = np.random.default_rng([seed % 2**32, g])
     block, rows = b"", []
     for i in range(int(rng.integers(3, 8))):
@@ -156,6 +160,7 @@ class RecordAndIndexTests(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("FAKE_RUNTIME", None)
         os.environ.pop("FAKE_FAIL_GAME", None)
+        os.environ.pop("FAKE_ERROR_GAME", None)
 
     def test_record_index_and_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -183,6 +188,14 @@ class RecordAndIndexTests(unittest.TestCase):
                 s0.verify_store(Path(tmp) / "root" / "manifest.json")
             data[100] ^= 1
             store_bin.write_bytes(bytes(data))
+            # A moved copy is verified where it is read, not at the pinned original.
+            import shutil
+            shutil.copytree(root, Path(tmp) / "copy")
+            copy_bin = Path(tmp) / "copy" / "store" / "chunk-000032.bin"
+            data[100] ^= 1
+            copy_bin.write_bytes(bytes(data))
+            with self.assertRaises(s0.S0Error):
+                s0.verify_store(Path(tmp) / "copy" / "manifest.json")
             self.assertTrue(np.all(np.diff(ix["game"]) >= 0))
             self.assertTrue(np.array_equal(ix["validation"], [s0.is_validation(int(g)) for g in ix["game"]]))
             # Every indexed record decodes at its offset with its row's outcome.
@@ -221,6 +234,24 @@ class RecordAndIndexTests(unittest.TestCase):
             store = Path(tmp) / "root" / "store"
             self.assertTrue((store / "chunk-000032.attempt-1.log").exists())
             self.assertEqual(s0.index_store(rec.plan_path)["counts"]["games"], 64)
+
+    def test_an_error_row_with_exit_zero_is_not_finished(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Recorded(Path(tmp), games=64)
+            os.environ["FAKE_ERROR_GAME"] = "3"
+            summary = s0.record(rec.plan_path, rec.fake, 2)
+            self.assertEqual(summary["failed"], ["chunk-000000"])
+            self.assertEqual(summary["remaining"], 1)
+            os.environ.pop("FAKE_ERROR_GAME")
+            self.assertEqual(s0.record(rec.plan_path, rec.fake, 2)["chunks_run"], 1)
+            self.assertEqual(s0.index_store(rec.plan_path)["counts"]["games"], 64)
+
+    def test_a_changed_teacher_stops_the_recording(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Recorded(Path(tmp), games=32)
+            (Path(tmp) / "b512.json").write_text('{"fake": "another checkpoint"}')
+            with self.assertRaisesRegex(s0.S0Error, "differs from its pin"):
+                s0.record(rec.plan_path, rec.fake, 1)
 
     def test_production_recording_needs_a_qualification(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -408,6 +439,7 @@ class StartAndSourceTests(unittest.TestCase):
                             "print(json.dumps({'checkpoint_sha256':hashlib.sha256(b).hexdigest(),'adam_step':0,"
                             "'state_sha256':'s','starting_state_sha256':hashlib.sha256(b+open(a['extras'],'rb').read()).hexdigest()}))\n")
             exp = {"schema": "w5-s0-export/v1", "passed": True, "smoke": True, "container": s0.pin(container),
+                   "teacher": {"label": "b512", "checkpoint_sha256": "t" * 64},
                    "parity": {"states": {"decisions": 500}}}
             (tmp / "exp.json").write_text(json.dumps(exp))
             with self.assertRaises(s0.S0Error):
@@ -440,8 +472,15 @@ class StartAndSourceTests(unittest.TestCase):
                                          "container": s0.pin(container)}))
             with self.assertRaisesRegex(s0.S0Error, "smoke"):
                 s0.floor_plan(src, parent_source(tmp), tmp / "panel.json", start, tmp / "eval.exe", tmp / "f")
-            start.write_text(json.dumps({"schema": "w5-xs-start/v1", "smoke": False,
-                                         "container": s0.pin(container)}))
+            teacher = s0.read_json(parent_source(tmp))["checkpoint"]["sha256"]
+            start.write_text(json.dumps({"schema": "w5-xs-start/v1", "smoke": False, "container": s0.pin(container),
+                                         "teacher": {"label": "b512", "checkpoint_sha256": "9" * 64}}))
+            with self.assertRaisesRegex(s0.S0Error, "teacher"):
+                s0.floor_plan(src, parent_source(tmp), tmp / "panel.json", start, tmp / "eval.exe", tmp / "f")
+            start.write_text(json.dumps({"schema": "w5-xs-start/v1", "smoke": False, "container": s0.pin(container),
+                                         "teacher": {"label": "b512", "checkpoint_sha256": teacher}}))
+            with self.assertRaises(FileNotFoundError):   # admitted up to the panel definition
+                s0.floor_plan(src, parent_source(tmp), tmp / "panel.json", start, tmp / "eval.exe", tmp / "f")
             continued = s0.read_json(src)
             continued["checkpoint"] = {"path": "record.json", "sha256": "1" * 64}
             (tmp / "continued.json").write_text(json.dumps(continued))
