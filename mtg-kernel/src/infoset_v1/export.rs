@@ -842,49 +842,8 @@ pub(crate) fn export_v1(
 
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
-        if *region != "live" {
-            continue;
-        }
-        let Some(track) = projection.objects.get(r.object.0 as usize) else {
-            continue;
-        };
-        let o = state.objects.get(r.object);
-        for &g in &r.generations {
-            // Every end of the referenced object counts, a lapse (it left
-            // V's sight) as much as a split (lead ruling 11, R1): a twin's
-            // departure counts either way. The scan stops after the first
-            // lapse: which later spans belong to the referenced copy is not
-            // V's information there, and R1b decides.
-            // From the span the reference resolves to (Sol round 7: an
-            // older span ending at the same generation is history the
-            // reference does not name); without one, every end at or after g.
-            let from_span = projection.span_of(r.object, g).map(|s| s.start_item);
-            let ends = track
-                .spans
-                .iter()
-                .filter(|s| from_span.is_none_or(|start| s.start_item >= start))
-                .filter_map(|s| s.end)
-                .filter(|e| e.last_gen >= g);
-            let mut lapsed = false;
-            for end in ends {
-                if lapsed {
-                    break;
-                }
-                lapsed = !end.split;
-                let batch = ProjectionV1::batch_of(&bounds, end.item);
-                let twin = projection.objects.iter().enumerate().any(|(i, other)| {
-                    let other_obj = state.objects.get(ObjectId(i as u32));
-                    i != r.object.0 as usize
-                        && other_obj.owner == o.owner
-                        && card_name(other_obj.card_def) == card_name(o.card_def)
-                        && other.spans.iter().filter_map(|s| s.end).any(|e| {
-                            e.from == end.from && ProjectionV1::batch_of(&bounds, e.item) == batch
-                        })
-                });
-                if twin {
-                    return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_BATCH_DETAIL));
-                }
-            }
+        if *region == "live" && batch_twin_v1(state, &projection, &bounds, r).is_some() {
+            return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_BATCH_DETAIL));
         }
     }
 
@@ -1731,6 +1690,57 @@ pub(crate) fn export_v1(
     })
 }
 
+/// Lead ruling 7 (a), R1 `same_name_batch`: the first (epoch, ending span
+/// item, origin zone, twin) at which a live reference's object left a zone
+/// in the same batch of V's transcript as another object of its name and
+/// owner from the same zone. Every end of the referenced object counts, a
+/// lapse (it left V's sight) as much as a split (lead ruling 11, R1): a
+/// twin's departure counts either way. The scan starts at the span the
+/// reference resolves to (Sol round 7: an older span ending at the same
+/// generation is history the reference does not name); without one, every
+/// end at or after the epoch. It stops after the first lapse: which later
+/// spans belong to the referenced copy is not V's information there, and
+/// R1b decides.
+pub(crate) fn batch_twin_v1(
+    state: &GameState,
+    projection: &ProjectionV1,
+    bounds: &[usize],
+    r: &RefV1,
+) -> Option<(u32, usize, Zone, ObjectId)> {
+    let track = projection.objects.get(r.object.0 as usize)?;
+    let o = state.objects.get(r.object);
+    for &g in &r.generations {
+        let from_span = projection.span_of(r.object, g).map(|s| s.start_item);
+        let ends = track
+            .spans
+            .iter()
+            .filter(|s| from_span.is_none_or(|start| s.start_item >= start))
+            .filter_map(|s| s.end)
+            .filter(|e| e.last_gen >= g);
+        let mut lapsed = false;
+        for end in ends {
+            if lapsed {
+                break;
+            }
+            lapsed = !end.split;
+            let batch = ProjectionV1::batch_of(bounds, end.item);
+            let twin = projection.objects.iter().enumerate().find(|(i, other)| {
+                let other_obj = state.objects.get(ObjectId(*i as u32));
+                *i != r.object.0 as usize
+                    && other_obj.owner == o.owner
+                    && card_name(other_obj.card_def) == card_name(o.card_def)
+                    && other.spans.iter().filter_map(|s| s.end).any(|e| {
+                        e.from == end.from && ProjectionV1::batch_of(bounds, e.item) == batch
+                    })
+            });
+            if let Some((i, _)) = twin {
+                return Some((g, end.item, end.from, ObjectId(i as u32)));
+            }
+        }
+    }
+    None
+}
+
 /// Diagnostics only (the bridge's `W1_INFOSET_REFUSAL_LOG`, never on the
 /// wire): every live reference to an object V does not track, with the
 /// object's true card, owner, zone and generation, V's last span of it, and
@@ -1834,7 +1844,48 @@ pub(crate) fn refusal_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
             holders.push(holder("pending_effect", 0, &pending.resolving_item));
         }
     }
+    // Amendment 43.9: the live references `same_name_batch` refuses, with
+    // the object, its twin, the batch's ending item and the state paths
+    // that hold the reference (log only).
+    let bounds = projection.batch_bounds(input.marks);
+    let mut batch_refs = Vec::new();
+    for (r, region) in &refs {
+        if *region != "live" {
+            continue;
+        }
+        let Some((g, item, from, twin)) = batch_twin_v1(state, &projection, &bounds, r) else {
+            continue;
+        };
+        let o = state.objects.get(r.object);
+        let tag = format!("{}{}", crate::ids::OBJECT_ID_TAG_PREFIX_V1, r.object.0);
+        let mut at = Vec::new();
+        paths(&tagged, &tag, "state".into(), &mut at);
+        at.retain(|p| {
+            !p.starts_with("state.engine.event_history") && !p.starts_with("state.objects")
+        });
+        at.truncate(12);
+        batch_refs.push(json!({
+            "object": r.object.0,
+            "card": card_name(o.card_def),
+            "owner": o.owner.0,
+            "zone": format!("{:?}", o.zone),
+            "generation": o.zone_change_count,
+            "ref_generations": r.generations,
+            "epoch": g,
+            "end_item": item,
+            "from": format!("{from:?}"),
+            "twin": twin.0,
+            "twin_zone": format!("{:?}", state.objects.get(twin).zone),
+            "tracked": projection.tracked(r.object),
+            "paid_cost": r.paid_cost,
+            "membership": r.membership,
+            "turn_scoped": r.turn_scoped,
+            "container": r.container.map(|(s, e)| format!("{} {:?}", s.0, e)),
+            "paths": at,
+        }));
+    }
     json!({"viewer": input.viewer.0, "items": projection.items, "untracked_live_refs": out,
+           "batch_refs": batch_refs,
            "paid_cost_holders": holders,
            "seam_refs": seam_refs_v1(input.state, input.viewer)})
 }
