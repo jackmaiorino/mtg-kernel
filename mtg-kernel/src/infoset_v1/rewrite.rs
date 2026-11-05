@@ -36,6 +36,43 @@ pub(crate) struct RefV1 {
     /// The `object` of a paid-cost record (`paid_cost_refs`), amendment
     /// 43.5.
     pub paid_cost: bool,
+    /// Amendment 43.7 (Sol round 8, finding 2): the epochs come from a
+    /// `spell_cast_origin` record paired with the object it describes (the
+    /// arena object's own field, or the source contract that names it): the
+    /// object's own cast receipt.
+    pub cast_receipt: bool,
+    /// Amendment 43.7 (Sol round 9): the reference sits inside a stack item
+    /// (or a resolving item) that its source activated from the opponent's
+    /// hand at the given epoch and paid with itself (cycling, channel): the
+    /// item's (source, hand epoch). Its references to that epoch are the
+    /// item's own receipt of the departure.
+    pub item_self_paid: Option<(ObjectId, u32)>,
+    /// Amendment 43.8: the stack item the reference sits in, if any: its
+    /// source and the source's epoch the item records (its ability source
+    /// contract), for the creation bound of a reference with no epoch.
+    pub container: Option<(ObjectId, Option<u32>)>,
+    /// Which stack item, pending trigger or pending resolution of the walk
+    /// the reference sits in (its walk order): two references share it only
+    /// inside the same item (Sol code review 1 on 43.8, finding 2: distinct
+    /// triggers of one source share `container`).
+    pub container_seq: Option<u32>,
+    /// Amendment 43.8 (Sol design review 2): the reference is a zone's
+    /// membership list (a player's battlefield or graveyard, the exile or
+    /// command zone) or a list the engine clears at every zone change of the
+    /// object (an attachment list, the combat state): it names the current
+    /// incarnation, so tracking decides it, never the seam predicate.
+    pub membership: bool,
+    /// Amendment 43.8: the reference sits in this turn's until-end-of-turn
+    /// effects, which the turn's start bounds.
+    pub turn_scoped: bool,
+    /// Amendment 43.8: the reference sits in the cast or activation being
+    /// announced (`pending_cast`, `pending_activation`): made during the
+    /// announcement, which no hand seam other than its own costs follows.
+    pub announcing: bool,
+    /// Amendment 43.8: an entry of a stack item's `discarded` list, written
+    /// by the discard that paid the item's cost (the copy that moved, in
+    /// V's sight, to the graveyard).
+    pub discarded: bool,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -82,7 +119,7 @@ const FINGERPRINTS_V1: &[&str] = &[
 /// Fields whose value is a `(value, timestamp)` pair.
 const TIMESTAMP_PAIRS_V1: &[&str] = &["added_subtype_v1"];
 
-fn generation_partner(id_key: &str, map: &Map<String, Value>) -> Option<String> {
+pub(crate) fn generation_partner(id_key: &str, map: &Map<String, Value>) -> Option<String> {
     let stem = id_key.strip_suffix("_id").unwrap_or(id_key);
     [
         format!("{id_key}_zone_change_count"),
@@ -109,6 +146,61 @@ pub(crate) struct WalkerV1<'a> {
     /// Inside an arena object: generation fields in a map that names no
     /// object are epochs of this object itself (`spell_cast_origin`).
     pub self_object: Option<ObjectId>,
+    /// The enclosing self-paid hand activation, if any (see
+    /// [`RefV1::item_self_paid`]).
+    pub item_self_paid: Option<(ObjectId, u32)>,
+    /// The enclosing stack item, if any (see [`RefV1::container`]).
+    pub container: Option<(ObjectId, Option<u32>)>,
+    /// The enclosing item's walk order (see [`RefV1::container_seq`]).
+    pub container_seq: Option<u32>,
+    /// The next item's walk order.
+    pub seq_next: u32,
+    /// Walking a zone's membership list (see [`RefV1::membership`]).
+    pub membership: bool,
+    /// Walking this turn's until-end-of-turn effects (see [`RefV1::turn_scoped`]).
+    pub turn_scoped: bool,
+    /// Walking an announcement (see [`RefV1::announcing`]).
+    pub announcing: bool,
+}
+
+/// A stack item whose source activated it from the hand at epoch g and paid
+/// a cost with itself: (source, g).
+fn self_paid_from_hand(map: &Map<String, Value>) -> Option<(ObjectId, u32)> {
+    let source = parse_tag(map.get("source")?)?;
+    let v4 = map.get("v4")?.as_object()?;
+    let contract = v4.get("ability_source_contract")?.as_object()?;
+    if parse_tag(contract.get("source")?)? != source || contract.get("zone")?.as_str()? != "Hand" {
+        return None;
+    }
+    let g = u32::try_from(contract.get("zone_change_count")?.as_u64()?).ok()?;
+    let paid = v4.get("paid_cost_refs")?.as_array()?;
+    paid.iter()
+        .any(|p| p.get("object").and_then(parse_tag) == Some(source))
+        .then_some((source, g))
+}
+
+/// A stack item (`state::StackItem`) or a pending trigger
+/// (`trigger::PendingTrigger`): its source and the source epoch its ability
+/// source contract records, when the contract names that source.
+fn stack_item_container(map: &Map<String, Value>) -> Option<(ObjectId, Option<u32>)> {
+    let item = map.contains_key("is_copy") && map.contains_key("targets");
+    let trigger = map.contains_key("source_contract") && map.contains_key("target_spec");
+    if !(item || trigger) {
+        return None;
+    }
+    let source = parse_tag(map.get("source")?)?;
+    let contract = if item {
+        map.get("v4").and_then(|v| v.get("ability_source_contract"))
+    } else {
+        map.get("source_contract")
+    };
+    let g = contract
+        .and_then(|c| c.as_object())
+        .filter(|c| c.get("source").and_then(parse_tag) == Some(source))
+        .and_then(|c| c.get("zone_change_count"))
+        .and_then(|g| g.as_u64())
+        .and_then(|g| u32::try_from(g).ok());
+    Some((source, g))
 }
 
 fn r2(detail: String) -> ExportErrorV1 {
@@ -148,6 +240,14 @@ impl WalkerV1<'_> {
                             object,
                             generations: Vec::new(),
                             paid_cost: false,
+                            cast_receipt: false,
+                            item_self_paid: self.item_self_paid,
+                            container: self.container,
+                            container_seq: self.container_seq,
+                            membership: self.membership,
+                            turn_scoped: self.turn_scoped,
+                            announcing: self.announcing,
+                            discarded: parent == "discarded",
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -167,6 +267,14 @@ impl WalkerV1<'_> {
                     object,
                     generations: Vec::new(),
                     paid_cost: false,
+                    cast_receipt: false,
+                    item_self_paid: self.item_self_paid,
+                    container: self.container,
+                    container_seq: self.container_seq,
+                    membership: self.membership,
+                    turn_scoped: self.turn_scoped,
+                    announcing: self.announcing,
+                    discarded: false,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -184,6 +292,33 @@ impl WalkerV1<'_> {
     }
 
     fn walk_map(
+        &mut self,
+        map: &mut Map<String, Value>,
+        class: ClassV1,
+        parent: &str,
+    ) -> Result<(), ExportErrorV1> {
+        let enclosing = (self.item_self_paid, self.container, self.container_seq);
+        if let Some(item) = self_paid_from_hand(map) {
+            self.item_self_paid = Some(item);
+        }
+        // A stack item or pending trigger, or a pending resolution
+        // (`EffectContinuation`): everything in it belongs to the item.
+        let c = stack_item_container(map).or_else(|| {
+            map.get("resolving_item")
+                .and_then(|v| v.as_object())
+                .and_then(stack_item_container)
+        });
+        if let Some(c) = c {
+            self.container = Some(c);
+            self.container_seq = Some(self.seq_next);
+            self.seq_next += 1;
+        }
+        let walked = self.walk_map_inner(map, class, parent);
+        (self.item_self_paid, self.container, self.container_seq) = enclosing;
+        walked
+    }
+
+    fn walk_map_inner(
         &mut self,
         map: &mut Map<String, Value>,
         class: ClassV1,
@@ -259,6 +394,14 @@ impl WalkerV1<'_> {
                 object,
                 generations,
                 paid_cost: parent == "paid_cost_refs" && k.as_deref() == Some("object"),
+                cast_receipt: parent == "spell_cast_origin" && k.is_none(),
+                item_self_paid: self.item_self_paid,
+                container: self.container,
+                container_seq: self.container_seq,
+                membership: self.membership,
+                turn_scoped: self.turn_scoped,
+                announcing: self.announcing,
+                discarded: false,
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -283,6 +426,14 @@ impl WalkerV1<'_> {
                 object,
                 generations: Vec::new(),
                 paid_cost: false,
+                cast_receipt: false,
+                item_self_paid: self.item_self_paid,
+                container: self.container,
+                container_seq: self.container_seq,
+                membership: self.membership,
+                turn_scoped: self.turn_scoped,
+                announcing: self.announcing,
+                discarded: false,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;

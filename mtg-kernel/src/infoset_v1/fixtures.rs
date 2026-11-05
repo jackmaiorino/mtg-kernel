@@ -777,8 +777,9 @@ pub(crate) fn spy_versus_terror(put_back: [&str; 2]) -> ScriptV1 {
 /// The Fable bounce (ruling 44; CawGates versus Faeries, off-board). V is
 /// Faeries (P1). CawGates casts Squadron Hawk and fetches the other three,
 /// then Brainstorms returning `put_back`; Faeries Snaps the battlefield Hawk
-/// back. The survivor tree is ({Hawk x3}, 1); the bounced Hawk is tracked
-/// and never counts toward it. `hawks` of the two returned cards are Hawks
+/// back. The survivor tree is ({Hawk x3}, 1); the bounced Hawk never counts
+/// toward it (amendment 43.7: it is a bound fact, exported as a known-name
+/// occupant, not a tracked copy). `hawks` of the two returned cards are Hawks
 /// (the others are untracked cards: the Hawk search shuffles the library,
 /// so the Brainstorm's draws are named by role).
 pub(crate) fn fable_bounce(hawks: usize) -> ScriptV1 {
@@ -1275,7 +1276,9 @@ fn spy_versus_terror_engine_fixture() {
     );
     for r in &after {
         assert!(r.p.is_ok(), "exported while the node holds: {:?}", r.p);
-        assert_eq!(r.known.len(), 1, "one known_name survivor: {:?}", r.known);
+        // Amendment 43.8 revision c (lead ruling 15, fallback D): P claims
+        // no opponent-hand names; the reducer still keeps the node.
+        assert!(r.known.is_empty(), "no known_name occupant: {:?}", r.known);
     }
     // Terror's next draw takes a put-back card back: the draw-back
     // amendment to 6.4 undoes that put-back's removal, so the node is
@@ -1291,7 +1294,7 @@ fn spy_versus_terror_engine_fixture() {
     );
     for r in &back {
         assert!(r.p.is_ok(), "exported after the draw-back: {:?}", r.p);
-        assert_eq!(r.known.len(), 2, "two known_name survivors: {:?}", r.known);
+        assert!(r.known.is_empty(), "no known_name occupant: {:?}", r.known);
     }
     assert!(
         records[0].iter().all(|r| r.p != Err("R8".to_string())),
@@ -1329,10 +1332,14 @@ fn fable_bounce_engine_fixture() {
         .rev()
         .find(|r| r.p.is_ok())
         .expect("an export while the node holds");
-    assert_eq!(
-        last.known,
-        vec!["Squadron Hawk".to_string()],
-        "one untracked Hawk survivor is still exported after the bounce"
+    // Amendment 43.8 revision c (lead ruling 15, fallback D): P claims no
+    // opponent-hand names. Under 43.7 and 43.8 the bounced Hawk's fact and
+    // the survivor node's Hawk were two known-name occupants; before 43.7
+    // the bounced Hawk took a `C:` handle.
+    assert!(
+        last.known.is_empty(),
+        "no known-name occupant after the bounce: {:?}",
+        last.known
     );
     assert!(reports.iter().all(|r| r.compared > 0));
 }
@@ -1362,29 +1369,48 @@ fn cawgates_lorien_engine_fixture() {
             .iter()
             .position(|r| r.nodes.contains(&node))
             .expect("the node ({Hawk x3, Island}, 2) appears");
+        // Amendment 43.8 revision c (lead ruling 15, fallback D): R8b
+        // guards the survivor tree's claims, which P no longer makes; P
+        // exports (or refuses R3) while the node lives, also after the second
+        // Lorien finds the Island.
+        assert!(
+            rec[i..]
+                .iter()
+                .filter(|r| r.nodes.contains(&node))
+                .all(|r| r.p.is_ok() || r.p == Err("R3".into())),
+            "exports while the node lives"
+        );
+        // The search still taints the node: mutant L8 claims the tree's
+        // names and refuses R8b from the second Lorien while the node lives.
+        let l8 = |r: &AtV1| {
+            r.mutants
+                .iter()
+                .find(|(m, _)| *m == MutantV1::L8)
+                .map(|(_, o)| o.clone())
+        };
         let first_refusal = rec[i..]
             .iter()
-            .position(|r| r.p == Err("R8b".to_string()))
+            .position(|r| l8(r) == Some(Err("R8b".to_string())))
             .map(|k| i + k)
-            .expect("R8b refuses once the second Lorien finds the Island");
+            .expect("L8 refuses R8b once the second Lorien finds the Island");
         assert!(
             rec[i..first_refusal]
                 .iter()
-                .all(|r| r.p.is_ok() || r.p == Err("R3".into())),
-            "exports up to the second Lorien"
+                .all(|r| matches!(l8(r), Some(Ok(_))) || l8(r) == Some(Err("R3".into()))),
+            "L8 exports up to the second Lorien"
         );
         assert!(
             rec[first_refusal..]
                 .iter()
-                .all(|r| r.p == Err("R8b".into()) || !r.nodes.contains(&node)),
-            "R8b holds while the node lives"
+                .all(|r| l8(r) == Some(Err("R8b".into())) || !r.nodes.contains(&node)),
+            "L8's R8b holds while the node lives (the node is tainted)"
         );
     }
     // The worlds' hands differ after the Brainstorm, so later default
-    // answers may diverge publicly: the pair truncates there, after R8b.
+    // answers may diverge publicly: the pair truncates there.
     assert!(reports
         .iter()
-        .all(|r| r.compared > 0 && r.p_refusals.get("R8b").copied().unwrap_or(0) > 0));
+        .all(|r| r.compared > 0 && r.p_refusals.get("R8b").copied().unwrap_or(0) == 0));
 }
 
 #[test]
@@ -1448,6 +1474,11 @@ fn w_pin_engine_fixtures() {
 /// Witness bar (ruling 6): at least 5 compared decisions where L8 differs and
 /// P does not, each shown in L8's bytes to differ through the bound copies
 /// (`l8_mechanism`).
+///
+/// Amendment 43.7: P binds no copy in the opponent's hand at all (the
+/// bounced Hawk is a known name, not a `C:` copy), while L8 still binds; the
+/// history L8 links to a bound copy is a tombstone in P, so the mechanism
+/// check masks the epoch stored beside such a reference with the reference.
 #[test]
 fn l8_bound_copies_engine_fixture() {
     let (mut total, mut equal_copies, mut equal_samples) = (0u64, 0u64, 0u64);
@@ -1572,19 +1603,46 @@ fn json_differences(a: &Value, b: &Value, path: String, out: &mut Vec<(String, V
 /// differ, and every differing leaf names a bound copy on at least one side.
 /// Returns the differing leaves of (2) and a byte window at the first raw
 /// difference.
+///
+/// Amendment 43.7: P never binds a copy in the opponent's hand, so the
+/// history L8's continuity links to a bound copy (the Snap's `Targeted`
+/// event, the search) is a tombstone in the other world, and the epoch the
+/// record stores beside the reference differs with it (a linked epoch
+/// against a tombstone's 0). That epoch is part of the reference: both
+/// checks mask the epoch field paired with a reference that names a bound
+/// copy or a tombstone (the rewrite's own pairing, `generation_partner`).
 fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, String), String> {
     let (sx, sy) = (ExportSideV1::parse(x, opp), ExportSideV1::parse(y, opp));
     if sx.bound.is_empty() || sy.bound.is_empty() {
         return Err("L8 binds no Hawk".into());
     }
+    fn mask_epochs(v: &mut Value, masked: &dyn Fn(&Value) -> bool) {
+        match v {
+            Value::Object(m) => {
+                let partners: Vec<String> = m
+                    .iter()
+                    .filter(|(_, x)| masked(x))
+                    .filter_map(|(k, _)| super::rewrite::generation_partner(k, m))
+                    .collect();
+                for p in partners {
+                    m.insert(p, Value::String("epoch of a masked reference".into()));
+                }
+                m.values_mut().for_each(|x| mask_epochs(x, masked));
+            }
+            Value::Array(xs) => xs.iter_mut().for_each(|x| mask_epochs(x, masked)),
+            _ => {}
+        }
+    }
     let merged = |side: &ExportSideV1| {
-        side.named(&|l: &str| {
+        let mut v = side.named(&|l: &str| {
             if side.bound.contains(l) || l.starts_with("H:") {
                 "bound-or-tombstone".to_string()
             } else {
                 l.to_string()
             }
-        })
+        });
+        mask_epochs(&mut v, &|x| x.as_str() == Some("bound-or-tombstone"));
+        v
     };
     let mut rest = Vec::new();
     json_differences(&merged(&sx), &merged(&sy), "state".into(), &mut rest);
@@ -1594,7 +1652,7 @@ fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, Strin
         ));
     }
     let apart = |side: &ExportSideV1| {
-        side.named(&|l: &str| {
+        let mut v = side.named(&|l: &str| {
             if side.bound.contains(l) {
                 format!("bound {l}")
             } else if l.starts_with("H:") {
@@ -1602,7 +1660,12 @@ fn l8_mechanism(x: &[u8], y: &[u8], opp: PlayerId) -> Result<(Vec<String>, Strin
             } else {
                 l.to_string()
             }
-        })
+        });
+        mask_epochs(&mut v, &|x| {
+            x.as_str()
+                .is_some_and(|s| s.starts_with("bound ") || s == "tombstone")
+        });
+        v
     };
     let mut diffs = Vec::new();
     json_differences(&apart(&sx), &apart(&sy), "state".into(), &mut diffs);
@@ -1680,7 +1743,6 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
     })
     .collect();
     let (records, reports) = pairs(&format!("l8-bound-copies seed {seed}"), runs);
-    let hawks = vec!["Squadron Hawk".to_string(); 2];
     let mut shown = false;
     // Compared decisions after the Brainstorm (P exports two `known_name`
     // Hawks, equal bytes, in both worlds): (L8 differs, L8 agrees).
@@ -1690,7 +1752,8 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
             if x.view != y.view {
                 break;
             }
-            if !(x.p.is_ok() && x.p == y.p && x.known == hawks && y.known == hawks) {
+            // Revision c: P claims no hand names (before it, two Hawks).
+            if !(x.p.is_ok() && x.p == y.p && x.known.is_empty() && y.known.is_empty()) {
                 continue;
             }
             let l8 = |r: &AtV1| {
@@ -1739,4 +1802,32 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
         "both pairs compare decisions: {reports:?}"
     );
     (witnesses, equal_differ, equal_differ + equal_agree)
+}
+
+/// Diagnostic (run by name): the first `same_name_hand` refusal on the
+/// fable-bounce and Lorien fixtures, with the references behind it.
+#[test]
+#[ignore = "diagnostic"]
+fn diag_hand_epoch_refs() {
+    let v = PlayerId::P1;
+    for (name, mut script) in [
+        ("fable", fable_bounce(0)),
+        ("lorien", cawgates_lorien(Some("Squadron Hawk"))),
+    ] {
+        let mut shown = 0;
+        script.run(400, 30, &mut |s, who, step| {
+            if who != v || shown >= 2 {
+                return;
+            }
+            if let Err(e) = export_at(s, v, ExportOptionsV1::default()) {
+                if format!("{e:?}").contains("same-name copies") {
+                    shown += 1;
+                    eprintln!(
+                        "{name} step {step}: {:#?}",
+                        super::export::seam_refs_v1(s.game_state(), v)
+                    );
+                }
+            }
+        });
+    }
 }

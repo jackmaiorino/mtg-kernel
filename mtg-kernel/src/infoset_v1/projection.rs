@@ -62,6 +62,10 @@ pub(crate) struct SpanEndV1 {
     /// span (where a move it made there started). Lead ruling 7 (a): V tells
     /// two departures apart by their origin zone.
     pub from: Zone,
+    /// Amendment 43.8 (Sol review of the design, finding 4): the span ended
+    /// with a move V saw, so `last_gen` is the generation the object entered
+    /// there (outside the span), not one V tracked it at.
+    pub entered: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,13 +75,15 @@ pub(crate) enum FactHowV1 {
     FromPublicZone,
 }
 
-/// A tracker-rule hand fact (kernel_history_v2.py `hand[viewer][owner]`).
+/// A fact about the opponent's hand (amendment 43.8, lead ruling 13): a
+/// name, never a copy. `known` facts form L, the names V knows are in the
+/// hand (a lower bound per name); the others are count facts (C) left by an
+/// unidentified departure, claimed only through the survivor tree (R4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HandFactV1 {
     pub card_def: u16,
     pub how: FactHowV1,
-    /// The physical copy while V can tell which one; `None` once it cannot.
-    pub native: Option<ObjectId>,
+    pub known: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,19 +100,6 @@ pub(crate) struct TransferV1 {
     pub item: usize,
     pub owner: PlayerId,
     pub dir: TransferDirV1,
-}
-
-/// Amendment 43.6 (lead ruling 9 (b)): a copy left the opponent's hand while
-/// another copy with the same name and the same V-visible fact (equal 43.4
-/// keys) was there with it, so V cannot tell which copy left. Every
-/// candidate is listed with its epoch in the hand. Recorded from the fact
-/// structure V sees (names, how each fact arose), never from which copy
-/// actually left: the candidate set is the same whichever copy it was.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HandAmbiguityV1 {
-    pub item: usize,
-    pub card_def: u16,
-    pub candidates: Vec<(ObjectId, u32)>,
 }
 
 /// A card of `owner` named `card_def` became tracked by V from a hidden zone
@@ -137,14 +130,33 @@ pub(crate) struct ProjectionV1 {
     pub objects: Vec<ObjectTrackSummaryV1>,
     /// V's library knowledge per owner: position from the top to object.
     pub library: [BTreeMap<u32, ObjectId>; 2],
-    /// Tracker-rule facts about the opponent's hand, in tracker order.
+    /// Name-level facts about the opponent's hand (amendment 43.8), in the
+    /// order V learned them.
     pub hand_facts: Vec<HandFactV1>,
+    /// Amendment 43.8: the seam events, (stream item, card definition): a
+    /// card of V's opponent with that name entered or left the opponent's
+    /// hand in V's transcript (named on the wire, or a reveal that may be a
+    /// search outcome). Unnamed transfers are not seam events.
+    pub seams: Vec<(usize, u16)>,
+    /// Amendment 43.8: names of cards revealed in the opponent's hand (an
+    /// aborted cast back to the hand is revealed this way, and no reveal is
+    /// provably not one: revision b; the export's moves-without-events
+    /// rule).
+    pub revealed: Vec<u16>,
+    /// Amendment 43.8: the stream items at which turns began (upkeeps).
+    pub turn_starts: Vec<usize>,
+    /// Harness only (the realizability proof): the departures from the
+    /// opponent's hand V saw, (stream item, card definition).
+    pub departures: Vec<(usize, u16)>,
+    /// Harness only (the realizability proof): the cards V saw enter the
+    /// opponent's hand, each once, (stream item, card definition). Seam
+    /// events are not arrival counts: a known library card's move and its
+    /// search reveal are two seams of one card (Sol code review 1 on 43.8,
+    /// finding 3).
+    pub entries: Vec<(usize, u16)>,
     pub survivors: SurvivorTreeV1,
     pub transfers: Vec<TransferV1>,
     pub arrivals: Vec<ArrivalV1>,
-    /// Amendment 43.6: departures from the opponent's hand that V cannot
-    /// attribute between equal-key copies.
-    pub hand_ambiguities: Vec<HandAmbiguityV1>,
     /// Stream items at which an owner's library order changed unseen by
     /// V's tracking (a shuffle, a reorder, a scry), with the owner.
     pub reorders: Vec<(usize, PlayerId)>,
@@ -170,6 +182,10 @@ pub(crate) struct ProjectionV1 {
     pub stamps: Vec<(usize, usize)>,
     /// Internal consistency failures (a projection bug): R5.
     pub inconsistencies: Vec<String>,
+    /// Harness only (the realizability proof): at each unidentified
+    /// departure from the opponent's hand, the names V knew there (L) just
+    /// before it.
+    pub departure_known: Vec<(usize, Vec<u16>)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -183,6 +199,37 @@ pub(crate) struct ObjectTrackSummaryV1 {
 }
 
 impl ProjectionV1 {
+    /// Amendment 43.8: the span in which V tracked `id` at generation `g`
+    /// (not one that only covers `g` as the epoch a seen move left).
+    pub(crate) fn tracked_at(&self, id: ObjectId, g: u32) -> Option<&SpanV1> {
+        let o = self.objects.get(id.0 as usize)?;
+        o.spans.iter().rev().find(|s| {
+            s.start_gen <= g
+                && match s.end {
+                    Some(end) => g + u32::from(end.entered) <= end.last_gen,
+                    None => g <= o.moves,
+                }
+        })
+    }
+    /// Amendment 43.8: the stream item at which V saw `id` leave generation
+    /// `g`: the start of the span that began with that move (it covers `g`).
+    pub(crate) fn left_seen(&self, id: ObjectId, g: u32) -> Option<usize> {
+        let o = self.objects.get(id.0 as usize)?;
+        o.spans
+            .iter()
+            .find(|s| s.cover_gen == g && g < s.start_gen)
+            .map(|s| s.start_item)
+    }
+    /// Amendment 43.8: the stream item at which V saw `id` move from a span
+    /// into generation `g` (V tracked it up to that move).
+    pub(crate) fn entered_seen(&self, id: ObjectId, g: u32) -> Option<usize> {
+        let o = self.objects.get(id.0 as usize)?;
+        o.spans
+            .iter()
+            .filter_map(|s| s.end)
+            .find(|e| e.entered && e.last_gen == g)
+            .map(|e| e.item)
+    }
     pub(crate) fn tracked(&self, id: ObjectId) -> bool {
         self.objects.get(id.0 as usize).is_some_and(|o| o.tracked)
     }
@@ -266,11 +313,16 @@ struct WalkV1<'a> {
     objs: Vec<ObjectTrackV1>,
     library: [BTreeMap<u32, ObjectId>; 2],
     hand: Vec<HandFactV1>,
+    seams: Vec<(usize, u16)>,
+    departures: Vec<(usize, u16)>,
+    entries: Vec<(usize, u16)>,
+    revealed: Vec<u16>,
+    turn_starts: Vec<usize>,
+    departure_known: Vec<(usize, Vec<u16>)>,
     removed: Vec<(PlayerId, Option<ObjectId>)>,
     survivors: SurvivorTreeV1,
     transfers: Vec<TransferV1>,
     arrivals: Vec<ArrivalV1>,
-    hand_ambiguities: Vec<HandAmbiguityV1>,
     reorders: Vec<(usize, PlayerId)>,
     /// Unidentified put-backs per owner still on top of the library (no
     /// reorder since): the next unidentified draws take them back.
@@ -296,10 +348,18 @@ struct WalkV1<'a> {
     /// (events, notes) committed so far, and each item's stamp.
     committed: (usize, usize),
     stamps: Vec<(usize, usize)>,
-    /// The owner whose library-to-hand move was the latest event, if it was
-    /// one: a hand reveal right after such moves is a search-and-reveal
-    /// outcome (R8b), recognized from the public event order alone.
-    last_event_library_to_hand: Option<PlayerId>,
+    /// Amendment 43.8, the search mark: the owner of the card a `zone_move`
+    /// from library to hand moved, when that was the latest wire event V
+    /// received other than reveals of that owner's hand. A reveal while it
+    /// is set may be a search outcome (R8b). Draws never set it.
+    search_mark: Option<PlayerId>,
+    /// The search run's moves (Sol round 12 on 43.7, finding 3): how many
+    /// cards it moved that V did not know, and the names of those V knew
+    /// at their library positions (already known facts). A reveal in the run
+    /// shows one of them: a known one changes nothing; otherwise it is a
+    /// new card (each card the run moved is revealed once), its own fact.
+    search_unknown: usize,
+    search_known: Vec<u16>,
 }
 
 /// Projects V's history from the native stream.
@@ -326,11 +386,16 @@ pub(crate) fn project_v1(
         objs,
         library: [BTreeMap::new(), BTreeMap::new()],
         hand: Vec::new(),
+        seams: Vec::new(),
+        departures: Vec::new(),
+        entries: Vec::new(),
+        revealed: Vec::new(),
+        turn_starts: Vec::new(),
+        departure_known: Vec::new(),
         removed: Vec::new(),
         survivors: SurvivorTreeV1::default(),
         transfers: Vec::new(),
         arrivals: Vec::new(),
-        hand_ambiguities: Vec::new(),
         reorders: Vec::new(),
         put_backs_on_top: [Vec::new(), Vec::new()],
         last_departure: Vec::new(),
@@ -344,7 +409,9 @@ pub(crate) fn project_v1(
         last_observed: Vec::new(),
         committed: (0, 0),
         stamps: Vec::new(),
-        last_event_library_to_hand: None,
+        search_mark: None,
+        search_unknown: 0,
+        search_known: Vec::new(),
     };
     let events = &state.engine.event_history;
     let mut event_items = Vec::with_capacity(events.len());
@@ -444,6 +511,7 @@ pub(crate) fn project_v1(
                         zone,
                         split: true,
                         from,
+                        entered: false,
                     });
                 }
                 o.spans.push(SpanV1 {
@@ -497,10 +565,14 @@ pub(crate) fn project_v1(
             .collect(),
         library: w.library,
         hand_facts: w.hand,
+        seams: w.seams,
+        departures: w.departures,
+        entries: w.entries,
+        revealed: w.revealed,
+        turn_starts: w.turn_starts,
         survivors: w.survivors,
         transfers: w.transfers,
         arrivals: w.arrivals,
-        hand_ambiguities: w.hand_ambiguities,
         reorders: w.reorders,
         top_draws: w.top_draws,
         r8_latch: w.r8_latch,
@@ -509,6 +581,7 @@ pub(crate) fn project_v1(
         items,
         stamps: w.stamps,
         inconsistencies: w.inconsistencies,
+        departure_known: w.departure_known,
     }
 }
 
@@ -532,9 +605,13 @@ impl WalkV1<'_> {
         }
         match o.zone {
             None => false,
-            Some(Zone::Hand) => {
-                o.owner == Some(self.viewer) || self.hand.iter().any(|f| f.native == Some(id))
-            }
+            // Amendment 43.7 (lead ruling 12; design 6.1, 6.2), kept by 43.8:
+            // the bot-facing transcript gives the opponent's hand cards no
+            // id, so V never follows a physical copy there. A card's span
+            // ends when it enters the opponent's hand and a new one starts
+            // when it leaves; in the hand V holds name-level facts only. V's
+            // own hand is unchanged.
+            Some(Zone::Hand) => o.owner == Some(self.viewer),
             Some(Zone::Library) => {
                 let owner = self.owner(id);
                 self.library[owner.index()].values().any(|&x| x == id)
@@ -619,6 +696,7 @@ impl WalkV1<'_> {
                     .find(|(x, _)| *x == id)
                     .map_or(o.zone, |(_, z)| *z)
                     .unwrap_or(Zone::Library);
+                let entered = observed.contains(&id) && prev_zones.iter().any(|(x, _)| *x == id);
                 let o = &mut self.objs[i];
                 let last_gen = o.last_obs_gen;
                 let zone = o.last_obs_zone.unwrap_or(Zone::Library);
@@ -629,6 +707,7 @@ impl WalkV1<'_> {
                         zone,
                         split: false,
                         from,
+                        entered,
                     });
                 }
             } else if now {
@@ -660,6 +739,7 @@ impl WalkV1<'_> {
                             zone,
                             split: true,
                             from: zone,
+                            entered: false,
                         });
                     }
                     o.spans.push(SpanV1 {
@@ -693,13 +773,22 @@ impl WalkV1<'_> {
         self.item += 1;
     }
 
+    /// Cards of `owner`'s hand outside what V tracks or knows by name
+    /// (amendment 43.8: the hand count, on the wire, less the known facts).
     fn state_hand_untracked(&self, owner: PlayerId) -> usize {
-        self.objs
+        let untracked = self
+            .objs
             .iter()
             .filter(|o| {
                 o.exists && o.owner == Some(owner) && o.zone == Some(Zone::Hand) && !o.tracked
             })
-            .count()
+            .count();
+        let known = if owner == self.opp() {
+            self.hand.iter().filter(|f| f.known).count()
+        } else {
+            0
+        };
+        untracked.saturating_sub(known)
     }
 
     fn moved(&mut self, id: ObjectId, zone: Zone) {
@@ -712,19 +801,43 @@ impl WalkV1<'_> {
 
     fn event(&mut self, event: &CommittedEvent, index: usize, positions: &[&ObservationNoteV1]) {
         let _ = index;
-        self.last_event_library_to_hand = match event {
-            CommittedEvent::Draw {
-                player,
-                object: Some(_),
-            } => Some(*player),
+        // Amendment 43.8: the search mark follows the wire events V receives
+        // (kernel_history_v2.py `_event`): set by a `zone_move` from library
+        // to hand, cleared by every other event the adapter emits, untouched
+        // by committed events it does not emit.
+        match event {
             CommittedEvent::ZoneChange {
                 object,
                 from: Zone::Library,
                 to: Zone::Hand,
                 ..
-            } => Some(self.owner(*object)),
-            _ => None,
-        };
+            } => {
+                let owner = self.owner(*object);
+                if self.search_mark != Some(owner) {
+                    self.search_unknown = 0;
+                    self.search_known.clear();
+                }
+                self.search_mark = Some(owner);
+            }
+            CommittedEvent::Draw {
+                object: Some(_), ..
+            }
+            | CommittedEvent::ZoneChange { .. }
+            | CommittedEvent::CreateToken { .. } => {
+                self.search_mark = None;
+            }
+            CommittedEvent::UpkeepBegan { .. } => {
+                self.search_mark = None;
+                self.turn_starts.push(self.item);
+            }
+            CommittedEvent::SpellCast { spell, .. } => {
+                let copy = self.state.objects.get(*spell).spell_copy_origin.is_some();
+                if !copy && self.objs[spell.0 as usize].zone != Some(Zone::Stack) {
+                    self.search_mark = None;
+                }
+            }
+            _ => {}
+        }
         match event {
             CommittedEvent::Draw { player, object } => {
                 let Some(id) = *object else {
@@ -871,6 +984,7 @@ impl WalkV1<'_> {
         let viewer = self.viewer;
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
+                self.search_mark = None;
                 self.reorders.push((self.item, *owner));
                 let records: Vec<u64> = self.put_backs_on_top[owner.index()]
                     .drain(..)
@@ -892,6 +1006,7 @@ impl WalkV1<'_> {
                     self.settle(&[]);
                     return;
                 }
+                self.search_mark = None;
                 let gone: Vec<u32> = positions.iter().map(|(p, _)| *p).collect();
                 let natives: Vec<ObjectId> = positions.iter().map(|(_, o)| *o).collect();
                 let lib = &mut self.library[owner.index()];
@@ -908,6 +1023,7 @@ impl WalkV1<'_> {
                 ordered,
                 revealed_to,
             } => {
+                self.search_mark = None;
                 self.reorders.push((self.item, *owner));
                 // Put-back cards stay among the top cards: no reset; their
                 // positions are no longer certain (R8 latch).
@@ -937,6 +1053,7 @@ impl WalkV1<'_> {
                 retained_top,
                 ordered_bottom,
             } => {
+                self.search_mark = None;
                 self.reorders.push((self.item, *owner));
                 // Put-back cards stay among the top cards: no reset; their
                 // positions are no longer certain (R8 latch).
@@ -987,23 +1104,73 @@ impl WalkV1<'_> {
                 owner,
                 object,
             } => {
-                if *observer != viewer || *owner == viewer {
+                if *observer != viewer {
+                    self.settle(&[]);
+                    return;
+                }
+                if *owner == viewer {
+                    self.search_mark = None;
                     self.settle(&[]);
                     return;
                 }
                 let id = *object;
                 let card_def = self.card_def(id);
-                let was = self.objs[id.0 as usize].tracked;
-                // A search-and-reveal outcome: the reveal follows the owner's
-                // library-to-hand moves (a single search or a batch). It
-                // locates a card outside the hand: R8b, applied before the
-                // in-place reveal update below (ruling 44). Recognized from
-                // the public event order, never from the card's identity.
-                if !was && self.last_event_library_to_hand == Some(*owner) {
-                    self.survivors.taint_name(card_def);
+                // Amendment 43.8 revision b (lead ruling 15): reveals are read
+                // by name only. No reveal is provably not an aborted cast's,
+                // so every one triggers the moves-without-events rule.
+                if !self.revealed.contains(&card_def) {
+                    self.revealed.push(card_def);
                 }
-                self.revealed_in_hand(id, card_def, was);
-                self.settle(&[id]);
+                if self.search_mark == Some(*owner) {
+                    // In a search run the reveal may be a search outcome: it
+                    // may locate a card outside the hand (R8b, applied before
+                    // the reveal's own update; ruling 44) and may be a card
+                    // entering the hand (a seam event).
+                    self.survivors.taint_name(card_def);
+                    self.seams.push((self.item, card_def));
+                    if let Some(pos) = self.search_known.iter().position(|d| *d == card_def) {
+                        // (a) The run's known move of the name and a
+                        // re-revealed card of the name claim the same.
+                        self.search_known.remove(pos);
+                    } else if let Some(pos) = self
+                        .hand
+                        .iter()
+                        .position(|f| !f.known && f.card_def == card_def)
+                    {
+                        // (b) A count fact of the name becomes a known fact
+                        // (the adapter binds a reveal to an unbound fact):
+                        // the claims stay the same multiset.
+                        self.hand.remove(pos);
+                        self.survivors.tracked_in_place(card_def);
+                        self.hand.push(HandFactV1 {
+                            card_def,
+                            how: FactHowV1::Revealed,
+                            known: true,
+                        });
+                    } else if self.search_unknown > 0 {
+                        // (c) The 43.8 search-run reading: a moved card, its
+                        // own fact. It can over-claim after a private move
+                        // and an aborted cast's re-reveal (Sol code review 1,
+                        // finding 1); under revision c (lead ruling 15,
+                        // fallback D) these facts reach only the validity
+                        // mutants and the harness, never P.
+                        self.search_unknown -= 1;
+                        self.entries.push((self.item, card_def));
+                        self.hand.push(HandFactV1 {
+                            card_def,
+                            how: FactHowV1::Revealed,
+                            known: true,
+                        });
+                    } else {
+                        self.revealed_in_hand(card_def);
+                    }
+                } else {
+                    self.search_mark = None;
+                    self.revealed_in_hand(card_def);
+                }
+                // The opponent's hand is opaque (43.7): the reveal names a
+                // card, never a copy V follows.
+                self.settle(&[]);
             }
             ObservationNoteKindV1::LibraryRemoval { owner, position } => {
                 let lib = std::mem::take(&mut self.library[owner.index()]);
@@ -1068,7 +1235,9 @@ impl WalkV1<'_> {
             .count() as u32
     }
 
-    /// A known library card that reaches its owner's hand stays known to V.
+    /// A known library card that reaches its owner's hand stays known to V
+    /// by name: V knew the card at the removed library position (the
+    /// removal note captured V's positional fact).
     fn library_to_hand(&mut self, id: ObjectId, owner: PlayerId) {
         if owner == self.viewer {
             return;
@@ -1077,91 +1246,48 @@ impl WalkV1<'_> {
             .removed
             .iter()
             .any(|(o, captured)| *o == owner && *captured == Some(id));
+        if self.search_mark == Some(owner) {
+            if known {
+                self.search_known.push(self.card_def(id));
+            } else {
+                self.search_unknown += 1;
+            }
+        }
         if known {
             let card_def = self.card_def(id);
             self.hand.push(HandFactV1 {
                 card_def,
                 how: FactHowV1::Tracked,
-                native: Some(id),
+                known: true,
             });
+            self.seams.push((self.item, card_def));
+            self.entries.push((self.item, card_def));
         }
     }
 
-    fn revealed_in_hand(&mut self, id: ObjectId, card_def: u16, was_tracked: bool) {
-        if self.hand.iter().any(|f| f.native == Some(id)) {
+    /// Amendment 43.8: a reveal of a card named `card_def` in the
+    /// opponent's hand. A reveal and a re-reveal look alike on the wire, so
+    /// it adds the name to L only when V knows no card of that name there;
+    /// then the card is no longer an unknown one (a count fact of the name
+    /// and one copy of it in every survivor node go: 6.4 "tracked in
+    /// place"). Otherwise nothing changes.
+    fn revealed_in_hand(&mut self, card_def: u16) {
+        if self.hand.iter().any(|f| f.known && f.card_def == card_def) {
             return;
         }
-        if !was_tracked {
-            // 6.4: a card of the hand becomes tracked in place.
-            self.survivors.tracked_in_place(card_def);
+        if let Some(pos) = self
+            .hand
+            .iter()
+            .position(|f| !f.known && f.card_def == card_def)
+        {
+            self.hand.remove(pos);
         }
-        for fact in &mut self.hand {
-            if fact.native.is_none() && fact.card_def == card_def {
-                fact.native = Some(id);
-                return;
-            }
-        }
+        self.survivors.tracked_in_place(card_def);
         self.hand.push(HandFactV1 {
             card_def,
             how: FactHowV1::Revealed,
-            native: Some(id),
+            known: true,
         });
-    }
-
-    /// Amendment 43.6: before a copy leaves the opponent's hand, record
-    /// every group of two or more bound facts with one name and one fact
-    /// kind that V cannot tell apart at this departure: the departing
-    /// copy's own group when it leaves identified by name, else every such
-    /// group (an unidentified departure could be any card).
-    fn note_hand_ambiguity(&mut self, id: ObjectId, card_def: u16, identified: bool) {
-        let item = self.item;
-        let departing_how = self
-            .hand
-            .iter()
-            .find(|f| f.native == Some(id))
-            .map(|f| f.how);
-        let mut groups: Vec<(u16, FactHowV1)> = Vec::new();
-        for f in &self.hand {
-            if f.native.is_none() || groups.contains(&(f.card_def, f.how)) {
-                continue;
-            }
-            let wanted = if identified {
-                f.card_def == card_def && departing_how.is_none_or(|h| h == f.how)
-            } else {
-                true
-            };
-            if wanted {
-                groups.push((f.card_def, f.how));
-            }
-        }
-        for (def, how) in groups {
-            let candidates: Vec<(ObjectId, u32)> = self
-                .hand
-                .iter()
-                .filter(|f| f.card_def == def && f.how == how)
-                .filter_map(|f| f.native)
-                .map(|o| {
-                    // The departing copy was already moved (its epoch is
-                    // the destination's): record its epoch in the hand.
-                    let moves = self.objs[o.0 as usize].moves;
-                    (
-                        o,
-                        if o == id {
-                            moves.saturating_sub(1)
-                        } else {
-                            moves
-                        },
-                    )
-                })
-                .collect();
-            if candidates.len() >= 2 {
-                self.hand_ambiguities.push(HandAmbiguityV1 {
-                    item,
-                    card_def: def,
-                    candidates,
-                });
-            }
-        }
     }
 
     fn hand_move(&mut self, id: ObjectId, owner: PlayerId, from: Zone, to: Zone, named: bool) {
@@ -1174,8 +1300,10 @@ impl WalkV1<'_> {
                 self.hand.push(HandFactV1 {
                     card_def,
                     how: FactHowV1::FromPublicZone,
-                    native: Some(id),
+                    known: true,
                 });
+                self.seams.push((self.item, card_def));
+                self.entries.push((self.item, card_def));
             } else if from == Zone::Library {
                 self.library_to_hand(id, owner);
             }
@@ -1184,47 +1312,53 @@ impl WalkV1<'_> {
         if from != Zone::Hand || to == Zone::Hand {
             return;
         }
-        self.note_hand_ambiguity(id, card_def, is_public(to) || named);
-        let tracked = self.objs[id.0 as usize].tracked;
         if is_public(to) || named {
-            // Identified as it leaves: drop its own fact, else one count fact
-            // with its name. A fact bound to another copy stays: V tells the
-            // copies apart by their public object ids, and the departure of
-            // a different object does not end that copy's span (6.1). The
-            // engine's own knowledge rows keep it too (R5 compares them).
-            let pos = self
+            // Amendment 43.8: an identified departure names a card, never a
+            // copy. A departing known X and a departing unknown X look alike
+            // on the wire: a known fact of the name ends first, and the
+            // survivor tree is untouched then (H - L keeps its multiset of
+            // names either way); otherwise a count fact of the name ends and
+            // every node loses one copy of the name.
+            self.seams.push((self.item, card_def));
+            self.departures.push((self.item, card_def));
+            if let Some(pos) = self
                 .hand
                 .iter()
-                .position(|f| f.native == Some(id))
-                .or_else(|| {
-                    self.hand
-                        .iter()
-                        .position(|f| f.native.is_none() && f.card_def == card_def)
-                });
-            if let Some(pos) = pos {
+                .position(|f| f.known && f.card_def == card_def)
+            {
+                self.hand.remove(pos);
+                return;
+            }
+            if let Some(pos) = self
+                .hand
+                .iter()
+                .position(|f| !f.known && f.card_def == card_def)
+            {
                 self.hand.remove(pos);
             }
-            if !tracked {
-                self.survivors.identified_departure(card_def);
-            }
+            self.survivors.identified_departure(card_def);
             return;
         }
         // An unidentified card left to a hidden zone: each name loses one
-        // fact, and no remaining fact can still be tied to one copy.
-        let tracked_names: Vec<u16> = self
+        // fact, every remaining fact becomes a count fact, and the survivor
+        // tree takes the known names as T (6.4). No card stays tied to a
+        // fact (the adapter unbinds every fact here; Sol code review 2).
+        let known_names: Vec<u16> = self
             .hand
             .iter()
-            .filter_map(|f| f.native.map(|_| f.card_def))
+            .filter(|f| f.known)
+            .map(|f| f.card_def)
             .collect();
+        self.departure_known.push((self.item, known_names.clone()));
         self.last_departure = self
             .survivors
-            .unidentified_departure(&tracked_names, to == Zone::Library);
+            .unidentified_departure(&known_names, to == Zone::Library);
         let mut seen = std::collections::BTreeSet::new();
         let mut kept = Vec::new();
         for fact in self.hand.iter().rev() {
             if seen.contains(&fact.card_def) {
                 kept.push(HandFactV1 {
-                    native: None,
+                    known: false,
                     ..*fact
                 });
             } else {

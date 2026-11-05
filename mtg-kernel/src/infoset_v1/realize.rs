@@ -73,6 +73,14 @@ fn named_object(v: &Value) -> Option<u32> {
         .as_u64()
         .or_else(|| v["candidate"]["arena_id"].as_u64())
         .or_else(|| v["card"]["arena_id"].as_u64())
+        // A one-card discard (cleanup, an effect's discard) names its card
+        // in `cards` (ruling 13 (5): the Elves/Affinity discards).
+        .or_else(|| {
+            v["cards"]
+                .as_array()
+                .filter(|c| c.len() == 1)
+                .and_then(|c| c[0]["arena_id"].as_u64())
+        })
         .map(|n| n as u32)
 }
 
@@ -258,6 +266,37 @@ fn replay(
             views.push(view(&s));
         }
         let kind = vals[index]["action_kind"].as_str().unwrap_or("");
+        // Amendment 43.7: which same-name copy leaves the owner's hand in
+        // V's sight (a land played, a spell cast, a card discarded) is not
+        // V's information either: the other copies of the definition are
+        // alternatives, as at a hidden choice.
+        let source = |v: &Value| {
+            named_object(v).or_else(|| v["source"]["arena_id"].as_u64().map(|n| n as u32))
+        };
+        if took_w && p == owner && !hidden_choice(kind) {
+            let st = s.game_state();
+            let hand = &st.players[owner.index()].hand;
+            if let Some(chosen) = source(&vals[index]).filter(|o| hand.contains(&ObjectId(*o))) {
+                let def = st.objects.get(ObjectId(chosen)).card_def;
+                let others: Vec<u32> = vals
+                    .iter()
+                    .filter(|v| v["action_kind"] == vals[index]["action_kind"])
+                    .filter_map(source)
+                    .filter(|o| {
+                        *o != chosen
+                            && hand.contains(&ObjectId(*o))
+                            && st.objects.get(ObjectId(*o)).card_def == def
+                    })
+                    .collect();
+                if !others.is_empty() {
+                    choices.push(ChoicePointV1 {
+                        at: i,
+                        chosen,
+                        others,
+                    });
+                }
+            }
+        }
         if took_w && p == owner && hidden_choice(kind) {
             let hand = &s.game_state().players[owner.index()].hand;
             if let Some(chosen) =
@@ -305,6 +344,10 @@ pub(crate) struct ContentsV1 {
     pub hand: BTreeMap<u16, u32>,
     pub library: BTreeMap<u16, u32>,
     pub pins: Vec<(u16, bool)>,
+    /// Amendment 43.8 revision c (lead ruling 15, fallback D): the unpinned
+    /// hand and library fills are not claims, so a W* may hold any unpinned
+    /// contents; only the pins are compared.
+    pub free: bool,
 }
 
 fn add(m: &mut BTreeMap<u16, u32>, d: u16) {
@@ -387,7 +430,14 @@ fn truth(state: &GameState, viewer: PlayerId, owner: PlayerId) -> TruthV1 {
                 def,
             );
             let entry = (*id, def, in_hand);
-            if projection.objects[id.0 as usize].spans.is_empty() {
+            // Amendment 43.7: a card revealed in the opponent's hand is never
+            // tracked there (no span), but V saw its name: its definition is
+            // fixed, as for a card V tracked earlier.
+            let revealed = state.observation_journal.notes().iter().any(|n| {
+                matches!(n.kind, ObservationNoteKindV1::HandCardRevealed { observer, object, .. }
+                    if observer == viewer && object == *id)
+            });
+            if projection.objects[id.0 as usize].spans.is_empty() && !revealed {
                 t.never.push(entry);
             } else {
                 t.seen.push(entry);
@@ -420,7 +470,7 @@ fn take(m: &mut BTreeMap<u16, u32>, d: u16) -> bool {
 fn misplaced(t: &TruthV1, target: &ContentsV1) -> Vec<(ObjectId, bool)> {
     let (mut hand, mut library) = (target.hand.clone(), target.library.clone());
     let mut out = Vec::new();
-    for (id, def, in_hand) in &t.seen {
+    for (id, def, in_hand) in t.seen.iter().filter(|_| !target.free) {
         let room = if *in_hand { &mut hand } else { &mut library };
         if !take(room, *def) {
             out.push((*id, *in_hand));
@@ -496,42 +546,49 @@ pub(crate) fn impossible_v1(
             .count()
             .min(on_top);
         for &at in &put_backs {
-            let known: Vec<ObjectId> = state
-                .objects
-                .iter()
-                .map(|(id, _)| id)
-                .filter(|id| {
-                    state.objects.get(*id).owner == owner
-                        && p.objects[id.0 as usize]
-                            .spans
-                            .iter()
-                            .any(|s| s.end.is_some_and(|e| e.item == at && e.zone == Zone::Hand))
-                        // Not tracked again since (a later public departure
-                        // is not among the put-backs).
-                        && p.objects[id.0 as usize]
-                            .spans
-                            .iter()
-                            .all(|s| s.start_item <= at)
-                        && hidden(*id)
-                })
-                .collect();
-            if known.is_empty() {
+            // Amendment 43.8: the names V knew in the hand right before the
+            // put-back (L). A card of them leaves afterwards only by an
+            // unidentified put-back or by a departure V sees, which names
+            // it; a card of them that enters in V's sight afterwards adds
+            // one.
+            let mut names: BTreeMap<u16, u32> = BTreeMap::new();
+            for (_, defs) in p.departure_known.iter().filter(|(item, _)| *item == at) {
+                for d in defs {
+                    add(&mut names, *d);
+                }
+            }
+            if names.is_empty() {
                 continue;
             }
-            let exits = put_backs.iter().filter(|&&x| x >= at).count();
-            let need = known.len().saturating_sub(exits - draws_back.min(exits));
-            let mut names: BTreeMap<u16, u32> = BTreeMap::new();
-            for id in &known {
-                add(&mut names, state.objects.get(*id).card_def);
+            // Entries V saw, each card once (not seam events: a known
+            // library card's move and its search reveal are one arrival;
+            // Sol code review 1 on 43.8, finding 3).
+            let mut entered: BTreeMap<u16, u32> = BTreeMap::new();
+            for &(_, d) in p.entries.iter().filter(|(item, _)| *item > at) {
+                if names.contains_key(&d) {
+                    add(&mut entered, d);
+                }
             }
+            let left = p
+                .departures
+                .iter()
+                .filter(|(item, d)| *item > at && names.contains_key(d))
+                .count();
+            let known: u32 = names.values().sum::<u32>() + entered.values().sum::<u32>();
+            let exits = put_backs.iter().filter(|&&x| x >= at).count();
+            let need = (known as usize)
+                .saturating_sub(exits - draws_back.min(exits))
+                .saturating_sub(left);
             let have: u32 = names
                 .iter()
-                .map(|(d, k)| (*k).min(target.hand.get(d).copied().unwrap_or(0)))
+                .map(|(d, k)| {
+                    (*k + entered.get(d).copied().unwrap_or(0))
+                        .min(target.hand.get(d).copied().unwrap_or(0))
+                })
                 .sum();
             if (have as usize) < need {
                 return Some(format!(
-                    "{} hidden objects tracked in the hand until the put-back at item {at}, {exits} put-backs, {draws_back} draws back: at least {need} remain, the target's hand holds {have} of their names",
-                    known.len()
+                    "{known} cards V knew in the hand after the put-back at item {at}, {exits} put-backs, {draws_back} draws back, {left} named departures: at least {need} remain, the target's hand holds {have} of their names"
                 ));
             }
         }
@@ -572,6 +629,9 @@ pub(crate) fn impossible_v1(
 /// The deal exchanges that give the never-tracked objects the target's
 /// remaining definitions, or None if the multisets disagree.
 fn deal_for(t: &TruthV1, target: &ContentsV1) -> Option<Vec<(ObjectId, ObjectId)>> {
+    if target.free {
+        return Some(Vec::new());
+    }
     let mut need = target.hand.clone();
     for (_, def, in_hand) in &t.seen {
         if *in_hand && !take(&mut need, *def) {
@@ -615,7 +675,7 @@ pub(crate) fn realize(
     target: &ContentsV1,
     export_w: Option<&[u8]>,
 ) -> Result<RealizedV1, String> {
-    const MAX_NODES: usize = 400;
+    const MAX_NODES: usize = 2000;
     let owner = viewer.opponent();
     let base = replay(game, &[], &[], d, owner, viewer)?;
     let context = {
@@ -672,7 +732,7 @@ pub(crate) fn realize(
                 continue;
             }
             let got = truth(star.s.game_state(), viewer, owner).contents;
-            if got != *target {
+            if (target.free && got.pins != target.pins) || (!target.free && got != *target) {
                 last = format!("{moves:?}: W* contents {got:?} differ from {target:?}");
                 continue;
             }
@@ -705,7 +765,7 @@ pub(crate) fn realize(
             }
             return Ok(RealizedV1 { moves, deal });
         }
-        if moves.len() >= 4 {
+        if moves.len() >= 6 {
             last = format!("{moves:?}: {} objects still misplaced", wrong.len());
             continue;
         }
@@ -720,12 +780,27 @@ pub(crate) fn realize(
                 .collect()
         };
         let mut next: Vec<MoveV1> = Vec::new();
+        // Amendment 43.8: V's facts about the opponent's hand are names, so
+        // any seen object of a misplaced object's name in its zone may be
+        // the one W* moves (the misplacement is by name; Sol round 12 on
+        // 43.7, the two re-derived realizer failures).
+        let mut candidates: Vec<(u32, bool)> = Vec::new();
         for (m, in_hand) in &wrong {
-            let m = m.0;
+            let def = run.s.game_state().objects.get(*m).card_def;
+            for (o, d, h) in t.seen.iter().chain(std::iter::once(&(*m, def, *in_hand))) {
+                if *d == def && h == in_hand && !candidates.contains(&(o.0, *h)) {
+                    candidates.push((o.0, *h));
+                }
+            }
+        }
+        for (m, in_hand) in &candidates {
+            let m = *m;
             for c in &run.choices {
                 // m is in the hand at d: it must be the one chosen instead
                 // of an object W chose (or the reverse).
-                if c.others.contains(&m) && end_zone.get(&c.chosen) == Some(&!in_hand) {
+                // (A copy that left the hidden zones in V's sight counts as
+                // outside m's zone too, amendment 43.7.)
+                if c.others.contains(&m) && end_zone.get(&c.chosen) != Some(in_hand) {
                     next.push(MoveV1::Choice {
                         at: c.at,
                         x: m,
@@ -798,7 +873,15 @@ pub(crate) fn realize_at(
     let s = at_step(game, d, viewer);
     let x =
         export_at(&s, viewer, ExportOptionsV1 { mutant }).map_err(|e| e.code_name().to_string())?;
-    let target = export_contents(&x, viewer.opponent());
+    let mut target = export_contents(&x, viewer.opponent());
+    if mutant.is_none() {
+        // Amendment 43.8 revision c (lead ruling 15, fallback D): P claims
+        // no opponent-hand names, so its hand and library fills are not
+        // claims a W* must hold: its unpinned contents may vary; the pins,
+        // V's views and P are compared. Validity mutants still claim names
+        // and keep the exact target.
+        target.free = true;
+    }
     let p = match mutant {
         None => Some(super::harness::p_outcome(&s, viewer)?),
         Some(_) => None,
@@ -912,7 +995,8 @@ mod tests {
             let game = native_of(&script);
             checked += all_realizable("fable-bounce", &records, &game, PlayerId::P1);
             // Decisions where L12's output differs from P's (after the
-            // bounce): L12 must fail at every one, either by an export
+            // bounce): L12 must fail at every one where its claims are not
+            // F's (revision c: P claims none), either by an export
             // proven unrealizable or by a refusal of the ledger's own
             // consistency check (R4: its allocation contradicts the
             // tracker-rule facts), which is how it fails while a count fact
@@ -943,12 +1027,19 @@ mod tests {
                         l12_r4 += 1;
                     }
                     Ok(_) => {
-                        assert!(
-                            unrealizable(&game, r.step, PlayerId::P1, MutantV1::L12),
-                            "L12 is not proven unrealizable at step {} ({hawks} Hawks returned): {:?}",
-                            r.step,
-                            realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12))
-                        );
+                        // Revision c (lead ruling 15, fallback D): P claims no
+                        // hand names, so L12 also differs from P where its
+                        // claims agree with F's. Such an export must realize;
+                        // every other one must be proven unrealizable.
+                        if !unrealizable(&game, r.step, PlayerId::P1, MutantV1::L12) {
+                            let got = realize_at(&game, r.step, PlayerId::P1, Some(MutantV1::L12));
+                            assert!(
+                                matches!(got, Ok(Ok(_))),
+                                "L12 neither realizes nor is proven unrealizable at step {} ({hawks} Hawks returned): {got:?}",
+                                r.step
+                            );
+                            continue;
+                        }
                     }
                 }
                 l12 += 1;
@@ -956,7 +1047,7 @@ mod tests {
             eprintln!(
                 "L12 fails at {l12} post-bounce decisions ({l12_r4} by R4) ({hawks} Hawks returned)"
             );
-            assert!(l12 > 0, "L12 differs from P after the bounce");
+            assert!(l12 > 0, "L12 fails after the bounce");
         }
 
         // CawGates Lorien: realizable up to the R8b refusal (every export).

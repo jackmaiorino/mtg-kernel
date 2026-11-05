@@ -265,3 +265,419 @@ fn same_name_batch_refuses_in_both_worlds() {
     );
     assert_eq!(pa, pb, "P agrees across the worlds");
 }
+
+/// Lead ruling 11 (R1, Fable Q1): the waiting ability's source and its twin
+/// leave the battlefield in one batch of V's transcript, one into the
+/// graveyard (an amendment 43.3 split) and one into the library unseen (a
+/// lapse). V's records agree whichever copy went where (the graveyard move
+/// comes first in both worlds). Returns P for V after the moves.
+fn p_mixed(s: &FastActorSessionV1, source_to_library: bool) -> Result<Vec<u8>, String> {
+    let v = PlayerId::P1;
+    let mut st = s.game_state().clone();
+    mixed_batch(&mut st, source_to_library);
+    let lists = super::tests::decklists(s);
+    let marks = s.infoset_marks_v1(v);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// The mixed batch: the waiting Shaman ability's source and the other
+/// Shaman leave the battlefield, the first named one to the graveyard, then
+/// the other to the bottom of the library (hidden from V).
+fn mixed_batch(st: &mut GameState, source_to_library: bool) {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let shaman = id(SHAMAN);
+    let source = st
+        .stack
+        .iter()
+        .find(|i| {
+            i.kind == crate::state::StackItemKind::ActivatedAbility
+                && st.objects.get(i.source).card_def == shaman
+        })
+        .map(|i| i.source)
+        .expect("the waiting ability");
+    let twin = st.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|x| *x != source && st.objects.get(*x).card_def == shaman)
+        .expect("the other Shaman is on the battlefield");
+    let (to_graveyard, to_library) = if source_to_library {
+        (twin, source)
+    } else {
+        (source, twin)
+    };
+    propose_and_commit(
+        st,
+        ProposedEvent::zone_change(to_graveyard, crate::state::Zone::Graveyard),
+    );
+    propose_and_commit(st, ProposedEvent::private_bottom_library_insert(to_library));
+    st.engine.pending_triggers.clear();
+}
+
+/// Lead ruling 11 (R1): in both orders of a mixed lapse/split batch, P
+/// refuses R1 `same_name_batch` with equal outcomes. Before the repair the
+/// batch test skipped the referenced copy's own lapse, so the world where
+/// the source lapsed exported (the source is pinned as a contract source)
+/// while the world where it split refused.
+#[test]
+fn mixed_lapse_split_batch_refuses_in_both_orders() {
+    let s = at_the_wait(0);
+    let (split, lapse) = (p_mixed(&s, false), p_mixed(&s, true));
+    eprintln!(
+        "mixed batch: source split {:?} / source lapsed {:?}",
+        split.as_ref().map(Vec::len),
+        lapse.as_ref().map(Vec::len)
+    );
+    let batch = |p: &Result<Vec<u8>, String>| {
+        p.as_ref().is_err_and(|e| {
+            e.contains("R1") && e.contains(super::export::R1_SAME_NAME_BATCH_DETAIL)
+        })
+    };
+    assert!(
+        batch(&split) && batch(&lapse),
+        "R1 same_name_batch in both orders: {split:?} / {lapse:?}"
+    );
+    assert_eq!(split, lapse, "P agrees whichever copy lapsed");
+}
+
+/// The mixed-batch AC1 fixture (lead ruling 11, R1): the same-name script
+/// with Shaman copy 0 activated; at V's first decision with the ability
+/// waiting, an edit makes the source and its twin leave in one batch, one
+/// split and one lapsed (world 0: the source splits; world 1: it lapses).
+/// The rest of the game is scripted as before.
+pub(crate) fn mixed_batch_fixture(source_to_library: bool) -> ScriptV1 {
+    let v = PlayerId::P1;
+    let mut script = same_name_batch(0);
+    // After V's land plays: V needs mana for a decision while the ability
+    // waits (the activating player does not keep priority).
+    let intents = &mut script.intents[v.index()];
+    intents.push_back(super::fixtures::gate(
+        "the Shaman ability waits",
+        |st: &GameState| shaman_items(st) == 1,
+    ));
+    intents.push_back(super::fixtures::edit(
+        "the source and its twin leave in one batch, one split, one lapsed",
+        move |st: &mut GameState| mixed_batch(st, source_to_library),
+    ));
+    script
+}
+
+/// AC1 over the mixed-batch fixture: P agrees across the worlds at every
+/// compared V decision, and the first V decision after the batch refuses R1
+/// `same_name_batch` in both worlds. Strict-view dumps
+/// `fx-mixedbatch-v0/v1`.
+#[test]
+fn mixed_batch_fixture_in_both_worlds() {
+    let v = PlayerId::P1;
+    let runs: Vec<(Vec<AtV1>, ScriptV1)> = [false, true]
+        .iter()
+        .map(|&lapse| {
+            record_strict(
+                mixed_batch_fixture(lapse),
+                v,
+                4,
+                &format!("fx-mixedbatch-v{}", u8::from(lapse)),
+            )
+        })
+        .collect();
+    let report: PairReportV1 = super::fixtures::compare_records(&runs[0].0, &runs[1].0);
+    eprintln!("mixed batch fixture, source split vs lapsed: {report:?}");
+    for (lapse, (_, script)) in [false, true].iter().zip(&runs) {
+        assert!(
+            script.trace.iter().any(|t| t.starts_with("edit ")),
+            "world {lapse}: the edit ran"
+        );
+    }
+    assert_eq!(
+        report.p_differs, 0,
+        "P differs across the worlds: {report:?}"
+    );
+    assert!(
+        report.compared > 0,
+        "the pair compares decisions: {report:?}"
+    );
+    // The raw view differs from the edit on (arena ids), so the lockstep
+    // comparison stops there, as for the scripted same-name fixture; the
+    // strict view compares the later decisions from the dumps. Here: the
+    // first V decision after the edit refuses R1 `same_name_batch` in both
+    // worlds, with equal outcomes.
+    let first = |records: &[AtV1]| {
+        records
+            .iter()
+            .find(|at| at.p.as_ref().is_err_and(|e| e == "R1:same_name_batch"))
+            .map(|at| (at.step, at.p.clone()))
+    };
+    let (a, b) = (first(&runs[0].0), first(&runs[1].0));
+    eprintln!("first same_name_batch refusal: {a:?} / {b:?}");
+    assert!(a.is_some(), "the split world refuses same_name_batch");
+    assert_eq!(a, b, "both worlds refuse at the same decision");
+}
+
+/// Sol round 1 on ruling 11 (R1), finding 1: the waiting ability's source
+/// A lapses alone (into the library, unseen); after a V decision a Shaman
+/// arrives on the battlefield from the library (A in one world, a third
+/// copy B in the other) and leaves with the other Shaman in one batch. The
+/// batch scan stops at A's lapse, so R1b decides in both worlds.
+fn p_after_return(s: &FastActorSessionV1, a_returns: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let v = PlayerId::P1;
+    let shaman = id(SHAMAN);
+    let mut st = s.game_state().clone();
+    let a = st
+        .stack
+        .iter()
+        .find(|i| {
+            i.kind == crate::state::StackItemKind::ActivatedAbility
+                && st.objects.get(i.source).card_def == shaman
+        })
+        .map(|i| i.source)
+        .expect("the waiting ability");
+    let twin = st.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|x| *x != a && st.objects.get(*x).card_def == shaman)
+        .expect("the other Shaman");
+    let b = st.players[0]
+        .library
+        .iter()
+        .copied()
+        .find(|x| st.objects.get(*x).card_def == shaman)
+        .expect("a third Shaman in the library");
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    propose_and_commit(&mut st, ProposedEvent::private_bottom_library_insert(a));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    let back = if a_returns { a } else { b };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(back, Zone::Battlefield));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    for x in [back, twin] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Graveyard));
+    }
+    st.engine.pending_triggers.clear();
+    let lists = super::tests::decklists(s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// Finding 1's two worlds: A or B returns, then leaves in a batch with the
+/// other Shaman. Equal P (R1b in both).
+#[test]
+fn a_lapse_then_a_return_batch_refuses_alike() {
+    let s = at_the_wait(0);
+    let (a, b) = (p_after_return(&s, true), p_after_return(&s, false));
+    eprintln!("lapse then return batch: A returned {a:?} / B returned {b:?}");
+    assert!(a.is_err(), "the A world refuses: {a:?}");
+    assert_eq!(a, b, "P agrees whichever copy returned");
+}
+
+/// Sol round 2 on ruling 11, finding 3: the waiting ability's source A
+/// lapses alone into the library; in a later batch a Shaman arrives in the
+/// graveyard from the library (A, or a third copy B); in a later batch it
+/// and the other Shaman C return to the opponent's hand; then C is
+/// discarded. The hand ambiguity's candidate epoch lies past A's lapse, so
+/// it does not cross; R1b decides in both worlds.
+fn p_after_hand_return(s: &FastActorSessionV1, a_returns: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let shaman = id(SHAMAN);
+    let mut st = s.game_state().clone();
+    let a = st
+        .stack
+        .iter()
+        .find(|i| {
+            i.kind == crate::state::StackItemKind::ActivatedAbility
+                && st.objects.get(i.source).card_def == shaman
+        })
+        .map(|i| i.source)
+        .expect("the waiting ability");
+    let c = st.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|x| *x != a && st.objects.get(*x).card_def == shaman)
+        .expect("the other Shaman");
+    let b = st.players[0]
+        .library
+        .iter()
+        .copied()
+        .find(|x| st.objects.get(*x).card_def == shaman)
+        .expect("a third Shaman in the library");
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    propose_and_commit(&mut st, ProposedEvent::private_bottom_library_insert(a));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    let back = if a_returns { a } else { b };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(back, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    for x in [back, c] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Hand));
+        st.reveal_hand_card(v, o, x)
+            .expect("reveal the returned Shaman");
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    propose_and_commit(&mut st, ProposedEvent::zone_change(c, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    let lists = super::tests::decklists(s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// Finding 3's two worlds: equal P (R1b in both).
+#[test]
+fn a_lapse_then_a_hand_return_refuses_alike() {
+    let s = at_the_wait(0);
+    let (a, b) = (
+        p_after_hand_return(&s, true),
+        p_after_hand_return(&s, false),
+    );
+    eprintln!("lapse then hand return: A returned {a:?} / B returned {b:?}");
+    assert!(a.is_err(), "the A world refuses: {a:?}");
+    assert_eq!(a, b, "P agrees whichever copy returned");
+}
+
+/// Sol round 3 on ruling 11, finding 3: the waiting ability's source A is
+/// bounced to the opponent's hand (a bound fact); an unrelated card is put
+/// back unidentified, so the fact lapses while A stays in the hand; then A
+/// (world A) or an unseen third Shaman B (world B, drawn earlier) is
+/// revealed; then the other Shaman C returns to the hand and is discarded.
+/// A's lapse precedes the ambiguous departure, so R1b decides in both.
+fn p_after_bounce_and_putback(s: &FastActorSessionV1, reveal_a: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let shaman = id(SHAMAN);
+    let mut st = s.game_state().clone();
+    let a = st
+        .stack
+        .iter()
+        .find(|i| {
+            i.kind == crate::state::StackItemKind::ActivatedAbility
+                && st.objects.get(i.source).card_def == shaman
+        })
+        .map(|i| i.source)
+        .expect("the waiting ability");
+    let c = st.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|x| *x != a && st.objects.get(*x).card_def == shaman)
+        .expect("the other Shaman");
+    let b = st.players[0]
+        .library
+        .iter()
+        .copied()
+        .find(|x| st.objects.get(*x).card_def == shaman)
+        .expect("a third Shaman in the library");
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    // B drawn unseen.
+    let lib = &mut st.players[0].library;
+    let at = lib.iter().position(|x| *x == b).expect("B in the library");
+    let b_id = lib.remove(at);
+    lib.insert(0, b_id);
+    propose_and_commit(&mut st, ProposedEvent::draw(o));
+    mark(&st, &mut marks);
+    // A bounced to the hand.
+    propose_and_commit(&mut st, ProposedEvent::zone_change(a, Zone::Hand));
+    st.reveal_hand_card(v, o, a).expect("reveal A");
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    // An unrelated card put back unidentified.
+    let other = st.players[0]
+        .hand
+        .iter()
+        .copied()
+        .find(|x| st.objects.get(*x).card_def != shaman)
+        .expect("another card in the hand");
+    st.clear_nonowner_hand_knowledge(o);
+    propose_and_commit(&mut st, ProposedEvent::private_top_library_insert(other));
+    mark(&st, &mut marks);
+    st.reveal_hand_card(v, o, if reveal_a { a } else { b })
+        .expect("reveal a Shaman");
+    mark(&st, &mut marks);
+    propose_and_commit(&mut st, ProposedEvent::zone_change(c, Zone::Hand));
+    st.reveal_hand_card(v, o, c).expect("reveal C");
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    propose_and_commit(&mut st, ProposedEvent::zone_change(c, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    let lists = super::tests::decklists(s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// Finding 3's two worlds: equal P.
+#[test]
+fn a_lapse_in_the_hand_then_a_reveal_agrees() {
+    let s = at_the_wait(0);
+    let (a, b) = (
+        p_after_bounce_and_putback(&s, true),
+        p_after_bounce_and_putback(&s, false),
+    );
+    eprintln!("lapse in the hand then reveal: A revealed {a:?} / B revealed {b:?}");
+    assert_eq!(a, b, "P agrees whichever copy was revealed");
+}

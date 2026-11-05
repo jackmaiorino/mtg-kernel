@@ -99,6 +99,28 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
     // The engine lists candidates in native-id order, which the wire
     // re-sorts (the adapter's row order): compare candidate sets by content.
     let mut obs = serde_json::to_value(&obs).expect("view serializes");
+    // Amendment 43.8: the bot-facing transcript carries facts about the
+    // opponent's hand as names (the adapter's `add_hand_knowledge`), never
+    // copies: the engine's copy-level rows are compared as name multisets.
+    if let Some(sides) = obs
+        .get_mut("known_hand_cards")
+        .and_then(|x| x.as_array_mut())
+    {
+        for side in sides.iter_mut() {
+            if let Some(rows) = side.as_array_mut() {
+                let mut names: Vec<serde_json::Value> = rows
+                    .iter()
+                    .map(|r| {
+                        r.get("card_name")
+                            .cloned()
+                            .unwrap_or_else(|| r["stable"]["card_db_id"].clone())
+                    })
+                    .collect();
+                names.sort_by_key(|x| x.to_string());
+                *rows = names;
+            }
+        }
+    }
     sort_candidate_lists(&mut obs);
     localize(&mut obs, &mut BTreeMap::new());
     let mut rows: Vec<String> = menu
@@ -111,6 +133,46 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
         .collect();
     rows.sort();
     Some(serde_json::to_vec(&(obs, rows)).expect("view serializes"))
+}
+
+/// Amendment 43.8: V's facts about the opponent's hand are names read
+/// conservatively from the transcript, so the engine's copy-level rows (the
+/// live side) may list more cards than the export claims. Each side's live
+/// rows are kept, per card, only up to the imported side's count; a card the
+/// export claims and the engine does not still differs.
+fn cap_hand_rows(live: &mut serde_json::Value, imported: &serde_json::Value) {
+    fn key(row: &serde_json::Value) -> String {
+        let mut r = row.clone();
+        if let Some(stable) = r.get_mut("stable").and_then(|x| x.as_object_mut()) {
+            stable.remove("arena_id");
+        }
+        r.to_string()
+    }
+    let (Some(a), Some(b)) = (
+        live.pointer_mut("/0/known_hand_cards")
+            .and_then(|x| x.as_array_mut()),
+        imported
+            .pointer("/0/known_hand_cards")
+            .and_then(|x| x.as_array()),
+    ) else {
+        return;
+    };
+    for (side, other) in a.iter_mut().zip(b) {
+        let (Some(rows), Some(other)) = (side.as_array_mut(), other.as_array()) else {
+            continue;
+        };
+        let mut budget: BTreeMap<String, usize> = BTreeMap::new();
+        for row in other {
+            *budget.entry(key(row)).or_default() += 1;
+        }
+        rows.retain(|row| match budget.get_mut(&key(row)) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                true
+            }
+            _ => false,
+        });
+    }
 }
 
 /// AC3's view: the V4 observation and the menu with `arena_id`s renamed
@@ -1011,14 +1073,25 @@ pub(crate) fn ac3_check(
             d.legal_action_count, e.legal_action_count
         ));
     }
-    // V's observation and menu, with viewer-local ids, are identical.
+    // V's observation and menu, with viewer-local ids, are identical. Only
+    // `C:` handles carry identity on both sides (Sol round 8, finding 3):
+    // the live side hides every untracked native, so the imported side hides
+    // its `U:` and `H:` arena indices the same way (amendment 43.7 makes the
+    // opponent's hand all `U:` occupants, known names included).
     let ids: BTreeMap<u64, u64> = export
         .tracked_natives
         .iter()
         .enumerate()
         .map(|(n, id)| (u64::from(id.0), n as u64))
         .collect();
-    if let (Some(a), Some(b)) = (ac3_view(live, Some(&ids)), ac3_view(&imported, None)) {
+    let imported_ids: BTreeMap<u64, u64> = (0..export.tracked_natives.len() as u64)
+        .map(|n| (n, n))
+        .collect();
+    if let (Some(mut a), Some(b)) = (
+        ac3_view(live, Some(&ids)),
+        ac3_view(&imported, Some(&imported_ids)),
+    ) {
+        cap_hand_rows(&mut a, &b);
         if a != b {
             return Err(format!(
                 "the imported view differs at {:?}",
@@ -1142,13 +1215,14 @@ pub(crate) fn f_choice(
     (out, tried)
 }
 
-/// Candidates of the current decision that cast a copy V tracks in the
+/// Candidates of the current decision that cast a copy V knows in the
 /// opponent's hand, grouped by the copy's definition: (definition, menu
-/// indices in menu order).
-pub(crate) fn tracked_hand_casts(
-    s: &FastActorSessionV1,
-    viewer: PlayerId,
-) -> Vec<(u64, Vec<usize>)> {
+/// indices in menu order). Amendment 43.7: no opponent-hand copy is tracked
+/// and V's facts are name-level (an identified departure of the name ends
+/// one of them, whichever copy left), so the family casts any two copies of
+/// a name V holds a bound fact of (revealed, fetched and revealed, or
+/// returned from a public zone); before 43.7 it cast two tracked copies.
+pub(crate) fn known_hand_casts(s: &FastActorSessionV1, viewer: PlayerId) -> Vec<(u64, Vec<usize>)> {
     let opp = viewer.opponent();
     let state = s.game_state();
     let projection =
@@ -1168,7 +1242,13 @@ pub(crate) fn tracked_hand_casts(
         };
         let id = ObjectId(arena as u32);
         let o = state.objects.get(id);
-        if o.zone == Zone::Hand && o.owner == opp && projection.tracked(id) {
+        if o.zone == Zone::Hand
+            && o.owner == opp
+            && projection
+                .hand_facts
+                .iter()
+                .any(|f| f.known && f.card_def == o.card_def)
+        {
             groups.entry(def).or_default().push(i);
         }
     }
@@ -1195,7 +1275,7 @@ fn continuation(w: &FastActorSessionV1, seed: u64, n: usize) -> Vec<Vec<u8>> {
 }
 
 /// F-cast (lead ruling 7 (b), amendment 43.4): at an opponent decision whose
-/// menu casts two copies of one card that V tracks in the opponent's hand
+/// menu casts two copies of one card that V knows in the opponent's hand
 /// (revealed, fetched and revealed, or returned from a public zone), W casts
 /// one and W' the other. V's bot-facing transcript gives the opponent's hand
 /// cards no id, so V may not be able to tell which copy left; the strict
@@ -1224,7 +1304,7 @@ pub(crate) fn f_cast(
             break;
         };
         if used < points && seat(d.acting_player) == opp {
-            for (_, group) in tracked_hand_casts(&s, viewer) {
+            for (_, group) in known_hand_casts(&s, viewer) {
                 used += 1;
                 let x = if group.contains(&a) { a } else { group[0] };
                 let Some(&y) = group.iter().find(|&&b| b != x) else {
