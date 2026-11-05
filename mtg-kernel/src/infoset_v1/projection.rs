@@ -114,12 +114,6 @@ pub(crate) struct HandAmbiguityV1 {
     pub item: usize,
     pub card_def: u16,
     pub candidates: Vec<(ObjectId, u32)>,
-    /// Lead ruling 11 (R2, Sol round 2): only references made before the
-    /// copy entered the hand (epoch below its hand epoch) cross. Set for an
-    /// identified departure V could attribute to a bound copy or to a card
-    /// it holds no fact for; a reference at the hand epoch itself (a cast
-    /// receipt's origin) follows the departing card in both worlds.
-    pub before_only: bool,
 }
 
 /// A card of `owner` named `card_def` became tracked by V from a hidden zone
@@ -1193,7 +1187,6 @@ impl WalkV1<'_> {
                     item,
                     card_def: def,
                     candidates,
-                    before_only: false,
                 });
             }
         }
@@ -1245,8 +1238,10 @@ impl WalkV1<'_> {
             // Sol round 2 (finding 2): when V holds a bound fact of the name
             // and the hand also holds cards V has no fact for, the copy
             // that left may be the bound one or one of those cards. A live
-            // reference made before a bound copy (or the departing copy)
-            // entered the hand cannot be paired: record the candidates.
+            // reference to a bound copy (or the departing copy) made at or
+            // before its hand epoch cannot be paired: record the candidates,
+            // read by 43.6's test as its own records are (Sol round 3: one
+            // rule for every candidate, which copy left differs by world).
             let in_hand_after = self
                 .objs
                 .iter()
@@ -1282,7 +1277,6 @@ impl WalkV1<'_> {
                     item: self.item,
                     card_def,
                     candidates,
-                    before_only: true,
                 });
             }
             let own = self.hand.iter().position(|f| f.native == Some(id));

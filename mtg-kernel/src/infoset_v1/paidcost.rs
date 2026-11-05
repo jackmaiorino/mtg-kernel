@@ -1027,6 +1027,28 @@ fn bound_and_unknown_hand_copies_agree() {
 /// the library and the record is re-made to name the discarded copy at its
 /// hand epoch, as a cast receipt names its origin (finding 1). Returns P.
 fn reference_world(paid_is_d: bool, discard_d: bool) -> Result<Vec<u8>, String> {
+    reference_world_with(paid_is_d, discard_d, HandRefAtV1::Gone, false)
+}
+
+/// Which copy a re-made record names at its hand epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandRefAtV1 {
+    /// The discarded copy (a cast receipt's origin).
+    Gone,
+    /// D, whether it stayed or left (Sol round 3 finding 1).
+    D,
+}
+
+/// As [`reference_world`]; `at` picks the copy the re-made record names,
+/// and with `twin` a second Lembas B also returns to the hand from the
+/// graveyard before C is drawn (equal 43.4 keys with D, Sol round 3
+/// finding 2).
+fn reference_world_with(
+    paid_is_d: bool,
+    discard_d: bool,
+    at: HandRefAtV1,
+    twin: bool,
+) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let s = opponent_payment();
@@ -1045,8 +1067,8 @@ fn reference_world(paid_is_d: bool, discard_d: bool) -> Result<Vec<u8>, String> 
         .filter(|x| st.objects.get(*x).card_def == lembas)
         .collect();
     assert!(
-        in_library.len() >= 2,
-        "two Lembas in the opponent's library"
+        in_library.len() >= 2 + usize::from(twin),
+        "enough Lembas in the opponent's library"
     );
     let (d, c) = if paid_is_d {
         (paid, in_library[0])
@@ -1069,6 +1091,16 @@ fn reference_world(paid_is_d: bool, discard_d: bool) -> Result<Vec<u8>, String> 
     st.reveal_hand_card(v, o, d).expect("reveal D");
     st.engine.pending_triggers.clear();
     mark(&st, &mut marks);
+    if twin {
+        let b = in_library[2];
+        propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Graveyard));
+        st.engine.pending_triggers.clear();
+        mark(&st, &mut marks);
+        propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Hand));
+        st.reveal_hand_card(v, o, b).expect("reveal B");
+        st.engine.pending_triggers.clear();
+        mark(&st, &mut marks);
+    }
     let lib = &mut st.players[o.index()].library;
     let at = lib.iter().position(|x| *x == c).expect("C in the library");
     let c_id = lib.remove(at);
@@ -1081,10 +1113,18 @@ fn reference_world(paid_is_d: bool, discard_d: bool) -> Result<Vec<u8>, String> 
     st.engine.pending_triggers.clear();
     let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
     if !paid_is_d {
-        let zcc = st.objects.get(gone).zone_change_count;
+        let named = if at == HandRefAtV1::Gone { gone } else { d };
+        // The epoch it had in the hand: one below its graveyard epoch if it
+        // left, its current epoch if it stayed.
+        let zcc = st.objects.get(named).zone_change_count;
+        let hand = if st.objects.get(named).zone == Zone::Hand {
+            zcc
+        } else {
+            zcc - 1
+        };
         let r = &mut st.stack[i].v4.paid_cost_refs[0];
-        r.object = gone;
-        r.zone_change_count = zcc - 1;
+        r.object = named;
+        r.zone_change_count = hand;
     }
     let lists = decklists(&s);
     export_v1(
@@ -1138,5 +1178,26 @@ fn a_reference_at_the_hand_epoch_agrees() {
             );
         }
     }
+    assert_eq!(a, b, "P agrees whichever copy was discarded");
+}
+
+/// Sol round 3 on ruling 11, finding 1: the record names D at its hand
+/// epoch whichever copy was discarded. Equal P.
+#[test]
+fn a_reference_to_d_at_its_hand_epoch_agrees() {
+    let run = |discard_d| reference_world_with(false, discard_d, HandRefAtV1::D, false);
+    let (a, b) = (run(true), run(false));
+    eprintln!("reference to D at its hand epoch: D discarded {a:?} / C discarded {b:?}");
+    assert_eq!(a, b, "P agrees whichever copy was discarded");
+}
+
+/// Sol round 3 on ruling 11, finding 2: equal-key bound D and B, unseen C;
+/// D or C is discarded and the record names the discarded copy at its hand
+/// epoch. Equal P.
+#[test]
+fn equal_keys_and_an_unseen_copy_agree() {
+    let run = |discard_d| reference_world_with(false, discard_d, HandRefAtV1::Gone, true);
+    let (a, b) = (run(true), run(false));
+    eprintln!("equal keys and an unseen copy: D discarded {a:?} / C discarded {b:?}");
     assert_eq!(a, b, "P agrees whichever copy was discarded");
 }
