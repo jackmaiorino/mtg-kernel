@@ -1435,6 +1435,7 @@ fn cursed_scroll_reveal(ctx: &ExecCtx, state: &mut GameState, named: u16) {
             return;
         }
     };
+    // spellbench-public-reveal: hand card revealed by the card rules (Cursed Scroll).
     if state
         .reveal_hand_card(player.opponent(), player, card)
         .is_err()
@@ -1654,6 +1655,7 @@ pub(crate) fn drive(
             if top.is_empty() {
                 return Ok(false);
             }
+            // spellbench-public-reveal: public reveal to both players (Goblin Ringleader).
             for observer in [PlayerId::P0, PlayerId::P1] {
                 state.reveal_library_top(observer, controller, top.len());
             }
