@@ -175,6 +175,10 @@ pub(crate) struct ProjectionV1 {
     /// events: an aborted cast, a madness rollback). Their walk epochs,
     /// opponent-hand epochs included, cannot be trusted.
     pub desynced: Vec<u16>,
+    /// Harness only (the realizability proof): at each unidentified
+    /// departure from the opponent's hand, the copies V held bound facts
+    /// for just before it (amendment 43.7: they are never tracked there).
+    pub departure_known: Vec<(usize, Vec<ObjectId>)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -284,6 +288,7 @@ struct WalkV1<'a> {
     library: [BTreeMap<u32, ObjectId>; 2],
     hand: Vec<HandFactV1>,
     released: Vec<ObjectId>,
+    departure_known: Vec<(usize, Vec<ObjectId>)>,
     removed: Vec<(PlayerId, Option<ObjectId>)>,
     survivors: SurvivorTreeV1,
     transfers: Vec<TransferV1>,
@@ -344,6 +349,7 @@ pub(crate) fn project_v1(
         library: [BTreeMap::new(), BTreeMap::new()],
         hand: Vec::new(),
         released: Vec::new(),
+        departure_known: Vec::new(),
         removed: Vec::new(),
         survivors: SurvivorTreeV1::default(),
         transfers: Vec::new(),
@@ -546,6 +552,7 @@ pub(crate) fn project_v1(
         stamps: w.stamps,
         inconsistencies: w.inconsistencies,
         desynced,
+        departure_known: w.departure_known,
     }
 }
 
@@ -1249,6 +1256,8 @@ impl WalkV1<'_> {
             .iter()
             .filter_map(|f| f.native.map(|_| f.card_def))
             .collect();
+        let known: Vec<ObjectId> = self.hand.iter().filter_map(|f| f.native).collect();
+        self.departure_known.push((self.item, known));
         self.last_departure = self
             .survivors
             .unidentified_departure(&tracked_names, to == Zone::Library);

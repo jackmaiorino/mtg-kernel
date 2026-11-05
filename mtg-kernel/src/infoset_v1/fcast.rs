@@ -39,12 +39,19 @@ pub(crate) fn cast_untracked(name: &str, viewer: PlayerId) -> IntentV1 {
 
 /// The F-cast fixture (CawGates versus Faeries, off-board). V is Faeries
 /// (P1). CawGates holds two Squadron Hawks it drew (untracked). Turn 2 it
-/// casts one and fetches a single Hawk (A, revealed); turn 3 it casts the
-/// other drawn Hawk and fetches the last library Hawk (B, revealed), so a
-/// land and the turn-3 Hawk start their spans between A's reveal and B's.
-/// Turn 4 it casts A or B (F-cast varies which): the bot-facing transcript
-/// names the opponent's hand cards by name only, so the remaining copy is
-/// the same to V either way, while its span start is not.
+/// casts one and fetches nothing; turn 3 it casts the other drawn Hawk and
+/// fetches the two library Hawks (A and B, revealed). Turn 4 it casts A or
+/// B (F-cast varies which): the bot-facing transcript names the opponent's
+/// hand cards by name only, so the remaining copy is the same to V either
+/// way, while its physical identity is not.
+///
+/// Amendment 43.7 re-derivation: before it, A was fetched on turn 2 and B
+/// on turn 3, so their span starts differed (the rule before 43.4 named the
+/// remaining copy differently). Under 43.7 an identified departure of a
+/// name ends one of V's facts of that name whichever copy left, so casting
+/// the second drawn Hawk after A's reveal would end A's fact and leave one
+/// known Hawk: both revealed copies must arrive after the last unknown Hawk
+/// leaves. Mutant L14 (bound copies tracked) still tells A from B.
 pub(crate) fn revealed_copies(seed: u64) -> ScriptV1 {
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let live = new_game(["CawGates", "Faeries"], seed, o);
@@ -85,10 +92,10 @@ pub(crate) fn revealed_copies(seed: u64) -> ScriptV1 {
             play_land("Azorius Guildgate"),
             play_land("Island"),
             cast_untracked("Squadron Hawk", v),
-            pick("Squadron Hawk"),
             finish(),
             play_land("Island"),
             cast_untracked("Squadron Hawk", v),
+            pick("Squadron Hawk"),
             pick("Squadron Hawk"),
             gate("turn 4 with two Hawks in hand", move |st: &GameState| {
                 st.turn >= 4

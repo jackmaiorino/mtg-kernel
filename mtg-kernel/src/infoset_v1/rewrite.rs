@@ -41,6 +41,12 @@ pub(crate) struct RefV1 {
     /// arena object's own field, or the source contract that names it): the
     /// object's own cast receipt.
     pub cast_receipt: bool,
+    /// Amendment 43.7 (Sol round 9): the reference sits inside a stack item
+    /// (or a resolving item) that its source activated from the opponent's
+    /// hand at the given epoch and paid with itself (cycling, channel): the
+    /// item's (source, hand epoch). Its references to that epoch are the
+    /// item's own receipt of the departure.
+    pub item_self_paid: Option<(ObjectId, u32)>,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -114,6 +120,25 @@ pub(crate) struct WalkerV1<'a> {
     /// Inside an arena object: generation fields in a map that names no
     /// object are epochs of this object itself (`spell_cast_origin`).
     pub self_object: Option<ObjectId>,
+    /// The enclosing self-paid hand activation, if any (see
+    /// [`RefV1::item_self_paid`]).
+    pub item_self_paid: Option<(ObjectId, u32)>,
+}
+
+/// A stack item whose source activated it from the hand at epoch g and paid
+/// a cost with itself: (source, g).
+fn self_paid_from_hand(map: &Map<String, Value>) -> Option<(ObjectId, u32)> {
+    let source = parse_tag(map.get("source")?)?;
+    let v4 = map.get("v4")?.as_object()?;
+    let contract = v4.get("ability_source_contract")?.as_object()?;
+    if parse_tag(contract.get("source")?)? != source || contract.get("zone")?.as_str()? != "Hand" {
+        return None;
+    }
+    let g = u32::try_from(contract.get("zone_change_count")?.as_u64()?).ok()?;
+    let paid = v4.get("paid_cost_refs")?.as_array()?;
+    paid.iter()
+        .any(|p| p.get("object").and_then(parse_tag) == Some(source))
+        .then_some((source, g))
 }
 
 fn r2(detail: String) -> ExportErrorV1 {
@@ -154,6 +179,7 @@ impl WalkerV1<'_> {
                             generations: Vec::new(),
                             paid_cost: false,
                             cast_receipt: false,
+                            item_self_paid: self.item_self_paid,
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -174,6 +200,7 @@ impl WalkerV1<'_> {
                     generations: Vec::new(),
                     paid_cost: false,
                     cast_receipt: false,
+                    item_self_paid: self.item_self_paid,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -191,6 +218,21 @@ impl WalkerV1<'_> {
     }
 
     fn walk_map(
+        &mut self,
+        map: &mut Map<String, Value>,
+        class: ClassV1,
+        parent: &str,
+    ) -> Result<(), ExportErrorV1> {
+        let enclosing = self.item_self_paid;
+        if let Some(item) = self_paid_from_hand(map) {
+            self.item_self_paid = Some(item);
+        }
+        let walked = self.walk_map_inner(map, class, parent);
+        self.item_self_paid = enclosing;
+        walked
+    }
+
+    fn walk_map_inner(
         &mut self,
         map: &mut Map<String, Value>,
         class: ClassV1,
@@ -267,6 +309,7 @@ impl WalkerV1<'_> {
                 generations,
                 paid_cost: parent == "paid_cost_refs" && k.as_deref() == Some("object"),
                 cast_receipt: parent == "spell_cast_origin" && k.is_none(),
+                item_self_paid: self.item_self_paid,
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -292,6 +335,7 @@ impl WalkerV1<'_> {
                 generations: Vec::new(),
                 paid_cost: false,
                 cast_receipt: false,
+                item_self_paid: self.item_self_paid,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;

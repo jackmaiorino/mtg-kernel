@@ -727,7 +727,14 @@ pub(crate) fn export_v1(
                 return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
             }
             if let Some(epoch) = projection.opp_hand_epoch(r.object, g) {
-                if !(r.cast_receipt && epoch.left_to == Some(Zone::Stack)) {
+                // Its own receipts of the departure: a cast receipt at a
+                // departure to the stack, or a reference inside an item the
+                // object activated from the hand at g and paid with itself
+                // (it left the hand as that cost, in V's sight).
+                let receipt = (r.cast_receipt && epoch.left_to == Some(Zone::Stack))
+                    || (r.item_self_paid == Some((r.object, g))
+                        && epoch.left_to.is_some_and(is_public));
+                if !receipt {
                     return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
                 }
             }
@@ -1428,6 +1435,7 @@ pub(crate) fn export_v1(
                 slot: 0,
                 check_pairs: true,
                 self_object: Some(*id),
+                item_self_paid: None,
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1740,6 +1748,7 @@ fn collect_refs(
             slot: 0,
             check_pairs: true,
             self_object: None,
+            item_self_paid: None,
         };
         for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
@@ -1783,6 +1792,7 @@ fn rewrite_state(
         slot: 0,
         check_pairs: true,
         self_object: None,
+        item_self_paid: None,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1858,6 +1868,7 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         slot: 0,
         check_pairs: false,
         self_object: None,
+        item_self_paid: None,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {

@@ -534,16 +534,19 @@ pub(crate) fn impossible_v1(
             .count()
             .min(on_top);
         for &at in &put_backs {
-            let known: Vec<ObjectId> = state
-                .objects
+            // Amendment 43.7: the copies V knew in the hand are the ones it
+            // held bound facts for right before the put-back (opponent-hand
+            // copies are never tracked, so no span ends at the put-back).
+            let bound: Vec<ObjectId> = p
+                .departure_known
                 .iter()
-                .map(|(id, _)| id)
+                .filter(|(item, _)| *item == at)
+                .flat_map(|(_, ids)| ids.iter().copied())
+                .collect();
+            let known: Vec<ObjectId> = bound
+                .into_iter()
                 .filter(|id| {
                     state.objects.get(*id).owner == owner
-                        && p.objects[id.0 as usize]
-                            .spans
-                            .iter()
-                            .any(|s| s.end.is_some_and(|e| e.item == at && e.zone == Zone::Hand))
                         // Not tracked again since (a later public departure
                         // is not among the put-backs).
                         && p.objects[id.0 as usize]

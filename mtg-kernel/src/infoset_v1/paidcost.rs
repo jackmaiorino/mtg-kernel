@@ -920,31 +920,31 @@ fn a_tainted_mixed_hand_departure_agrees() {
     assert_eq!(unbound, bound, "P agrees whichever copy was discarded");
 }
 
-/// Sol round 9 on #526, finding 1: a cast receipt of a copy whose walk
-/// epochs fell behind its native ones (moves without committed events, as
-/// a madness rollback makes them; here two moves added in the graveyard by
-/// state surgery). Lembas D goes to the graveyard in V's sight, is out of
-/// step, returns to the opponent's hand (a bound fact); Lembas C is drawn
-/// unseen; then D or C (`d_cast`) goes to the stack with its own cast
-/// receipt at its hand epoch. Without the surgery (`desync` false) both
-/// worlds export alike; with it, the D world's receipt named an epoch the
-/// walk never saw (R2) while the C world exported, so both must refuse
-/// `same_name_hand` by name. Returns P.
-fn desynced_receipt_world(d_cast: bool, desync: bool) -> Result<Vec<u8>, String> {
+/// Sol round 9 on #526, finding 1: a reference to a copy whose walk epochs
+/// fell behind its native ones (moves without committed events, as a
+/// madness rollback makes them; here two moves added in the graveyard by
+/// state surgery). Lembas D goes to the graveyard in V's sight, falls out
+/// of step, returns to the opponent's hand (a bound fact); Lembas C is
+/// drawn unseen; then D or C (`d_left`) is discarded and the Shaman's
+/// paid-cost record is re-made to name it at its hand epoch. Without the
+/// surgery (`desync` false) both worlds refuse `same_name_hand` by the hand
+/// rule. With it, the walk never recorded D's native hand epoch: before the
+/// repair the D world refused R2 (an unobserved epoch) while the C world
+/// refused `same_name_hand`; the name-level rule refuses both alike. (A
+/// cast receipt of D at that epoch failed the same way against an
+/// exporting C world; the receipt and this record take the same path.)
+/// Returns P.
+fn desynced_receipt_world(d_left: bool, desync: bool) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
-    use crate::state::{SpellCastOriginV4, SpellCastRouteV4};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let s = opponent_payment();
     let lembas = id("Lembas");
     let mut st = s.game_state().clone();
-    st.stack.retain(|it| {
-        it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
-    });
+    let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+    let paid = paid_object(&st, i);
+    st.stack
+        .retain(|it| st.objects.get(it.source).card_def != lembas);
     st.engine.pending_triggers.clear();
-    let paid = paid_object(
-        &s.game_state().clone(),
-        waiting(s.game_state(), OutletV1::Shaman).expect("the Shaman ability waits"),
-    );
     let in_library = library_lembas(&mut st, paid, 2);
     let (d, c) = (in_library[0], in_library[1]);
     let mut marks = s.infoset_marks_v1(v);
@@ -971,16 +971,14 @@ fn desynced_receipt_world(d_cast: bool, desync: bool) -> Result<Vec<u8>, String>
     propose_and_commit(&mut st, ProposedEvent::draw(o));
     assert_eq!(st.objects.get(c).zone, Zone::Hand, "C was drawn");
     mark(&st, &mut marks);
-    let cast = if d_cast { d } else { c };
-    let origin = st.objects.get(cast).zone_change_count;
-    propose_and_commit(&mut st, ProposedEvent::zone_change(cast, Zone::Stack));
+    let gone = if d_left { d } else { c };
+    let hand = st.objects.get(gone).zone_change_count;
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
     st.engine.pending_triggers.clear();
-    st.objects.get_mut(cast).v4.spell_cast_origin = Some(SpellCastOriginV4 {
-        origin_zone: Zone::Hand,
-        origin_zone_change_count: origin,
-        route: SpellCastRouteV4::Hand,
-        finalized_method: None,
-    });
+    let i = waiting(&st, OutletV1::Shaman).expect("the Shaman ability waits");
+    let r = &mut st.stack[i].v4.paid_cost_refs[0];
+    r.object = gone;
+    r.zone_change_count = hand;
     let lists = decklists(&s);
     export_v1(
         &ExportInputV1 {
@@ -997,23 +995,19 @@ fn desynced_receipt_world(d_cast: bool, desync: bool) -> Result<Vec<u8>, String>
 }
 
 #[test]
-fn a_desynced_copy_and_its_twin_cast_alike() {
+fn an_out_of_step_copy_and_its_twin_agree() {
     let (dx, cx) = (
         desynced_receipt_world(true, false),
         desynced_receipt_world(false, false),
     );
-    eprintln!(
-        "receipt control: D cast {:?} / C cast {:?}",
-        dx.as_ref().map(Vec::len),
-        cx.as_ref().map(Vec::len)
-    );
-    assert_eq!(dx, cx, "P agrees whichever copy was cast (control)");
+    eprintln!("in step (control): D left {dx:?} / C left {cx:?}");
+    assert_eq!(dx, cx, "P agrees whichever copy left (control)");
     let (d, c) = (
         desynced_receipt_world(true, true),
         desynced_receipt_world(false, true),
     );
-    eprintln!("desynced receipt: D cast {d:?} / C cast {c:?}");
-    assert_eq!(d, c, "P agrees whichever copy was cast");
+    eprintln!("out of step: D left {d:?} / C left {c:?}");
+    assert_eq!(d, c, "P agrees whichever copy left");
     assert!(
         d.as_ref()
             .err()
