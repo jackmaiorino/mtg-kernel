@@ -536,7 +536,7 @@ fn tracked_order(
 /// zone's membership list never crosses. Several epochs take the earliest
 /// bound.
 pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usize> {
-    if r.membership {
+    if r.membership || (r.discarded && projection.last_span(r.object).is_some()) {
         return None;
     }
     if r.generations.is_empty() {
@@ -798,6 +798,22 @@ pub(crate) fn export_v1(
             })
         {
             return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
+        }
+        // An epochless reference beside a reference to the same object at
+        // an epoch V tracked, in the same item (a target and its target
+        // contract), names that tracked incarnation: as that reference.
+        if r.generations.is_empty()
+            && refs.iter().any(|(t, reg)| {
+                *reg == "live"
+                    && t.object == r.object
+                    && t.container == r.container
+                    && !t.generations.is_empty()
+                    && t.generations
+                        .iter()
+                        .all(|&g| projection.tracked_at(t.object, g).is_some())
+            })
+        {
+            continue;
         }
         if let Some(b) = seam_bound_v1(&projection, r) {
             if projection
@@ -1512,6 +1528,7 @@ pub(crate) fn export_v1(
                 membership: false,
                 turn_scoped: false,
                 announcing: false,
+                discarded: false,
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1824,6 +1841,7 @@ fn collect_refs(
             membership: false,
             turn_scoped: false,
             announcing: false,
+            discarded: false,
         };
         for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
@@ -1879,6 +1897,7 @@ fn rewrite_state(
         membership: false,
         turn_scoped: false,
         announcing: false,
+        discarded: false,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1977,6 +1996,7 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         membership: false,
         turn_scoped: false,
         announcing: false,
+        discarded: false,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {

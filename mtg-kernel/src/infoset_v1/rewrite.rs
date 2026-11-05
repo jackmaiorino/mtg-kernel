@@ -64,6 +64,10 @@ pub(crate) struct RefV1 {
     /// announced (`pending_cast`, `pending_activation`): made during the
     /// announcement, which no hand seam other than its own costs follows.
     pub announcing: bool,
+    /// Amendment 43.8: an entry of a stack item's `discarded` list, written
+    /// by the discard that paid the item's cost (the copy that moved, in
+    /// V's sight, to the graveyard).
+    pub discarded: bool,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -233,6 +237,7 @@ impl WalkerV1<'_> {
                             membership: self.membership,
                             turn_scoped: self.turn_scoped,
                             announcing: self.announcing,
+                            discarded: parent == "discarded",
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -258,6 +263,7 @@ impl WalkerV1<'_> {
                     membership: self.membership,
                     turn_scoped: self.turn_scoped,
                     announcing: self.announcing,
+                    discarded: false,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -383,6 +389,7 @@ impl WalkerV1<'_> {
                 membership: self.membership,
                 turn_scoped: self.turn_scoped,
                 announcing: self.announcing,
+                discarded: false,
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -413,6 +420,7 @@ impl WalkerV1<'_> {
                 membership: self.membership,
                 turn_scoped: self.turn_scoped,
                 announcing: self.announcing,
+                discarded: false,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;

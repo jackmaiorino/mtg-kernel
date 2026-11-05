@@ -537,31 +537,51 @@ pub(crate) fn impossible_v1(
             // Amendment 43.8: the names V knew in the hand right before the
             // put-back (L). A card of them leaves afterwards only by an
             // unidentified put-back or by a departure V sees, which names
-            // it: each such departure of a name may take one of them.
+            // it; a card of them that enters in V's sight afterwards (a
+            // seam event that is not a departure) adds one.
             let mut names: BTreeMap<u16, u32> = BTreeMap::new();
             for (_, defs) in p.departure_known.iter().filter(|(item, _)| *item == at) {
                 for d in defs {
                     add(&mut names, *d);
                 }
             }
-            for (_, d) in p.departures.iter().filter(|(item, _)| *item > at) {
-                if let Some(k) = names.get_mut(d) {
-                    *k = k.saturating_sub(1);
-                }
-            }
-            let known: u32 = names.values().sum();
-            if known == 0 {
+            if names.is_empty() {
                 continue;
             }
+            let mut departures: Vec<(usize, u16)> = p
+                .departures
+                .iter()
+                .copied()
+                .filter(|(item, _)| *item > at)
+                .collect();
+            let mut entered: BTreeMap<u16, u32> = BTreeMap::new();
+            for &(item, d) in p.seams.iter().filter(|(item, _)| *item > at) {
+                if let Some(k) = departures.iter().position(|x| *x == (item, d)) {
+                    departures.remove(k);
+                } else if names.contains_key(&d) {
+                    add(&mut entered, d);
+                }
+            }
+            let left = p
+                .departures
+                .iter()
+                .filter(|(item, d)| *item > at && names.contains_key(d))
+                .count();
+            let known: u32 = names.values().sum::<u32>() + entered.values().sum::<u32>();
             let exits = put_backs.iter().filter(|&&x| x >= at).count();
-            let need = (known as usize).saturating_sub(exits - draws_back.min(exits));
+            let need = (known as usize)
+                .saturating_sub(exits - draws_back.min(exits))
+                .saturating_sub(left);
             let have: u32 = names
                 .iter()
-                .map(|(d, k)| (*k).min(target.hand.get(d).copied().unwrap_or(0)))
+                .map(|(d, k)| {
+                    (*k + entered.get(d).copied().unwrap_or(0))
+                        .min(target.hand.get(d).copied().unwrap_or(0))
+                })
                 .sum();
             if (have as usize) < need {
                 return Some(format!(
-                    "{known} cards V knew in the hand until the put-back at item {at}, {exits} put-backs, {draws_back} draws back: at least {need} remain, the target's hand holds {have} of their names"
+                    "{known} cards V knew in the hand after the put-back at item {at}, {exits} put-backs, {draws_back} draws back, {left} named departures: at least {need} remain, the target's hand holds {have} of their names"
                 ));
             }
         }
