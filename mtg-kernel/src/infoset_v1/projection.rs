@@ -114,6 +114,12 @@ pub(crate) struct HandAmbiguityV1 {
     pub item: usize,
     pub card_def: u16,
     pub candidates: Vec<(ObjectId, u32)>,
+    /// Lead ruling 11 (R2, Sol round 2): only references made before the
+    /// copy entered the hand (epoch below its hand epoch) cross. Set for an
+    /// identified departure V could attribute to a bound copy or to a card
+    /// it holds no fact for; a reference at the hand epoch itself (a cast
+    /// receipt's origin) follows the departing card in both worlds.
+    pub before_only: bool,
 }
 
 /// A card of `owner` named `card_def` became tracked by V from a hidden zone
@@ -590,7 +596,8 @@ impl WalkV1<'_> {
                 // located while in the library taints survivor nodes (R8b).
                 // A departure attributed to another copy's bound fact is
                 // no arrival (lead ruling 11, R2): V sees what it would see
-                // had the bound copy left.
+                // had the bound copy left. Its origin epoch stays covered,
+                // as a bound copy's old span covers it (Sol round 2).
                 let attributed = self.attributed.contains(&id);
                 let before = prev_zones
                     .iter()
@@ -613,9 +620,8 @@ impl WalkV1<'_> {
                 // the card left (its origin epoch is one below the epoch it
                 // entered, and V saw the move), for live-reference checks
                 // only; the span itself starts at the entered epoch.
-                let entered_by_observed_move = !attributed
-                    && observed.contains(&id)
-                    && prev_zones.iter().any(|(x, _)| *x == id);
+                let entered_by_observed_move =
+                    observed.contains(&id) && prev_zones.iter().any(|(x, _)| *x == id);
                 let o = &mut self.objs[i];
                 let start_gen = o.moves;
                 let cover_gen = if entered_by_observed_move {
@@ -1187,6 +1193,7 @@ impl WalkV1<'_> {
                     item,
                     card_def: def,
                     candidates,
+                    before_only: false,
                 });
             }
         }
@@ -1235,6 +1242,49 @@ impl WalkV1<'_> {
             // departure ends a bound copy's fact (lead ruling 11, R2, Sol
             // round 1 finding 3): that copy is released from V's tracking
             // and the departure reads as that copy's own.
+            // Sol round 2 (finding 2): when V holds a bound fact of the name
+            // and the hand also holds cards V has no fact for, the copy
+            // that left may be the bound one or one of those cards. A live
+            // reference made before a bound copy (or the departing copy)
+            // entered the hand cannot be paired: record the candidates.
+            let in_hand_after = self
+                .objs
+                .iter()
+                .filter(|o| o.exists && o.owner == Some(owner) && o.zone == Some(Zone::Hand))
+                .count();
+            let unknown = (in_hand_after + 1).saturating_sub(self.hand.len());
+            let bound: Vec<ObjectId> = self
+                .hand
+                .iter()
+                .filter(|f| f.card_def == card_def)
+                .filter_map(|f| f.native)
+                .collect();
+            if !bound.is_empty() && unknown >= 1 {
+                let mut candidates: Vec<(ObjectId, u32)> = bound
+                    .iter()
+                    .map(|&o| {
+                        let moves = self.objs[o.0 as usize].moves;
+                        (
+                            o,
+                            if o == id {
+                                moves.saturating_sub(1)
+                            } else {
+                                moves
+                            },
+                        )
+                    })
+                    .collect();
+                if !bound.contains(&id) {
+                    let moves = self.objs[id.0 as usize].moves;
+                    candidates.push((id, moves.saturating_sub(1)));
+                }
+                self.hand_ambiguities.push(HandAmbiguityV1 {
+                    item: self.item,
+                    card_def,
+                    candidates,
+                    before_only: true,
+                });
+            }
             let own = self.hand.iter().position(|f| f.native == Some(id));
             let unbound = self
                 .hand

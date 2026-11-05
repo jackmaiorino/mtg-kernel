@@ -499,3 +499,87 @@ fn a_lapse_then_a_return_batch_refuses_alike() {
     assert!(a.is_err(), "the A world refuses: {a:?}");
     assert_eq!(a, b, "P agrees whichever copy returned");
 }
+
+/// Sol round 2 on ruling 11, finding 3: the waiting ability's source A
+/// lapses alone into the library; in a later batch a Shaman arrives in the
+/// graveyard from the library (A, or a third copy B); in a later batch it
+/// and the other Shaman C return to the opponent's hand; then C is
+/// discarded. The hand ambiguity's candidate epoch lies past A's lapse, so
+/// it does not cross; R1b decides in both worlds.
+fn p_after_hand_return(s: &FastActorSessionV1, a_returns: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let shaman = id(SHAMAN);
+    let mut st = s.game_state().clone();
+    let a = st
+        .stack
+        .iter()
+        .find(|i| {
+            i.kind == crate::state::StackItemKind::ActivatedAbility
+                && st.objects.get(i.source).card_def == shaman
+        })
+        .map(|i| i.source)
+        .expect("the waiting ability");
+    let c = st.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|x| *x != a && st.objects.get(*x).card_def == shaman)
+        .expect("the other Shaman");
+    let b = st.players[0]
+        .library
+        .iter()
+        .copied()
+        .find(|x| st.objects.get(*x).card_def == shaman)
+        .expect("a third Shaman in the library");
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    propose_and_commit(&mut st, ProposedEvent::private_bottom_library_insert(a));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    let back = if a_returns { a } else { b };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(back, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    for x in [back, c] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Hand));
+        st.reveal_hand_card(v, o, x)
+            .expect("reveal the returned Shaman");
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    propose_and_commit(&mut st, ProposedEvent::zone_change(c, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    let lists = super::tests::decklists(s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// Finding 3's two worlds: equal P (R1b in both).
+#[test]
+fn a_lapse_then_a_hand_return_refuses_alike() {
+    let s = at_the_wait(0);
+    let (a, b) = (
+        p_after_hand_return(&s, true),
+        p_after_hand_return(&s, false),
+    );
+    eprintln!("lapse then hand return: A returned {a:?} / B returned {b:?}");
+    assert!(a.is_err(), "the A world refuses: {a:?}");
+    assert_eq!(a, b, "P agrees whichever copy returned");
+}

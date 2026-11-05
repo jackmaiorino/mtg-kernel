@@ -703,10 +703,30 @@ pub(crate) fn export_v1(
         }
         // A reference with no epoch is current membership (a zone vector,
         // an attachment), not a historical link across the hand (Sol r1).
+        // A candidate epoch past a lapse of the referenced object after the
+        // reference's epoch is not V's to pair (which copy came back is
+        // R1b's question), so it does not cross (lead ruling 11, Sol round
+        // 2 finding 3).
+        let track = projection.objects.get(r.object.0 as usize);
+        let lapsed_between = |g: u32, g_hand: u32| {
+            track.is_some_and(|t| {
+                t.spans
+                    .iter()
+                    .filter_map(|s| s.end)
+                    .any(|e| !e.split && e.last_gen >= g && e.last_gen < g_hand)
+            })
+        };
         let crossed = projection.hand_ambiguities.iter().any(|a| {
-            a.candidates
-                .iter()
-                .any(|&(o, g_hand)| o == r.object && r.generations.iter().any(|&g| g <= g_hand))
+            a.candidates.iter().any(|&(o, g_hand)| {
+                o == r.object
+                    && r.generations.iter().any(|&g| {
+                        (if a.before_only {
+                            g < g_hand
+                        } else {
+                            g <= g_hand
+                        }) && !lapsed_between(g, g_hand)
+                    })
+            })
         });
         if crossed {
             return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
