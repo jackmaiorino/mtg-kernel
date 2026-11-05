@@ -9,6 +9,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import numpy as np
@@ -347,13 +348,26 @@ class PackedStoreTests(unittest.TestCase):
             store.mkdir(parents=True)
             os.environ["FAKE_SLEEP"] = "60"
             held = s0.chunk_lock(store / "chunk-000032")
+            launched, real_popen = [], s0.subprocess.Popen
+
+            def popen(*args, **kwargs):
+                launched.append(real_popen(*args, **kwargs))
+                return launched[-1]
             t0 = time.time()
             try:
-                with self.assertRaisesRegex(s0.S0Error, "still running"):
-                    s0.record(rec.plan_path, rec.fake, 2)   # chunk 0 starts, then chunk 32 is refused
+                with mock.patch.object(s0.subprocess, "Popen", popen):
+                    with self.assertRaisesRegex(s0.S0Error, "still running"):
+                        s0.record(rec.plan_path, rec.fake, 2)   # chunk 0 starts, then chunk 32 is refused
+                # chunk 0's recorder was stopped and reaped before the run returned, not left running
+                self.assertEqual(len(launched), 1)
+                self.assertIsNotNone(launched[0].returncode)
+                self.assertLess(time.time() - t0, 30)
             finally:
                 held.close()
-            self.assertLess(time.time() - t0, 30)   # chunk 0's recorder was stopped and reaped, not left running
+                for proc in launched:
+                    if proc.poll() is None:
+                        proc.kill()
+                    proc.wait()
             self.assertIsNotNone(lock := s0.chunk_lock(store / "chunk-000000"))
             lock.close()
             self.assertFalse(s0.finished(store / "chunk-000000", 0, 32, rec.plan["store_codec"]))
