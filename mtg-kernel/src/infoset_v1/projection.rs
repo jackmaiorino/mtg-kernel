@@ -152,6 +152,11 @@ pub(crate) struct ProjectionV1 {
     /// Amendment 43.6: departures from the opponent's hand that V cannot
     /// attribute between equal-key copies.
     pub hand_ambiguities: Vec<HandAmbiguityV1>,
+    /// Lead ruling 11 (R2, Sol round 1 finding 3): copies whose bound fact
+    /// an identified departure of another copy of the name ended (the
+    /// adapter's rule). V no longer tracks them; the engine's knowledge
+    /// rows may still list them, which R5 allows for these copies only.
+    pub released: Vec<ObjectId>,
     /// Stream items at which an owner's library order changed unseen by
     /// V's tracking (a shuffle, a reorder, a scry), with the owner.
     pub reorders: Vec<(usize, PlayerId)>,
@@ -278,6 +283,11 @@ struct WalkV1<'a> {
     transfers: Vec<TransferV1>,
     arrivals: Vec<ArrivalV1>,
     hand_ambiguities: Vec<HandAmbiguityV1>,
+    released: Vec<ObjectId>,
+    /// Copies whose identified departure this item was attributed to a
+    /// bound fact of another copy: they arrive in their new zone as that
+    /// copy would (no arrival record, no covered origin epoch).
+    attributed: Vec<ObjectId>,
     reorders: Vec<(usize, PlayerId)>,
     /// Unidentified put-backs per owner still on top of the library (no
     /// reorder since): the next unidentified draws take them back.
@@ -338,6 +348,8 @@ pub(crate) fn project_v1(
         transfers: Vec::new(),
         arrivals: Vec::new(),
         hand_ambiguities: Vec::new(),
+        released: Vec::new(),
+        attributed: Vec::new(),
         reorders: Vec::new(),
         put_backs_on_top: [Vec::new(), Vec::new()],
         last_departure: Vec::new(),
@@ -508,6 +520,7 @@ pub(crate) fn project_v1(
         transfers: w.transfers,
         arrivals: w.arrivals,
         hand_ambiguities: w.hand_ambiguities,
+        released: w.released,
         reorders: w.reorders,
         top_draws: w.top_draws,
         r8_latch: w.r8_latch,
@@ -575,12 +588,16 @@ impl WalkV1<'_> {
                 // Became tracked: from a hidden zone unless it was just
                 // created. R1b reads these arrivals; a card of the opponent
                 // located while in the library taints survivor nodes (R8b).
+                // A departure attributed to another copy's bound fact is
+                // no arrival (lead ruling 11, R2): V sees what it would see
+                // had the bound copy left.
+                let attributed = self.attributed.contains(&id);
                 let before = prev_zones
                     .iter()
                     .find(|(x, _)| *x == id)
                     .map_or(o.zone, |(_, z)| *z);
                 if let (Some(before), Some(owner)) = (before, o.owner) {
-                    if !is_public(before) {
+                    if !is_public(before) && !attributed {
                         let card_def = self.state.objects.get(id).card_def;
                         self.arrivals.push(ArrivalV1 {
                             item,
@@ -596,8 +613,9 @@ impl WalkV1<'_> {
                 // the card left (its origin epoch is one below the epoch it
                 // entered, and V saw the move), for live-reference checks
                 // only; the span itself starts at the entered epoch.
-                let entered_by_observed_move =
-                    observed.contains(&id) && prev_zones.iter().any(|(x, _)| *x == id);
+                let entered_by_observed_move = !attributed
+                    && observed.contains(&id)
+                    && prev_zones.iter().any(|(x, _)| *x == id);
                 let o = &mut self.objs[i];
                 let start_gen = o.moves;
                 let cover_gen = if entered_by_observed_move {
@@ -684,6 +702,7 @@ impl WalkV1<'_> {
             let o = &mut self.objs[i];
             o.tracked = now;
         }
+        self.attributed.clear();
         // A hand with no untracked card left: F is cleared (6.4).
         let opp_hand = self.state_hand_untracked(opp);
         if opp_hand == 0 {
@@ -1208,17 +1227,31 @@ impl WalkV1<'_> {
             let mixed = (named_facts().any(|f| f.native.is_some())
                 && named_facts().any(|f| f.native.is_none()))
                 || named_facts().any(|f| f.ambiguous);
-            let pos = self
+            // The adapter's rule (kernel_history_v2.py `_hand_move`): the
+            // copy's own fact, else an unbound fact of the name, else any
+            // fact of the name. V cannot tell the copies in the hand apart
+            // (they carry no id on the wire), so when the copy that left
+            // had no fact and no unbound fact of its name remains, its
+            // departure ends a bound copy's fact (lead ruling 11, R2, Sol
+            // round 1 finding 3): that copy is released from V's tracking
+            // and the departure reads as that copy's own.
+            let own = self.hand.iter().position(|f| f.native == Some(id));
+            let unbound = self
                 .hand
                 .iter()
-                .position(|f| f.native == Some(id))
-                .or_else(|| {
-                    self.hand
-                        .iter()
-                        .position(|f| f.native.is_none() && f.card_def == card_def)
-                });
+                .position(|f| f.native.is_none() && f.card_def == card_def);
+            let any = self.hand.iter().position(|f| f.card_def == card_def);
+            let pos = own.or(unbound).or(any);
+            let attributed = match (own, unbound, any) {
+                (None, None, Some(i)) => self.hand[i].native,
+                _ => None,
+            };
             if let Some(pos) = pos {
                 self.hand.remove(pos);
+            }
+            if let Some(other) = attributed {
+                self.released.push(other);
+                self.attributed.push(id);
             }
             if mixed {
                 // Lead ruling 11 (R2): V held a bound and an unbound fact of
@@ -1228,7 +1261,7 @@ impl WalkV1<'_> {
                     f.ambiguous = true;
                 }
             }
-            if !tracked {
+            if !tracked && attributed.is_none() {
                 self.survivors.identified_departure(card_def);
             }
             return;

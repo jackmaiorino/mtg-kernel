@@ -988,6 +988,9 @@ fn bound_and_unknown_world(discard_bound: bool) -> Result<Vec<u8>, String> {
 }
 
 /// Finding 3's two worlds: discard the bound copy D or the unseen copy C.
+/// Before the repair both exported, 99,865 against 100,474 bytes (D kept as
+/// `C:16` when C was discarded). The projection now follows the adapter: the
+/// departure ends D's fact in both worlds, so P agrees.
 #[test]
 fn bound_and_unknown_hand_copies_agree() {
     let (unknown, bound) = (

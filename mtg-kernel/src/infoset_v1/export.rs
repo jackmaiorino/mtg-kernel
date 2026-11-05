@@ -441,7 +441,19 @@ fn knowledge_check(state: &GameState, projection: &ProjectionV1) -> Result<(), E
         .iter()
         .map(|k| (k.object.0, k.zone_change_count))
         .collect();
-    if projected != native {
+    // Lead ruling 11 (R2): a copy released by an attributed departure may
+    // stay in the engine's rows while V no longer binds it.
+    let released: BTreeSet<(u32, u32)> = projection
+        .released
+        .iter()
+        .filter(|id| state.players[opp.index()].hand.contains(id))
+        .map(|id| (id.0, state.objects.get(*id).zone_change_count))
+        .collect();
+    if !projected.is_subset(&native)
+        || !native
+            .iter()
+            .all(|k| projected.contains(k) || released.contains(k))
+    {
         return Err(refuse(
             RefusalCodeV1::R5,
             "hand physical facts differ from native rows",
