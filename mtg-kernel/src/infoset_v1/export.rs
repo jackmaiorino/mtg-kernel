@@ -718,25 +718,6 @@ pub(crate) fn export_v1(
                 .desynced
                 .iter()
                 .any(|d| card_name(*d) == card_name(o.card_def));
-        // Sol round 11: a live reference with no epoch to an opponent copy
-        // links to whatever incarnation the copy has now, so if it was made
-        // before the copy's stint in the opponent's hand, whether it links
-        // depends on which same-name copy later left. It refuses alike when
-        // the copy is in the opponent's hand now, or when the copy entered
-        // the opponent's hand after V had tracked it (a public card bounced
-        // or returned there): references to it from before that stint
-        // cannot be told from references after it.
-        if r.generations.is_empty() && o.owner == opp && !o.v4.is_token {
-            let track = &projection.objects[r.object.0 as usize];
-            let in_hand = state.players[opp.index()].hand.contains(&r.object);
-            let tracked_then_hand = track
-                .opp_hand
-                .iter()
-                .any(|e| track.spans.iter().any(|s| s.cover_gen < e.generation));
-            if in_hand || tracked_then_hand {
-                return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
-            }
-        }
         for &g in &r.generations {
             if desynced
                 && projection
