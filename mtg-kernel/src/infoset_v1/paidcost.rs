@@ -920,6 +920,117 @@ fn a_tainted_mixed_hand_departure_agrees() {
     assert_eq!(unbound, bound, "P agrees whichever copy was discarded");
 }
 
+/// Sol round 10 on #526, finding 1: a repeat reveal after a departure.
+/// Six copies of one name (E, F, U, A, B, C). C is drawn unseen; E, F, U
+/// return publicly to the opponent's hand and E, F are put back unseen (one
+/// unbound fact, a survivor node); A, B return publicly; the library is
+/// shuffled and E, F milled (the node is tainted). World 1 discards A and
+/// reveals B; world 2 discards C and reveals A. Before the repair, the
+/// reveal of a copy with its own fact changed nothing while the reveal of
+/// the released A pruned the node: R8b against an export. Returns P.
+fn repeat_reveal_world(world1: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    st.stack.retain(|it| {
+        it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
+    });
+    st.engine.pending_triggers.clear();
+    let lib = st.players[o.index()].library.clone();
+    let mut defs: Vec<u16> = lib.iter().map(|x| st.objects.get(*x).card_def).collect();
+    defs.sort_unstable();
+    defs.dedup();
+    let def = defs
+        .into_iter()
+        .find(|d| {
+            lib.iter()
+                .filter(|x| st.objects.get(**x).card_def == *d)
+                .count()
+                >= 6
+        })
+        .expect("a name with six copies in the opponent's library");
+    let c6: Vec<ObjectId> = lib
+        .iter()
+        .copied()
+        .filter(|x| st.objects.get(*x).card_def == def)
+        .take(6)
+        .collect();
+    let (e, f, u, a, b, c) = (c6[0], c6[1], c6[2], c6[3], c6[4], c6[5]);
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    let lib = &mut st.players[o.index()].library;
+    let at = lib.iter().position(|x| *x == c).expect("C in the library");
+    let c_id = lib.remove(at);
+    lib.insert(0, c_id);
+    propose_and_commit(&mut st, ProposedEvent::draw(o));
+    assert_eq!(st.objects.get(c).zone, Zone::Hand, "C was drawn");
+    mark(&st, &mut marks);
+    for x in [e, f, u, a, b] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Graveyard));
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    for x in [e, f, u] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Hand));
+        st.reveal_hand_card(v, o, x)
+            .expect("reveal the returned copy");
+    }
+    mark(&st, &mut marks);
+    for x in [e, f] {
+        st.clear_nonowner_hand_knowledge(o);
+        propose_and_commit(&mut st, ProposedEvent::private_top_library_insert(x));
+        mark(&st, &mut marks);
+    }
+    for x in [a, b] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Hand));
+        st.reveal_hand_card(v, o, x)
+            .expect("reveal the returned copy");
+    }
+    mark(&st, &mut marks);
+    st.shuffle_library(o).expect("shuffle");
+    mark(&st, &mut marks);
+    for x in [e, f] {
+        propose_and_commit(&mut st, ProposedEvent::zone_change(x, Zone::Graveyard));
+    }
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    let (gone, shown) = if world1 { (a, b) } else { (c, a) };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    st.reveal_hand_card(v, o, shown).expect("the repeat reveal");
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+#[test]
+fn a_repeat_reveal_after_a_departure_agrees() {
+    let (w1, w2) = (repeat_reveal_world(true), repeat_reveal_world(false));
+    eprintln!(
+        "repeat reveal: world 1 {:?} / world 2 {:?}",
+        w1.as_ref().map(Vec::len),
+        w2.as_ref().map(Vec::len)
+    );
+    assert_eq!(w1, w2, "P agrees whichever copy left and was shown");
+}
+
 /// Sol round 9 on #526, finding 1: a reference to a copy whose walk epochs
 /// fell behind its native ones (moves without committed events, as a
 /// madness rollback makes them; here two moves added in the graveyard by

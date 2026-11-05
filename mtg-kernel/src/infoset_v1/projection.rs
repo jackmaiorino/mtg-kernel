@@ -1166,6 +1166,17 @@ impl WalkV1<'_> {
         if self.hand.iter().any(|f| f.native == Some(id)) {
             return;
         }
+        // Sol round 10 (amendment 43.7): a reveal names a card of the hand,
+        // not a copy. While V holds a fact of the name, the reveal may show
+        // that same card, so it tells V nothing new: no fact or survivor
+        // change, whichever copy it was. The engine's row for the revealed
+        // copy is allowed (R5) as for a released copy.
+        if !was_tracked && self.hand.iter().any(|f| f.card_def == card_def) {
+            if !self.released.contains(&id) {
+                self.released.push(id);
+            }
+            return;
+        }
         if !was_tracked {
             // 6.4: a card of the hand becomes tracked in place.
             self.survivors.tracked_in_place(card_def);

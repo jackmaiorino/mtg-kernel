@@ -128,95 +128,6 @@ fn sum_witnesses(totals: &mut BTreeMap<String, u64>, r: &PairReportV1) {
     }
 }
 
-/// The first fixture branch replayed to V's next decision: P's bytes agree,
-/// L14's (the rule before 43.4) do not. Returns the evidence line.
-fn fixture_bytes(game: &GameV1, v: PlayerId) -> String {
-    let mut s = game.start.clone();
-    for (i, chosen) in game.actions.iter().enumerate() {
-        let FastActorResponseV1::Decision(d) = s.current_response() else {
-            break;
-        };
-        let a = local_menu(&s)
-            .iter()
-            .position(|x| x == chosen)
-            .expect("replay");
-        let groups = known_hand_casts(&s, v);
-        if seat(d.acting_player) == v.opponent() && !groups.is_empty() {
-            let g = &groups[0].1;
-            let x = if g.contains(&a) { a } else { g[0] };
-            let y = *g.iter().find(|&&b| b != x).expect("two copies");
-            let (mut w, mut w2) = (s.clone(), s.clone());
-            w.step(d.episode_id, d.step, x as u32).expect("W");
-            w2.step(d.episode_id, d.step, y as u32).expect("W'");
-            for later in &game.actions[i + 1..] {
-                let (FastActorResponseV1::Decision(e), FastActorResponseV1::Decision(f)) =
-                    (w.current_response(), w2.current_response())
-                else {
-                    break;
-                };
-                if seat(e.acting_player) == v && e.legal_action_count >= 2 {
-                    // While P refuses, it must refuse alike; the witness
-                    // is the first V decision at which both worlds export
-                    // (under 43.7 the revealed copies are name-level
-                    // occupants, and L14 keeps them tracked).
-                    let (p, p2) = (
-                        export_at(&w, v, ExportOptionsV1::default()),
-                        export_at(&w2, v, ExportOptionsV1::default()),
-                    );
-                    let (p, p2) = match (p, p2) {
-                        (Ok(p), Ok(p2)) => (p, p2),
-                        (Err(a), Err(b)) => {
-                            assert_eq!(
-                                format!("{a:?}"),
-                                format!("{b:?}"),
-                                "P agrees while it refuses"
-                            );
-                            let (Some(b), Some(c)) = (
-                                local_menu(&w).iter().position(|r| r == later),
-                                local_menu(&w2).iter().position(|r| r == later),
-                            ) else {
-                                panic!("the worlds part before V decides");
-                            };
-                            w.step(e.episode_id, e.step, b as u32).expect("W");
-                            w2.step(f.episode_id, f.step, c as u32).expect("W'");
-                            continue;
-                        }
-                        (a, b) => panic!(
-                            "P presence differs: {:?} / {:?}",
-                            a.as_ref().err(),
-                            b.as_ref().err()
-                        ),
-                    };
-                    assert_eq!(p.bytes, p2.bytes, "P agrees at the first V decision");
-                    let o = ExportOptionsV1 {
-                        mutant: Some(MutantV1::L14),
-                    };
-                    let m = export_at(&w, v, o).expect("L14 exports");
-                    let m2 = export_at(&w2, v, o).expect("L14 exports");
-                    assert_ne!(m.bytes, m2.bytes, "L14 differs at the first V decision");
-                    return format!(
-                        "branch at decision {i}: P equal ({} bytes, sha256 {}); L14 (before 43.4) {}",
-                        p.bytes.len(),
-                        &p.sha256[..16],
-                        byte_window(&m.bytes, &m2.bytes)
-                    );
-                }
-                let (Some(b), Some(c)) = (
-                    local_menu(&w).iter().position(|r| r == later),
-                    local_menu(&w2).iter().position(|r| r == later),
-                ) else {
-                    panic!("the worlds part before V decides");
-                };
-                w.step(e.episode_id, e.step, b as u32).expect("W");
-                w2.step(f.episode_id, f.step, c as u32).expect("W'");
-            }
-            panic!("no V decision after the branch");
-        }
-        s.step(d.episode_id, d.step, a as u32).expect("replay");
-    }
-    panic!("the fixture never offers two revealed Hawks to cast");
-}
-
 /// Lead ruling 7 (b): the F-cast variant. On its fixture and over every AC1
 /// engine-family game, both viewers, P must agree across the worlds (former
 /// view here; the strict checker reads the `fcast-*` dumps). On the fixture,
@@ -253,11 +164,21 @@ fn ac1_f_cast_revealed_copies() {
         reports.iter().all(|r| r.p_differs == 0),
         "P differs across the cast copies: {reports:?}"
     );
+    // Amendment 43.7 re-derivation: an identified departure ends one of
+    // V's facts of the name whichever copy left, so after the cast both
+    // worlds hold the same facts and L14 (bound copies tracked) binds the
+    // remaining copy alike; it departs from P (P binds no hand copy) at
+    // every compared decision, the same way in both worlds. Before 43.7 the
+    // witness was L14 differing across the worlds.
+    let departs: u64 = reports
+        .iter()
+        .map(|r| r.departs.get("L14").copied().unwrap_or(0))
+        .sum();
+    eprintln!("F-cast fixture: L14 departs from P at {departs} compared decisions");
     assert!(
-        fixture_witnesses.get("L14").copied().unwrap_or(0) > 0,
-        "the rule before 43.4 differs on the fixture: {reports:?}"
+        departs > 0,
+        "L14 binds the revealed copies where P does not: {reports:?}"
     );
-    eprintln!("F-cast fixture bytes: {}", fixture_bytes(&game, v));
     let (mut pairs, mut compared, mut differs, mut truncated) = (0u64, 0u64, 0u64, 0u64);
     let mut witnesses: BTreeMap<String, u64> = BTreeMap::new();
     for (decks, seed) in ENGINE_FAMILY_GAMES {
