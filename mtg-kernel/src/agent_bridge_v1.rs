@@ -279,6 +279,11 @@ struct SpellbenchBridgeGameV1 {
     history_cursor: (usize, usize, usize),
     /// The producer's per-game state, when `x_kernel_infoset_v1` is on.
     infoset: Option<InfosetBridgeV1>,
+    /// Amendment 43.9 (a): every `x_kernel_flat_v4` of this game carries
+    /// `known_hand_masked_observation_sha256` (with `x_kernel_infoset_v1`
+    /// on). A private preview copies it, though it carries no payload, so a
+    /// previewed point's extension equals the committed one (spellbench G6).
+    masked_observation: bool,
     #[cfg(test)]
     force_flat_v4_encode_error: bool,
     /// Test hook: the action id handed to the session on the next step, so
@@ -594,8 +599,10 @@ impl SpellbenchBridgeServerV1 {
                 flat_v4_scratch: FlatV4EncodeScratchV1::default(),
                 private_block_root_step: game.private_block_root_step,
                 history_cursor: game.history_cursor,
-                // A private preview carries no payload.
+                // A private preview carries no payload, but presents the
+                // same flat-v4 extension as the committed point.
                 infoset: None,
+                masked_observation: game.masked_observation,
                 #[cfg(test)]
                 force_flat_v4_encode_error: game.force_flat_v4_encode_error,
                 #[cfg(test)]
@@ -856,6 +863,7 @@ impl SpellbenchBridgeServerV1 {
             history_cursor: (0, 0, 0),
             infoset: (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
                 .then(InfosetBridgeV1::default),
+            masked_observation: self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1,
             #[cfg(test)]
             force_flat_v4_encode_error: false,
             #[cfg(test)]
@@ -1276,6 +1284,7 @@ impl BridgeMirrorV1 {
             private_block_root_step: self.private_block_root_step,
             history_cursor: self.history_cursor,
             infoset: None,
+            masked_observation: false,
             force_flat_v4_encode_error: false,
             force_session_action_id: None,
         };
@@ -1348,6 +1357,7 @@ fn flat_v4_extension_v1(
         flat_v4_rows,
         flat_v4_scratch,
         infoset,
+        masked_observation,
         ..
     } = game;
     if let Some(infoset) = infoset.as_mut() {
@@ -1376,10 +1386,11 @@ fn flat_v4_extension_v1(
         .map_err(|error| error.halt_reason())?;
     let mut value =
         flat_v4_extension_value_v1(&encoded, &rows).map_err(|error| error.halt_reason())?;
-    // Amendment 43.9 (a): with the infoset producer on, the committed point
-    // also carries its canonical observation's digest without the opponent's
-    // known hand (spellbench G6 compares it with the entrant's walk).
-    if infoset.is_some() {
+    // Amendment 43.9 (a): with the infoset producer on, every point (a
+    // committed one and a private preview alike) also carries its canonical
+    // observation's digest without the opponent's known hand (spellbench G6
+    // compares previews with committed points, and these with the walk).
+    if *masked_observation {
         value = crate::agent_bridge_flat_v4_encode::with_known_hand_masked_observation_v1(
             value, &encoded,
         )
@@ -3680,6 +3691,64 @@ mod tests {
         );
     }
 
+    /// Amendment 43.9 (a), spellbench G6 `views_equal`: with
+    /// `x_kernel_infoset_v1` on, a private preview of one candidate presents
+    /// the same `x_kernel_flat_v4` extension (the masked observation digest
+    /// included) as the point the bridge presents once that candidate is
+    /// committed. A preview copy carries no payload, which once dropped the
+    /// digest from previews only.
+    #[test]
+    fn infoset_v1_preview_flat_extension_equals_the_committed_one() {
+        let field = crate::agent_bridge_flat_v4_encode::KNOWN_HAND_MASKED_OBSERVATION_FIELD_V1;
+        let mut compared = 0u64;
+        for (deck, seed) in [("CawGates", 5_u64), ("Faeries", 7), ("Spy", 3), ("Wildfire", 6)] {
+            let mut server = SpellbenchBridgeServerV1::with_options(
+                SpellbenchEngineIdentityV1::with_source_revision(None),
+                SpellbenchBridgeOptionsV1 {
+                    x_kernel_flat_v4: true,
+                    private_v2_support: true,
+                    x_kernel_infoset_v1: true,
+                },
+            );
+            let mut line =
+                server.handle_line(&flat_v4_reset(&format!("pf-{deck}-{seed}"), deck, seed));
+            let mut rng = crate::state::SplitMix64::seed(seed);
+            for _ in 0..500 {
+                let response: Value = serde_json::from_str(&line).unwrap();
+                if response["response_type"] != "decision" {
+                    break;
+                }
+                assert!(
+                    response["extensions"]["x_kernel_flat_v4"][field].is_string(),
+                    "{deck}: a committed point lacks {field}"
+                );
+                let rows = rows_of(&response);
+                let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
+                let preview = json!({"protocol": SPELLBENCH_PROTOCOL_V1,
+                    "request_type": "preview_steps", "request_id": format!("pf-{}", response["step"]),
+                    "game_id": response["game_id"], "expected_step": response["step"],
+                    "candidate_ids": [pick]})
+                .to_string();
+                let answer: Value = serde_json::from_str(&server.handle_line(&preview)).unwrap();
+                line = server.handle_line(&flat_v4_step(&response, pick));
+                if answer["response_type"] != "private_preview" {
+                    continue;
+                }
+                let committed: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(committed["response_type"], "decision", "{deck}");
+                assert_eq!(
+                    answer["view"]["extensions"]["x_kernel_flat_v4"],
+                    committed["extensions"]["x_kernel_flat_v4"],
+                    "{deck}: preview and committed flat-v4 extensions differ at step {}",
+                    committed["step"]
+                );
+                compared += 1;
+            }
+        }
+        eprintln!("preview flat extensions: {compared} compared");
+        assert!(compared >= 10, "only {compared} previews compared");
+    }
+
     /// W1 bridge wiring: with `x_kernel_infoset_v1` on, every eligible
     /// decision (two candidates, two of them not mana abilities) carries a
     /// payload or a refusal code and no other decision carries either; each
@@ -4223,6 +4292,7 @@ imported {:#?}",
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
             infoset: None,
+            masked_observation: false,
             force_flat_v4_encode_error: false,
             force_session_action_id: None,
         };
