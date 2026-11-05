@@ -22,6 +22,11 @@ import s0  # noqa: E402
 import s0_recipe  # noqa: E402
 
 HAS_TORCH = importlib.util.find_spec("torch") is not None
+try:
+    s0.zstd_api()
+    HAS_ZSTD = True
+except s0.S0Error:
+    HAS_ZSTD = False
 
 
 def synthetic_record(rng, actor=0, max_card=192):
@@ -77,6 +82,8 @@ for g in range(first, first + games):
                           "runtime_rules": runtime,
                           "limits": {"max_physical_decisions": limits[0], "max_policy_steps": limits[1]}}) + "\n")
     out.flush()
+if os.environ.get("FAKE_TRAILING"):
+    tensors.write(b"xx")
 '''
 
 
@@ -95,7 +102,7 @@ def parent_source(tmp: Path) -> Path:
 class Recorded:
     """A recorded and indexed fake store under a temporary directory."""
 
-    def __init__(self, tmp: Path, games=96, chunk=32, runtime=None):
+    def __init__(self, tmp: Path, games=96, chunk=32, runtime=None, codec=None):
         self.tmp = tmp
         self.fake = tmp / "fake_recorder.py"
         self.fake.write_text(FAKE_RECORDER)
@@ -104,7 +111,8 @@ class Recorded:
         os.environ["PYTHONPATH"] = os.pathsep.join([str(HERE), str(Path(__file__).resolve().parent)])
         if runtime is not None:
             os.environ["FAKE_RUNTIME"] = runtime
-        self.plan = s0.plan_record(parent_source(tmp), tmp / "root", games=games, chunk_games=chunk)
+        self.plan = s0.plan_record(parent_source(tmp), tmp / "root", games=games, chunk_games=chunk,
+                                   store_codec=codec)
         self.plan_path = tmp / "root" / "plan.json"
 
     def record_and_index(self, parallel=2):
@@ -270,6 +278,134 @@ class RecordAndIndexTests(unittest.TestCase):
             self.assertFalse((Path(tmp) / "root" / "store").exists())
 
 
+@unittest.skipUnless(HAS_ZSTD, "no zstd (Python 3.14 or the zstandard package)")
+class PackedStoreTests(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop("FAKE_TRAILING", None)
+
+    def pair(self, tmp: Path, games=96, chunk=32):
+        """The same fake games recorded raw and packed."""
+        (tmp / "raw").mkdir()
+        (tmp / "packed").mkdir()
+        return (Recorded(tmp / "raw", games=games, chunk=chunk),
+                Recorded(tmp / "packed", games=games, chunk=chunk, codec=s0.STORE_CODEC))
+
+    def test_record_size_reads_the_header(self):
+        rng = np.random.default_rng(5)
+        for _ in range(20):
+            data = s0.encode_record(synthetic_record(rng))
+            self.assertEqual(s0.record_size(data), len(data))
+
+    def test_raw_plan_is_unchanged_when_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            plan = s0.plan_record(parent_source(tmp), tmp / "a", games=10)
+            self.assertNotIn("store_codec", plan)
+            self.assertNotIn("store_codec", s0.plan_record(parent_source(tmp), tmp / "b", games=10, store_codec="raw"))
+            packed = s0.plan_record(parent_source(tmp), tmp / "c", games=10, store_codec=s0.STORE_CODEC)
+            self.assertEqual(packed["store_codec"], {"kind": "zstd-record/v1", "level": 3})
+            with self.assertRaises(s0.S0Error):
+                s0.plan_record(parent_source(tmp), tmp / "d", games=10, store_codec="gzip")
+
+    def test_packed_store_decodes_to_the_raw_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            raw, packed = self.pair(tmp)
+            _, m_raw = raw.record_and_index()
+            summary, m_packed = packed.record_and_index()
+            self.assertEqual(summary["failed"], [])
+            root_raw, root = tmp / "raw" / "root", tmp / "packed" / "root"
+            store = root / "store"
+            # Packed chunks keep no raw tensor file; each decodes to the raw recording's bytes and hash.
+            self.assertEqual(sorted(p.name for p in store.glob("*.bin")), [])
+            self.assertEqual(len(list(store.glob("*.binz"))), 3)
+            self.assertEqual([c["decoded"]["sha256"] for c in m_packed["chunks"]],
+                             [c["bin"]["sha256"] for c in m_raw["chunks"]])
+            self.assertEqual(m_packed["counts"]["store_bytes"], m_raw["counts"]["store_bytes"])
+            self.assertEqual(m_packed["codec"], {"kind": "zstd-record/v1", "level": 3})
+            self.assertNotIn("codec", m_raw)
+            # The games file (decoded block hashes) is the raw store's; the index adds packed coordinates.
+            self.assertEqual((root / "index.games.json").read_bytes(), (root_raw / "index.games.json").read_bytes())
+            ix_raw, _, _ = s0.load_index(root_raw / "manifest.json")
+            ix, manifest, _ = s0.load_index(root / "manifest.json")
+            for key in ix_raw:
+                if key != "files":
+                    self.assertTrue(np.array_equal(ix[key], ix_raw[key]), key)
+            self.assertEqual([str(f) for f in ix["files"]], [f"store/{c['name']}.binz" for c in m_packed["chunks"]])
+            self.assertEqual(set(ix) - set(ix_raw), {"zoffset", "zlength"})
+            reader, reader_raw = s0.RecordReader(ix, root, manifest["codec"]), s0.RecordReader(ix_raw, root_raw, None)
+            for r in range(ix["game"].size):
+                self.assertEqual(reader.read(r), reader_raw.read(r))
+            reader.close()
+            reader_raw.close()
+            check = s0.verify_store(root / "manifest.json")
+            self.assertEqual((check["chunks"], check["bytes"]), (3, m_raw["counts"]["store_bytes"]))
+            self.assertLess(check["packed_bytes"], check["bytes"])
+            rows = np.nonzero(ix["validation"])[0]
+            self.assertEqual(s0.verify_games(ix, root, rows), len(set(ix["game"][rows].tolist())))
+            out = tmp / "states.td"
+            s0.parity_states(ix, root, 50, out, manifest["codec"])
+            s0.parity_states(ix_raw, root_raw, 50, tmp / "states-raw.td")
+            self.assertEqual(out.read_bytes(), (tmp / "states-raw.td").read_bytes())
+            # A changed packed byte is caught by the store check and by the pack receipt.
+            binz = store / "chunk-000032.binz"
+            data = bytearray(binz.read_bytes())
+            data[10] ^= 1
+            binz.write_bytes(bytes(data))
+            with self.assertRaises(s0.S0Error):
+                s0.verify_store(root / "manifest.json")
+            with self.assertRaises(s0.S0Error):
+                s0.index_store(packed.plan_path)
+            # A second record pass does nothing.
+            self.assertEqual(s0.record(packed.plan_path, packed.fake, 2)["chunks_run"], 0)
+
+    def test_pack_refuses_a_partial_record_and_the_chunk_reruns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Recorded(Path(tmp), games=64, codec=s0.STORE_CODEC)
+            os.environ["FAKE_TRAILING"] = "1"
+            summary = s0.record(rec.plan_path, rec.fake, 2)
+            self.assertEqual(sorted(summary["failed"]), ["chunk-000000", "chunk-000032"])
+            store = Path(tmp) / "root" / "store"
+            self.assertIn("rc=-101", (store / "chunk-000000.log").read_text().strip().splitlines()[-1])
+            self.assertTrue((store / "chunk-000000.bin").exists())
+            self.assertFalse((store / "chunk-000000.pack.json").exists())
+            with self.assertRaises(s0.S0Error):
+                s0.index_store(rec.plan_path)
+            os.environ.pop("FAKE_TRAILING")
+            self.assertEqual(s0.record(rec.plan_path, rec.fake, 2)["chunks_run"], 2)
+            self.assertTrue((store / "chunk-000000.attempt-1.bin").exists())
+            self.assertEqual(s0.index_store(rec.plan_path)["counts"]["games"], 64)
+
+    def test_pack_is_checked_and_rerun_only_removes_a_leftover_raw_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            rng = np.random.default_rng(9)
+            raw = b"".join(s0.encode_record(synthetic_record(rng)) for _ in range(40))
+            stem = tmp / "c"
+            (tmp / "c.bin").write_bytes(raw)
+            receipt = s0.pack_chunk(stem)
+            self.assertEqual(receipt["records"], 40)
+            self.assertEqual(receipt["decoded"], {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+            self.assertFalse((tmp / "c.bin").exists())
+            _, table = s0.check_pack(stem, {"kind": s0.STORE_CODEC, "level": 3})
+            reader = s0.PackedChunk(tmp / "c.binz", table)
+            self.assertEqual(reader.read(0, len(raw)), raw)
+            self.assertEqual(reader.decoded_sha256(), hashlib.sha256(raw).hexdigest())
+            with self.assertRaises(s0.S0Error):
+                reader.read(1, 10)   # not a record start
+            with self.assertRaises(s0.S0Error):
+                reader.read(0, int(table[0, 1]) + 1)   # ends inside a record
+            reader.close()
+            with self.assertRaises(s0.S0Error):
+                s0.check_pack(stem, {"kind": s0.STORE_CODEC, "level": 9})
+            (tmp / "c.bin").write_bytes(raw)
+            self.assertEqual(s0.pack_chunk(stem), receipt)
+            self.assertFalse((tmp / "c.bin").exists())
+            (tmp / "c.bin").write_bytes(raw[:-1])
+            with self.assertRaises(s0.S0Error):
+                s0.pack_chunk(stem)
+
+
 @unittest.skipUnless(HAS_TORCH, "torch is not installed")
 class TrainerTests(unittest.TestCase):
     @classmethod
@@ -394,6 +530,28 @@ class TrainerTests(unittest.TestCase):
             bad.write_text(json.dumps(doc))
             with self.assertRaises(s0.S0Error):
                 self.T.train(bad, tmp / "d")
+
+    @unittest.skipUnless(HAS_ZSTD, "no zstd (Python 3.14 or the zstandard package)")
+    def test_packed_store_trains_like_the_raw_store(self):
+        import torch
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            runs = []
+            for name, codec in (("raw", None), ("packed", s0.STORE_CODEC)):
+                (tmp / name).mkdir()
+                rec = Recorded(tmp / name, games=160, chunk=64, codec=codec)
+                rec.record_and_index()
+                cfg = tmp / name / "cfg.json"
+                s0.make_config(rec.plan_path, cfg, "1.0", smoke=True, eval_every=2, max_steps=2)
+                self.assertEqual(self.T.train(cfg, tmp / name / "run"), 0)
+                runs.append(s0.read_json(tmp / name / "run" / "train.json"))
+                store = self.T.Store(tmp / name / "root" / "manifest.json")
+                runs[-1]["batch"] = store.batch(np.arange(0, 40, 3))
+                store.close()
+            self.assertEqual(runs[0]["final_params_sha256"], runs[1]["final_params_sha256"])
+            for a, b in zip(runs[0]["batch"], runs[1]["batch"]):
+                for k in a:
+                    self.assertTrue(torch.equal(a[k], b[k]) if torch.is_tensor(a[k]) else a[k] == b[k], k)
 
     def test_production_config_refuses_overrides_and_smoke_sizes(self):
         with tempfile.TemporaryDirectory() as tmp:

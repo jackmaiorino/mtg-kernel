@@ -237,34 +237,26 @@ def chunks(recs):
 
 
 class Store:
-    """Reads each record with one positioned read (checks-code/train_checks.py lines 60 to 91)."""
+    """Reads each record with one positioned read (checks-code/train_checks.py lines 60 to 91); a packed store's
+    record is one zstd frame, decoded to the recorded bytes (s0.RecordReader)."""
 
     def __init__(self, manifest_path):
         # The trainer verified the index hash once; data workers read it as is.
-        self.ix, _, self.root = s0.load_index(manifest_path, verify=False)
-        self._fd = {}
+        self.ix, manifest, self.root = s0.load_index(manifest_path, verify=False)
+        self.reader = s0.RecordReader(self.ix, self.root, manifest.get("codec"))
 
     def close(self):
-        for fd in self._fd.values():
-            os.close(fd)
-        self._fd = {}
+        if getattr(self, "reader", None) is not None:
+            self.reader.close()
 
     def __del__(self):
         self.close()
 
-    def fd(self, f):
-        if f not in self._fd:
-            path = self.root / str(self.ix["files"][f])
-            self._fd[f] = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_RANDOM", 0))
-        return self._fd[f]
-
     def records(self, rows):
         ix, recs = self.ix, []
         for r in rows:
-            fd = self.fd(int(ix["fid"][r]))
             n = int(ix["length"][r])
-            os.lseek(fd, int(ix["offset"][r]), os.SEEK_SET)
-            buf = os.read(fd, n)
+            buf = self.reader.read(int(r))
             rec, end = s0.decode_record(buf, 0)
             if end != n or len(buf) != n:
                 raise s0.S0Error(f"record {r}: length {end} != {n}")

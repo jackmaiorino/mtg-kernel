@@ -3,10 +3,15 @@
 S0 is a distillation of b512 into S. This tool covers every step except the trainer (tools/w5/s0_train.py):
 
   s0.py plan-record --parent SOURCE.json --out ROOT [--attempt first|retry] [--games N] [--chunk-games 256]
+                    [--store-codec raw|zstd-record/v1]
       the recording plan: b512 self-play games under W5's training runtime (resolution-boundary-v1, mulligans
       off, the training limits, the nine-deck pool), recorded with teacher logits by `regret_census_v1
       mode=s4a-tensor-dump` (mtg-kernel#480). 100k games is the frozen size; the one retry records 2x in place
-      of the first store, in its own seed namespace.
+      of the first store, in its own seed namespace. With `--store-codec zstd-record/v1` (opt-in; the raw store
+      is unchanged without it) each recorded chunk is packed (`pack-chunk`): one zstd frame per record, the
+      packed file read back and decoded to the recorder's bytes (SHA-256) before the raw file is removed. The
+      index keeps raw coordinates and decoded block hashes and adds each record's frame; the trainer reads a
+      record with one positioned read and one decode.
   s0.py qualify-record --plan ROOT/plan.json --binary EXE --parallel 1,2,4 [--games 64]
       the recorder's throughput check (COMPUTE-POLICY): completed games per second at each process count, on
       throwaway chunks; `record` runs a production plan only with a receipt for this binary and host.
@@ -99,6 +104,11 @@ XS_SEED_ROOTS = tuple(f"w5/chain{i}" for i in range(1, 7))
 XS_FIRST_UPDATE = 0
 # Production plans need a record qualification receipt; smaller ones are smoke runs.
 SMOKE_GAMES_MAX = 4096
+# Opt-in packed store (`plan-record --store-codec zstd-record/v1`): each record one zstd frame, so a record is read
+# with one positioned read and one decode; the index keeps raw coordinates and adds packed ones.
+STORE_CODEC = "zstd-record/v1"
+ZSTD_LEVEL = 3
+PACK_SCHEMA = "w5-s0-chunk-pack/v1"
 
 RECORD_FIELDS = (  # name, dtype, per-row width, count key (stage4a/tensor_dump.rs record layout)
     ("state", np.float32, 1, "s"),
@@ -200,6 +210,13 @@ def decode_record(buf, pos: int = 0) -> tuple[dict, int]:
     return out, pos
 
 
+def record_size(buf, pos: int = 0) -> int:
+    """A record's byte length from its header alone (the layout decode_record reads)."""
+    n, e, a, r, s = (int(x) for x in np.frombuffer(buf, np.uint32, 5, pos))
+    counts = {"n": n, "e": e, "a": a, "r": r, "s": s, "one": 1}
+    return 32 + 4 * sum(width * counts[key] for _, _, width, key in RECORD_FIELDS)
+
+
 def encode_record(rec: dict) -> bytes:
     """The inverse of decode_record (tests and fixtures)."""
     n, e = len(rec["object_card_ids"]), len(rec["edge_source"])
@@ -212,12 +229,175 @@ def encode_record(rec: dict) -> bytes:
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# Packed store (opt-in): one zstd frame per record
+
+
+def zstd_api():
+    """(library, version, compress(data, level), decompress(frame, size)) from the standard library's
+    compression.zstd (Python 3.14) or the zstandard package; both write and read standard zstd frames."""
+    try:
+        from compression import zstd as z
+        return ("compression.zstd", ".".join(map(str, z.zstd_version_info)),
+                lambda data, level: z.compress(data, level=level), lambda frame, size: z.decompress(frame))
+    except ImportError:
+        pass
+    try:
+        import zstandard as z
+    except ImportError:
+        raise S0Error("a packed store needs zstd: Python 3.14 (compression.zstd) or the zstandard package") from None
+    dctx = z.ZstdDecompressor()
+    return ("zstandard", str(z.ZSTD_VERSION if isinstance(z.ZSTD_VERSION, str) else ".".join(map(str, z.ZSTD_VERSION))),
+            lambda data, level: z.ZstdCompressor(level=level).compress(data),
+            lambda frame, size: dctx.decompress(frame, max_output_size=size))
+
+
+def frames_path(stem) -> Path:
+    return Path(f"{stem}.frames.npy")
+
+
+def pack_chunk(stem, level: int = ZSTD_LEVEL) -> dict:
+    """Packs a finished chunk's tensor file record by record (STORE_CODEC): STEM.binz holds one zstd frame per
+    record in file order, STEM.frames.npy the table (raw offset, raw length, packed offset, packed length). The
+    packed file is read back and every frame decoded; the decoded bytes must hash to the raw file's SHA-256 before
+    the receipt (STEM.pack.json) is written and the raw file removed. Rerunning on a packed chunk only removes a
+    raw file left behind, after checking it against the receipt."""
+    stem = Path(stem)
+    raw, packed, frames_file, receipt_path = (Path(f"{stem}.bin"), Path(f"{stem}.binz"), frames_path(stem),
+                                              Path(f"{stem}.pack.json"))
+    if receipt_path.exists():
+        receipt = read_json(receipt_path)
+        if raw.exists():
+            require(sha256_file(raw) == receipt["decoded"]["sha256"], f"{raw.name} differs from its pack receipt")
+            raw.unlink()
+        return receipt
+    require(raw.exists(), f"{raw.name} is missing")
+    library, version, compress, decompress = zstd_api()
+    tmp = Path(f"{packed}.tmp")
+    table, raw_hash, pos, zpos = [], hashlib.sha256(), 0, 0
+    with open(raw, "rb") as fin, open(tmp, "wb") as fout:
+        while header := fin.read(32):
+            require(len(header) == 32, f"{raw.name}: a short record header at {pos}")
+            size = record_size(header)
+            body = fin.read(size - 32)
+            require(len(body) == size - 32, f"{raw.name}: a short record at {pos}")
+            data = header + body
+            raw_hash.update(data)
+            frame = compress(data, level)
+            fout.write(frame)
+            table.append((pos, size, zpos, len(frame)))
+            pos += size
+            zpos += len(frame)
+    table = np.asarray(table, np.int64).reshape(-1, 4)
+    require(pos == raw.stat().st_size, f"{raw.name}: changed while packing")
+    decoded_hash = hashlib.sha256()
+    with open(tmp, "rb") as f:   # the bytes on disk decode to the raw file
+        for _, size, zoff, zlen in table:
+            f.seek(int(zoff))
+            data = decompress(f.read(int(zlen)), int(size))
+            require(len(data) == size, f"{packed.name}: a frame decodes to {len(data)} bytes, not {size}")
+            decoded_hash.update(data)
+    require(decoded_hash.hexdigest() == raw_hash.hexdigest(), f"{packed.name}: decoded bytes differ from the raw file")
+    os.replace(tmp, packed)
+    with open(frames_file, "wb") as f:
+        np.save(f, table, allow_pickle=False)
+    receipt = {"schema": PACK_SCHEMA, "codec": {"kind": STORE_CODEC, "level": int(level)},
+               "library": {"name": library, "zstd": version}, "records": int(len(table)),
+               "decoded": {"bytes": pos, "sha256": raw_hash.hexdigest()}, "packed": pin(packed),
+               "frames": pin(frames_file)}
+    tmp_receipt = Path(f"{receipt_path}.tmp")
+    write_json(tmp_receipt, receipt)
+    os.replace(tmp_receipt, receipt_path)
+    raw.unlink()
+    return receipt
+
+
+def check_pack(stem, codec: dict) -> tuple[dict, np.ndarray]:
+    """A packed chunk's receipt, codec and pins; returns the receipt and its frame table."""
+    receipt_path = Path(f"{stem}.pack.json")
+    require(receipt_path.exists(), f"{Path(stem).name} has not been packed")
+    receipt = read_json(receipt_path)
+    require(receipt.get("schema") == PACK_SCHEMA and receipt["codec"] == codec,
+            f"{Path(stem).name}: packed with another codec")
+    for key in ("packed", "frames"):
+        path = Path(f"{stem}.binz") if key == "packed" else frames_path(stem)
+        require(path.exists() and sha256_file(path) == receipt[key]["sha256"],
+                f"{path.name} differs from its pack receipt")
+    table = np.load(frames_path(stem), allow_pickle=False)
+    require(table.ndim == 2 and table.shape[1] == 4 and len(table) == receipt["records"]
+            and int(table[:, 1].sum()) == receipt["decoded"]["bytes"], f"{Path(stem).name}: bad frame table")
+    return receipt, table
+
+
+class RawChunk:
+    """Reads from a raw chunk tensor file (the interface PackedChunk shares)."""
+
+    def __init__(self, path):
+        self.f = open(path, "rb")
+
+    def close(self):
+        self.f.close()
+
+    def read(self, offset: int, length: int) -> bytes:
+        self.f.seek(offset)
+        return self.f.read(length)
+
+
+def open_chunk(root: Path, manifest_chunk: dict, codec: dict | None):
+    """A reader of one indexed chunk in raw coordinates; a packed chunk's pins are checked against the manifest."""
+    stem = root / "store" / manifest_chunk["name"]
+    if codec is None:
+        return RawChunk(f"{stem}.bin")
+    receipt, table = check_pack(stem, codec)
+    require(receipt["packed"]["sha256"] == manifest_chunk["packed"]["sha256"]
+            and receipt["frames"]["sha256"] == manifest_chunk["frames"]["sha256"],
+            f"{manifest_chunk['name']}: pack differs from the manifest")
+    return PackedChunk(f"{stem}.binz", table)
+
+
+class PackedChunk:
+    """Raw-coordinate reads from a packed chunk: a read starts and ends on record (frame) boundaries."""
+
+    def __init__(self, path, table: np.ndarray):
+        self.f, self.table = open(path, "rb"), table
+        self.decompress = zstd_api()[3]
+
+    def close(self):
+        self.f.close()
+
+    def read(self, offset: int, length: int) -> bytes:
+        i = int(np.searchsorted(self.table[:, 0], offset))
+        require(i < len(self.table) and int(self.table[i, 0]) == offset, f"offset {offset} is not a record start")
+        out, end = [], offset + length
+        while offset < end:
+            require(i < len(self.table), f"read past the chunk at {offset}")
+            _, size, zoff, zlen = (int(x) for x in self.table[i])
+            self.f.seek(zoff)
+            data = self.decompress(self.f.read(zlen), size)
+            require(len(data) == size, f"frame {i} decodes to {len(data)} bytes, not {size}")
+            out.append(data)
+            offset += size
+            i += 1
+        require(offset == end, "a read ends inside a record")
+        return b"".join(out)
+
+    def decoded_sha256(self) -> str:
+        h = hashlib.sha256()
+        for _, size, zoff, zlen in self.table:
+            self.f.seek(int(zoff))
+            data = self.decompress(self.f.read(int(zlen)), int(size))
+            require(len(data) == size, "a frame decodes to the wrong size")
+            h.update(data)
+        return h.hexdigest()
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # Recording plan, qualification and runner
 
 
 def plan_record(parent: Path, out: Path, attempt: str = "first", games: int | None = None,
-                chunk_games: int = CHUNK_GAMES) -> dict:
+                chunk_games: int = CHUNK_GAMES, store_codec: str | None = None) -> dict:
     require(attempt in FROZEN_GAMES, "attempt is first or retry")
+    require(store_codec in (None, "raw", STORE_CODEC), f"store codec is raw or {STORE_CODEC}")
     games = FROZEN_GAMES[attempt] if games is None else int(games)
     require(games > 0 and chunk_games > 0, "games and chunk size must be positive")
     source = read_json(parent)
@@ -241,6 +421,9 @@ def plan_record(parent: Path, out: Path, attempt: str = "first", games: int | No
             "split": {"tag": SPLIT_TAG, "validation_fraction": VALIDATION_FRACTION,
                       "rule": "sha256(json([tag, game]))[:8] big-endian / 2^64 < fraction"},
             "chunks": chunks, "s0_tool_sha256": sha256_file(__file__)}
+    if store_codec == STORE_CODEC:   # absent: the raw store, as before
+        zstd_api()
+        plan["store_codec"] = {"kind": STORE_CODEC, "level": ZSTD_LEVEL}
     write_json(out / "plan.json", plan)
     return plan
 
@@ -286,13 +469,16 @@ def roster_complete(stem: Path, first: int, games: int) -> bool:
     return sorted(seen) == list(range(first, first + games))
 
 
-def finished(stem: Path, first: int | None = None, games: int | None = None) -> bool:
-    """The log ends `rc=0` and, given the chunk's range, the rows are exactly its recorded games."""
+def finished(stem: Path, first: int | None = None, games: int | None = None, codec: dict | None = None) -> bool:
+    """The log ends `rc=0` and, given the chunk's range, the rows are exactly its recorded games; a packed store's
+    chunk also has its pack receipt (written after the packed bytes decoded to the raw file)."""
     log = Path(str(stem) + ".log")
     if not log.exists():
         return False
     lines = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
     if not (bool(lines) and lines[-1].startswith("rc=0 ")):
+        return False
+    if codec is not None and not Path(f"{stem}.pack.json").exists():
         return False
     return first is None or roster_complete(stem, first, games)
 
@@ -306,7 +492,8 @@ def check_parent(plan: dict) -> None:
 
 def set_aside(stem: Path) -> None:
     """A previous attempt's files are kept under an attempt suffix (ARTIFACT-LAW clause 3; code/gen_chunk.sh)."""
-    present = [s for s in ("log", "jsonl", "bin") if Path(f"{stem}.{s}").exists()]
+    present = [s for s in ("log", "jsonl", "bin", "binz", "binz.tmp", "frames.npy", "pack.json")
+               if Path(f"{stem}.{s}").exists()]
     if not present:
         return
     n = 1
@@ -325,32 +512,57 @@ def start_chunk(plan: dict, binary: Path, stem: Path, first: int, games: int):
     return subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT), log, time.time()
 
 
-def close_chunk(proc, log, stem: Path, first: int, games: int) -> int:
+def close_census(proc, log, stem: Path, first: int, games: int) -> int:
     rc = proc.wait()
     log.close()
     if rc == 0 and not roster_complete(stem, first, games):
         rc = -100   # exited 0 with failed or missing games
-    with open(str(stem) + ".log", "a", encoding="utf-8") as f:
-        f.write(f"rc={rc} first={first} games={games}" + (" (failed or missing games)" if rc == -100 else "") + "\n")
     return rc
 
 
+def start_pack(stem: Path, codec: dict):
+    """Packs the chunk in its own process (the slot stays busy), its output appended to the chunk's log."""
+    log = open(str(stem) + ".log", "a", encoding="utf-8")
+    cmd = [sys.executable, "-B", str(Path(__file__).resolve()), "pack-chunk", "--stem", str(stem),
+           "--level", str(codec["level"])]
+    return subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT), log
+
+
+def end_chunk(stem: Path, first: int, games: int, rc: int) -> None:
+    note = {-100: " (failed or missing games)", -101: " (packing failed)"}.get(rc, "")
+    with open(str(stem) + ".log", "a", encoding="utf-8") as f:
+        f.write(f"rc={rc} first={first} games={games}{note}\n")
+
+
 def run_chunks(plan: dict, binary: Path, items: list[tuple[Path, int, int]], parallel: int) -> list[dict]:
-    """Runs (stem, first, games) items, at most `parallel` processes at once; returns per-chunk results."""
+    """Runs (stem, first, games) items, at most `parallel` processes at once; returns per-chunk results. With the
+    plan's store codec, a recorded chunk is packed in the same slot before its `rc` line is written."""
+    codec = plan.get("store_codec")
     pending, running, results = list(items), [], []
     while pending or running:
         while pending and len(running) < parallel:
             stem, first, games = pending.pop(0)
             proc, log, t0 = start_chunk(plan, binary, stem, first, games)
-            running.append((proc, log, stem, first, games, t0))
+            running.append({"proc": proc, "log": log, "stem": stem, "first": first, "games": games, "t0": t0,
+                            "phase": "record"})
         time.sleep(0.05)
-        for item in list(running):
-            proc, log, stem, first, games, t0 = item
-            if proc.poll() is None:
+        for job in list(running):
+            if job["proc"].poll() is None:
                 continue
-            running.remove(item)
-            rc = close_chunk(proc, log, stem, first, games)
-            results.append({"chunk": stem.name, "rc": rc, "games": games, "seconds": time.time() - t0})
+            stem, first, games = job["stem"], job["first"], job["games"]
+            if job["phase"] == "record":
+                rc = close_census(job["proc"], job["log"], stem, first, games)
+                if rc == 0 and codec is not None:
+                    job["proc"], job["log"] = start_pack(stem, codec)
+                    job["phase"] = "pack"
+                    continue
+            else:
+                rc = job["proc"].wait()
+                job["log"].close()
+                rc = 0 if rc == 0 else -101
+            running.remove(job)
+            end_chunk(stem, first, games, rc)
+            results.append({"chunk": stem.name, "rc": rc, "games": games, "seconds": time.time() - job["t0"]})
     return results
 
 
@@ -398,7 +610,9 @@ def record(plan_path, binary, parallel: int | None = None, limit_chunks: int | N
         parallel = receipt["selected_processes"] if parallel is None else parallel
     parallel = parallel or 1
     check_parent(plan)
-    todo = [c for c in plan["chunks"] if not finished(root / "store" / c["name"], c["first_game"], c["games"])]
+    codec = plan.get("store_codec")
+    todo = [c for c in plan["chunks"]
+            if not finished(root / "store" / c["name"], c["first_game"], c["games"], codec)]
     if limit_chunks is not None:
         todo = todo[:limit_chunks]
     t0 = time.time()
@@ -407,7 +621,7 @@ def record(plan_path, binary, parallel: int | None = None, limit_chunks: int | N
     summary = {"chunks_run": len(results), "failed": [r["chunk"] for r in results if r["rc"] != 0],
                "games": sum(r["games"] for r in results), "wall_seconds": time.time() - t0, "parallel": parallel,
                "remaining": sum(1 for c in plan["chunks"]
-                                if not finished(root / "store" / c["name"], c["first_game"], c["games"]))}
+                                if not finished(root / "store" / c["name"], c["first_game"], c["games"], codec))}
     if summary["wall_seconds"] > 0:
         summary["games_per_second"] = summary["games"] / summary["wall_seconds"]
     with open(root / "record-log.jsonl", "a", encoding="utf-8") as f:
@@ -424,14 +638,15 @@ def index_store(plan_path) -> dict:
     every planned game appears exactly once on the plan's runtime and limits."""
     plan, root = load_plan(plan_path)
     store = root / "store"
+    codec = plan.get("store_codec")
     cols = {k: [] for k in ("fid", "offset", "length", "outcome", "has_value", "game", "actor", "turn",
-                            "actions")}
+                            "actions") + (("zoffset", "zlength") if codec else ())}
     games_out, files, chunks_out = [], [], []
     value_targets = {"not_natural": 0, "natural_draws": 0}
     decisions_total = 0
     for fid, chunk in enumerate(plan["chunks"]):
         stem = store / chunk["name"]
-        require(finished(stem, chunk["first_game"], chunk["games"]), f"{chunk['name']} has not finished")
+        require(finished(stem, chunk["first_game"], chunk["games"], codec), f"{chunk['name']} has not finished")
         bin_path, jsonl = Path(f"{stem}.bin"), Path(f"{stem}.jsonl")
         rows = {}
         for line in jsonl.read_text(encoding="utf-8").splitlines():
@@ -444,17 +659,32 @@ def index_store(plan_path) -> dict:
             rows[g] = row
         want = set(range(chunk["first_game"], chunk["first_game"] + chunk["games"]))
         require(set(rows) == want, f"{chunk['name']}: games differ from the plan's")
-        files.append(f"store/{chunk['name']}.bin")
-        chunks_out.append({"name": chunk["name"], "bin": pin(bin_path), "jsonl": pin(jsonl),
-                           "log": pin(Path(f"{stem}.log")), "bytes": bin_path.stat().st_size})
-        with open(bin_path, "rb") as fb:
+        if codec is None:
+            files.append(f"store/{chunk['name']}.bin")
+            chunks_out.append({"name": chunk["name"], "bin": pin(bin_path), "jsonl": pin(jsonl),
+                               "log": pin(Path(f"{stem}.log")), "bytes": bin_path.stat().st_size})
+            fb = RawChunk(bin_path)
+        else:
+            # The packed file decodes to the recorder's bytes (the pack receipt's raw SHA-256), checked again here;
+            # the game blocks below are hashed from the decoded bytes.
+            receipt, table = check_pack(stem, codec)
+            fb = PackedChunk(f"{stem}.binz", table)
+            require(fb.decoded_sha256() == receipt["decoded"]["sha256"],
+                    f"{chunk['name']}: decoded bytes differ from the recorded file")
+            files.append(f"store/{chunk['name']}.binz")
+            chunks_out.append({"name": chunk["name"], "packed": receipt["packed"], "frames": receipt["frames"],
+                               "pack": pin(Path(f"{stem}.pack.json")), "decoded": receipt["decoded"],
+                               "jsonl": pin(jsonl), "log": pin(Path(f"{stem}.log")),
+                               "bytes": receipt["decoded"]["bytes"],
+                               "packed_bytes": Path(f"{stem}.binz").stat().st_size})
+            frame_of = {int(o): i for i, o in enumerate(table[:, 0])}
+        try:
             for g in sorted(rows):
                 row = rows[g]
                 require(row.get("runtime_rules") == RUNTIME_RULES and row.get("limits") == {
                     "max_physical_decisions": MAX_PHYSICAL_DECISIONS, "max_policy_steps": MAX_POLICY_STEPS},
                     f"game {g} was not recorded on the training runtime and limits")
-                fb.seek(row["bin_offset"])
-                block = fb.read(row["bin_bytes"])
+                block = fb.read(row["bin_offset"], row["bin_bytes"])
                 require(len(block) == row["bin_bytes"], f"game {g}: short block")
                 natural = row["classification"] == "Natural"
                 pos, decoded = 0, []
@@ -488,9 +718,16 @@ def index_store(plan_path) -> dict:
                     cols["actor"].append(actor)
                     cols["turn"].append(turn)
                     cols["actions"].append(legal)
+                    if codec:
+                        i = frame_of[row["bin_offset"] + start]
+                        require(int(table[i, 1]) == length, f"game {g}: a record is not one frame")
+                        cols["zoffset"].append(int(table[i, 2]))
+                        cols["zlength"].append(int(table[i, 3]))
+        finally:
+            fb.close()
     dtypes = {"fid": np.int32, "offset": np.int64, "length": np.int32, "outcome": np.float32, "has_value": bool,
               "game": np.int64,
-              "actor": np.uint8, "turn": np.int32, "actions": np.int32}
+              "actor": np.uint8, "turn": np.int32, "actions": np.int32, "zoffset": np.int64, "zlength": np.int32}
     arrays = {k: np.asarray(v, dtypes[k]) for k, v in cols.items()}
     arrays["validation"] = np.asarray([is_validation(int(g)) for g in arrays["game"]], bool)
     arrays["files"] = np.asarray(files)
@@ -506,6 +743,9 @@ def index_store(plan_path) -> dict:
                            "validation_decisions": int(arrays["validation"].sum()),
                            "store_bytes": sum(c["bytes"] for c in chunks_out)},
                 "value_targets": value_targets}
+    if codec:
+        manifest["codec"] = codec
+        manifest["counts"]["packed_bytes"] = sum(c["packed_bytes"] for c in chunks_out)
     write_json(root / "manifest.json", manifest)
     return manifest
 
@@ -513,19 +753,27 @@ def index_store(plan_path) -> dict:
 def verify_store(manifest_path) -> dict:
     """Every chunk's tensor file against its manifest pin, in the index's file order (once, before training)."""
     index, manifest, root = load_index(manifest_path)
-    require([str(f) for f in index["files"]] == [f"store/{c['name']}.bin" for c in manifest["chunks"]],
+    codec = manifest.get("codec")
+    suffix, key = ("bin", "bin") if codec is None else ("binz", "packed")
+    require([str(f) for f in index["files"]] == [f"store/{c['name']}.{suffix}" for c in manifest["chunks"]],
             "index files differ from the manifest")
     for chunk, name in zip(manifest["chunks"], index["files"]):
         path = root / str(name)   # the file the trainer reads, wherever the store now lives
-        require(path.exists() and sha256_file(path) == chunk["bin"]["sha256"],
+        require(path.exists() and sha256_file(path) == chunk[key]["sha256"],
                 f"{chunk['name']} tensors differ from the manifest")
-    return {"chunks": len(manifest["chunks"]), "bytes": sum(c["bytes"] for c in manifest["chunks"])}
+    out = {"chunks": len(manifest["chunks"]), "bytes": sum(c["bytes"] for c in manifest["chunks"])}
+    if codec is not None:   # the packed bytes, which the index decoded to the recorded ones
+        out["packed_bytes"] = sum(c["packed_bytes"] for c in manifest["chunks"])
+        out["codec"] = codec
+    return out
 
 
 def verify_games(index: dict, root: Path, rows) -> int:
     """The blocks of the games holding `rows` against their recorded block hashes (index.games.json)."""
     games = {g["game"]: g for g in read_json(root / "index.games.json")["games"]}
     plan = read_json(root / "plan.json")
+    chunk_pins = {c["name"]: c for c in read_json(root / "manifest.json")["chunks"]}
+    codec = plan.get("store_codec")
     wanted = sorted({int(index["game"][r]) for r in rows})
     rows_of = {}
     for chunk in plan["chunks"]:
@@ -536,11 +784,52 @@ def verify_games(index: dict, root: Path, rows) -> int:
                     rows_of[row["game"]] = (chunk["name"], row)
     for g in wanted:
         name, row = rows_of[g]
-        with open(root / "store" / f"{name}.bin", "rb") as f:
-            f.seek(row["bin_offset"])
-            require(sha256_bytes(f.read(row["bin_bytes"])) == games[g]["block_sha256"],
+        reader = open_chunk(root, chunk_pins[name], codec)
+        try:
+            require(sha256_bytes(reader.read(row["bin_offset"], row["bin_bytes"])) == games[g]["block_sha256"],
                     f"game {g}: block differs from the index")
+        finally:
+            reader.close()
     return len(wanted)
+
+
+class RecordReader:
+    """Indexed records (rows of index.npz) with one positioned read each; a packed store's record is its zstd
+    frame (the index's zoffset and zlength) decoded to `length` bytes."""
+
+    def __init__(self, index: dict, root: Path, codec: dict | None):
+        self.ix, self.root, self.codec, self._fd = index, Path(root), codec, {}
+        self.decompress = None
+        if codec is not None:
+            require(codec.get("kind") == STORE_CODEC and "zoffset" in index and "zlength" in index,
+                    f"a packed store is {STORE_CODEC} with packed coordinates in its index")
+            self.decompress = zstd_api()[3]
+
+    def close(self):
+        for fd in self._fd.values():
+            os.close(fd)
+        self._fd = {}
+
+    def __del__(self):
+        self.close()
+
+    def fd(self, f: int):
+        if f not in self._fd:
+            path = self.root / str(self.ix["files"][f])
+            self._fd[f] = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_RANDOM", 0))
+        return self._fd[f]
+
+    def read(self, r: int) -> bytes:
+        ix = self.ix
+        fd, n = self.fd(int(ix["fid"][r])), int(ix["length"][r])
+        if self.codec is None:
+            os.lseek(fd, int(ix["offset"][r]), os.SEEK_SET)
+            return os.read(fd, n)
+        zl = int(ix["zlength"][r])
+        os.lseek(fd, int(ix["zoffset"][r]), os.SEEK_SET)
+        frame = os.read(fd, zl)
+        require(len(frame) == zl, f"record {r}: short frame")
+        return self.decompress(frame, n)
 
 
 def load_index(manifest_path, verify: bool = True) -> tuple[dict, dict, Path]:
@@ -595,21 +884,19 @@ def run_json(cmd: list, env=None) -> dict:
     return json.loads(done.stdout)
 
 
-def parity_states(index: dict, root: Path, count: int, out: Path) -> dict:
+def parity_states(index: dict, root: Path, count: int, out: Path, codec: dict | None = None) -> dict:
     """The first `count` validation decisions in index order, concatenated as a tensor-dump file."""
     rows = np.nonzero(index["validation"])[0][:count]
     require(rows.size > 0, "no validation decisions")
-    handles = {}
-    with open(out, "wb") as f:
-        for r in rows:
-            fid = int(index["fid"][r])
-            if fid not in handles:
-                handles[fid] = open(root / str(index["files"][fid]), "rb")
-            h = handles[fid]
-            h.seek(int(index["offset"][r]))
-            f.write(h.read(int(index["length"][r])))
-    for h in handles.values():
-        h.close()
+    reader = RecordReader(index, root, codec)
+    try:
+        with open(out, "wb") as f:
+            for r in rows:
+                buf = reader.read(int(r))
+                require(len(buf) == int(index["length"][r]), f"record {r}: short read")
+                f.write(buf)
+    finally:
+        reader.close()
     return {"decisions": int(rows.size), "first_row": int(rows[0]), "last_row": int(rows[-1]), **pin(out)}
 
 
@@ -635,7 +922,7 @@ def export(config_path, run_dir, binary, parity_decisions: int = PARITY_DECISION
     imported = run_json([*launcher(binary), "import-values", f"values={out / 'values.bin'}",
                          f"names={out / 'names.json'}", f"out={container}"])
     require(imported["adam_step"] == 0, "the native S0 must carry a fresh optimizer")
-    states = parity_states(index, root, parity_decisions, out / "parity-states.td")
+    states = parity_states(index, root, parity_decisions, out / "parity-states.td", manifest.get("codec"))
     states["game_blocks_verified"] = verify_games(index, root, np.nonzero(index["validation"])[0][:parity_decisions])
     native = run_json([*launcher(binary), "logits-dump", f"out={out / 'native.logits'}",
                        f"model=s-checkpoint:{container}", f"states=td:{out / 'parity-states.td'}"])
@@ -891,6 +1178,12 @@ def main(argv=None) -> int:
     p.add_argument("--attempt", choices=list(FROZEN_GAMES), default="first")
     p.add_argument("--games", type=int, default=None, help="smoke size; the frozen size when omitted")
     p.add_argument("--chunk-games", type=int, default=CHUNK_GAMES)
+    p.add_argument("--store-codec", choices=["raw", STORE_CODEC], default="raw",
+                   help=f"{STORE_CODEC}: each chunk packed record by record after it is recorded (zstd level "
+                        f"{ZSTD_LEVEL}), decoded bytes checked against the recorded file before it is removed")
+    p = sub.add_parser("pack-chunk", help="(run by `record`) pack one recorded chunk")
+    p.add_argument("--stem", type=Path, required=True)
+    p.add_argument("--level", type=int, default=ZSTD_LEVEL)
     p = sub.add_parser("qualify-record")
     p.add_argument("--plan", type=Path, required=True)
     p.add_argument("--binary", type=Path, required=True)
@@ -939,8 +1232,10 @@ def main(argv=None) -> int:
     sys.path.insert(0, str(HERE))
     try:
         if a.command == "plan-record":
-            result = plan_record(a.parent, a.out, a.attempt, a.games, a.chunk_games)
+            result = plan_record(a.parent, a.out, a.attempt, a.games, a.chunk_games, a.store_codec)
             result = {k: v for k, v in result.items() if k != "chunks"}
+        elif a.command == "pack-chunk":
+            result = pack_chunk(a.stem, a.level)
         elif a.command == "qualify-record":
             result = qualify_record(a.plan, a.binary, [int(x) for x in a.parallel.split(",")], a.games)
         elif a.command == "record":
