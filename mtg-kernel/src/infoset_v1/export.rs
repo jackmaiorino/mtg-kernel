@@ -560,8 +560,11 @@ pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usiz
                     _ => 0,
                 }
             }
-            // This turn's combat state: the turn's start.
+            // This turn's until-end-of-turn effects: the turn's start.
             None if r.turn_scoped => projection.turn_starts.last().copied().unwrap_or(0),
+            // The announcement in progress: made after the stream so far,
+            // except its own cost payments.
+            None if r.announcing => projection.items,
             None => 0,
         };
         // V has followed the object's current incarnation (its current
@@ -1497,6 +1500,7 @@ pub(crate) fn export_v1(
                 container: None,
                 membership: false,
                 turn_scoped: false,
+                announcing: false,
             };
             for (k, field) in map.iter_mut() {
                 if k == "zone_change_count" {
@@ -1808,6 +1812,7 @@ fn collect_refs(
             container: None,
             membership: false,
             turn_scoped: false,
+            announcing: false,
         };
         for (i, item) in items.iter().enumerate() {
             let mut item = item.clone();
@@ -1815,7 +1820,14 @@ fn collect_refs(
             if let Some(m) = item.as_object_mut() {
                 m.remove("zone_change_count");
                 for (k, f) in m.iter_mut() {
-                    walker.walk(f, ClassV1::Live, k)?;
+                    // Amendment 43.8: an object's attachment list names
+                    // objects in their current incarnation (every zone
+                    // change clears it, `clear_object_relations`): like a
+                    // zone's membership, it never crosses the hand seam.
+                    walker.membership = k == "attachments";
+                    let walked = walker.walk(f, ClassV1::Live, k);
+                    walker.membership = false;
+                    walked?;
                 }
             }
         }
@@ -1855,6 +1867,7 @@ fn rewrite_state(
         container: None,
         membership: false,
         turn_scoped: false,
+        announcing: false,
     };
     let mut record = 0usize;
     for (k, field) in map.iter_mut() {
@@ -1901,9 +1914,18 @@ fn rewrite_state(
                         }
                     }
                 } else {
-                    walker.turn_scoped = ek == "combat";
+                    // Amendment 43.8: the combat state names creatures in
+                    // their current incarnation (leaving the battlefield
+                    // removes a creature from combat, 506.4): membership.
+                    // This turn's until-end-of-turn effects are bounded by
+                    // the turn's start.
+                    walker.membership = ek == "combat";
+                    walker.turn_scoped = ek == "until_end_of_turn";
+                    walker.announcing = ek == "pending_cast" || ek == "pending_activation";
                     let walked = walker.walk(ef, ClassV1::Live, ek);
+                    walker.membership = false;
                     walker.turn_scoped = false;
+                    walker.announcing = false;
                     walked?;
                 }
             }
@@ -1943,6 +1965,7 @@ fn rewrite_timestamps(value: &mut Value, rank: &BTreeMap<u64, u64>) -> Result<()
         container: None,
         membership: false,
         turn_scoped: false,
+        announcing: false,
     };
     if let Some(map) = value.as_object_mut() {
         for (k, f) in map.iter_mut() {

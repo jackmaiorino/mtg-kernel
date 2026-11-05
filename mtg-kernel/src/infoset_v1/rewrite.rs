@@ -53,12 +53,17 @@ pub(crate) struct RefV1 {
     pub container: Option<(ObjectId, Option<u32>)>,
     /// Amendment 43.8 (Sol design review 2): the reference is a zone's
     /// membership list (a player's battlefield or graveyard, the exile or
-    /// command zone), not a record about the object: tracking and the slot
-    /// layout decide it, never the seam predicate.
+    /// command zone) or a list the engine clears at every zone change of the
+    /// object (an attachment list, the combat state): it names the current
+    /// incarnation, so tracking decides it, never the seam predicate.
     pub membership: bool,
-    /// Amendment 43.8: the reference sits in this turn's combat state
-    /// (declared attackers and blockers), which the turn's start bounds.
+    /// Amendment 43.8: the reference sits in this turn's until-end-of-turn
+    /// effects, which the turn's start bounds.
     pub turn_scoped: bool,
+    /// Amendment 43.8: the reference sits in the cast or activation being
+    /// announced (`pending_cast`, `pending_activation`): made during the
+    /// announcement, which no hand seam other than its own costs follows.
+    pub announcing: bool,
 }
 
 /// What a reference becomes: the new id and the new epochs, in the order
@@ -139,8 +144,10 @@ pub(crate) struct WalkerV1<'a> {
     pub container: Option<(ObjectId, Option<u32>)>,
     /// Walking a zone's membership list (see [`RefV1::membership`]).
     pub membership: bool,
-    /// Walking the combat state (see [`RefV1::turn_scoped`]).
+    /// Walking this turn's until-end-of-turn effects (see [`RefV1::turn_scoped`]).
     pub turn_scoped: bool,
+    /// Walking an announcement (see [`RefV1::announcing`]).
+    pub announcing: bool,
 }
 
 /// A stack item whose source activated it from the hand at epoch g and paid
@@ -159,16 +166,22 @@ fn self_paid_from_hand(map: &Map<String, Value>) -> Option<(ObjectId, u32)> {
         .then_some((source, g))
 }
 
-/// A stack item (`state::StackItem`): its source and the source epoch its
-/// ability source contract records, when the contract names that source.
+/// A stack item (`state::StackItem`) or a pending trigger
+/// (`trigger::PendingTrigger`): its source and the source epoch its ability
+/// source contract records, when the contract names that source.
 fn stack_item_container(map: &Map<String, Value>) -> Option<(ObjectId, Option<u32>)> {
-    if !(map.contains_key("is_copy") && map.contains_key("targets")) {
+    let item = map.contains_key("is_copy") && map.contains_key("targets");
+    let trigger = map.contains_key("source_contract") && map.contains_key("target_spec");
+    if !(item || trigger) {
         return None;
     }
     let source = parse_tag(map.get("source")?)?;
-    let g = map
-        .get("v4")
-        .and_then(|v| v.get("ability_source_contract"))
+    let contract = if item {
+        map.get("v4").and_then(|v| v.get("ability_source_contract"))
+    } else {
+        map.get("source_contract")
+    };
+    let g = contract
         .and_then(|c| c.as_object())
         .filter(|c| c.get("source").and_then(parse_tag) == Some(source))
         .and_then(|c| c.get("zone_change_count"))
@@ -219,6 +232,7 @@ impl WalkerV1<'_> {
                             container: self.container,
                             membership: self.membership,
                             turn_scoped: self.turn_scoped,
+                            announcing: self.announcing,
                         };
                         if let Some((id, _)) = (self.resolve)(r)? {
                             *item = Value::from(id);
@@ -243,6 +257,7 @@ impl WalkerV1<'_> {
                     container: self.container,
                     membership: self.membership,
                     turn_scoped: self.turn_scoped,
+                    announcing: self.announcing,
                 };
                 if let Some((id, _)) = (self.resolve)(r)? {
                     *value = Value::from(id);
@@ -367,6 +382,7 @@ impl WalkerV1<'_> {
                 container: self.container,
                 membership: self.membership,
                 turn_scoped: self.turn_scoped,
+                announcing: self.announcing,
             };
             if let Some((id, new_gens)) = (self.resolve)(r)? {
                 if let Some(k) = k {
@@ -396,6 +412,7 @@ impl WalkerV1<'_> {
                 container: self.container,
                 membership: self.membership,
                 turn_scoped: self.turn_scoped,
+                announcing: self.announcing,
             };
             let mut inner = map.remove(&k).expect("present");
             self.walk(&mut inner, class, parent)?;
