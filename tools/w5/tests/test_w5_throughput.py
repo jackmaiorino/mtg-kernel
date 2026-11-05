@@ -186,11 +186,34 @@ class ThroughputTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '5'}):
             passed, record, out = self.run_throughput(path, 'C', 'tn', 8)
         self.assertFalse(passed)
-        self.assertIn("phase tn-c-p1: ['tn-c-p1-s0'] exited {'tn-c-p1-s0': 8} before 8 updates", record['why'])
+        self.assertIn("phase tn-c-p1: ['tn-c-p1-s0'] exited {'tn-c-p1-s0': 8} before every box completed 8 updates",
+                      record['why'])
         self.assertEqual(record['phases'], [])
         self.assertTrue(Path(f'{out}.failed.json').exists())
         later = json.loads((self.node.root / 'chains' / 'tn-c-p4-s0' / 'chain.json').read_text())
         self.assertEqual(later['segments'], [])  # no later phase ran
+
+    def test_an_exit_after_n_while_a_peer_is_short_ends_the_phase(self):
+        # A box that exits past its own N while another is still short would leave a handoff outage freezing it.
+        class Proc:
+            def __init__(self, code):
+                self.returncode = code
+
+            def poll(self):
+                return self.returncode
+        procs = {'a': Proc(None), 'b': Proc(None)}
+        ticks = []
+
+        def sleep(_):
+            ticks.append(1)
+            if len(ticks) == 2:
+                procs['a'].returncode = 3  # an OOM close after boundary N
+        with mock.patch.object(chains, 'cycle'), mock.patch.object(chains, 'sample_memory'),                 mock.patch.object(chains, 'reached', lambda plan, n, u: n == 'a'),                 mock.patch.object(chains, 'end_phase', return_value=[]) as ended,                 mock.patch.object(chains.time, 'sleep', sleep):
+            with self.assertRaisesRegex(chains.Stop, r"\['a'\] exited \{'a': 3\} before every box"):
+                chains.run_phase('plan', {'chains': {'a': {}, 'b': {}}}, 8, 60, spawn=lambda p, n, w: procs[n],
+                                 launcher=lambda p: None)
+        self.assertEqual(len(ticks), 2)
+        ended.assert_called_once()
 
     def test_refusals_before_any_chain(self):
         path, _ = self.target()

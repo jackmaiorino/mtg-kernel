@@ -103,7 +103,7 @@ Its chains (`<label>-<arm>-p<count>-s<slot>`, slots 0 to count - 1, all on one s
 `w5/throughput`) run fresh through `chains.py run` in qualification mode, under this command's own supervise
 cycles without fills; the node runs whole until every box has completed N updates (so each box's window has every
 other box busy), then every chain ends at once (STOP files, then w5box kills: a chain ended alone would leave a
-handoff outage freezing the rest), and a chain that exits short of N fails the phase.
+handoff outage freezing the rest), and a chain that exits before every box is done fails the phase.
 Per box: updates N, the ledger at boundary N (in-box CPU), the in-box wall from the instance's start to boundary
 N less node-frozen intervals (a phase's first chains start held until every box is occupied), and identity rows
 (the after-state hash of every boundary 1 to N), which must be equal in every box of every phase. The record also
@@ -2023,8 +2023,8 @@ def end_phase(plan, procs, poll):
 def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=launch_phase, poll=THROUGHPUT_POLL):
     """One phase: a guard verdict, the launch hold and every chain started; the node runs whole until every box has
     completed N updates (so each box's window has every other box busy), then all chains end together. Supervise
-    cycles run throughout without fills (a qualification box holds no filler). A chain that exits short of N fails
-    the phase."""
+    cycles run throughout without fills (a qualification box holds no filler). A chain that exits before every box
+    is done fails the phase."""
     names = sorted(plan['chains'])
     cycle(plan, plan_path, fills=False)  # a guard verdict and admission ceilings before any driver starts
     launcher(plan_path)
@@ -2036,7 +2036,9 @@ def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=laun
             done = {n for n in names if reached(plan, n, updates)}
             if len(done) == len(names):
                 break
-            gone = sorted(n for n in names if n not in done and procs[n].poll() is not None)
+            # Any exit before every box is done ends the phase: the exited box's handoff outage freezes its peers
+            # (one that exits after its own N included).
+            gone = sorted(n for n in names if procs[n].poll() is not None)
             if gone:
                 short = {n: procs[n].returncode for n in gone}
                 break
@@ -2049,7 +2051,7 @@ def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=laun
         running = end_phase(plan, procs, poll)
     exits = {n: p.returncode for n, p in procs.items()}
     if short:
-        raise Stop(f'{sorted(short)} exited {short} before {updates} updates')
+        raise Stop(f'{sorted(short)} exited {short} before every box completed {updates} updates')
     require(not running, f'{running} did not end within {THROUGHPUT_STOP_GRACE:g} s of the kill')
     boxes = [box_measurement(plan, n, updates, box_threads(plan, plan['chains'][n]['slot']), peaks.get(n))
              for n in names]
