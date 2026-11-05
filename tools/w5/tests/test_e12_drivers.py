@@ -229,6 +229,39 @@ class DumpCompareTests(unittest.TestCase):
         with self.assertRaises(lp.ParityError):  # the scorer must load the dump's source
             self.scorer_case(source={"kind": "checkpoint", "checkpoint": "ckpt.bin", "temperature": 0.5})
 
+    def test_scorer_check_refuses_a_failing_scorer(self):
+        fake = self.root / "failing_scorer.py"
+        fake.write_text(FAKE_SCORER + "\nsys.exit(17)\n")
+        self.dump("d")
+        config = self.root / "bot.scorer.json"
+        config.write_text(json.dumps({"source": json.loads(self.source.read_text()), "selection": "sampled-wide-v1"}))
+        with self.assertRaises(lp.ParityError):
+            lp.scorer_check(self.root / "d", self.jobs, Path(sys.executable), config, [str(fake)])
+
+    def test_decode_request_reads_every_field_in_order_with_signs(self):
+        objects, edges, actions, refs, state = 1, 1, 2, 1, 2
+        f = lambda *xs: struct.pack(f"<{len(xs)}f", *xs)  # noqa: E731
+        i = lambda *xs: struct.pack(f"<{len(xs)}i", *xs)  # noqa: E731
+        block = (struct.pack("<8I", objects, edges, actions, refs, state, 1, actions, 1)
+                 + f(-0.0, 2.5) + f(*([-1.5] * 98)) + i(-1) + i(-2) + i(3)
+                 + f(*([0.75] * 41)) + i(0) + i(-1)
+                 + f(*([1.0] * 195), *([-2.0] * 195)) + f(*([0.5] * 25)) + i(9) + i(1) + i(-1)
+                 + f(0.25, -0.125) + f(-0.5))
+        tensor, logits, value, actor = lp.decode_request(block)
+        bits = lambda x: struct.unpack("<I", struct.pack("<f", x))[0]  # noqa: E731
+        self.assertEqual(tensor["state"], [0x80000000, bits(2.5)])
+        self.assertEqual(tensor["object_features"], [bits(-1.5)] * 98)
+        self.assertEqual((tensor["object_card_ids"], tensor["object_groups"], tensor["object_node_ids"]),
+                         ([-1], [-2], [3]))
+        self.assertEqual(tensor["edge_features"], [bits(0.75)] * 41)
+        self.assertEqual((tensor["edge_source_indices"], tensor["edge_target_indices"]), ([0], [-1]))
+        self.assertEqual(tensor["action_features"], [bits(1.0)] * 195 + [bits(-2.0)] * 195)
+        self.assertEqual(tensor["action_ref_features"], [bits(0.5)] * 25)
+        self.assertEqual((tensor["action_ref_card_ids"], tensor["action_ref_action_indices"],
+                          tensor["action_ref_node_indices"]), ([9], [1], [-1]))
+        self.assertEqual((logits, value, actor), ([bits(0.25), bits(-0.125)], bits(-0.5), 1))
+        self.assertEqual(len(tensor), len(lp.TENSOR_FIELDS))
+
     def test_scorer_check_cli(self):
         import os
         self.dump("d")

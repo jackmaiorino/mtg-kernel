@@ -342,6 +342,7 @@ def scorer_check(dump_dir: Path, jobs: Path, scorer: Path, config: Path, scorer_
         errors.seek(0)
         stderr = errors.read().decode("utf-8", "replace")
         errors.close()
+    require(proc.returncode == 0, f"scorer exited with {proc.returncode}: {stderr[-2000:]}")
     require(decisions == record["decisions"], "the scorer did not see every dumped decision")
     checks = {"logits_bit_identical": logit_mismatches == 0, "values_bit_identical": value_mismatches == 0}
     return {"schema": SCORER_RECEIPT_SCHEMA, "pass": all(checks.values()), "checks": checks, "decisions": decisions,
