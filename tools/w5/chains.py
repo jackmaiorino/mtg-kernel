@@ -64,10 +64,10 @@ cut with the container tool, kept open until R_i is final or 30 GB of snapshots)
 once), stop at the X cap (END `x-cap`, kill; enforced before X's first update too); once C ends (END) and its
 instance closes, R_i = its final closed ledger (at its wall) or the ledger at its last valid boundary (an early
 end): a paused X resumes with `{"stop_at_usec": R_i}`, a running X without that stop is paused and resumed with
-it, an X past R_i ends (END `reached-r`, kill). When both chains have ended and no instance is open: endpoints (C: its last valid boundary; X: the first valid boundary at or past R_i, else
-its last valid one, labelled under budget; a failed or lead-ended X: its recorded last valid boundary, under
-budget), `retention.select`, a replay where the state is gone (run detached by
-`_replay`, then `verify-replay`), the PRUNE manifest (look checkpoints kept), and the pruned files moved to the
+it, an X past R_i ends (END `reached-r`, kill). When both chains have ended and no instance is open: endpoints
+(C: its last valid boundary; X: the first valid boundary at or past R_i, else its last valid one, labelled under
+budget; a failed or lead-ended X: its recorded last valid boundary, under budget), `retention.select`, a replay
+where the state is gone (run detached by `_replay`, then `verify-replay`), the PRUNE manifest (look checkpoints kept), and the pruned files moved to the
 same-volume hold folder `<root>/hold` with a move manifest, purged after `hold_days`. Then the rolling retention of
 running chains (`retention.plan` / `apply`); kills retried for ended chains still running; occupancy (a box whose
 measured chain has ended, and every filler box, holds the frozen filler while the stage runs, through `w5box.py
