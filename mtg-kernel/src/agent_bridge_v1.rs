@@ -1374,7 +1374,17 @@ fn flat_v4_extension_v1(
     }
     let encoded = encode_flat_v4_tensor_v1(lockstep.fast_session(), flat_v4_scratch)
         .map_err(|error| error.halt_reason())?;
-    let value = flat_v4_extension_value_v1(&encoded, &rows).map_err(|error| error.halt_reason())?;
+    let mut value =
+        flat_v4_extension_value_v1(&encoded, &rows).map_err(|error| error.halt_reason())?;
+    // Amendment 43.9 (a): with the infoset producer on, the committed point
+    // also carries its canonical observation's digest without the opponent's
+    // known hand (spellbench G6 compares it with the entrant's walk).
+    if infoset.is_some() {
+        value = crate::agent_bridge_flat_v4_encode::with_known_hand_masked_observation_v1(
+            value, &encoded,
+        )
+        .map_err(|error| error.halt_reason())?;
+    }
     *flat_v4_rows = rows;
     if let Some(infoset) = infoset.as_mut() {
         infoset_extension_v1(lockstep.fast_session(), decision, infoset)?;

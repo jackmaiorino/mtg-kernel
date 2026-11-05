@@ -74,6 +74,9 @@ pub(crate) struct EncodedFlatV4V1 {
     step: u64,
     /// The encoded decision's actor in protocol spelling, "p0" or "p1".
     acting_seat: &'static str,
+    /// The canonical observation JSON the tensorizer wrote for it (the input
+    /// of the tensor's 96 state-digest values).
+    canonical_observation: Vec<u8>,
 }
 
 /// Encodes the current decision of `fast` with the evaluation encoder and
@@ -134,14 +137,59 @@ pub(crate) fn encode_flat_v4_tensor_v1(
         &decision.extensions,
     );
     let mut tensor = NativeFlatDecisionTensorV4::default();
-    NativeFlatTensorizerV4::default()
+    let mut tensorizer = NativeFlatTensorizerV4::default();
+    tensorizer
         .fill(view, &mut tensor)
         .map_err(|error| FlatV4EncodeErrorV1::Tensorize(format!("{error:?}")))?;
     Ok(EncodedFlatV4V1 {
         tensor,
         step: expected.step,
         acting_seat: seat_str_v1(expected.acting_player),
+        canonical_observation: tensorizer.canonical_observation_v1().to_vec(),
     })
+}
+
+/// The `x_kernel_flat_v4` member that carries
+/// [`known_hand_masked_observation_sha256_v1`] (amendment 43.9 (a)).
+pub(crate) const KNOWN_HAND_MASKED_OBSERVATION_FIELD_V1: &str =
+    "known_hand_masked_observation_sha256";
+
+/// Amendment 43.9 (a): the sha256 of the decision's canonical observation
+/// (the JSON whose digest fills the tensor's 96 state-digest values) with
+/// the opponent's known hand removed: `known_hand_cards[1]`, the acting
+/// seat's known cards of the opponent's hand, becomes empty; every other
+/// member, the own known-hand row and the hand counts included, stays.
+/// Spellbench's G6 accepts a walked point whose full tensor digest differs
+/// from the committed one only when this digest and the tensor digest
+/// without the known opponent hand both agree and the known hands differ.
+pub(crate) fn known_hand_masked_observation_sha256_v1(
+    encoded: &EncodedFlatV4V1,
+) -> Result<String, FlatV4EncodeErrorV1> {
+    use sha2::{Digest, Sha256};
+    let bad = |what: &str| FlatV4EncodeErrorV1::Encode(format!("masked observation: {what}"));
+    let mut observation: Value =
+        serde_json::from_slice(&encoded.canonical_observation).map_err(|_| bad("json"))?;
+    let rows = observation
+        .get_mut("known_hand_cards")
+        .and_then(Value::as_array_mut)
+        .filter(|rows| rows.len() == 2 && rows.iter().all(Value::is_array))
+        .ok_or_else(|| bad("known_hand_cards"))?;
+    rows[1] = Value::Array(Vec::new());
+    let bytes = serde_json::to_vec(&observation).map_err(|_| bad("serialize"))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+/// Adds [`known_hand_masked_observation_sha256_v1`] to an `x_kernel_flat_v4`
+/// value built from the same `encoded` decision.
+pub(crate) fn with_known_hand_masked_observation_v1(
+    mut value: Value,
+    encoded: &EncodedFlatV4V1,
+) -> Result<Value, FlatV4EncodeErrorV1> {
+    let digest = known_hand_masked_observation_sha256_v1(encoded)?;
+    if let Value::Object(m) = &mut value {
+        m.insert(KNOWN_HAND_MASKED_OBSERVATION_FIELD_V1.into(), Value::String(digest));
+    }
+    Ok(value)
 }
 
 fn bits(values: &[f32]) -> Vec<u32> {
@@ -272,6 +320,94 @@ mod tests {
             decisions_per_seat.iter().all(|&count| count > 0),
             "decisions per seat (p0, p1): {decisions_per_seat:?}"
         );
+    }
+
+    /// Amendment 43.9 (a): the masked observation digest ignores the
+    /// opponent's known hand and nothing else. At live decisions of every
+    /// deck: adding or changing a known opponent hand card keeps it; a
+    /// flipped subtype id, a change to the own known-hand row, a hand count
+    /// or a life total changes it; the field is the bridge's member.
+    #[test]
+    fn masked_observation_digest_ignores_only_the_known_opponent_hand() {
+        fn first_subtypes(v: &mut Value) -> Option<&mut Vec<Value>> {
+            match v {
+                Value::Object(m) => {
+                    if m.get("effective_subtype_ids")
+                        .and_then(Value::as_array)
+                        .is_some_and(|a| !a.is_empty())
+                    {
+                        return m.get_mut("effective_subtype_ids").and_then(Value::as_array_mut);
+                    }
+                    m.values_mut().find_map(first_subtypes)
+                }
+                Value::Array(a) => a.iter_mut().find_map(first_subtypes),
+                _ => None,
+            }
+        }
+        let digest = |encoded: &EncodedFlatV4V1, o: &Value| {
+            let mut e = encoded.clone();
+            e.canonical_observation = serde_json::to_vec(o).unwrap();
+            known_hand_masked_observation_sha256_v1(&e).unwrap()
+        };
+        let mut scratch = FlatV4EncodeScratchV1::default();
+        let (mut checked, mut flipped) = (0, 0);
+        for (index, deck) in DECKS.iter().enumerate() {
+            let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+                700 + index as u64,
+                17 + index as u64,
+                400,
+                40_000,
+                [deck.to_string(), deck.to_string()],
+            )
+            .unwrap();
+            for turn in 0..60_u64 {
+                let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                    break;
+                };
+                let encoded = encode_flat_v4_tensor_v1(&session, &mut scratch).unwrap();
+                let base = known_hand_masked_observation_sha256_v1(&encoded).unwrap();
+                let rows: Vec<u32> = (0..decision.legal_action_count).collect();
+                let value = with_known_hand_masked_observation_v1(
+                    flat_v4_extension_value_v1(&encoded, &rows).unwrap(),
+                    &encoded,
+                )
+                .unwrap();
+                assert_eq!(value[KNOWN_HAND_MASKED_OBSERVATION_FIELD_V1], json!(base));
+                let observation: Value =
+                    serde_json::from_slice(&encoded.canonical_observation).unwrap();
+                assert_eq!(digest(&encoded, &observation), base, "{deck} {turn}");
+                let card = json!({"stable": {"card_db_id": 7, "controller": "opponent",
+                                             "owner": "opponent", "zone": "hand"}});
+                let mut known = observation.clone();
+                known["known_hand_cards"][1] = json!([card.clone(), card.clone()]);
+                assert_eq!(digest(&encoded, &known), base, "{deck} {turn}: known hand");
+                let mut own = observation.clone();
+                own["known_hand_cards"][0]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(card.clone());
+                assert_ne!(digest(&encoded, &own), base, "{deck} {turn}: own row");
+                let mut life = observation.clone();
+                let total = life["projection"]["life_totals"][1].as_i64().unwrap();
+                life["projection"]["life_totals"][1] = json!(total + 1);
+                assert_ne!(digest(&encoded, &life), base, "{deck} {turn}: life");
+                let mut count = observation.clone();
+                let n = count["projection"]["hand_counts"][1].as_u64().unwrap();
+                count["projection"]["hand_counts"][1] = json!(n + 1);
+                assert_ne!(digest(&encoded, &count), base, "{deck} {turn}: hand count");
+                let mut subtype = observation.clone();
+                if let Some(ids) = first_subtypes(&mut subtype) {
+                    let id = ids[0].as_u64().unwrap();
+                    ids[0] = json!(id + 1);
+                    assert_ne!(digest(&encoded, &subtype), base, "{deck} {turn}: subtype");
+                    flipped += 1;
+                }
+                checked += 1;
+                let row = (turn % u64::from(decision.legal_action_count)) as u32;
+                session.step(decision.episode_id, decision.step, row).unwrap();
+            }
+        }
+        assert!(checked >= 200 && flipped >= 50, "checked {checked}, flipped {flipped}");
     }
 
     fn max_integer(value: &Value) -> u64 {
