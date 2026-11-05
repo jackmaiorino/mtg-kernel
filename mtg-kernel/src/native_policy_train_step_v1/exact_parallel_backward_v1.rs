@@ -242,13 +242,13 @@ fn backward_dims_v1<D: NetDimsV1>(
     // The sequential arm's coefficients and visiting order.
     let mut visits = Vec::new();
     for group in groups.iter().rev() {
-        let d_joint_log_probability = -group.advantage / group_count;
         let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
         for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
             visits.push(VisitV1 {
                 index: visits.len(),
                 selected,
-                d_joint_log_probability,
+                d_joint_log_probability: group
+                    .d_joint_log_probability_v1(substep_index, group_count),
                 d_value: if substep_index == 0 { d_value } else { 0.0 },
             });
         }

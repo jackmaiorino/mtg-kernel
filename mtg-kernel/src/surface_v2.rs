@@ -438,6 +438,22 @@ impl SuppressionCounts {
     }
 }
 
+/// The surface's id-free scalar state (public: derived from public actions
+/// and public counts), carried by the W1 information-set payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarnessSurfaceScalarsV1 {
+    pub combat_priority_spent: [bool; 2],
+    pub combat_priority_round_seen: Option<u64>,
+    pub combat_priority_stack_len_seen: usize,
+    pub combat_priority_mana_count_seen: u64,
+    pub combat_round_opening_mana_count: u64,
+    pub round_opening_stack_len: usize,
+    pub stack_len_round_seen: Option<u64>,
+    pub last_seen_stack_len: Option<usize>,
+    pub mana_count_at_last_stack_change: u64,
+}
+
 /// See the module doc. Structurally identical to `HarnessSurfaceV1` (same
 /// four suppression rules, same blockers-reshape bookkeeping) but a
 /// separate type, per the H2 contract.
@@ -712,6 +728,75 @@ pub enum PriorityModeV1 {
 }
 
 impl HarnessSurfaceV2 {
+    /// The id-free throttle and mana-activity context the W1 export carries
+    /// (`infoset_v1`); None while a reshape or exemption that names objects
+    /// is active.
+    pub(crate) fn infoset_context_v1(&self) -> Option<HarnessSurfaceScalarsV1> {
+        if self.blockers.is_some() || self.discard.is_some() {
+            return None;
+        }
+        self.infoset_scalars_with_reshapes_v1()
+    }
+
+    /// As `infoset_context_v1`, while a blocker or discard reshape may be
+    /// active: the payload's combat and discard records (amendment 43.1)
+    /// carry those reshapes themselves.
+    pub(crate) fn infoset_scalars_with_reshapes_v1(&self) -> Option<HarnessSurfaceScalarsV1> {
+        if self.optional_cost.is_some() || self.madness_cast_reprompt_exemption.is_some() {
+            return None;
+        }
+        Some(HarnessSurfaceScalarsV1 {
+            combat_priority_spent: self.combat_priority_spent,
+            combat_priority_round_seen: self.combat_priority_round_seen,
+            combat_priority_stack_len_seen: self.combat_priority_stack_len_seen,
+            combat_priority_mana_count_seen: self.combat_priority_mana_count_seen,
+            combat_round_opening_mana_count: self.combat_round_opening_mana_count,
+            round_opening_stack_len: self.round_opening_stack_len,
+            stack_len_round_seen: self.stack_len_round_seen,
+            last_seen_stack_len: self.last_seen_stack_len,
+            mana_count_at_last_stack_change: self.mana_count_at_last_stack_change,
+        })
+    }
+
+    /// The blocker reshape a carried combat context restores (amendment
+    /// 43.1); the reshape's order and progress are the live surface's.
+    pub(crate) fn set_blockers_reshape_v1(&mut self, b: Option<&BlockersReshapePublicV2>) {
+        self.blockers = b.map(|b| BlockersReshape {
+            remaining: b.remaining.iter().cloned().collect(),
+            accumulated: b.accumulated.clone(),
+            current_attacker: b.current_attacker,
+        });
+    }
+
+    /// The discard reshape a carried discard record restores (amendment
+    /// 43.1 part 2): the remaining choices come from the imported state.
+    pub(crate) fn set_discard_reshape_v1(
+        &mut self,
+        player: PlayerId,
+        chosen: Vec<ObjectId>,
+        remaining_choices: Vec<ObjectId>,
+        remaining_needed: u32,
+    ) {
+        self.discard = Some(DiscardReshape {
+            player,
+            remaining_choices,
+            chosen,
+            remaining_needed,
+        });
+    }
+
+    pub(crate) fn set_infoset_context_v1(&mut self, c: HarnessSurfaceScalarsV1) {
+        self.combat_priority_spent = c.combat_priority_spent;
+        self.combat_priority_round_seen = c.combat_priority_round_seen;
+        self.combat_priority_stack_len_seen = c.combat_priority_stack_len_seen;
+        self.combat_priority_mana_count_seen = c.combat_priority_mana_count_seen;
+        self.combat_round_opening_mana_count = c.combat_round_opening_mana_count;
+        self.round_opening_stack_len = c.round_opening_stack_len;
+        self.stack_len_round_seen = c.stack_len_round_seen;
+        self.last_seen_stack_len = c.last_seen_stack_len;
+        self.mana_count_at_last_stack_change = c.mana_count_at_last_stack_change;
+    }
+
     pub fn new() -> HarnessSurfaceV2 {
         Self::new_with_suppression_audit_mode(SuppressionAuditMode::Full)
     }

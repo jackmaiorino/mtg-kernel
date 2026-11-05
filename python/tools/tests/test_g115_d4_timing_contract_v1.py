@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g115_d4_timing_contract_v1 import bind_placement, validate_recipe
+from g115_d4_timing_contract_v1 import bind_placement, pinned_checkpoint, validate_recipe
 from windows_owned_child_policy_v1 import configure_owned_child
 
 
@@ -87,6 +87,19 @@ class OwnedChildTests(unittest.TestCase):
                 configure_owned_child(child, sys.executable)
         finally:
             child.communicate(b"", timeout=10)
+
+
+class CheckpointPinTests(unittest.TestCase):
+    def test_a_container_reads_as_the_v1_file_it_came_from_and_a_changed_pin_is_refused(self):
+        import hashlib
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "checkpoint_container_v1"
+        pins = {}
+        for name in ("checkpoint-v1.json", "checkpoint.ckpt"):
+            path = fixtures / name
+            pins[name] = dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        self.assertEqual(pinned_checkpoint(pins["checkpoint.ckpt"]), pinned_checkpoint(pins["checkpoint-v1.json"]))
+        with self.assertRaises(ValueError):
+            pinned_checkpoint(dict(pins["checkpoint.ckpt"], sha256="0" * 64))
 
 
 if __name__ == "__main__":

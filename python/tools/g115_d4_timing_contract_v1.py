@@ -17,6 +17,15 @@ def pinned_json(item):
     return json.loads(raw)
 
 
+def pinned_checkpoint(item):
+    """`pinned_json` for a checkpoint pin: v1 JSON or a checkpoint container (the default record format)."""
+    raw = Path(item["path"]).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != item["sha256"]:
+        raise ValueError("timing input differs from SHA256 pin")
+    import checkpoint_container_v1
+    return checkpoint_container_v1.document_from_bytes(raw)
+
+
 def validate_recipe(config):
     if config.get("schema") != "mtg-kernel-native-expanded-training-run/v1":
         raise ValueError("only the expanded-training recipe is supported")

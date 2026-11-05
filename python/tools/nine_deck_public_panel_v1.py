@@ -42,6 +42,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import checkpoint_container_v1
 import host_reservation_v1 as reservations
 import nine_deck_baseline_v1 as ndb
 
@@ -331,7 +332,7 @@ def public_checkpoint_metadata(source):
     # Fresh ordinary import descriptors have these real loader dependencies.
     # Their checkpoints and parameter objects are opaque identity bytes.
     check_request_pins([imported[key] for key in ("initialization", "parameters") if key in imported])
-    initial_age = (json.loads(checked(parent["checkpoint"]).read_bytes())["adam_step"]
+    initial_age = (checkpoint_container_v1.read_document(checked(parent["checkpoint"]))["adam_step"]
                    if parent.get("checkpoint") is not None else 0)
     ppo = config.get("ppo")
     steps = checkpoint["next_update"] * (ppo["epochs"]*ppo["minibatches"] if ppo is not None else 1)
@@ -633,11 +634,45 @@ def candidate_layout(source: dict) -> str:
                       play_import=config["source"]["play_import"]["sha256"],
                       parameters=[(row["name"], row["shape"]) for row in optimizer["parameters"]])
         return sha256_bytes(json.dumps(layout, sort_keys=True).encode())
-    checkpoint = json.loads(checked(source["checkpoint"]).read_text(encoding="utf-8"))
+    if source.get("s_learner") is not None:
+        return s_candidate_layout(source)
+    checkpoint = checkpoint_container_v1.read_document(checked(source["checkpoint"]))
     layout = {key: checkpoint[key] for key in ("schema", "source_import", "feature_contract_digest",
                                                "feature_encoding_digest", "card_db_hash")}
     layout["parameters"] = [(row["name"], row["shape"]) for row in checkpoint["parameters"]]
     layout["play_import"] = source["play_import"]["sha256"]
+    return sha256_bytes(json.dumps(layout, sort_keys=True).encode())
+
+
+S_LEARNER_SOURCE = "w5-s-learner/v1"
+S_LEARNER_CHECKPOINT = "w5-s-learner-checkpoint/v1"
+
+
+def s_candidate_layout(source: dict) -> str:
+    """A native S candidate's layout (W5 XS): the S member schema, the shell import, the feature transfer, and
+    S's architecture, config and parameter shapes from its train-state container (the checkpoint record's state,
+    or the initial state for a fresh source), never its weights. The same for every checkpoint of a lineage. A
+    checkpoint record must belong to the source (schema, architecture, initial state, feature digests)."""
+    member = source["s_learner"]
+    require(member.get("schema") == S_LEARNER_SOURCE, "unknown S learner source schema")
+    transfer = source["feature_transfer"]
+    state = member["initial"]
+    if source.get("checkpoint") is not None:
+        record = json.loads(checked(source["checkpoint"]).read_bytes())
+        require(record.get("schema") == S_LEARNER_CHECKPOINT
+                and record.get("initial_sha256") == member["initial"]["sha256"]
+                and record.get("feature_contract_digest") == transfer["expected_feature_contract_digest"]
+                and record.get("feature_encoding_digest") == transfer["expected_feature_encoding_digest"],
+                "S checkpoint record does not belong to this source")
+        state = record["state"]
+    document = checkpoint_container_v1.read_s_document(checked(state))
+    if source.get("checkpoint") is not None:
+        require(document["state_sha256"] == record["state_sha256"] and document["adam_step"] == record["adam_step"]
+                and document["architecture"] == record["architecture"], "S checkpoint record and container differ")
+    layout = {"kind": "s_learner", "schema": member["schema"], "architecture": document["architecture"],
+              "config": document["config"], "play_import": source["play_import"]["sha256"],
+              "feature_transfer": transfer,
+              "parameters": [(row["name"], row["shape"]) for row in document["parameters"]]}
     return sha256_bytes(json.dumps(layout, sort_keys=True).encode())
 
 

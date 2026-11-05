@@ -255,7 +255,7 @@ fn shared_query_preserves_cancellation_and_sequence_stops_on_lower_boundary_both
                 .engine
                 .event_history
                 .push(CommittedEvent::DrakeJournalV1 {
-                    record: Box::new(crate::drake_hatcher_v1::custody::RecordV1 {
+                    record: std::sync::Arc::new(crate::drake_hatcher_v1::custody::RecordV1 {
                         index,
                         value: crate::drake_hatcher_v1::custody::JournalV1::Enclosing {
                             start: index,

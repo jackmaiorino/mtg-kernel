@@ -4,13 +4,14 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from unittest.mock import patch
 
 import g_references_campaign_v1 as driver
@@ -78,6 +79,28 @@ class PackageTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.fixture = Fixture(self.temp.name)
+
+    def test_a_superseded_root_stays_an_accounting_root(self):
+        """QUALIFICATION-RESTART.md: the old campaign root on the volume counts until it is archived and pruned."""
+        out = Path(self.temp.name) / "package-q2"
+        gcloud.package(self.fixture.spec(campaign_root=ROOT + "-q2", superseded_campaign_roots=[ROOT]), out)
+        campaign = json.loads((out / "campaign.json").read_text())
+        self.assertEqual(campaign["storage"]["accounting_roots"],
+                         [f"/workspace/{ROOT}-q2/campaign", f"/workspace/{ROOT}/campaign"])
+        self.assertTrue(campaign["roots"]["checkpoints"].startswith(f"/workspace/{ROOT}-q2/campaign/"))
+        for bad in ([ROOT + "-q2"], [ROOT, ROOT], ["Bad Name"], ROOT, [{}], [[]]):
+            with self.assertRaisesRegex(ValueError, "superseded campaign roots"):
+                gcloud.package(self.fixture.spec(campaign_root=ROOT + "-q2", superseded_campaign_roots=bad),
+                               Path(self.temp.name) / f"bad-{time.monotonic_ns()}")
+
+    def test_exports_name_campaign_files_for_the_lease_to_copy_home(self):
+        out = Path(self.temp.name) / "package-exports"
+        manifest = gcloud.package(self.fixture.spec(exports=["checkpoints/G1/block-002.json"]), out)
+        self.assertEqual(manifest["exports"], [f"/workspace/{ROOT}/campaign/checkpoints/G1/block-002.json"])
+        self.assertNotIn("exports", gcloud.package(self.fixture.spec(), Path(self.temp.name) / "plain"))
+        for bad in (["../escape.json"], ["/abs.json"], ["a.json", "a.json"], [""], "a.json", [1]):
+            with self.assertRaisesRegex(ValueError, "exports are distinct"):
+                gcloud.package(self.fixture.spec(exports=bad), Path(self.temp.name) / f"bad-{time.monotonic_ns()}")
 
     def test_qualification_package(self):
         out = Path(self.temp.name) / "package"
@@ -176,6 +199,8 @@ class FakePod:
             return self.granted
         if program is cloud.POD_LAUNCH:
             return {"pid": 7, "start_ticks": 1, "token": "t", "epoch": 1.0}
+        if program is gcloud.POD_MARKER_PROBE:  # the release-marker probe before the launch (#471)
+            return {"ok": True}
         raise AssertionError(program.split("\n", 1)[0])
 
 
@@ -290,6 +315,196 @@ class LeaseTests(unittest.TestCase):
     def test_recovery_includes_doses_and_qualification(self):
         self.assertIn('"doses", "qualification"', gcloud.POD_RECOVER)
 
+    def test_a_qualification_recovery_brings_the_records_home_without_the_bulk(self):
+        """Lease 20261101-2302's full recovery ran out of the guard's window; a qualification lease's recovery
+        takes the deciding records (the whole qualification folder, this lease's states, exposure and doses)
+        and leaves payload folders and oversized files on the volume, listed."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            campaign, control, guard, locks = (root / name for name in ("campaign", "control", "guard", "locks"))
+            for folder in (control, guard, locks):
+                folder.mkdir()
+            old, now = time.time() - 7200, time.time()
+
+            def put(rel, data=b"{}", mtime=now):
+                path = campaign / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                os.utime(path, (mtime, mtime))
+            put("state/G1.json"); put("state/events.jsonl", mtime=old)            # top-level state: always
+            put("state/old/x.json", mtime=old)                                     # nested and old: no
+            put("exposure/G1-b001-episodes.jsonl"); put("exposure/G1-b000-old.jsonl", mtime=old)
+            put("doses/d.json")
+            put("qualification/stages/item1.json", mtime=old)                      # an earlier lease's stage
+            put("qualification/events.jsonl")
+            put("qualification/scratch/s/state/G1.json")
+            put("qualification/scratch/s/checkpoints/G1/block-002.json")          # payload folders: left
+            put("qualification/scratch/s/native/G1/x.json")
+            put("qualification/empty-pool/trials/w1/cold/a.zip")
+            put("qualification/big.json", b"x" * (gcloud.QUALIFICATION_RECOVERY_FILE_LIMIT + 1))
+            put("checkpoints/G1/block-001.json"); put("retained/G1/b01/r.json")  # campaign bulk: stays
+            (guard / "guard.json").write_text("{}")
+            args = {"control": str(control), "campaign": str(campaign), "guard": str(guard), "locks": str(locks),
+                    "since": now - 60, "skip_dirs": list(gcloud.QUALIFICATION_RECOVERY_SKIP_DIRS),
+                    "file_limit_bytes": gcloud.QUALIFICATION_RECOVERY_FILE_LIMIT}
+            code = cloud.PRELUDE % json.dumps(args) + gcloud.POD_RECOVER_QUALIFICATION
+            done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertEqual(done.returncode, 0, done.stderr.decode())
+            packed = json.loads(done.stdout.decode().splitlines()[-1])
+            with tarfile.open(control / "results.tar.gz") as tar:
+                names = set(tar.getnames())
+                listed = json.loads(tar.extractfile("RECOVERED.json").read())
+        self.assertEqual(set(listed), names - {"RECOVERED.json"})
+        self.assertEqual(packed["files"], len(listed))
+        self.assertEqual({name for name in names if name.startswith("campaign/")}, {
+            "campaign/state/G1.json", "campaign/state/events.jsonl", "campaign/exposure/G1-b001-episodes.jsonl",
+            "campaign/doses/d.json", "campaign/qualification/stages/item1.json",
+            "campaign/qualification/events.jsonl", "campaign/qualification/scratch/s/state/G1.json"})
+        self.assertIn("guard/guard.json", names)
+        self.assertEqual(packed["left_out_over_limit"],
+                         [{"path": "campaign/qualification/big.json",
+                           "bytes": gcloud.QUALIFICATION_RECOVERY_FILE_LIMIT + 1}])
+        self.assertEqual(packed["skipped_dirs"], ["campaign/qualification/empty-pool/trials/w1/cold",
+                                                  "campaign/qualification/scratch/s/checkpoints",
+                                                  "campaign/qualification/scratch/s/native"])
+
+    # Injected before a recovery program: one pathlib or os call fails with ENXIO for one name, as the read on
+    # lease 20261103-1211 did; the program itself is unchanged.
+    ENXIO_FAULTS = {
+        "read": ("_pathlib.Path", "read_bytes", "lost.json"),
+        "stat": ("_pathlib.Path", "stat", "lost.json"),
+        "tree root": ("_pathlib.Path", "is_dir", "doses"),
+        "folder listing": ("_os", "scandir", "lost"),
+    }
+
+    @staticmethod
+    def fault(owner, attribute, name):
+        return (
+            "import errno as _errno, os as _os, pathlib as _pathlib\n"
+            f"_owner = {owner}\n"
+            f"_real = _owner.{attribute}\n"
+            "def _fault(*args, **kwargs):\n"
+            "    target = args[0] if args else '.'\n"
+            f"    if _os.path.basename(_os.fspath(target)) == {name!r}:\n"
+            "        raise OSError(_errno.ENXIO, 'No such device or address', _os.fspath(target))\n"
+            "    return _real(*args, **kwargs)\n"
+            f"_owner.{attribute} = _fault\n")
+
+    def recover_with(self, program, mode, injected):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            campaign, control, guard, locks = (root / name for name in ("campaign", "control", "guard", "locks"))
+            for folder in (control, guard, locks):
+                folder.mkdir()
+            for rel in ("state/G1.json", "doses/d.json", "qualification/events.jsonl", "qualification/lost.json",
+                        "qualification/lost/x.json", "qualification/stages/item1.json"):
+                path = campaign / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"{}")
+            args = {"control": str(control), "campaign": str(campaign), "guard": str(guard), "locks": str(locks),
+                    "since": time.time() - 60}
+            if mode == "qualification":
+                args.update(skip_dirs=list(gcloud.QUALIFICATION_RECOVERY_SKIP_DIRS),
+                            file_limit_bytes=gcloud.QUALIFICATION_RECOVERY_FILE_LIMIT)
+            code = injected + cloud.PRELUDE % json.dumps(args) + program
+            done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertEqual(done.returncode, 0, done.stderr.decode())
+            packed = json.loads(done.stdout.decode().splitlines()[-1])
+            with tarfile.open(control / "results.tar.gz") as tar:
+                names = set(tar.getnames())
+                listed = json.loads(tar.extractfile("RECOVERED.json").read())
+        self.assertEqual(set(listed), names - {"RECOVERED.json"})
+        self.assertEqual(packed["files"], len(listed))
+        return packed, names
+
+    def test_what_the_volume_cannot_serve_is_listed_and_the_recovery_goes_on(self):
+        """Lease 20261103-1211: one read in the qualification folder failed with ENXIO (errno 6, the network
+        volume's MooseFS client on a chunk with no readable copy) and the whole recovery ended with nothing
+        home. Both recovery programs list a file, a folder or a tree they cannot read under "unreadable" and
+        archive everything else."""
+        expected = {"read": "campaign/qualification/lost.json", "stat": "campaign/qualification/lost.json",
+                    "tree root": "campaign/doses", "folder listing": "campaign/qualification/lost"}
+        for mode, program in (("qualification", gcloud.POD_RECOVER_QUALIFICATION), ("production", gcloud.POD_RECOVER)):
+            for fault, spec in self.ENXIO_FAULTS.items():
+                with self.subTest(mode=mode, fault=fault):
+                    packed, names = self.recover_with(program, mode, self.fault(*spec))
+                    self.assertEqual(packed["unreadable"], [{"path": expected[fault], "errno": 6,
+                                                             "error": "No such device or address"}])
+                    present = {"campaign/state/G1.json", "campaign/doses/d.json", "campaign/qualification/events.jsonl",
+                               "campaign/qualification/lost.json", "campaign/qualification/lost/x.json",
+                               "campaign/qualification/stages/item1.json"}
+                    lost = {name for name in present if name == expected[fault] or name.startswith(expected[fault] + "/")}
+                    self.assertEqual({name for name in names if name.startswith("campaign/")}, present - lost)
+
+    def test_a_readable_volume_lists_nothing_unreadable(self):
+        for mode, program in (("qualification", gcloud.POD_RECOVER_QUALIFICATION), ("production", gcloud.POD_RECOVER)):
+            with self.subTest(mode=mode):
+                packed, names = self.recover_with(program, mode, "")
+                self.assertEqual(packed["unreadable"], [])
+                self.assertIn("campaign/qualification/lost/x.json", names)
+
+    def test_a_recovery_with_unreadable_files_is_recovered_and_names_them(self):
+        """The controller keeps the recovery (its archive is complete without them) and names the files the
+        volume could not serve in the lease's result and recovery.json."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            (source / "campaign" / "state").mkdir(parents=True)
+            (source / "campaign" / "state" / "G1.json").write_text(json.dumps({"blocks": {"1": {"done": True}}}))
+            listed = {"campaign/state/G1.json": hashlib.sha256(
+                (source / "campaign" / "state" / "G1.json").read_bytes()).hexdigest()}
+            (source / "RECOVERED.json").write_text(json.dumps(listed))
+            archive = root / "made.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                for name in ("campaign/state/G1.json", "RECOVERED.json"):
+                    tar.add(source / name, arcname=name)
+            unreadable = [{"path": "campaign/qualification/lost.json", "errno": 6,
+                           "error": "No such device or address"}]
+            packed = {"sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "bytes": archive.stat().st_size,
+                      "files": 1, "since_epoch": 0, "scope": "qualification", "left_out_over_limit": [],
+                      "skipped_dirs": [], "unreadable": unreadable}
+            cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+            cycle.manifest = {"mode": "qualification", "runs": ["G1"]}
+            cycle.result, cycle.remote_ready, cycle.recover_all, cycle.before = {}, True, False, {}
+            cycle.worker, cycle.remote_control, cycle.base, cycle.guard = None, "/c", PurePosixPath("/w"), "/g"
+            cycle.control = root / "control"
+            cycle.control.mkdir()
+            cycle.release_boundary = lambda now: now + 3600
+            cycle.quiesce_records = lambda timeout: True
+            cycle.export = lambda left: None
+
+            class Pod:
+                def run(self, code, args, timeout=30, read_only=False):
+                    return packed
+
+                def get(self, remote, local, timeout=600):
+                    shutil.copyfile(archive, local)
+            cycle.pod = Pod()
+            cycle.recover()
+            self.assertTrue(cycle.result["recovered"])
+            self.assertEqual(cycle.result["recovery_unreadable"], ["campaign/qualification/lost.json"])
+            self.assertEqual(cycle.result["recovery_unreadable_count"], 1)
+            self.assertEqual(read(cycle.control / "recovery.json")["unreadable"], unreadable)
+
+    def test_the_qualification_recovery_is_chosen_by_mode(self):
+        for mode, program in (("qualification", gcloud.POD_RECOVER_QUALIFICATION), ("production", gcloud.POD_RECOVER)):
+            cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+            cycle.manifest, cycle.result, cycle.remote_ready, cycle.recover_all = {"mode": mode, "runs": []}, {}, True, False
+            cycle.worker, cycle.remote_control, cycle.base, cycle.guard = None, "/c", PurePosixPath("/w"), "/g"
+            cycle.release_boundary = lambda now: now + 3600
+            cycle.quiesce_records = lambda timeout: True
+            seen = []
+
+            class Pod:
+                def run(self, code, args, timeout=30, read_only=False):
+                    seen.append((code, args))
+                    raise cloud.PodUnavailable("stop here")
+            cycle.pod = Pod()
+            with self.assertRaises(cloud.PodUnavailable):
+                cycle.recover()
+            self.assertIs(seen[0][0], program)
+            self.assertEqual("skip_dirs" in seen[0][1], mode == "qualification")
+
     def conclude(self, runs):
         cycle = gcloud.Cycle.__new__(gcloud.Cycle)
         cycle.manifest, cycle.before, cycle.result = {"runs": list(runs), "mode": "production"}, {}, {}
@@ -393,6 +608,188 @@ class LeaseTests(unittest.TestCase):
         cycle.recover()  # 200 s less the 120 s release reserve: too little to quiesce and recover
         self.assertTrue(cycle.result["recovery"].startswith("skipped: too little time"))
         self.assertEqual(set(ran), {gcloud.POD_GUARD_RELEASE})  # nothing quiesced, packed or copied
+
+    def test_exports_are_copied_home_and_checked(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.control, cycle.result = Path(tempfile.mkdtemp()), {}
+        self.addCleanup(shutil.rmtree, cycle.control, True)
+        cycle.base = PurePosixPath("/workspace/root")
+        good, gone, wrong = ("/workspace/root/campaign/checkpoints/G1/block-002.json",
+                             "/workspace/root/campaign/checkpoints/G2/block-002.json",
+                             "/workspace/root/campaign/checkpoints/G3/block-002.json")
+        data = {good: b"checkpoint", wrong: b"changed"}
+
+        class Pod:
+            def run(self, program, args, timeout=30, read_only=False):
+                assert program is gcloud.POD_EXPORTS and not read_only  # one attempt inside the deadline
+                return {good: {"sha256": hashlib.sha256(b"checkpoint").hexdigest(), "bytes": 10}, gone: None,
+                        wrong: {"sha256": "0" * 64, "bytes": 7}}
+
+            def get(self, remote, local, timeout=600):
+                Path(local).write_bytes(data[remote])
+        cycle.pod = Pod()
+        cycle.manifest = {"exports": [good, gone]}
+        cycle.export(lambda: 3600)
+        record = json.loads((cycle.control / "exports.json").read_text())
+        self.assertEqual(Path(record["files"][good]["local"]).read_bytes(), b"checkpoint")
+        self.assertEqual(Path(record["files"][good]["local"]).name, "00-block-002.json")
+        self.assertEqual(record["files"][gone], {"error": "absent on the volume"})
+        self.assertEqual(cycle.result["exports"], {"files": 1, "error": None})
+        cycle.manifest = {"exports": [wrong]}
+        cycle.export(lambda: 3600)  # a copy that differs is an error, recorded; the release still follows
+        self.assertIn("exported file differs", json.loads((cycle.control / "exports.json").read_text())["error"])
+        cycle.manifest = {"exports": [good]}
+        cycle.export(lambda: 10)  # too little time: recorded, nothing fetched
+        self.assertIn("too little time", json.loads((cycle.control / "exports.json").read_text())["error"])
+        (cycle.control / "exports.json").unlink()
+        cycle.manifest = {}
+        cycle.export(lambda: 3600)
+        self.assertFalse((cycle.control / "exports.json").exists())
+        cycle.manifest, cycle.remote_ready = {"exports": [good]}, False  # a recovery that never ran says so
+        cycle.recover()
+        self.assertIn("recovery did not complete", json.loads((cycle.control / "exports.json").read_text())["error"])
+        same = ["/workspace/root/campaign/a/b.json", "/workspace/root/campaign/a__b.json"]
+        data.update({same[0]: b"one", same[1]: b"two"})
+        cycle.manifest, cycle.remote_ready = {"exports": same}, True
+
+        class Both(Pod):
+            def run(self, program, args, timeout=30, read_only=False):
+                return {path: {"sha256": hashlib.sha256(data[path]).hexdigest(), "bytes": 3} for path in same}
+        cycle.pod = Both()
+        cycle.export(lambda: 3600)  # two exports never share a local file
+        files = json.loads((cycle.control / "exports.json").read_text())["files"]
+        self.assertEqual({Path(files[path]["local"]).read_bytes() for path in same}, {b"one", b"two"})
+
+    def test_the_release_path_signals_dispatchers_before_stopping_the_worker(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.control, cycle.result, cycle.guard, cycle.ended = Path(tempfile.mkdtemp()), {}, "/run/phase1/g", False
+        self.addCleanup(shutil.rmtree, cycle.control, True)
+        cycle.worker, order = {"pid": 7, "start_ticks": 9}, []
+        cycle.lease, cycle.created, cycle.remote_control = {"name": "g-test"}, {"id": "pod1"}, "/w/control/g-test"
+
+        class Pod:
+            def run(self, program, args, timeout=30, read_only=False):
+                order.append(program)
+                if program is gcloud.POD_STOP_DISPATCHERS:
+                    return {"signalled": [{"pid": 11, "start_ticks": 1, "request": "/w/a.json", "signalled_unix": 1.0},
+                                          {"pid": 12, "start_ticks": 2, "request": "/w/b.json", "signalled_unix": 1.0}],
+                            "still_running": [], "epoch": 1.0}
+                return {"stopped": True}
+        cycle.pod = Pod()
+        cycle.stop_worker()
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])  # signal, then the supervisor
+        self.assertEqual(cycle.result["dispatchers_signalled"], 2)
+        self.assertTrue(cycle.ended)
+        self.assertEqual([item["request"] for item in read(cycle.control / "dispatchers-stopped.json")["signalled"]],
+                         ["/w/a.json", "/w/b.json"])
+        started = read(cycle.control / "release-path-started.json")  # the window's start, before any signal
+        self.assertEqual(started["cause"], "controller release")
+        cycle.ended, order[:] = False, []
+        cycle.stop_worker()  # a second release path: the records are replaced, the worker still stopped
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])
+
+        class Unreachable:
+            def run(self, program, args, timeout=30, read_only=False):
+                order.append(program)
+                if program is gcloud.POD_STOP_DISPATCHERS:
+                    raise gcloud.cloud.PodUnavailable("gone")
+                return {"stopped": True}
+        cycle.pod, cycle.ended, order[:] = Unreachable(), False, []
+        cycle.stop_worker()  # an unreachable Pod still gets the worker stop
+        self.assertEqual(order, [gcloud.POD_STOP_DISPATCHERS, gcloud.cloud.POD_STOP])
+        self.assertIn("PodUnavailable", cycle.result["dispatchers_stop_error"])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc: the Pod is Linux")
+    def test_the_pod_program_refuses_new_work_and_signals_each_dispatcher(self):
+        """Note: the program signals every real dispatcher on this host too; run it where none runs."""
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "recorded"
+            body = ("import pathlib, signal, sys, time\n"
+                    "def stop(signum, frame):\n"
+                    "    pathlib.Path(sys.argv[3]).write_text('stopped')\n"
+                    "    sys.exit(0)\n"
+                    "signal.signal(signal.SIGTERM, stop)\n"
+                    "print('ready', flush=True)\n"
+                    "time.sleep(60)\n")
+            request = Path(temp) / "request.json"
+            request.write_text(json.dumps({"root": str(Path(temp) / "dispatch")}))
+            (Path(temp) / "dispatch").mkdir()
+            body = body.replace("sys.argv[3]", "sys.argv[4]")
+            fake = subprocess.Popen([sys.executable, "-c", body, "native_expanded_dispatch_v1.py", "_dispatch",
+                                     str(request), str(marker)], stdout=subprocess.PIPE)
+            other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "unrelated"])
+            # A reservation supervisor names the dispatcher's command after its own script: never signalled.
+            wrapper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "host_reservation_v1.py",
+                                        "supervise", "--nested", "--", "python3", "-B",
+                                        "native_expanded_dispatch_v1.py", "_dispatch", "request.json"])
+            try:
+                self.assertEqual(fake.stdout.readline().strip(), b"ready")
+                markers = Path(temp) / "markers"
+                code = cloud.PRELUDE % json.dumps({"guard": temp, "seconds": 10, "marker_dir": str(markers),
+                                                   "control": str(Path(temp) / "pod-control"),
+                                                   "lease": "g-test", "pod_id": "pod1"}) + \
+                    gcloud.POD_STOP_DISPATCHERS
+                done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+                result = json.loads(done.stdout.decode().splitlines()[-1])
+                fake.wait(10)
+                self.assertEqual(([item["pid"] for item in result["signalled"]], result["still_running"]), ([fake.pid], []))
+                self.assertEqual(result["signalled"][0]["request"], str(request))  # the argument after the action
+                self.assertEqual(json.loads((Path(temp) / "pod-control" / "dispatchers-stopped.json").read_text()),
+                                 result)  # the copy recovery packs
+                self.assertEqual((result["lease"], result["pod_id"]), ("g-test", "pod1"))  # each copy names itself
+                entry = result["signalled"][0]
+                written = markers / f"{entry['pid']}-{entry['start_ticks']}"  # its own marker, before the signal
+                self.assertEqual(entry["marker"], str(written))
+                self.assertEqual(json.loads(written.read_text())["request"], str(request))
+                self.assertLessEqual(result["signalled"][0]["signalled_unix"], time.time())
+                self.assertEqual(marker.read_text(), "stopped")  # the dispatcher saw SIGTERM, not SIGKILL
+                self.assertIsNone(other.poll())  # nothing else signalled
+                self.assertIsNone(wrapper.poll())  # nor the supervisor that would SIGKILL its job
+                self.assertTrue((Path(temp) / "stop-request.json").exists())  # new work refused first
+                self.assertTrue(result["stop_request_written"])
+                self.assertEqual(result["stop_request_epoch"],
+                                 json.loads((Path(temp) / "stop-request.json").read_text())["epoch"])
+            finally:
+                for process in (fake, other, wrapper):
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
+
+    def test_launch_probes_the_release_marker_folder_and_production_refuses_without_it(self):
+        for mode, ok in (("qualification", False), ("production", True), ("production", False)):
+            cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+            cycle.control = Path(tempfile.mkdtemp())
+            self.addCleanup(shutil.rmtree, cycle.control, True)
+            cycle.lease = {"created_epoch": time.time(), "startup_idle_seconds": 1800}
+            cycle.created, cycle.guard, cycle.remote_control = {"id": "pod"}, "/run/phase1/g", "/w/control/g"
+            cycle.manifest = {"mode": mode, "tooling": {"root": "/w/tooling/abc"}, "pod_root": "/w",
+                              "campaign": {"path": "/w/campaign.json"}, "runs": list(g.RUNS),
+                              "qualification_spec": {"path": "/w/q.json"}}
+            ran = []
+
+            class Pod:
+                def run(self, program, args, timeout=30, read_only=False):
+                    ran.append(program)
+                    if program is gcloud.POD_MARKER_PROBE:
+                        return {"ok": ok, "folder": args["marker_dir"]}
+                    return {"pid": 5, "start_ticks": 6, "epoch": 1.0}
+            cycle.pod = Pod()
+            if mode == "production" and not ok:
+                with self.assertRaisesRegex(ValueError, "release marker folder"):
+                    cycle.launch()
+                self.assertEqual(ran, [gcloud.POD_MARKER_PROBE])  # no driver started
+            else:
+                cycle.launch()
+                self.assertEqual(ran, [gcloud.POD_MARKER_PROBE, gcloud.cloud.POD_LAUNCH])
+                self.assertEqual(read(cycle.control / "worker-started.json")["release_marker_probe"]["ok"], ok)
+
+    def test_the_marker_probe_program(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp) / "markers"
+            code = cloud.PRELUDE % json.dumps({"marker_dir": str(folder)}) + gcloud.POD_MARKER_PROBE
+            done = subprocess.run([sys.executable, "-B", "-"], input=code.encode(), capture_output=True)
+            self.assertTrue(json.loads(done.stdout.decode().splitlines()[-1])["ok"])
+            self.assertEqual(list(folder.iterdir()), [])  # the probe is removed
 
     def test_the_pod_guard_read_tells_unreadable_from_unlatched(self):
         with tempfile.TemporaryDirectory() as temp:

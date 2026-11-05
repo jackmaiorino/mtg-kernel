@@ -61,6 +61,53 @@ pub(crate) struct ExternalAuxiliaryInputV1<'a> {
     /// Record the Adam steps of the ordinary and combined gradients.
     pub(crate) step_telemetry: bool,
     pub(crate) rows: Vec<ExternalAuxiliaryRowV1<'a>>,
+    /// W5 (`w5-xact-v1`): the in-batch substeps `(group, substep)` the
+    /// search played, whose policy gradient is masked; the policy term is
+    /// normalized over the groups with an unmasked substep. Empty on every
+    /// other path, which leaves the update unchanged.
+    pub(crate) policy_mask: Vec<(usize, usize)>,
+}
+
+/// A validated policy-gradient mask over an update's groups.
+pub(crate) struct PolicyMaskSetV1 {
+    /// Per group, per substep: masked.
+    pub(crate) masked: Vec<Vec<bool>>,
+    /// The number of groups with at least one unmasked substep (1 when none,
+    /// where it is never read).
+    pub(crate) policy_count: f32,
+}
+
+/// The input's mask over `groups`, or `None` when it masks nothing. Every
+/// entry must name an existing substep, once.
+pub(crate) fn policy_mask_v1(
+    input: &ExternalAuxiliaryInputV1<'_>,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+) -> Result<Option<PolicyMaskSetV1>, NativePolicyTrainErrorV1> {
+    if input.policy_mask.is_empty() {
+        return Ok(None);
+    }
+    let mut masked: Vec<Vec<bool>> = groups
+        .iter()
+        .map(|group| vec![false; group.substeps.len()])
+        .collect();
+    for &(group, substep) in &input.policy_mask {
+        let slot = masked
+            .get_mut(group)
+            .and_then(|substeps| substeps.get_mut(substep))
+            .ok_or(invalid("policy-mask-outside-batch"))?;
+        if *slot {
+            return Err(invalid("policy-mask-repeated"));
+        }
+        *slot = true;
+    }
+    let unmasked = masked
+        .iter()
+        .filter(|substeps| substeps.iter().any(|m| !m))
+        .count();
+    Ok(Some(PolicyMaskSetV1 {
+        masked,
+        policy_count: exact_group_count_f32(unmasked.max(1))?,
+    }))
 }
 
 /// The exact one-hot target E's supported choice CE uses

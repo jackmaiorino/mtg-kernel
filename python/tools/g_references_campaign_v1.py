@@ -64,6 +64,7 @@ import sys
 import threading
 import time
 
+import checkpoint_container_v1
 import g_references_v1 as g
 import host_reservation_v1 as reservations
 import native_expanded_dispatch_v1 as native_dispatch
@@ -108,6 +109,7 @@ VOLUME_REWALK_SECONDS = 60  # a refusal resting on blocks finished since an olde
 WALK_HEARTBEAT_SECONDS = 30
 WALK_HEARTBEAT_LIMIT_SECONDS = 1800  # a walk still running past this records no more work: a hung walk goes idle
 VOLUMES: dict = {}  # the shared walks (volume), per accounting roots, under SCRATCH_LOCK
+SHARED_WALK = "volume-walk.json"  # each walk, published for the dispatchers (native_expanded_dispatch_v1)
 
 
 def read_pinned(item: dict) -> dict:
@@ -334,11 +336,148 @@ class LeaseProgress(base.LeaseProgress):
     guard released a working Pod. A run stuck without CPU work still goes idle, and
     the guard's work_idle_seconds bound releases the pod. ``completed_updates``
     counts this driver's updates for the lease adapter's session.
+
+    Watched dispatches (``watch``) are observed like in-flight attempts. A qualification trial runs under a
+    detached reservation supervisor, no child of this driver: during its native part (its root's started.json
+    without execution.json) only the native child's CPU counts, so a stalled native run still goes idle; outside
+    it, CPU time under the supervisor counts, while the supervisor is the same process (its token and its start
+    time). A pack qualification's trials are observed through their requests (``<pack root>/*.request.json``):
+    during a native part its native child's ticks; outside it, CPU under the supervisor whose command line names
+    the request (the dispatcher's preparation, admission walk, fingerprints and archive; the supervisor's own
+    polling is left out, as for an attempt). The pack process's own CPU counts at PACK_BUSY_SHARE of a core since
+    the last beat (its volume walk and launches; its 5 s polling stays below it). For any watched root, a newly written started.json, execution.json, report.json or failure.json
+    is activity, so a step shorter than a beat is seen. On 2026-11-01 item 6's history trial ran over five
+    minutes with nothing else to observe, and the guard released the Pod mid-qualification; on 2026-11-02 the
+    history pack's trials prepared for about 80 s and ran natively for 4 s, between beats, and it latched again.
     """
 
     def __init__(self, campaign: Campaign):
         super().__init__(campaign)
         self.counts, self.total = {}, 0
+        self.watched, self.marks, self.busy = {}, {}, {}
+
+    def watch(self, key: str, pid: int | None = None, token: str | None = None, root: str | None = None,
+              pack: str | None = None) -> None:
+        """Observe a detached dispatch until ``unwatch``: a trial (its supervisor ``pid`` naming ``token``, its
+        ``root``) or a pack qualification (its ``pack`` root)."""
+        start = base.process_start_unix(pid) if isinstance(pid, int) else None
+        with self.lock:
+            self.watched[key] = {"pid": pid, "token": token, "start": start, "root": root, "pack": pack,
+                                 "child": None}
+
+    def exclude_child(self, key: str, pid: int) -> None:
+        """The watched pack's own process, a child of this driver: its polling is not activity, its trials'
+        native parts are."""
+        with self.lock:
+            if key in self.watched:
+                self.watched[key]["child"] = pid
+
+    def excluded_children(self) -> frozenset:
+        return frozenset(entry["child"] for entry in self.watched.values() if isinstance(entry.get("child"), int))
+
+    def unwatch(self, key: str) -> None:
+        with self.lock:
+            self.watched.pop(key, None)
+            for store in (self.ticks, self.marks, self.busy):
+                for name in [name for name in store if name.startswith("watched:" + key + ":")]:
+                    store.pop(name, None)
+
+    def marked(self, name: str, root: Path, stamp: float) -> None:
+        """A watched root's step records: a new one is activity (a step can start and end between beats)."""
+        marks = tuple(record for record in WATCHED_RECORDS if (root / record).exists())
+        if marks != self.marks.get(name, ()):
+            self.activity = stamp
+        self.marks[name] = marks
+
+    def busy_since(self, name: str, ticks: int, stamp: float, share: float) -> None:
+        """CPU ``ticks`` (cumulative) count as activity at ``share`` of a core since the last beat."""
+        last = self.busy.get(name)
+        if last is not None and (ticks - last[1]) / CLOCK_TICKS >= share * (stamp - last[0]) > 0:
+            self.activity = stamp
+        self.busy[name] = (stamp, ticks)
+
+    def observe_pack(self, key: str, entry: dict, stamp: float, table: dict) -> bool:
+        alive, requests = False, []
+        for request in sorted(Path(entry["pack"]).glob("*.request.json")):
+            try:
+                value = json.loads(request.read_text(encoding="utf-8"))
+                requests.append((str(request), Path(value["root"]), value.get("start_barrier")))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        commands = process_commands(table) if requests else {}
+        for request, root, barrier in requests:
+            self.marked(f"watched:{key}:{root}:marks", root, stamp)
+            ticks = base.native_ticks(root)
+            processes = f"watched:{key}:{root}:processes"
+            if ticks is not None:  # its native part: the native child only
+                alive = alive or ticks >= 0
+                name = f"watched:{key}:{root}"
+                if ticks > self.ticks.get(name, -1):
+                    self.activity = stamp
+                self.ticks[name] = ticks
+                self.ticks.pop(processes, None)
+                continue
+            finished = any((root / record).exists() for record in ("report.json", "failure.json"))
+            waiting = (isinstance(barrier, dict) and isinstance(barrier.get("ready"), str)
+                       and Path(barrier["ready"]).exists() and not (root / "started.json").exists())
+            # The trial's own supervisor (its command line: supervise --token <token> -- ... <request>), identified
+            # by PID and start time; an orphan dispatcher, a finished trial or one waiting at its start barrier
+            # (polling every 20 ms) is not activity.
+            tops = sorted((pid, base.process_start_unix(pid)) for pid, args in commands.items()
+                          if pid in table and supervises(args, request))
+            if finished or waiting or not tops:
+                self.ticks.pop(processes, None)
+                self.marks.pop(processes, None)
+                continue
+            ticks = sum(max(0, base.descendant_ticks(table, pid)) for pid, _ in tops)
+            if self.marks.get(processes) == tuple(tops) and ticks > self.ticks.get(processes, ticks):
+                self.activity = stamp
+            self.ticks[processes], self.marks[processes] = ticks, tuple(tops)
+        child = entry.get("child")
+        if isinstance(child, int) and child in table:  # the pack's own work (a volume walk, launches), not its polling
+            self.busy_since(f"watched:{key}:pack", table[child][1], stamp, PACK_BUSY_SHARE)
+        return alive
+
+    @staticmethod
+    def same_supervisor(entry: dict) -> bool:
+        """The watched PID is still the supervisor it was: its token on its command line and, where /proc can
+        say, its start time. A reused PID, even one under the same reservation, never credits."""
+        if not isinstance(entry["pid"], int) or not base.supervisor_owned(entry["pid"], entry["token"]):
+            return False
+        if not proc_readable():
+            return True
+        return entry["start"] is not None and base.process_start_unix(entry["pid"]) == entry["start"]
+
+    def observe(self, stamp: float) -> bool:
+        alive = super().observe(stamp)
+        table = None
+        for key, entry in list(self.watched.items()):
+            if entry["pack"]:
+                table = base.process_table() if table is None else table
+                alive = self.observe_pack(key, entry, stamp, table) or alive
+                continue
+            roots = [Path(entry["root"])] if entry["root"] else []
+            native = False
+            for root in roots:
+                self.marked(f"watched:{key}:{root}:marks", root, stamp)
+                ticks = base.native_ticks(root)
+                if ticks is None:
+                    continue
+                native, alive = True, alive or ticks >= 0
+                name = f"watched:{key}:{root}"
+                if ticks > self.ticks.get(name, -1):
+                    self.activity = stamp
+                self.ticks[name] = ticks
+            name = f"watched:{key}:supervised"
+            if native or not self.same_supervisor(entry):  # during a native part only the native child counts
+                self.ticks.pop(name, None)
+                continue
+            table = base.process_table() if table is None else table
+            ticks = base.descendant_ticks(table, entry["pid"])
+            if ticks > self.ticks.get(name, ticks):
+                self.activity = stamp
+            self.ticks[name] = ticks
+        return alive
 
     def touch(self) -> None:
         with self.lock:
@@ -366,6 +505,64 @@ class LeaseProgress(base.LeaseProgress):
 def touch(campaign: Campaign) -> None:
     if campaign.lease:
         campaign.lease.touch()
+
+
+def proc_readable() -> bool:
+    """Whether /proc can tell a process's start time (Linux, as on a Pod)."""
+    return Path("/proc/self/stat").exists()
+
+
+WATCHED_RECORDS = ("started.json", "execution.json", "report.json", "failure.json")
+PACK_BUSY_SHARE = 0.02  # the pack process: a volume walk is mostly I/O wait, its polling a few file reads per 5 s
+CLOCK_TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+
+
+def supervises(args: list[str], request: str) -> bool:
+    """Whether a command line is a reservation supervisor (host_reservation_v1.supervisor_command) whose work
+    names ``request``."""
+    try:
+        at, token = args.index("supervise"), args.index("--token")
+        work = args.index("--", token)
+    except ValueError:
+        return False
+    return at < token < work and token + 1 < work and bool(args[token + 1]) and request in args[work + 1:]
+
+
+def process_commands(table: dict) -> dict:
+    """pid -> command-line arguments, for the processes in ``table`` (/proc; empty off Linux)."""
+    commands = {}
+    for pid in table:
+        try:
+            commands[pid] = [arg.decode(errors="replace") for arg in
+                             Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if arg]
+        except OSError:
+            continue
+    return commands
+
+
+class watching:
+    """``with watching(campaign, key, ...):`` observes a detached dispatch (``LeaseProgress.watch``) as lease
+    activity while the block runs; a no-op without a lease."""
+
+    def __init__(self, campaign: Campaign, key: str, dispatched: dict | None = None, root=None, pack=None):
+        self.lease, self.key = getattr(campaign, "lease", None), key
+        dispatched = dispatched or {}
+        self.fields = {"pid": dispatched.get("pid"), "token": dispatched.get("token"),
+                       "root": None if root is None else str(root), "pack": None if pack is None else str(pack)}
+
+    def __enter__(self):
+        if self.lease:
+            self.lease.watch(self.key, **self.fields)
+        return self
+
+    def exclude_child(self, pid: int) -> None:
+        if self.lease:
+            self.lease.exclude_child(self.key, pid)
+
+    def __exit__(self, *exc):
+        if self.lease:
+            self.lease.unwatch(self.key)
+        return False
 
 
 def discard(campaign: Campaign, run: str, block: int, attempt: dict, reason: str) -> None:
@@ -482,12 +679,7 @@ def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
         entry["sealed"] = pin(published)
         campaign.save_state(run, state)
         return
-    sources = [campaign.retained / run / f"b{block:02d}",
-               *sorted((campaign.retained / run).glob(f"{name}-a*-failed")),
-               *sorted((campaign.hot(run) / run).glob(f"{name}-a*")),
-               campaign.exposure / f"{run}-{name}-episodes.jsonl",
-               *sorted((campaign.state / "configs").glob(f"{run}-{name}-a*.json")),
-               *sorted((campaign.state / "requests").glob(f"{run}-{name}-a*.json"))]
+    sources = seal_sources(campaign, run, block)
     files = []
     for source in sources:
         for path in [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file()):
@@ -498,6 +690,18 @@ def seal(campaign: Campaign, run: str, block: int, state: dict) -> None:
                                         "sealed_at": now(), "epoch": time.time()})
     campaign.save_state(run, state)
     touch(campaign)
+
+
+def seal_sources(campaign: Campaign, run: str, block: int) -> list[Path]:
+    """A finished block's record sources, as ``seal`` hashes them: its retained and failed-attempt folders,
+    dispatch folders, exposure rows, configs and requests."""
+    name = label(block)
+    return [campaign.retained / run / f"b{block:02d}",
+            *sorted((campaign.retained / run).glob(f"{name}-a*-failed")),
+            *sorted((campaign.hot(run) / run).glob(f"{name}-a*")),
+            campaign.exposure / f"{run}-{name}-episodes.jsonl",
+            *sorted((campaign.state / "configs").glob(f"{run}-{name}-a*.json")),
+            *sorted((campaign.state / "requests").glob(f"{run}-{name}-a*.json"))]
 
 
 def pending_seals(campaign: Campaign) -> int:
@@ -534,9 +738,177 @@ def records_hold(campaign: Campaign, in_flight: int = 0) -> str | None:
 
 
 def volume(campaign: Campaign) -> dict:
-    """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since."""
+    """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since,
+    and the file where each walk is published for the dispatchers (the first campaign's state folder)."""
     key = tuple(campaign.raw["storage"]["accounting_roots"])
-    return VOLUMES.setdefault(key, {"logical": None, "walked": 0.0, "finished": 0})
+    return VOLUMES.setdefault(key, {"logical": None, "started": 0.0, "walked": 0.0, "finished": 0,
+                                    "shared": str(campaign.state / SHARED_WALK)})
+
+
+# The incremental accounting walk. A sealed block's record folders (the retained, failed-attempt and dispatch
+# folders its seal lists files under, state/seals) hold exactly the seal's files until the copy-back deletes
+# them, and nothing writes there after the seal; once the copy-back confirms them gone (state/moved, deleted
+# true) they hold nothing. A static root (the campaign's static_roots: the qualification folder, which production
+# never writes) is fixed. A walk counts a sealed folder by its seal only after a walk of this process measured
+# it equal to its seal, and for at most REVERIFY_SECONDS after that measurement (then it is measured again); a
+# moved block's folders count nothing once a walk measured them empty (the copy-back writes nothing there and
+# deletes only the seal's files); a static root counts its last measurement for REVERIFY_SECONDS. Every
+# other folder, a folder the seal does not list (a later attempt) included, is walked. Any sealed folder that
+# measures other than its seal latches this process's walks of that volume full (an event), for good.
+WALK_LOCK = threading.Lock()
+WALK_SERIAL = threading.Lock()  # one walk at a time per process (admission walk, background walker)
+WALK_STATE: dict = {}  # accounting roots -> {"latched", "folders": {key: (seal bytes, measured at)}, "static", "static_at"}
+REVERIFY_SECONDS = 6 * 3600
+
+
+def folder_key(path) -> str:
+    """A walked folder's key: its path as the walk lists it under the resolved accounting roots."""
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def resolved_key(path) -> str:
+    """A sealed or static folder's key, resolved as the accounting roots are (links, short-name aliases)."""
+    return os.path.normcase(os.path.realpath(str(path)))
+
+
+def seal_folders(campaign: Campaign, value: dict) -> dict[str, int]:
+    """The record folders a seal lists files under (relative to the records root), each with its seal bytes."""
+    run, name = value["run"], label(value["block"])
+    root = records_root(campaign)
+    hot = (campaign.hot(run) / run).relative_to(root).as_posix()
+    retained = (campaign.retained / run).relative_to(root).as_posix()
+    folders: dict[str, int] = {}
+    for item in value["files"]:
+        path = item["path"]
+        for parent in (retained, hot):
+            if not path.startswith(parent + "/"):
+                continue
+            folder = path[len(parent) + 1:].split("/", 1)[0]
+            listed = (parent == retained and (folder == f"b{value['block']:02d}"
+                                              or folder.startswith(f"{name}-a") and folder.endswith("-failed"))
+                      or parent == hot and folder.startswith(f"{name}-a"))
+            if listed and "/" in path[len(parent) + 1:]:
+                key = f"{parent}/{folder}"
+                folders[key] = folders.get(key, 0) + item["bytes"]
+    return folders
+
+
+def sealed_folders(campaign: Campaign) -> tuple[dict[str, int], dict[str, int]]:
+    """(sealed folders not yet moved: folder -> seal bytes, moved blocks' folders: folder -> 0), existing ones."""
+    seals, markers, root = campaign.state / "seals", campaign.state / "moved", records_root(campaign)
+    held, gone = {}, {}
+    for path in sorted(seals.glob("*.json")) if seals.exists() else []:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if value.get("schema") != RECORDS_SCHEMA:
+            continue
+        target = gone if moved(markers / path.name) else held
+        for folder, size in seal_folders(campaign, value).items():
+            if (root / folder).is_dir():
+                target[resolved_key(root / folder)] = 0 if target is gone else size
+    return held, gone
+
+
+def walk_trees(roots, counted: dict[str, int], measure: set[str]) -> tuple[int, dict[str, int]]:
+    """native_expanded_dispatch_v1.accounting_bytes, except that a folder in ``measure`` is walked and its own
+    bytes returned too, and any other folder in ``counted`` adds its given bytes unwalked."""
+    logical, measured = 0, {}
+
+    def walk(top, inside=None):
+        nonlocal logical
+        pending = [top]
+        while pending:
+            folder = pending.pop()
+            key = folder_key(folder)
+            if key != inside and key in measure:
+                measured[key] = walk_one(folder, key)
+                logical += measured[key]
+                continue
+            if key != inside and key in counted:
+                logical += counted[key]
+                continue
+            try:
+                with os.scandir(folder) as entries:
+                    listed = list(entries)
+            except FileNotFoundError:  # a folder removed mid-walk
+                continue
+            for entry in listed:
+                native_dispatch.require(not entry.is_symlink() and not entry.is_junction(),
+                                        "accounting tree contains a link")
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        logical += entry.stat(follow_symlinks=False).st_size
+                except FileNotFoundError:  # deleted by its owner mid-walk: freed
+                    pass
+
+    def walk_one(folder, key):
+        nonlocal logical
+        before = logical
+        walk(folder, inside=key)
+        size, logical = logical - before, before
+        return size
+
+    for root in roots:
+        if root.exists():
+            native_dispatch.require(not root.is_symlink() and not root.is_junction(), "accounting root is a link")
+            walk(str(root))
+    return logical, measured
+
+
+def accounted_bytes(campaign: Campaign, publish=None) -> int:
+    """The accounting trees' logical bytes: the incremental walk (above), or the full walk (accounting_bytes)
+    when nothing is sealed or static, or once a sealed folder disagreed with its seal. Walks of one process run
+    one at a time (WALK_SERIAL), each with its ``publish``, so no walk returns or publishes a total after a later
+    walk found a mismatch."""
+    with WALK_SERIAL:
+        started = time.time()  # the measurement's own start, inside its turn: published walks stay in order
+        logical = accounted_bytes_serial(campaign)
+        if publish is not None:
+            publish(logical, started)
+        return logical
+
+
+def accounted_bytes_serial(campaign: Campaign) -> int:
+    storage = campaign.raw["storage"]
+    held, gone = sealed_folders(campaign)
+    static = {resolved_key(path) for path in campaign.raw.get("static_roots", []) if Path(path).is_dir()}
+    if not held and not gone and not static:
+        return native_dispatch.accounting_bytes(storage)[1]
+    key = tuple(storage["accounting_roots"])
+    now = time.time()
+    with WALK_LOCK:
+        state = WALK_STATE.setdefault(key, {"latched": False, "folders": {}, "moved": set(), "static": {},
+                                            "static_at": 0.0})
+        latched = state["latched"]
+        trusted = {folder: size for folder, size in held.items()
+                   if (entry := state["folders"].get(folder)) and entry[0] == size and now - entry[1] < REVERIFY_SECONDS}
+        moved_known = {folder for folder in gone if folder in state["moved"]}
+        static_known = dict(state["static"]) if now - state["static_at"] < REVERIFY_SECONDS else {}
+    if latched:
+        return native_dispatch.accounting_bytes(storage)[1]
+    # A moved block's folders are measured once, empty, before they count nothing: the copy-back deletes only
+    # the seal's files, so anything else left there is found (and latches) rather than hidden.
+    expected = {**held, **{folder: 0 for folder in gone}}
+    measure = ({folder for folder in held if folder not in trusted} | {folder for folder in gone if folder not in moved_known}
+               | {folder for folder in static if folder not in static_known})
+    counted = {**{folder: 0 for folder in moved_known}, **trusted,
+               **{folder: static_known[folder] for folder in static if folder in static_known}}
+    logical, measured = walk_trees(native_dispatch.accounting_roots(storage), counted, measure)
+    wrong = {folder: (measured[folder], size) for folder, size in expected.items()
+             if folder in measured and measured[folder] != size}
+    with WALK_LOCK:
+        if wrong:
+            state["latched"] = True
+        else:
+            state["folders"].update({folder: (held[folder], now) for folder in held if folder in measured})
+            state["moved"].update(folder for folder in gone if folder in measured)
+            if static and not static_known and all(folder in measured for folder in static):
+                state["static"], state["static_at"] = {folder: measured[folder] for folder in static}, now
+    if wrong:
+        campaign.event(kind="volume-walk-seal-mismatch", count=len(wrong),
+                       folders={folder: list(sizes) for folder, sizes in sorted(wrong.items())[:20]})
+    return logical
 
 
 def walk_volume(campaign: Campaign) -> None:
@@ -545,11 +917,21 @@ def walk_volume(campaign: Campaign) -> None:
     Pod), so it runs in a helper thread while this thread records driver work every WALK_HEARTBEAT_SECONDS,
     for at most WALK_HEARTBEAT_LIMIT_SECONDS, so a hung walk still goes idle. Each walk is an event, so its
     time is measured. The caller holds SCRATCH_LOCK (release, which counts finished blocks, waits for it)."""
-    result, started = {}, time.monotonic()
+    result, started, started_unix = {}, time.monotonic(), time.time()
+    record = volume(campaign)
+
+    def publish(logical, measured):  # in order with the other walks of this process (WALK_SERIAL)
+        record.update(logical=logical, started=measured, walked=time.time(), finished=0)
+        try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
+            Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
+            native_dispatch.publish_walk(record["shared"], logical, measured, record["walked"], "driver",
+                                         len(SCRATCH_INFLIGHT))  # the caller holds SCRATCH_LOCK
+        except OSError:
+            pass  # only a shortcut: the background walker publishes too
 
     def walk():
         try:
-            result["logical"] = native_dispatch.accounting_bytes(campaign.raw["storage"])[1]
+            result["logical"] = accounted_bytes(campaign, publish)
         except BaseException as error:
             result["error"] = error
     thread = threading.Thread(target=walk, name="volume-walk", daemon=True)
@@ -560,10 +942,92 @@ def walk_volume(campaign: Campaign) -> None:
             touch(campaign)  # the walk is the admission's work in progress
     if "error" in result:
         raise result["error"]
-    record = volume(campaign)
-    record.update(logical=result["logical"], walked=time.time(), finished=0)
+    seconds = round(time.monotonic() - started, 1)
     touch(campaign)
-    campaign.event(kind="volume-walk", seconds=round(time.monotonic() - started, 1), logical=result["logical"])
+    campaign.event(kind="volume-walk", seconds=seconds, logical=result["logical"])
+
+
+def admission_record(campaign: Campaign, native: Path | None = None) -> dict | None:
+    """The admission walk a dispatch request carries (native_expanded_dispatch_v1.admitted_bytes): the last
+    walk's logical bytes and times, the blocks finished since it, the other blocks in flight (besides ``native``)
+    and the shared walk file. The caller holds SCRATCH_LOCK."""
+    record = volume(campaign)
+    if record["logical"] is None:
+        return None
+    return {"schema": native_dispatch.ADMISSION_SCHEMA, "logical_bytes": record["logical"],
+            "walked_unix": record["started"], "completed_unix": record["walked"], "finished_since": record["finished"],
+            "shared_walk": record["shared"], "in_flight": len(SCRATCH_INFLIGHT - {str(native)})}
+
+
+WALKERS: dict = {}  # accounting roots -> (thread, stop event): this process's one background walker per volume
+WALKER_POLL_SECONDS = 30
+
+
+def start_walker(campaign: Campaign) -> None:
+    """Start this process's background walker of the campaign's accounting trees, once per volume, for the
+    dispatchers' emergency samples (AMENDMENT-2 item 6; mtg-kernel#463: eight attempts each walking the network
+    volume took 40 min a walk). While blocks are in flight it walks when the published walk completed over
+    EMERGENCY_WALK_SECONDS ago and publishes each walk; the dispatchers read it and walk only if it goes stale.
+    It records no driver work: its walk is not the lease's progress, so a stalled driver still goes idle."""
+    storage = campaign.raw["storage"]
+    if not storage.get("emergency") or not storage.get("accounting_roots"):
+        return
+    key = tuple(storage["accounting_roots"])
+    with SCRATCH_LOCK:  # registered and started under the lock: two admissions start one walker
+        if key in WALKERS and WALKERS[key][0].is_alive():
+            return
+        stop = threading.Event()
+        thread = threading.Thread(target=walker, args=(campaign, volume(campaign)["shared"], stop),
+                                  name="volume-walker", daemon=True)
+        WALKERS[key] = (thread, stop)
+        thread.start()
+
+
+def stop_walkers() -> None:
+    """Stop and forget the background walkers (tests; a driver's ends with its process)."""
+    with SCRATCH_LOCK:
+        walkers = list(WALKERS.values())
+        WALKERS.clear()
+    for thread, stop in walkers:
+        stop.set()
+        thread.join(60)
+
+
+def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
+    storage = campaign.raw["storage"]
+    while not stop.wait(WALKER_POLL_SECONDS):
+        with SCRATCH_LOCK:
+            in_flight = len(SCRATCH_INFLIGHT)
+        found = native_dispatch.shared_walk(shared)
+        if not in_flight or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
+            continue
+        started = time.time()
+        def publish(logical, measured):  # in order with the other walks of this process (WALK_SERIAL)
+            Path(shared).parent.mkdir(parents=True, exist_ok=True)
+            native_dispatch.publish_walk(shared, logical, measured, time.time(), "driver-background", in_flight)
+        try:
+            logical = accounted_bytes(campaign, publish)
+        except Exception as error:  # the dispatchers walk for themselves once the record is stale
+            if stop.is_set():
+                return
+            campaign.event(kind="volume-walk-error", error=f"{type(error).__name__}: {error}")
+            stop.wait(native_dispatch.EMERGENCY_WALK_SECONDS)
+            continue
+        if stop.is_set():
+            return
+        campaign.event(kind="volume-walk", seconds=round(time.time() - started, 1), logical=logical,
+                       walker="background")
+
+
+def admitted(campaign: Campaign, walk: bool = False, native: Path | None = None) -> dict | None:
+    """admission_record under SCRATCH_LOCK; with ``walk``, after walking when the last walk is stale (a check
+    that precedes admission, such as the qualification's choice check, then serves the admissions after it)."""
+    if not campaign.raw["storage"].get("accounting_roots"):
+        return None
+    with SCRATCH_LOCK:
+        if walk:
+            volume_logical(campaign)
+        return admission_record(campaign, native)
 
 
 def volume_logical(campaign: Campaign) -> tuple[int, int]:
@@ -747,14 +1211,18 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
             waiting = True
             continue
         waiting = False
+        start_walker(campaign)  # the dispatchers' emergency samples read its walks
         try:
             config = g.block_config(block_spec(campaign, run, block, state, native))
             g.require_runtime_rules(config)  # amendment 1: refuse a block with any episode outside the profile
             config_path = campaign.state / "configs" / f"{run}-{label(block)}-a{attempt}.json"
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
-            request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json",
-                                     request_for(campaign, run, pin(config_path), root, cold, estimate))
+            request = request_for(campaign, run, pin(config_path), root, cold, estimate)
+            admission = admitted(campaign, native=native)  # the walk this block was admitted on
+            if admission is not None:
+                request["admission"] = admission
+            request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json", request)
         except BaseException:
             release(campaign, run, block, native)  # admitted, never dispatched
             raise
@@ -853,12 +1321,12 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
             raise RuntimeError("retained checkpoint copy differs")
         entry["final_checkpoint"] = {"path": str(kept), "sha256": update["checkpoint"]["sha256"]}
         entry["final_adam_step"] = update["adam_step"]
-        entry["final_state_sha256"] = json.loads(kept.read_bytes())["state_sha256"]
+        entry["final_state_sha256"] = checkpoint_container_v1.read_document(kept)["state_sha256"]
         entry["checkpoint_state"] = "kept"
         campaign.save_state(run, state)
     if block == 1 and "embedding_gate" not in entry:
         gate = collector.embedding_gate(fresh_embedding(campaign.raw["play_imports"][run]),
-                                        json.loads(Path(entry["final_checkpoint"]["path"]).read_bytes()),
+                                        checkpoint_container_v1.read_document(entry["final_checkpoint"]["path"]),
                                         g.ndb.load_decks(Path(campaign.raw["decks"])))
         entry["embedding_gate"] = write_json(campaign.exposure / f"{run}-b001-embedding-gate.json", gate)
         entry["embedding_gate_pass"] = gate["pass"]

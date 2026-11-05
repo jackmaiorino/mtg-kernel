@@ -50,6 +50,9 @@ pub(crate) struct ServiceStatsV1 {
     pub(crate) requests: u64,
     pub(crate) launches: u64,
     pub(crate) model_uploads: u64,
+    /// Model groups started (a batch of more than `max_models` models runs
+    /// several); a device error stops a batch before its next group.
+    pub(crate) groups: u64,
     pub(crate) busy_micros: u64,
     /// Batches by size: 1, 2, 3-4, 5-8, 9-16, 17-32, 33-64, 65 or more.
     pub(crate) batch_sizes: [u64; 8],
@@ -360,9 +363,10 @@ fn serve_v1(
 
 /// Every pending request's reply, in order. Requests run in groups of at
 /// most `max_models` distinct models (first-use order, at most one v2 launch
-/// each), so any mix of models is served. A group's device error fails that
-/// group's requests, and the caller then stops serving. Grouping changes
-/// launches, never a reply's bits.
+/// each), so any mix of models is served. A group's device error fails every
+/// request of the batch and stops before the next group; the caller then
+/// stops serving. A group's other errors fail only that group. Grouping
+/// changes launches, never a reply's bits.
 #[allow(clippy::too_many_arguments)]
 fn run_batch_v1(
     device: &ExactDeviceV1,
@@ -385,6 +389,7 @@ fn run_batch_v1(
         let members: Vec<usize> = (0..pending.len())
             .filter(|&i| group.contains(&pending[i].model.digest))
             .collect();
+        stats.groups += 1;
         let result = run_group_v1(
             device, policy, resident, buffers, batch, pending, &members, group, tick, stats,
         );
@@ -393,6 +398,12 @@ fn run_batch_v1(
                 for (&i, output) in members.iter().zip(outputs) {
                     replies[i] = Some(Ok(output));
                 }
+            }
+            // A device error fails the whole batch at once, earlier groups
+            // included, and no later group touches the device (design 2.2:
+            // the context may be poisoned).
+            Err(error) if error.starts_with(DEVICE_ERROR_PREFIX_V1) => {
+                return (0..pending.len()).map(|_| Err(error.clone())).collect();
             }
             Err(error) => {
                 for &i in &members {

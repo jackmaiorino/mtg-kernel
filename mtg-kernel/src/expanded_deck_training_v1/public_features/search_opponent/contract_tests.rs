@@ -28,6 +28,7 @@ fn g115() -> ExpandedModelSourceV1 {
             expected_feature_encoding_digest: "27".repeat(32),
         },
         checkpoint: Some(pin("checkpoint.json", G115_CHECKPOINT_SHA256)),
+        s_learner: None,
     }
 }
 

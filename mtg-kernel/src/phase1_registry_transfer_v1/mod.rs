@@ -368,6 +368,12 @@ pub fn transfer_expanded_checkpoint_to_current_registry_v1(
     request: &RegistryTransferRequestV1,
 ) -> Result<VerifiedRegistryTransferV1, String> {
     require(
+        !crate::expanded_deck_training_v1::checkpoint_container_v1::is_container_v1(
+            checkpoint_bytes,
+        ),
+        "registry transfer reads only a v1 JSON checkpoint; export the container first",
+    )?;
+    require(
         checkpoint_bytes.len() <= MAX_INPUT_BYTES && source_registry_bytes.len() <= MAX_INPUT_BYTES,
         "transfer input exceeds size bound",
     )?;

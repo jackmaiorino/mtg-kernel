@@ -31,6 +31,7 @@ fn source() -> ExpandedModelSourceV1 {
             expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
         },
         checkpoint: None,
+        s_learner: None,
     }
 }
 

@@ -3664,8 +3664,11 @@ fn staging_chain_v1(config: &PrescreenConfigV1, chain: &PrescreenChainV1) -> Res
         .checkpoint
         .as_ref()
         .ok_or("the parent has no checkpoint")?;
-    let digests: CheckpointDigestsV1 =
-        serde_json::from_slice(&check_pin_v1(checkpoint)?).map_err(err)?;
+    let checkpoint_bytes = check_pin_v1(checkpoint)?;
+    let digests: CheckpointDigestsV1 = serde_json::from_slice(
+        super::checkpoint_container_v1::metadata_view_v1(&checkpoint_bytes)?,
+    )
+    .map_err(err)?;
     ensure(
         digests.feature_contract_digest == config.feature_contract_digest
             && digests.feature_encoding_digest == config.feature_encoding_digest,

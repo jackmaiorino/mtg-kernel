@@ -1143,6 +1143,7 @@ pub fn update_bo3_gameplay_v1(
             play_import: descriptor,
             checkpoint: Some(existing_pin(&checkpoint_path, MAX_CHECKPOINT_BYTES)?),
             feature_transfer: parent.origin.source.feature_transfer.clone(),
+            s_learner: None,
         };
         let (readback, checkpoint) = load_state(&source)?;
         require(
@@ -1267,6 +1268,7 @@ pub fn update_bo3_gameplay_v1(
         play_import: descriptor_pin,
         checkpoint: Some(checkpoint_pin),
         feature_transfer: parent.origin.source.feature_transfer.clone(),
+        s_learner: None,
     };
     let (readback, restored) = load_state(&source)?;
     require(

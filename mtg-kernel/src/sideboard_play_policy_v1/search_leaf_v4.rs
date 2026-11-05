@@ -14,6 +14,10 @@ impl<'a> V4SearchLeafEvaluatorV1<'a> {
             policy.feature_generation_v1() == PlayPolicyGenerationV1::V4,
             "search leaf requires explicit V4 policy",
         )?;
+        require(
+            policy.s_model.is_none(),
+            "the model-guided search leaf is net-8's; native S searches through s4a",
+        )?;
         crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
             .map_err(|e| format!("V4 search leaf floating-point state: {e:?}"))?;
         crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
