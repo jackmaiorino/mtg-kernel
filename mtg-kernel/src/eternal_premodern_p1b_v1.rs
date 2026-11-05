@@ -744,7 +744,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         PARALLAX_WAVE => &WAVE_TRIGGERS,
         SOLITARY_CONFINEMENT => &CONFINEMENT_TRIGGERS,
         TSABOS_WEB => &TSABOS_WEB_TRIGGERS,
-        _ => &[],
+        // Premodern wave P1a names disjoint cards.
+        _ => crate::eternal_premodern_p1a_v1::triggers_for(name),
     }
 }
 
@@ -1245,6 +1246,7 @@ pub(crate) fn drive(
             if top.is_empty() {
                 return Ok(false);
             }
+            // spellbench-public-reveal: public reveal to both players (Fact or Fiction).
             for observer in [PlayerId::P0, PlayerId::P1] {
                 state.reveal_library_top(observer, controller, top.len());
             }
@@ -1430,6 +1432,7 @@ pub(crate) fn finish_selection(
                     .iter()
                     .position(|&object| object == card.object)
                 {
+                    // spellbench-public-reveal: the found cards are revealed (Intuition).
                     state.reveal_library_position(opponent, controller, position);
                 }
             }
@@ -1473,6 +1476,7 @@ pub(crate) fn finish_selection(
             };
             let object = library.remove(position);
             library.insert(0, object);
+            // spellbench-public-reveal: the revealed card's new top position is public.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 state.reveal_library_position(observer, controller, 0);
             }

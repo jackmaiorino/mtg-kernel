@@ -1469,6 +1469,7 @@ fn anchor_identity_preflight_v1(
         denominator: rows.len(),
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: rows
             .iter()
             .zip(targets)
@@ -2113,6 +2114,7 @@ pub(super) fn phase1_v1(
             denominator: ANCHOR_BATCH,
             cap: None,
             step_telemetry: false,
+            policy_mask: Vec::new(),
             rows: step
                 .anchor
                 .iter()
@@ -2146,6 +2148,7 @@ pub(super) fn phase1_v1(
             denominator: step.denominator,
             cap: None,
             step_telemetry: false,
+            policy_mask: Vec::new(),
             rows: step
                 .archive
                 .iter()

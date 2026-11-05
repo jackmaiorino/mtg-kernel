@@ -273,6 +273,7 @@ impl NativePolicyValueTrainStateV1 {
                     tapes,
                     advantage,
                     value_error,
+                    policy_mask: None,
                 },
                 weight,
             ));

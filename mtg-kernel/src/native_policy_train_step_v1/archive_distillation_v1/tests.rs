@@ -65,6 +65,7 @@ fn external<'a>(
         denominator,
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: tensors
             .iter()
             .zip(targets)
@@ -324,6 +325,7 @@ fn off_batch_rows_reproduce_in_batch_line_b_roots_bit_for_bit() {
             }],
             advantage: 0.0,
             value_error: 0.0,
+            policy_mask: None,
         })
         .collect();
     let in_batch = LineBAuxiliaryInputV1 {
@@ -563,6 +565,7 @@ fn invalid_inputs_reject_before_mutation() {
         denominator: 1,
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: Vec::new(),
     };
     for terms in [

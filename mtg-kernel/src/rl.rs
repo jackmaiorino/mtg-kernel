@@ -7229,6 +7229,28 @@ fn core_surface_action_candidates_fake_scoped_v50(
                             )),
                         )?;
                     }
+                } else if state.engine.spellbench_neutral_v1.choices
+                    && *option_count == 1
+                    && state.engine.pending_cast.as_ref().is_some_and(|pending| {
+                        pending.controller == *player
+                            && pending.spell.0 == source.arena_id
+                            && pending.selected_x_v59().is_none()
+                    })
+                {
+                    // The opt-in explicit X=0 prompt is a singleton numeric
+                    // choice. Use the existing numeric feature kind so the
+                    // pinned categorical encoder's >=2 contract stays intact.
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseEffectNumber {
+                            actor,
+                            source,
+                            number: 0,
+                            minimum: 0,
+                            maximum: 0,
+                        },
+                        SurfaceAction::Action(Action::ChooseEffectOption(0)),
+                    )?;
                 } else {
                     for option_index in 0..*option_count {
                         push_action(
@@ -12939,6 +12961,107 @@ fn stack_public_conqueror_v49_fake_v50(
         .collect()
 }
 
+/// The ordinary projection of one completed stack item (engine tests).
+#[cfg(test)]
+pub(crate) fn stack_item_public_v2(
+    state: &GameState,
+    acting_player: PlayerId,
+    stack_index: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    crate::engine::validated_stack_item_target_spec(item, state)
+        .map_err(|error| RlContractError(format!("invalid stack metadata: {error}")))?;
+    stack_item_public_v2_from_frozen(state, acting_player, stack_index, item)
+}
+
+/// A pending targeted trigger's announcement: its prospective stack
+/// instance, public item, target minimum, maximum and selected count.
+pub(crate) type SpellbenchTriggerAnnouncementV2 = (String, StackItemPublicV2, u8, u8, usize);
+
+pub(crate) fn spellbench_pending_trigger_public_v2(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<Option<SpellbenchTriggerAnnouncementV2>> {
+    let Some(item) = crate::engine::spellbench_pending_trigger_announcement(state, actor)
+        .map_err(RlContractError)?
+    else {
+        return Ok(None);
+    };
+    let spec = item
+        .v4
+        .target_spec
+        .ok_or_else(|| RlContractError("targeted announcement lost its specification".into()))?;
+    // This path is protected by the pending-trigger prefix validator, not the
+    // completed stack-item validator. Ordinary stack projection stays strict.
+    let public = stack_item_public_v2_from_frozen(state, actor, state.stack.len() as u32, &item)?;
+    Ok(Some((
+        item.v4.stack_item_id.0.to_string(),
+        public,
+        crate::engine::target_min_count(spec),
+        crate::engine::target_count(spec),
+        item.targets.len(),
+    )))
+}
+
+pub(crate) fn spellbench_pending_activation_public_v2(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<Option<(String, StackItemPublicV2)>> {
+    let Some(item) = crate::engine::spellbench_pending_activation_announcement(state, actor)
+        .map_err(RlContractError)?
+    else {
+        return Ok(None);
+    };
+    // Exact pending-activation validation permits incomplete target prefixes.
+    // Only the announcing actor may inspect a hand ability before disclosure.
+    let public = stack_item_public_v2_from_frozen(state, actor, state.stack.len() as u32, &item)?;
+    Ok(Some((item.v4.stack_item_id.0.to_string(), public)))
+}
+
+/// The ordinary V2 stack-item projection (every successor family off, as the
+/// pinned Pauper observation projects it) from the item's frozen source and
+/// target contracts, without the completed stack-item validator. Callers
+/// either validated the completed item or ran the announcement's own prefix
+/// validator.
+fn stack_item_public_v2_from_frozen(
+    state: &GameState,
+    acting_player: PlayerId,
+    stack_index: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
+        return Err(RlContractError(
+            "spell stack items require a cast method and abilities must not carry one".to_string(),
+        ));
+    }
+    let targets = frozen_stack_target_refs(state, item)?;
+    let counter_distribution =
+        public_counter_distribution(item.inline_effect.as_ref(), targets.clone());
+    Ok(StackItemPublicV2 {
+        stack_index,
+        source: frozen_stack_source_ref(state, item)?,
+        controller: item.controller.into(),
+        targets,
+        stack_item_kind: item.kind.into(),
+        is_copy: item.is_copy,
+        is_flashback: item.is_flashback,
+        mode_chosen: item.mode_chosen,
+        madness_offer: item.madness_offer,
+        kicked: item.kicked,
+        cast_method: item.v4.cast_method,
+        face_index: item.v4.face_index,
+        x_value: item.v4.x_value,
+        paid_cost_refs: paid_cost_card_refs(state, &item.v4.paid_cost_refs, acting_player),
+        granted_ability: public_granted_ability(item.v4.cauldron_grant),
+        counter_transfer: public_counter_transfer(
+            state,
+            item.inline_effect.as_ref(),
+            item.v4.ability_source_contract,
+        ),
+        counter_distribution,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn stack_item_public_conqueror_v49_fake_v50(
     state: &GameState,
@@ -13498,6 +13621,10 @@ fn stack_source_ref_common_fishing_v39(
 fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     crate::engine::validated_stack_item_target_spec(item, state)
         .map_err(|error| RlContractError(format!("invalid stack source metadata: {error}")))?;
+    frozen_stack_source_ref(state, item)
+}
+
+fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     let (card_def, owner, controller, zone, zone_change_count) = match item.kind {
         StackItemKind::Spell => return card_ref(state, item.source),
         StackItemKind::TriggeredAbility if item.v4.source_contract.is_some() => {
@@ -13568,6 +13695,10 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
 fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
     crate::engine::validated_stack_item_target_spec(item, state)
         .map_err(|error| RlContractError(format!("invalid stack target metadata: {error}")))?;
+    frozen_stack_target_refs(state, item)
+}
+
+fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
     if item.targets.len() != item.v4.target_contracts.len() {
         return Err(RlContractError(
             "stack target vector/contract length mismatch".to_string(),

@@ -235,11 +235,13 @@ pub(crate) fn reveal_order_sources(
                     .iter()
                     .position(|id| *id == binding.object)
                     .ok_or("Progenitus revealed library source missing")?;
+                // spellbench-public-reveal: public reveal to both players.
                 for viewer in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
                     state.reveal_library_position(viewer, owner, position);
                 }
             }
             Zone::Hand => {
+                // spellbench-public-reveal: hand card revealed by the card rules.
                 for viewer in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
                     state.reveal_hand_card(viewer, owner, binding.object)?;
                 }

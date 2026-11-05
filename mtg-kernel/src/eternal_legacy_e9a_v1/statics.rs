@@ -161,10 +161,12 @@ pub(crate) fn grants_haste(state: &GameState, object: ObjectId) -> bool {
 
 /// The keywords this module grants `object`.
 pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords {
+    // Goblin Warchief's haste and Mystic Enforcer's flying (wave P1a).
+    let premodern = crate::eternal_premodern_p1a_v1::statics::granted_keywords(state, object);
     if grants_haste(state, object) {
-        Keywords::HASTE
+        Keywords::HASTE | premodern
     } else {
-        Keywords::NONE
+        premodern
     }
 }
 
@@ -280,7 +282,13 @@ pub(crate) fn activation_allowed(
         }
         (TOLARIA, 0) => state.step == Step::Upkeep,
         (BROADSIDE_BOMBARDIERS, 0) => attacked_this_turn(state, source),
-        _ => true,
+        // Barbarian Ring and Weathered Wayfarer (wave P1a).
+        _ => crate::eternal_premodern_p1a_v1::statics::activation_allowed(
+            state,
+            source,
+            name,
+            ability_index,
+        ),
     }
 }
 
@@ -335,6 +343,8 @@ pub(crate) fn special_activation(
 /// Eumidian Hatchery: "Put a hatchling counter on this land." Called after
 /// `land` was tapped for mana.
 pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
+    // Gemstone Mine's mining counters (wave P1a).
+    crate::eternal_premodern_p1a_v1::statics::after_tapped_for_mana(state, land);
     if definition_name(state, land) != Some(EUMIDIAN_HATCHERY)
         || state.objects.get(land).zone != Zone::Battlefield
         || !active_named(state, land, EUMIDIAN_HATCHERY)
@@ -390,7 +400,8 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
         return (0, 0);
     };
     let controller = live.controller;
-    let mut boost = (0_i128, 0_i128);
+    // Mystic Enforcer's threshold (wave P1a).
+    let mut boost = crate::eternal_premodern_p1a_v1::statics::controlled_boost(state, object);
     if active_named(state, object, KNIGHT_OF_THE_RELIQUARY) {
         let lands = graveyard_lands(state, controller);
         boost.0 += lands;
@@ -408,6 +419,13 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
 /// Sejiri Steppe: the colors `host` has protection from until end of turn,
 /// as a mask.
 pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
+    // Printed protection from a color (wave P1a).
+    let printed = crate::eternal_premodern_p1a_v1::statics::protection_mask(state, host);
+    printed | granted_protection_mask(state, host)
+}
+
+/// Sejiri Steppe's protection until end of turn, as a mask.
+fn granted_protection_mask(state: &GameState, host: ObjectId) -> u8 {
     let Some(e9a) = read_state(state) else {
         return 0;
     };

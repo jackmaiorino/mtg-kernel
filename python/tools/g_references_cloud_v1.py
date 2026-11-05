@@ -148,6 +148,14 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
     native = PurePosixPath(spec["native_root"])
     require(native.is_absolute() and not native.is_relative_to(cloud.WORKSPACE), "native root is on the container disk")
     storage = cloud.checked_storage(spec["storage"], base)
+    # QUALIFICATION-RESTART.md (lead ruling 2026-11-01): a superseded campaign root on the same volume stays an
+    # accounting root of this campaign (admission cap, walks, emergency check) until it is archived and pruned.
+    superseded = spec.get("superseded_campaign_roots", [])
+    require(isinstance(superseded, list)
+            and all(isinstance(old, str) and re.fullmatch("[a-z0-9][a-z0-9-]{0,62}", old) and old != base.name
+                    for old in superseded) and len(set(superseded)) == len(superseded),
+            "superseded campaign roots are distinct short names other than this campaign's")
+    storage["accounting_roots"] += [str(cloud.WORKSPACE / old / "campaign") for old in superseded]
     # AMENDMENT-2.md: the trajectories are block scratch, admitted against the container disk (spec "scratch":
     # the measured per-block peak, its factor and the margin); the cap counts the campaign tree on the volume.
     storage["scratch_roots"] = [str(native)]
@@ -185,12 +193,20 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
             campaign[key] = item
     require(spec["mode"] == "qualification" or "placement_record" in campaign,
             "production needs the placement record on the volume")
+    if spec["mode"] == "production":  # the qualification folder: production never writes it (incremental walks)
+        campaign["static_roots"] = [str(base / "campaign" / "qualification")]
+    # Files a lease copies home after its recovery (a block-2 checkpoint for Jack's PC's qualification items 4
+    # and 5): campaign-relative paths, each fetched and checked against its SHA256 on the Pod.
+    exports = spec.get("exports", [])
+    require(isinstance(exports, list) and len(set(exports)) == len(exports) and all(
+        isinstance(item, str) and item and not PurePosixPath(item).is_absolute() and ".." not in PurePosixPath(item).parts
+        for item in exports), "exports are distinct campaign-relative paths")
     block = spec.get("lease_block_seconds", template.get("lease_block_seconds"))
     if block is not None:
         cloud.native_dispatch.positive(block, "lease block seconds")
         campaign["lease_block_seconds"] = block
     cloud.native_dispatch.positive(campaign["wall_seconds"], "wall-time limit")
-    extra = {}
+    extra = {"exports": [str(base / "campaign" / item) for item in exports]} if exports else {}
     if spec["mode"] == "qualification":
         inventory = read(spec["inventory"])
         inventory["inventory"] = {host: {**status, "evidence": carry(status["evidence"])}
@@ -274,10 +290,157 @@ def verified_package(directory):
 
 # ---------------------------------------------------------------- the lease
 
-POD_RECOVER = cloud.POD_RECOVER.replace(
-    '''    for name in ("retained", "checkpoints", "exposure"):''',
-    '''    for name in ("retained", "checkpoints", "exposure", "doses", "qualification"):''')
-assert POD_RECOVER != cloud.POD_RECOVER
+# A file the volume cannot serve does not end a recovery: it is listed under "unreadable" (path, errno) and the
+# walk goes on. On lease 20261103-1211 one read in the qualification folder failed with ENXIO (errno 6, the network
+# volume's MooseFS client's error for a chunk with no readable copy) and the whole recovery ended with nothing
+# brought home, the run's own events included.
+RECOVER_EDITS = (
+    ('''    for name in ("retained", "checkpoints", "exposure"):''',
+     '''    for name in ("retained", "checkpoints", "exposure", "doses", "qualification"):'''),
+    ('''out, members = control / "results.tar.gz", {}''',
+     '''out, members, unreadable = control / "results.tar.gz", {}, []'''),
+    # The walk itself: os.walk (no symlinked folders followed, as rglob on the Pod's Python 3.12) reports a folder
+    # it cannot list; a path whose metadata or bytes cannot be read is listed; the selection rules are unchanged.
+    ('''    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root)
+        recent = since is None or top and len(rel.parts) == 1 or path.stat().st_mtime >= since
+        if (path.is_symlink() or not path.is_file() or any(part in skip for part in rel.parts)
+                or path.name.endswith((".tar.gz", ".partial")) or not recent):
+            continue
+        data = path.read_bytes()  # one read for both the archive and its SHA256
+        name = prefix + "/" + rel.as_posix()
+        info = tarfile.TarInfo(name)
+        info.size, info.mtime, info.mode = len(data), int(path.stat().st_mtime), 0o644''',
+     '''    def failed(path, error):
+        rel = pathlib.Path(path).relative_to(root).as_posix()
+        unreadable.append({"path": prefix if rel == "." else prefix + "/" + rel, "errno": error.errno,
+                           "error": error.strerror or str(error)})
+    try:
+        if not root.is_dir():
+            return
+    except OSError as error:
+        failed(root, error)
+        return
+    paths = []
+    for folder, dirs, files in os.walk(root, onerror=lambda error: failed(error.filename, error)):
+        dirs.sort()
+        paths += [pathlib.Path(folder) / name for name in files]
+    for path in sorted(paths):
+        rel = path.relative_to(root)
+        name = prefix + "/" + rel.as_posix()
+        try:
+            if (path.is_symlink() or not path.is_file() or any(part in skip for part in rel.parts)
+                    or path.name.endswith((".tar.gz", ".partial"))):
+                continue
+            stat = path.stat()
+            if not (since is None or top and len(rel.parts) == 1 or stat.st_mtime >= since):
+                continue
+            data = path.read_bytes()  # one read for both the archive and its SHA256
+        except OSError as error:
+            failed(path, error)
+            continue
+        info = tarfile.TarInfo(name)
+        info.size, info.mtime, info.mode = len(data), int(stat.st_mtime), 0o644'''),
+    ('''import io, pathlib, tarfile, time''', '''import io, os, pathlib, tarfile, time'''),
+    ('''"since_epoch": since}))''', '''"since_epoch": since, "unreadable": unreadable}))'''),
+)
+POD_RECOVER = cloud.POD_RECOVER
+for _old, _new in RECOVER_EDITS:
+    assert POD_RECOVER.count(_old) == 1, _old
+    POD_RECOVER = POD_RECOVER.replace(_old, _new)
+
+# A qualification lease's recovery brings home the records that decide the qualification, not the campaign's
+# bulk: on lease 20261101-2302 the full recovery (every block's checkpoints and retained trees, the whole
+# qualification folder, gzip level 9) ran out of the guard's recovery window and nothing came home. Here: the
+# run states, exposure rows and dose records written by this lease, and the whole qualification folder (stages
+# cached by an earlier lease included), without its payload folders (native, cold and hot trees, scratch
+# checkpoints) and without any single file over QUALIFICATION_RECOVERY_FILE_LIMIT. What is left out stays on the
+# volume and is listed in recovery.json; block checkpoints and retained trees stay on the volume for the next
+# lease, as in production.
+QUALIFICATION_RECOVERY_SKIP_DIRS = ("native", "cold", "hot", "checkpoints")
+QUALIFICATION_RECOVERY_FILE_LIMIT = 8 * 2**20
+POD_RECOVER_QUALIFICATION = '''#pod:recover-qualification
+import hashlib, io, os, pathlib, tarfile, time
+control, campaign = pathlib.Path(ARGS["control"]), pathlib.Path(ARGS["campaign"])
+since = ARGS["since"] if ARGS["since"] is not None else time.time()
+limit, skip_dirs = ARGS["file_limit_bytes"], set(ARGS["skip_dirs"])
+out, members, left_out, skipped_dirs, unreadable = control / "results.tar.gz", {}, [], [], []
+def failed(prefix, root, path, error):
+    try:
+        rel = pathlib.Path(path).relative_to(root).as_posix()
+        name = prefix if rel == "." else prefix + "/" + rel
+    except ValueError:
+        name = str(path)
+    unreadable.append({"path": name, "errno": error.errno, "error": error.strerror or str(error)})
+def walked(prefix, root, path):
+    """A folder the walk enters: not a symlink, and one whose metadata cannot be read is listed and left."""
+    try:
+        return not path.is_symlink()
+    except OSError as error:
+        failed(prefix, root, path, error)
+        return False
+def tree(tar, root, prefix, since=None, top=False, skip=frozenset()):
+    try:
+        if not root.is_dir():
+            return
+    except OSError as error:
+        failed(prefix, root, root, error)
+        return
+    for folder, dirs, files in os.walk(root, onerror=lambda error: failed(prefix, root, error.filename, error)):
+        here = pathlib.Path(folder)
+        for name in sorted(dirs):
+            if name in skip:
+                skipped_dirs.append(prefix + "/" + (here / name).relative_to(root).as_posix())
+        dirs[:] = sorted(name for name in dirs if name not in skip and walked(prefix, root, here / name))
+        for name in sorted(files):
+            path = here / name
+            rel = path.relative_to(root)
+            member = prefix + "/" + rel.as_posix()
+            try:
+                if path.is_symlink() or not path.is_file() or name.endswith((".tar.gz", ".partial")):
+                    continue
+                stat = path.stat()
+                if not (since is None or top and len(rel.parts) == 1 or stat.st_mtime >= since):
+                    continue
+                if stat.st_size > limit:
+                    left_out.append({"path": member, "bytes": stat.st_size})
+                    continue
+                data = path.read_bytes()  # one read for both the archive and its SHA256
+            except OSError as error:  # the volume cannot serve it: listed, and the walk goes on
+                failed(prefix, root, path, error)
+                continue
+            info = tarfile.TarInfo(member)
+            info.size, info.mtime, info.mode = len(data), int(stat.st_mtime), 0o644
+            tar.addfile(info, io.BytesIO(data))
+            members[member] = hashlib.sha256(data).hexdigest()
+with tarfile.open(out, "w:gz", compresslevel=1) as tar:
+    tree(tar, campaign / "state", "campaign/state", since, top=True)  # run states, events and PRUNE always
+    for name in ("exposure", "doses"):
+        tree(tar, campaign / name, "campaign/" + name, since)
+    tree(tar, campaign / "qualification", "campaign/qualification", None, skip=skip_dirs)  # whole, every lease's
+    tree(tar, pathlib.Path(ARGS["guard"]), "guard")
+    tree(tar, control, "control")
+    tree(tar, pathlib.Path(ARGS["locks"]), "reservation")
+    listing = json.dumps(members, sort_keys=True).encode()
+    info = tarfile.TarInfo("RECOVERED.json")
+    info.size = len(listing)
+    tar.addfile(info, io.BytesIO(listing))
+print(json.dumps({"sha256": digest(out), "bytes": out.stat().st_size, "files": len(members), "since_epoch": since,
+                  "scope": "qualification", "left_out_over_limit": left_out, "skipped_dirs": sorted(skipped_dirs),
+                  "unreadable": unreadable}))
+'''
+
+
+POD_EXPORTS = '''#pod:exports
+import pathlib
+out = {}
+for path in ARGS["paths"]:
+    item = pathlib.Path(path)
+    out[path] = {"sha256": digest(item), "bytes": item.stat().st_size} if item.is_file() else None
+print(json.dumps(out))
+'''
 
 
 POD_AFFINITY = '''#pod:affinity
@@ -304,6 +467,119 @@ print(json.dumps(json.loads(path.read_text()) if path.exists() else None))
 
 
 RELEASE_RESERVE_SECONDS = 120  # before the release boundary, kept for the release after recovery
+# The release path's wait for signalled dispatchers to record and exit. A dispatcher acts on the signal at its
+# next checkpoint: within about 1 s in the native part, but after its native part the next checkpoint follows the
+# whole fingerprint or archive step. Measured on lease 1604 (G1 block 1, one lineage alone): fingerprints 64.0 s,
+# archive 81.2 s. With eight lineages sharing the volume, twice the longer step, rounded up.
+DISPATCHER_GRACE_SECONDS = 180
+# AMENDMENT-3 (release path): before the worker's supervisor is stopped (it SIGKILLs its whole job, so no
+# dispatcher could record anything), new work is refused (the guard's stop-request.json, which every dispatch and
+# admission reads) and each attempt's dispatcher gets SIGTERM directly. A dispatcher latches it, records
+# interruption.json at its next checkpoint, ends its native child and writes execution.json (mtg-kernel #464).
+POD_STOP_DISPATCHERS = '''#pod:stop-dispatchers
+import os, pathlib, signal, time
+signal.signal(signal.SIGHUP, signal.SIG_IGN)  # a dropped SSH session must not end the stop step half done
+request = pathlib.Path(ARGS["guard"], "stop-request.json")
+written = not request.exists()
+if written:
+    partial = request.with_name("stop-request.controller.partial")
+    partial.write_text(json.dumps({"epoch": time.time(), "reason": "controller release path"}))
+    os.replace(partial, request)
+try:
+    stop_epoch = json.loads(request.read_text()).get("epoch")
+except (OSError, ValueError, AttributeError):
+    stop_epoch = None
+def identity(pid):
+    # (state, start ticks) from /proc/<pid>/stat, or None once it is gone
+    try:
+        fields = pathlib.Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()
+        return fields[0], int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None
+def running(pid, ticks):
+    seen = identity(pid)
+    return seen is not None and seen[1] == ticks and seen[0] not in ("Z", "X")
+def dispatchers():
+    # A dispatcher runs the launcher script itself: the first script on its command line is
+    # native_expanded_dispatch_v1.py, followed by its _dispatch or _qualify action. A reservation supervisor names
+    # that command after its own script (host_reservation_v1.py ... -- python3 ... native_expanded_dispatch_v1.py
+    # _dispatch) and is left alone: on SIGTERM it SIGKILLs its whole job, before the dispatcher could record.
+    found = []
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        before = identity(int(entry.name))  # bound before and after the argv read: a reused PID never matches
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\\0")
+        except OSError:
+            continue
+        scripts = [index for index, arg in enumerate(argv) if arg.endswith(b".py")]
+        if not scripts or not argv[scripts[0]].endswith(b"native_expanded_dispatch_v1.py") \\
+                or scripts[0] + 1 >= len(argv) or argv[scripts[0] + 1] not in (b"_dispatch", b"_qualify"):
+            continue
+        seen = identity(int(entry.name))
+        if before is not None and seen is not None and seen[1] == before[1] and seen[0] not in ("Z", "X"):
+            request = argv[scripts[0] + 2].decode(errors="replace") if scripts[0] + 2 < len(argv) else None
+            found.append((int(entry.name), seen[1], request))
+    return found
+# Per dispatcher: its request (which names the attempt), the release marker written in its dispatch root before the
+# signal (the dispatcher notes whether it existed when it latched its first stop: AMENDMENT-3 3(b)), and the
+# Pod-clock time of the signal.
+def mark(pid, ticks, request):
+    # the dispatcher's own marker, on this Pod's local disk (native_expanded_dispatch_v1.own_marker)
+    try:
+        folder = pathlib.Path(ARGS["marker_dir"])
+        folder.mkdir(parents=True, exist_ok=True)
+        marker = folder / ("%d-%d" % (pid, ticks))
+        partial = marker.with_name(marker.name + ".partial")
+        partial.write_text(json.dumps({"epoch": time.time(), "request": request}))
+        os.replace(partial, marker)
+        return str(marker)
+    except OSError:
+        return None
+signalled = []
+for pid, ticks, request in dispatchers():
+    if running(pid, ticks):  # the same process, not a reused PID
+        marker = mark(pid, ticks, request)
+        if not running(pid, ticks):  # gone while the marker was written: its PID may name another process now
+            continue
+        at = time.time()
+        try:
+            os.kill(pid, signal.SIGTERM)
+            signalled.append({"pid": pid, "start_ticks": ticks, "request": request, "marker": marker,
+                              "signalled_unix": at})
+        except OSError:
+            pass
+deadline = time.monotonic() + ARGS["seconds"]
+while time.monotonic() < deadline and any(running(item["pid"], item["start_ticks"]) for item in signalled):
+    time.sleep(0.5)
+result = {"lease": ARGS["lease"], "pod_id": ARGS["pod_id"], "signalled": signalled,
+          "still_running": [item["pid"] for item in signalled if running(item["pid"], item["start_ticks"])],
+          "epoch": time.time(), "stop_request_written": written, "stop_request_epoch": stop_epoch}
+try:  # also in the Pod control folder, which recovery packs: the evidence survives a lost controller copy
+    control = pathlib.Path(ARGS["control"])
+    control.mkdir(parents=True, exist_ok=True)
+    partial = control / "dispatchers-stopped.json.partial"
+    partial.write_text(json.dumps(result))
+    os.replace(partial, control / "dispatchers-stopped.json")
+except OSError:
+    pass
+print(json.dumps(result))
+'''
+# The release marker folder must be writable on the Pod before any dispatch: without it no attempt can carry
+# AMENDMENT-3's evidence. Probed at launch; a production lease refuses to start without it.
+POD_MARKER_PROBE = '''#pod:marker-probe
+import os, pathlib
+try:
+    folder = pathlib.Path(ARGS["marker_dir"])
+    folder.mkdir(parents=True, exist_ok=True)
+    probe = folder / ("probe-%d" % os.getpid())
+    probe.write_text("probe")
+    probe.unlink()
+    print(json.dumps({"ok": True, "folder": str(folder)}))
+except OSError as error:
+    print(json.dumps({"ok": False, "folder": ARGS["marker_dir"], "error": str(error)[-300:]}))
+'''
 POD_GUARD_RELEASE = '''path = ARGS["guard"] + "/guard.json"
 try:
     value = json.load(open(path))
@@ -382,9 +658,13 @@ class Cycle(cloud.Cycle):
                "MTG_HOST_LOCK_ROOT": cloud.LOCK_ROOT, "HOST_SLOTS_ROOT": cloud.LOCK_ROOT, "PYTHONDONTWRITEBYTECODE": "1"}
         if getattr(self, "binding", None):
             env[host_slots_v1.CPU_BINDING_ENV] = ",".join(map(str, self.binding))
+        probe = self.pod.run(POD_MARKER_PROBE, {"marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR}, timeout=60)
+        require(probe.get("ok") is True or self.manifest["mode"] != "production",
+                "the release marker folder is not writable on the Pod (AMENDMENT-3): " + json.dumps(probe))
         self.worker = self.pod.run(cloud.POD_LAUNCH, {"control": self.remote_control, "argv": driver_command(self.manifest),
                                                       "cwd": self.manifest["tooling"]["root"], "env": env}, timeout=360)
-        write(self.control / "worker-started.json", {**self.worker, "pod_id": self.created["id"]})
+        write(self.control / "worker-started.json", {**self.worker, "pod_id": self.created["id"],
+                                                     "release_marker_probe": probe})
 
     def conclude(self, snapshot):
         """Complete when every lineage completed through the stop block or ended for good (a failed lineage
@@ -410,6 +690,28 @@ class Cycle(cloud.Cycle):
         require(exhausted and all(status[run] == "complete" or run in exhausted or run in failed for run in status),
                 "campaign ended without completing or a lease stop: " + json.dumps(status))
         self.result["lease_stopped"] = True
+
+    def stop_worker(self):
+        """AMENDMENT-3's release path: refuse new work and SIGTERM every attempt's dispatcher, wait up to
+        DISPATCHER_GRACE_SECONDS for them to record the stop and exit, then stop the worker as before. A Pod
+        that cannot be reached skips the signal (its attempts get no record and count)."""
+        try:
+            if self.worker is not None and not self.ended:
+                # AMENDMENT-3 3(b): the release window starts no later than this record, written before any signal.
+                write(self.control / "release-path-started.json",
+                      {"epoch": time.time(), "cause": self.result.get("error") or "controller release",
+                       "error_type": self.result.get("error_type")}, replace=True)
+                stopped = self.pod.run(POD_STOP_DISPATCHERS, {"guard": self.guard, "seconds": DISPATCHER_GRACE_SECONDS,
+                                                              "marker_dir": cloud.native_dispatch.RELEASE_MARKER_DIR,
+                                                              "control": self.remote_control,
+                                                              "lease": self.lease["name"], "pod_id": self.created["id"]},
+                                       timeout=DISPATCHER_GRACE_SECONDS + 30)
+                write(self.control / "dispatchers-stopped.json", stopped, replace=True)
+                self.result["dispatchers_signalled"] = len(stopped["signalled"])
+        except Exception as error:  # noqa: BLE001 - the worker stop below always runs
+            self.result["dispatchers_stop_error"] = f"{type(error).__name__}: {error}"[-400:]
+        finally:
+            super().stop_worker()
 
     def quiesce_records(self, timeout: float = 150.0):
         """Stop the record copy-back before recovery reads the volume, so nothing it lists is deleted under it.
@@ -456,6 +758,7 @@ class Cycle(cloud.Cycle):
 
     def recover(self):
         """nine_deck_cloud_v1.Cycle.recover with this study's recovery program (dose records, qualification)."""
+        self.exports_pending()
         if not self.remote_ready:
             return
         boundary = self.release_boundary(time.time())
@@ -477,9 +780,14 @@ class Cycle(cloud.Cycle):
             self.result["recovery"] = "skipped: quiescence left too little time before the guards' release"
             return
         since = 0 if self.recover_all else None if self.worker is None else self.worker["epoch"] - 60
-        packed = self.pod.run(POD_RECOVER, {"control": self.remote_control, "campaign": str(self.base / "campaign"),
-                                            "guard": self.guard, "locks": cloud.LOCK_ROOT, "since": since},
-                              timeout=left())
+        args = {"control": self.remote_control, "campaign": str(self.base / "campaign"), "guard": self.guard,
+                "locks": cloud.LOCK_ROOT, "since": since}
+        if self.manifest["mode"] == "qualification":
+            program = POD_RECOVER_QUALIFICATION
+            args.update(skip_dirs=list(QUALIFICATION_RECOVERY_SKIP_DIRS), file_limit_bytes=QUALIFICATION_RECOVERY_FILE_LIMIT)
+        else:
+            program = POD_RECOVER
+        packed = self.pod.run(program, args, timeout=left())
         target, recovered = self.control / "results.tar.gz", self.control / "recovered"
         require(left() > 0, "recovery time spent before the copy")
         self.pod.get(self.remote_control + "/results.tar.gz", target, timeout=left())
@@ -492,6 +800,9 @@ class Cycle(cloud.Cycle):
         require(present == set(listed) | {"RECOVERED.json"} and len(listed) == packed["files"] and
                 all(sha(recovered / name) == digest for name, digest in listed.items()), "recovered files differ")
         write(self.control / "recovery.json", {**packed, "archive": pin(target)})
+        if packed.get("unreadable"):  # recovered, with the files the volume could not serve named
+            self.result["recovery_unreadable"] = [item["path"] for item in packed["unreadable"]][:50]
+            self.result["recovery_unreadable_count"] = len(packed["unreadable"])
         runs = {}
         for run in self.manifest["runs"]:
             path = recovered / "campaign/state" / (run + ".json")
@@ -499,6 +810,44 @@ class Cycle(cloud.Cycle):
                 runs[run] = {"blocks_done": [key for key, value in read(path)["blocks"].items() if value.get("done")]}
         self.count(runs)
         self.result["recovered"] = True
+        self.export(left)
+
+    def exports_pending(self) -> None:
+        """Before the recovery: the package's exports are recorded as not fetched, so a skipped or failed
+        recovery leaves its reason beside them; a completed export replaces it."""
+        if (getattr(self, "manifest", None) or {}).get("exports"):
+            write(self.control / "exports.json", {"files": {}, "error": "not fetched: the recovery did not complete"},
+                  replace=True)
+
+    def export(self, left) -> None:
+        """Copy the package's exports home (control/exports), each checked against its SHA256 on the Pod;
+        what time or the Pod does not allow is recorded, never retried past the recovery deadline."""
+        paths = self.manifest.get("exports") or []
+        if not paths:
+            return
+        record = {"files": {}}
+        try:
+            require(left() > 60, "too little time before the guards' release")
+            # One attempt (no read-only retries): its timeout is what remains of the recovery deadline.
+            listed = self.pod.run(POD_EXPORTS, {"paths": paths}, timeout=max(1, min(120, left() - 30)))
+            folder = self.control / "exports"
+            folder.mkdir(exist_ok=True)
+            for index, path in enumerate(paths):
+                found = listed.get(path)
+                if found is None:
+                    record["files"][path] = {"error": "absent on the volume"}
+                    continue
+                # Named by its position, so two exports never share a local file (case aliases included).
+                target = folder / safe_name(f"{index:02d}-" + PurePosixPath(path).name)
+                require(left() > 30, "too little time before the guards' release")
+                self.pod.get(path, target, timeout=max(1, left() - 30))
+                require(sha(target) == found["sha256"], "exported file differs: " + path)
+                record["files"][path] = {"local": str(target), **found}
+        except Exception as error:  # noqa: BLE001 - the release still follows
+            record["error"] = f"{type(error).__name__}: {error}"[-400:]
+        write(self.control / "exports.json", record, replace=True)
+        self.result["exports"] = {"files": len([v for v in record["files"].values() if "local" in v]),
+                                  "error": record.get("error")}
 
 
 def driver_command(manifest):

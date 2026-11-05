@@ -1886,3 +1886,293 @@ fn s4a_bank_and_b1_root_specs_refuse_an_opening() {
         assert!(refused, "{path}");
     }
 }
+
+/// One value-leaf search (`s4a-vl-v1`) at `session` with fresh fixture roles,
+/// EX1's selection settings (legacy keys, FPU urgency) and `n` attempted
+/// simulations under a transition guard of `cap`.
+fn value_leaf_search(
+    session: &crate::rl_session::FastActorSessionV1,
+    prior: &world::DeckPrior,
+    seed_root: &str,
+    horizon: value_leaf::Horizon,
+    n: u64,
+    cap: u64,
+) -> (arms::Selection, tree::Tree) {
+    let mut roles = Roles {
+        focal: fixture(),
+        opps: vec![fixture()],
+        scorer: fixture(),
+        inner_focal: fixture(),
+        inner_opps: vec![fixture()],
+    };
+    let seeds = RootSeeds {
+        model: "fixture".into(),
+        root: seed_root.into(),
+    };
+    let ctx = RootCtx {
+        visible_history: &[],
+        root: session,
+        d: play::decision(session).unwrap(),
+        focal: play::acting(&play::decision(session).unwrap()),
+        opp: 0,
+        seeds: &seeds,
+        prior,
+        defs: spy_defs(),
+        cast_root: false,
+        probs: Vec::new(),
+        limits: Limits {
+            select_cap: cap,
+            eval_worlds: 1,
+            eval_cap: 1,
+        },
+        urgency: Some(1.5),
+        key_mode: super::canon2::KeyMode::Legacy,
+        interchange: false,
+        bestline: None,
+    };
+    let options = root_allocation::SearchOptions {
+        work_limit: Some(n),
+        value_leaf: Some(value_leaf::ValueLeafV1 { horizon }),
+        ..root_allocation::SearchOptions::default()
+    };
+    roles.select_e_options(&ctx, None, 1, None, None, None, &options)
+}
+
+/// The deterministic part of a value-leaf search: counts, the tree hash and
+/// the value-leaf receipt (census and root edges), without wall time.
+fn value_leaf_primary(sel: &arms::Selection) -> serde_json::Value {
+    serde_json::json!({"attempted":sel.attempted,"completed":sel.completed,"nonnatural":sel.nonnatural,
+        "transitions":sel.transitions,"inference":sel.inference,"cap_reached":sel.cap_reached,
+        "incomplete":sel.incomplete,"faults":sel.faults,"tree":sel.extra["tree"],
+        "value_leaf":sel.extra["value_leaf"]})
+}
+
+fn value_leaf_root() -> (crate::rl_session::FastActorSessionV1, world::DeckPrior) {
+    let cfg = test_cfg();
+    let game = spy_index() as u64 + 9 * 3;
+    let setup = game_setup(&cfg, 1, game);
+    let focal_id = PlayerId(setup.focal as u8);
+    let (mut a, mut b) = (fixture(), fixture());
+    let mut root = None;
+    drive(&setup, &mut a, &mut b, |s, d, _| {
+        if play::acting(d) == focal_id && d.legal_action_count >= 3 && s.game_state().turn >= 3 {
+            root = Some(s.clone());
+            return Ok(true);
+        }
+        Ok(false)
+    })
+    .unwrap();
+    (
+        root.expect("a fixture root"),
+        world::DeckPrior::new(&cfg.decks),
+    )
+}
+
+/// V9-lite: the same value-leaf config twice gives the same counts, tree and
+/// value sums; leaves and natural endings back up exact units; the formal
+/// search keeps no value sums; root edges are well formed.
+#[test]
+fn value_leaf_search_repeats_exactly() {
+    let (session, prior) = value_leaf_root();
+    for horizon in [value_leaf::Horizon::H0, value_leaf::Horizon::T0] {
+        let (a, ta) = value_leaf_search(&session, &prior, "vl-fixture", horizon, 40, 40 * 512);
+        let (b, tb) = value_leaf_search(&session, &prior, "vl-fixture", horizon, 40, 40 * 512);
+        assert!(!a.incomplete && a.faults.is_empty(), "{:?}", a.faults);
+        assert_eq!(value_leaf_primary(&a), value_leaf_primary(&b));
+        assert_eq!(value_leaf::root_edges(&ta), value_leaf::root_edges(&tb));
+        // Every node's counts and value sums replay exactly.
+        assert_eq!(ta.nodes.len(), tb.nodes.len());
+        for (k, n) in &ta.nodes {
+            let m = &tb.nodes[k];
+            assert_eq!(
+                (&n.n, &n.wins, &n.draws, &n.vsum),
+                (&m.n, &m.wins, &m.draws, &m.vsum)
+            );
+        }
+        let census = &a.extra["value_leaf"]["census"];
+        let leaves = census["leaves"].as_u64().unwrap();
+        let natural = census["natural"].as_u64().unwrap();
+        assert!(leaves > 0, "{horizon:?}: no value leaf in 40 simulations");
+        assert_eq!(leaves + natural, a.completed);
+        // Every stored node keeps one value sum per edge; the root's visits
+        // equal the backed-up simulations, and no edge exceeds its visits.
+        let edges = value_leaf::root_edges(&ta).expect("a value-leaf root");
+        assert_eq!(edges.iter().map(|e| e.n).sum::<u64>(), a.completed);
+        assert!(edges.iter().all(|e| e.units <= e.n * value_leaf::UNIT));
+        // Leaf units are the backed-up leaf values: the root's sums are at
+        // least the leaf census's share routed through it (all of it here).
+        let root_units: u64 = edges.iter().map(|e| e.units).sum();
+        assert!(root_units >= census["leaf_units"].as_u64().unwrap());
+        assert!(ta.nodes.values().all(|n| n.vsum.len() == n.n.len()));
+    }
+    // The formal search is untouched by the option's existence.
+    let mut roles = Roles {
+        focal: fixture(),
+        opps: vec![fixture()],
+        scorer: fixture(),
+        inner_focal: fixture(),
+        inner_opps: vec![fixture()],
+    };
+    let seeds = RootSeeds {
+        model: "fixture".into(),
+        root: "vl-fixture".into(),
+    };
+    let d = play::decision(&session).unwrap();
+    let ctx = RootCtx {
+        visible_history: &[],
+        root: &session,
+        d,
+        focal: play::acting(&d),
+        opp: 0,
+        seeds: &seeds,
+        prior: &prior,
+        defs: spy_defs(),
+        cast_root: false,
+        probs: Vec::new(),
+        limits: Limits {
+            select_cap: 4_000,
+            eval_worlds: 1,
+            eval_cap: 1,
+        },
+        urgency: Some(1.5),
+        key_mode: super::canon2::KeyMode::Legacy,
+        interchange: false,
+        bestline: None,
+    };
+    let (_, formal) = roles.select_e(&ctx);
+    assert!(formal.nodes.values().all(|n| n.vsum.is_empty()));
+    assert!(value_leaf::root_edges(&formal).is_none());
+}
+
+/// V9-lite: K = 4 root-parallel trees (one seed root each) merge to the same
+/// root edges and the same `pick-v2` choice whether the trees ran serially
+/// or concurrently on separate threads.
+#[test]
+fn value_leaf_root_parallel_merge_is_order_and_thread_independent() {
+    let (session, prior) = value_leaf_root();
+    let roots: Vec<String> = (0..4).map(|k| format!("vl-fixture/k{k}")).collect();
+    let serial: Vec<value_leaf::RootEdges> = roots
+        .iter()
+        .map(|r| {
+            let (sel, tree) =
+                value_leaf_search(&session, &prior, r, value_leaf::Horizon::H0, 16, 16 * 512);
+            assert!(!sel.incomplete, "{:?}", sel.faults);
+            value_leaf::root_edges(&tree).expect("a value-leaf root")
+        })
+        .collect();
+    let concurrent: Vec<value_leaf::RootEdges> = std::thread::scope(|scope| {
+        let handles: Vec<_> = roots
+            .iter()
+            .map(|r| {
+                let session = session.clone();
+                let prior = prior.clone();
+                std::thread::Builder::new()
+                    .stack_size(64 << 20)
+                    .spawn_scoped(scope, move || {
+                        let (_, tree) = value_leaf_search(
+                            &session,
+                            &prior,
+                            r,
+                            value_leaf::Horizon::H0,
+                            16,
+                            16 * 512,
+                        );
+                        value_leaf::root_edges(&tree).expect("a value-leaf root")
+                    })
+                    .unwrap()
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    assert_eq!(serial, concurrent);
+    let merged = value_leaf::merge(&serial).unwrap();
+    let mut reversed = serial.clone();
+    reversed.reverse();
+    assert_eq!(merged, value_leaf::merge(&reversed).unwrap());
+    assert_eq!(
+        merged.iter().map(|e| e.n).sum::<u64>(),
+        serial.iter().flatten().map(|e| e.n).sum::<u64>()
+    );
+    assert_eq!(
+        value_leaf::pick_v2(&merged),
+        value_leaf::pick_v2(&value_leaf::merge(&concurrent).unwrap())
+    );
+}
+
+/// V9-lite: a transition guard that binds stops the search with
+/// `cap_reached` (never a fault), and does so identically on repeat.
+#[test]
+fn value_leaf_guard_exhaustion_is_clean_and_repeatable() {
+    let (session, prior) = value_leaf_root();
+    let (a, _) = value_leaf_search(
+        &session,
+        &prior,
+        "vl-cap",
+        value_leaf::Horizon::T0,
+        1_000,
+        300,
+    );
+    let (b, _) = value_leaf_search(
+        &session,
+        &prior,
+        "vl-cap",
+        value_leaf::Horizon::T0,
+        1_000,
+        300,
+    );
+    assert!(
+        a.cap_reached && !a.incomplete && a.faults.is_empty(),
+        "{:?}",
+        a.faults
+    );
+    assert!(a.attempted < 1_000);
+    assert_eq!(value_leaf_primary(&a), value_leaf_primary(&b));
+}
+
+/// The value-leaf option refuses combinations it does not define.
+#[test]
+fn value_leaf_refuses_undefined_combinations() {
+    let (session, prior) = value_leaf_root();
+    let mut roles = Roles {
+        focal: fixture(),
+        opps: vec![fixture()],
+        scorer: fixture(),
+        inner_focal: fixture(),
+        inner_opps: vec![fixture()],
+    };
+    let seeds = RootSeeds {
+        model: "fixture".into(),
+        root: "vl-refuse".into(),
+    };
+    let d = play::decision(&session).unwrap();
+    let ctx = RootCtx {
+        visible_history: &[],
+        root: &session,
+        d,
+        focal: play::acting(&d),
+        opp: 0,
+        seeds: &seeds,
+        prior: &prior,
+        defs: spy_defs(),
+        cast_root: false,
+        probs: Vec::new(),
+        limits: Limits {
+            select_cap: 4_000,
+            eval_worlds: 1,
+            eval_cap: 1,
+        },
+        urgency: Some(1.5),
+        key_mode: super::canon2::KeyMode::Legacy,
+        interchange: false,
+        bestline: Some(8),
+    };
+    let options = root_allocation::SearchOptions {
+        work_limit: Some(4),
+        value_leaf: Some(value_leaf::ValueLeafV1 {
+            horizon: value_leaf::Horizon::H0,
+        }),
+        ..root_allocation::SearchOptions::default()
+    };
+    let (sel, _) = roles.select_e_options(&ctx, None, 1, None, None, None, &options);
+    assert!(sel.incomplete && sel.attempted == 0);
+}

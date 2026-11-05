@@ -1291,6 +1291,7 @@ fn gae_with_external_rows_equals_gae_with_the_same_in_batch_roots() {
         denominator: 2,
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: (0..2)
             .map(|_| archive_distillation_v1::ExternalAuxiliaryRowV1 {
                 encoded: encoded_decision_view_v3(&fixture.tensors[1]),
@@ -1364,6 +1365,7 @@ fn gae_with_external_rows_at_zero_coefficient_is_the_ordinary_update() {
         denominator: 32,
         cap: None,
         step_telemetry: false,
+        policy_mask: Vec::new(),
         rows: (0..3)
             .map(|_| archive_distillation_v1::ExternalAuxiliaryRowV1 {
                 encoded: encoded_decision_view_v3(&fixture.tensors[1]),
@@ -1432,6 +1434,7 @@ fn gae_external_cap_matches_the_uncapped_update_and_a_reference_adam_step() {
             denominator: 2,
             cap,
             step_telemetry: true,
+            policy_mask: Vec::new(),
             rows: (0..2)
                 .map(|_| archive_distillation_v1::ExternalAuxiliaryRowV1 {
                     encoded: encoded_decision_view_v3(&fixture.tensors[1]),
@@ -1574,6 +1577,7 @@ fn gae_stage_b2_empty_packets_are_the_ordinary_update_with_receipts() {
             denominator: 32,
             cap,
             step_telemetry: true,
+            policy_mask: Vec::new(),
             rows: Vec::new(),
         };
         let mut state = step_once();
@@ -1739,4 +1743,145 @@ fn gpu_exact_learner_preserves_every_bit() {
     let receipt = crate::gpu_exact_v1::learner_receipt_v1().unwrap();
     assert_eq!(receipt["updates"], 3, "{receipt}");
     eprintln!("{receipt}");
+}
+
+/// A real device fault in the GPU learner's second update (the
+/// fault-injection trigger `learner:2` launches a trapping kernel) fails that
+/// update closed: the step returns the error, the train state keeps the
+/// first update's bits (equal to the CPU's, so a CPU resume from it is the
+/// CPU run), and the receipt records the fatal error with no CPU fallback.
+/// The segment-level fault and CPU resume run with the RT1 binary in the S3b
+/// qualification. Run alone, in its own process (the fault is sticky):
+/// `MTG_KERNEL_GPU_EXACT_FAULT=learner:2 MTG_KERNEL_GPU_EXACT_TEST_ORDINAL=N
+/// cargo test --release --features gpu-exact-fault-injection-v1 --lib --
+/// --exact --ignored
+/// native_policy_train_step_v1::gae_v1::tests::gpu_exact_learner_fault_fails_the_update_closed`.
+#[cfg(feature = "gpu-exact-fault-injection-v1")]
+#[test]
+#[ignore = "needs a CUDA device and its own process (MTG_KERNEL_GPU_EXACT_FAULT=learner:2)"]
+fn gpu_exact_learner_fault_fails_the_update_closed() {
+    if std::env::var("MTG_KERNEL_GPU_EXACT_FAULT").as_deref() != Ok("learner:2") {
+        eprintln!("skipped: set MTG_KERNEL_GPU_EXACT_FAULT=learner:2 and run this test alone");
+        return;
+    }
+    let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .parse()
+        .unwrap();
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = many_substeps(&fixture, 120);
+    let batch = physical_groups(&steps);
+    let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    assert!(
+        !crate::gpu_exact_v1::learner_installed_v1(),
+        "run this test alone"
+    );
+    let mut cpu = start.clone();
+    profiled_step(&mut cpu, &batch, 4).unwrap();
+    let after_first = state_bits(&cpu);
+    let second_fixture = Fixture::capture(&cpu.model);
+    let second_steps = many_substeps(&second_fixture, 80);
+    let second_batch = physical_groups(&second_steps);
+    crate::gpu_exact_v1::install_learner_v1(ordinal).unwrap();
+    let mut gpu = start.clone();
+    profiled_step(&mut gpu, &batch, 4).unwrap();
+    assert_eq!(state_bits(&gpu), after_first);
+    let error = profiled_step(&mut gpu, &second_batch, 4).expect_err("the faulted update fails");
+    eprintln!("{error:?}");
+    assert_eq!(
+        state_bits(&gpu),
+        after_first,
+        "no state from the failed update"
+    );
+    let receipt = crate::gpu_exact_v1::learner_receipt_v1().unwrap();
+    assert_eq!(receipt["updates"], 1, "{receipt}");
+    assert_eq!(receipt["cpu_fallbacks"], 0, "{receipt}");
+    assert!(receipt["fatal_error"].is_string(), "{receipt}");
+    eprintln!("{receipt}");
+}
+
+/// W5 (`w5-xact-v1`): a masked substep takes no policy gradient and keeps
+/// its value gradient; the policy term is normalized over the groups with an
+/// unmasked substep, the value term over every group.
+#[test]
+fn w5_policy_mask_zeroes_masked_substeps_and_renormalizes_the_policy_term() {
+    use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+    let model = model();
+    let fixture = Fixture::capture(&model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let step = |mask: Vec<(usize, usize)>| {
+        let external = archive_distillation_v1::ExternalAuxiliaryInputV1 {
+            direction: LineBDivergenceV1::Forward,
+            coefficient: 0.7,
+            denominator: 1,
+            cap: None,
+            step_telemetry: true,
+            policy_mask: mask,
+            rows: Vec::new(),
+        };
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let (result, captured) = capture_train_step_for_test_v1(|| {
+            state.train_step_gae_external_auxiliary_v1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups,
+                &LINE_B_TARGETS,
+                &LINE_B_ADVANTAGES,
+                VC,
+                LR,
+                None,
+                &external,
+            )
+        });
+        (result, captured)
+    };
+    let [a0, a1] = LINE_B_ADVANTAGES;
+    // Visiting order: group 1 substep 0, group 0 substep 1, group 0 substep 0.
+    let roots = |captured: &TrainStepCaptureV1| {
+        captured
+            .roots
+            .iter()
+            .map(|r| (r.d_joint_log_probability.to_bits(), r.d_value))
+            .collect::<Vec<_>>()
+    };
+    let (unmasked, plain) = step(Vec::new());
+    unmasked.unwrap();
+    let plain = roots(&plain);
+    assert_eq!(
+        plain.iter().map(|r| r.0).collect::<Vec<_>>(),
+        vec![
+            (-a1 / 2.0).to_bits(),
+            (-a0 / 2.0).to_bits(),
+            (-a0 / 2.0).to_bits()
+        ]
+    );
+    // One substep of group 0: both groups still count.
+    let (result, captured) = step(vec![(0, 1)]);
+    result.unwrap();
+    let masked = roots(&captured);
+    assert_eq!(
+        masked.iter().map(|r| r.0).collect::<Vec<_>>(),
+        vec![
+            (-a1 / 2.0).to_bits(),
+            0.0_f32.to_bits(),
+            (-a0 / 2.0).to_bits()
+        ]
+    );
+    assert_eq!(
+        masked.iter().map(|r| r.1).collect::<Vec<_>>(),
+        plain.iter().map(|r| r.1).collect::<Vec<_>>()
+    );
+    // All of group 1: its value gradient stays, the policy term counts one group.
+    let (result, captured) = step(vec![(1, 0)]);
+    result.unwrap();
+    let masked = roots(&captured);
+    assert_eq!(
+        masked.iter().map(|r| r.0).collect::<Vec<_>>(),
+        vec![0.0_f32.to_bits(), (-a0).to_bits(), (-a0).to_bits()]
+    );
+    assert!(masked[0].1 != 0.0 && masked[0].1 == plain[0].1);
+    for bad in [vec![(2, 0)], vec![(0, 2)], vec![(0, 0), (0, 0)]] {
+        assert!(step(bad).0.is_err());
+    }
 }

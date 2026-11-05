@@ -458,6 +458,7 @@ pub(super) fn load_v1(
         play_import: import.base_play_import,
         feature_transfer: source.feature_transfer.clone(),
         checkpoint: source.checkpoint.clone(),
+        s_learner: None,
     };
     let (mut policy, mut identity) = load_expanded_inference_any_math_v1(&base)?;
     install_v1(&mut policy, &conversion, check_enabled_v1())?;
@@ -683,7 +684,8 @@ pub(super) fn names_another_file_v1(checkpoint: &[u8]) -> Result<bool, String> {
     }
     #[cfg(test)]
     PROBES_FOR_TEST_V1.with(|probes| probes.set(probes.get() + 1));
-    let probe: ArchiveProbeV1 = serde_json::from_slice(checkpoint).map_err(err)?;
+    let view = super::checkpoint_container_v1::metadata_view_v1(checkpoint)?;
+    let probe: ArchiveProbeV1 = serde_json::from_slice(view).map_err(err)?;
     Ok(probe.archive_distillation.is_some())
 }
 
@@ -757,6 +759,7 @@ fn initialize_v1(
         play_import: import.base_play_import.clone(),
         feature_transfer: source.feature_transfer.clone(),
         checkpoint: conversion.base_checkpoint.clone(),
+        s_learner: None,
     };
     let base_bytes = read_pinned_bytes(&base.play_import)?;
     ensure(
@@ -1187,6 +1190,10 @@ fn converted_checkpoint_bytes_v1(
     converted_contract: &str,
     runtime_weight: &[f32],
 ) -> Result<Vec<u8>, String> {
+    ensure(
+        !super::checkpoint_container_v1::is_container_v1(checkpoint),
+        "the no-state-digest conversion reads only a v1 JSON checkpoint; export the container first",
+    )?;
     let mut value: Value = serde_json::from_slice(checkpoint).map_err(err)?;
     let source_state = value
         .get("state_sha256")
@@ -1321,6 +1328,7 @@ pub fn convert_no_state_digest_v1(
         play_import: play_import.clone(),
         feature_transfer: source.feature_transfer.clone(),
         checkpoint: source.checkpoint.clone(),
+        s_learner: None,
     };
     let source_pin = write_pinned_v1(
         out_dir,

@@ -6,9 +6,11 @@ use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
     ESupportedTeacherOptionsV1,
 };
-use crate::expanded_deck_training_v1::ex1_collect_v1::{Ex1CollectOptionsV1, EX1_BUDGET_V1};
+use crate::expanded_deck_training_v1::ex1_collect_v1::{
+    Ex1CollectOptionsV1, W5CollectOptionsV1, EX1_BUDGET_V1,
+};
 use crate::expanded_deck_training_v1::ex1_update_v1::{
-    continuation_identity as ex1_continuation_identity_v1, Ex1UpdateOptionsV1,
+    continuation_identity as ex1_continuation_identity_v1, Ex1UpdateOptionsV1, W5UpdateOptionsV1,
 };
 use crate::expanded_deck_training_v1::no_state_digest_v1::{
     is_converted_source_v1, policy_contract_record_v1,
@@ -32,6 +34,7 @@ use crate::expanded_deck_training_v1::{
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
 use crate::training_math_v1::TrainingMathV1;
+use crate::w5_xact_v1::W5_XACT_VERSION_V1;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -149,6 +152,25 @@ pub struct Ex1RunOptionsV1 {
     pub coefficient: f64,
     #[serde(default)]
     pub cap: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1,
+    /// W5's `w5-xact-v1` recipe (collab LANES/lead/W5-DESIGN.md v1.3 section
+    /// 3) at the run's frozen budget B; omitted for EX1, so every EX1 config
+    /// and run identity is unchanged. `run` is the chain id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w5: Option<W5RunOptionsV1>,
+}
+
+/// W5's run options: the frozen search budget B (Stage 0b) and the search's
+/// exact key memo limit in MiB (default 512; 0 turns it off).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct W5RunOptionsV1 {
+    pub budget: u64,
+    #[serde(default = "default_w5_key_memo_mib")]
+    pub key_memo_mib: u64,
+}
+
+fn default_w5_key_memo_mib() -> u64 {
+    crate::w5_xact_v1::W5_KEY_MEMO_MIB_DEFAULT_V1
 }
 
 impl Ex1RunOptionsV1 {
@@ -156,7 +178,12 @@ impl Ex1RunOptionsV1 {
         Ex1CollectOptionsV1 {
             run: self.run.clone(),
             update: self.update_offset + index as u64,
-            budget: EX1_BUDGET_V1,
+            budget: self.w5.as_ref().map_or(EX1_BUDGET_V1, |w5| w5.budget),
+            w5: self.w5.as_ref().map(|w5| W5CollectOptionsV1 {
+                recipe: W5_XACT_VERSION_V1.into(),
+                key_memo_mib: w5.key_memo_mib,
+                capture_0b: None,
+            }),
         }
     }
 
@@ -167,7 +194,109 @@ impl Ex1RunOptionsV1 {
             coefficient: self.coefficient,
             cap: self.cap,
             collection,
+            w5: self.w5.as_ref().map(|w5| W5UpdateOptionsV1 {
+                recipe: W5_XACT_VERSION_V1.into(),
+                budget: w5.budget,
+                key_memo_mib: w5.key_memo_mib,
+            }),
         }
+    }
+}
+
+/// W5's chain-only CPU ledger (collab LANES/lead/W5-DESIGN.md v1.3 section
+/// 2.1). The guarded launcher (E10) owns the chain's cgroups and writes the
+/// source file `source` (schema `w5-chain-ledger-source/v1`):
+///
+/// - `closed_usec`: the closed total of every earlier cgroup instance of the
+///   chain (pauses, resumes, restarts, the stage transition);
+/// - `cpu_stat`: the live instance's `cpu.stat`, whose `usage_usec` line the
+///   driver reads (it sums every process of the chain, never the filler);
+/// - `instance`: the live instance's ordinal;
+/// - `stop_at_usec` (optional): the driver stops cleanly after the first
+///   update whose ledger value reaches it (resume to R_i).
+///
+/// At every update boundary the driver re-reads the source and records
+/// `closed_usec + usage_usec` in the iteration receipt as `chain_ledger`,
+/// beside the wall clock. The ledger is telemetry: it never enters a train
+/// state, a command or a checkpoint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChainLedgerOptionsV1 {
+    pub source: PathBuf,
+}
+
+pub const CHAIN_LEDGER_SOURCE_SCHEMA_V1: &str = "w5-chain-ledger-source/v1";
+
+/// One update boundary's ledger reading and the source's stop value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChainLedgerReadingV1 {
+    pub record: Value,
+    pub usec: u64,
+    pub stop_at_usec: Option<u64>,
+}
+
+impl ChainLedgerOptionsV1 {
+    fn source_v1(&self) -> Result<Value, String> {
+        let source = read_json(&self.source, SMALL_CAP)?;
+        check(
+            source["schema"] == CHAIN_LEDGER_SOURCE_SCHEMA_V1,
+            "chain ledger source has another schema",
+        )?;
+        Ok(source)
+    }
+
+    /// The source's stop value, read without the live counter.
+    pub fn stop_at_usec_v1(&self) -> Result<Option<u64>, String> {
+        let source = self.source_v1()?;
+        match source.get("stop_at_usec") {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| "chain ledger stop_at_usec is not an integer".into()),
+        }
+    }
+
+    pub fn read_v1(&self) -> Result<ChainLedgerReadingV1, String> {
+        let source = self.source_v1()?;
+        let closed = source["closed_usec"]
+            .as_u64()
+            .ok_or("chain ledger source lacks closed_usec")?;
+        let instance = source["instance"]
+            .as_u64()
+            .ok_or("chain ledger source lacks instance")?;
+        let stop_at_usec = match source.get("stop_at_usec") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_u64()
+                    .ok_or("chain ledger stop_at_usec is not an integer")?,
+            ),
+        };
+        let stat_path = PathBuf::from(
+            source["cpu_stat"]
+                .as_str()
+                .ok_or("chain ledger source lacks cpu_stat")?,
+        );
+        let stat = fs::read_to_string(&stat_path)
+            .map_err(|e| format!("chain ledger cpu.stat {}: {e}", stat_path.display()))?;
+        let live = stat
+            .lines()
+            .find_map(|line| line.strip_prefix("usage_usec "))
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .ok_or("chain ledger cpu.stat lacks usage_usec")?;
+        let usec = closed.checked_add(live).ok_or("chain ledger overflows")?;
+        let unix_seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(err)?
+            .as_secs_f64();
+        Ok(ChainLedgerReadingV1 {
+            record: json!({"schema":"w5-chain-ledger/v1","usec":usec,"closed_usec":closed,
+                "live_usec":live,"instance":instance,"unix_seconds":unix_seconds,
+                "chain":source.get("chain").cloned().unwrap_or(Value::Null)}),
+            usec,
+            stop_at_usec,
+        })
     }
 }
 
@@ -252,6 +381,17 @@ pub struct NativeExpandedTrainingRunV1 {
     pub value_coefficient: f32,
     #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
     pub update_backend: ExpandedUpdateBackendV1,
+    /// Config-driven; absent means `auto` (checkpoint containers where the
+    /// writer's scope gate admits the checkpoint, v1 JSON otherwise), and
+    /// `auto` is never serialized, so every existing config keeps its wire
+    /// bytes and its run identity. An explicit `"v1"` (always JSON) or `"v2"`
+    /// (always the container; refused outside the gate) is serialized. See
+    /// `checkpoint_container_v1` and design 4.2.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::expanded_deck_training_v1::CheckpointRecordFormatV1::is_auto"
+    )]
+    pub record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1,
     /// Config-driven; default `TerminalReinforceValueV3` keeps every
     /// existing config, its wire bytes, and its run identity byte-identical.
     /// See `ExpandedLossSelectionV1`.
@@ -327,6 +467,10 @@ pub struct NativeExpandedTrainingRunV1 {
     /// every existing config and receipt is unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub record_process_cpu: bool,
+    /// W5's chain-only CPU ledger; omitted when absent, so every existing
+    /// config and receipt is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_ledger: Option<ChainLedgerOptionsV1>,
     pub output_directory: PathBuf,
 }
 
@@ -354,6 +498,25 @@ fn err(value: impl std::fmt::Display) -> String {
 }
 fn value(value: &impl Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(err)
+}
+/// `value` as `publish` writes it and `read_json` reads it back: through the
+/// JSON bytes, so f32 fields keep their shortest form.
+fn published_value(value: &impl Serialize) -> Result<Value, String> {
+    serde_json::from_slice(&serde_json::to_vec(value).map_err(err)?).map_err(err)
+}
+/// An interrupted attempt's saved collection command must be the one this
+/// resume rebuilds. Compared as published, through the JSON bytes: an f32
+/// field (max_non_natural_episode_fraction 0.2) is written as "0.2" but
+/// becomes 0.20000000298023224 in a direct `to_value`, so a direct comparison
+/// refused every interrupted attempt of such a config.
+fn check_saved_collect_command(
+    saved: &Path,
+    command: &ExpandedTrainingCommandV1,
+) -> Result<(), String> {
+    check(
+        read_json(saved, SMALL_CAP)? == published_value(command)?,
+        "interrupted attempt collection command differs",
+    )
 }
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -383,6 +546,17 @@ impl NativeExpandedTrainingRunV1 {
         )?;
         self.update_backend.validate_v1()?;
         self.loss_selection.validate_v1()?;
+        // The E-supported, SQ1, TP1 Stage B and EX1 updates always write v1
+        // checkpoints (outside the v2 writer's scope gate), so a run that
+        // demands v2 must not select them (the default keeps v1 there).
+        check(
+            !self.record_format.is_v2()
+                || (self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()),
+            "record_format v2 is not available with e_supported, soft_q, search_targets or ex1 updates",
+        )?;
         if !self.training_math.is_platform_libm() {
             check(
                 self.update_backend.is_cpu()
@@ -433,6 +607,27 @@ impl NativeExpandedTrainingRunV1 {
             "opponent roster exceeds 128 entries",
         )?;
         validate_source_paths(&self.initial_source)?;
+        // W5's native S learner (`s_learner_v1`) runs the ordinary CPU GAE
+        // update and collection, with or without EX1/W5; its own update and
+        // loader refuse the rest too, this check refuses them before any work.
+        if self.initial_source.s_learner.is_some() {
+            check(
+                self.update_backend.is_cpu()
+                    && self.update_backward_execution.is_sequential()
+                    && !self.record_format.is_v2()
+                    && self.collection_sampler.is_legacy()
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    ),
+                "an S learner run requires the ordinary sequential CPU GAE update, record \
+                 format v1 and the legacy sampler, without line (b), E, SQ1 or search targets",
+            )?;
+        }
         if let Some(options) = &self.e_supported {
             // The E command is the sequential CPU GAE update with full Adam and
             // the unchanged deployment sampler; nothing else may be combined.
@@ -624,7 +819,10 @@ impl NativeExpandedTrainingRunV1 {
 }
 
 fn validate_source_paths(source: &ExpandedModelSourceV1) -> Result<(), String> {
-    for pin in std::iter::once(&source.play_import).chain(source.checkpoint.iter()) {
+    for pin in std::iter::once(&source.play_import)
+        .chain(source.checkpoint.iter())
+        .chain(source.s_learner.iter().map(|member| &member.initial))
+    {
         check(
             pin.path.is_absolute()
                 && pin.sha256.len() == 64
@@ -1086,6 +1284,7 @@ fn validate_update(
     ex1: Option<(&Ex1RunOptionsV1, usize, &PinnedFileV1)>,
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
+    loss_selection: &ExpandedLossSelectionV1,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     check(
@@ -1129,6 +1328,8 @@ fn validate_update(
     };
     let after =
         load_expanded_update_inference_v1(&next, trajectories, learning_rate, value_coefficient)?;
+    // An S checkpoint also binds the run's GAE settings (`s_learner_v1`).
+    crate::expanded_deck_training_v1::s_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
     check(
         after.adam_step
             == before
@@ -1360,6 +1561,7 @@ fn update_command(
             update_backward_execution: config.update_backward_execution,
             loss_selection: config.loss_selection,
             training_math: config.training_math,
+            record_format: config.record_format,
             output_directory,
         }
     } else {
@@ -1375,6 +1577,7 @@ fn update_command(
             preparation_workers: config.preparation_workers,
             max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
             training_math: config.training_math,
+            record_format: config.record_format,
             output_directory,
         }
     }
@@ -1535,6 +1738,13 @@ pub fn run_native_expanded_training_v1(
     let mut history = Vec::new();
     let mut receipts = Vec::new();
     let mut newly_completed = 0usize;
+    let mut stopped_at_ledger = false;
+    let recovered_stop_at_usec = config
+        .chain_ledger
+        .as_ref()
+        .map(ChainLedgerOptionsV1::stop_at_usec_v1)
+        .transpose()?
+        .flatten();
     let mut missing_seen = false;
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
@@ -1606,18 +1816,27 @@ pub fn run_native_expanded_training_v1(
                 config.ex1.as_ref().map(|o| (o, index, &collection)),
                 config.training_math,
                 input_contract.as_ref(),
+                &config.loss_selection,
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
                 "iteration checkpoint identity differs",
             )?;
+            // A recovered boundary at or past the source's stop value stops
+            // the run before any new work (a relaunch never passes R_i).
+            if let (Some(stop), Some(usec)) = (
+                recovered_stop_at_usec,
+                receipt["chain_ledger"]["usec"].as_u64(),
+            ) {
+                stopped_at_ledger = usec >= stop;
+            }
             current = next;
             current_identity = after;
             history.push(current.clone());
             receipts.push(pin(&complete_path)?);
             continue;
         }
-        if max_new_iterations.is_some_and(|limit| newly_completed >= limit) {
+        if stopped_at_ledger || max_new_iterations.is_some_and(|limit| newly_completed >= limit) {
             break;
         }
         // Invocation telemetry stays outside immutable iteration receipts. It
@@ -1659,10 +1878,7 @@ pub fn run_native_expanded_training_v1(
             }
             let collect_command =
                 collection_command(config, index, &current, &episodes, attempt.join("collect"));
-            check(
-                read_json(&saved_command, SMALL_CAP)? == value(&collect_command)?,
-                "interrupted attempt collection command differs",
-            )?;
+            check_saved_collect_command(&saved_command, &collect_command)?;
             let path = attempt.join("collect/collection.json");
             if path.exists() {
                 let candidate = pin(&path)?;
@@ -1719,6 +1935,7 @@ pub fn run_native_expanded_training_v1(
                         .map(|o| (o, index, &referenced_collection)),
                     config.training_math,
                     input_contract.as_ref(),
+                    &config.loss_selection,
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -1840,6 +2057,7 @@ pub fn run_native_expanded_training_v1(
             config.ex1.as_ref().map(|o| (o, index, &collection)),
             config.training_math,
             input_contract.as_ref(),
+            &config.loss_selection,
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -1848,6 +2066,14 @@ pub fn run_native_expanded_training_v1(
         if config.record_process_cpu {
             receipt["driver_process_cpu_seconds"] =
                 json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
+        }
+        let ledger = config
+            .chain_ledger
+            .as_ref()
+            .map(ChainLedgerOptionsV1::read_v1)
+            .transpose()?;
+        if let Some(reading) = &ledger {
+            receipt["chain_ledger"] = reading.record.clone();
         }
         if let Some(ledger_pin) = collection_non_natural_ledger_pin(&collection)? {
             receipt["non_natural_ledger"] = value(&ledger_pin)?;
@@ -1869,6 +2095,13 @@ pub fn run_native_expanded_training_v1(
         current_identity = after;
         history.push(current.clone());
         newly_completed += 1;
+        // W5 resume to R_i: stop after the first boundary at or past it.
+        if ledger
+            .as_ref()
+            .is_some_and(|r| r.stop_at_usec.is_some_and(|stop| r.usec >= stop))
+        {
+            stopped_at_ledger = true;
+        }
         println!(
             "{}",
             json!({"completed_iteration":index,"adam_step":current_identity.adam_step,
@@ -2056,6 +2289,7 @@ mod tests {
                     },
                 }],
             }],
+            record_format: Default::default(),
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -2073,6 +2307,7 @@ mod tests {
             search_targets: None,
             ex1: None,
             record_process_cpu: false,
+            chain_ledger: None,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -2128,6 +2363,50 @@ mod tests {
         assert!(parallel.validate_v1().is_err());
         parallel.collection_workers = 1025;
         assert!(parallel.validate_v1().is_err());
+    }
+
+    /// An interrupted attempt's saved collection command matches the one a
+    /// resume rebuilds, also for an f32 field without an exact decimal form
+    /// (max_non_natural_episode_fraction 0.2, as D1 runs use). A direct
+    /// `to_value` widens it to 0.20000000298023224 and once refused every
+    /// such resume.
+    #[test]
+    fn saved_collection_command_matches_on_resume_with_f32_fields() {
+        let mut config = schedule();
+        config.max_non_natural_episode_fraction = 0.2;
+        config.collection_workers = 4;
+        let episodes = resolve_episodes(&config, 0, &config.initial_source, &[]).unwrap();
+        let attempt =
+            std::env::temp_dir().join(format!("rt1-saved-command-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&attempt);
+        fs::create_dir_all(&attempt).unwrap();
+        let command = collection_command(
+            &config,
+            0,
+            &config.initial_source,
+            &episodes,
+            attempt.join("collect"),
+        );
+        publish(&attempt, "collect-command.json", &command).unwrap();
+        let saved = attempt.join("collect-command.json");
+        assert_ne!(
+            read_json(&saved, SMALL_CAP).unwrap(),
+            value(&command).unwrap(),
+            "the direct form widens the f32"
+        );
+        // The resume's own check accepts it, and still refuses a changed command.
+        check_saved_collect_command(&saved, &command).unwrap();
+        let mut other = config.clone();
+        other.max_non_natural_episode_fraction = 0.25;
+        let changed = collection_command(
+            &other,
+            0,
+            &config.initial_source,
+            &episodes,
+            attempt.join("collect"),
+        );
+        assert!(check_saved_collect_command(&saved, &changed).is_err());
+        let _ = fs::remove_dir_all(&attempt);
     }
 
     #[test]
@@ -2239,6 +2518,36 @@ mod tests {
             "max_decoded_tensor_bytes": 1024u64 * 1024 * 1024}});
         validate_preparation_execution(&recorded, 4, 1024).unwrap();
         assert!(validate_preparation_execution(&recorded, 4, 256).is_err());
+    }
+
+    /// The default record format (`auto`, an absent field) keeps the config's
+    /// wire bytes and identity: it is never serialized. An explicit `"v1"` or
+    /// `"v2"` is serialized and is a different config.
+    #[test]
+    fn record_format_default_preserves_the_config_wire_and_identity() {
+        use crate::expanded_deck_training_v1::CheckpointRecordFormatV1 as Format;
+        let default = schedule();
+        assert!(default.record_format.is_auto());
+        let default_value = value(&default).unwrap();
+        assert!(default_value.get("record_format").is_none());
+        let restored: NativeExpandedTrainingRunV1 =
+            serde_json::from_value(default_value.clone()).unwrap();
+        assert!(restored.record_format.is_auto());
+        assert_eq!(value(&restored).unwrap(), default_value);
+        assert_eq!(identity(&restored).unwrap(), identity(&default).unwrap());
+        for (format, name) in [(Format::V1, "v1"), (Format::V2, "v2")] {
+            let mut explicit = default.clone();
+            explicit.record_format = format;
+            let explicit_value = value(&explicit).unwrap();
+            assert_eq!(explicit_value["record_format"], name);
+            assert_ne!(identity(&explicit).unwrap(), identity(&default).unwrap());
+            // Without the member it is the default's bytes again.
+            let mut stripped = explicit_value.clone();
+            stripped.as_object_mut().unwrap().remove("record_format");
+            assert_eq!(stripped, default_value);
+            let back: NativeExpandedTrainingRunV1 = serde_json::from_value(explicit_value).unwrap();
+            assert_eq!(back.record_format, format);
+        }
     }
 
     #[test]
@@ -2791,6 +3100,7 @@ mod tests {
             play_import,
             feature_transfer,
             checkpoint: None,
+            s_learner: None,
         };
         let list = |id: &str| {
             let registration =
@@ -2833,6 +3143,7 @@ mod tests {
             initial_source,
             opponents: vec![],
             iterations,
+            record_format: Default::default(),
             learning_rate: 0.0003,
             value_coefficient: 0.5,
             update_backend,
@@ -2850,6 +3161,7 @@ mod tests {
             search_targets: None,
             ex1: None,
             record_process_cpu: false,
+            chain_ledger: None,
             output_directory: root.join("run"),
         }
     }
@@ -2886,8 +3198,16 @@ mod tests {
     }
 
     fn checkpoint_identity_v1(pin: &PinnedFileV1) -> (String, String, u64) {
-        let checkpoint: Value =
-            serde_json::from_str(&fs::read_to_string(&pin.path).unwrap()).unwrap();
+        // The default writes containers for these kinds; read either format.
+        let bytes = fs::read(&pin.path).unwrap();
+        let bytes =
+            if crate::expanded_deck_training_v1::checkpoint_container_v1::is_container_v1(&bytes) {
+                crate::expanded_deck_training_v1::checkpoint_container_v1::export_v1(&bytes)
+                    .unwrap()
+            } else {
+                bytes
+            };
+        let checkpoint: Value = serde_json::from_slice(&bytes).unwrap();
         (
             checkpoint["feature_contract_digest"]
                 .as_str()
@@ -2968,6 +3288,7 @@ mod tests {
             play_import: v7.initial_source.play_import.clone(),
             feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8),
             checkpoint: Some(converted.pin.clone()),
+            s_learner: None,
         };
         london(&mut v8);
         // The RT1 chains' parallel collection and ordered update preparation.
@@ -3238,6 +3559,293 @@ mod tests {
         std::fs::write(options.packets_directory.join("STOP"), b"").unwrap();
         let error = run_native_expanded_training_v1(&stopped, None).unwrap_err();
         assert!(error.contains("stopped"), "{error}");
+    }
+
+    /// W5 (`w5-xact-v1`) through the production run path: every receipt
+    /// records the chain-only ledger from the launcher's source, the ledger
+    /// never changes a state (two runs with different ledgers reach the same
+    /// hashes), `stop_at_usec` stops after the first boundary that reaches
+    /// it, and the resumed run reaches the same hashes.
+    #[test]
+    fn w5_run_records_the_chain_ledger_stops_at_it_and_replays() {
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        };
+        let w5_config = |label: &str, closed: u64, stop: Option<u64>| {
+            let mut config = real_two_iteration_config_v1(label, gae, ExpandedUpdateBackendV1::Cpu);
+            let root = config.output_directory.parent().unwrap().to_path_buf();
+            let stat = root.join("cpu.stat");
+            fs::write(&stat, "usage_usec 1000\nuser_usec 600\nsystem_usec 400\n").unwrap();
+            let source = root.join("ledger-source.json");
+            let mut document = json!({"schema":CHAIN_LEDGER_SOURCE_SCHEMA_V1,"chain":"w5/chain1",
+                "closed_usec":closed,"cpu_stat":stat,"instance":2});
+            if let Some(stop) = stop {
+                document["stop_at_usec"] = json!(stop);
+            }
+            fs::write(&source, serde_json::to_vec(&document).unwrap()).unwrap();
+            config.ex1 = Some(Ex1RunOptionsV1 {
+                run: "w5/chain1".into(),
+                update_offset: 0,
+                coefficient: 1.0,
+                cap:
+                    crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1::Ratio {
+                        kappa: 2.0,
+                    },
+                w5: Some(W5RunOptionsV1 {
+                    budget: 1_500,
+                    key_memo_mib: 512,
+                }),
+            });
+            config.chain_ledger = Some(ChainLedgerOptionsV1 { source });
+            config.validate_v1().unwrap();
+            (config, document)
+        };
+        let states = |result: &Value| {
+            (0..2)
+                .map(|i| {
+                    let update: PinnedFileV1 =
+                        serde_json::from_value(iteration_receipt_v1(result, i)["update"].clone())
+                            .unwrap();
+                    read_pin(&update).unwrap()["after_state_sha256"].clone()
+                })
+                .collect::<Vec<_>>()
+        };
+        let (a, _) = w5_config("w5-ledger-a", 5_000, None);
+        let result = run_native_expanded_training_v1(&a, None).unwrap();
+        assert_eq!(result["complete"], true);
+        for i in 0..2 {
+            let receipt = iteration_receipt_v1(&result, i);
+            assert_eq!(receipt["chain_ledger"]["usec"], 6_000);
+            assert_eq!(receipt["chain_ledger"]["instance"], 2);
+            let update: PinnedFileV1 = serde_json::from_value(receipt["update"].clone()).unwrap();
+            let document = read_pin(&update).unwrap();
+            let ex1 = read_pin(&parse_pin(&document["ex1"], "receipt").unwrap()).unwrap();
+            assert_eq!(ex1["method"], "w5-xact-v1");
+            assert_eq!(ex1["w5"]["budget"], 1_500);
+            let telemetry = ex1["w5"]["step_telemetry"].as_bool().unwrap();
+            assert_eq!(telemetry, i == 0, "update {i}");
+        }
+        let (b, _) = w5_config("w5-ledger-b", 9_000_000, None);
+        let other = run_native_expanded_training_v1(&b, None).unwrap();
+        assert_eq!(
+            states(&result),
+            states(&other),
+            "the ledger changed a state"
+        );
+        let (c, mut document) = w5_config("w5-ledger-c", 5_000, Some(6_000));
+        let stopped = run_native_expanded_training_v1(&c, None).unwrap();
+        assert_eq!(stopped["completed_iterations"], 1);
+        assert_eq!(stopped["complete"], false);
+        // A relaunch with the same stop value does no new work.
+        let again = run_native_expanded_training_v1(&c, None).unwrap();
+        assert_eq!(again["completed_iterations"], 1);
+        document["stop_at_usec"] = Value::Null;
+        fs::write(
+            &c.chain_ledger.as_ref().unwrap().source,
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        let resumed = run_native_expanded_training_v1(&c, None).unwrap();
+        assert_eq!(resumed["complete"], true);
+        assert_eq!(states(&result), states(&resumed), "resume changed a state");
+        // An ordinary config without the ledger keeps its receipts.
+        assert!(iteration_receipt_v1(&result, 0)
+            .get("chain_ledger")
+            .is_some());
+        let plain =
+            real_two_iteration_config_v1("w5-ledger-plain", gae, ExpandedUpdateBackendV1::Cpu);
+        plain.validate_v1().unwrap();
+        assert!(serde_json::to_value(&plain)
+            .unwrap()
+            .get("chain_ledger")
+            .is_none());
+    }
+
+    /// Bookkeeping design 2.3, the crash point, in both record formats: an
+    /// update interrupted after its checkpoint's publication and before
+    /// `update.json` resumes in a new attempt that reuses the original
+    /// collection and reaches the uninterrupted run's states. The inventory
+    /// of both attempts is exactly the frozen one: the interrupted attempt
+    /// holds its collection, both commands, its update input and an update
+    /// directory with the published checkpoint and no `update.json`, whose
+    /// bytes equal the resumed attempt's checkpoint; the resumed attempt's
+    /// collection directory stays unused, its update input pins the original
+    /// collection and its update command differs only in the output
+    /// directory.
+    #[test]
+    fn a_crash_after_the_checkpoint_resumes_in_a_new_attempt_with_the_same_states() {
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        };
+        for format in [
+            crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
+            crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V2,
+        ] {
+            let label = format!("crash-point-{format:?}");
+            let mut plain = real_two_iteration_config_v1(
+                &format!("{label}-plain"),
+                gae,
+                ExpandedUpdateBackendV1::Cpu,
+            );
+            plain.record_format = format;
+            let mut crashed =
+                real_two_iteration_config_v1(&label, gae, ExpandedUpdateBackendV1::Cpu);
+            crashed.record_format = format;
+            let reference = run_native_expanded_training_v1(&plain, None).unwrap();
+            crate::expanded_deck_training_v1::arm_crash_point_for_test_v1();
+            let error = run_native_expanded_training_v1(&crashed, None).unwrap_err();
+            assert!(error.contains("crash point"), "{error}");
+            // Every file of the interrupted attempt, recursively, with its bytes.
+            let inventory = |dir: &Path| -> std::collections::BTreeMap<String, Vec<u8>> {
+                let mut out = std::collections::BTreeMap::new();
+                let mut stack = vec![dir.to_path_buf()];
+                while let Some(next) = stack.pop() {
+                    for entry in fs::read_dir(&next).unwrap() {
+                        let path = entry.unwrap().path();
+                        if path.is_dir() {
+                            stack.push(path);
+                        } else {
+                            let rel = path
+                                .strip_prefix(dir)
+                                .unwrap()
+                                .to_string_lossy()
+                                .replace(std::path::MAIN_SEPARATOR, "/");
+                            out.insert(rel, fs::read(&path).unwrap());
+                        }
+                    }
+                }
+                out
+            };
+            let interrupted = crashed
+                .output_directory
+                .join("iterations")
+                .join("000000")
+                .join("attempt-000000");
+            let before = inventory(&interrupted);
+            let resumed = run_native_expanded_training_v1(&crashed, None).unwrap();
+            assert_eq!(
+                before,
+                inventory(&interrupted),
+                "{label}: the resume changed the interrupted attempt"
+            );
+            let names: Vec<&str> = before.keys().map(String::as_str).collect();
+            assert!(
+                names.iter().all(|name| [
+                    "collect-command.json",
+                    "update-input.json",
+                    "update-command.json",
+                    "update/checkpoint.json",
+                    "collect/collection.json"
+                ]
+                .contains(name)
+                    || (name.starts_with("collect/episode-") && name.ends_with(".json"))),
+                "{label}: {names:?}"
+            );
+            for required in [
+                "collect-command.json",
+                "update-input.json",
+                "update-command.json",
+                "update/checkpoint.json",
+                "collect/collection.json",
+            ] {
+                assert!(before.contains_key(required), "{label}: {required} missing");
+            }
+            let after = inventory(
+                &crashed
+                    .output_directory
+                    .join("iterations")
+                    .join("000000")
+                    .join("attempt-000001"),
+            );
+            assert_eq!(
+                after.keys().map(String::as_str).collect::<Vec<_>>(),
+                vec![
+                    "collect-command.json",
+                    "update-command.json",
+                    "update-input.json",
+                    "update/checkpoint.json",
+                    "update/update.json"
+                ],
+                "{label}"
+            );
+            assert_eq!(resumed["complete"], true);
+            let states = |result: &Value| {
+                (0..2)
+                    .map(|i| {
+                        let update: PinnedFileV1 = serde_json::from_value(
+                            iteration_receipt_v1(result, i)["update"].clone(),
+                        )
+                        .unwrap();
+                        read_pin(&update).unwrap()["after_state_sha256"].clone()
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(states(&reference), states(&resumed), "{label}");
+            let iteration = crashed.output_directory.join("iterations").join("000000");
+            let names = |dir: &Path| {
+                let mut out: Vec<String> = fs::read_dir(dir)
+                    .unwrap()
+                    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect();
+                out.sort();
+                out
+            };
+            assert_eq!(
+                names(&iteration),
+                vec!["attempt-000000", "attempt-000001", "complete.json"]
+            );
+            let first = iteration.join("attempt-000000");
+            let second = iteration.join("attempt-000001");
+            assert_eq!(
+                names(&first),
+                vec![
+                    "collect",
+                    "collect-command.json",
+                    "update",
+                    "update-command.json",
+                    "update-input.json"
+                ]
+            );
+            assert!(!first.join("update/update.json").exists());
+            assert!(first.join("update/checkpoint.json").exists());
+            assert_eq!(
+                fs::read(first.join("update/checkpoint.json")).unwrap(),
+                fs::read(second.join("update/checkpoint.json")).unwrap(),
+                "{label}: the update is deterministic"
+            );
+            assert!(first.join("collect/collection.json").exists());
+            assert!(!second.join("collect").exists() || names(&second.join("collect")).is_empty());
+            let read = |path: PathBuf| -> Value {
+                serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+            };
+            let original = read(second.join("update-input.json"))["collection"]["path"]
+                .as_str()
+                .map(PathBuf::from)
+                .unwrap();
+            assert_eq!(
+                original.canonicalize().unwrap(),
+                first
+                    .join("collect")
+                    .join("collection.json")
+                    .canonicalize()
+                    .unwrap()
+            );
+            let mut a = read(first.join("update-command.json"));
+            let mut b = read(second.join("update-command.json"));
+            a["output_directory"] = Value::Null;
+            b["output_directory"] = Value::Null;
+            assert_eq!(a, b, "{label}: commands differ beyond the output directory");
+            assert_ne!(
+                read(first.join("collect-command.json"))["output_directory"],
+                read(second.join("collect-command.json"))["output_directory"]
+            );
+            let log = fs::read_to_string(crashed.output_directory.join("restarts.log")).unwrap();
+            assert!(log.contains("iteration 0: restart incomplete phase in attempt 1"));
+        }
     }
 
     /// TP1 Stage B's ledger: with `record_process_cpu`, every iteration

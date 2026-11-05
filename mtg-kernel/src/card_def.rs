@@ -436,6 +436,12 @@ pub enum Subtype {
     Peasant,
     /// Appended for the eternal catalog's Premodern wave P1b (Psychatog).
     Atog,
+    /// Appended for the eternal catalog's Premodern wave P1a (Jackal Pup,
+    /// Hypnotic Specter, Nantuko Shade and Mystic Enforcer).
+    Jackal,
+    Specter,
+    Shade,
+    Mystic,
 }
 
 impl Subtype {
@@ -802,6 +808,13 @@ impl Subtype {
         Subtype::Peasant,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Atog,
+        Subtype::Jackal,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Specter,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Shade,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Mystic,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1037,6 +1050,10 @@ impl Subtype {
             202 => Subtype::Scarecrow,
             203 => Subtype::Peasant,
             204 => Subtype::Atog,
+            205 => Subtype::Jackal,
+            206 => Subtype::Specter,
+            207 => Subtype::Shade,
+            208 => Subtype::Mystic,
             _ => return None,
         })
     }
@@ -1251,6 +1268,10 @@ impl Subtype {
             Subtype::Scarecrow => true,
             Subtype::Peasant => true,
             Subtype::Atog => true,
+            Subtype::Jackal => true,
+            Subtype::Specter => true,
+            Subtype::Shade => true,
+            Subtype::Mystic => true,
         }
     }
 
@@ -1350,6 +1371,10 @@ impl Subtype {
                     | Subtype::Scarecrow
                     | Subtype::Peasant
                     | Subtype::Atog
+                    | Subtype::Jackal
+                    | Subtype::Specter
+                    | Subtype::Shade
+                    | Subtype::Mystic
             )
         {
             return true;
@@ -1961,6 +1986,10 @@ pub enum PermanentFilter {
     /// A controlled Forest or Plains (Knight of the Reliquary). Appended for
     /// the eternal catalog.
     ForestOrPlainsV1,
+    /// A controlled permanent with this effective subtype, the cost source
+    /// included (Siege-Gang Commander's "Sacrifice a Goblin"). Appended for
+    /// the eternal catalog.
+    WithSubtypeV1(Subtype),
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -2140,6 +2169,19 @@ pub enum CostComponent {
     /// one at a time through `Decision::ChooseCostTargets`. Appended for the
     /// eternal catalog.
     DiscardLandCardsV1(u8),
+    /// "Exile X cards from your graveyard" (Skeletal Scrying's additional
+    /// cost), or "Exile X blue cards from your graveyard" with `blue_only`
+    /// (Flash of Insight's flashback): exactly the announced X cards other
+    /// than the spell, chosen privately one at a time through
+    /// `Decision::ChooseCostTargets`. Appended for the eternal catalog.
+    ExileXCardsFromOwnGraveyardV1 {
+        blue_only: bool,
+    },
+    /// "Discard an Island card and another card" (Foil's alternative cost):
+    /// two distinct cards from the payer's hand other than the spell, the
+    /// first an Island card, chosen privately through
+    /// `Decision::ChooseCostTargets`. Appended for the eternal catalog.
+    DiscardIslandAndAnotherCardV1,
 }
 
 impl CostComponent {
@@ -2426,6 +2468,10 @@ pub enum ManaAbilityCostDef {
     /// "{T}, Sacrifice a creature" (Lazotep Quarry): the creature is the
     /// activation's cost target. Appended for the eternal catalog.
     TapSelfSacrificeControlledCreatureV1,
+    /// "Sacrifice a Goblin" (Skirk Prospector): a controlled permanent with
+    /// this subtype, the source included, is the activation's cost target;
+    /// no tap. Appended for the eternal catalog.
+    SacrificeControlledWithSubtypeV1(Subtype),
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -3811,7 +3857,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xb3b0_e8dc_a14d_52d0;
+        const EXPECTED_ETERNAL: u64 = 0x5339_7c25_1772_e392;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

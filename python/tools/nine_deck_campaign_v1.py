@@ -50,6 +50,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import checkpoint_container_v1
 import host_reservation_v1 as reservations
 import native_expanded_dispatch_v1 as native_dispatch
 import nine_deck_baseline_v1 as ndb
@@ -220,18 +221,32 @@ def supervisor_owned(pid: int, token) -> bool:
         return False
 
 
+def process_gone(pid: int) -> bool:
+    """Whether ``pid`` has exited, where /proc can say so (Linux): no /proc entry. Elsewhere False."""
+    return Path("/proc/self/stat").exists() and not Path(f"/proc/{pid}").exists()
+
+
 def native_ticks(root: Path) -> int | None:
-    """None outside a block's native part, else its native CPU clock ticks (-1 once unreadable, or once the
-    PID names another process: its start differs from started.json's)."""
+    """None outside a block's native part, else its native CPU clock ticks (-1 while unreadable). The native part
+    ends with execution.json or with the recorded process itself: once it has exited (no /proc entry, a zombie,
+    or its PID names another process, whose start differs from started.json's). The dispatcher's work after it
+    (recording the end, fingerprints, archive) is then the attempt's activity: a dispatcher still busy after its
+    native child had exited was taken for a stalled native run, and the guard released the Pod
+    (mtg-kernel#463)."""
     if not (root / "started.json").exists() or (root / "execution.json").exists():
         return None
     try:
         started = json.loads((root / "started.json").read_text(encoding="utf-8"))
-        pid, start = started["pid"], process_start_unix(started["pid"])
-        if start is None or abs(start - float(started["started_unix"])) > START_TOLERANCE_SECONDS:
+        pid = started["pid"]
+        if process_gone(pid):
+            return None
+        start = process_start_unix(pid)
+        if start is None:
             return -1
+        if abs(start - float(started["started_unix"])) > START_TOLERANCE_SECONDS:
+            return None
         fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-        return -1 if fields[0] in ("Z", "X") else int(fields[11]) + int(fields[12])
+        return None if fields[0] in ("Z", "X") else int(fields[11]) + int(fields[12])
     except (OSError, ValueError, KeyError, IndexError):
         return -1
 
@@ -314,6 +329,10 @@ class LeaseProgress:
         with self.lock:
             self.activity = time.time()
 
+    def excluded_children(self) -> frozenset:
+        """Children of the driver whose CPU is not activity (a subclass observes their work another way)."""
+        return frozenset()
+
     def completed(self) -> None:
         self.productive = time.time()
         self.beat()
@@ -352,7 +371,8 @@ class LeaseProgress:
         supervisors = {root: record["pid"] for root, record in supervisors.items()
                        if isinstance(record.get("pid"), int) and supervisor_owned(record["pid"], record.get("token"))}
         table = process_table()
-        observed = {"driver-children": descendant_ticks(table, os.getpid(), frozenset(supervisors.values()))}
+        observed = {"driver-children": descendant_ticks(table, os.getpid(),
+                                                         frozenset(supervisors.values()) | self.excluded_children())}
         observed |= {root + ":supervised": descendant_ticks(table, pid) for root, pid in supervisors.items()
                      if root in in_flight and native.get(root) is None}
         for root in supervisors:  # unobserved during the native part: a fresh baseline when it ends
@@ -585,9 +605,10 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
         campaign.save_state(run, state)
         touch(campaign)
     if block == 1 and "embedding_gate_pass" not in entry:
-        gate = collector.embedding_gate(json.loads(Path(campaign.raw["t1_source"]["checkpoint"]["path"]).read_bytes()),
-                                        json.loads(Path(entry["final_checkpoint"]["path"]).read_bytes()),
-                                        ndb.load_decks(Path(campaign.raw["decks"])))
+        gate = collector.embedding_gate(
+            checkpoint_container_v1.read_document(campaign.raw["t1_source"]["checkpoint"]["path"]),
+            checkpoint_container_v1.read_document(entry["final_checkpoint"]["path"]),
+            ndb.load_decks(Path(campaign.raw["decks"])))
         entry["embedding_gate"] = write_json(campaign.exposure / f"{run}-b01-embedding-gate.json", gate)
         entry["embedding_gate_pass"] = gate["pass"]
         campaign.save_state(run, state)

@@ -838,6 +838,7 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let viewer = ctx.controller;
             let opponent = viewer.opponent();
             for card in state.players[opponent.index()].hand.clone() {
+                // spellbench-reviewed-look: the card rules let a player look at the other hand.
                 if state.reveal_hand_card(viewer, opponent, card).is_err() {
                     halt(state, ctx.source);
                     return;
@@ -866,6 +867,7 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             if !in_hand {
                 return;
             }
+            // spellbench-public-reveal: hand card revealed by the card rules.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 if state
                     .reveal_hand_card(observer, contract.owner, contract.source)
@@ -1671,6 +1673,7 @@ pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
         || crate::eternal_e5a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_legacy_e8a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_premodern_p1b_v1::statics::prevents_untap_step(state, object)
+        || crate::eternal_premodern_p1a_v1::statics::prevents_untap_step(state, object)
 }
 
 /// Applies a Time Vault skip to the turn about to begin for the now-active

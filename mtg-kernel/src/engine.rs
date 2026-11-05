@@ -335,6 +335,46 @@ pub struct EngineState {
         skip_serializing_if = "ordinary_cleanup_v1::StateV1::is_empty"
     )]
     pub ordinary_cleanup_v1: ordinary_cleanup_v1::StateV1,
+    /// Opt-in Spellbench neutral-choice state. Absent (default) in every
+    /// other session, where it adds no serialized or hashed bytes.
+    #[serde(default, skip_serializing_if = "SpellbenchNeutralStateV1::is_default")]
+    pub spellbench_neutral_v1: SpellbenchNeutralStateV1,
+}
+
+/// Spellbench's opt-in neutral-choice mode and its two pieces of private
+/// progress. The default value hashes to nothing, so every state outside a
+/// Spellbench bridge session keeps its historical hash bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpellbenchNeutralStateV1 {
+    /// Pose single-option choices instead of resolving them automatically.
+    /// Legacy training and replay sessions keep the automatic choices.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub choices: bool,
+    /// The current publicly revealed, forced hand/graveyard partition.
+    /// Reuses the typed library-partition continuation and exact bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revealed_partition: Option<Vec<u16>>,
+    /// Neutral activation announcement, retaining its original producer and
+    /// a reserved identity until the paid ability is installed on the stack.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_activation: Option<StackItem>,
+}
+
+impl SpellbenchNeutralStateV1 {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl std::hash::Hash for SpellbenchNeutralStateV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        if !self.is_default() {
+            b"spellbench-neutral/v1".hash(h);
+            self.choices.hash(h);
+            self.revealed_partition.hash(h);
+            self.pending_activation.hash(h);
+        }
+    }
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -1983,7 +2023,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     }
 }
 
-fn target_min_count(spec: TargetSpec) -> u8 {
+pub(crate) fn target_min_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::CreatureThenUpToOneAttachedEquipment => 1,
         TargetSpec::UpToOneOtherCreature
@@ -2053,6 +2093,10 @@ fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
         != 0
     {
         return true;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(mask) = crate::eternal_premodern_p1a_v1::statics::color_override(state, id) {
+        return mask & card_def::mana_color_mask(color) != 0;
     }
     card_def::CARD_DEFS[def_idx as usize]
         .colors
@@ -3409,6 +3453,13 @@ pub(crate) fn stack_spell_has_type(
 pub(crate) fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16 {
     if state.objects.get(item.source).v4.face_down_v1.is_some() {
         return 0;
+    }
+    // A split card's half (eternal wave P1a) has only its own mana value.
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(value) =
+        crate::eternal_premodern_p1a_v1::statics::split_spell_mana_value(state, item)
+    {
+        return value;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if let Some((_, value, _)) = crate::standard_cards_v1::room_characteristics(state, item.source)
@@ -6159,6 +6210,14 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 graveyard_exile_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::ExileXCardsFromOwnGraveyardV1 { .. } => {
+                graveyard_exile_count += 1;
+                saw_source_changing_component = true;
+            }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                hand_exile_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::Mana(cost) => {
                 if mana.is_some() || saw_source_changing_component {
                     return false;
@@ -6337,6 +6396,8 @@ fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
                         | CostComponent::ExileCardsFromHandWithColorV1 { .. }
                         | CostComponent::DiscardLandCardsV1(_)
                         | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+                        | CostComponent::ExileXCardsFromOwnGraveyardV1 { .. }
+                        | CostComponent::DiscardIslandAndAnotherCardV1
                         | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
                         | CostComponent::TapUntappedControlledPermanentsV1 { .. }
                 )
@@ -6698,6 +6759,13 @@ fn can_pay_components(
                     },
                 )
             }
+            // X may be zero: exiling no cards always pays.
+            CostComponent::ExileXCardsFromOwnGraveyardV1 { .. } => {
+                checked_graveyard_exile_candidates(player, source, state, &[]).is_some()
+            }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                !island_discard_cost_candidates(player, source, state, &[]).is_empty()
+            }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
                     player,
@@ -7048,6 +7116,33 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
+    let x_graveyard_exile = components.iter().find_map(|component| match component {
+        CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => Some(*blue_only),
+        _ => None,
+    });
+    if let Some(blue_only) = x_graveyard_exile {
+        if checked_graveyard_exile_candidates(player, source, state, object_cost_chosen).is_none()
+            || (blue_only
+                && object_cost_chosen.iter().any(|&card| {
+                    object_color_mask(state, card) & card_def::mana_color_mask(ManaColor::U) == 0
+                }))
+        {
+            return None;
+        }
+    }
+    if components
+        .iter()
+        .any(|component| matches!(component, CostComponent::DiscardIslandAndAnotherCardV1))
+    {
+        let valid = object_cost_chosen.len() == 2
+            && island_discard_cost_candidates(player, source, state, &[])
+                .contains(&object_cost_chosen[0])
+            && island_discard_cost_candidates(player, source, state, &object_cost_chosen[..1])
+                .contains(&object_cost_chosen[1]);
+        if !valid {
+            return None;
+        }
+    }
     let graveyard_types_needed = components.iter().find_map(|component| match component {
         CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => Some(*minimum),
         _ => None,
@@ -7131,6 +7226,10 @@ fn validate_cost_component_choices_v1(
         && hand_exiles.is_none()
         && land_discards.is_none()
         && graveyard_types_needed.is_none()
+        && x_graveyard_exile.is_none()
+        && !components
+            .iter()
+            .any(|component| matches!(component, CostComponent::DiscardIslandAndAnotherCardV1))
         && !returns_unblocked_attacker
         && tap_other_subtype.is_none()
         && tap_filter.is_none()
@@ -7228,9 +7327,12 @@ fn commit_cost_components_from_plan_v1(
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
             }
             CostComponent::DiscardSelf => {
-                // Cycling discards its card (Hollow One counts it).
+                // Cycling discards its card (Hollow One counts it; Gempalm
+                // Incinerator's cycle trigger sees it).
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_vintage_e7b_v1::statics::note_discard(state, source);
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
                     state,
                     ProposedEvent::zone_change(source, Zone::Graveyard),
@@ -7364,6 +7466,7 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 let hand = state.players[player.index()].hand.clone();
                 for object in hand {
+                    // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state
                             .reveal_hand_card(observer, player, object)
@@ -7420,8 +7523,14 @@ fn commit_cost_components_from_plan_v1(
                     commit_discarded_card(state, card);
                 }
             }
-            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_) => {
+            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+            | CostComponent::ExileXCardsFromOwnGraveyardV1 { .. } => {
                 commit_graveyard_exile(state, object_cost_chosen);
+            }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                for &card in object_cost_chosen {
+                    commit_discarded_card(state, card);
+                }
             }
             CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. } => {
                 for &object in object_cost_chosen {
@@ -7913,7 +8022,9 @@ pub(crate) fn permanent_matches_filter(
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_land
         }
         PermanentFilter::AnotherArtifact => object_has_type(state, id, CardType::Artifact),
-        PermanentFilter::AnotherWithSubtype(subtype) => has_effective_subtype(state, id, subtype),
+        PermanentFilter::AnotherWithSubtype(subtype) | PermanentFilter::WithSubtypeV1(subtype) => {
+            has_effective_subtype(state, id, subtype)
+        }
         PermanentFilter::BlueV1 => {
             object_color_mask(state, id) & (1 << ManaColor::U.pool_index()) != 0
         }
@@ -8087,6 +8198,11 @@ fn graveyard_exile_cards_needed(
     def: &card_def::CardDef,
     state: &GameState,
 ) -> u8 {
+    // "Exile X cards from your graveyard" (eternal wave P1a): the chosen
+    // cards so far; the caster stops when they choose (X is their number).
+    if pending_x_graveyard_exile(pending, def).is_some() {
+        return u8::try_from(pending.sacrifice_chosen.len()).unwrap_or(u8::MAX);
+    }
     if pending.source_contract.cast_method != CastMethodV4::Escape {
         // Abhorrent Oculus: "As an additional cost to cast this spell, exile
         // six cards from your graveyard."
@@ -8142,10 +8258,13 @@ fn escape_extra_exile_candidates(
     def: &card_def::CardDef,
     state: &GameState,
 ) -> Option<Vec<ObjectId>> {
-    if !cfg!(feature = "eternal-fixtures")
-        || pending.escape_exile_finished_v1
-        || pending.source_contract.cast_method != CastMethodV4::Escape
-    {
+    if !cfg!(feature = "eternal-fixtures") || pending.escape_exile_finished_v1 {
+        return None;
+    }
+    if let Some(blue_only) = pending_x_graveyard_exile(pending, def) {
+        return x_graveyard_exile_candidates(pending, def, state, blue_only);
+    }
+    if pending.source_contract.cast_method != CastMethodV4::Escape {
         return None;
     }
     let minimum = def
@@ -8169,6 +8288,98 @@ fn escape_extra_exile_candidates(
         &pending.sacrifice_chosen,
     )?;
     (!candidates.is_empty()).then_some(candidates)
+}
+
+/// The "exile X cards from your graveyard" cost of this cast, if any:
+/// Skeletal Scrying's additional cost, or Flash of Insight's flashback (with
+/// `blue_only`). Eternal wave P1a.
+fn pending_x_graveyard_exile(pending: &PendingCast, def: &card_def::CardDef) -> Option<bool> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    let cost = match pending.source_contract.cast_method {
+        CastMethodV4::Flashback => def.flashback.as_ref()?.cost,
+        CastMethodV4::Normal if pending.cast_mode != Some(CastMode::Alternative) => {
+            def.additional_cost?
+        }
+        _ => return None,
+    };
+    cost.iter().find_map(|component| match component {
+        CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => Some(*blue_only),
+        _ => None,
+    })
+}
+
+/// The graveyard cards an "exile X cards" cost may take next, while
+/// exiling one more keeps the cast payable (X is the number exiled, and the
+/// announced X adds that much generic mana). `None` once none may.
+fn x_graveyard_exile_candidates(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+    blue_only: bool,
+) -> Option<Vec<ObjectId>> {
+    let candidates = checked_graveyard_exile_candidates(
+        pending.controller,
+        pending.spell,
+        state,
+        &pending.sacrifice_chosen,
+    )?
+    .into_iter()
+    .filter(|&card| {
+        !blue_only || object_color_mask(state, card) & card_def::mana_color_mask(ManaColor::U) != 0
+    })
+    .collect::<Vec<_>>();
+    let first = *candidates.first()?;
+    let mut more = pending.clone();
+    more.sacrifice_chosen.push(first);
+    let x = u16::try_from(more.sacrifice_chosen.len()).ok()?;
+    let method = finalized_cast_method(&more, more.source_contract.cast_method, def);
+    pending_cast_quote_v1(def, &more, method, more.kicked == Some(true), x, state)?;
+    Some(candidates)
+}
+
+/// An "exile X cards from your graveyard" cast announces X as the number of
+/// cards it exiled.
+pub(crate) fn forced_cast_x(pending: &PendingCast, def: &card_def::CardDef) -> Option<u16> {
+    pending_x_graveyard_exile(pending, def)?;
+    u16::try_from(pending.sacrifice_chosen.len()).ok()
+}
+
+/// Foil's "discard an Island card and another card": the hand cards
+/// `player` may choose next after `chosen`, other than the spell `source`.
+/// The first is an Island card, and some other card must remain to be the
+/// second.
+fn island_discard_cost_candidates(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    let hand = state.players[player.index()]
+        .hand
+        .iter()
+        .copied()
+        .filter(|&id| {
+            id != source
+                && state
+                    .objects
+                    .try_get(id)
+                    .is_some_and(|object| object.zone == Zone::Hand && object.owner == player)
+        })
+        .collect::<Vec<_>>();
+    match chosen {
+        [] if hand.len() >= 2 => hand
+            .into_iter()
+            .filter(|&id| {
+                card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+                    .subtypes
+                    .contains(&card_def::Subtype::Island)
+            })
+            .collect(),
+        [first] => hand.into_iter().filter(|id| id != first).collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Exiles one more graveyard card for Nethergoyf's escape after its card
@@ -8297,6 +8508,8 @@ enum CastSingleObjectCostV1 {
     /// Retrace's discarded land cards (Wrenn and Six's emblem).
     #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
     DiscardLandCards(u8),
+    /// Foil's discarded Island card and another card.
+    DiscardIslandAndAnother,
 }
 
 impl CastSingleObjectCostV1 {
@@ -8309,6 +8522,7 @@ impl CastSingleObjectCostV1 {
             | CastSingleObjectCostV1::DiscardLandCards(count) => count,
             CastSingleObjectCostV1::ReturnPermanent(_)
             | CastSingleObjectCostV1::ExileHandCard(_) => 1,
+            CastSingleObjectCostV1::DiscardIslandAndAnother => 2,
         }
     }
 }
@@ -8357,6 +8571,9 @@ fn cast_single_object_cost_needed(
             CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
                 Some(CastSingleObjectCostV1::ReturnPermanents(*filter, *count))
             }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                Some(CastSingleObjectCostV1::DiscardIslandAndAnother)
+            }
             _ => None,
         })
 }
@@ -8399,6 +8616,12 @@ fn cast_single_object_cost_candidates(
             pending.controller,
             state,
             filter,
+            &pending.sacrifice_chosen,
+        ),
+        CastSingleObjectCostV1::DiscardIslandAndAnother => island_discard_cost_candidates(
+            pending.controller,
+            pending.spell,
+            state,
             &pending.sacrifice_chosen,
         ),
     }
@@ -8460,6 +8683,7 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         | PermanentFilter::Token
         | PermanentFilter::Creature
         | PermanentFilter::AnotherWithSubtype(_)
+        | PermanentFilter::WithSubtypeV1(_)
         | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
         PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
             CostKind::SacrificePermanents
@@ -9126,7 +9350,7 @@ fn printed_spell_form_count(def: &card_def::CardDef) -> u8 {
     }
 }
 
-fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpec> {
+pub(crate) fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpec> {
     match form {
         0 => Some(def.target_spec),
         1 => def
@@ -9610,6 +9834,11 @@ fn maximum_payable_x(
     state: &GameState,
 ) -> Option<u16> {
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+    // "Exile X cards from your graveyard": X is the number exiled.
+    if let Some(x) = forced_cast_x(pending, def) {
+        return pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
+            .map(|_| x);
+    }
     // Splice onto Arcane: at most the splice cards in hand.
     let cap =
         crate::eternal_pauper_e8b_v1::splice_cap(def, pending.spell, pending.controller, state)
@@ -10458,7 +10687,33 @@ fn rich_mana_ability_is_payable(
                 || creature_summoning_sick(state, source, def)
                 || sacrificeable_mana_cost_creatures(player, state).is_empty())
         }
+        // No tap symbol: summoning sickness doesn't matter.
+        ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype) => {
+            !sacrificeable_mana_cost_subtype(player, subtype, state).is_empty()
+        }
     }
+}
+
+/// The permanents `player` may sacrifice for "Sacrifice a Goblin" (Skirk
+/// Prospector, eternal wave P1a): controlled permanents with `subtype`, the
+/// source included.
+fn sacrificeable_mana_cost_subtype(
+    player: PlayerId,
+    subtype: card_def::Subtype,
+    state: &GameState,
+) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .filter(|&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && has_effective_subtype(state, candidate, subtype)
+        })
+        .collect()
 }
 
 /// The creatures `player` may sacrifice for "{T}, Sacrifice a creature"
@@ -10565,7 +10820,9 @@ pub(crate) fn available_mana_ability_choices_into(
         return;
     };
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_pauper_e8b_v1::mana_ability_blocked(state, source) {
+    if crate::eternal_pauper_e8b_v1::mana_ability_blocked(state, source)
+        || crate::eternal_premodern_p1a_v1::statics::mana_ability_blocked(state, source)
+    {
         return;
     }
     if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, source) {
@@ -10802,6 +11059,11 @@ pub(crate) fn mana_ability_cost_targets(
     let Some(definition) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return Vec::new();
     };
+    if let Some(ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype)) =
+        definition.mana_ability_def.map(|ability| ability.cost)
+    {
+        return sacrificeable_mana_cost_subtype(player, subtype, state);
+    }
     if !matches!(
         definition.mana_ability_def.map(|ability| ability.cost),
         Some(ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature)
@@ -10966,7 +11228,8 @@ fn activate_mana_ability_for_with_checkpoint(
             mana_ability_cost_targets_for_choice(player, source, choice, state);
         match rich.cost {
             ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
-            | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
+            | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
+            | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
                 let target = cost_target.ok_or_else(|| {
                     format!("{source} requires another untapped controlled creature as a cost")
                 })?;
@@ -11116,6 +11379,9 @@ fn activate_mana_ability_for_with_checkpoint(
             }
             ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
+                commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
+            }
+            ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
                 commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
             }
         }
@@ -11511,7 +11777,7 @@ pub(crate) fn can_attack(state: &GameState, id: ObjectId) -> bool {
         && !obj.v4.enduring_enchantment_v1
 }
 
-fn eligible_attackers(state: &GameState) -> Vec<ObjectId> {
+pub(crate) fn eligible_attackers(state: &GameState) -> Vec<ObjectId> {
     state.players[state.active_player.index()]
         .battlefield
         .iter()
@@ -11581,7 +11847,7 @@ pub(crate) fn minimum_blockers_required(state: &GameState, attacker: ObjectId) -
     )
 }
 
-fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
+pub(crate) fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     let attacker_obj = state.objects.get(attacker);
     let defender = attacker_obj.controller.opponent();
     let defender_controls_island = state.players[defender.index()]
@@ -12576,7 +12842,7 @@ fn remaining_cast_payment_is_payable(
         .is_some()
 }
 
-fn finalized_cast_method(
+pub(crate) fn finalized_cast_method(
     pending: &PendingCast,
     staged_method: CastMethodV4,
     def: &card_def::CardDef,
@@ -12738,6 +13004,33 @@ pub(crate) fn validate_pending_discard_binding(
 /// If a discard is pending, either auto-resolves it (no real choice: the
 /// legal pool is already <= the required count) or returns
 /// `Decision::Discard`.
+/// The hand cards a pending discard may choose from (its own source or the
+/// spell being cast excluded), in hand order.
+fn pending_discard_choices(state: &GameState, pd: &PendingDiscard) -> Vec<ObjectId> {
+    let exclude = match &pd.resume {
+        DiscardResume::FinishCast { .. } => state.engine.pending_cast.as_ref().map(|p| p.spell),
+        DiscardResume::FinishActivation { source, .. } => Some(*source),
+        _ => None,
+    };
+    state.players[pd.player.index()]
+        .hand
+        .iter()
+        .copied()
+        .filter(|&id| Some(id) != exclude)
+        .collect()
+}
+
+/// The `Decision::Discard` a pending discard presents (player, count,
+/// choices), for the W1 payload's import check (amendment 43.1 part 2);
+/// None without a pending discard.
+pub(crate) fn pending_discard_decision_v1(
+    state: &GameState,
+) -> Option<(PlayerId, u32, Vec<ObjectId>)> {
+    let pd = state.engine.pending_discard.as_ref()?;
+    let choices = pending_discard_choices(state, pd);
+    Some((pd.player, pd.count.min(choices.len() as u32), choices))
+}
+
 fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
     let pd = state.engine.pending_discard.clone()?;
     if let Err((source, _message)) = validate_pending_discard_binding(state, &pd) {
@@ -12747,25 +13040,22 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
             source,
         });
     }
-    let exclude = match &pd.resume {
-        DiscardResume::FinishCast { .. } => state.engine.pending_cast.as_ref().map(|p| p.spell),
-        DiscardResume::FinishActivation { source, .. } => Some(*source),
-        _ => None,
-    };
-    let choices: Vec<ObjectId> = state.players[pd.player.index()]
-        .hand
-        .iter()
-        .copied()
-        .filter(|&id| Some(id) != exclude)
-        .collect();
+    let choices = pending_discard_choices(state, &pd);
 
-    if choices.len() <= pd.count as usize {
+    if state.engine.spellbench_neutral_v1.choices {
+        // The neutral contract poses every nonempty discard, even a forced
+        // one; nothing to choose means nothing is discarded.
+        if pd.count == 0 || choices.is_empty() {
+            apply_discard(state, Vec::new(), pd);
+            return None;
+        }
+    } else if choices.len() <= pd.count as usize {
         apply_discard(state, choices, pd);
         return None;
     }
     Some(Decision::Discard {
         player: pd.player,
-        count: pd.count,
+        count: pd.count.min(choices.len() as u32),
         choices,
     })
 }
@@ -13580,7 +13870,7 @@ fn drain_pending_optional_cost_sacrifice_or_decide(state: &mut GameState) -> Opt
                 source: pending.source,
             });
         }
-        if candidates.len() <= 1 {
+        if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
             state
                 .engine
                 .pending_optional_cost_sacrifice
@@ -14267,13 +14557,26 @@ pub(crate) fn validate_pending_cast(
         let mut unchosen = pending.clone();
         unchosen.sacrifice_chosen.clear();
         let candidates = cast_single_object_cost_candidates(&unchosen, cost, state);
+        // Foil's picks depend on the earlier pick (an Island card first).
+        let ordered_pick_illegal = |index: usize, object: &ObjectId| {
+            cost == CastSingleObjectCostV1::DiscardIslandAndAnother
+                && !island_discard_cost_candidates(
+                    pending.controller,
+                    pending.spell,
+                    state,
+                    &pending.sacrifice_chosen[..index],
+                )
+                .contains(object)
+        };
         if pending.sacrifice_chosen.len() > usize::from(cost.count())
             || pending
                 .sacrifice_chosen
                 .iter()
                 .enumerate()
                 .any(|(index, object)| {
-                    !candidates.contains(object)
+                    (cost != CastSingleObjectCostV1::DiscardIslandAndAnother
+                        && !candidates.contains(object))
+                        || ordered_pick_illegal(index, object)
                         || pending.sacrifice_chosen[..index].contains(object)
                 })
         {
@@ -14694,7 +14997,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if viable_modes.len() == 1 {
+        if viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
             state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(viable_modes[0]);
             return drain_pending_cast_or_decide(state);
         }
@@ -14797,7 +15100,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if candidates.len() <= 1 {
+        if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
             // No real choice for *this single pick* (0 or 1 legal
             // candidate) -- auto-resolve just this one and let the next
             // loop pass re-derive whether the *following* pick (if any)
@@ -14859,7 +15162,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if candidates.len() <= 1 {
+        if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
             state
                 .engine
                 .pending_cast
@@ -14934,7 +15237,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() <= 1 {
+            if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
                 if let Some(&object) = candidates.first() {
                     mandatory_cast_cost_v1::bind_creature(state, &pending, object)
                         .expect("validated mandatory sacrifice candidate");
@@ -14959,6 +15262,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::ArtifactOrCreature
                     | PermanentFilter::Token
                     | PermanentFilter::AnotherWithSubtype(_)
+                    | PermanentFilter::WithSubtypeV1(_)
                     | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
                     PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
                         CostKind::SacrificePermanents
@@ -14982,7 +15286,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() == 1 {
+            if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
                 state
                     .engine
                     .pending_cast
@@ -15006,6 +15310,13 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         if pending.sacrifice_chosen.len() < usize::from(cost.count()) {
             let candidates = cast_single_object_cost_candidates(&pending, cost, state);
             let remaining = cost.count() - pending.sacrifice_chosen.len() as u8;
+            // Foil's two picks are offered one at a time (the second depends
+            // on the first), so each step needs one candidate.
+            let remaining = if cost == CastSingleObjectCostV1::DiscardIslandAndAnother {
+                1
+            } else {
+                remaining
+            };
             if candidates.len() < usize::from(remaining) {
                 let cast_method = finalized_cast_method(&pending, staged_method, def);
                 let pending = state.engine.pending_cast.take().unwrap();
@@ -15033,7 +15344,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     CastSingleObjectCostV1::ExileHandCard(_)
                     | CastSingleObjectCostV1::ExileHandCards(..) => CostKind::ExileFromHandV1,
                     CastSingleObjectCostV1::TapPermanents(..) => CostKind::TapPermanents,
-                    CastSingleObjectCostV1::DiscardLandCards(_) => CostKind::DiscardCards,
+                    CastSingleObjectCostV1::DiscardLandCards(_)
+                    | CastSingleObjectCostV1::DiscardIslandAndAnother => CostKind::DiscardCards,
                 },
                 remaining,
                 candidates,
@@ -15225,7 +15537,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() == 1 {
+            if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
                 state
                     .engine
                     .pending_cast
@@ -15265,7 +15577,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         };
-        if maximum == minimum {
+        // The Spellbench neutral contract poses the forced X = 0 as an
+        // explicit singleton numeric choice.
+        if maximum == minimum && !(state.engine.spellbench_neutral_v1.choices && maximum == 0) {
             state
                 .engine
                 .pending_cast
@@ -15467,7 +15781,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                     source: pending.source,
                 });
             }
-            if candidates.len() == 1 {
+            if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
                 state
                     .engine
                     .pending_activation
@@ -15500,7 +15814,9 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 &pending.object_cost_chosen,
             );
             let remaining = needed - pending.object_cost_chosen.len() as u8;
-            if candidates.len() == usize::from(remaining) {
+            if candidates.len() == usize::from(remaining)
+                && !state.engine.spellbench_neutral_v1.choices
+            {
                 state
                     .engine
                     .pending_activation
@@ -15619,7 +15935,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 source: pending.source,
             });
         }
-        if candidates.len() == 1 {
+        if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
             state
                 .engine
                 .pending_activation
@@ -15661,7 +15977,10 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         }
         // V39 binds the granting Pole through its explicit named-cost input,
         // including a singleton menu, before either tap or mana is collected.
-        if candidates.len() == 1 && !crate::fishing_pole_v39::named_cost(ability.cost) {
+        if candidates.len() == 1
+            && !crate::fishing_pole_v39::named_cost(ability.cost)
+            && !state.engine.spellbench_neutral_v1.choices
+        {
             let chosen = candidates[0];
             let object = state.objects.get(chosen);
             let binding = EffectObjectBinding {
@@ -16592,6 +16911,65 @@ fn casualty_trigger_source_contract(
         return Err("casualty trigger lost its paid source spell".into());
     }
     Ok(spell.v4.source_contract)
+}
+
+/// A pending targeted trigger has a valid, incomplete target prefix and an
+/// exact historical producer. Target selection does not allocate stack IDs.
+pub(crate) fn spellbench_pending_trigger_announcement(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<Option<StackItem>, String> {
+    if !state.engine.spellbench_neutral_v1.choices {
+        return Ok(None);
+    }
+    let Some(pending) = state.engine.pending_triggers.first() else {
+        return Ok(None);
+    };
+    if pending.controller != actor || pending.is_madness_offer || !pending.placement_ordered {
+        return Ok(None);
+    }
+    validate_pending_trigger(state, pending)?;
+    if pending.targets.len() >= usize::from(target_count(pending.target_spec)) {
+        return Ok(None);
+    }
+    Ok(Some(pending_trigger_stack_candidate(state, pending)?))
+}
+
+fn pending_trigger_stack_candidate(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<StackItem, String> {
+    let prospective_stack_item_id = StackItemId(
+        state
+            .engine
+            .next_stack_item_id
+            .checked_add(1)
+            .ok_or("stack-item identity space exhausted")?,
+    );
+    Ok(StackItem {
+        kind: StackItemKind::TriggeredAbility,
+        source: pending.source,
+        controller: pending.controller,
+        targets: pending.targets.clone(),
+        is_copy: false,
+        inline_effect: Some(pending.effect.clone()),
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: pending.kicked,
+        v4: StackStateV4 {
+            stack_item_id: prospective_stack_item_id,
+            source_contract: pending_trigger_spell_source_contract(state, pending)?,
+            paid_cost_refs: pending.paid_cost_refs.clone(),
+            optional_additional_cost_paid: pending.optional_additional_cost_paid,
+            target_spec: (pending.target_spec != TargetSpec::None).then_some(pending.target_spec),
+            target_contracts: pending.target_contracts.clone(),
+            ability_source_contract: pending.source_contract,
+            granted_by: pending.granted_by,
+            ..StackStateV4::default()
+        },
+    })
 }
 
 fn validate_pending_trigger_for_stack(
@@ -18706,6 +19084,13 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
     }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
+        // A split card's second half (Fire // Ice, eternal wave P1a) is an
+        // ordinary instant or sorcery: it goes to its owner's graveyard.
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_premodern_p1a_v1::statics::split_card(def.name) {
+            let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
+            return apply_spell_departure(state, departure);
+        }
         if supported_adventure(def).is_some() {
             let departure = plan_spell_departure(state, item, Zone::Exile)?;
             if item.is_copy {
@@ -20181,7 +20566,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             hidden_by: None,
             hidden_by_source: None,
         });
-        state.objects.get_mut(item.source).v4.ward_generic = 2;
+        // A morph card (eternal wave P1a) is face down without disguise's
+        // ward.
+        let morph = cfg!(feature = "eternal-fixtures")
+            && crate::eternal_premodern_p1a_v1::statics::is_morph(
+                card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize].name,
+            );
+        state.objects.get_mut(item.source).v4.ward_generic = if morph { 0 } else { 2 };
     }
     // A permanent spell cast for its warp cost remembers that on the
     // battlefield incarnation it just became.
@@ -20710,6 +21101,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             #[cfg(feature = "eternal-fixtures")]
             let vintage_draw_step = crate::eternal_vintage_v1::begin_draw_step(state, p);
             if !is_first_turn_of_the_game {
+                // Sylvan Library: "At the beginning of your draw step"; put
+                // on the stack after the draw (eternal wave P1a).
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_premodern_p1a_v1::begin_draw_step(state, p);
                 // Dredge (eternal waves E7a and E7b): the draw waits for its
                 // player's choice to dredge instead.
                 let dredge = cfg!(feature = "eternal-fixtures")
@@ -21388,6 +21783,12 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
 fn unpainted_object_color_mask(state: &GameState, id: ObjectId) -> u8 {
     if crate::continuous_characteristics_v1::land_colorless(state, id) {
         return 0;
+    }
+    // Wild Mongrel's chosen color; a split card's half on the stack
+    // (eternal wave P1a).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(mask) = crate::eternal_premodern_p1a_v1::statics::color_override(state, id) {
+        return mask;
     }
     if let Some(object) = state.objects.try_get(id) {
         if object.zone == Zone::Stack
@@ -22984,6 +23385,13 @@ fn is_still_in_combat(state: &GameState, id: ObjectId) -> bool {
     state.objects.get(id).zone == Zone::Battlefield
 }
 
+/// Goblin Vandal: "this creature assigns no combat damage this turn"
+/// (eternal wave P1a).
+pub(crate) fn assigns_no_combat_damage(state: &GameState, creature: ObjectId) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && crate::eternal_premodern_p1a_v1::statics::assigns_no_combat_damage(state, creature)
+}
+
 fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) -> bool {
     let attackers = state.engine.combat.attackers.clone();
     let blocked_by = state.engine.combat.blocked_by.clone();
@@ -22996,7 +23404,7 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) -> bool {
             continue;
         }
         let power = effective_power(state, attacker);
-        if power <= 0 {
+        if power <= 0 || assigns_no_combat_damage(state, attacker) {
             continue;
         }
         if let Some((_, blockers)) = blocked_by.iter().find(|(a, _)| *a == attacker) {
@@ -23015,7 +23423,7 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) -> bool {
                 continue;
             }
             let power = effective_power(state, blocker);
-            if power > 0 {
+            if power > 0 && !assigns_no_combat_damage(state, blocker) {
                 events.push(ProposedEvent::damage(
                     blocker,
                     Target::Object(*attacker),
@@ -24126,7 +24534,8 @@ pub(crate) fn step_without_linked_aura_v1(
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
             let viable_modes = viable_pending_spell_forms(def, pending, state);
-            if viable_modes.len() < 2 || !viable_modes.contains(&mode) {
+            if viable_modes.is_empty() || (viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
+                || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));
             }
             state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(mode);
@@ -24858,7 +25267,9 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .chosen_creature_cost_zone
                 .ok_or("chosen-creature cost object selected before its branch")?;
             let candidates = chosen_creature_cost_candidates(pending.controller, zone, state);
-            if candidates.len() < 2 {
+            if candidates.is_empty()
+                || (candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
+            {
                 return Err(
                     "chosen-creature cost object choice is not currently offered".to_string(),
                 );
@@ -25081,10 +25492,31 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
         .clone()
         .ok_or("no discard is pending")?;
     validate_pending_discard_binding(state, &pd).map_err(|(_, message)| message)?;
-    if chosen.len() as u32 != pd.count {
+    let exclude = match &pd.resume {
+        DiscardResume::FinishCast { .. } => state.engine.pending_cast.as_ref().map(|p| p.spell),
+        DiscardResume::FinishActivation { source, .. } => Some(*source),
+        _ => None,
+    };
+    let hand = &state.players[pd.player.index()].hand;
+    // A discard cost is paid in full. Under the neutral contract an effect
+    // discards as many as it can and poses that smaller selection; the
+    // default path keeps its exact-count action check.
+    let is_cost = matches!(
+        pd.resume,
+        DiscardResume::FinishCast { .. }
+            | DiscardResume::FinishActivation { .. }
+            | DiscardResume::FinishOptionalCost { .. }
+    );
+    let eligible = hand.iter().filter(|&&id| Some(id) != exclude).count() as u32;
+    let required = if is_cost || !state.engine.spellbench_neutral_v1.choices {
+        pd.count
+    } else {
+        pd.count.min(eligible)
+    };
+    if chosen.len() as u32 != required {
         return Err(format!(
             "must discard exactly {} card(s), got {}",
-            pd.count,
+            required,
             chosen.len()
         ));
     }
@@ -25094,12 +25526,6 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
     if dedup.len() != chosen.len() {
         return Err("duplicate card in discard selection".to_string());
     }
-    let exclude = match &pd.resume {
-        DiscardResume::FinishCast { .. } => state.engine.pending_cast.as_ref().map(|p| p.spell),
-        DiscardResume::FinishActivation { source, .. } => Some(*source),
-        _ => None,
-    };
-    let hand = &state.players[pd.player.index()].hand;
     if !chosen
         .iter()
         .all(|id| hand.contains(id) && Some(*id) != exclude)
@@ -26559,6 +26985,8 @@ fn apply_declare_blockers(
     crate::eternal_vintage_v1::note_blockers_declared(state);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_pauper_e8b_v1::note_blockers_declared(state);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p1a_v1::note_blockers_declared(state);
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())
@@ -26770,7 +27198,11 @@ fn apply_pending_cast_effect_option(
             let x_value = option_index
                 .checked_add(minimum)
                 .ok_or_else(|| "chosen X exceeds the native u16 range".to_string())?;
-            if maximum <= minimum || x_value > maximum {
+            // A forced X (maximum equal to minimum) is never posed, except the
+            // Spellbench neutral contract's explicit X = 0 singleton.
+            let neutral_forced_zero =
+                state.engine.spellbench_neutral_v1.choices && maximum == 0 && minimum == 0;
+            if (maximum <= minimum && !neutral_forced_zero) || x_value > maximum {
                 return Err("chosen X is outside the currently payable range".to_string());
             }
             state
@@ -27330,6 +27762,73 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
             ability_index,
         ),
     });
+    if state.engine.spellbench_neutral_v1.choices {
+        let stack_item_id = next_stack_item_id(state);
+        let producer = AbilitySourceContractV4::capture(state, source);
+        state.engine.spellbench_neutral_v1.pending_activation = Some(StackItem {
+            kind: StackItemKind::ActivatedAbility,
+            source,
+            controller: player,
+            targets: vec![],
+            is_copy: false,
+            inline_effect: Some((ability.effect)()),
+            discarded: vec![],
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: StackStateV4 {
+                stack_item_id,
+                ability_source_contract: Some(producer),
+                target_spec: Some(ability.target_spec),
+                activated_ability_index: Some(ability_index),
+                ..StackStateV4::default()
+            },
+        });
+    }
+}
+
+pub(crate) fn spellbench_pending_activation_announcement(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<Option<StackItem>, String> {
+    let Some(pending) = state.engine.pending_activation.as_ref() else {
+        return Ok(None);
+    };
+    if !state.engine.spellbench_neutral_v1.choices || pending.controller != actor {
+        return Ok(None);
+    }
+    validate_pending_activation(state, pending)?;
+    let mut item = state
+        .engine
+        .spellbench_neutral_v1
+        .pending_activation
+        .clone()
+        .ok_or("missing activation announcement")?;
+    let producer = item
+        .v4
+        .ability_source_contract
+        .ok_or("missing announced producer")?;
+    if item.kind != StackItemKind::ActivatedAbility
+        || item.source != pending.source
+        || item.controller != pending.controller
+        || producer.source != pending.source
+        || producer.controller != pending.controller
+        || producer != AbilitySourceContractV4::capture(state, pending.source)
+        || producer.zone_change_count != pending.source_zone_change_count
+        || item.v4.activated_ability_index != Some(pending.ability_index)
+        || item.v4.target_spec != Some(pending.target_spec)
+        || item.v4.stack_item_id == StackItemId::default()
+        || state
+            .stack
+            .iter()
+            .any(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("activation announcement lost its exact pending binding".into());
+    }
+    item.targets = pending.targets_chosen.clone();
+    item.v4.target_contracts = pending.target_contracts.clone();
+    Ok(Some(item))
 }
 
 /// Pays whichever cost this cast settled on (flashback cost; or the
@@ -27774,6 +28273,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     }
     if to_zone == Zone::Library {
         // The spell was public on the stack.
+        // spellbench-public-reveal: public reveal to both players.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state.reveal_library_position(observer, owner, 0);
         }
@@ -27790,6 +28290,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         }
     }
     if to_zone == Zone::Hand && !was_face_down {
+        // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
                 .reveal_hand_card(observer, owner, pending.spell)
@@ -28298,6 +28799,7 @@ fn push_paid_activation(
     if ability.activation_zone == Zone::Hand && state.objects.get(pending.source).zone == Zone::Hand
     {
         let owner = state.objects.get(pending.source).owner;
+        // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             if state
                 .reveal_hand_card(observer, owner, pending.source)
@@ -28315,7 +28817,45 @@ fn push_paid_activation(
         activation_x_value(ability, &pending.targets_chosen, state)
             .expect("validated paid activation retains its target-bound X value")
     });
-    let stack_item_id = next_stack_item_id(state);
+    let stack_item_id = if state.engine.spellbench_neutral_v1.choices {
+        let Some(item) = state.engine.spellbench_neutral_v1.pending_activation.take() else {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        };
+        let producer = item.v4.ability_source_contract;
+        if item.kind != StackItemKind::ActivatedAbility
+            || item.source != pending.source
+            || item.controller != pending.controller
+            || producer.map(|p| p.zone_change_count) != Some(pending.source_zone_change_count)
+            || producer.map(|p| (p.source, p.card_def, p.owner, p.controller, p.zone))
+                != Some((
+                    ability_source_contract.source,
+                    ability_source_contract.card_def,
+                    ability_source_contract.owner,
+                    ability_source_contract.controller,
+                    ability_source_contract.zone,
+                ))
+            || item.v4.target_spec != Some(pending.target_spec)
+            || item.v4.activated_ability_index != Some(pending.ability_index)
+            || item.v4.stack_item_id == StackItemId::default()
+            || state
+                .stack
+                .iter()
+                .any(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+        item.v4.stack_item_id
+    } else {
+        next_stack_item_id(state)
+    };
     if ability.cost.contains(&CostComponent::LoyaltyX) {
         crate::standard_cards_v1::record_loyalty_x(state, stack_item_id, x_value);
     }
@@ -30704,10 +31244,413 @@ mod tests {
         assert_eq!(state.stack.len(), 1);
     }
 
-    /// Lava Dart's flashback cost (`CostComponent::SacrificeLands(1)`) is
-    /// unconditional (no mana alternative to choose between first, unlike
-    /// Fireblast) but still asks a real `Decision::ChooseCostTargets` for
-    /// *which* Mountain when more than 1 is controlled.
+    #[test]
+    fn spellbench_neutral_fireblast_poses_and_accepts_the_forced_final_cost() {
+        let mut state = empty_game();
+        state.engine.spellbench_neutral_v1.choices = true;
+        let first = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let last = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Fireblast");
+        state.step = Step::Main1;
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::ChooseCostTargets { remaining: 2, .. }
+        ));
+        step(&mut state, Action::ChooseCostTarget(first)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseCostTargets {
+                remaining: 1,
+                candidates,
+                ..
+            } => assert_eq!(candidates, vec![last]),
+            other => panic!("expected the explicit final sacrifice, got {other:?}"),
+        }
+        assert!(
+            state.players[0].graveyard.is_empty(),
+            "cost commits only after the complete selection"
+        );
+        step(&mut state, Action::ChooseCostTarget(last)).unwrap();
+        let _ = advance_until_decision(&mut state);
+        assert_eq!(state.players[0].graveyard, vec![first, last]);
+        assert_eq!(state.stack.len(), 1);
+    }
+
+    #[test]
+    fn spellbench_neutral_targeted_trigger_keeps_historical_source_and_prospective_id() {
+        let mut state = empty_game();
+        state.engine.spellbench_neutral_v1.choices = true;
+        state.step = Step::Main1;
+        let creature = put_on_battlefield(&mut state, PlayerId::P1, "Guttersnipe");
+        let journey = put_in_hand(&mut state, PlayerId::P0, "Journey to Nowhere");
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(journey, Zone::Battlefield),
+        );
+        collect_and_queue_triggers(&mut state);
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        let generation = state.objects.get(journey).zone_change_count;
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(journey, Zone::Graveyard),
+        );
+        let announcement = spellbench_pending_trigger_announcement(&state, PlayerId::P0)
+            .unwrap()
+            .unwrap();
+        assert!(
+            validated_stack_item_target_spec(&announcement, &state).is_err(),
+            "completed-item validation still rejects the empty target prefix"
+        );
+        let (instance, public, minimum, maximum, selected) =
+            crate::rl::spellbench_pending_trigger_public_v2(&state, PlayerId::P0)
+                .unwrap()
+                .unwrap();
+        assert_eq!((minimum, maximum, selected), (1, 1, 0));
+        assert_eq!(public.source.zone, Zone::Battlefield);
+        assert_eq!(public.source.zone_change_count, generation);
+        assert!(
+            spellbench_pending_trigger_announcement(&state, PlayerId::P1)
+                .unwrap()
+                .is_none()
+        );
+        step(&mut state, Action::ChooseTarget(Target::Object(creature))).unwrap();
+        let _ = advance_until_decision(&mut state);
+        let item = state
+            .stack
+            .iter()
+            .find(|item| item.v4.stack_item_id.0.to_string() == instance)
+            .unwrap();
+        assert_eq!(
+            crate::rl::stack_item_public_v2(&state, PlayerId::P0, 0, item)
+                .unwrap()
+                .source,
+            public.source
+        );
+    }
+
+    #[test]
+    fn spellbench_neutral_zero_x_uses_existing_numeric_features() {
+        let mut state = empty_game();
+        state.engine.spellbench_neutral_v1.choices = true;
+        state.step = Step::Main1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Nyxborn Hydra");
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::ChooseSpellMode { .. }
+        ));
+        step(&mut state, Action::ChooseSpellMode(0)).unwrap();
+        let decision = advance_until_decision(&mut state);
+        assert!(matches!(
+            decision,
+            Decision::ChooseEffectOption {
+                option_count: 1,
+                ..
+            }
+        ));
+        let choices = crate::rl::legal_action_candidates_v1(
+            &crate::surface::SurfaceDecision::Decision(decision),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(choices.len(), 1);
+        assert!(matches!(
+            choices[0].record.semantic,
+            crate::rl::ActionSemanticV1::ChooseEffectNumber {
+                number: 0,
+                minimum: 0,
+                maximum: 0,
+                ..
+            }
+        ));
+        step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+        let _ = advance_until_decision(&mut state);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 0);
+    }
+
+    #[test]
+    fn spellbench_neutral_resolving_optional_cost_keeps_item_on_stack_until_each_finish() {
+        // CR 608.2: the resolving spell stays on the live stack (rules fix
+        // d6d02bc8b), so the neutral bridge needs no detached copy.
+        for choice in [
+            OptionalCostChoice::Decline,
+            OptionalCostChoice::Discard,
+            OptionalCostChoice::SacrificeLand,
+        ] {
+            let mut state = ready_game_in_main1(2);
+            state.engine.spellbench_neutral_v1.choices = true;
+            let spell = put_in_hand(&mut state, PlayerId::P0, "Highway Robbery");
+            let discard = put_in_hand(&mut state, PlayerId::P0, "Island");
+            step(&mut state, Action::CastSpell(spell)).unwrap();
+            let _ = advance_until_decision(&mut state);
+            let original = state.stack.last().unwrap().clone();
+            let live = |state: &GameState| {
+                state
+                    .stack
+                    .iter()
+                    .position(|item| item.v4.stack_item_id == original.v4.stack_item_id)
+            };
+            assert!(matches!(
+                pass_until_stack_resolves(&mut state),
+                Decision::ChooseOptionalCost { .. }
+            ));
+            let index = live(&state).expect("resolving spell stays on the stack");
+            let public = crate::rl::stack_item_public_v2(
+                &state,
+                PlayerId::P1,
+                index as u32,
+                &state.stack[index],
+            )
+            .unwrap();
+            assert_eq!(public.source.zone, Zone::Stack);
+            step(&mut state, Action::ChooseOptionalCost(choice)).unwrap();
+            match choice {
+                OptionalCostChoice::Discard => {
+                    assert!(matches!(
+                        advance_until_decision(&mut state),
+                        Decision::Discard { .. }
+                    ));
+                    assert!(live(&state).is_some());
+                    step(&mut state, Action::Discard(vec![discard])).unwrap();
+                }
+                OptionalCostChoice::SacrificeLand => {
+                    let land = match advance_until_decision(&mut state) {
+                        Decision::ChooseCostTargets { candidates, .. } => candidates[0],
+                        other => panic!("expected sacrifice, got {other:?}"),
+                    };
+                    assert!(live(&state).is_some());
+                    step(&mut state, Action::ChooseCostTarget(land)).unwrap();
+                    let _ = advance_until_decision(&mut state);
+                }
+                _ => {}
+            }
+            assert!(live(&state).is_none());
+            assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+        }
+    }
+
+    #[test]
+    fn spellbench_neutral_winding_way_suspends_before_moves_and_preserves_both_orders() {
+        let definitions = ["Elvish Mystic", "Quirion Ranger", "Island", "Mountain"]
+            .map(|name| card_id_by_name(name).unwrap());
+        let mut state = GameState::new_from_libraries(
+            &definitions,
+            &definitions,
+            |id| card_def::CARD_DEFS[id as usize].name.to_string(),
+            9,
+        );
+        state.engine.spellbench_neutral_v1.choices = true;
+        state.step = Step::Main1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
+        let original = state.players[0].library.clone();
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Winding Way");
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        let _ = advance_until_decision(&mut state);
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(
+            resolve_top_of_stack(&mut state),
+            ResolutionProgress::Suspended
+        );
+        effect::choose_resumable_option(&mut state, 0).unwrap();
+        assert_eq!(
+            effect::resume_resumable_resolution(&mut state).unwrap(),
+            effect::ResumableProgress::Suspended
+        );
+        assert_eq!(state.players[0].library, original);
+        assert!(state.players[0].graveyard.is_empty());
+        assert!(state
+            .engine
+            .spellbench_neutral_v1
+            .revealed_partition
+            .is_some());
+        // First option is creatures. Their neutral hand order is independent
+        // of the order in which they originally appeared in the library.
+        effect::choose_resumable_target(&mut state, Target::Object(original[1])).unwrap();
+        effect::choose_resumable_target(&mut state, Target::Object(original[0])).unwrap();
+        assert_eq!(
+            effect::resume_resumable_resolution(&mut state).unwrap(),
+            effect::ResumableProgress::Suspended
+        );
+        effect::choose_resumable_target(&mut state, Target::Object(original[3])).unwrap();
+        assert!(matches!(
+            effect::resume_resumable_resolution(&mut state).unwrap(),
+            effect::ResumableProgress::Complete(_)
+        ));
+        assert_eq!(state.players[0].hand, vec![original[1], original[0]]);
+        assert_eq!(state.players[0].graveyard, vec![original[3], original[2]]);
+        assert!(state.players[0].library.is_empty());
+        assert!(state
+            .engine
+            .spellbench_neutral_v1
+            .revealed_partition
+            .is_none());
+    }
+
+    /// Winding Way with no card of the chosen type: the neutral contract
+    /// still poses the (empty) forced subset, then the graveyard order of all
+    /// four revealed cards, for both the creature and land options.
+    #[test]
+    fn spellbench_neutral_winding_way_zero_match_for_both_options() {
+        for (option, names) in [
+            (0_u16, ["Island", "Mountain", "Forest", "Swamp"]),
+            (
+                1_u16,
+                [
+                    "Elvish Mystic",
+                    "Quirion Ranger",
+                    "Llanowar Elves",
+                    "Elvish Mystic",
+                ],
+            ),
+        ] {
+            let definitions = names.map(|name| card_id_by_name(name).unwrap());
+            let mut state = GameState::new_from_libraries(
+                &definitions,
+                &definitions,
+                |id| card_def::CARD_DEFS[id as usize].name.to_string(),
+                9,
+            );
+            state.engine.spellbench_neutral_v1.choices = true;
+            state.step = Step::Main1;
+            state.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
+            let original = state.players[0].library.clone();
+            let spell = put_in_hand(&mut state, PlayerId::P0, "Winding Way");
+            let hand_before = state.players[0].hand.len();
+            step(&mut state, Action::CastSpell(spell)).unwrap();
+            let _ = advance_until_decision(&mut state);
+            assert_eq!(
+                resolve_top_of_stack(&mut state),
+                ResolutionProgress::Suspended
+            );
+            effect::choose_resumable_option(&mut state, option).unwrap();
+            assert_eq!(
+                effect::resume_resumable_resolution(&mut state).unwrap(),
+                effect::ResumableProgress::Suspended
+            );
+            assert!(state
+                .engine
+                .spellbench_neutral_v1
+                .revealed_partition
+                .is_some());
+            assert_eq!(state.players[0].library, original);
+            // Nothing matches: the forced subset is empty and finishes at once.
+            effect::finish_resumable_target_selection(&mut state).unwrap();
+            assert_eq!(
+                effect::resume_resumable_resolution(&mut state).unwrap(),
+                effect::ResumableProgress::Suspended
+            );
+            for &card in [original[2], original[0], original[3]].iter() {
+                effect::choose_resumable_target(&mut state, Target::Object(card)).unwrap();
+            }
+            assert!(matches!(
+                effect::resume_resumable_resolution(&mut state).unwrap(),
+                effect::ResumableProgress::Complete(_)
+            ));
+            assert_eq!(state.players[0].hand.len(), hand_before - 1);
+            assert_eq!(
+                state.players[0].graveyard,
+                vec![original[2], original[0], original[3], original[1]]
+            );
+            assert!(state.players[0].library.is_empty());
+            assert!(state
+                .engine
+                .spellbench_neutral_v1
+                .revealed_partition
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn spellbench_neutral_activation_announcement_retains_identity_through_costs() {
+        for name in ["Makeshift Munitions", "Quirion Ranger"] {
+            let mut state = empty_game();
+            state.engine.spellbench_neutral_v1.choices = true;
+            state.step = Step::Main1;
+            state.priority_player = PlayerId::P0;
+            state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+            let source = put_on_battlefield(&mut state, PlayerId::P0, name);
+            let creature = put_on_battlefield(&mut state, PlayerId::P0, "Elvish Mystic");
+            let forest = put_on_battlefield(&mut state, PlayerId::P0, "Forest");
+            begin_activation(&mut state, PlayerId::P0, source, 0);
+            let (instance, initial) =
+                crate::rl::spellbench_pending_activation_public_v2(&state, PlayerId::P0)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                initial.stack_item_kind,
+                crate::rl::StackItemKindV2::ActivatedAbility
+            );
+            assert!(
+                crate::rl::spellbench_pending_activation_public_v2(&state, PlayerId::P1)
+                    .unwrap()
+                    .is_none()
+            );
+            let mut tampered = state.clone();
+            tampered
+                .engine
+                .spellbench_neutral_v1
+                .pending_activation
+                .as_mut()
+                .unwrap()
+                .v4
+                .ability_source_contract
+                .as_mut()
+                .unwrap()
+                .attached_to = Some(ObjectLinkV4 {
+                object: forest,
+                zone_change_count: state.objects.get(forest).zone_change_count,
+            });
+            assert!(spellbench_pending_activation_announcement(&tampered, PlayerId::P0).is_err());
+            let target = if name == "Makeshift Munitions" {
+                Target::Player(PlayerId::P1)
+            } else {
+                Target::Object(creature)
+            };
+            step(&mut state, Action::ChooseTarget(target)).unwrap();
+            let after = crate::rl::spellbench_pending_activation_public_v2(&state, PlayerId::P0)
+                .unwrap()
+                .unwrap();
+            assert_eq!(after.0, instance);
+            assert_eq!(after.1.source, initial.source);
+            assert_eq!(after.1.targets.len(), 1);
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { .. }
+            ));
+            let other_id = next_stack_item_id(&mut state);
+            assert_ne!(other_id.0.to_string(), instance);
+            step(
+                &mut state,
+                Action::ChooseCostTarget(if name == "Makeshift Munitions" {
+                    creature
+                } else {
+                    forest
+                }),
+            )
+            .unwrap();
+            finalize_activation(&mut state);
+            assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
+            let paid = state.stack.last().unwrap();
+            assert_eq!(paid.v4.stack_item_id.0.to_string(), instance);
+            assert!(state
+                .engine
+                .spellbench_neutral_v1
+                .pending_activation
+                .is_none());
+            let public = crate::rl::stack_item_public_v2(&state, PlayerId::P0, 0, paid).unwrap();
+            assert_eq!(public.source, initial.source);
+        }
+    }
+
     #[test]
     fn lava_dart_flashback_asks_which_mountain_to_sacrifice() {
         let mut state = empty_game();

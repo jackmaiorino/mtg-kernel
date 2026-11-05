@@ -361,7 +361,7 @@ fn actual_paid_prowess_current_temporary_form_final_damage_activation_restore_an
                     _ => None,
                 })
                 .unwrap();
-            match &mut row.value {
+            match &mut std::sync::Arc::make_mut(row).value {
                 J::Debit { count, .. } => *count = 2,
                 J::Paid { original, .. } => {
                     std::sync::Arc::make_mut(original)
@@ -547,7 +547,7 @@ fn public_tamper_and_erased_private_originals_refuse_before_recapture_both_seats
                         _ => None,
                     })
                     .unwrap();
-                match &mut row.value {
+                match &mut std::sync::Arc::make_mut(row).value {
                     J::Captured { amount, .. } => *amount = 1,
                     J::CombatInput { world, .. } => {
                         std::sync::Arc::make_mut(world)

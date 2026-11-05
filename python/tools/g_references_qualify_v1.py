@@ -55,6 +55,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -179,14 +180,63 @@ def bounded(campaign: driver.Campaign, request: dict) -> dict:
                       dict(value, wall_seconds=limit))
 
 
+def run_pack(argv: list[str], timeout, watched) -> subprocess.CompletedProcess:
+    """The pack tool as a child of this driver, its own polling left out of the lease's activity (its trials'
+    native parts are observed through ``watched``); at ``timeout`` it is killed, then TimeoutExpired."""
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          cwd=str(TOOLS.parents[1])) as process:
+        watched.exclude_child(process.pid)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+
+
+def set_aside(path: Path, log, reason: str) -> None:
+    """An interrupted earlier lease's trial or pack root (no report or pack index): the dispatcher and the pack
+    tool need fresh roots, so it is kept beside itself as ``<name>-interrupted-<k>`` and the work runs again."""
+    if not path.exists():
+        return
+    k = 1
+    while path.with_name(f"{path.name}-interrupted-{k}").exists():
+        k += 1
+    target = path.with_name(f"{path.name}-interrupted-{k}")
+    path.rename(target)
+    log(kind="interrupted-root-kept", path=str(path), kept=str(target), reason=reason)
+
+
+def set_aside_pack(pack_root: Path, log) -> None:
+    """An interrupted pack: its trials' roots (named in ``<pack root>/*.request.json``, beside the base request's
+    roots, so a retry of the same plan would name them again) and then the pack root itself are kept aside."""
+    if not pack_root.exists():
+        return
+    for request in sorted(pack_root.glob("*.request.json")):
+        try:
+            value = read(request)
+        except (OSError, ValueError):
+            continue
+        for key in ("root", "cold_root"):
+            if isinstance(value.get(key), str):
+                set_aside(Path(value[key]), log, f"{request.name} of a pack without its index")
+    set_aside(pack_root, log, "pack without its index")
+
+
 def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> dict:
     reports = {}
     for name, request in family["trials"].items():
         report = Path(read(request["path"])["root"]) / "report.json"
         if not report.exists():
+            value = read(request["path"])
+            for key in ("root", "cold_root"):  # a trial an earlier lease's release interrupted
+                if value.get(key):
+                    set_aside(Path(value[key]), log, f"trial {name} without a report")
             request = bounded(campaign, request)
             result = nested([str(TOOLS / "native_expanded_dispatch_v1.py"), "qualify", request["path"]])
-            wait_report(report.parent, result["pid"])
+            with driver.watching(campaign, "trial:" + name, result, root=report.parent):  # detached: observed
+                wait_report(report.parent, result["pid"])
         reports[name] = pin(report)
         log(kind="trial", name=name, report=reports[name])
     pack_index = Path(read(family["pack"]["path"])["root"]) / "pack.json"
@@ -224,10 +274,12 @@ def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> 
         # One absolute deadline for the whole pack (its launch retries and barrier waits included): ending the
         # tool fails its waiting trials, and a running trial's own timeout is already inside the claim time.
         deadline = None if left is None else max(1, math.floor(left - driver.base.LEASE_MARGIN_SECONDS))
+        pack_root = Path(read(family["pack"]["path"])["root"])
+        set_aside_pack(pack_root, log)  # an earlier lease's release interrupted it
         try:
-            done = subprocess.run([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
-                                   family["pack"]["path"]], capture_output=True, text=True,
-                                   cwd=str(TOOLS.parents[1]), timeout=deadline)
+            with driver.watching(campaign, "pack", pack=pack_root) as watched:
+                done = run_pack([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
+                                 family["pack"]["path"]], timeout=deadline, watched=watched)
         except subprocess.TimeoutExpired:
             raise SystemExit("study_wall_cap: the pack qualification reached the study's claim time") from None
         # Beside its plan, under the plan's own name (one per host and bound); the root may not exist yet
@@ -254,9 +306,14 @@ def make_choice(campaign: driver.Campaign, value: dict, evidence: dict) -> dict:
     name = "-".join(sorted(evidence))
     choice_pin = write_json(out / f"choice-{name}.json", choice)
     verifications = {}
+    # One walk of the accounting trees (or the driver's last, while fresh) serves the choice checks and then the
+    # wave's admissions: each check-choice process walked the volume itself (mtg-kernel#463).
+    admission = driver.admitted(campaign, walk=True)
     for tag in evidence:
         request = driver.request_for(campaign, "G1", value["families"][tag]["config"], out / "check" / tag / "root",
                                      out / "check" / tag / "cold")
+        if admission is not None:
+            request["admission"] = admission
         target = out / f"choice-{name}-verification-{tag}.json"
         target.unlink(missing_ok=True)
         request.update(choice=choice_pin, choice_verification_output=str(target))
@@ -370,19 +427,103 @@ def checkpoint_identity(item: dict) -> dict:
 
 
 IDENTITY_KEYS = ("state_sha256", "adam_step", "content_sha256")
+RECORD_NAME = "QUALIFICATION-RECORD.json"  # ``record``'s output in the qualification folder
+
+# The block identity the qualification items judge (G(i) lead rulings of 2026-11-01, QUALIFICATION-RESTART.md
+# "Investigation outcome"; mtg-kernel#475). Episode files embed absolute paths and path-derived SHA256s (the
+# campaign root's play-import descriptor, the attempt directory, the previous checkpoint's pin), so trajectory
+# pin SHA256s, and with them content_sha256, differ between roots and attempts under perfect determinism. Two
+# runs of one block are identical when: the state hash and Adam step are equal; every checkpoint member other
+# than the trajectory pins is equal; the pins are as many and their paths equal once the scratch campaign and
+# the attempt directory are normalized; and the block's exposure rows are equal without the two path-derived
+# hashes. content_sha256 and file_sha256 are still recorded.
+JUDGED_KEYS = ("state_sha256", "adam_step", "outside_trajectories_sha256", "pin_count", "pin_paths_sha256",
+               "exposure_sha256")
+JUDGED_RULE = "g-references-v1/judged-identity-v2"
+EXPOSURE_PATH_DERIVED = ("trajectory_sha256", "opponent_checkpoint_sha256")
+
+
+def normalized_pin_path(path: str, native_root) -> str:
+    """A trajectory pin's path relative to its campaign's native root (``Campaign.native``: a Pod's container
+    disk, a scratch campaign's own folder under it, or the hot root on the desktop), with forward slashes and the
+    attempt of its block folder (``<run>/<block>-a<k>/``) normalized. A pin outside that root keeps its whole
+    path, so it never matches a pin inside one."""
+    path = str(path).replace("\\", "/")
+    root = str(native_root).replace("\\", "/").rstrip("/") + "/"
+    if path.startswith(root):
+        path = "<native>/" + path[len(root):]
+    return re.sub(r"^(<native>/[^/]+/b\d+)-a\d+/", r"\1-a*/", path)
+
+
+def judged_identity(campaign: driver.Campaign, run: str, block: int) -> dict:
+    """``checkpoint_identity`` of a block's final checkpoint plus the judged keys (``JUDGED_KEYS``), which also
+    read the block's exposure rows."""
+    item = campaign.run_state(run)["blocks"][str(block)]["final_checkpoint"]
+    value = json.loads(driver.collector.read_bytes_pinned(item))
+    pins = value["trajectories"]
+    content = dict(value, trajectories=[trajectory["sha256"] for trajectory in pins])
+    outside = {key: member for key, member in value.items() if key != "trajectories"}
+    exposure = campaign.exposure / f"{run}-{driver.label(block)}-episodes.jsonl"
+    rows = [{key: field for key, field in json.loads(line).items() if key not in EXPOSURE_PATH_DERIVED}
+            for line in exposure.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return {"file_sha256": item["sha256"], "state_sha256": value["state_sha256"], "adam_step": value["adam_step"],
+            "content_sha256": dispatch.digest(content), "outside_trajectories_sha256": dispatch.digest(outside),
+            "pin_count": len(pins),
+            "pin_paths_sha256": dispatch.digest([normalized_pin_path(t["path"], campaign.native(run)) for t in pins]),
+            "exposure_sha256": dispatch.digest(rows), "exposure_rows": len(rows), "rule": JUDGED_RULE}
+
+
+def judged_equal(straight: dict, rerun: dict) -> bool:
+    return all(key in straight and straight[key] == rerun.get(key) for key in JUDGED_KEYS)
 
 
 def end_of(campaign: driver.Campaign, run: str, block: int) -> dict:
-    return checkpoint_identity(campaign.run_state(run)["blocks"][str(block)]["final_checkpoint"])
+    return judged_identity(campaign, run, block)
 
 
 def compare(campaign: driver.Campaign, run: str, block: int, straight: dict) -> dict:
     entry = campaign.run_state(run)["blocks"][str(block)]
     attempts = [{"attempt": a["attempt"], "outcome": a.get("outcome")} for a in entry["attempts"]]
-    rerun = checkpoint_identity(entry["final_checkpoint"])
+    rerun = judged_identity(campaign, run, block)
     interrupted = len(attempts) > 1 and attempts[0]["outcome"] == "interrupted"
     return {"straight": straight, "rerun": rerun, "attempts": attempts, "interrupted": interrupted,
-            "identical": all(straight[key] == rerun[key] for key in IDENTITY_KEYS)}
+            "identical": judged_equal(straight, rerun), "rule": JUDGED_RULE}
+
+
+RECORD_HEARTBEAT_SECONDS, RECORD_HEARTBEAT_LIMIT_SECONDS = 30, 1800
+
+
+def record_after(campaign_path: Path, plan_path: Path, out: Path, log, touch=None) -> None:
+    """Items 2 and 7 and the run's measurements (``record``) from the volume itself, beside RESULT.json, so a
+    qualification lease brings them home with its folder; a failure here is an event, the verdicts stand. Its
+    walks of the network volume are mostly I/O wait, so, as for the driver's volume walk, the step runs in a
+    helper thread while this one records the work in progress (``touch``) for at most
+    RECORD_HEARTBEAT_LIMIT_SECONDS: a hung step still goes idle."""
+    result, started = {}, time.monotonic()
+
+    def work():
+        try:
+            result["pin"] = record(campaign_path, plan_path, out / RECORD_NAME)
+        except Exception as error:  # noqa: BLE001 - reported below
+            result["error"] = error
+    thread = threading.Thread(target=work, name="record", daemon=True)
+    thread.start()
+    while thread.is_alive():
+        thread.join(RECORD_HEARTBEAT_SECONDS)
+        if touch and thread.is_alive() and time.monotonic() - started < RECORD_HEARTBEAT_LIMIT_SECONDS:
+            touch()
+    if "error" in result:
+        error = result["error"]
+        log(kind="record-error", error_type=type(error).__name__, error=str(error)[-4000:])
+        return
+    log(kind="record", record=result["pin"], passed=read(out / RECORD_NAME)["pass"],
+        seconds=round(time.monotonic() - started, 1))
+
+
+def legacy_stage(value: dict) -> bool:
+    """A stage cached by a tool before ``JUDGED_RULE`` (its identity predicate included content_sha256): its
+    verdict is not this tool's, and RESULT.json says so."""
+    return value.get("rule") != JUDGED_RULE
 
 
 def prune_scratch(campaign: driver.Campaign, out: Path, reason: str) -> dict:
@@ -458,11 +599,12 @@ def run(campaign_path: Path, plan_path: Path) -> int:
             for block in (1, 2):
                 alone, concurrent = end_of(campaign, "G1", block), end_of(eighth, "G1", block)
                 repeat[str(block)] = {"alone": alone, "concurrent": concurrent,
-                                      "identical": all(alone[key] == concurrent[key] for key in IDENTITY_KEYS)}
-            value = {"schema": f"{g.PREFIX}/g1-alone-vs-concurrent", "blocks": repeat}
+                                      "identical": judged_equal(alone, concurrent)}
+            value = {"schema": f"{g.PREFIX}/g1-alone-vs-concurrent", "blocks": repeat, "rule": JUDGED_RULE}
             write_json(out / "REPEAT-G1.json", value)
             return value
-        repeat = stage(out, "item1", waves)["blocks"]
+        item1 = stage(out, "item1", waves)
+        repeat = item1["blocks"]
         prune_scratch(scratch(campaign, "concurrent-g1", 2, out), out,
                       "item 1 repeat compared; the main campaign keeps G1's block ends")
 
@@ -525,8 +667,13 @@ def run(campaign_path: Path, plan_path: Path) -> int:
             prune_scratch(scratch(campaign, name, 4, out, synthetic=True), out,
                           "item 6 synthetic block, discarded after its comparison (DESIGN section 6)")
         passed = receipt["pass"] and item6_result["pass"] and all(row["identical"] for row in repeat.values())
-        log(kind="done", passed=passed)
-        write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed})
+        legacy = [name for name, value_ in (("item1", item1), ("item3", receipt), ("item6", item6_result))
+                  if legacy_stage(value_)]
+        log(kind="done", passed=passed, legacy_stages=legacy)
+        write_json(out / "RESULT.json", {"schema": f"{g.PREFIX}/qualification-run", "passed": passed,
+                                         "rule": JUDGED_RULE, "legacy_stages": legacy})
+        record_after(campaign_path, plan_path, out, log,
+                     touch=campaign.lease.touch if campaign.lease else None)
         return 0 if passed else 1
     except BaseException as error:  # the supervisor discards stderr: the reason goes in the events
         log(kind="error", error_type=type(error).__name__, error=str(error)[-4000:])

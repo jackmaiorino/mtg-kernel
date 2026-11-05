@@ -279,7 +279,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Fury" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::R)], condition: AltCostCondition::Always })",
         "Endurance" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::G)], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_p1a_v1::alt_cost_for(name),
     }
 }
 
@@ -301,7 +301,7 @@ pub(super) fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_p1a_v1::flashback_for(name),
     }
 }
 
@@ -337,7 +337,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         "Cephalid Coliseum" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
         "Eumidian Hatchery" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfPayLife(1), amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_p1a_v1::mana_ability_def_for(name),
     }
 }
 

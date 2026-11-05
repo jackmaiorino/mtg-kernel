@@ -748,6 +748,11 @@ thread_local! {
     static ORIGIN_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Whether new origin digests are v1 here ([`as_recorded`]).
+pub(crate) fn origin_v1_active() -> bool {
+    ORIGIN_V1.with(std::cell::Cell::get)
+}
+
 /// The digest an operation records for its original world: v2, or v1 while
 /// replaying an operation recorded before v2 ([`as_recorded`]).
 fn original_sha256(state: &GameState) -> String {

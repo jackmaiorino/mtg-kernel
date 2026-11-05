@@ -222,7 +222,7 @@ fn build_wave(state: &GameState, phase: DamagePhaseV1, first: &[ObjectLinkV4]) -
         if !participates(state, source, phase, first) {
             continue;
         }
-        let power = engine::effective_power(state, attacker).max(0);
+        let power = assigned_power(state, attacker);
         if power == 0 {
             continue;
         }
@@ -303,7 +303,7 @@ fn build_wave(state: &GameState, phase: DamagePhaseV1, first: &[ObjectLinkV4]) -
             if !participates(state, source, phase, first) {
                 continue;
             }
-            let power = engine::effective_power(state, blocker).max(0);
+            let power = assigned_power(state, blocker);
             if power == 0 {
                 continue;
             }
@@ -397,7 +397,7 @@ fn validate_pending(state: &GameState, pending: &PendingDamageV1) -> Result<(), 
     for creature in &pending.creatures {
         if !live(state, creature.source)
             || state.objects.get(creature.source.object).controller != creature.controller
-            || engine::effective_power(state, creature.source.object).max(0) != creature.power
+            || assigned_power(state, creature.source.object) != creature.power
             || creature.amounts.len() > creature.recipients.len()
             || creature.recipients.is_empty()
         {
@@ -533,4 +533,14 @@ pub(crate) fn answer_range(state: &mut GameState, upper_half: bool) -> Result<()
         .expect("pending damage")
         .range = Some(next);
     Ok(())
+}
+
+/// The combat damage `creature` assigns: its power, or none when it
+/// "assigns no combat damage this turn" (Goblin Vandal, eternal wave P1a).
+fn assigned_power(state: &GameState, creature: crate::ids::ObjectId) -> i32 {
+    if engine::assigns_no_combat_damage(state, creature) {
+        0
+    } else {
+        engine::effective_power(state, creature).max(0)
+    }
 }

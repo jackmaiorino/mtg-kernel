@@ -703,6 +703,25 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             );
             out.atoms.push(Atom::Opaque);
         }
+        CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => {
+            // The announced X cards the payer owns, other than the source,
+            // move from their graveyard to exile. Vocabulary gap: no
+            // X-sized amount or color refinement.
+            let _ = blue_only;
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Graveyard,
+                to: ZoneF::Exile,
+                obj: ObjF::AnyCard,
+                amount: AmtF::X,
+            });
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::DiscardIslandAndAnotherCardV1 => {
+            // Two cards, the first an Island card, other than the source,
+            // move from the payer's hand to their graveyard as a discard.
+            move_cost(out, ZoneF::Hand, ZoneF::Graveyard, ObjF::AnyCard, 2);
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::Crew(required) => {
             // The payer selects untapped creatures, excluding the source,
             // whose total crew power meets the threshold, then taps them.
@@ -787,6 +806,7 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
                 filter,
                 PermanentFilter::AnotherArtifact
                     | PermanentFilter::AnotherWithSubtype(_)
+                    | PermanentFilter::WithSubtypeV1(_)
                     | PermanentFilter::AnotherArtifactOrCreatureV1
             ) {
                 out.atoms.push(Atom::Opaque);

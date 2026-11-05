@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from pathlib import Path
-from common import encoded, pin, read, require, write
+from common import encoded, pin, read, read_checkpoint, require, write
 from throughput import (finite, training_contract, canonical_training_config, preparation_workers,
                         validate_preparation_runner, validate_preparation_update, validate_preparation_result)
 from semantic import ALGORITHM, trajectory_digest, validated_map
@@ -17,6 +17,10 @@ from fresh_source import fresh_origins, initial_state
 def checked(reference):
     pin(reference['path'],reference['sha256'])
     return read(reference['path'])
+
+
+def checked_checkpoint(reference):
+    return read_checkpoint(reference['path'],reference['sha256'])
 
 
 def build(config_pin, result_pin, build_pin, payload_pin=None, inspection_pin=None):
@@ -51,7 +55,7 @@ def build(config_pin, result_pin, build_pin, payload_pin=None, inspection_pin=No
         equivalents=[row['original'] for row in (relocations or []) if row['relocated']==source]
         initial=initial_state(source,inspection_pin,equivalent_sources=equivalents)
     else:
-        initial=checked(source['checkpoint'])
+        initial=checked_checkpoint(source['checkpoint'])
     origins=fresh_origins(config)
     states=[]; first_hashes=[]; first_semantic=[]; first_pins=[]; stage_seconds=[]; instrumentation_complete=True
     preparation=[]
@@ -66,7 +70,7 @@ def build(config_pin, result_pin, build_pin, payload_pin=None, inspection_pin=No
                 'update chain differs')
         require(update['after_state_sha256']==complete['output_identity']['state_sha256'],
                 'update output state differs')
-        saved=checked(update['checkpoint'])
+        saved=checked_checkpoint(update['checkpoint'])
         require(saved['state_sha256']==update['after_state_sha256'] and
                 saved['adam_step']==initial['adam_step']+index+1,'full-state checkpoint or Adam step differs')
         require(len(collection['trajectories'])==len(config['iterations'][index]['episodes']),

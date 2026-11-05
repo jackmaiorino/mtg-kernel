@@ -9,7 +9,7 @@ import copy
 import hashlib
 from pathlib import Path
 import re
-from common import encoded, pin, read, require
+from common import encoded, pin, read, read_checkpoint, require
 from semantic import trajectory_digest, validated_map
 from fresh_source import (SOURCE_SCHEMA, inspect_source, initial_state, is_fresh_origin, origin_key,
                           validate_checkpoint_origin, validate_inference_identity, validate_trajectory)
@@ -61,6 +61,10 @@ class Artifacts:
 
     def checked(self,reference):return read(self.local_pin(reference)['path'])
 
+    def checked_checkpoint(self,reference):
+        path=self.local_pin(reference)['path']
+        return read_checkpoint(path,reference['sha256'])
+
     def expected(self,reference,path):
         require(normal(reference['path'])==normal(path),'artifact belongs to a different native run')
         return self.checked(reference)
@@ -97,7 +101,7 @@ def original_config(reader,config,payload=None):
 
 
 def checkpoint_state(reader,reference,trajectories=None):
-    value=reader.checked(reference)
+    value=reader.checked_checkpoint(reference)
     require(set(value)==STATE_KEYS,'unsupported checkpoint state fields')
     validate_checkpoint_origin(value)
     require(type(value['adam_step']) is int and value['adam_step']>=0,'invalid Adam step')

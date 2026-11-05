@@ -532,7 +532,11 @@ fn forward_v2_enqueued(
         let floats = packed.slice(floats_at..ints_at);
         let ints = packed.slice(ints_at..words);
         let (mut logits, mut values) = out.split_at_mut(batch.logits_len);
-        let mut launch = stream.launch_builder(&device.net8_forward_v2);
+        let v2 = device
+            .net8_forward_v2
+            .as_ref()
+            .ok_or("the v2 forward needs sm_80 or newer")?;
+        let mut launch = stream.launch_builder(v2);
         launch
             .arg(&descriptors)
             .arg(&floats)

@@ -3088,6 +3088,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 tapes,
                 advantage,
                 value_error,
+                policy_mask: None,
             });
         }
         if let Some(recomputes) = parallel_packed_recomputes.as_mut() {
@@ -4649,6 +4650,30 @@ struct GroupTapeV1<'a> {
     tapes: Vec<SelectedDecisionTapeV1<'a>>,
     advantage: f32,
     value_error: f32,
+    /// W5's policy-gradient mask (`w5-xact-v1`); `None` on every other path.
+    policy_mask: Option<GroupPolicyMaskV1>,
+}
+
+/// W5 (`w5-xact-v1`): which substeps of a group take no policy gradient
+/// (the search played them), and the policy-gradient denominator, the number
+/// of groups with at least one unmasked substep. The value term keeps the
+/// group count.
+struct GroupPolicyMaskV1 {
+    masked: Vec<bool>,
+    denominator: f32,
+}
+
+impl GroupTapeV1<'_> {
+    /// The gradient of the policy loss at substep `substep`'s selected
+    /// log-probability. Without a mask this is `-advantage / group_count`,
+    /// exactly as every path computes it.
+    fn d_joint_log_probability_v1(&self, substep: usize, group_count: f32) -> f32 {
+        match &self.policy_mask {
+            None => -self.advantage / group_count,
+            Some(mask) if mask.masked[substep] => 0.0,
+            Some(mask) => -self.advantage / mask.denominator,
+        }
+    }
 }
 
 /// Update-local scratch only. Buffers are zeroed or overwritten before every
