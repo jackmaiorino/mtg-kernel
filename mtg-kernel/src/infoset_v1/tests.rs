@@ -1203,3 +1203,49 @@ fn r3_refuses_only_the_opponents_library_search() {
     );
     assert!(own > 0, "V's own library searches witnessed");
 }
+
+/// Amendment 43.9, cut 2 (R2): a live optional-cost reshape and the madness
+/// reprompt exemption travel in the payload instead of refusing. At V's
+/// decisions of Burn mirrors (Highway Robbery, Fiery Temper) where either
+/// is live, the payload is built, its import passes the fail-closed checks
+/// and presents the live decision (same actor and menu size), and AC3's
+/// menu bijection and rollout hold from the export.
+#[test]
+fn optional_cost_and_madness_records_travel_and_import() {
+    let mut seen = [0usize; 2];
+    for seed in 0..400_u64 {
+        play(["Burn", "Burn"], 4_300 + seed, 700, |s, v| {
+            let k = match s.payload_refusal_detail_v1(v) {
+                "optional_cost_reshape" => 0,
+                "madness_reprompt" => 1,
+                _ => return,
+            };
+            let Ok(x) = export_at(s, v, ExportOptionsV1::default()) else {
+                return;
+            };
+            let p = super::payload::PayloadV1::new(&x, s, v, 0)
+                .unwrap_or_else(|| panic!("seed {seed}: the {k} record does not travel"));
+            assert!(
+                p.surface.optional_cost.is_some() || p.surface.madness_reprompt.is_some(),
+                "seed {seed}: no record"
+            );
+            let imported = p.import().unwrap_or_else(|e| panic!("seed {seed}: import: {e}"));
+            let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
+                (s.current_response(), imported.current_response())
+            else {
+                panic!("seed {seed}: the imported root is not a decision");
+            };
+            assert_eq!(
+                (d.acting_player, d.legal_action_count),
+                (e.acting_player, e.legal_action_count),
+                "seed {seed}"
+            );
+            super::harness::ac3_check(s, &x, seed).expect("AC3");
+            seen[k] += 1;
+        });
+        if seen.iter().all(|&n| n >= 4) {
+            break;
+        }
+    }
+    assert!(seen.iter().all(|&n| n > 0), "witnesses (optional cost, madness): {seen:?}");
+}
