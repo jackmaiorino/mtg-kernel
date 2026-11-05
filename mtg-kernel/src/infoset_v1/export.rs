@@ -984,12 +984,15 @@ pub(crate) fn export_v1(
             .map(|f| f.card_def)
             .collect::<Vec<_>>())
     } else if is(MutantV1::L12) {
+        // v6's allocator: the cards V knows in the hand (43.8: the names in
+        // L; mutants L8 and L14: their copies) count toward nodes.
         allocate_counting_arrivals(
             &projection,
             state,
             &opp_hand_tracked,
+            &bound_names,
             &pool5,
-            opp_hand_slots,
+            opp_hand_slots.saturating_sub(bound_names.len()),
         )
     } else {
         survivors.allocate(
@@ -2068,12 +2071,14 @@ fn allocate_counting_arrivals(
     projection: &ProjectionV1,
     state: &GameState,
     opp_hand_tracked: &[ObjectId],
+    known: &[u16],
     pool5: &NamesV1,
     slots: usize,
 ) -> Result<Vec<u16>, AllocationErrorV1> {
     let h0: Vec<u16> = opp_hand_tracked
         .iter()
         .map(|id| state.objects.get(*id).card_def)
+        .chain(known.iter().copied())
         .collect();
     let mut placed: Vec<u16> = Vec::new();
     let mut pool = pool5.clone();

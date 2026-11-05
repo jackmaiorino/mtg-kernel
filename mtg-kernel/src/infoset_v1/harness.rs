@@ -99,6 +99,28 @@ pub(crate) fn view(s: &FastActorSessionV1) -> Option<Vec<u8>> {
     // The engine lists candidates in native-id order, which the wire
     // re-sorts (the adapter's row order): compare candidate sets by content.
     let mut obs = serde_json::to_value(&obs).expect("view serializes");
+    // Amendment 43.8: the bot-facing transcript carries facts about the
+    // opponent's hand as names (the adapter's `add_hand_knowledge`), never
+    // copies: the engine's copy-level rows are compared as name multisets.
+    if let Some(sides) = obs
+        .get_mut("known_hand_cards")
+        .and_then(|x| x.as_array_mut())
+    {
+        for side in sides.iter_mut() {
+            if let Some(rows) = side.as_array_mut() {
+                let mut names: Vec<serde_json::Value> = rows
+                    .iter()
+                    .map(|r| {
+                        r.get("card_name")
+                            .cloned()
+                            .unwrap_or_else(|| r["stable"]["card_db_id"].clone())
+                    })
+                    .collect();
+                names.sort_by_key(|x| x.to_string());
+                *rows = names;
+            }
+        }
+    }
     sort_candidate_lists(&mut obs);
     localize(&mut obs, &mut BTreeMap::new());
     let mut rows: Vec<String> = menu
