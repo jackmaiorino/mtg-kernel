@@ -386,6 +386,14 @@ class ChainTests(unittest.TestCase):
         frozen = chains.frozen_intervals(self.node.root, 110)
         self.assertEqual(frozen, [(5, 27), (105, 110)])
         self.assertEqual(chains.running_seconds(events[:5], 110, frozen), (5 + 3) + 5)
+        # A recovered close (the supervisor had died) and a dead open instance end at their last live reading.
+        state = self.node.root / 'state' / 'x9'
+        jwrite(state / 'instance-0000' / 'live.json', {'unix': 20})
+        jwrite(state / 'instance-0001' / 'live.json', {'unix': 150})
+        dead = [{'event': 'open', 'instance': 0, 'unix': 0}, {'event': 'close', 'unix': 500, 'recovered': 'cgroup'},
+                {'event': 'open', 'instance': 1, 'unix': 100}]
+        self.assertEqual(chains.running_seconds(dead, 1000, (), state), 20 + 50)
+        self.assertEqual(chains.running_seconds(dead, 160, (), state), 20 + 60)  # its supervisor is alive
 
     def synthetic(self, plan, c_end=None, x_ledgers=(), paused=False, stop_at=None, x_cap=1e6, opened=0.0):
         t0 = 1.0e9
@@ -486,6 +494,8 @@ class ChainTests(unittest.TestCase):
         self.node.ledger('c1', 'open', 'close')
         self.node.ledger('x1', 'open')
         with mock.patch.object(chains.subprocess, 'Popen') as popen, contextlib.redirect_stdout(io.StringIO()):
+            self.assertIn('held', chains.occupancy(plan, root))  # no guard verdict yet: no filler starts
+            self.node.guard()
             # The filler box (f2, slot 2) first, then the ended chain's box.
             self.assertEqual(chains.occupancy(plan, root), {'started': [2, 0], 'stopped': []})
             cmd = popen.call_args[0][0]
