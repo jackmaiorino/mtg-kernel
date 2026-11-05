@@ -66,6 +66,11 @@ the filler goes, so an operator's restart retries with the node held. The `--sto
 measured chain has ended; never removed here, so a late start exits at once) ends it: the filler goes and the box's
 open outage closes.
 
+**Recover.** `w5box.py recover` closes the open instance of a chain whose supervisor has died (nothing holds its
+supervisor lock), as the next `run` would, without starting another: a chain still running there has no reader for
+its pause, resume and kill requests, so its cgroup is killed first, and a `handoff` chain's box becomes an outage
+before it is released.
+
 **Guard (COMPUTE-POLICY item 5).** `run` refuses before any spawn unless the plan's pins hold (host class, the
 complete detected box layout, binary and config hashes, `argv[0]` is the pinned binary and the config is in
 `argv`) and a box throughput record binds this plan's complete launch specification (`w5-box-throughput/v1`:
@@ -78,6 +83,7 @@ scaling checks only).
     w5box.py run --plan PLAN.json --chain CHAIN [--qualification LABEL --max-wall-seconds S]
     w5box.py pause|resume|kill|refill --plan PLAN.json --chain CHAIN [--payload JSON]
     w5box.py fill --plan PLAN.json --slot K --stop FILE [--empty-since UNIX]   an ended box holds the filler
+    w5box.py recover --plan PLAN.json --chain CHAIN     close a dead supervisor's instance (stopping it if it runs)
     w5box.py node-freeze|node-thaw --plan PLAN.json --reason TEXT    operator freeze or thaw of the node's chains
     w5box.py occupancy --plan PLAN.json                           open faults, freeze state and outages
     w5box.py ledger --plan PLAN.json --chain CHAIN       current ledger value (closed + live)
@@ -1202,6 +1208,38 @@ class Supervisor:
         return code if code >= 0 else 128 - code
 
 
+# ---------------------------------------------------------------- recovery without a restart
+
+def recover_chain(plan: dict, plan_sha: str, chain: str, layout: dict, detected: str) -> dict:
+    """`w5box.py recover`: closes the open instance of a chain whose supervisor has died (module docstring)."""
+    sup = Supervisor(plan, plan_sha, chain, None, None, layout, detected, None)
+    if not sup.ledger.path.exists() or sup.ledger.summary()["open"] is None:
+        return {"chain": chain, "recovered": False, "why": "no open instance"}
+    locks = [flock(sup.state / "supervisor.lock", f"Chain {chain}"),
+             flock(sup.state_root / f"box{sup.slot['slot']}.lock", f"Box {sup.slot['slot']}")]
+    try:
+        killed = False
+        if sup.chain_cg.exists() and sup.chain_cg.populated():  # unsupervised: nothing reads its requests
+            sup.chain_cg.freeze(False)
+            sup.chain_cg.kill()
+            require(sup.chain_cg.wait_empty(SETTLE_SECONDS), f"{sup.chain_cg.path} did not empty")
+            killed = True
+        if sup.spec.get("handoff") is True:
+            with sup.node.locked():
+                records, torn = sup.node.read()
+                if sup.slot["slot"] not in NodeLog.state(records, torn)["open_outages"]:
+                    sup.node.append({"event": "outage-start", "box_slot": sup.slot["slot"], "handoff": True,
+                                     "id": f"{chain}/recover/handoff/{time.time_ns()}", "chain": chain,
+                                     "reason": "a dead supervisor's instance closes: its box waits to be occupied",
+                                     "affected": node_chains(sup.state_root)})
+            enforce_node(plan, sup.node, "recover")
+        sup.recover()
+        return {"chain": chain, "recovered": True, "killed": killed}
+    finally:
+        for lock in locks:
+            lock.close()
+
+
 # ---------------------------------------------------------------- an ended chain's box
 
 def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, stop_path: Path) -> int:
@@ -1399,7 +1437,7 @@ def main(argv=None) -> int:
     p.add_argument("--slot", type=int, required=True)
     p.add_argument("--stop", type=Path, required=True)
     p.add_argument("--empty-since", type=float, default=None)
-    for name in ("pause", "resume", "kill", "refill", "ledger", "verify-ledger"):
+    for name in ("pause", "resume", "kill", "refill", "ledger", "verify-ledger", "recover"):
         p = sub.add_parser(name)
         p.add_argument("--plan", required=True)
         p.add_argument("--chain", required=True)
@@ -1421,6 +1459,17 @@ def main(argv=None) -> int:
             return 0
         if args.command == "run":
             return guarded_supervisor(args).run()
+        if args.command == "recover":
+            require(sys.platform.startswith("linux"), "The W5 launcher runs on Linux only")
+            plan, plan_sha = load_plan(args.plan)
+            chain_spec(plan, args.chain)
+            frozen = plan["layout"]
+            layout = compute_layout(read_topology(), frozen["cores_per_box"], frozen["offbox_cores_per_domain"],
+                                    len(frozen["boxes"]))
+            require({k: frozen.get(k) for k in LAYOUT_KEYS} == {k: layout[k] for k in LAYOUT_KEYS},
+                    "The plan's box layout differs from the layout detected on this host")
+            print(json.dumps(recover_chain(plan, plan_sha, args.chain, layout, host_class())))
+            return 0
         if args.command == "fill":
             require(sys.platform.startswith("linux"), "The W5 launcher runs on Linux only")
             plan, _ = load_plan(args.plan)

@@ -908,13 +908,19 @@ def end_cmd(a):
 LIVE_STALE = 30.0  # w5box rewrites an instance's live.json every 5 s while its supervisor runs
 
 
-def running_intervals(records, now, state=None):
-    """Open w5box instances minus the chain's own paused intervals, as (start, end) wall intervals. An instance that
-    w5box closed by recovery (its supervisor had died), or an open one whose supervisor no longer writes live.json,
-    ends at that instance's last live reading: the time in between is not the chain's running wall."""
-    def last_live(instance, default):
+def running_intervals(records, now, state=None, evidence=None):
+    """Open w5box instances minus the chain's own paused intervals, as (start, end) wall intervals. A chain's driver
+    outlives a dead supervisor, so an instance that w5box closed by recovery, or an open one whose live.json is
+    stale, ends at its last evidence of execution: the later of its last live reading and its last update receipt
+    (`evidence`: instance to unix seconds), else its start."""
+    def last_seen(instance, start, default):
+        seen = [start]
         path = Path(state) / f'instance-{instance:04d}' / 'live.json' if state is not None else None
-        return min(read(path)['unix'], default) if path is not None and path.exists() else default
+        if path is not None and path.exists():
+            seen.append(read(path)['unix'])
+        if evidence and instance in evidence:
+            seen.append(evidence[instance])
+        return min(max(seen), default)
 
     out, opened, start, instance = [], False, None, None
     for r in records:
@@ -928,14 +934,15 @@ def running_intervals(records, now, state=None):
             start = t
         elif event == 'close':
             if start is not None:
-                end = last_live(instance, t) if r.get('recovered') else t
+                end = last_seen(instance, start, t) if r.get('recovered') else t
                 out.append((start, max(start, end)))
             opened, start = False, None
     if start is not None:
         end = now
-        if state is not None and instance is not None:
-            seen = last_live(instance, now)
-            end = seen if now - seen > LIVE_STALE else now
+        live_path = Path(state) / f'instance-{instance:04d}' / 'live.json' if state is not None and \
+            instance is not None else None
+        if live_path is not None and (not live_path.exists() or now - read(live_path)['unix'] > LIVE_STALE):
+            end = last_seen(instance, start, now)
         out.append((start, max(start, end)))
     return out
 
@@ -961,10 +968,10 @@ def frozen_intervals(root, now):
     return out
 
 
-def running_seconds(records, now, frozen=(), state=None):
+def running_seconds(records, now, frozen=(), state=None, evidence=None):
     """X's own running wall (the cap): its open instances minus its pauses and minus node freezes."""
     total = 0.0
-    for a, b in running_intervals(records, now, state):
+    for a, b in running_intervals(records, now, state, evidence):
         total += b - a
         for fa, fb in frozen:
             total -= max(0.0, min(b, fb) - max(a, fa))
@@ -1035,7 +1042,11 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
     x, c = info_x, info_c
     c_valid = valid_records(c)
     c_ended = c['end'] is not None
-    running = running_seconds(x['ledger'], now, frozen_intervals(root, now), x['state'])
+    evidence = {}
+    for rec in x['records']:
+        if rec.get('instance') is not None and rec.get('unix_seconds') is not None:
+            evidence[rec['instance']] = max(evidence.get(rec['instance'], 0), rec['unix_seconds'])
+    running = running_seconds(x['ledger'], now, frozen_intervals(root, now), x['state'], evidence)
     x_cap = float(x['chain'].get('x_cap_seconds', retention.X_CAP_SECONDS))
     if c_ended and not c_valid:
         end_x(plan, x, 'c-failed-before-update')
@@ -1355,6 +1366,35 @@ def guard_reservation(plan, root):
     return (GUARD_SEGMENTS + 1) * measured + 2 * boxes * segment('F') + replays
 
 
+def supervised(root, name):
+    """A w5box supervisor holds the chain's lock (POSIX: a lock taken here would succeed only without one)."""
+    path = Path(root) / 'state' / name / 'supervisor.lock'
+    if os.name == 'nt' or not path.exists():
+        return os.name == 'nt'
+    import fcntl
+    with open(path, 'a') as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(f, fcntl.LOCK_UN)
+        return False
+
+
+def recover_unsupervised(plan, root):
+    """A measured chain whose ledger is open while no supervisor holds it (its supervisor died) is closed by
+    `w5box.py recover`: a still running instance is stopped (nothing reads its requests), its box is held, and the
+    instance closes exactly from its cgroup. An unended chain is then restarted by the operator (`run`)."""
+    done = []
+    for n, c in sorted(plan['chains'].items()):
+        if c['arm'] in MEASURED and live(root, n) and not supervised(root, n):
+            code = subprocess.call([sys.executable, str(HERE / 'w5box.py'), 'recover', '--plan', w5box_plan(plan, n),
+                                    '--chain', n])
+            log(root, chain=n, event='recover-unsupervised', exit=code)
+            done.append(n)
+    return done
+
+
 def enforce_ends(plan, root):
     """An ended measured chain must not keep running: a kill that did not land (a supervise crash between END and
     the request, or a lost request) is requested again once the END is older than END_KILL_GRACE."""
@@ -1481,8 +1521,9 @@ def occupancy(plan, root):
         out['handoffs_closed'] = close_handoffs(plan, root)
         return out
     verdict = read(Path(root) / 'GUARD.json') if (Path(root) / 'GUARD.json').exists() else {}
-    if not verdict.get('ok') or time.time() - verdict.get('unix', 0) > GUARD_MAX_AGE:
-        out['held'] = 'no fresh ok guard verdict: no filler starts (an empty box stays an outage)'
+    if not verdict.get('ok') or verdict.get('plan') != plan['label'] or \
+            time.time() - verdict.get('unix', 0) > GUARD_MAX_AGE:
+        out['held'] = 'no fresh ok guard verdict of this plan: no filler starts (an empty box stays an outage)'
         return out
     boxes = [(c['slot'], n, None) for n, c in sorted(plan['chains'].items()) if c['arm'] == 'F']
     boxes += [(plan['chains'][n]['slot'], n, closed_unix(root, n)) for n in sorted(measured) if closed[n]]
@@ -1569,6 +1610,7 @@ def cycle(plan, plan_path, now=None):
         removed = retention.apply(doc, root / 'retention' / f'{n}.jsonl')
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
+    report['recovered'] = recover_unsupervised(plan, root)
     report['kills'] = enforce_ends(plan, root)
     report['fills'] = occupancy(plan, root)
     report['purged'] = purge_hold(root, plan['hold_days'], now)

@@ -11,7 +11,10 @@ chain ledger from the chain cgroup's cpu.stat) in two one-core boxes:
 - pair B (c2, x2): X runs slower than C, so it is below R_i when C ends; C's closing box holds the node until its
   filler is verified; supervise pauses X and resumes it with `stop_at_usec = R_i`, and X stops at the first boundary
   at or past R_i.
-Both stages are launched first (`chains.py launch`), so the first chain to start waits frozen for the other.
+- pair C (c3, x3): x3's w5box supervisor is killed mid-run; supervise recovers the instance (`w5box.py recover`:
+  the unsupervised chain stops, its box is held, the instance closes exactly from its cgroup); x3's restart takes
+  the box back and the pair finishes.
+Every stage is launched first (`chains.py launch`), so the first chain to start waits frozen for the other.
 
   sudo python3 chains_acceptance.py --receipt OUT.json
 """
@@ -19,6 +22,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -100,6 +104,17 @@ def records(root, name):
 
 def end(root, name):
     return json.loads((root / 'chains' / name / 'END.json').read_text())
+
+
+def w5box_supervisor_pid(chain):
+    for proc in Path('/proc').iterdir():
+        try:
+            argv = (proc / 'cmdline').read_bytes().split(b'\0')
+        except (OSError, ValueError):
+            continue
+        if any(a.endswith(b'w5box.py') for a in argv) and b'run' in argv and chain.encode() in argv:
+            return int(proc.name)
+    return None
 
 
 def main():
@@ -191,6 +206,9 @@ def main():
         wait_for(lambda: pair_b.exists() and json.loads(pair_b.read_text()).get('done'), 300, 'pair B')
         codes_b['x2'] = x2.wait(timeout=120)
         wait_for(lambda: not fills_running(), 120, 'the fills of pair B to stop')
+        supervise.terminate()  # supervise owns the index cache: stop it before reading the indexes
+        supervise.wait(timeout=60)
+        supervise = None
         pb = json.loads(pair_b.read_text())
         log_b = [json.loads(line) for line in (root / 'LOG.jsonl').read_text().splitlines()]
         fill_starts = [e for e in log_b if e.get('event') == 'fill-start' and e.get('box_of') == 'c2']
@@ -223,6 +241,42 @@ def main():
                  if e['event'] == 'start'), key=lambda e: e['unix'])['started_frozen'] is True,
             'b_fill_stopped_after_the_stage': not (root / 'state' / 'box0.fill.json').exists() and
             not (cgroup_root / f'box{lay["boxes"][0]["slot"]}' / 'filler').exists(),
+        })
+        # ---- pair C: a dead supervisor's instance is recovered and its box held until the chain restarts
+        plan_c = inputs(t, root, cgroup_root, lay, 'acc-c', {
+            'c3': {'arm': 'C', 'slot': 0, 'pair': 3, 'seed_root': 'w5/acc3'},
+            'x3': {'arm': 'X8', 'slot': 1, 'pair': 3, 'seed_root': 'w5/acc3'}}, 30.0,
+            {'burn': 0.15, 'sleep': 0.15, 'burn_x': 0.4, 'sleep_x': 0.0})
+        supervise = subprocess.Popen(tool('supervise', '--plan', str(plan_c), '--loop', '1'),
+                                     stdout=open(t / 'supervise-c.log', 'w'))
+        wait_for(lambda: (root / 'GUARD.json').exists() and json.loads((root / 'GUARD.json').read_text())
+                 .get('plan') == 'acc-c', 60, 'pair C\'s first guard verdict')
+        subprocess.run(tool('launch', '--plan', str(plan_c)), check=True)
+        c3, x3 = run_chain(plan_c, 'c3'), run_chain(plan_c, 'x3')
+        wait_for(lambda: len(list((root / 'chains' / 'x3').glob('seg-*/iterations/*/complete.json'))) >= 3, 120,
+                 'x3 to run')
+        os.kill(w5box_supervisor_pid('x3'), signal.SIGKILL)
+        x3.wait(timeout=60)
+        x3_ledger = w5box.Ledger(root / 'state' / 'x3' / 'ledger.jsonl')
+        wait_for(lambda: any(e['event'] == 'close' for e in x3_ledger.records()), 120, 'the recovery of x3')
+        recovered_close = [e for e in x3_ledger.records() if e['event'] == 'close'][0]
+        x3b = run_chain(plan_c, 'x3')
+        pair_c = root / 'pairs' / 'c3--x3' / 'PAIR.json'
+        wait_for(lambda: pair_c.exists() and json.loads(pair_c.read_text()).get('done'), 300, 'pair C')
+        codes_c = {'c3': c3.wait(timeout=120), 'x3': x3b.wait(timeout=120)}
+        wait_for(lambda: not fills_running(), 120, 'the fills of pair C to stop')
+        node_log = w5box.NodeLog(root / 'state').read()[0]
+        restored = {e['outage_id']: e for e in node_log if e['event'] == 'restored'}
+        recover_outages = [e for e in node_log if e['event'] == 'outage-start' and '/recover/' in e['id']]
+        pc = json.loads(pair_c.read_text())
+        receipt['pair_c'] = {'pair': pc, 'exits': codes_c, 'recovered_close': recovered_close,
+                             'recover_outages': recover_outages}
+        checks.update({
+            'c_dead_supervisor_instance_closed_exactly': recovered_close.get('recovered') == 'cgroup' and
+            recovered_close.get('lower_bound') is False,
+            'c_box_held_until_the_chain_restarted': len(recover_outages) == 1 and
+            restored.get(recover_outages[0]['id'], {}).get('how') == 'chain-restart',
+            'c_pair_finished': pc.get('done') is True and codes_c == {'c3': 0, 'x3': 0},
         })
         receipt['checks'] = checks
         receipt['pass'] = all(checks.values())

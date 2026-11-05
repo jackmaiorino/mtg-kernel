@@ -394,6 +394,10 @@ class ChainTests(unittest.TestCase):
                 {'event': 'open', 'instance': 1, 'unix': 100}]
         self.assertEqual(chains.running_seconds(dead, 1000, (), state), 20 + 50)
         self.assertEqual(chains.running_seconds(dead, 160, (), state), 20 + 60)  # its supervisor is alive
+        # The driver outlives its supervisor: update receipts after the last live reading are running time too.
+        self.assertEqual(chains.running_seconds(dead, 1000, (), state, {0: 300, 1: 900}), 300 + 800)
+        # An instance that died before its first live reading or receipt ran for no time.
+        self.assertEqual(chains.running_seconds([{'event': 'open', 'instance': 5, 'unix': 10}], 1000, (), state), 0)
 
     def synthetic(self, plan, c_end=None, x_ledgers=(), paused=False, stop_at=None, x_cap=1e6, opened=0.0):
         t0 = 1.0e9
@@ -496,6 +500,9 @@ class ChainTests(unittest.TestCase):
         with mock.patch.object(chains.subprocess, 'Popen') as popen, contextlib.redirect_stdout(io.StringIO()):
             self.assertIn('held', chains.occupancy(plan, root))  # no guard verdict yet: no filler starts
             self.node.guard()
+            self.assertIn('held', chains.occupancy(plan, root))  # nor one of another plan
+            verdict = json.loads((root / 'GUARD.json').read_text())
+            jwrite(root / 'GUARD.json', dict(verdict, plan='stage0'))
             # The filler box (f2, slot 2) first, then the ended chain's box.
             self.assertEqual(chains.occupancy(plan, root), {'started': [2, 0], 'stopped': []})
             cmd = popen.call_args[0][0]
