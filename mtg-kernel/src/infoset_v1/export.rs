@@ -1552,7 +1552,44 @@ pub(crate) fn refusal_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
             "paths": at,
         }));
     }
-    json!({"viewer": input.viewer.0, "items": projection.items, "untracked_live_refs": out})
+    // Lead ruling 9 (a): the items that hold paid-cost records, with their
+    // kind, source card, effect and 43.5's verdict (log only).
+    let holder = |where_: &str, i: usize, item: &crate::state::StackItem| {
+        let effect = item
+            .inline_effect
+            .as_ref()
+            .map(|e| format!("{e:?}").chars().take(240).collect::<String>());
+        json!({
+            "at": format!("{where_}[{i}]"),
+            "kind": format!("{:?}", item.kind),
+            "source_card": card_name(state.objects.get(item.source).card_def),
+            "source_zone": format!("{:?}", state.objects.get(item.source).zone),
+            "controller": item.controller.0,
+            "inline_effect": effect,
+            "granted": item.v4.granted_by.is_some(),
+            "paid_cost_cards": item
+                .v4
+                .paid_cost_refs
+                .iter()
+                .map(|p| card_name(p.card_def))
+                .collect::<Vec<_>>(),
+            "unread_43_5": paid_costs_unread_v1(state, item),
+        })
+    };
+    let mut holders: Vec<Value> = state
+        .stack
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| !item.v4.paid_cost_refs.is_empty())
+        .map(|(i, item)| holder("stack", i, item))
+        .collect();
+    if let Some(pending) = state.engine.pending_effect.as_ref() {
+        if !pending.resolving_item.v4.paid_cost_refs.is_empty() {
+            holders.push(holder("pending_effect", 0, &pending.resolving_item));
+        }
+    }
+    json!({"viewer": input.viewer.0, "items": projection.items, "untracked_live_refs": out,
+           "paid_cost_holders": holders})
 }
 
 /// Collect pass: every reference with its region.
