@@ -387,7 +387,14 @@ fn truth(state: &GameState, viewer: PlayerId, owner: PlayerId) -> TruthV1 {
                 def,
             );
             let entry = (*id, def, in_hand);
-            if projection.objects[id.0 as usize].spans.is_empty() {
+            // Amendment 43.7: a card revealed in the opponent's hand is never
+            // tracked there (no span), but V saw its name: its definition is
+            // fixed, as for a card V tracked earlier.
+            let revealed = state.observation_journal.notes().iter().any(|n| {
+                matches!(n.kind, ObservationNoteKindV1::HandCardRevealed { observer, object, .. }
+                    if observer == viewer && object == *id)
+            });
+            if projection.objects[id.0 as usize].spans.is_empty() && !revealed {
                 t.never.push(entry);
             } else {
                 t.seen.push(entry);

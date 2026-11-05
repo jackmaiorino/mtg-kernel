@@ -700,11 +700,32 @@ pub(crate) fn export_v1(
     // paired with the object it describes) at the epoch it left the hand
     // for the stack: it names the cast copy, the one V saw go to the stack,
     // in every world. This runs first, before every test that reads spans.
+    // Sol round 9, finding 1: moves without committed events (an aborted
+    // cast, a madness rollback) leave a copy's walk epochs, opponent-hand
+    // epochs included, behind its native ones, so neither the hand test nor
+    // the spans can place a reference to an earlier incarnation of it. Which
+    // same-name copy a later reference names is not V's information, so the
+    // test is by name: while any opponent copy of the name is out of step,
+    // a live reference to an incarnation of an opponent copy of that name
+    // before its current span (or with none) refuses alike.
     for (r, region) in &refs {
         if *region != "live" {
             continue;
         }
+        let o = state.objects.get(r.object);
+        let desynced = o.owner == opp
+            && projection
+                .desynced
+                .iter()
+                .any(|d| card_name(*d) == card_name(o.card_def));
         for &g in &r.generations {
+            if desynced
+                && projection
+                    .current_span(r.object)
+                    .is_none_or(|s| g < s.start_gen)
+            {
+                return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
+            }
             if let Some(epoch) = projection.opp_hand_epoch(r.object, g) {
                 if !(r.cast_receipt && epoch.left_to == Some(Zone::Stack)) {
                     return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
@@ -1973,4 +1994,60 @@ fn allocate_counting_arrivals(
         }
     }
     Ok(placed)
+}
+
+/// Test diagnostics: the live references at an opponent-hand epoch, with
+/// the JSON paths that hold their object.
+#[cfg(test)]
+pub(crate) fn hand_epoch_refs_v1(state: &GameState, viewer: PlayerId) -> Vec<String> {
+    let projection = project_v1(state, state.observation_journal.notes(), viewer);
+    let tagged = tagged_value(state);
+    let mut refs: Vec<(RefV1, &'static str)> = Vec::new();
+    {
+        let mut record = |r: RefV1, region: &'static str| refs.push((r, region));
+        if collect_refs(&tagged, &mut record).is_err() {
+            return vec!["collect refused".into()];
+        }
+    }
+    fn paths(v: &Value, tag: &str, at: String, out: &mut Vec<String>) {
+        match v {
+            Value::String(s) if s == tag => out.push(at),
+            Value::Array(xs) => {
+                for (i, x) in xs.iter().enumerate() {
+                    paths(x, tag, format!("{at}[{i}]"), out);
+                }
+            }
+            Value::Object(m) => {
+                for (k, x) in m {
+                    paths(x, tag, format!("{at}.{k}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for (r, region) in &refs {
+        if *region != "live" {
+            continue;
+        }
+        for &g in &r.generations {
+            if let Some(e) = projection.opp_hand_epoch(r.object, g) {
+                let tag = format!("{}{}", crate::ids::OBJECT_ID_TAG_PREFIX_V1, r.object.0);
+                let mut at = Vec::new();
+                paths(&tagged, &tag, "state".into(), &mut at);
+                at.retain(|p| !p.starts_with("state.engine.event_history"));
+                at.truncate(12);
+                out.push(format!(
+                    "object {} {} g {g} epoch {e:?} receipt {} paid {} slot {} paths {at:?} desynced {:?}",
+                    r.object.0,
+                    card_name(state.objects.get(r.object).card_def),
+                    r.cast_receipt,
+                    r.paid_cost,
+                    r.slot,
+                    projection.desynced
+                ));
+            }
+        }
+    }
+    out
 }

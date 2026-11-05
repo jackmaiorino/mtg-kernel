@@ -1782,3 +1782,31 @@ fn l8_bound_copies_witnesses(seed: u64) -> (u64, u64, u64) {
     );
     (witnesses, equal_differ, equal_differ + equal_agree)
 }
+
+/// Diagnostic (run by name): the first `same_name_hand` refusal on the
+/// fable-bounce and Lorien fixtures, with the references behind it.
+#[test]
+#[ignore = "diagnostic"]
+fn diag_hand_epoch_refs() {
+    let v = PlayerId::P1;
+    for (name, mut script) in [
+        ("fable", fable_bounce(0)),
+        ("lorien", cawgates_lorien(Some("Squadron Hawk"))),
+    ] {
+        let mut shown = 0;
+        script.run(400, 30, &mut |s, who, step| {
+            if who != v || shown >= 2 {
+                return;
+            }
+            if let Err(e) = export_at(s, v, ExportOptionsV1::default()) {
+                if format!("{e:?}").contains("same-name copies") {
+                    shown += 1;
+                    eprintln!(
+                        "{name} step {step}: {:#?}",
+                        super::export::hand_epoch_refs_v1(s.game_state(), v)
+                    );
+                }
+            }
+        });
+    }
+}

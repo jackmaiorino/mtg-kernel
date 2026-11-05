@@ -169,6 +169,12 @@ pub(crate) struct ProjectionV1 {
     pub stamps: Vec<(usize, usize)>,
     /// Internal consistency failures (a projection bug): R5.
     pub inconsistencies: Vec<String>,
+    /// Amendment 43.7 (Sol round 9, finding 1): card definitions of the
+    /// opponent's cards whose walk-counted moves differ from their native
+    /// generation before the final reconciliation (moves without committed
+    /// events: an aborted cast, a madness rollback). Their walk epochs,
+    /// opponent-hand epochs included, cannot be trusted.
+    pub desynced: Vec<u16>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -423,6 +429,24 @@ pub(crate) fn project_v1(
             w.settle(&[id]);
         }
     }
+    // Amendment 43.7 (Sol round 9, finding 1): the opponent's cards whose
+    // walk count missed moves, recorded before the reconciliation below
+    // repairs the tracked ones; the export reads it by name.
+    let mut desynced: Vec<u16> = state
+        .objects
+        .iter()
+        .filter(|(id, object)| {
+            let o = &w.objs[id.0 as usize];
+            object.owner == viewer.opponent()
+                && !object.v4.is_token
+                && object.spell_copy_origin.is_none()
+                && o.exists
+                && o.moves != object.zone_change_count
+        })
+        .map(|(_, object)| object.card_def)
+        .collect();
+    desynced.sort_unstable();
+    desynced.dedup();
     // Every object's native generation must equal the moves V's walk counted
     // (hidden moves included): otherwise the walk missed a zone change and
     // its epochs cannot be trusted.
@@ -521,6 +545,7 @@ pub(crate) fn project_v1(
         items,
         stamps: w.stamps,
         inconsistencies: w.inconsistencies,
+        desynced,
     }
 }
 
@@ -1173,14 +1198,21 @@ impl WalkV1<'_> {
         }
         if is_public(to) || named {
             // Identified as it leaves. Amendment 43.7 (lead ruling 12, Sol
-            // round 7): the adapter's rule (kernel_history_v2.py
-            // `_hand_move`): drop the copy's own fact, else an unbound fact
-            // of its name, else any fact of its name. Hand cards carry no
+            // rounds 7 and 9): one fact of the name ends, chosen at name
+            // level (below). Hand cards carry no
             // id, so which copy left is not V's information; a bound fact of
             // another copy that ends here releases that copy (the engine's
             // rows may still list it; R5 allows it). The survivor tree loses
             // the name only when no bound fact ended (a bound fact's copy
             // was outside F, as before 43.7).
+            // Sol round 9, finding 2: the adapter picks by the copy's native
+            // id, which V does not hold; which kind of fact ends (bound or
+            // unbound) decides whether the survivor tree loses the name, so
+            // that choice must be name-level. A bound fact of the name ends
+            // first (the copy's own, else the first, whose copy is
+            // released), then an unbound fact, then the tree. Which bound
+            // fact of the name ends moves no exported value (known names are
+            // ordered by name only); it keeps R5's rows exact.
             let pos = self
                 .hand
                 .iter()
@@ -1188,9 +1220,13 @@ impl WalkV1<'_> {
                 .or_else(|| {
                     self.hand
                         .iter()
-                        .position(|f| f.native.is_none() && f.card_def == card_def)
+                        .position(|f| f.native.is_some() && f.card_def == card_def)
                 })
-                .or_else(|| self.hand.iter().position(|f| f.card_def == card_def));
+                .or_else(|| {
+                    self.hand
+                        .iter()
+                        .position(|f| f.native.is_none() && f.card_def == card_def)
+                });
             let mut bound_ended = false;
             if let Some(pos) = pos {
                 let fact = self.hand.remove(pos);

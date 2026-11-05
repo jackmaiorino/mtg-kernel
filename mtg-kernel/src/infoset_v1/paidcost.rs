@@ -692,20 +692,20 @@ fn same_name_hand_refuses_in_both_orders() {
     assert_eq!(pa, pb, "P agrees whichever copy left");
 }
 
-/// Amendment 43.6's negative control: the copies' 43.4 keys differ (one
-/// returned from the graveyard, one revealed after an unseen draw), so
-/// either discard still exports.
+/// Amendment 43.6's negative control, re-derived for 43.7: the copies'
+/// 43.4 keys differ (one returned from the graveyard, one revealed after an
+/// unseen draw). Under 43.6 either discard exported (the keys told the
+/// copies apart). Under 43.7 no hand copy is tracked, so the departing
+/// Lembas is an arrival from the hand in either world and the paid-cost
+/// record (made before A entered the hand) refuses R1b in both: P agrees.
 #[test]
 fn different_hand_keys_still_export() {
-    for discard_a in [true, false] {
-        let p = hand_world(HandSecondV1::RevealedFromLibrary, discard_a);
-        assert!(
-            p.is_ok(),
-            "discard {}: different keys export: {:?}",
-            if discard_a { "A" } else { "the revealed copy" },
-            p.as_ref().err()
-        );
-    }
+    let (pa, pb) = (
+        hand_world(HandSecondV1::RevealedFromLibrary, true),
+        hand_world(HandSecondV1::RevealedFromLibrary, false),
+    );
+    eprintln!("different keys: A discarded {pa:?} / revealed copy discarded {pb:?}");
+    assert_eq!(pa, pb, "P agrees whichever copy left");
 }
 
 /// Sol review of 43.6, round 1 controls: equal-key copies with no surviving
@@ -746,6 +746,14 @@ fn mixed_hand_world(discard_bound: bool) -> Result<Vec<u8>, String> {
 /// to the hand from the graveyard and the fourth copy is discarded (Sol
 /// round 1: the mark must survive which fact that departure ends).
 fn mixed_hand_world_with(discard_bound: bool, again: bool) -> Result<Vec<u8>, String> {
+    mixed_hand_world_full(discard_bound, again, false)
+}
+
+/// As [`mixed_hand_world_with`]; with `taint`, after the fourth copy
+/// returns, the opponent's library is shuffled (the put-back pins go) and
+/// one put-back copy is milled in V's sight, tainting the survivor node
+/// (Sol round 9 on #526, finding 2).
+fn mixed_hand_world_full(discard_bound: bool, again: bool, taint: bool) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let s = opponent_payment();
@@ -805,6 +813,16 @@ fn mixed_hand_world_with(discard_bound: bool, again: bool) -> Result<Vec<u8>, St
     st.reveal_hand_card(v, o, fourth)
         .expect("reveal the fourth copy");
     mark(&st, &mut marks);
+    if taint {
+        st.shuffle_library(o).expect("shuffle");
+        mark(&st, &mut marks);
+        propose_and_commit(
+            &mut st,
+            ProposedEvent::zone_change(copies[0], Zone::Graveyard),
+        );
+        st.engine.pending_triggers.clear();
+        mark(&st, &mut marks);
+    }
     let gone = if discard_bound { fourth } else { copies[2] };
     propose_and_commit(&mut st, ProposedEvent::zone_change(gone, Zone::Graveyard));
     st.engine.pending_triggers.clear();
@@ -882,6 +900,126 @@ fn mixed_hand_mark_survives_a_second_departure() {
         b.as_ref().map(Vec::len)
     );
     assert_eq!(a, b, "P agrees after the second departure");
+}
+
+/// Sol round 9 on #526 (amendment 43.7), finding 2: the mixed hand with a
+/// tainted survivor node. Discarding the bound fourth copy or the unbound
+/// copy must end the same kind of fact: before the repair the bound world
+/// kept the tainted node (R8b) and the unbound world pruned it (exported).
+#[test]
+fn a_tainted_mixed_hand_departure_agrees() {
+    let (unbound, bound) = (
+        mixed_hand_world_full(false, false, true),
+        mixed_hand_world_full(true, false, true),
+    );
+    eprintln!(
+        "tainted mixed hand: unbound copy discarded {:?} / bound copy discarded {:?}",
+        unbound.as_ref().map(Vec::len),
+        bound.as_ref().map(Vec::len)
+    );
+    assert_eq!(unbound, bound, "P agrees whichever copy was discarded");
+}
+
+/// Sol round 9 on #526, finding 1: a cast receipt of a copy whose walk
+/// epochs fell behind its native ones (moves without committed events, as
+/// a madness rollback makes them; here two moves added in the graveyard by
+/// state surgery). Lembas D goes to the graveyard in V's sight, is out of
+/// step, returns to the opponent's hand (a bound fact); Lembas C is drawn
+/// unseen; then D or C (`d_cast`) goes to the stack with its own cast
+/// receipt at its hand epoch. Without the surgery (`desync` false) both
+/// worlds export alike; with it, the D world's receipt named an epoch the
+/// walk never saw (R2) while the C world exported, so both must refuse
+/// `same_name_hand` by name. Returns P.
+fn desynced_receipt_world(d_cast: bool, desync: bool) -> Result<Vec<u8>, String> {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::{SpellCastOriginV4, SpellCastRouteV4};
+    let (o, v) = (PlayerId::P0, PlayerId::P1);
+    let s = opponent_payment();
+    let lembas = id("Lembas");
+    let mut st = s.game_state().clone();
+    st.stack.retain(|it| {
+        it.v4.paid_cost_refs.is_empty() && st.objects.get(it.source).card_def != lembas
+    });
+    st.engine.pending_triggers.clear();
+    let paid = paid_object(
+        &s.game_state().clone(),
+        waiting(s.game_state(), OutletV1::Shaman).expect("the Shaman ability waits"),
+    );
+    let in_library = library_lembas(&mut st, paid, 2);
+    let (d, c) = (in_library[0], in_library[1]);
+    let mut marks = s.infoset_marks_v1(v);
+    let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
+        marks.push((
+            st.engine.event_history.len(),
+            st.observation_journal.notes().len(),
+        ));
+    };
+    propose_and_commit(&mut st, ProposedEvent::zone_change(d, Zone::Graveyard));
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    if desync {
+        st.objects.get_mut(d).zone_change_count += 2;
+    }
+    propose_and_commit(&mut st, ProposedEvent::zone_change(d, Zone::Hand));
+    st.reveal_hand_card(v, o, d).expect("reveal D");
+    st.engine.pending_triggers.clear();
+    mark(&st, &mut marks);
+    let lib = &mut st.players[o.index()].library;
+    let at = lib.iter().position(|x| *x == c).expect("C in the library");
+    let c_id = lib.remove(at);
+    lib.insert(0, c_id);
+    propose_and_commit(&mut st, ProposedEvent::draw(o));
+    assert_eq!(st.objects.get(c).zone, Zone::Hand, "C was drawn");
+    mark(&st, &mut marks);
+    let cast = if d_cast { d } else { c };
+    let origin = st.objects.get(cast).zone_change_count;
+    propose_and_commit(&mut st, ProposedEvent::zone_change(cast, Zone::Stack));
+    st.engine.pending_triggers.clear();
+    st.objects.get_mut(cast).v4.spell_cast_origin = Some(SpellCastOriginV4 {
+        origin_zone: Zone::Hand,
+        origin_zone_change_count: origin,
+        route: SpellCastRouteV4::Hand,
+        finalized_method: None,
+    });
+    let lists = decklists(&s);
+    export_v1(
+        &ExportInputV1 {
+            state: &st,
+            journal: st.observation_journal.notes(),
+            viewer: v,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        },
+        ExportOptionsV1::default(),
+    )
+    .map(|x| x.bytes)
+    .map_err(|e| format!("{e:?}"))
+}
+
+#[test]
+fn a_desynced_copy_and_its_twin_cast_alike() {
+    let (dx, cx) = (
+        desynced_receipt_world(true, false),
+        desynced_receipt_world(false, false),
+    );
+    eprintln!(
+        "receipt control: D cast {:?} / C cast {:?}",
+        dx.as_ref().map(Vec::len),
+        cx.as_ref().map(Vec::len)
+    );
+    assert_eq!(dx, cx, "P agrees whichever copy was cast (control)");
+    let (d, c) = (
+        desynced_receipt_world(true, true),
+        desynced_receipt_world(false, true),
+    );
+    eprintln!("desynced receipt: D cast {d:?} / C cast {c:?}");
+    assert_eq!(d, c, "P agrees whichever copy was cast");
+    assert!(
+        d.as_ref()
+            .err()
+            .is_some_and(|e| e.contains("same-name copies in the opponent's hand")),
+        "the out-of-step name refuses same_name_hand: {d:?}"
+    );
 }
 
 /// Sol round 1 on ruling 11 (R2), finding 3: a copy D returns from the

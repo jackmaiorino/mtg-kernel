@@ -1178,10 +1178,11 @@ pub(crate) fn f_choice(
 
 /// Candidates of the current decision that cast a copy V knows in the
 /// opponent's hand, grouped by the copy's definition: (definition, menu
-/// indices in menu order). Amendment 43.7: no opponent-hand copy is tracked,
-/// so a copy V knows is one V holds a bound fact for (revealed, fetched and
-/// revealed, or returned from a public zone), the copies the F-cast family
-/// tracked before 43.7.
+/// indices in menu order). Amendment 43.7: no opponent-hand copy is tracked
+/// and V's facts are name-level (an identified departure of the name ends
+/// one of them, whichever copy left), so the family casts any two copies of
+/// a name V holds a bound fact of (revealed, fetched and revealed, or
+/// returned from a public zone); before 43.7 it cast two tracked copies.
 pub(crate) fn known_hand_casts(s: &FastActorSessionV1, viewer: PlayerId) -> Vec<(u64, Vec<usize>)> {
     let opp = viewer.opponent();
     let state = s.game_state();
@@ -1204,7 +1205,10 @@ pub(crate) fn known_hand_casts(s: &FastActorSessionV1, viewer: PlayerId) -> Vec<
         let o = state.objects.get(id);
         if o.zone == Zone::Hand
             && o.owner == opp
-            && projection.hand_facts.iter().any(|f| f.native == Some(id))
+            && projection
+                .hand_facts
+                .iter()
+                .any(|f| f.native.is_some() && f.card_def == o.card_def)
         {
             groups.entry(def).or_default().push(i);
         }
