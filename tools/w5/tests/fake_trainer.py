@@ -87,12 +87,17 @@ def main():
         (a / 'update').mkdir(parents=True, exist_ok=True)
         ep = a / 'collect' / 'episode-0000.json'
         ep.write_text(json.dumps({'ids': ids, 'seeds': [e['episode']['seed'] for e in item['episodes']]}))
+        if x:  # EX1's search-target sidecar beside the trajectory
+            (a / 'collect' / 'ex1-0000.json').write_text(json.dumps({'ids': ids, 'targets': [[0.25, 0.75]]}))
         ck = a / 'update' / 'checkpoint.json'
         ck.write_text(json.dumps({'from': source['checkpoint']['sha256'], 'ids': ids,
                                   'search': (cfg.get('ex1') or {}).get('w5')}))
         c = a / 'collect' / 'collection.json'
-        c.write_text(json.dumps({'collection_elapsed_seconds': 0.1,
-                                 'trajectories': [{'path': ep.as_posix(), 'sha256': h(ep)}]}))
+        collection = {'collection_elapsed_seconds': 0.1, 'trajectories': [{'path': ep.as_posix(), 'sha256': h(ep)}]}
+        if x:  # the sidecars' pins, as the native collector records them
+            side = a / 'collect' / 'ex1-0000.json'
+            collection['ex1'] = {'options': {}, 'episodes': [{'path': side.as_posix(), 'sha256': h(side)}]}
+        c.write_text(json.dumps(collection))
         u = a / 'update' / 'update.json'
         u.write_text(json.dumps({'after_state_sha256': h(ck), 'checkpoint': {'path': ck.as_posix(),
                                                                              'sha256': h(ck)}}))
