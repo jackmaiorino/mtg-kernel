@@ -1659,6 +1659,25 @@ def occupancy(plan, root):
     return out
 
 
+def inside_segment(path, root):
+    """The path, resolved through links, lies in a chain segment directory of the root (`chains/<chain>/seg-<n>`)."""
+    real, chains_dir = Path(os.path.realpath(path)), Path(os.path.realpath(Path(root) / 'chains'))
+    return any(q.parent.parent == chains_dir and retention.SEGMENT_DIR.fullmatch(q.name) for q in [real, *real.parents])
+
+
+def counter_safe(plan, root):
+    """The ByteCounter's precondition for the plan's own output locations: none of them resolves into a chain segment
+    (hold, retention logs, the replay sample's staging, fillers, replays, snapshot directories, LOG and guard files)."""
+    root = Path(root)
+    places = [root / n for n in ('hold', 'retention', 'replay-sample', 'fillers', 'state', 'plan', 'pairs', 'LOG.jsonl',
+                                 'GUARD.json', 'GUARD-SPENT.json')]
+    for c in plan['chains'].values():
+        if c['manifest']:
+            places.append(retention.snapshot_dir(c['manifest'], read(c['manifest'])))
+            places.append(Path(c['manifest']).parent / 'replay')
+    return not any(inside_segment(p, root) for p in places)
+
+
 def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
     """One supervise cycle. `caches` (manifest path to `retention.IndexCache`, kept by `supervise --loop` across
     cycles) gives the same decisions without reading every index record and file again; `fills=False` (the box
@@ -1739,12 +1758,15 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
     report['purged'] = purge_hold(root, plan['hold_days'], now)
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
+    safe = counter is not None and counter_safe(plan, root)
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests,
                         None if caches is None else {Path(m).as_posix(): index_cache(caches, m) for m in manifests},
-                        counter)
+                        counter if safe else None)
     write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], ceilings=ceilings, id=time.time_ns(),
                                     headroom=g['cap_bytes'] - g['used_bytes'] - g['next_bytes']))
     report['guard'] = {k: g[k] for k in ('ok', 'used_bytes', 'next_bytes', 'cap_bytes')}
+    if counter is not None and not safe:
+        report['guard']['counter'] = 'off: an output location resolves into a chain segment (walked everything)'
     if counter is not None and counter.mismatches:  # a finished segment changed outside the supervisor
         report['guard']['recount_mismatches'] = counter.mismatches[-20:]
     write(root / 'plan' / plan['label'] / 'SUPERVISE.json', report)

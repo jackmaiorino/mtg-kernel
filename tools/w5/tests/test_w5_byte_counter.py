@@ -118,6 +118,20 @@ class CounterTests(unittest.TestCase):
         self.assertEqual(counter.total([root]), retention.tree_bytes(root))  # not yet reused: counted again
         self.assertEqual(counter.total([root]), retention.tree_bytes(root))
 
+    def test_an_output_location_inside_a_segment_turns_the_counter_off(self):
+        path, plan = self.node.stage0(c_wall=600.0)
+        root = self.node.root
+        self.node.guard(ceilings={'c1': 3})
+        self.node.drive(plan, 'c1')
+        self.assertTrue(chains.counter_safe(plan, root))
+        man = json.loads(Path(plan['chains']['x1']['manifest']).read_text())
+        man['snapshot_dir'] = (root / 'chains' / 'c1' / 'seg-00000' / 'iterations').as_posix()
+        Path(plan['chains']['x1']['manifest']).write_text(json.dumps(man))
+        self.assertFalse(chains.counter_safe(plan, root))
+        report = self.cycle(path, retention.ByteCounter(), {})
+        self.assertIn('off', report['guard']['counter'])
+        self.assertEqual(report['guard']['used_bytes'], json.loads((root / 'GUARD.json').read_text())['used_bytes'])
+
     def test_a_hold_folder_inside_a_finished_segment_is_counted(self):
         path, plan = self.node.stage0(c_wall=600.0)
         root = self.node.root

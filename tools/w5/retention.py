@@ -797,15 +797,20 @@ def touch_segments(paths):
 
 class ByteCounter:
     """`tree_bytes` for a long-lived caller (`chains.py supervise --loop`) that is not linear in the files of
-    finished segments. A sealed segment (a `seg-<n>` directory, not a link, holding completion.json) never gains a
-    file or changes one: its run has finished. Files leave it only through the W5 tools, which move the segment
-    directory's modification time forward (`touch_segments`); the native publisher's own cleanup of its last
-    publication changes it too. So a segment's total is reused only while its directory's modification time is
-    the one seen by the two consecutive calls that last counted it (the second count is the one kept, so a
-    publication finishing between them is in it); otherwise it is counted again. Everything else is walked every
-    call. A call therefore returns `sum(tree_bytes(r) for r in roots)`, except after a deletion by hand inside a
-    finished segment (outside the tools), which can only make the total larger than the truth: every
-    FULL_RECOUNT_SECONDS a call recounts every sealed segment and records such a change (`mismatches`)."""
+    finished chain segments.
+
+    **Precondition** (checked for a plan's own output locations by `chains.counter_safe`, which otherwise makes the
+    cycle walk everything): a sealed segment, `<root>/chains/<chain>/seg-<n>` (a directory, not a link, holding
+    completion.json), receives files only from the native trainer before completion.json appears; afterwards files
+    only leave it, and only through the W5 tools, which move the segment directory's modification time forward
+    (`touch_segments`). Nothing writes into it by hand.
+
+    Under it a segment's total is reused only while its directory's modification time is the one seen by the two
+    consecutive counts that last counted it, the second made SETTLE_SECONDS after that time (so a publisher's
+    same-tick cleanup is in it); otherwise it is counted again. Everything else, other `seg-<n>` directories
+    included, is walked every call. A call then returns `sum(tree_bytes(r) for r in roots)`. A hand edit inside a
+    finished segment breaks the precondition: every FULL_RECOUNT_SECONDS a call recounts every sealed segment and
+    records any segment whose total changed without a touch (`mismatches`)."""
 
     def __init__(self, full_seconds=FULL_RECOUNT_SECONDS):
         self.sealed = {}  # key -> {'mtime': ns, 'bytes': n, 'stable': bool}
@@ -850,7 +855,8 @@ class ByteCounter:
                 walk = []
                 for d in dirnames:
                     path = os.path.join(dirpath, d)
-                    if SEGMENT_DIR.fullmatch(d) and not os.path.islink(path) and \
+                    if SEGMENT_DIR.fullmatch(d) and Path(dirpath).parent.name == 'chains' and \
+                            Path(dirpath).parent.parent == Path(root) and not os.path.islink(path) and \
                             os.path.exists(os.path.join(path, 'completion.json')):
                         try:
                             key, size = self.segment(path, full, now)
