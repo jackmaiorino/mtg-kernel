@@ -507,6 +507,7 @@ def ship(staging, store, arm_quota=ARM_QUOTA_BYTES, total_cap=TOTAL_CAP_BYTES):
     report = {'shipped': 0, 'refused': 0, 'evicted': 0, 'duplicates': 0, 'repaired': 0, 'orphans_removed': 0,
               'failed': []}
     with store_lock(store):
+        sync_ancestors(store, Path(os.path.abspath(store)).anchor)  # a new store's own entry durable too
         manifest = store / 'MANIFEST.jsonl'
         if manifest.exists():  # what an earlier ship appended may not have reached the disk yet
             with open(manifest, 'r+b') as h:
