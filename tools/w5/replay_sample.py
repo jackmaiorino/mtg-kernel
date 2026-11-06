@@ -23,11 +23,14 @@ the byte guard counts it) with `ENTRY.json` written last; `PROGRESS.json` per ch
 already considered. Files of a selected update not yet staged are protected from rolling deletion
 (`protected`). An update whose files were already gone is recorded as missing and never staged.
 
-**Transfer** (`ship`, run where the node's staging directory and E: are both mounted): under a store lock, each
-staged entry is copied to `<store>/<arm>/<chain>/u<update>/`, every frame's SHA-256 checked at the destination,
-recorded in `<store>/MANIFEST.jsonl` (hash-chained), the quota applied, and only then is the staged copy deleted.
-Evicted frames are deleted with a manifest line (trajectories are regenerable by deterministic replay from the
-chain's kept full states).
+**Transfer** (`ship`, run where the node's staging directory and E: are both mounted): under a store lock, room is
+made first (evictions by the prefix rule, each confirmed deleted before its manifest line; an entry that would be
+the first one out is refused without a copy), so the store never holds more than an arm's quota. Then each staged
+entry's frames are written to `<store>/<arm>/<chain>/u<update>/`, fsynced and hashed there, published, recorded in
+`<store>/MANIFEST.jsonl` (hash-chained, fsynced; a torn tail from an interrupted append is cut before the next),
+and only then is the staged copy deleted. A rerun checks an entry already kept against its staged copy and repairs
+missing or damaged frames; frames left by an interrupted ship that the manifest does not keep are removed. Evicted
+frames are deleted (trajectories are regenerable by deterministic replay from the chain's kept full states).
 
   replay_sample.py selected SEED_ROOT UPDATE
   replay_sample.py ship --staging DIR --store DIR [--arm-quota-bytes N] [--total-cap-bytes N]
@@ -263,22 +266,43 @@ def store_lock(store):
         f.close()
 
 
-def manifest_events(store):
+def sync_dir(path):
+    """Makes a directory's entries durable (POSIX; NTFS journals metadata itself)."""
+    if hasattr(os, 'O_DIRECTORY'):
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def manifest_lines(store):
+    """The manifest's complete lines and whether a torn tail (an interrupted append) follows them."""
     path = Path(store) / 'MANIFEST.jsonl'
+    data = path.read_bytes() if path.exists() else b''
+    cut = data.rfind(b'\n') + 1
+    return data[:cut].splitlines(), cut < len(data)
+
+
+def manifest_events(store):
     out, prev = [], None
-    if path.exists():
-        for number, raw in enumerate(path.read_bytes().splitlines(), 1):
-            event = json.loads(raw)
-            require(event.get('prev_sha256') == prev, f'{path}: line {number} breaks the hash chain')
-            prev = sha_bytes(raw)
-            out.append(event)
+    lines, _ = manifest_lines(store)
+    for number, raw in enumerate(lines, 1):
+        event = json.loads(raw)
+        require(event.get('prev_sha256') == prev, f'{store}/MANIFEST.jsonl: line {number} breaks the hash chain')
+        prev = sha_bytes(raw)
+        out.append(event)
     return out
 
 
 def append_event(store, event):
+    """Appends one hash-chained line (fsynced). A torn tail is cut first: its event never happened, and the staged
+    copy it would have retired is still there."""
     path = Path(store) / 'MANIFEST.jsonl'
-    events = path.read_bytes().splitlines() if path.exists() else []
-    event = dict(event, schema=MANIFEST_SCHEMA, prev_sha256=sha_bytes(events[-1]) if events else None,
+    lines, torn = manifest_lines(store)
+    if torn:
+        write_bytes(path, b''.join(line + b'\n' for line in lines))
+    event = dict(event, schema=MANIFEST_SCHEMA, prev_sha256=sha_bytes(lines[-1]) if lines else None,
                  unix=round(time.time(), 3))
     with open(path, 'ab') as f:
         f.write(json.dumps(event, sort_keys=True, separators=(',', ':')).encode('utf-8') + b'\n')
@@ -304,80 +328,166 @@ def store_state(store):
     return kept, cutoff, fate
 
 
-def apply_quota(store, arm, kept, cutoff, quota):
-    """The arm keeps the longest run of its entries in selection-hash order whose frames fit the quota; the rest
-    are evicted (frames deleted, a manifest line each) and the cutoff lowered to the first evicted hash."""
-    total, evict = 0, []
-    for key, e in sorted(kept.items(), key=lambda kv: kv[1]['selection_sha256']):
-        if evict or total + e['zst_bytes'] > quota:
-            evict.append((key, e))
-        else:
-            total += e['zst_bytes']
-    for key, e in evict:
-        shutil.rmtree(entry_dir(store, *key), ignore_errors=True)
-        append_event(store, {'event': 'evict', 'arm': arm, 'chain': key[1], 'update': key[2],
-                             'selection_sha256': e['selection_sha256'], 'zst_bytes': e['zst_bytes'],
-                             'reason': 'arm quota'})
-        kept.pop(key)
-        if cutoff.get(arm) is None or e['selection_sha256'] < cutoff[arm]:
-            cutoff[arm] = e['selection_sha256']
-    return [k for k, _ in evict]
+def remove_tree(path):
+    """Deletes a directory and confirms it is gone (False if any of it remains)."""
+    path = Path(path)
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
+    return not path.exists()
+
+
+def frames_intact(dest, entry):
+    return all((Path(dest) / f'{i["path"]}.zst').exists() and sha_file(Path(dest) / f'{i["path"]}.zst') ==
+               i['zst_sha256'] for i in entry['files'])
+
+
+def copy_frames(src, tmp, entry):
+    """Copies the staged frames into `tmp`, each written, fsynced and hashed at the destination. Returns the files
+    whose destination hash differs."""
+    bad = []
+    for item in entry['files']:
+        data = (Path(src) / f'{item["path"]}.zst').read_bytes()
+        target = Path(tmp) / f'{item["path"]}.zst'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        if sha_file(target) != item['zst_sha256'] or target.stat().st_size != item['zst_bytes']:
+            bad.append(item['path'])
+    return bad
+
+
+def publish(store, key, src, entry):
+    """The entry's frames at their store place, durable and checked there; False (nothing published) if a frame's
+    hash differs."""
+    dest = entry_dir(store, *key)
+    tmp = dest.with_name(dest.name + '.incoming')
+    require(remove_tree(tmp), f'{tmp} could not be cleared')
+    bad = copy_frames(src, tmp, entry)
+    if bad:
+        remove_tree(tmp)
+        return bad
+    write_json(tmp / 'ENTRY.json', entry)
+    for d in sorted({p.parent for p in tmp.rglob('*')} | {tmp}, key=lambda p: -len(p.parts)):
+        sync_dir(d)
+    require(remove_tree(dest), f'{dest} could not be cleared')
+    os.replace(tmp, dest)
+    sync_dir(dest.parent)
+    return []
+
+
+class Arm:
+    """One arm's kept entries in selection-hash order, with their frame bytes."""
+
+    def __init__(self, entries):
+        self.order = sorted((e['selection_sha256'], key) for key, e in entries.items())
+        self.bytes = {key: e['zst_bytes'] for key, e in entries.items()}
+        self.total = sum(self.bytes.values())
+
+    def room_for(self, digest, size, quota):
+        """The entries to evict so an entry of `size` bytes and hash `digest` fits, largest hashes first (the prefix
+        rule), or None if the entry itself would be the first one out."""
+        out, total = [], self.total + size
+        for h, key in reversed(self.order):
+            if total <= quota:
+                break
+            if h < digest:  # the newcomer has the largest hash still in: it would go first
+                return None
+            out.append((h, key))
+            total -= self.bytes[key]
+        return out if total <= quota else None
+
+    def remove(self, key):
+        self.order = [(h, k) for h, k in self.order if k != key]
+        self.total -= self.bytes.pop(key)
+
+    def add(self, digest, key, size):
+        self.order.append((digest, key))
+        self.order.sort()
+        self.bytes[key] = size
+        self.total += size
 
 
 def ship(staging, store, arm_quota=ARM_QUOTA_BYTES, total_cap=TOTAL_CAP_BYTES):
     """Copies every staged entry to the store with its frames' hashes checked there, applies the quota, then deletes
-    the staged copy (module docstring)."""
+    the staged copy (module docstring). The store never holds more than an arm's quota: room is made (evictions,
+    each confirmed deleted before it is recorded) before an entry is copied, and an entry that would be the first
+    one out is refused without a copy."""
     staging, store = Path(staging), Path(store)
     require(arm_quota * len(SAMPLED_ARMS) <= total_cap, 'the arm quotas pass the total cap')
-    report = {'shipped': 0, 'refused': 0, 'evicted': 0, 'duplicates': 0, 'failed': []}
+    report = {'shipped': 0, 'refused': 0, 'evicted': 0, 'duplicates': 0, 'repaired': 0, 'orphans_removed': 0,
+              'failed': []}
     with store_lock(store):
         kept, cutoff, fate = store_state(store)
+        arms = {arm: Arm(kept.get(arm, {})) for arm in SAMPLED_ARMS}
+        # Frames left by an interrupted ship (published without their manifest line, or an unfinished copy).
+        listed = {(arm, chain, update) for arm in kept for (_, chain, update) in kept[arm]}
+        for d in sorted(store.glob('*/*/u*')):
+            name = d.name.split('.')[0]
+            if d.is_dir() and ('.' in d.name or (d.parent.parent.name, d.parent.name, int(name[1:])) not in listed):
+                if remove_tree(d):
+                    report['orphans_removed'] += 1
         for entry_path in sorted(staging.glob('*/*/u*/ENTRY.json')):
             entry = read_json(entry_path)
             require(entry.get('schema') == ENTRY_SCHEMA and entry['arm'] in SAMPLED_ARMS, f'{entry_path}: not an entry')
             require(entry['selection_sha256'] == selection_hash(entry['seed_root'], entry['update']) and
                     selected(entry['selection_sha256']), f'{entry_path}: not a selected update')
             key = (entry['arm'], entry['chain'], entry['update'])
-            src = entry_path.parent
-            if key in fate:  # shipped before (a rerun after a crash before the staged copy went)
+            src, arm, digest = entry_path.parent, arms[entry['arm']], entry['selection_sha256']
+            if fate.get(key) == 'kept':  # shipped before; its frames are checked and repaired from this copy
+                if not frames_intact(entry_dir(store, *key), entry):
+                    bad = publish(store, key, src, entry)
+                    if bad:
+                        report['failed'].append({'entry': entry_path.as_posix(), 'files': bad})
+                        continue
+                    report['repaired'] += 1
                 report['duplicates'] += 1
-            elif cutoff.get(entry['arm']) is not None and entry['selection_sha256'] >= cutoff[entry['arm']]:
-                append_event(store, {'event': 'refuse', 'arm': key[0], 'chain': key[1], 'update': key[2],
-                                     'selection_sha256': entry['selection_sha256'], 'zst_bytes': entry['zst_bytes'],
-                                     'reason': 'past the arm cutoff'})
-                fate[key] = 'refuse'
-                report['refused'] += 1
+            elif key in fate:  # evicted or refused before
+                report['duplicates'] += 1
             else:
-                dest = entry_dir(store, *key)
-                tmp = dest.with_name(dest.name + '.incoming')
-                shutil.rmtree(tmp, ignore_errors=True)
-                bad = []
-                for item in entry['files']:
-                    target = tmp / f'{item["path"]}.zst'
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(src / f'{item["path"]}.zst', target)
-                    if sha_file(target) != item['zst_sha256'] or target.stat().st_size != item['zst_bytes']:
-                        bad.append(item['path'])
-                if bad:
-                    shutil.rmtree(tmp, ignore_errors=True)
-                    report['failed'].append({'entry': entry_path.as_posix(), 'files': bad})
-                    continue  # the staged copy stays for the next ship
-                write_json(tmp / 'ENTRY.json', entry)
-                shutil.rmtree(dest, ignore_errors=True)
-                os.replace(tmp, dest)
-                event = append_event(store, dict({k: entry[k] for k in (
-                    'arm', 'chain', 'seed_root', 'update', 'boundary', 'selection_sha256', 'after_state_sha256',
-                    'zst_bytes', 'raw_bytes', 'files')}, event='add'))
-                kept.setdefault(key[0], {})[key] = event
-                fate[key] = 'kept'
-                report['shipped'] += 1
-            shutil.rmtree(src)  # its fate is in the manifest
-        for arm in sorted(kept):  # once per ship: the result is the same as after each entry
-            for evicted in apply_quota(store, arm, kept[arm], cutoff, arm_quota):
-                fate[evicted] = 'evict'
-                report['evicted'] += 1
-        total = sum(e['zst_bytes'] for arm in kept.values() for e in arm.values())
-        require(total <= total_cap, f'the store holds {total} bytes, past the {total_cap} cap')
+                room = None if cutoff.get(key[0]) is not None and digest >= cutoff[key[0]] else \
+                    arm.room_for(digest, entry['zst_bytes'], arm_quota)
+                others = sum(a.total for name, a in arms.items() if name != key[0])
+                if room is not None and others + arm.total + entry['zst_bytes'] - \
+                        sum(arm.bytes[k] for _, k in room) > total_cap:
+                    room = None
+                if room is None:
+                    append_event(store, {'event': 'refuse', 'arm': key[0], 'chain': key[1], 'update': key[2],
+                                         'selection_sha256': digest, 'zst_bytes': entry['zst_bytes'],
+                                         'reason': 'past the arm cutoff or quota'})
+                    fate[key] = 'refuse'
+                    cutoff[key[0]] = digest if cutoff.get(key[0]) is None else min(cutoff[key[0]], digest)
+                    report['refused'] += 1
+                else:
+                    stuck = False
+                    for h, out in room:
+                        if not remove_tree(entry_dir(store, *out)):
+                            report['failed'].append({'evict': list(out), 'reason': 'its frames could not be deleted'})
+                            stuck = True
+                            break
+                        append_event(store, {'event': 'evict', 'arm': out[0], 'chain': out[1], 'update': out[2],
+                                             'selection_sha256': h, 'zst_bytes': arm.bytes[out],
+                                             'reason': 'arm quota'})
+                        fate[out] = 'evict'
+                        cutoff[key[0]] = h if cutoff.get(key[0]) is None else min(cutoff[key[0]], h)
+                        arm.remove(out)
+                        report['evicted'] += 1
+                    if stuck:
+                        continue  # the staged copy stays for the next ship
+                    bad = publish(store, key, src, entry)
+                    if bad:
+                        report['failed'].append({'entry': entry_path.as_posix(), 'files': bad})
+                        continue
+                    append_event(store, dict({k: entry[k] for k in (
+                        'arm', 'chain', 'seed_root', 'update', 'boundary', 'selection_sha256', 'after_state_sha256',
+                        'zst_bytes', 'raw_bytes', 'files')}, event='add'))
+                    fate[key] = 'kept'
+                    arm.add(digest, key, entry['zst_bytes'])
+                    report['shipped'] += 1
+            if fate.get(key) != 'kept':
+                remove_tree(entry_dir(store, *key))  # nothing of a refused or evicted entry stays in the store
+            remove_tree(src)  # its fate is in the manifest
     report.update(store_summary(store))
     return report
 

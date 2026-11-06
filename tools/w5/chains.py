@@ -1452,10 +1452,13 @@ def guard_reservation(plan, root):
                 if (rdir / 'spec.json').exists() and not (rdir / 'RECEIPT.json').exists():
                     updates = read(rdir / 'spec.json')['replay']['updates']
                     replays += updates * plan['arms'][c['arm']]['bytes_per_update']
-    staging = 0  # the replay sample's frames of the selected updates the verdict may admit (exact: hash-selected)
-    for n, c in plan['chains'].items():
-        if replay_sample.sampled(plan['stage'], c['arm']) and writing(root, n):
-            last = (admitted(chain_dir(root, n)) + GUARD_SEGMENTS) * plan['arms'][c['arm']]['segment_updates'] - 1
+    staging = 0  # the replay sample's frames of the selected updates it may stage (exact: hash-selected): through
+    for n, c in plan['chains'].items():  # what this verdict may admit, or an ended chain's last update
+        if replay_sample.sampled(plan['stage'], c['arm']):
+            if writing(root, n):
+                last = (admitted(chain_dir(root, n)) + GUARD_SEGMENTS) * plan['arms'][c['arm']]['segment_updates'] - 1
+            else:
+                last = latest(read(c['manifest']))[0] - 1
             staging += replay_sample.reservation(root, c['arm'], n, c['seed_root'], last,
                                                  plan['arms'][c['arm']]['bytes_per_update'])
     return (GUARD_SEGMENTS + 1) * measured + 2 * boxes * segment('F') + replays + staging

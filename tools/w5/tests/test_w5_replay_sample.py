@@ -138,6 +138,20 @@ class StagingTests(unittest.TestCase):
         self.assertEqual(base, segments + 2 * 4 * plan['arms']['F']['segment_updates'] *
                          plan['arms']['F']['bytes_per_update'] + expected)
 
+    def test_an_ended_chains_pending_staging_stays_reserved(self):
+        self.advance('x8-1', 12)
+        _, records = retention.index(self.plan['chains']['x8-1']['manifest'])
+        chains.write_once(self.node.root / 'chains' / 'x8-1' / 'END.json', {'reason': 'operator', 'unix': 0})
+        plan = chains.load_plan(self.path)
+        pending = sum(replay_sample.selected(replay_sample.selection_hash('w5/chain1', r['update'])) for r in records)
+        self.assertGreater(pending, 0)
+        with_pending = chains.guard_reservation(plan, self.node.root)
+        replay_sample.write_json(replay_sample.chain_staging(self.node.root, 'X8', 'x8-1') / 'PROGRESS.json',
+                                 {'next_update': len(records), 'staged': pending, 'missing': []})
+        caught_up = chains.guard_reservation(plan, self.node.root)
+        bpu = plan['arms']['X8']['bytes_per_update']
+        self.assertEqual(with_pending - caught_up, pending * int(bpu * replay_sample.FRAME_OVERHEAD + 65536))
+
     def test_stage0_is_not_sampled(self):
         node = Node(tempfile.mkdtemp(dir=self.tmp.name))
         path, plan = node.stage0(c_wall=600.0)
@@ -234,6 +248,53 @@ class ShipTests(unittest.TestCase):
         report = replay_sample.ship(staging, store)
         self.assertEqual((report['failed'], report['shipped']), ([], 1))
         self.assertTrue(replay_sample.verify(store)['ok'])
+
+    def test_the_store_never_holds_more_than_the_quota(self):
+        a, b = self.nodes('q')
+        sizes = sorted(json.loads(p.read_text())['zst_bytes'] for p in a.glob('*/*/u*/ENTRY.json'))
+        quota = sum(sizes[:4])
+        store = self.t / 'store'
+        real, peak = replay_sample.publish, []
+
+        def watched(store_, key, src, entry):
+            out = real(store_, key, src, entry)
+            peak.append(sum(f.stat().st_size for f in Path(store_).rglob('*.zst')))
+            return out
+        with mock.patch.object(replay_sample, 'publish', watched):
+            replay_sample.ship(a, store, quota, 2 * quota)
+            replay_sample.ship(b, store, quota, 2 * quota)
+        self.assertTrue(peak)
+        self.assertLessEqual(max(peak), quota)
+
+    def test_crash_states_are_repaired(self):
+        a, _ = self.nodes('r')
+        entries = sorted(a.glob('*/*/u*/ENTRY.json'))
+        keep = self.t / 'keep'
+        shutil.copytree(a, keep)
+        store = self.t / 'store'
+        replay_sample.ship(a, store)
+        # A torn manifest tail (an interrupted append) is cut before the next line.
+        with open(store / 'MANIFEST.jsonl', 'ab') as f:
+            f.write(b'{"event": "add", "ar')
+        # A frame of a kept entry went missing; the same update is staged again (a rerun): it is repaired.
+        first = json.loads(entries[0].read_text()) if entries[0].exists() else json.loads(
+            (keep / entries[0].relative_to(a)).read_text())
+        dest = replay_sample.entry_dir(store, first['arm'], first['chain'], first['update'])
+        next(dest.rglob('*.zst')).unlink()
+        # Frames published without their manifest line (a crash before it) are removed.
+        orphan = replay_sample.entry_dir(store, 'X8', 'x8-1', 999_999)
+        (orphan / 'collect').mkdir(parents=True)
+        (orphan / 'collect' / 'episode-0000.json.zst').write_bytes(b'x')
+        report = replay_sample.ship(keep, store)
+        self.assertEqual((report['repaired'], report['orphans_removed']), (1, 1))
+        self.assertFalse(orphan.exists())
+        self.assertTrue(replay_sample.verify(store)['ok'])
+        replay_sample.manifest_events(store)  # the torn tail is ignored on read
+        _, other = self.nodes('r2')  # the next line written cuts the tail first
+        self.assertGreater(replay_sample.ship(other, store)['shipped'], 0)
+        self.assertTrue((store / 'MANIFEST.jsonl').read_bytes().endswith(b'\n'))
+        self.assertNotIn(b'"ar\n', (store / 'MANIFEST.jsonl').read_bytes())
+        replay_sample.manifest_events(store)  # the hash chain holds
 
     def test_refusals_and_reruns(self):
         with self.assertRaisesRegex(replay_sample.SampleError, 'pass the total cap'):
