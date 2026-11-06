@@ -49,6 +49,15 @@ impl PayloadV1 {
         if surface.discard.as_ref().is_some_and(|d| d.player != viewer) {
             return None;
         }
+        // Likewise an optional-cost record (amendment 43.9): only the
+        // viewer's own reshape.
+        if surface
+            .optional_cost
+            .as_ref()
+            .is_some_and(|o| o.player != viewer)
+        {
+            return None;
+        }
         let mut payload = Self {
             schema: INFOSET_SCHEMA_V1.into(),
             sha256: String::new(),
@@ -108,6 +117,27 @@ impl PayloadV1 {
                 return Err("payload carries both a combat and a discard record".into());
             }
             discard.validate_in_state(&state, &self.handles, PlayerId(self.viewer))?;
+        }
+        // Amendment 43.9: the optional-cost and madness records.
+        if let Some(o) = &self.surface.optional_cost {
+            if self.surface.combat.is_some() || self.surface.discard.is_some() {
+                return Err("payload carries an optional-cost record beside another".into());
+            }
+            crate::policy_surface_v5::validate_optional_cost_in_state_v1(
+                o,
+                &state,
+                PlayerId(self.viewer),
+            )?;
+        }
+        if let Some(card) = self.surface.madness_reprompt {
+            if self.surface.combat.is_some() {
+                return Err("payload carries a madness record beside a combat record".into());
+            }
+            crate::policy_surface_v5::validate_madness_reprompt_in_state_v1(
+                card,
+                &state,
+                &self.handles,
+            )?;
         }
         let digest = super::export::canonical_digest_v1(&state, &self.handles);
         if digest != self.state_sha256 {

@@ -304,6 +304,12 @@ impl NativeFlatTensorScratchV3 {
     pub(crate) fn set_state_digest_v1(&mut self, on: bool) {
         self.slot.state_digest_off = !on;
     }
+
+    /// The canonical observation JSON of the last successful fill (the bytes
+    /// the state digest hashes when it is on).
+    pub(crate) fn canonical_observation_v1(&self) -> &[u8] {
+        &self.slot.state_json
+    }
 }
 
 #[cfg(test)]

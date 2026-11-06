@@ -1203,3 +1203,203 @@ fn r3_refuses_only_the_opponents_library_search() {
     );
     assert!(own > 0, "V's own library searches witnessed");
 }
+
+/// Amendment 43.9, cut 2 (R2): a live optional-cost reshape and the madness
+/// reprompt exemption travel in the payload instead of refusing. At V's
+/// decisions of Burn mirrors (Highway Robbery, Fiery Temper) where either
+/// is live, the payload is built, its import passes the fail-closed checks
+/// and presents the live decision (same actor and menu size), and AC3's
+/// menu bijection and rollout hold from the export.
+#[test]
+fn optional_cost_and_madness_records_travel_and_import() {
+    let mut seen = [0usize; 2];
+    for seed in 0..400_u64 {
+        play(["Burn", "Burn"], 4_300 + seed, 700, |s, v| {
+            let k = match s.payload_refusal_detail_v1(v) {
+                "optional_cost_reshape" => 0,
+                "madness_reprompt" => 1,
+                _ => return,
+            };
+            let Ok(x) = export_at(s, v, ExportOptionsV1::default()) else {
+                return;
+            };
+            // The madness exemption travels only during its announcement;
+            // after it (trigger ordering) the producer still refuses.
+            let announcing = s.game_state().engine.pending_cast.is_some();
+            let Some(p) = super::payload::PayloadV1::new(&x, s, v, 0) else {
+                assert!(
+                    k == 1 && !announcing,
+                    "seed {seed}: the {k} record does not travel"
+                );
+                return;
+            };
+            assert!(
+                p.surface.optional_cost.is_some() || p.surface.madness_reprompt.is_some(),
+                "seed {seed}: no record"
+            );
+            let imported = p
+                .import()
+                .unwrap_or_else(|e| panic!("seed {seed}: import: {e}"));
+            let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
+                (s.current_response(), imported.current_response())
+            else {
+                panic!("seed {seed}: the imported root is not a decision");
+            };
+            assert_eq!(
+                (d.acting_player, d.legal_action_count),
+                (e.acting_player, e.legal_action_count),
+                "seed {seed}"
+            );
+            super::harness::ac3_check(s, &x, seed).expect("AC3");
+            seen[k] += 1;
+        });
+        if seen.iter().all(|&n| n >= 4) {
+            break;
+        }
+    }
+    assert!(
+        seen.iter().all(|&n| n > 0),
+        "witnesses (optional cost, madness): {seen:?}"
+    );
+}
+
+/// Amendment 43.9, cut 1 (`same_name_batch`): the move of the spell being
+/// announced is walked after the committed stream, with the committed
+/// lengths V's cast decision was presented at; it is the open item, a batch
+/// of its own, while every other item keeps the batch it had (bounds over
+/// the closed items, so event-less moves after it stay in the closed batch).
+/// At every V decision with a pending cast in these mirrors: the open item
+/// is the announced spell's move and has its own batch; every closed item
+/// keeps the batch the former placement gave it (recomputed here with the
+/// open item stamped like the others), the open item excepted; witnesses
+/// are decisions where the former placement put a same-name copy of the
+/// owner, leaving the same zone, in the open item's batch (the refusal
+/// the cut removes).
+#[test]
+fn the_announced_spell_moves_in_the_open_batch() {
+    use super::projection::ProjectionV1;
+    use crate::card_def::CARD_DEFS;
+    let former = |p: &ProjectionV1, marks: &[(usize, usize)]| -> Vec<usize> {
+        let mut out: Vec<usize> = marks
+            .iter()
+            .map(|&(h, j)| {
+                p.stamps
+                    .iter()
+                    .take_while(|&&(e, n)| e <= h && n <= j)
+                    .count()
+            })
+            .filter(|&b| b < p.stamps.len())
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    };
+    let mut pending = 0;
+    let mut witnesses = 0;
+    let mut closed_checked = 0;
+    for (decks, seeds) in [
+        (["Burn", "Burn"], 0..30_u64),
+        (["Faeries", "Faeries"], 0..30),
+        (["Rally", "Rally"], 0..30),
+    ] {
+        for seed in seeds {
+            play(decks, 9_100 + seed, 500, |s, v| {
+                let st = s.game_state();
+                let Some(cast) = st.engine.pending_cast.as_ref() else {
+                    return;
+                };
+                let p = super::projection::project_v1(st, st.observation_journal.notes(), v);
+                let Some(open) = p.open_item else {
+                    return;
+                };
+                pending += 1;
+                let marks = s.infoset_marks_v1(v);
+                let bounds = p.batch_bounds(Some(&marks));
+                let old = former(&p, &marks);
+                let old_batch = |item: usize| old.partition_point(|&b| b <= item);
+                let end = p.objects[cast.spell.0 as usize]
+                    .spans
+                    .iter()
+                    .filter_map(|x| x.end)
+                    .find(|e| e.item == open)
+                    .unwrap_or_else(|| {
+                        panic!("seed {seed}: the open item is not the spell's move")
+                    });
+                assert_eq!(p.batch_of(&bounds, open), usize::MAX, "seed {seed}");
+                // Batches are runs of consecutive items: every two
+                // consecutive closed items keep their former relation.
+                // `p.items` is the reconciliation index (`final_item`) when
+                // event-less moves follow the announcement.
+                let closed: Vec<usize> = (0..=p.items).filter(|&a| a != open).collect();
+                for w in closed.windows(2) {
+                    assert_eq!(
+                        p.batch_of(&bounds, w[0]) == p.batch_of(&bounds, w[1]),
+                        old_batch(w[0]) == old_batch(w[1]),
+                        "seed {seed}: items {} and {}",
+                        w[0],
+                        w[1]
+                    );
+                    closed_checked += 1;
+                }
+                let name = CARD_DEFS[st.objects.get(cast.spell).card_def as usize].name;
+                let owner = st.objects.get(cast.spell).owner;
+                if p.objects.iter().enumerate().any(|(i, o)| {
+                    let other = st.objects.get(crate::ids::ObjectId(i as u32));
+                    i != cast.spell.0 as usize
+                        && other.owner == owner
+                        && CARD_DEFS[other.card_def as usize].name == name
+                        && o.spans.iter().filter_map(|x| x.end).any(|e| {
+                            e.from == end.from
+                                && e.item != open
+                                && old_batch(e.item) == old_batch(open)
+                        })
+                }) {
+                    witnesses += 1;
+                }
+            });
+        }
+    }
+    assert!(
+        pending > 50 && witnesses > 0 && closed_checked > 0,
+        "pending casts {pending}, witnesses {witnesses}, closed pairs {closed_checked}"
+    );
+}
+
+/// Amendment 43.9, cut 1, the placement rule on its own (Sol design review
+/// round 2): committed items stamped (1, 0) and (2, 0), the announcement
+/// (the open item) and an event-less move after it, both walked at (2, 0),
+/// and the reconciliation index after them; marks at (1, 0) and (2, 0). The
+/// open item is a batch of its own; the event-less move and the
+/// reconciliation index stay in the batch of the committed item before the
+/// announcement, as the former placement had them.
+#[test]
+fn the_open_item_leaves_every_other_batch_alone() {
+    let s = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+        5,
+        5,
+        2_000,
+        20_000,
+        ["Burn".to_string(), "Burn".to_string()],
+    )
+    .expect("reset");
+    let st = s.game_state();
+    let mut p = super::projection::project_v1(st, st.observation_journal.notes(), PlayerId(0));
+    p.stamps = vec![(1, 0), (2, 0), (2, 0), (2, 0)];
+    p.items = 4;
+    let marks = [(1, 0), (2, 0)];
+    p.open_item = None;
+    let former = p.batch_bounds(Some(&marks));
+    let former: Vec<usize> = (0..=4).map(|i| p.batch_of(&former, i)).collect();
+    assert_eq!(former, vec![0, 1, 1, 1, 1]);
+    p.open_item = Some(2);
+    let bounds = p.batch_bounds(Some(&marks));
+    let now: Vec<usize> = (0..=4).map(|i| p.batch_of(&bounds, i)).collect();
+    assert_eq!(now, vec![0, 1, usize::MAX, 1, 1]);
+    // A mark between the event-less move and a later committed item still
+    // separates them.
+    p.stamps = vec![(1, 0), (2, 0), (2, 0), (2, 0), (3, 0)];
+    p.items = 5;
+    let bounds = p.batch_bounds(Some(&[(1, 0), (2, 0), (3, 0)]));
+    let now: Vec<usize> = (0..=5).map(|i| p.batch_of(&bounds, i)).collect();
+    assert_eq!(now, vec![0, 1, usize::MAX, 1, 2, 2]);
+}

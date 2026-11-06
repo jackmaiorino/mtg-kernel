@@ -5415,6 +5415,23 @@ impl FastActorSessionV1 {
             })?;
             context.discard = Some(renamed);
         }
+        if let Some(card) = context.madness_reprompt {
+            // Only during the madness announcement itself (amendment 43.9).
+            if self
+                .state
+                .engine
+                .pending_cast
+                .as_ref()
+                .is_none_or(|p| p.spell != card)
+            {
+                return None;
+            }
+            let renamed = ids
+                .get(&u64::from(card.0))
+                .and_then(|n| u32::try_from(*n).ok())
+                .map(ObjectId)?;
+            context.madness_reprompt = Some(renamed);
+        }
         Some(context)
     }
 
@@ -5465,6 +5482,14 @@ impl FastActorSessionV1 {
                     .collect();
                 surface.set_discard_context_v1(discard, remaining);
             }
+        }
+        // Amendment 43.9: a carried optional-cost record and madness
+        // exemption, likewise (the payload's import checked both).
+        if let Some(o) = context.as_ref().and_then(|c| c.optional_cost.as_ref()) {
+            surface.set_optional_cost_reshape_v1(o);
+        }
+        if let Some(card) = context.as_ref().and_then(|c| c.madness_reprompt) {
+            surface.set_madness_reprompt_v1(card);
         }
         let mut session = FastActorSessionV1 {
             deck_ids: template.deck_ids.clone(),
@@ -5537,6 +5562,12 @@ impl RlEpisodeSessionV1 {
                     .collect();
                 surface.set_discard_context_v1(discard, remaining);
             }
+        }
+        if let Some(o) = context.as_ref().and_then(|c| c.optional_cost.as_ref()) {
+            surface.set_optional_cost_reshape_v1(o);
+        }
+        if let Some(card) = context.as_ref().and_then(|c| c.madness_reprompt) {
+            surface.set_madness_reprompt_v1(card);
         }
         let mut session = RlEpisodeSessionV1 {
             deck_ids: fast.deck_ids.clone(),

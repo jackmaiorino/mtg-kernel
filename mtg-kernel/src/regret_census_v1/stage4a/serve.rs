@@ -409,6 +409,12 @@ fn point_v1(req: &PointRequestV1) -> Result<Value, String> {
         .map_err(|e| format!("encode: {e:?}"))?;
     let rows: Vec<u32> = (0..d.legal_action_count).collect();
     let flat = crate::agent_bridge_flat_v4_encode::flat_v4_extension_value_v1(&encoded, &rows)
+        .and_then(|flat| {
+            // Amendment 43.9 (a): as the bridge's committed point carries it.
+            crate::agent_bridge_flat_v4_encode::with_known_hand_masked_observation_v1(
+                flat, &encoded,
+            )
+        })
         .map_err(|e| format!("encode: {e:?}"))?;
     Ok(
         json!({"viewer_decision": true, "keys": keys, "eligible": eligible_session_v1(&s),
