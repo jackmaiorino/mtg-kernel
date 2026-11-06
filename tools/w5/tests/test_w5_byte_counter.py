@@ -118,6 +118,21 @@ class CounterTests(unittest.TestCase):
         self.assertEqual(counter.total([root]), retention.tree_bytes(root))  # not yet reused: counted again
         self.assertEqual(counter.total([root]), retention.tree_bytes(root))
 
+    def test_a_hold_folder_inside_a_finished_segment_is_counted(self):
+        path, plan = self.node.stage0(c_wall=600.0)
+        root = self.node.root
+        self.node.guard(ceilings={'c1': 3})
+        self.node.drive(plan, 'c1')
+        later = time.time() + 2 * retention.SETTLE_SECONDS
+        counter = retention.ByteCounter(full_seconds=10**9)
+        for _ in range(3):
+            counter.total([root], later)
+        victim = next((root / 'chains' / 'c1' / 'seg-00000').rglob('episode-*.json'))
+        hold = root / 'chains' / 'c1' / 'seg-00001' / 'iterations'  # an existing directory of another segment
+        doc = {'checkpoints': [], 'trajectories': [{'path': victim.as_posix(), 'bytes': victim.stat().st_size}]}
+        retention.apply(doc, self.node.t / 'apply.jsonl', hold=hold)
+        self.assertEqual(counter.total([root], later + 5), retention.tree_bytes(root))
+
 
 class LargeTreeTests(unittest.TestCase):
     SEGMENTS, FILES = 400, 120

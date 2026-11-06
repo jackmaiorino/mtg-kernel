@@ -400,6 +400,7 @@ def snapshot(chain_path, binary, snapshot_from, max_new=None):
                  'sha256': receipt['output']['sha256'], 'bytes': receipt['snapshot_bytes'],
                  'cut_from_state_sha256': receipt['cut_from_state_sha256'],
                  'parameters_sha256': receipt['parameters_sha256']}
+        touch_segments([out])  # a snapshot directory placed inside a finished segment: count it again
         with open(snapshot_index_path(chain_path), 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry) + '\n')
         made.append(entry)
@@ -506,6 +507,7 @@ def apply(plan_doc, log_path, hold=None):
                         dst = Path(hold) / path.relative_to(path.anchor)
                         dst.parent.mkdir(parents=True, exist_ok=True)
                         os.replace(path, dst)
+                        touched.append(dst)  # a hold folder inside a finished segment gains the file
                         item = dict(item, moved_to=dst.as_posix())
                     else:
                         path.unlink()
@@ -775,8 +777,9 @@ def segment_key(path):
 
 def touch_segments(paths):
     """Moves the modification time of every `seg-<n>` directory holding one of `paths` forward, so a ByteCounter
-    counts it again: every tool that deletes or moves files out of a segment (retention.apply, chains.py's hold
-    moves) calls this, the standalone `retention.py apply` included."""
+    counts it again: every tool that deletes, moves or writes a file in or out of a segment calls this
+    (retention.apply, the standalone `retention.py apply` included, with its hold destinations; snapshots; chains.py's
+    hold moves)."""
     for seg in {next((q for q in Path(os.path.abspath(p)).parents if SEGMENT_DIR.fullmatch(q.name)), None)
                 for p in paths} - {None}:
         try:

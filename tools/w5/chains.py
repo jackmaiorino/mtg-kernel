@@ -1318,7 +1318,7 @@ def hold_move(root, name, items):
                                 'from': p.as_posix(), 'to': dest.as_posix(), 'sha256': item['sha256'],
                                 'bytes': dest.stat().st_size, 'moved_at': time.time()}) + '\n')
         moved += 1
-        retention.touch_segments([p])  # a finished segment that lost a file is counted again (ByteCounter)
+        retention.touch_segments([p, dest])  # finished segments that lost or gained a file are counted again
     return moved, size
 
 
