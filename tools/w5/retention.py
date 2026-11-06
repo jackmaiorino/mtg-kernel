@@ -60,6 +60,7 @@ import hashlib
 import math
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -756,17 +757,84 @@ def tree_bytes(root):
     return total
 
 
+SEGMENT_DIR = re.compile(r'seg-\d+')
+FULL_RECOUNT_SECONDS = 6 * 3600
+
+
+def segment_key(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
+class ByteCounter:
+    """`tree_bytes` for a long-lived caller (`chains.py supervise --loop`) that is not linear in the files of
+    finished segments. A sealed segment (a `seg-<n>` directory, not a link, holding completion.json) never gains a
+    file or changes one: its run has finished, and only the supervisor deletes from it (rolling retention, PRUNE
+    moves), telling the counter (`invalidate`). So its total is counted once and reused until then; everything else
+    is walked every call. Every FULL_RECOUNT_SECONDS a call recounts every sealed segment and records any segment
+    whose total had changed without an invalidation (`mismatches`), so a deletion by anyone else (which can only
+    make the cached total larger than the truth) is corrected then. Under that rule a call returns exactly
+    `sum(tree_bytes(r) for r in roots)`."""
+
+    def __init__(self, full_seconds=FULL_RECOUNT_SECONDS):
+        self.sealed = {}
+        self.full_seconds = full_seconds
+        self.last_full = None
+        self.mismatches = []
+
+    def invalidate(self, paths):
+        """Paths deleted or moved by the caller: their sealed segments are counted again on the next call."""
+        for p in paths:
+            for parent in Path(os.path.abspath(p)).parents:
+                if self.sealed.pop(segment_key(parent), None) is not None:
+                    break
+
+    def total(self, roots, now=None):
+        now = time.time() if now is None else now
+        full = self.last_full is None or now - self.last_full >= self.full_seconds
+        seen, total = set(), 0
+        for root in roots:
+            for dirpath, dirnames, names in os.walk(root):
+                for name in names:
+                    try:
+                        total += os.path.getsize(os.path.join(dirpath, name))
+                    except OSError:
+                        pass
+                walk = []
+                for d in dirnames:
+                    path = os.path.join(dirpath, d)
+                    if SEGMENT_DIR.fullmatch(d) and not os.path.islink(path) and \
+                            os.path.exists(os.path.join(path, 'completion.json')):
+                        key = segment_key(path)
+                        seen.add(key)
+                        if full or key not in self.sealed:
+                            size = tree_bytes(path)
+                            if full and key in self.sealed and self.sealed[key] != size:
+                                self.mismatches.append({'segment': key, 'cached': self.sealed[key], 'counted': size,
+                                                        'unix': round(now, 3)})
+                            self.sealed[key] = size
+                        total += self.sealed[key]
+                    else:
+                        walk.append(d)
+                dirnames[:] = walk
+        for key in [k for k in self.sealed if k not in seen]:  # removed segments
+            del self.sealed[key]
+        if full:
+            self.last_full = now
+        return total
+
+
 def under(path, roots):
     path = Path(path).resolve()
     return any(path == Path(r).resolve() or Path(r).resolve() in path.parents for r in roots)
 
 
-def guard(roots, cap_bytes, next_bytes=0, chains=(), caches=None):
+def guard(roots, cap_bytes, next_bytes=0, chains=(), caches=None, counter=None):
     """The per-node byte guard: refuses (exit 1) when the W5 trees plus the next segment would pass the cap. For
     each chain manifest given, its full states and weights-only snapshots on disk are reported by kind, and every
     one of them must lie under a guarded root (a snapshot directory outside the roots would escape the cap).
-    `caches` (manifest path to `IndexCache`) gives the same report from the chains' active records."""
-    used = sum(tree_bytes(r) for r in roots)
+    `caches` (manifest path to `IndexCache`) gives the same report from the chains' active records, and `counter`
+    (a `ByteCounter`) the same used bytes without walking finished segments again."""
+    used = sum(tree_bytes(r) for r in roots) if counter is None else counter.total(roots)
     kinds, escaped = [], []
     for chain_path in chains:
         cache = (caches or {}).get(Path(chain_path).as_posix())
