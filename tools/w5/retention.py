@@ -414,7 +414,9 @@ def probe_snapshot_bytes(records, binary):
         path = Path(rec['checkpoint']['path'])
         if not path.exists() or sha(path) != rec['checkpoint']['sha256']:
             continue
-        with tempfile.TemporaryDirectory(dir=path.parent) as tmp:
+        seg = next((q for q in path.parents if SEGMENT_DIR.fullmatch(q.name)), None)
+        # Beside the segment, never inside it: a finished segment gains no file (ByteCounter).
+        with tempfile.TemporaryDirectory(dir=seg.parent if seg is not None else path.parent) as tmp:
             out = Path(tmp).resolve() / 'probe.weights'
             run = subprocess.run([binary, 'weights-snapshot', '--input', path.as_posix(), '--sha256',
                                   rec['checkpoint']['sha256'], '--output', out.as_posix()],
@@ -762,6 +764,8 @@ def tree_bytes(root):
 
 
 SEGMENT_DIR = re.compile(r'seg-\d+')
+TOUCH_STEP_NS = 2 * 10**9  # survives any timestamp resolution (NTFS 100 ns, coarse kernel ticks, FAT 2 s)
+SETTLE_SECONDS = 10.0  # a reused total is from a count made this long after the directory last changed
 FULL_RECOUNT_SECONDS = 6 * 3600
 
 
@@ -777,7 +781,7 @@ def touch_segments(paths):
                 for p in paths} - {None}:
         try:
             before = seg.stat().st_mtime_ns
-            stamp = max(time.time_ns(), before + 1)
+            stamp = max(time.time_ns(), before + TOUCH_STEP_NS)
             os.utime(seg, ns=(stamp, stamp))
         except OSError:
             pass
@@ -817,9 +821,11 @@ class ByteCounter:
         size = tree_bytes(path)
         if full and have is not None and have['stable'] and have['mtime'] == mtime and have['bytes'] != size:
             self.mismatches.append({'segment': key, 'cached': have['bytes'], 'counted': size, 'unix': round(now, 3)})
+        # Stable: the same modification time at two counts, the second made SETTLE_SECONDS after it (a publisher's
+        # cleanup in the tick of its link is long done by then; one held longer changes the time when it resumes).
         self.sealed[key] = {'mtime': mtime, 'bytes': size,
                             'stable': have is not None and have['mtime'] == mtime and os.stat(path).st_mtime_ns ==
-                            mtime}
+                            mtime and now - mtime / 1e9 >= SETTLE_SECONDS}
         return key, size
 
     def total(self, roots, now=None):

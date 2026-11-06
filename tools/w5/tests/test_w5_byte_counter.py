@@ -71,7 +71,7 @@ class CounterTests(unittest.TestCase):
         self.node.guard(ceilings={'c1': 3})
         self.node.drive(plan, 'c1')
         counter = retention.ByteCounter(full_seconds=3600)
-        t0 = time.time()
+        t0 = time.time() + 2 * retention.SETTLE_SECONDS  # counts made after the segments settled
         self.assertEqual(counter.total([root], t0), retention.tree_bytes(root))
         self.assertEqual(counter.total([root], t0 + 0.5), retention.tree_bytes(root))  # now reused
         victim = next((root / 'chains' / 'c1' / 'seg-00000').rglob('episode-*.json'))
@@ -134,12 +134,13 @@ class LargeTreeTests(unittest.TestCase):
                 if s < self.SEGMENTS:
                     (seg / 'completion.json').write_text('{}')
             counter = retention.ByteCounter()
-            counter.total([root])
-            counter.total([root])  # a segment is reused once two calls saw it unchanged
+            later = time.time() + 2 * retention.SETTLE_SECONDS  # the steady state: segments finished a while ago
+            counter.total([root], later)
+            counter.total([root], later)  # a segment is reused once two counts saw it unchanged
             t0 = time.perf_counter()
             walked = retention.tree_bytes(root)
             t1 = time.perf_counter()
-            counted = counter.total([root])
+            counted = counter.total([root], later)
             t2 = time.perf_counter()
             self.assertEqual(counted, walked)
             timing = {'files': self.SEGMENTS * self.FILES, 'walk_seconds': round(t1 - t0, 3),
