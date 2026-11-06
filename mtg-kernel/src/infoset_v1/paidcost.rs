@@ -1223,6 +1223,18 @@ fn a_reveal_after_an_unseen_draw_or_search_agrees() {
 /// exporting C world; the receipt and this record take the same path.)
 /// Returns P.
 fn desynced_receipt_world(d_left: bool, desync: bool) -> Result<Vec<u8>, String> {
+    desynced_receipt_world_with(d_left, desync, false)
+}
+
+/// [`desynced_receipt_world`]; with `untracked_too`, the Shaman's record
+/// also names a card of another name in the opponent's library, which V
+/// never saw: the R1 untracked test refuses that reference (lead ruling
+/// 19's second refusing test).
+fn desynced_receipt_world_with(
+    d_left: bool,
+    desync: bool,
+    untracked_too: bool,
+) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
     let s = opponent_payment();
@@ -1267,6 +1279,18 @@ fn desynced_receipt_world(d_left: bool, desync: bool) -> Result<Vec<u8>, String>
     let r = &mut st.stack[i].v4.paid_cost_refs[0];
     r.object = gone;
     r.zone_change_count = hand;
+    if untracked_too {
+        let other = st.players[o.index()]
+            .library
+            .iter()
+            .copied()
+            .find(|x| st.objects.get(*x).card_def != lembas)
+            .expect("a library card of another name");
+        let mut extra = st.stack[i].v4.paid_cost_refs[0].clone();
+        extra.object = other;
+        extra.zone_change_count = st.objects.get(other).zone_change_count;
+        st.stack[i].v4.paid_cost_refs.push(extra);
+    }
     let lists = decklists(&s);
     export_v1(
         &ExportInputV1 {
@@ -1376,11 +1400,50 @@ fn an_out_of_step_copy_and_its_twin_agree() {
     eprintln!("out of step: D left {d:?} / C left {c:?}");
     assert_eq!(d, c, "P agrees whichever copy left");
     assert!(
-        d.as_ref()
-            .err()
-            .is_some_and(|e| e.contains("same-name copies in the opponent's hand")),
-        "the out-of-step name refuses same_name_hand: {d:?}"
+        d.as_ref().err().is_some_and(|e| {
+            e.contains(crate::infoset_v1::export::R1_SAME_NAME_HAND_REVEAL_DETAIL)
+        }),
+        "the out-of-step name refuses by the reveal rule alone (lead ruling 19): {d:?}"
     );
+}
+
+/// Lead ruling 19, the two-world unit: in the out-of-step worlds above the
+/// reveal-triggered rule is the only test that refuses (the seam test and
+/// every span test skip the reference it refuses), so both worlds refuse
+/// with the same reason, the reveal subclass, ineligible by definition.
+#[test]
+fn reveal_only_units_refuse_with_one_reason_in_both_worlds() {
+    let (d, c) = (
+        desynced_receipt_world(true, true),
+        desynced_receipt_world(false, true),
+    );
+    eprintln!("out of step: D left {d:?} / C left {c:?}");
+    assert_eq!(d, c, "the refusal reason agrees whichever copy left");
+    assert!(
+        d.as_ref().err().is_some_and(|e| e.contains(
+            crate::infoset_v1::export::R1_SAME_NAME_HAND_REVEAL_DETAIL
+        )),
+        "the reveal rule is the sole refusing test: {d:?}"
+    );
+}
+
+/// Lead ruling 19: a unit with a second refusing test stays C5. The same
+/// worlds, with a further live reference to a card V never saw: R1
+/// untracked refuses it, so neither world refuses with the reveal subclass.
+#[test]
+fn a_second_refusing_test_keeps_a_reveal_unit_c5() {
+    let (d, c) = (
+        desynced_receipt_world_with(true, true, true),
+        desynced_receipt_world_with(false, true, true),
+    );
+    eprintln!("out of step, untracked too: D left {d:?} / C left {c:?}");
+    assert_eq!(d, c, "the refusal reason agrees whichever copy left");
+    let e = d.as_ref().err().expect("the unit refuses");
+    assert!(
+        !e.contains(crate::infoset_v1::export::R1_SAME_NAME_HAND_REVEAL_DETAIL),
+        "a second refusing test keeps the unit C5: {e}"
+    );
+    assert!(e.contains("untracked object"), "R1 untracked refuses: {e}");
 }
 
 /// Sol round 1 on ruling 11 (R2), finding 3: a copy D returns from the

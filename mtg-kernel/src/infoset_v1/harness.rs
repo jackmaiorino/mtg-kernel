@@ -474,7 +474,14 @@ pub(crate) fn head(o: &Result<Vec<u8>, String>) -> String {
 pub(crate) fn outcome(r: &Result<InfosetV1, ExportErrorV1>) -> Result<Vec<u8>, String> {
     match r {
         Ok(x) => Ok(x.bytes.clone()),
-        Err(e) => Err(e.code_name().to_string()),
+        // Lead ruling 19: the strict view compares the refusal reason across
+        // worlds (the code and its wire subclass), not only that one refused.
+        Err(e) => Err(
+            match crate::agent_bridge_infoset_v1::export_refusal_subclass_v1(e) {
+                "export" => e.code_name().to_string(),
+                subclass => format!("{}:{subclass}", e.code_name()),
+            },
+        ),
     }
 }
 
