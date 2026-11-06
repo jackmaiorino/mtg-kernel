@@ -76,6 +76,8 @@ def make_chain(tmp, arm, segments, per_segment, ledger_step=1000, t0=1.0e9, dt=6
             (att / 'update').mkdir(parents=True)
             (att / 'collect').mkdir(parents=True)
             (att / 'collect' / 'episode-0000.json').write_text('x' * 10)
+            if arm == 'X':  # the EX1/W5 search-target sidecar beside the trajectory
+                (att / 'collect' / 'ex1-0000.json').write_text('y' * 10)
             ck = att / 'update' / 'checkpoint.json'
             state = None
             if s_learner:
@@ -139,6 +141,14 @@ class RetentionTests(unittest.TestCase):
             chain = make_chain(tmp, 'C', segments=66, per_segment=1)
             doc = retention.plan(chain)
             self.assertEqual(sorted({t['segment'] for t in doc['trajectories']}), [0, 1])
+            # An X chain's ex1 sidecars roll off with their trajectories, and the cached plan agrees.
+            x = make_chain(Path(tmp) / 'x', 'X', segments=66, per_segment=1)
+            doc = retention.plan(x)
+            self.assertEqual(sorted(Path(t['path']).name for t in doc['trajectories']),
+                             ['episode-0000.json', 'episode-0000.json', 'ex1-0000.json', 'ex1-0000.json'])
+            self.assertEqual(retention.plan(x, None, retention.IndexCache(x)), doc)
+            retention.apply(doc, Path(tmp) / 'log.jsonl')
+            self.assertEqual(retention.plan(x)['trajectories'], [])
 
     def test_projection_and_decisions(self):
         with tempfile.TemporaryDirectory() as tmp:
