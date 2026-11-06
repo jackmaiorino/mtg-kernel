@@ -35,14 +35,40 @@ fn effect_sequence(state: &GameState) -> Vec<(String, Vec<String>)> {
 /// arena id.
 fn board(shaman_first: bool) -> GameState {
     let mut state = ready_state();
-    let blowgun = put(&mut state, PlayerId::P0, "Hunter's Blowgun", Zone::Battlefield);
-    let rod = put(&mut state, PlayerId::P0, "Black Mage's Rod", Zone::Battlefield);
+    let blowgun = put(
+        &mut state,
+        PlayerId::P0,
+        "Hunter's Blowgun",
+        Zone::Battlefield,
+    );
+    let rod = put(
+        &mut state,
+        PlayerId::P0,
+        "Black Mage's Rod",
+        Zone::Battlefield,
+    );
     let (shaman, enforcer) = if shaman_first {
-        let s = put(&mut state, PlayerId::P0, "Krark-Clan Shaman", Zone::Battlefield);
-        (s, put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield))
+        let s = put(
+            &mut state,
+            PlayerId::P0,
+            "Krark-Clan Shaman",
+            Zone::Battlefield,
+        );
+        (
+            s,
+            put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield),
+        )
     } else {
         let e = put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
-        (put(&mut state, PlayerId::P0, "Krark-Clan Shaman", Zone::Battlefield), e)
+        (
+            put(
+                &mut state,
+                PlayerId::P0,
+                "Krark-Clan Shaman",
+                Zone::Battlefield,
+            ),
+            e,
+        )
     };
     attach(&mut state, blowgun, shaman);
     attach(&mut state, rod, enforcer);
@@ -57,8 +83,14 @@ fn equipment_effects_follow_battlefield_order_not_arena_ids() {
     let low_shaman = board(true);
     let low_enforcer = board(false);
     let expected = vec![
-        ("Black Mage's Rod".to_string(), vec!["Myr Enforcer".to_string()]),
-        ("Hunter's Blowgun".to_string(), vec!["Krark-Clan Shaman".to_string()]),
+        (
+            "Black Mage's Rod".to_string(),
+            vec!["Myr Enforcer".to_string()],
+        ),
+        (
+            "Hunter's Blowgun".to_string(),
+            vec!["Krark-Clan Shaman".to_string()],
+        ),
     ];
     // The Enforcer entered first, so its Rod effect comes first whichever
     // host holds the lower arena id (arena order put the Blowgun first in
@@ -74,11 +106,37 @@ fn two_on_one_host(blowgun_first: bool) -> GameState {
     let mut state = ready_state();
     let host = put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
     let (blowgun, rod) = if blowgun_first {
-        let b = put(&mut state, PlayerId::P0, "Hunter's Blowgun", Zone::Battlefield);
-        (b, put(&mut state, PlayerId::P0, "Black Mage's Rod", Zone::Battlefield))
+        let b = put(
+            &mut state,
+            PlayerId::P0,
+            "Hunter's Blowgun",
+            Zone::Battlefield,
+        );
+        (
+            b,
+            put(
+                &mut state,
+                PlayerId::P0,
+                "Black Mage's Rod",
+                Zone::Battlefield,
+            ),
+        )
     } else {
-        let r = put(&mut state, PlayerId::P0, "Black Mage's Rod", Zone::Battlefield);
-        (put(&mut state, PlayerId::P0, "Hunter's Blowgun", Zone::Battlefield), r)
+        let r = put(
+            &mut state,
+            PlayerId::P0,
+            "Black Mage's Rod",
+            Zone::Battlefield,
+        );
+        (
+            put(
+                &mut state,
+                PlayerId::P0,
+                "Hunter's Blowgun",
+                Zone::Battlefield,
+            ),
+            r,
+        )
     };
     attach(&mut state, blowgun, host);
     attach(&mut state, rod, host);
@@ -92,8 +150,14 @@ fn two_on_one_host(blowgun_first: bool) -> GameState {
 #[test]
 fn one_hosts_equipment_effects_follow_battlefield_order_not_arena_ids() {
     let expected = vec![
-        ("Black Mage's Rod".to_string(), vec!["Myr Enforcer".to_string()]),
-        ("Hunter's Blowgun".to_string(), vec!["Myr Enforcer".to_string()]),
+        (
+            "Black Mage's Rod".to_string(),
+            vec!["Myr Enforcer".to_string()],
+        ),
+        (
+            "Hunter's Blowgun".to_string(),
+            vec!["Myr Enforcer".to_string()],
+        ),
     ];
     assert_eq!(effect_sequence(&two_on_one_host(true)), expected);
     assert_eq!(effect_sequence(&two_on_one_host(false)), expected);
