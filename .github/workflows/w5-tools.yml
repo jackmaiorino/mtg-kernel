@@ -48,6 +48,8 @@ jobs:
           W5_PARITY_RECEIPT: ${{ github.workspace }}/w5-parity-demo-${{ matrix.os }}.json
         run: |
           python -m pip install --disable-pip-version-check "numpy>=1.26,<3"
+          # The packed S0 store's tests need zstd (the standard library has it from Python 3.14).
+          python -m pip install --disable-pip-version-check "zstandard>=0.22,<1"
           # E4's S0 trainer tests (tools/w5/tests/test_s0.py) run on CPU torch.
           python -m pip install --disable-pip-version-check "torch>=2.2,<3" --index-url https://download.pytorch.org/whl/cpu
           python -m unittest discover -v -s tools/w5/tests -p 'test_*.py'

@@ -41,7 +41,8 @@ Rules (frozen in the design):
   twice (`checkpoint_parts`).
 
 Commands:
-  retention.py index CHAIN.json                    per-update index (cached in INDEX next to the manifest)
+  retention.py index CHAIN.json                    per-update index (cached in INDEX next to the manifest; a
+                                                   long-lived caller keeps it in memory with IndexCache)
   retention.py snapshot CHAIN.json BINARY --from B  weights-only snapshots of every unpruned checkpoint from B
   retention.py plan CHAIN.json [--snapshot-from B]  rolling prune plan (checkpoints, trajectories) as JSON
   retention.py apply PLAN.json [--hold DIR]         delete (or move to a same-volume hold folder) and log
@@ -54,6 +55,7 @@ Commands:
   retention.py guard --cap-bytes N [--next-bytes M] [--chain CHAIN.json ...] ROOT [ROOT ...]
 """
 import argparse
+import contextlib
 import hashlib
 import math
 import json
@@ -122,6 +124,11 @@ def state_present(pin, state=None):
     return all(Path(p['path']).exists() for p in checkpoint_parts(pin, state))
 
 
+def state_present_any(pin, state=None):
+    """Some file of the state exists."""
+    return any(Path(p['path']).exists() for p in checkpoint_parts(pin, state))
+
+
 def state_intact(pin, state=None):
     """Every file of the state exists and matches its pin."""
     return all(Path(p['path']).exists() and sha(p['path']) == p['sha256'] for p in checkpoint_parts(pin, state))
@@ -151,8 +158,64 @@ def index_path(chain_path):
     return Path(chain_path).with_suffix('.index.jsonl')
 
 
+def scan(chain, known):
+    """Index records of the completed updates from `known` on, in order, stopping at the first update without its
+    receipt (a segment's iterations complete in order)."""
+    new = []
+    for s, seg in enumerate(chain['segments']):
+        if seg['offset'] + seg['updates'] <= known:
+            continue
+        for i in range(max(0, known - seg['offset']), seg['updates']):
+            complete = Path(seg['root'], 'iterations', f'{i:06d}', 'complete.json')
+            if not complete.exists():
+                return new
+            receipt = read(complete)
+            doc = read(receipt['update']['path'])
+            ledger = receipt.get('chain_ledger') or {}
+            new.append({'update': seg['offset'] + i, 'boundary': seg['offset'] + i + 1, 'segment': s, 'iteration': i,
+                        'after_state_sha256': doc['after_state_sha256'], 'checkpoint': doc['checkpoint'],
+                        'state': state_pin(doc),
+                        'ledger_usec': ledger.get('usec'), 'unix_seconds': ledger.get('unix_seconds'),
+                        'instance': ledger.get('instance')})
+    return new
+
+
+@contextlib.contextmanager
+def index_lock(chain_path):
+    """The chain index file's writers (`index`, `IndexCache.refresh`) take turns: each reads, scans and appends under
+    this lock, so no two append the same records."""
+    path = Path(chain_path).with_suffix('.index.lock')
+    with open(path, 'a+b') as f:
+        if os.name == 'nt':
+            import msvcrt
+            f.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 def index(chain_path):
     """One record per completed update: update, boundary, segment, after-state hash, checkpoint pin, ledger."""
+    with index_lock(chain_path):
+        return index_locked(chain_path)
+
+
+def index_locked(chain_path):
     chain = load_chain(chain_path)
     cache = index_path(chain_path)
     records = []
@@ -169,32 +232,108 @@ def index(chain_path):
         tmp = cache.with_suffix(cache.suffix + '.tmp')
         tmp.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
         os.replace(tmp, cache)
-    known = len(records)
-    new = []
-    for s, seg in enumerate(chain['segments']):
-        for i in range(seg['updates']):
-            update = seg['offset'] + i
-            if update < known:
-                continue
-            complete = Path(seg['root'], 'iterations', f'{i:06d}', 'complete.json')
-            if not complete.exists():
-                break
-            receipt = read(complete)
-            doc = read(receipt['update']['path'])
-            ledger = receipt.get('chain_ledger') or {}
-            new.append({'update': update, 'boundary': update + 1, 'segment': s, 'iteration': i,
-                        'after_state_sha256': doc['after_state_sha256'], 'checkpoint': doc['checkpoint'],
-                        'state': state_pin(doc),
-                        'ledger_usec': ledger.get('usec'), 'unix_seconds': ledger.get('unix_seconds'),
-                        'instance': ledger.get('instance')})
-        else:
-            continue
-        break
+    new = scan(chain, len(records))
     if new:
-        with open(cache, 'a', encoding='utf-8') as f:
-            for rec in new:
-                f.write(json.dumps(rec) + '\n')
+        with open(cache, 'ab') as f:
+            terminate(f)
+            f.write(''.join(json.dumps(rec) + '\n' for rec in new).encode('utf-8'))
     return chain, records + new
+
+
+def terminate(f):
+    """Before an append (`f` open in 'ab'): a last line left without its newline (an interrupted append whose record
+    is complete, which `index` reads as a line) gets one, so the new lines never join it."""
+    size = os.fstat(f.fileno()).st_size
+    if size:
+        with open(f.name, 'rb') as r:
+            r.seek(size - 1)
+            if r.read(1) != b'\n':
+                f.write(b'\n')
+
+
+class IndexCache:
+    """`index` with the records kept in memory across calls (`chains.py supervise --loop`): under the index lock, a
+    refresh reads only the cache file's new lines and the receipts past them, and appends what it finds as `index`
+    does, so it returns the same records. A cache file that was replaced or shortened, whose last line lacks its
+    newline, or that does not end at the cursor, is read whole through `index` instead.
+
+    It also keeps what `plan` and `guard` need not look at again:
+    - `settled`: boundaries every file of whose full state was found absent. Nothing writes into a completed
+      iteration again, so they stay absent; an absent file is never a plan item or a guard count, and it cannot
+      shadow an existing one in `plan`'s set of files surviving states use. `active` is the other records, rebuilt
+      whenever the records are read whole.
+    - `complete`: segments found with completion.json (never removed).
+    - `swept`: complete segments older than the trajectory window whose trajectories were found gone."""
+
+    def __init__(self, chain_path):
+        self.chain_path = Path(chain_path)
+        self.records, self.active, self.offset, self.ident = None, [], 0, None
+        self.settled, self.complete, self.swept = set(), set(), set()
+
+    def _whole(self):
+        """Every record as `index` reads them (the lock is held); the cursor is then the file's end."""
+        chain, records = index_locked(self.chain_path)
+        cache = index_path(self.chain_path)
+        if cache.exists():
+            with open(cache, 'ab') as f:
+                terminate(f)
+                st = os.fstat(f.fileno())
+            self.offset, self.ident = st.st_size, (st.st_dev, st.st_ino)
+        else:
+            self.offset, self.ident = 0, None
+        self.records = records
+        self.active = [r for r in records if r['boundary'] not in self.settled]
+        return chain, list(records)
+
+    def refresh(self):
+        """(chain, records), equal to `index(chain_path)` at the same moment."""
+        with index_lock(self.chain_path):
+            return self._refresh()
+
+    def _refresh(self):
+        cache = index_path(self.chain_path)
+        if self.records is None:
+            return self._whole()
+        try:
+            f = open(cache, 'rb')
+        except FileNotFoundError:
+            return self._whole()
+        with f:  # every fallback below runs with no handle open (a migration replaces the file)
+            st = os.fstat(f.fileno())
+            moved = (st.st_dev, st.st_ino) != self.ident or st.st_size < self.offset
+            if not moved:
+                f.seek(self.offset)
+                data = f.read()
+        if moved:
+            return self._whole()  # replaced or shortened
+        if data and not data.endswith(b'\n'):
+            return self._whole()  # a last line without its newline: read as index() reads it
+        added = [json.loads(line) for line in data.decode('utf-8').splitlines() if line]
+        if any('state' not in r for r in added):
+            return self._whole()  # index() migrates the file first
+        chain = load_chain(self.chain_path)
+        new = scan(chain, len(self.records) + len(added))
+        if new:
+            text = ''.join(json.dumps(r) + '\n' for r in new).encode('utf-8')
+            with open(cache, 'ab') as f:
+                before = os.fstat(f.fileno())
+                moved = (before.st_dev, before.st_ino) != self.ident or before.st_size != self.offset + len(data)
+                if not moved:
+                    f.write(text)
+                    f.flush()
+            if moved:
+                return self._whole()  # not the file just read (a writer outside the lock): append nothing
+            data += text
+        self.offset += len(data)
+        self.records.extend(added + new)
+        self.active.extend(r for r in added + new if r['boundary'] not in self.settled)
+        return chain, list(self.records)
+
+    def settle(self, boundaries):
+        """Records whose full-state files were all found absent leave `active`."""
+        if boundaries:
+            self.settled |= set(boundaries)
+            self.active = [r for r in self.active if r['boundary'] not in self.settled]
 
 
 def keeps_full_state(arm, boundary, latest):
@@ -284,24 +423,29 @@ def probe_snapshot_bytes(records, binary):
     return None
 
 
-def plan(chain_path, snapshot_from=None):
+def plan(chain_path, snapshot_from=None, cache=None):
     """Rolling prune plan. A checkpoint is pruned when its boundary keeps no full state, its segment and the next
     segment are complete, it is not the latest, and, inside the snapshot window (boundary at or past
     `snapshot_from`), its weights-only snapshot exists. Trajectories of complete segments older than the 64 most
-    recent are pruned."""
-    chain, records = index(chain_path)
+    recent are pruned. With an `IndexCache` the same plan reads only its active records and unswept segments."""
+    chain, records = index(chain_path) if cache is None else cache.refresh()
+    candidates = records if cache is None else cache.active
     have = snapshots(chain_path)
-    after = {r['boundary']: r['after_state_sha256'] for r in records}
+    after = {r['boundary']: r['after_state_sha256'] for r in candidates}
 
     def verified(b):
         snap = have.get(b)
         return bool(snap) and snap['cut_from_state_sha256'] == after.get(b) and sha(snap['path']) == snap['sha256']
     latest = records[-1]['boundary'] if records else 0
     segs = chain['segments']
-    complete = [segment_complete(s) for s in segs]
+    if cache is None:
+        complete = [segment_complete(s) for s in segs]
+    else:
+        cache.complete |= {i for i, s in enumerate(segs) if i not in cache.complete and segment_complete(s)}
+        complete = [i in cache.complete for i in range(len(segs))]
     checkpoints, trajectories = [], []
     prunable = []
-    for rec in records:
+    for rec in candidates:
         s = rec['segment']
         if keeps_full_state(chain['arm'], rec['boundary'], latest) or rec['boundary'] == latest:
             continue
@@ -311,8 +455,9 @@ def plan(chain_path, snapshot_from=None):
             continue
         prunable.append(rec)
     pruned = {r['boundary'] for r in prunable}
-    surviving = {Path(p['path']).as_posix() for r in records if r['boundary'] not in pruned for p in record_parts(r)}
-    seen = set()
+    surviving = {Path(p['path']).as_posix() for r in candidates if r['boundary'] not in pruned
+                 for p in record_parts(r)}
+    seen, gone = set(), []
     for rec in prunable:
         for part in record_parts(rec):
             path = Path(part['path'])
@@ -324,10 +469,19 @@ def plan(chain_path, snapshot_from=None):
             if part['part'] != 'checkpoint':
                 item['part'] = part['part']
             checkpoints.append(item)
+        if cache is not None and not state_present_any(rec['checkpoint'], rec.get('state')):
+            gone.append(rec['boundary'])
     done = [i for i, c in enumerate(complete) if c]
     for s in done[:-TRAJECTORY_SEGMENTS] if len(done) > TRAJECTORY_SEGMENTS else []:
-        for path in sorted(Path(segs[s]['root'], 'iterations').glob('*/attempt-*/collect/episode-*.json')):
+        if cache is not None and s in cache.swept:
+            continue
+        found = sorted(Path(segs[s]['root'], 'iterations').glob('*/attempt-*/collect/episode-*.json'))
+        for path in found:
             trajectories.append({'segment': s, 'path': path.as_posix(), 'bytes': path.stat().st_size})
+        if cache is not None and not found:
+            cache.swept.add(s)
+    if cache is not None:
+        cache.settle(gone)
     return {'schema': 'w5-retention-plan/v1', 'chain': chain['chain'], 'arm': chain['arm'], 'latest': latest,
             'snapshot_from': snapshot_from, 'checkpoints': checkpoints, 'trajectories': trajectories,
             'bytes': sum(c['bytes'] for c in checkpoints) + sum(t['bytes'] for t in trajectories)}
@@ -607,14 +761,22 @@ def under(path, roots):
     return any(path == Path(r).resolve() or Path(r).resolve() in path.parents for r in roots)
 
 
-def guard(roots, cap_bytes, next_bytes=0, chains=()):
+def guard(roots, cap_bytes, next_bytes=0, chains=(), caches=None):
     """The per-node byte guard: refuses (exit 1) when the W5 trees plus the next segment would pass the cap. For
     each chain manifest given, its full states and weights-only snapshots on disk are reported by kind, and every
-    one of them must lie under a guarded root (a snapshot directory outside the roots would escape the cap)."""
+    one of them must lie under a guarded root (a snapshot directory outside the roots would escape the cap).
+    `caches` (manifest path to `IndexCache`) gives the same report from the chains' active records."""
     used = sum(tree_bytes(r) for r in roots)
     kinds, escaped = [], []
     for chain_path in chains:
-        chain, records = index(chain_path)
+        cache = (caches or {}).get(Path(chain_path).as_posix())
+        if cache is None:
+            chain, records = index(chain_path)
+        else:
+            chain, _ = cache.refresh()
+            records = cache.active
+            cache.settle([r['boundary'] for r in records if not state_present_any(r['checkpoint'], r.get('state'))])
+            records = cache.active
         full = sorted({Path(p['path']) for r in records for p in record_parts(r) if Path(p['path']).exists()})
         weights = [Path(s['path']) for s in snapshots(chain_path).values()]
         # Where the chain will write (segment roots and its snapshot directory), checked before anything exists.
