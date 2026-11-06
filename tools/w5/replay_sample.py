@@ -174,13 +174,14 @@ def update_files(seg_root, iteration):
 
 
 def trajectories_intact(files):
-    """Every trajectory the update's collection receipt names is among `files` and matches its pin (an episode
-    already rolled off makes the update missing, never a partial sample)."""
+    """Every trajectory and EX1 sidecar the update's collection receipt names (`trajectories`, `ex1.episodes`) is
+    among `files` and matches its pin (one already rolled off makes the update missing, never a partial sample)."""
     collection = next((p for rel, p in files if rel.endswith('collect/collection.json')), None)
     if collection is None:
         return False
     have = {Path(os.path.abspath(p)) for _, p in files}
-    for pin in read_json(collection).get('trajectories', []):
+    doc = read_json(collection)
+    for pin in doc.get('trajectories', []) + ((doc.get('ex1') or {}).get('episodes') or []):
         path = Path(os.path.abspath(pin['path']))
         if path not in have or not path.exists() or sha_file(path) != pin['sha256']:
             return False
@@ -430,12 +431,23 @@ def sweep(dest, kept):
             require(not f.exists(), f'{f}: a stray file could not be removed')
 
 
+def sync_kept(store, dest):
+    """A kept entry's files and directory chain up to the store, durable (before a staged copy of it goes)."""
+    for f in Path(dest).rglob('*'):
+        if f.is_file():
+            with open(f, 'r+b') as h:  # Windows commits only a writable handle
+                os.fsync(h.fileno())
+    for d in sorted({q.parent for q in Path(dest).rglob('*')} | {Path(dest)}, key=lambda q: -len(q.parts)):
+        sync_ancestors(d, store)
+
+
 def repair(store, key, src, kept):
     """A kept entry's missing or damaged frames rewritten in place from a staged copy, one at a time and only from
     staged frames whose hash is the one the manifest recorded (`kept`, its add event), each damaged file removed
     before its replacement is written, so the store never holds more than its accounted bytes. Returns the frames
     it could not restore."""
     dest, bad = entry_dir(store, *key), []
+    sweep(dest, kept)
     for item in kept['files']:
         target = dest / f'{item["path"]}.zst'
         if target.exists() and sha_file(target) == item['zst_sha256']:
@@ -450,7 +462,6 @@ def repair(store, key, src, kept):
         sync_ancestors(target.parent, store)
         if sha_file(target) != item['zst_sha256']:
             bad.append(item['path'])
-    sweep(dest, kept)
     return bad
 
 
@@ -526,6 +537,7 @@ def ship(staging, store, arm_quota=ARM_QUOTA_BYTES, total_cap=TOTAL_CAP_BYTES):
                         continue
                     report['repaired'] += 1
                 sweep(entry_dir(store, *key), recorded)
+                sync_kept(store, entry_dir(store, *key))
                 report['duplicates'] += 1
             elif key in fate:  # evicted or refused before
                 report['duplicates'] += 1

@@ -157,6 +157,12 @@ class StagingTests(unittest.TestCase):
                          plan['arms']['F']['bytes_per_update'] + expected)
 
     def test_an_update_whose_trajectory_is_gone_is_missing_not_partial(self):
+        self.gone_is_missing('episode-*.json')
+
+    def test_an_update_whose_sidecar_is_gone_is_missing_not_partial(self):
+        self.gone_is_missing('ex1-*.json')
+
+    def gone_is_missing(self, pattern):
         manifest = self.plan['chains']['x8-1']['manifest']
         while True:
             self.advance('x8-1', 2)
@@ -167,7 +173,7 @@ class StagingTests(unittest.TestCase):
         segs = chains.read(manifest)['segments']
         rec = next(r for r in records if r['update'] == chosen[0])
         for ep in Path(segs[rec['segment']]['root']).glob(
-                f'iterations/{rec["iteration"]:06d}/attempt-*/collect/episode-*.json'):
+                f'iterations/{rec["iteration"]:06d}/attempt-*/collect/{pattern}'):
             ep.unlink()
         self.cycle()
         progress = replay_sample.progress(self.node.root, 'X8', 'x8-1')
