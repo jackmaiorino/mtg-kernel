@@ -400,7 +400,7 @@ def snapshot(chain_path, binary, snapshot_from, max_new=None):
                  'sha256': receipt['output']['sha256'], 'bytes': receipt['snapshot_bytes'],
                  'cut_from_state_sha256': receipt['cut_from_state_sha256'],
                  'parameters_sha256': receipt['parameters_sha256']}
-        touch_segments([out])  # a snapshot directory placed inside a finished segment: count it again
+        touch_segments([out, receipt['output']['path']])  # a snapshot directory inside a finished segment
         with open(snapshot_index_path(chain_path), 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry) + '\n')
         made.append(entry)
@@ -514,7 +514,7 @@ def apply(plan_doc, log_path, hold=None):
                     log.write(json.dumps(dict(item, kind=kind, unix_seconds=time.time())) + '\n')
                     done += 1
     finally:
-        touch_segments(touched)  # a finished segment that lost files is counted again (ByteCounter)
+        touch_segments(touched + [log_path])  # a finished segment that lost or gained a file is counted again
     return done
 
 
@@ -776,12 +776,17 @@ def segment_key(path):
 
 
 def touch_segments(paths):
-    """Moves the modification time of every `seg-<n>` directory holding one of `paths` forward, so a ByteCounter
-    counts it again: every tool that deletes, moves or writes a file in or out of a segment calls this
-    (retention.apply, the standalone `retention.py apply` included, with its hold destinations; snapshots; chains.py's
-    hold moves)."""
-    for seg in {next((q for q in Path(os.path.abspath(p)).parents if SEGMENT_DIR.fullmatch(q.name)), None)
-                for p in paths} - {None}:
+    """Moves the modification time of every `seg-<n>` directory above one of `paths` forward (each such ancestor,
+    along the path as written and as resolved through links), so a ByteCounter counts it again. Every W5 tool that
+    deletes, moves or writes a file under a W5 root calls this for the paths it touches: retention.apply (sources,
+    hold destinations and its log, the standalone `retention.py apply` included), snapshots and the removal of
+    orphan snapshots, chains.py's hold moves."""
+    segments = set()
+    for p in paths:
+        p = Path(os.path.abspath(p))
+        for form in (p, Path(os.path.realpath(p.parent)) / p.name):
+            segments |= {q for q in form.parents if SEGMENT_DIR.fullmatch(q.name)}
+    for seg in segments:
         try:
             before = seg.stat().st_mtime_ns
             stamp = max(time.time_ns(), before + TOUCH_STEP_NS)

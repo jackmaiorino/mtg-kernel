@@ -1185,6 +1185,7 @@ def cut_snapshots(plan, x, st, size, budget):
     for orphan in sorted(directory.glob('b*.weights')) if directory.exists() else []:
         if key(orphan) not in indexed:
             orphan.unlink()
+            retention.touch_segments([orphan])
             log(plan['root'], chain=x['name'], event='snapshot-orphan-removed', path=orphan.as_posix())
     have = retention.snapshots(x['path'])
     total = sum(v['bytes'] for v in have.values())
