@@ -491,22 +491,26 @@ def plan(chain_path, snapshot_from=None, cache=None):
 def apply(plan_doc, log_path, hold=None):
     """Deletes (or moves under `hold`, same volume) every planned file, appending one log line per file.
     Checkpoints are regenerable by replay against their recorded hashes; trajectories by recollection."""
-    done = 0
-    with open(log_path, 'a', encoding='utf-8') as log:
-        for kind in ('checkpoints', 'trajectories'):
-            for item in plan_doc[kind]:
-                path = Path(item['path'])
-                if not path.exists():
-                    continue
-                if hold:
-                    dst = Path(hold) / path.relative_to(path.anchor)
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(path, dst)
-                    item = dict(item, moved_to=dst.as_posix())
-                else:
-                    path.unlink()
-                log.write(json.dumps(dict(item, kind=kind, unix_seconds=time.time())) + '\n')
-                done += 1
+    done, touched = 0, []
+    try:
+        with open(log_path, 'a', encoding='utf-8') as log:
+            for kind in ('checkpoints', 'trajectories'):
+                for item in plan_doc[kind]:
+                    path = Path(item['path'])
+                    if not path.exists():
+                        continue
+                    touched.append(path)
+                    if hold:
+                        dst = Path(hold) / path.relative_to(path.anchor)
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(path, dst)
+                        item = dict(item, moved_to=dst.as_posix())
+                    else:
+                        path.unlink()
+                    log.write(json.dumps(dict(item, kind=kind, unix_seconds=time.time())) + '\n')
+                    done += 1
+    finally:
+        touch_segments(touched)  # a finished segment that lost files is counted again (ByteCounter)
     return done
 
 
@@ -765,28 +769,58 @@ def segment_key(path):
     return os.path.normcase(os.path.abspath(path))
 
 
+def touch_segments(paths):
+    """Moves the modification time of every `seg-<n>` directory holding one of `paths` forward, so a ByteCounter
+    counts it again: every tool that deletes or moves files out of a segment (retention.apply, chains.py's hold
+    moves) calls this, the standalone `retention.py apply` included."""
+    for seg in {next((q for q in Path(os.path.abspath(p)).parents if SEGMENT_DIR.fullmatch(q.name)), None)
+                for p in paths} - {None}:
+        try:
+            before = seg.stat().st_mtime_ns
+            stamp = max(time.time_ns(), before + 1)
+            os.utime(seg, ns=(stamp, stamp))
+        except OSError:
+            pass
+
+
 class ByteCounter:
     """`tree_bytes` for a long-lived caller (`chains.py supervise --loop`) that is not linear in the files of
     finished segments. A sealed segment (a `seg-<n>` directory, not a link, holding completion.json) never gains a
-    file or changes one: its run has finished, and only the supervisor deletes from it (rolling retention, PRUNE
-    moves), telling the counter (`invalidate`). So its total is counted once and reused until then; everything else
-    is walked every call. Every FULL_RECOUNT_SECONDS a call recounts every sealed segment and records any segment
-    whose total had changed without an invalidation (`mismatches`), so a deletion by anyone else (which can only
-    make the cached total larger than the truth) is corrected then. Under that rule a call returns exactly
-    `sum(tree_bytes(r) for r in roots)`."""
+    file or changes one: its run has finished. Files leave it only through the W5 tools, which move the segment
+    directory's modification time forward (`touch_segments`); the native publisher's own cleanup of its last
+    publication changes it too. So a segment's total is reused only while its directory's modification time is
+    the one seen by the two consecutive calls that last counted it (the second count is the one kept, so a
+    publication finishing between them is in it); otherwise it is counted again. Everything else is walked every
+    call. A call therefore returns `sum(tree_bytes(r) for r in roots)`, except after a deletion by hand inside a
+    finished segment (outside the tools), which can only make the total larger than the truth: every
+    FULL_RECOUNT_SECONDS a call recounts every sealed segment and records such a change (`mismatches`)."""
 
     def __init__(self, full_seconds=FULL_RECOUNT_SECONDS):
-        self.sealed = {}
+        self.sealed = {}  # key -> {'mtime': ns, 'bytes': n, 'stable': bool}
         self.full_seconds = full_seconds
         self.last_full = None
         self.mismatches = []
 
     def invalidate(self, paths):
-        """Paths deleted or moved by the caller: their sealed segments are counted again on the next call."""
+        """Paths the caller deleted or moved: their sealed segments are counted again on the next calls."""
         for p in paths:
             for parent in Path(os.path.abspath(p)).parents:
                 if self.sealed.pop(segment_key(parent), None) is not None:
                     break
+
+    def segment(self, path, full, now):
+        key = segment_key(path)
+        mtime = os.stat(path).st_mtime_ns
+        have = self.sealed.get(key)
+        if have is not None and have['mtime'] == mtime and have['stable'] and not full:
+            return key, have['bytes']
+        size = tree_bytes(path)
+        if full and have is not None and have['stable'] and have['mtime'] == mtime and have['bytes'] != size:
+            self.mismatches.append({'segment': key, 'cached': have['bytes'], 'counted': size, 'unix': round(now, 3)})
+        self.sealed[key] = {'mtime': mtime, 'bytes': size,
+                            'stable': have is not None and have['mtime'] == mtime and os.stat(path).st_mtime_ns ==
+                            mtime}
+        return key, size
 
     def total(self, roots, now=None):
         now = time.time() if now is None else now
@@ -804,15 +838,12 @@ class ByteCounter:
                     path = os.path.join(dirpath, d)
                     if SEGMENT_DIR.fullmatch(d) and not os.path.islink(path) and \
                             os.path.exists(os.path.join(path, 'completion.json')):
-                        key = segment_key(path)
+                        try:
+                            key, size = self.segment(path, full, now)
+                        except OSError:  # removed while counted
+                            continue
                         seen.add(key)
-                        if full or key not in self.sealed:
-                            size = tree_bytes(path)
-                            if full and key in self.sealed and self.sealed[key] != size:
-                                self.mismatches.append({'segment': key, 'cached': self.sealed[key], 'counted': size,
-                                                        'unix': round(now, 3)})
-                            self.sealed[key] = size
-                        total += self.sealed[key]
+                        total += size
                     else:
                         walk.append(d)
                 dirnames[:] = walk

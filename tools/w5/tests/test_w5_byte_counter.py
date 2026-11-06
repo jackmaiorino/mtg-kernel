@@ -18,7 +18,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 import chains  # noqa: E402
 import retention  # noqa: E402
-from test_w5_chains import Node, STEP_C, STEP_X  # noqa: E402
+from test_w5_chains import Node, STEP_C, STEP_X, jwrite  # noqa: E402
 
 
 class CounterTests(unittest.TestCase):
@@ -73,6 +73,7 @@ class CounterTests(unittest.TestCase):
         counter = retention.ByteCounter(full_seconds=3600)
         t0 = time.time()
         self.assertEqual(counter.total([root], t0), retention.tree_bytes(root))
+        self.assertEqual(counter.total([root], t0 + 0.5), retention.tree_bytes(root))  # now reused
         victim = next((root / 'chains' / 'c1' / 'seg-00000').rglob('episode-*.json'))
         size = victim.stat().st_size
         victim.unlink()  # not through the supervisor: the cached total is now larger than the truth
@@ -88,6 +89,34 @@ class CounterTests(unittest.TestCase):
         shutil.rmtree(root / 'chains' / 'c1' / 'seg-00001')
         self.assertEqual(counter.total([root], t0 + 3603), retention.tree_bytes(root))
         self.assertNotIn(retention.segment_key(root / 'chains' / 'c1' / 'seg-00001'), counter.sealed)
+
+    def test_tool_deletions_and_a_finishing_publication_are_counted_at_once(self):
+        path, plan = self.node.stage0(c_wall=600.0)
+        root = self.node.root
+        self.node.guard(ceilings={'c1': 3})
+        self.node.drive(plan, 'c1')
+        counter = retention.ByteCounter(full_seconds=10**9)
+        for _ in range(3):
+            self.assertEqual(counter.total([root]), retention.tree_bytes(root))
+        # The standalone `retention.py apply` (no counter in sight) deletes from a finished segment.
+        victim = next((root / 'chains' / 'c1' / 'seg-00000').rglob('episode-*.json'))
+        doc = {'checkpoints': [], 'trajectories': [{'path': victim.as_posix(), 'bytes': victim.stat().st_size}]}
+        jlog = self.node.t / 'apply.jsonl'
+        with contextlib.redirect_stdout(io.StringIO()):
+            retention.main(['apply', str(jwrite(self.node.t / 'plan.json', doc)), '--log', str(jlog)])
+        self.assertFalse(victim.exists())
+        self.assertEqual(counter.total([root]), retention.tree_bytes(root))
+        # A segment seen while its publisher still removes a staging name, in the same clock tick as the link.
+        seg = root / 'chains' / 'c1' / 'seg-00001'
+        staging = seg / '.completion.json.stage'
+        staging.write_text('x' * 500)
+        stamp = seg.stat().st_mtime_ns
+        counter.invalidate([staging])
+        self.assertEqual(counter.total([root]), retention.tree_bytes(root))
+        staging.unlink()
+        os.utime(seg, ns=(stamp, stamp))  # the same modification time as when it was counted
+        self.assertEqual(counter.total([root]), retention.tree_bytes(root))  # not yet reused: counted again
+        self.assertEqual(counter.total([root]), retention.tree_bytes(root))
 
 
 class LargeTreeTests(unittest.TestCase):
@@ -106,6 +135,7 @@ class LargeTreeTests(unittest.TestCase):
                     (seg / 'completion.json').write_text('{}')
             counter = retention.ByteCounter()
             counter.total([root])
+            counter.total([root])  # a segment is reused once two calls saw it unchanged
             t0 = time.perf_counter()
             walked = retention.tree_bytes(root)
             t1 = time.perf_counter()

@@ -95,8 +95,9 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
 - Byte guard: each verdict reserves 5 segments per measured chain (one in flight, GUARD_SEGMENTS = 4 admitted)
   and two F segments per box (fillers do not wait on the guard; their hot set is bounded).
 - `supervise --loop` also keeps finished segments' byte totals (`retention.ByteCounter`): the guard walks only the
-  rest of the root each cycle, every deletion or PRUNE move from a finished segment makes it count that segment
-  again, and every 6 hours it recounts them all (a segment whose total changed otherwise is reported).
+  rest of the root each cycle; every deletion or PRUNE move from a finished segment (any W5 tool's) moves the
+  segment directory's modification time forward and the segment is counted again; every 6 hours it recounts them
+  all (a segment changed by hand is reported).
 - `supervise --loop` keeps each chain's index in memory across cycles (`retention.IndexCache`): a cycle reads only
   the index file's new lines and the receipts past them, and the rolling plan and the guard skip records whose
   full-state files are all gone and old segments whose trajectories are gone (nothing writes into a completed
@@ -1317,6 +1318,7 @@ def hold_move(root, name, items):
                                 'from': p.as_posix(), 'to': dest.as_posix(), 'sha256': item['sha256'],
                                 'bytes': dest.stat().st_size, 'moved_at': time.time()}) + '\n')
         moved += 1
+        retention.touch_segments([p])  # a finished segment that lost a file is counted again (ByteCounter)
     return moved, size
 
 
