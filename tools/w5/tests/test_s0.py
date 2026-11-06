@@ -949,12 +949,21 @@ class HRebindTests(unittest.TestCase):
                 if args[0] == "qualify":
                     root = Path(args[args.index("--root") + 1])
                     root.mkdir(parents=True)
-                    (root / "receipt.json").write_text("{}")
+                    trials = [{"workers": int(k)} for k in args[args.index("--workers") + 1].split(",")]
+                    (root / "receipt.json").write_text(json.dumps({"trials": trials}))
 
             with mock.patch.object(s0, "runner", fake_runner):
                 s0.floor_run(tmp / "floor.json", exe, "1,2,4,8,16")
             self.assertEqual([c[0] for c in calls], ["qualify", "run", "qualify", "run"])
             self.assertTrue(all(c[c.index("--workers") + 1] == "1,2,4,8,16" for c in calls if c[0] == "qualify"))
+            # A reused receipt with only a serial (or only a parallel) trial is refused before any run.
+            for trials in ([{"workers": 1}], [{"workers": 2}, {"workers": 4}], []):
+                (tmp / "s0" / "qualification" / "receipt.json").write_text(json.dumps({"trials": trials}))
+                calls.clear()
+                with mock.patch.object(s0, "runner", fake_runner):
+                    with self.assertRaisesRegex(s0.S0Error, "serial and a parallel trial"):
+                        s0.floor_run(tmp / "floor.json", exe, "1,2,4,8,16")
+                self.assertEqual(calls, [])
 
 
 class RecipeTests(unittest.TestCase):

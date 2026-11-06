@@ -1246,6 +1246,9 @@ def floor_run(floor_path, evaluator, workers: str = FLOOR_WORKERS) -> dict:
             runner("qualify", "--plan", str(plan_path), "--sample", str(FLOOR_QUALIFY_SAMPLE), "--workers", workers,
                    "--root", str(root / "qualification"), "--executable", str(evaluator))
         require(receipt.exists(), f"{role}: qualification wrote no receipt")
+        counts = {t.get("workers") for t in read_json(receipt).get("trials", [])}
+        require(1 in counts and any(type(k) is int and k > 1 for k in counts),
+                f"{role}: the qualification receipt needs a serial and a parallel trial (COMPUTE-POLICY item 2)")
         runner("run", "--plan", str(plan_path), "--receipt", str(receipt), "--executable", str(evaluator))
     return {"ran": str(floor_path)}
 
