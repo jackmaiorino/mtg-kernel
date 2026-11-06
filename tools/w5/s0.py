@@ -34,13 +34,18 @@ S0 is a distillation of b512 into S. This tool covers every step except the trai
       (`STrainStateV1::starting_state_sha256_v1`). Written before the floor can be planned.
   s0.py source --shell SHELL.json --container S0.bin --out S0-SOURCE.json
       the RT1 S source (`w5-s-learner/v1`) on the FlatV4 shell, for the floor and XS.
+  s0.py rebind-h --panel-def H-PANEL.json --import IMPORT.json --envelope ENVELOPE.json --head SHA --out DIR
+      Step C's H rebound to the floor evaluator's build (lead ruling 11-05 E4 item 4: both panels on one S-capable
+      build). H's V3 transfer envelope records its destination build commit and loads only in that build, so the
+      envelope changes in that one field and the import and opponent only in the pin below them (D1, OH2, Step C).
   s0.py floor-plan --s0-source S --b512-source B --panel-def H-PANEL.json --xs-start XS-START.json
-                   --evaluator EXE --out DIR
-  s0.py floor-run --floor DIR/floor.json --evaluator EXE
+                   --evaluator EXE --out DIR [--h-rebind DIR/h-rebind.json]
+  s0.py floor-run --floor DIR/floor.json --evaluator EXE [--workers 1,2,4,8]
   s0.py floor-read --floor DIR/floor.json [--out RECEIPT.json]
       the qualification floor: native S0 and b512 each play the frozen H panel (Step C namespace a: 81 ordered
       deck pairs, 12 families, 2 seats, 1,944 games) against Step C's reference H on one evaluator build; the
-      paired difference S0 minus b512 in signed score over the eight non-Spy decks must be at least -0.03.
+      paired difference S0 minus b512 in signed score over the eight non-Spy decks must be at least -0.03. With
+      --h-rebind the plan re-derives the rebound H from Step C's pinned files byte for byte.
 
 Pinned choices (design 6.2 names them or defers to the W7 pilot, collab LANES/bignet-pilot-20261031):
 - recording: `regret_census_v1 mode=s4a-tensor-dump` (#480) with `OPPONENTS=self=<parent>` (both seats b512,
@@ -1089,7 +1094,88 @@ def anchor_floor_panel(panel: dict) -> None:
         require(panel[key]["sha256"].lower() in pinned, f"the panel's {key} is not pinned by Step C's manifest")
 
 
-def floor_plan(s0_source, b512_source, panel_def, xs_start, evaluator, out) -> dict:
+H_REBIND_SCHEMA = "w5-s0-h-rebind/v1"
+H_HEAD_FIELD = "destination_build_git_head"
+
+
+def rebound_h(opponent_bytes: bytes, import_bytes: bytes, envelope_bytes: bytes, head: str, envelope_path,
+              import_path) -> tuple[bytes, bytes, bytes]:
+    """Step C's H rebound to the build `head` (the D1, OH2 and Step C rebind): the V3 transfer envelope records its
+    destination build commit and the loader reproduces the envelope, so H loads only in a binary of that commit. The
+    envelope changes in that one field (one occurrence of the old head in its bytes); the import and the opponent
+    change only in the pin (path and hash) of the file below them. Returns the rebound (envelope, import, opponent)."""
+    require(len(head) == 40 and all(c in "0123456789abcdef" for c in head), "the build head must be a full commit")
+    require(Path(envelope_path).is_absolute() and Path(import_path).is_absolute(),
+            "rebound H pins must be absolute paths (the native loader refuses relative ones)")
+    opponent, imp, envelope = json.loads(opponent_bytes), json.loads(import_bytes), json.loads(envelope_bytes)
+    require(opponent["source"]["play_import"]["sha256"] == sha256_bytes(import_bytes), "the import is not H's")
+    require(imp["transfer_envelope"]["sha256"] == sha256_bytes(envelope_bytes), "the envelope is not H's import's")
+    old = envelope["receipt"][H_HEAD_FIELD]
+    require(len(old) == 40 and old != head, "the envelope is already bound to this build")
+    text = envelope_bytes.decode("utf-8")
+    field = f'"{H_HEAD_FIELD}":"{old}"'
+    field = field if text.count(field) else field.replace(":", ": ")
+    require(text.count(field) == 1 and text.count(old) == 1, "expected exactly one occurrence of the old head")
+    new_envelope = text.replace(field, field.replace(old, head), 1).encode("utf-8")
+    parsed = json.loads(new_envelope)
+    require(parsed["receipt"][H_HEAD_FIELD] == head, "the rebind did not set the head")
+    parsed["receipt"][H_HEAD_FIELD] = old
+    require(parsed == envelope, "parsed contents differ beyond the one field")
+    imp = dict(imp, transfer_envelope={"path": Path(envelope_path).as_posix(), "sha256": sha256_bytes(new_envelope)})
+    new_import = (json.dumps(imp, indent=2) + "\n").encode("utf-8")
+    opponent = dict(opponent, source=dict(opponent["source"], play_import={
+        "path": Path(import_path).as_posix(), "sha256": sha256_bytes(new_import)}))
+    new_opponent = (json.dumps(opponent, indent=1) + "\n").encode("utf-8")
+    return new_envelope, new_import, new_opponent
+
+
+def rebind_h(panel_def, import_file, envelope_file, head: str, out) -> dict:
+    """H rebound to the floor build's `head`, written under `out` with its record. `import_file` and `envelope_file`
+    are Step C's H files at their current location (moved trees), checked against the pins in the panel's opponent."""
+    out = Path(out).resolve()   # the native loader needs absolute pins (registry_transfer_source.rs)
+    require(not (out / "h-rebind.json").exists(), f"{out} already holds an H rebind")
+    panel = read_json(panel_def)
+    anchor_floor_panel(panel)
+    files = {"opponent": checked(panel["opponent"], "opponent H"), "import": Path(import_file),
+             "envelope": Path(envelope_file)}
+    raw = {k: p.read_bytes() for k, p in files.items()}
+    targets = {"envelope": out / f"h-v3-transfer-envelope-{head[:8]}.json",
+               "import": out / f"h-v3-play-import-source-{head[:8]}.json",
+               "opponent": out / f"h-opponent-{head[:8]}.json"}
+    rebound = rebound_h(raw["opponent"], raw["import"], raw["envelope"], head, targets["envelope"], targets["import"])
+    require(not any(p.exists() for p in targets.values()), f"{out} already holds rebound H files")
+    out.mkdir(parents=True, exist_ok=True)
+    for key, data in zip(("envelope", "import", "opponent"), rebound):
+        targets[key].write_bytes(data)
+    record = {"schema": H_REBIND_SCHEMA,
+              "design": "W5-DESIGN.md v1.3 section 6.2; lead ruling 2026-11-05 E4 item 4 (both floor panels on one "
+                        "S-capable build, so Step C's H is rebound to that build as D1, OH2 and Step C did)",
+              "field": f"receipt.{H_HEAD_FIELD}", "old": json.loads(raw["envelope"])["receipt"][H_HEAD_FIELD],
+              "new": head, "from": {k: pin(p) for k, p in files.items()},
+              "to": {k: pin(p) for k, p in targets.items()}, "panel_def": pin(panel_def),
+              "s0_tool_sha256": sha256_file(__file__)}
+    write_json(out / "h-rebind.json", record)
+    return record
+
+
+def admit_h_rebind(panel: dict, rebind_path) -> dict:
+    """The floor's opponent on a build other than Step C's: H rebound from the panel's pinned opponent, re-derived here
+    byte for byte from Step C's files."""
+    record = read_json(rebind_path)
+    require(record.get("schema") == H_REBIND_SCHEMA, "not an H rebind record")
+    require(record["from"]["opponent"]["sha256"] == panel["opponent"]["sha256"],
+            "the rebind does not start from the panel's opponent")
+    raw = {k: checked(record["from"][k], f"Step C H {k}").read_bytes() for k in ("opponent", "import", "envelope")}
+    to = {k: checked(record["to"][k], f"rebound H {k}") for k in ("envelope", "import", "opponent")}
+    expected = rebound_h(raw["opponent"], raw["import"], raw["envelope"], record["new"], to["envelope"], to["import"])
+    for key, data in zip(("envelope", "import", "opponent"), expected):
+        require(to[key].read_bytes() == data, f"rebound H {key} differs from its re-derivation")
+    return read_json(to["opponent"])
+
+
+def floor_plan(s0_source, b512_source, panel_def, xs_start, evaluator, out, h_rebind=None) -> dict:
+    """With `h_rebind` (a `rebind-h` record), the floor plays H rebound to the evaluator's build; without it, the
+    panel's opponent bytes as Step C pinned them, which load only in Step C's build."""
     out = Path(out)
     require(not (out / "floor.json").exists(), f"{out} already holds a floor plan")
     start = read_json(xs_start)
@@ -1106,7 +1192,8 @@ def floor_plan(s0_source, b512_source, panel_def, xs_start, evaluator, out) -> d
             "the floor's comparator is not S0's distillation teacher")
     panel = read_json(panel_def)
     anchor_floor_panel(panel)
-    opponent = read_json(checked(panel["opponent"], "opponent H"))
+    opponent = read_json(checked(panel["opponent"], "opponent H")) if h_rebind is None else \
+        admit_h_rebind(panel, h_rebind)
     decks = read_json(checked(panel["decks"], "decks"))
     panel_tool, _ = _panel_tools()
     plans = {}
@@ -1121,6 +1208,8 @@ def floor_plan(s0_source, b512_source, panel_def, xs_start, evaluator, out) -> d
              "starting_state_sha256": start["starting_state_sha256"], "s0_source": pin(s0_source),
              "b512_source": pin(b512_source), "panel_def": pin(panel_def), "evaluator": pin(evaluator),
              "plans": plans, "s0_tool_sha256": sha256_file(__file__)}
+    if h_rebind is not None:
+        floor["h_rebind"] = pin(h_rebind)
     write_json(out / "floor.json", floor)
     return floor
 
@@ -1133,20 +1222,33 @@ def runner(*args: str) -> None:
     require(done.returncode == 0, f"panel runner {args[0]} failed")
 
 
-def floor_run(floor_path, evaluator) -> dict:
+FLOOR_WORKERS = "1,2,4,8"
+FLOOR_QUALIFY_SAMPLE = 16
+
+
+def floor_run(floor_path, evaluator, workers: str = FLOOR_WORKERS) -> dict:
     """Qualify, then run, both panels on the floor's one evaluator; start inside the host's held reservation, as
-    the panel runner's `qualify` and `run` require (tools/w5/h_look.py run)."""
+    the panel runner's `qualify` and `run` require (tools/w5/h_look.py run). `workers` is the qualification's
+    worker-count ladder; the runner selects the count from its measured throughput."""
     floor = read_json(floor_path)
     require(floor.get("schema") == FLOOR_SCHEMA, "not an S0 floor")
     require(sha256_file(evaluator) == floor["evaluator"]["sha256"], "the evaluator is not the floor's")
+    ladder = [int(x) for x in workers.split(",")]
+    require(len(ladder) >= 2 and ladder[0] == 1 and all(a < b for a, b in zip(ladder, ladder[1:]))
+            and all(FLOOR_QUALIFY_SAMPLE % k == 0 for k in ladder),
+            f"the worker ladder starts at 1, has a parallel count, increases and divides the "
+            f"{FLOOR_QUALIFY_SAMPLE}-game sample (COMPUTE-POLICY item 2)")
     for role in ("s0", "b512"):
         plan_path = checked(floor["plans"][role], f"{role} plan")
         root = plan_path.parent
         receipt = root / "qualification" / "receipt.json"
         if not receipt.exists():
-            runner("qualify", "--plan", str(plan_path), "--sample", "16", "--workers", "1,2,4,8",
+            runner("qualify", "--plan", str(plan_path), "--sample", str(FLOOR_QUALIFY_SAMPLE), "--workers", workers,
                    "--root", str(root / "qualification"), "--executable", str(evaluator))
         require(receipt.exists(), f"{role}: qualification wrote no receipt")
+        counts = {t.get("workers") for t in read_json(receipt).get("trials", [])}
+        require(1 in counts and any(type(k) is int and k > 1 for k in counts),
+                f"{role}: the qualification receipt needs a serial and a parallel trial (COMPUTE-POLICY item 2)")
         runner("run", "--plan", str(plan_path), "--receipt", str(receipt), "--executable", str(evaluator))
     return {"ran": str(floor_path)}
 
@@ -1279,12 +1381,18 @@ def main(argv=None) -> int:
     p.add_argument("--shell", type=Path, required=True)
     p.add_argument("--container", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("rebind-h")
+    for name in ("--panel-def", "--import", "--envelope", "--out"):
+        p.add_argument(name, type=Path, required=True)
+    p.add_argument("--head", required=True, help="the floor evaluator's full build commit")
     p = sub.add_parser("floor-plan")
     for name in ("--s0-source", "--b512-source", "--panel-def", "--xs-start", "--evaluator", "--out"):
         p.add_argument(name, type=Path, required=True)
+    p.add_argument("--h-rebind", type=Path, default=None, help="a rebind-h record: H rebound to the evaluator's build")
     p = sub.add_parser("floor-run")
     p.add_argument("--floor", type=Path, required=True)
     p.add_argument("--evaluator", type=Path, required=True)
+    p.add_argument("--workers", default=FLOOR_WORKERS, help="qualification worker-count ladder")
     p = sub.add_parser("floor-read")
     p.add_argument("--floor", type=Path, required=True)
     p.add_argument("--out", type=Path, default=None)
@@ -1310,10 +1418,12 @@ def main(argv=None) -> int:
             result = freeze_start(a.export, a.binary, a.out, a.smoke)
         elif a.command == "source":
             result = make_source(a.shell, a.container, a.out)
+        elif a.command == "rebind-h":
+            result = rebind_h(a.panel_def, getattr(a, "import"), a.envelope, a.head, a.out)
         elif a.command == "floor-plan":
-            result = floor_plan(a.s0_source, a.b512_source, a.panel_def, a.xs_start, a.evaluator, a.out)
+            result = floor_plan(a.s0_source, a.b512_source, a.panel_def, a.xs_start, a.evaluator, a.out, a.h_rebind)
         elif a.command == "floor-run":
-            result = floor_run(a.floor, a.evaluator)
+            result = floor_run(a.floor, a.evaluator, a.workers)
         else:
             result = floor_read(a.floor, a.out)
     except S0Error as exc:
