@@ -11017,20 +11017,31 @@ fn continuous_effects_common_v2(
         ))
     })?;
     let mut out = Vec::new();
-    // Hosts in public battlefield order (seat 0, then seat 1, each in entry
-    // order), never arena order: the effect list is model input in list
-    // order, and arena ids are not a function of the observer's information
-    // (the W1 information-set import renumbers them, so arena order made
-    // the imported and native observations of one state differ).
-    for &host_id in state.players[0]
+    // Hosts, and each host's equipment, in public battlefield order (seat 0,
+    // then seat 1, each in entry order), never arena order: the effect list
+    // is model input in list order, and arena ids are not a function of the
+    // observer's information (the W1 information-set import renumbers them,
+    // so arena order made the imported and native observations of one state
+    // differ). `attachments` is itself kept in arena order.
+    let battlefield: Vec<ObjectId> = state.players[0]
         .battlefield
         .iter()
         .chain(state.players[1].battlefield.iter())
-    {
+        .copied()
+        .collect();
+    let position = |id: ObjectId| {
+        battlefield
+            .iter()
+            .position(|x| *x == id)
+            .unwrap_or(usize::MAX)
+    };
+    for &host_id in &battlefield {
         if state.objects.get(host_id).zone != Zone::Battlefield {
             continue;
         }
-        for (equipment_id, equipment) in engine::attached_equipment_profiles(state, host_id) {
+        let mut equipped: Vec<_> = engine::attached_equipment_profiles(state, host_id).collect();
+        equipped.sort_by_key(|(equipment_id, _)| position(*equipment_id));
+        for (equipment_id, equipment) in equipped {
             let equipment_object = state.objects.get(equipment_id);
             let controller_turn = state.active_player == equipment_object.controller;
             let keywords = if controller_turn {

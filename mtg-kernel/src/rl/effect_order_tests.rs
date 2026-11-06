@@ -66,3 +66,35 @@ fn equipment_effects_follow_battlefield_order_not_arena_ids() {
     assert_eq!(effect_sequence(&low_shaman), expected);
     assert_eq!(effect_sequence(&low_enforcer), expected);
 }
+
+/// One host with both equipment, the Rod entered first. `blowgun_first`
+/// only decides which equipment gets the lower arena id; the host's
+/// `attachments` list is kept in arena order, as the engine keeps it.
+fn two_on_one_host(blowgun_first: bool) -> GameState {
+    let mut state = ready_state();
+    let host = put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+    let (blowgun, rod) = if blowgun_first {
+        let b = put(&mut state, PlayerId::P0, "Hunter's Blowgun", Zone::Battlefield);
+        (b, put(&mut state, PlayerId::P0, "Black Mage's Rod", Zone::Battlefield))
+    } else {
+        let r = put(&mut state, PlayerId::P0, "Black Mage's Rod", Zone::Battlefield);
+        (put(&mut state, PlayerId::P0, "Hunter's Blowgun", Zone::Battlefield), r)
+    };
+    attach(&mut state, blowgun, host);
+    attach(&mut state, rod, host);
+    state.objects.get_mut(host).attachments.sort();
+    let bf = &mut state.players[0].battlefield;
+    bf.retain(|id| *id != blowgun && *id != rod);
+    bf.extend([rod, blowgun]);
+    state
+}
+
+#[test]
+fn one_hosts_equipment_effects_follow_battlefield_order_not_arena_ids() {
+    let expected = vec![
+        ("Black Mage's Rod".to_string(), vec!["Myr Enforcer".to_string()]),
+        ("Hunter's Blowgun".to_string(), vec!["Myr Enforcer".to_string()]),
+    ];
+    assert_eq!(effect_sequence(&two_on_one_host(true)), expected);
+    assert_eq!(effect_sequence(&two_on_one_host(false)), expected);
+}
