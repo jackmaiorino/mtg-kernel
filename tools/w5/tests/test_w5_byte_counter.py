@@ -132,6 +132,27 @@ class CounterTests(unittest.TestCase):
         self.assertIn('off', report['guard']['counter'])
         self.assertEqual(report['guard']['used_bytes'], json.loads((root / 'GUARD.json').read_text())['used_bytes'])
 
+    def test_a_link_into_a_segment_makes_the_call_count_everything(self):
+        path, plan = self.node.stage0(c_wall=600.0)
+        root = self.node.root
+        self.node.guard(ceilings={'c1': 3})
+        self.node.drive(plan, 'c1')
+        later = time.time() + 2 * retention.SETTLE_SECONDS
+        counter = retention.ByteCounter(full_seconds=10**9)
+        target = next((root / 'chains' / 'c1' / 'seg-00000').rglob('episode-*.json'))
+        link = root / 'retention' / 'c1.jsonl'
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError):
+            self.skipTest('this host cannot make symbolic links')
+        for _ in range(3):
+            counter.total([root], later)
+        with open(link, 'a') as f:  # retention's log, appended through the link into the finished segment
+            f.write('x' * 500)
+        self.assertEqual(counter.total([root], later + 1), retention.tree_bytes(root))
+        self.assertTrue(counter.links)
+
     def test_a_hold_folder_inside_a_finished_segment_is_counted(self):
         path, plan = self.node.stage0(c_wall=600.0)
         root = self.node.root

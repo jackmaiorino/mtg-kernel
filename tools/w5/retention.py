@@ -784,7 +784,7 @@ def touch_segments(paths):
     segments = set()
     for p in paths:
         p = Path(os.path.abspath(p))
-        for form in (p, Path(os.path.realpath(p.parent)) / p.name):
+        for form in (p, Path(os.path.realpath(p.parent)) / p.name, Path(os.path.realpath(p))):
             segments |= {q for q in form.parents if SEGMENT_DIR.fullmatch(q.name)}
     for seg in segments:
         try:
@@ -817,6 +817,7 @@ class ByteCounter:
         self.full_seconds = full_seconds
         self.last_full = None
         self.mismatches = []
+        self.links = []
 
     def invalidate(self, paths):
         """Paths the caller deleted or moved: their sealed segments are counted again on the next calls."""
@@ -842,14 +843,33 @@ class ByteCounter:
         return key, size
 
     def total(self, roots, now=None):
+        """The bytes under `roots`, as `tree_bytes` counts them. A link outside the sealed segments that resolves into
+        a chain segment (a way to write into one without touching it) makes the call count every segment
+        (`links` records it)."""
         now = time.time() if now is None else now
         full = self.last_full is None or now - self.last_full >= self.full_seconds
+        result = self._total(roots, now, full)
+        if result is None:
+            self.links_unix = now
+            result = self._total(roots, now, True, record=False)
+        return result
+
+    def _total(self, roots, now, full, record=True):
         seen, total = set(), 0
+        chains_dirs = [Path(os.path.realpath(Path(r) / 'chains')) for r in roots]
+
+        def into_segment(path):
+            real = Path(os.path.realpath(path))
+            return any(q.parent.parent in chains_dirs and SEGMENT_DIR.fullmatch(q.name) for q in [real, *real.parents])
         for root in roots:
             for dirpath, dirnames, names in os.walk(root):
                 for name in names:
+                    file = os.path.join(dirpath, name)
+                    if record and not full and os.path.islink(file) and into_segment(file):
+                        self.links.append({'link': file, 'unix': round(now, 3)})
+                        return None
                     try:
-                        total += os.path.getsize(os.path.join(dirpath, name))
+                        total += os.path.getsize(file)
                     except OSError:
                         pass
                 walk = []
@@ -865,6 +885,9 @@ class ByteCounter:
                         seen.add(key)
                         total += size
                     else:
+                        if record and not full and os.path.islink(path) and into_segment(path):
+                            self.links.append({'link': path, 'unix': round(now, 3)})
+                            return None
                         walk.append(d)
                 dirnames[:] = walk
         for key in [k for k in self.sealed if k not in seen]:  # removed segments
