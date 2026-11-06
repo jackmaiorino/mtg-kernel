@@ -811,6 +811,119 @@ class FloorReaderTests(unittest.TestCase):
                 s0.read_floor_rows(tmp / "b.jsonl", tmp / "b.jsonl", "S-vs-H", "B-vs-H")
 
 
+OLD_HEAD, NEW_HEAD = "6" * 40, "b" * 40
+
+
+def step_c_h(tmp: Path) -> tuple[Path, Path, Path]:
+    """A Step C style H panel: opponent -> play import -> V3 envelope (bound to OLD_HEAD), with Step C's manifest
+    pinning the opponent and decks."""
+    env = tmp / "stepc" / "envelope.json"
+    env.parent.mkdir(parents=True)
+    env.write_text(json.dumps({"schema": "mtg-kernel-expanded-registry-transfer/v1", "request": {"x": 1},
+                               "receipt": {"destination_build_git_head": OLD_HEAD, "features": {"a": 2}},
+                               "parameters": [[1, 2, 3]]}, separators=(",", ":")))
+    imp = tmp / "stepc" / "import.json"
+    imp.write_text(json.dumps({"schema": "mtg-kernel-expanded-registry-transfer-source/v1",
+                               "source_checkpoint": {"path": "C:/x.json", "sha256": "1" * 64},
+                               "transfer_envelope": s0.pin(env)}, indent=2) + "\n")
+    opp = tmp / "stepc" / "h.json"
+    opp.write_text(json.dumps({"kind": "legacy", "v3_forced_actions": True,
+                               "source": {"checkpoint": None, "play_import": s0.pin(imp)}}, indent=1) + "\n")
+    decks = tmp / "stepc" / "decks.json"
+    decks.write_text("[]")
+    manifest = tmp / "stepc" / "manifest.json"
+    manifest.write_text(json.dumps({"h_opponent": s0.pin(opp), "decks": s0.pin(decks)}))
+    panel = tmp / "panel.json"
+    panel.write_text(json.dumps({"schema": "w5-h-panel/v1", "namespace": s0.H_NAMESPACE, "opponent": s0.pin(opp),
+                                 "decks": s0.pin(decks), "shards": 4, "step_c_manifest": s0.pin(manifest)}))
+    return panel, imp, env
+
+
+class HRebindTests(unittest.TestCase):
+    def test_rebind_changes_only_the_head_and_the_pins_below(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            panel, imp, env = step_c_h(tmp)
+            moved = tmp / "moved"   # Step C's files read at their current location
+            moved.mkdir()
+            (moved / "i.json").write_bytes(imp.read_bytes())
+            (moved / "e.json").write_bytes(env.read_bytes())
+            rec = s0.rebind_h(panel, moved / "i.json", moved / "e.json", NEW_HEAD, tmp / "h")
+            self.assertEqual((rec["old"], rec["new"]), (OLD_HEAD, NEW_HEAD))
+            new_env = Path(rec["to"]["envelope"]["path"]).read_bytes()
+            self.assertEqual(new_env, env.read_bytes().replace(OLD_HEAD.encode(), NEW_HEAD.encode()))
+            new_imp = s0.read_json(rec["to"]["import"]["path"])
+            self.assertEqual(new_imp["transfer_envelope"], rec["to"]["envelope"])
+            self.assertEqual(dict(new_imp, transfer_envelope=None),
+                             dict(s0.read_json(imp), transfer_envelope=None))
+            new_opp = s0.read_json(rec["to"]["opponent"]["path"])
+            self.assertEqual(new_opp["source"]["play_import"], rec["to"]["import"])
+            self.assertEqual(dict(new_opp, source=None), dict(s0.read_json(rec["from"]["opponent"]["path"]),
+                                                              source=None))
+            opponent = s0.admit_h_rebind(s0.read_json(panel), tmp / "h" / "h-rebind.json")
+            self.assertEqual(opponent, new_opp)
+            with self.assertRaisesRegex(s0.S0Error, "already holds"):
+                s0.rebind_h(panel, moved / "i.json", moved / "e.json", NEW_HEAD, tmp / "h")
+
+    def test_rebind_refusals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            panel, imp, env = step_c_h(tmp)
+            with self.assertRaisesRegex(s0.S0Error, "full commit"):
+                s0.rebind_h(panel, imp, env, "b01d6387e", tmp / "h0")
+            with self.assertRaisesRegex(s0.S0Error, "already bound"):
+                s0.rebind_h(panel, imp, env, OLD_HEAD, tmp / "h0")
+            with self.assertRaisesRegex(s0.S0Error, "import is not H's"):
+                s0.rebind_h(panel, env, env, NEW_HEAD, tmp / "h0")
+            other = tmp / "other-env.json"
+            other.write_bytes(env.read_bytes() + b" ")
+            with self.assertRaisesRegex(s0.S0Error, "envelope is not"):
+                s0.rebind_h(panel, imp, other, NEW_HEAD, tmp / "h0")
+            self.assertFalse((tmp / "h0").exists())
+            # The old head twice in the envelope's bytes is refused.
+            twice = s0.read_json(env)
+            twice["note"] = OLD_HEAD
+            env.write_text(json.dumps(twice, separators=(",", ":")))
+            imp_doc = s0.read_json(imp)
+            imp_doc["transfer_envelope"] = s0.pin(env)
+            imp.write_text(json.dumps(imp_doc, indent=2) + "\n")
+            with self.assertRaisesRegex(s0.S0Error, "exactly one occurrence"):
+                s0.rebound_h(json.dumps({"source": {"play_import": s0.pin(imp)}}).encode(), imp.read_bytes(),
+                             env.read_bytes(), NEW_HEAD, tmp / "e", tmp / "i")
+
+    def test_admission_rederives_every_rebound_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            panel, imp, env = step_c_h(tmp)
+            rec = s0.rebind_h(panel, imp, env, NEW_HEAD, tmp / "h")
+            record_path = tmp / "h" / "h-rebind.json"
+            # An envelope edited beyond the head, with the record's pin updated to match, fails the re-derivation.
+            new_env = Path(rec["to"]["envelope"]["path"])
+            doc = json.loads(new_env.read_bytes())
+            doc["parameters"] = [[9, 9, 9]]
+            new_env.write_text(json.dumps(doc, separators=(",", ":")))
+            forged = dict(rec, to=dict(rec["to"], envelope=s0.pin(new_env)))
+            (tmp / "forged.json").write_text(json.dumps(forged))
+            with self.assertRaisesRegex(s0.S0Error, "differs from its re-derivation"):
+                s0.admit_h_rebind(s0.read_json(panel), tmp / "forged.json")
+            with self.assertRaisesRegex(s0.S0Error, "rebound H envelope differs from its pin"):
+                s0.admit_h_rebind(s0.read_json(panel), record_path)
+            # A rebind from another opponent is refused.
+            other_panel = dict(s0.read_json(panel), opponent={"path": "x", "sha256": "f" * 64})
+            with self.assertRaisesRegex(s0.S0Error, "panel's opponent"):
+                s0.admit_h_rebind(other_panel, record_path)
+
+    def test_floor_run_worker_ladder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            exe = tmp / "eval.exe"
+            exe.write_bytes(b"x")
+            (tmp / "floor.json").write_text(json.dumps({"schema": s0.FLOOR_SCHEMA, "evaluator": s0.pin(exe)}))
+            for bad in ("2,4", "1,4,2", "1,2,3", "1,2,4,8,12"):
+                with self.assertRaisesRegex(s0.S0Error, "worker ladder"):
+                    s0.floor_run(tmp / "floor.json", exe, bad)
+
+
 class RecipeTests(unittest.TestCase):
     def test_recipe_names_design_constants_and_needs_the_clip_decision(self):
         r = s0_recipe.recipe(1.0)
