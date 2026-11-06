@@ -1223,17 +1223,52 @@ fn a_reveal_after_an_unseen_draw_or_search_agrees() {
 /// exporting C world; the receipt and this record take the same path.)
 /// Returns P.
 fn desynced_receipt_world(d_left: bool, desync: bool) -> Result<Vec<u8>, String> {
-    desynced_receipt_world_with(d_left, desync, false)
+    desynced_receipt_world_with(d_left, desync, ExtraV1::default())
 }
 
-/// [`desynced_receipt_world`]; with `untracked_too`, the Shaman's record
-/// also names a card of another name in the opponent's library, which V
-/// never saw: the R1 untracked test refuses that reference (lead ruling
-/// 19's second refusing test).
+/// Additions to [`desynced_receipt_world`] for lead ruling 19.
+#[derive(Clone, Copy, Default)]
+struct ExtraV1 {
+    /// The Shaman's record also names a card of another name in the
+    /// opponent's library, which V never saw: the R1 untracked test refuses
+    /// that reference (a second refusing test).
+    untracked: bool,
+    /// Sol code review on ruling 19, finding 1: the paid reference names the
+    /// copy that left at its first epoch out of the library (D's public
+    /// graveyard epoch, C's unseen draw), and the item's `discarded` list
+    /// names it too (an epochless companion in the same item).
+    companion: bool,
+    /// Sol code review on ruling 19, finding 2: a tracked object (the
+    /// Shaman) holds a source contract naming D at its public graveyard
+    /// epoch in its own fields (an arena reference).
+    arena: bool,
+}
+
+/// The refusal as `code:subclass | detail` (the wire subclass the bridge
+/// sends), or the export bytes.
+fn wire_outcome(
+    r: Result<crate::infoset_v1::InfosetV1, crate::infoset_v1::ExportErrorV1>,
+) -> Result<Vec<u8>, String> {
+    r.map(|x| x.bytes).map_err(|e| {
+        format!(
+            "{}:{} | {e:?}",
+            e.code_name(),
+            crate::agent_bridge_infoset_v1::export_refusal_subclass_v1(&e)
+        )
+    })
+}
+
+/// The refusal's `code:subclass`, for comparing reasons across worlds.
+fn reason(o: &Result<Vec<u8>, String>) -> Option<String> {
+    o.as_ref()
+        .err()
+        .map(|e| e.split(" | ").next().unwrap_or("").to_string())
+}
+
 fn desynced_receipt_world_with(
     d_left: bool,
     desync: bool,
-    untracked_too: bool,
+    extra: ExtraV1,
 ) -> Result<Vec<u8>, String> {
     use crate::event::{propose_and_commit, ProposedEvent};
     let (o, v) = (PlayerId::P0, PlayerId::P1);
@@ -1247,6 +1282,8 @@ fn desynced_receipt_world_with(
     st.engine.pending_triggers.clear();
     let in_library = library_lembas(&mut st, paid, 2);
     let (d, c) = (in_library[0], in_library[1]);
+    let first_out = |x: ObjectId, st: &GameState| st.objects.get(x).zone_change_count + 1;
+    let (d_out, c_out) = (first_out(d, &st), first_out(c, &st));
     let mut marks = s.infoset_marks_v1(v);
     let mark = |st: &GameState, marks: &mut Vec<(usize, usize)>| {
         marks.push((
@@ -1256,6 +1293,7 @@ fn desynced_receipt_world_with(
     };
     propose_and_commit(&mut st, ProposedEvent::zone_change(d, Zone::Graveyard));
     st.engine.pending_triggers.clear();
+    let d_contract = crate::state::AbilitySourceContractV4::capture(&st, d);
     mark(&st, &mut marks);
     if desync {
         st.objects.get_mut(d).zone_change_count += 2;
@@ -1279,7 +1317,15 @@ fn desynced_receipt_world_with(
     let r = &mut st.stack[i].v4.paid_cost_refs[0];
     r.object = gone;
     r.zone_change_count = hand;
-    if untracked_too {
+    if extra.companion {
+        st.stack[i].v4.paid_cost_refs[0].zone_change_count = if d_left { d_out } else { c_out };
+        st.stack[i].discarded.push(gone);
+    }
+    if extra.arena {
+        let x = st.stack[i].source;
+        st.objects.get_mut(x).v4.melira_protection_v1 = Some(vec![d_contract.clone()]);
+    }
+    if extra.untracked {
         let other = st.players[o.index()]
             .library
             .iter()
@@ -1292,7 +1338,7 @@ fn desynced_receipt_world_with(
         st.stack[i].v4.paid_cost_refs.push(extra);
     }
     let lists = decklists(&s);
-    export_v1(
+    wire_outcome(export_v1(
         &ExportInputV1 {
             state: &st,
             journal: st.observation_journal.notes(),
@@ -1301,9 +1347,7 @@ fn desynced_receipt_world_with(
             marks: Some(&marks),
         },
         ExportOptionsV1::default(),
-    )
-    .map(|x| x.bytes)
-    .map_err(|e| format!("{e:?}"))
+    ))
 }
 
 /// Sol round 11 on #526, finding 1 (unit form): a live reference with no
@@ -1420,9 +1464,9 @@ fn reveal_only_units_refuse_with_one_reason_in_both_worlds() {
     eprintln!("out of step: D left {d:?} / C left {c:?}");
     assert_eq!(d, c, "the refusal reason agrees whichever copy left");
     assert!(
-        d.as_ref().err().is_some_and(|e| e.contains(
-            crate::infoset_v1::export::R1_SAME_NAME_HAND_REVEAL_DETAIL
-        )),
+        d.as_ref()
+            .err()
+            .is_some_and(|e| e.starts_with("R1:same_name_hand_reveal |")),
         "the reveal rule is the sole refusing test: {d:?}"
     );
 }
@@ -1433,8 +1477,8 @@ fn reveal_only_units_refuse_with_one_reason_in_both_worlds() {
 #[test]
 fn a_second_refusing_test_keeps_a_reveal_unit_c5() {
     let (d, c) = (
-        desynced_receipt_world_with(true, true, true),
-        desynced_receipt_world_with(false, true, true),
+        desynced_receipt_world_with(true, true, untracked()),
+        desynced_receipt_world_with(false, true, untracked()),
     );
     eprintln!("out of step, untracked too: D left {d:?} / C left {c:?}");
     assert_eq!(d, c, "the refusal reason agrees whichever copy left");
@@ -1443,7 +1487,60 @@ fn a_second_refusing_test_keeps_a_reveal_unit_c5() {
         !e.contains(crate::infoset_v1::export::R1_SAME_NAME_HAND_REVEAL_DETAIL),
         "a second refusing test keeps the unit C5: {e}"
     );
-    assert!(e.contains("untracked object"), "R1 untracked refuses: {e}");
+    assert!(
+        e.starts_with("R1:export |") && e.contains("untracked object"),
+        "R1 untracked refuses: {e}"
+    );
+}
+
+fn untracked() -> ExtraV1 {
+    ExtraV1 {
+        untracked: true,
+        ..ExtraV1::default()
+    }
+}
+
+/// Sol code review on ruling 19, finding 1: an epochless companion of a
+/// reference the reveal rule refuses is flagged before any seam test, so
+/// the D world (where the companion's epoch was public) and the C world
+/// (where it was an unseen draw) refuse with the same reason.
+#[test]
+fn a_companion_is_flagged_before_the_seam_test() {
+    let extra = ExtraV1 {
+        companion: true,
+        ..ExtraV1::default()
+    };
+    for desync in [false, true] {
+        let (d, c) = (
+            desynced_receipt_world_with(true, desync, extra),
+            desynced_receipt_world_with(false, desync, extra),
+        );
+        eprintln!("companion, desync {desync}: D left {d:?} / C left {c:?}");
+        assert!(d.is_err(), "the unit refuses (desync {desync})");
+        assert_eq!(reason(&d), reason(&c), "one reason (desync {desync})");
+    }
+}
+
+/// Sol code review on ruling 19, finding 2: an arena reference (a source
+/// contract in a tracked object's own fields) to D at its public graveyard
+/// epoch, while D is discarded in one world and stays hidden in the hand in
+/// the other. The arena rewrite takes the same reveal placeholder as the
+/// state walk, so both worlds refuse with the same reason.
+#[test]
+fn an_arena_reference_to_a_revealed_name_refuses_alike() {
+    let extra = ExtraV1 {
+        arena: true,
+        ..ExtraV1::default()
+    };
+    for desync in [false, true] {
+        let (d, c) = (
+            desynced_receipt_world_with(true, desync, extra),
+            desynced_receipt_world_with(false, desync, extra),
+        );
+        eprintln!("arena, desync {desync}: D left {d:?} / C left {c:?}");
+        assert!(d.is_err(), "the unit refuses (desync {desync})");
+        assert_eq!(reason(&d), reason(&c), "one reason (desync {desync})");
+    }
 }
 
 /// Sol round 1 on ruling 11 (R2), finding 3: a copy D returns from the
