@@ -45,6 +45,24 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(replay_sample.sampled('1a', 'X8') and replay_sample.sampled('1b', 'XS'))
         self.assertFalse(replay_sample.sampled('1a', 'C') or replay_sample.sampled('0', 'X8'))
 
+    def test_the_prefix_rule_whatever_the_order(self):
+        """Hashes A < B < C, sizes 8, 3, 2, quota 10: the prefix rule keeps A alone (A + B passes the quota), so
+        B and C are out in every shipping order."""
+        sizes = {'A': 8, 'B': 3, 'C': 2}
+        import itertools
+        for order in itertools.permutations('ABC'):
+            arm, out = replay_sample.Arm({}), set()
+            for name in order:
+                evict, accept = arm.room_for(name, sizes[name], 10)
+                for _, k in evict:
+                    arm.remove(k)
+                    out.add(k)
+                if accept and not (out and name > min(out)):  # the cutoff refuses anything past an exclusion
+                    arm.add(name, name, sizes[name])
+                else:
+                    out.add(name)
+            self.assertEqual(sorted(arm.bytes), ['A'], order)
+
 
 @unittest.skipUnless(HAS_ZSTD, 'no zstd (Python 3.14 or the zstandard package)')
 class StagingTests(unittest.TestCase):
@@ -295,6 +313,17 @@ class ShipTests(unittest.TestCase):
         self.assertTrue((store / 'MANIFEST.jsonl').read_bytes().endswith(b'\n'))
         self.assertNotIn(b'"ar\n', (store / 'MANIFEST.jsonl').read_bytes())
         replay_sample.manifest_events(store)  # the hash chain holds
+
+    def test_an_orphan_that_cannot_be_removed_stops_the_ship(self):
+        a, _ = self.nodes('o')
+        store = self.t / 'store'
+        orphan = replay_sample.entry_dir(store, 'X8', 'x8-9', 5)
+        orphan.mkdir(parents=True)
+        real = replay_sample.remove_tree
+        with mock.patch.object(replay_sample, 'remove_tree', lambda p: False if Path(p) == orphan else real(p)):
+            with self.assertRaisesRegex(replay_sample.SampleError, 'could not be removed'):
+                replay_sample.ship(a, store)
+        self.assertTrue(list(a.glob('*/*/u*/ENTRY.json')))  # nothing shipped, nothing dropped
 
     def test_refusals_and_reruns(self):
         with self.assertRaisesRegex(replay_sample.SampleError, 'pass the total cap'):
