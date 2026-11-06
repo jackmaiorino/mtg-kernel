@@ -474,6 +474,10 @@ fn knowledge_check(
     Ok(())
 }
 
+/// The R2 detail of a handle-order collision (`tracked_order`).
+pub(crate) const R2_ORDER_DETAIL_V1: &str =
+    "two tracked objects start their spans in one record without a V-presented order";
+
 /// Canonical order of tracked objects (6.2 step 7).
 /// The tracked objects in `C:` handle order (design 6.2 steps 2 and 7;
 /// ruling 3): by the start of their current span in V's transcript, keyed
@@ -513,10 +517,7 @@ fn tracked_order(
     }
     keyed.sort_by_key(|(key, _)| *key);
     if keyed.windows(2).any(|w| w[0].0 == w[1].0) {
-        return Err(refuse(
-            RefusalCodeV1::R2,
-            "two tracked objects start their spans in one record without a V-presented order",
-        ));
+        return Err(refuse(RefusalCodeV1::R2, R2_ORDER_DETAIL_V1));
     }
     let mut out: Vec<ObjectId> = keyed.into_iter().map(|(_, id)| id).collect();
     out.extend(opp_hand.unwrap_or(&[]).iter().copied());
@@ -1888,6 +1889,110 @@ pub(crate) fn refusal_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
            "batch_refs": batch_refs,
            "paid_cost_holders": holders,
            "seam_refs": seam_refs_v1(input.state, input.viewer)})
+}
+
+/// Diagnostics only (the bridge's `W1_INFOSET_REFUSAL_LOG`, never on the
+/// wire): the R2 handle-order collisions of 6.2 step 7 (`tracked_order`):
+/// every group of tracked objects whose current spans start at the same
+/// (stream item, V-presented position), with each object's card, owner,
+/// zone, position in its zone list, generation, the record that starts the
+/// span (an event's kind and the objects V identified in it, or no event:
+/// a note or the event-less re-mint after the last record) and the state
+/// paths that hold a reference to it. Reads S freely; feeds nothing back.
+pub(crate) fn r2_order_diagnostics_v1(input: &ExportInputV1<'_>) -> Value {
+    let state = input.state;
+    let projection = project_v1(state, input.journal, input.viewer);
+    let tagged = tagged_value(state);
+    fn paths(v: &Value, tag: &str, at: String, out: &mut Vec<String>) {
+        match v {
+            Value::String(s) if s == tag => out.push(at),
+            Value::Array(xs) => {
+                for (i, x) in xs.iter().enumerate() {
+                    paths(x, tag, format!("{at}[{i}]"), out);
+                }
+            }
+            Value::Object(m) => {
+                for (k, x) in m {
+                    paths(x, tag, format!("{at}.{k}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let opp = input.viewer.opponent();
+    let mut groups: BTreeMap<(usize, u32), Vec<ObjectId>> = BTreeMap::new();
+    for (id, o) in state.objects.iter() {
+        if !projection.tracked(id) || (o.owner == opp && o.zone == Zone::Hand) {
+            continue;
+        }
+        let key = projection
+            .current_span(id)
+            .map_or((usize::MAX, u32::MAX), |s| (s.start_item, s.start_pos));
+        groups.entry(key).or_default().push(id);
+    }
+    let position = |id: ObjectId| -> Option<usize> {
+        let o = state.objects.get(id);
+        let p = &state.players[o.owner.index()];
+        match o.zone {
+            Zone::Graveyard => p.graveyard.iter().position(|x| *x == id),
+            Zone::Battlefield => p.battlefield.iter().position(|x| *x == id),
+            Zone::Library => p.library.iter().position(|x| *x == id),
+            Zone::Hand => p.hand.iter().position(|x| *x == id),
+            Zone::Stack => state.stack.iter().position(|x| x.source == id),
+            _ => None,
+        }
+    };
+    let mut out = Vec::new();
+    for ((item, pos), ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+        let events: Vec<usize> = projection
+            .event_items
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| **i == item)
+            .map(|(e, _)| e)
+            .collect();
+        let records: Vec<Value> = events
+            .iter()
+            .map(|e| {
+                let kind = state
+                    .engine
+                    .event_history
+                    .get(*e)
+                    .map(|ev| format!("{:?}", ev.kind_v1()));
+                let observed: Vec<u32> = projection
+                    .event_observed
+                    .get(*e)
+                    .map(|v| v.iter().map(|x| x.0).collect())
+                    .unwrap_or_default();
+                json!({"event": e, "kind": kind, "observed": observed})
+            })
+            .collect();
+        let objects: Vec<Value> = ids
+            .iter()
+            .map(|id| {
+                let o = state.objects.get(*id);
+                let tag = format!("{}{}", crate::ids::OBJECT_ID_TAG_PREFIX_V1, id.0);
+                let mut at = Vec::new();
+                paths(&tagged, &tag, "state".into(), &mut at);
+                at.retain(|p| {
+                    !p.starts_with("state.engine.event_history")
+                        && !p.starts_with("state.objects")
+                        && !p.starts_with("state.observation_journal")
+                });
+                at.truncate(12);
+                json!({"object": id.0, "card": card_name(o.card_def), "owner": o.owner.0,
+                       "zone": format!("{:?}", o.zone), "zone_index": position(*id),
+                       "generation": o.zone_change_count,
+                       "span_start_gen": projection.current_span(*id).map(|s| s.start_gen),
+                       "spans": projection.objects.get(id.0 as usize).map(|t| t.spans.len()),
+                       "paths": at})
+            })
+            .collect();
+        out.push(json!({"item": item, "position": (pos != u32::MAX).then_some(pos),
+                        "items": projection.items, "turn_starts_after": projection.turn_starts.iter().filter(|t| **t <= item).count(),
+                        "records": records, "objects": objects}));
+    }
+    json!({"viewer": input.viewer.0, "items": projection.items, "collisions": out})
 }
 
 /// Collect pass: every reference with its region.

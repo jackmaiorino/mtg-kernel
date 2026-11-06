@@ -249,20 +249,28 @@ fn log_refusal_v1(
     };
     let mut line = json!({"step": step, "viewer": viewer.0, "turn": fast.game_state().turn,
                           "code": error.code_name(), "subclass": subclass, "detail": detail});
-    if error.code_name() == "R1" {
+    let r2_order = error.code_name() == "R2"
+        && detail.as_str() == crate::infoset_v1::export::R2_ORDER_DETAIL_V1;
+    if error.code_name() == "R1" || r2_order {
         let lists = fast.deck_ids_v1().clone().map(|id| {
             runtime_deck_by_id(&id)
                 .map(|d| d.card_ids.to_vec())
                 .unwrap_or_default()
         });
         let game = fast.game_state();
-        line["diagnostics"] = crate::infoset_v1::export::refusal_diagnostics_v1(&ExportInputV1 {
+        let marks = fast.infoset_marks_v1(viewer);
+        let input = ExportInputV1 {
             state: game,
             journal: game.observation_journal.notes(),
             viewer,
             decklists: [&lists[0], &lists[1]],
-            marks: Some(&fast.infoset_marks_v1(viewer)),
-        });
+            marks: Some(&marks),
+        };
+        line["diagnostics"] = if r2_order {
+            crate::infoset_v1::export::r2_order_diagnostics_v1(&input)
+        } else {
+            crate::infoset_v1::export::refusal_diagnostics_v1(&input)
+        };
     }
     let path = std::path::Path::new(&dir).join(format!("refusals-{}.jsonl", std::process::id()));
     if let Ok(mut f) = std::fs::OpenOptions::new()
