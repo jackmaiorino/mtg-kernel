@@ -94,6 +94,10 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
   records the chain's close, so the unfrozen gap of at most one cycle is on record).
 - Byte guard: each verdict reserves 5 segments per measured chain (one in flight, GUARD_SEGMENTS = 4 admitted)
   and two F segments per box (fillers do not wait on the guard; their hot set is bounded).
+- `supervise --loop` also keeps finished segments' byte totals (`retention.ByteCounter`): the guard walks only the
+  rest of the root each cycle; every deletion or PRUNE move from a finished segment (any W5 tool's) moves the
+  segment directory's modification time forward and the segment is counted again; every 6 hours it recounts them
+  all (a segment changed by hand is reported).
 - Replay sample (section 7.5.6, tools/w5/replay_sample.py): each cycle stages the selected updates of Stage 1's X8
   and XS chains (zstd, inside the W5 root, so the byte guard counts it) before rolling retention, which keeps the
   files of any selected update not yet staged; each verdict reserves the frames of the selected updates it may
@@ -1188,6 +1192,7 @@ def cut_snapshots(plan, x, st, size, budget):
     for orphan in sorted(directory.glob('b*.weights')) if directory.exists() else []:
         if key(orphan) not in indexed:
             orphan.unlink()
+            retention.touch_segments([orphan])
             log(plan['root'], chain=x['name'], event='snapshot-orphan-removed', path=orphan.as_posix())
     have = retention.snapshots(x['path'])
     total = sum(v['bytes'] for v in have.values())
@@ -1321,6 +1326,7 @@ def hold_move(root, name, items):
                                 'from': p.as_posix(), 'to': dest.as_posix(), 'sha256': item['sha256'],
                                 'bytes': dest.stat().st_size, 'moved_at': time.time()}) + '\n')
         moved += 1
+        retention.touch_segments([p, dest])  # finished segments that lost or gained a file are counted again
     return moved, size
 
 
@@ -1351,7 +1357,7 @@ def purge_hold(root, hold_days, now):
     return count
 
 
-def prune_chain(root, info, sel, look_doc):
+def prune_chain(root, info, sel, look_doc, counter=None):
     """The ARTIFACT-LAW PRUNE manifest (look checkpoints kept) and its moves into the hold folder (once)."""
     cdir = info['path'].parent
     if (cdir / 'PRUNED.json').exists():
@@ -1367,6 +1373,8 @@ def prune_chain(root, info, sel, look_doc):
         man['prune_bytes_by_kind'] = {k: sum(p['bytes'] for p in man['prune'] if p['kind'] == k)
                                       for k in ('full', 'weights')}
     write(cdir / 'PRUNE-MANIFEST.json', man)
+    if counter is not None:  # the moves leave finished segments: their byte totals are counted again
+        counter.invalidate([p['path'] for p in man['prune']])
     moved, size = hold_move(root, info['name'], man['prune'])
     doc = {'manifest': pin(cdir / 'PRUNE-MANIFEST.json'), 'moved': moved, 'bytes': size, 'unix': time.time()}
     write(cdir / 'PRUNED.json', doc)
@@ -1393,7 +1401,7 @@ def r_i(root, c):
     return max(summary['closed_total_usec'], c_valid[-1]['ledger_usec'] if c_valid else 0)
 
 
-def pair_finalize(plan, plan_path, c, x, st, looks, budget):
+def pair_finalize(plan, plan_path, c, x, st, looks, budget, counter=None):
     """Both chains ended and closed: endpoints, selection (replays), PRUNE."""
     c_valid, x_valid = valid_records(c), valid_records(x)
     r = r_i(plan['root'], c)
@@ -1426,7 +1434,8 @@ def pair_finalize(plan, plan_path, c, x, st, looks, budget):
     st.pop('waiting', None)
     root = Path(plan['root'])
     for info in (c, x):
-        st.setdefault('pruned', {})[info['name']] = prune_chain(root, info, sels[info['name']], looks.get(info['name']))
+        st.setdefault('pruned', {})[info['name']] = prune_chain(root, info, sels[info['name']], looks.get(info['name']),
+                                                            counter)
     st['selected'] = {n: {k: v for k, v in s.items() if k != 'spec'} for n, s in sels.items()}
     st['done'] = True
     log(root, event='pair-done', c=c['name'], x=x['name'], label=st['label'], endpoints=st['endpoints'])
@@ -1683,10 +1692,30 @@ def occupancy(plan, root):
     return out
 
 
-def cycle(plan, plan_path, now=None, caches=None, fills=True):
+def inside_segment(path, root):
+    """The path, resolved through links, lies in a chain segment directory of the root (`chains/<chain>/seg-<n>`)."""
+    real, chains_dir = Path(os.path.realpath(path)), Path(os.path.realpath(Path(root) / 'chains'))
+    return any(q.parent.parent == chains_dir and retention.SEGMENT_DIR.fullmatch(q.name) for q in [real, *real.parents])
+
+
+def counter_safe(plan, root):
+    """The ByteCounter's precondition for the plan's own output locations: none of them resolves into a chain segment
+    (hold, retention logs, the replay sample's staging, fillers, replays, snapshot directories, LOG and guard files)."""
+    root = Path(root)
+    places = [root / n for n in ('hold', 'retention', 'replay-sample', 'fillers', 'state', 'plan', 'pairs', 'LOG.jsonl',
+                                 'GUARD.json', 'GUARD-SPENT.json')]
+    for c in plan['chains'].values():
+        if c['manifest']:
+            places.append(retention.snapshot_dir(c['manifest'], read(c['manifest'])))
+            places.append(Path(c['manifest']).parent / 'replay')
+    return not any(inside_segment(p, root) for p in places)
+
+
+def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
     """One supervise cycle. `caches` (manifest path to `retention.IndexCache`, kept by `supervise --loop` across
     cycles) gives the same decisions without reading every index record and file again; `fills=False` (the box
-    throughput command) starts no fillers."""
+    throughput command) starts no fillers. `counter` (a `retention.ByteCounter`, kept across cycles too) gives the
+    guard's used bytes without walking finished segments again; every deletion here is reported to it."""
     now = time.time() if now is None else now
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
@@ -1709,7 +1738,7 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True):
                     x['end'] = read_end(root, x['name'])
                 if c['end'] is not None and x['end'] is not None and not c['live'] and not x['live']:
                     x = infos[pair['X']] = chain_info(root, pair['X'], caches)
-                    st = pair_finalize(plan, plan_path, c, x, st, looks, budget)
+                    st = pair_finalize(plan, plan_path, c, x, st, looks, budget, counter)
                 st.pop('blocked', None)
             except (Stop, SystemExit) as exc:
                 st['blocked'] = str(exc)
@@ -1758,6 +1787,8 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True):
             doc['trajectories'] = [i for i in doc['trajectories'] if i['path'] not in sample]
         (root / 'retention').mkdir(parents=True, exist_ok=True)
         removed = retention.apply(doc, root / 'retention' / f'{n}.jsonl')
+        if counter is not None:
+            counter.invalidate([i['path'] for i in doc['checkpoints'] + doc['trajectories']])
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
     report['kills'] = enforce_ends(plan, root)
@@ -1765,11 +1796,17 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True):
     report['purged'] = purge_hold(root, plan['hold_days'], now)
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
+    safe = counter is not None and counter_safe(plan, root)
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests,
-                        None if caches is None else {Path(m).as_posix(): index_cache(caches, m) for m in manifests})
+                        None if caches is None else {Path(m).as_posix(): index_cache(caches, m) for m in manifests},
+                        counter if safe else None)
     write(root / 'GUARD.json', dict(g, unix=time.time(), plan=plan['label'], ceilings=ceilings, id=time.time_ns(),
                                     headroom=g['cap_bytes'] - g['used_bytes'] - g['next_bytes']))
     report['guard'] = {k: g[k] for k in ('ok', 'used_bytes', 'next_bytes', 'cap_bytes')}
+    if counter is not None and not safe:
+        report['guard']['counter'] = 'off: an output location resolves into a chain segment (walked everything)'
+    if counter is not None and counter.mismatches:  # a finished segment changed outside the supervisor
+        report['guard']['recount_mismatches'] = counter.mismatches[-20:]
     write(root / 'plan' / plan['label'] / 'SUPERVISE.json', report)
     return report
 
@@ -1781,8 +1818,9 @@ def supervise(a):
     require(held is not None, 'another supervise holds this node')
     try:
         caches = {}  # each chain's index records and settled state, kept across cycles
+        counter = retention.ByteCounter()  # finished segments' byte totals, kept across cycles
         while True:
-            report = cycle(plan, Path(a.plan).resolve(), caches=caches)
+            report = cycle(plan, Path(a.plan).resolve(), caches=caches, counter=counter)
             print(json.dumps(report, sort_keys=True), flush=True)
             if not a.loop:
                 return 0

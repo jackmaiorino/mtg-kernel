@@ -61,6 +61,7 @@ import hashlib
 import math
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -402,6 +403,7 @@ def snapshot(chain_path, binary, snapshot_from, max_new=None):
                  'sha256': receipt['output']['sha256'], 'bytes': receipt['snapshot_bytes'],
                  'cut_from_state_sha256': receipt['cut_from_state_sha256'],
                  'parameters_sha256': receipt['parameters_sha256']}
+        touch_segments([out, receipt['output']['path']])  # a snapshot directory inside a finished segment
         with open(snapshot_index_path(chain_path), 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry) + '\n')
         made.append(entry)
@@ -416,7 +418,9 @@ def probe_snapshot_bytes(records, binary):
         path = Path(rec['checkpoint']['path'])
         if not path.exists() or sha(path) != rec['checkpoint']['sha256']:
             continue
-        with tempfile.TemporaryDirectory(dir=path.parent) as tmp:
+        seg = next((q for q in path.parents if SEGMENT_DIR.fullmatch(q.name)), None)
+        # Beside the segment, never inside it: a finished segment gains no file (ByteCounter).
+        with tempfile.TemporaryDirectory(dir=seg.parent if seg is not None else path.parent) as tmp:
             out = Path(tmp).resolve() / 'probe.weights'
             run = subprocess.run([binary, 'weights-snapshot', '--input', path.as_posix(), '--sha256',
                                   rec['checkpoint']['sha256'], '--output', out.as_posix()],
@@ -494,22 +498,27 @@ def plan(chain_path, snapshot_from=None, cache=None):
 def apply(plan_doc, log_path, hold=None):
     """Deletes (or moves under `hold`, same volume) every planned file, appending one log line per file.
     Checkpoints are regenerable by replay against their recorded hashes; trajectories by recollection."""
-    done = 0
-    with open(log_path, 'a', encoding='utf-8') as log:
-        for kind in ('checkpoints', 'trajectories'):
-            for item in plan_doc[kind]:
-                path = Path(item['path'])
-                if not path.exists():
-                    continue
-                if hold:
-                    dst = Path(hold) / path.relative_to(path.anchor)
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(path, dst)
-                    item = dict(item, moved_to=dst.as_posix())
-                else:
-                    path.unlink()
-                log.write(json.dumps(dict(item, kind=kind, unix_seconds=time.time())) + '\n')
-                done += 1
+    done, touched = 0, []
+    try:
+        with open(log_path, 'a', encoding='utf-8') as log:
+            for kind in ('checkpoints', 'trajectories'):
+                for item in plan_doc[kind]:
+                    path = Path(item['path'])
+                    if not path.exists():
+                        continue
+                    touched.append(path)
+                    if hold:
+                        dst = Path(hold) / path.relative_to(path.anchor)
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(path, dst)
+                        touched.append(dst)  # a hold folder inside a finished segment gains the file
+                        item = dict(item, moved_to=dst.as_posix())
+                    else:
+                        path.unlink()
+                    log.write(json.dumps(dict(item, kind=kind, unix_seconds=time.time())) + '\n')
+                    done += 1
+    finally:
+        touch_segments(touched + [log_path])  # a finished segment that lost or gained a file is counted again
     return done
 
 
@@ -760,17 +769,150 @@ def tree_bytes(root):
     return total
 
 
+SEGMENT_DIR = re.compile(r'seg-\d+')
+TOUCH_STEP_NS = 2 * 10**9  # survives any timestamp resolution (NTFS 100 ns, coarse kernel ticks, FAT 2 s)
+SETTLE_SECONDS = 10.0  # a reused total is from a count made this long after the directory last changed
+FULL_RECOUNT_SECONDS = 6 * 3600
+
+
+def segment_key(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
+def touch_segments(paths):
+    """Moves the modification time of every `seg-<n>` directory above one of `paths` forward (each such ancestor,
+    along the path as written and as resolved through links), so a ByteCounter counts it again. Every W5 tool that
+    deletes, moves or writes a file under a W5 root calls this for the paths it touches: retention.apply (sources,
+    hold destinations and its log, the standalone `retention.py apply` included), snapshots and the removal of
+    orphan snapshots, chains.py's hold moves."""
+    segments = set()
+    for p in paths:
+        p = Path(os.path.abspath(p))
+        for form in (p, Path(os.path.realpath(p.parent)) / p.name, Path(os.path.realpath(p))):
+            segments |= {q for q in form.parents if SEGMENT_DIR.fullmatch(q.name)}
+    for seg in segments:
+        try:
+            before = seg.stat().st_mtime_ns
+            stamp = max(time.time_ns(), before + TOUCH_STEP_NS)
+            os.utime(seg, ns=(stamp, stamp))
+        except OSError:
+            pass
+
+
+class ByteCounter:
+    """`tree_bytes` for a long-lived caller (`chains.py supervise --loop`) that is not linear in the files of
+    finished chain segments.
+
+    **Precondition** (checked for a plan's own output locations by `chains.counter_safe`, which otherwise makes the
+    cycle walk everything): a sealed segment, `<root>/chains/<chain>/seg-<n>` (a directory, not a link, holding
+    completion.json), receives files only from the native trainer before completion.json appears; afterwards files
+    only leave it, and only through the W5 tools, which move the segment directory's modification time forward
+    (`touch_segments`). Nothing writes into it by hand.
+
+    Under it a segment's total is reused only while its directory's modification time is the one seen by the two
+    consecutive counts that last counted it, the second made SETTLE_SECONDS after that time (so a publisher's
+    same-tick cleanup is in it); otherwise it is counted again. Everything else, other `seg-<n>` directories
+    included, is walked every call. A call then returns `sum(tree_bytes(r) for r in roots)`. A hand edit inside a
+    finished segment breaks the precondition: every FULL_RECOUNT_SECONDS a call recounts every sealed segment and
+    records any segment whose total changed without a touch (`mismatches`)."""
+
+    def __init__(self, full_seconds=FULL_RECOUNT_SECONDS):
+        self.sealed = {}  # key -> {'mtime': ns, 'bytes': n, 'stable': bool}
+        self.full_seconds = full_seconds
+        self.last_full = None
+        self.mismatches = []
+        self.links = []
+
+    def invalidate(self, paths):
+        """Paths the caller deleted or moved: their sealed segments are counted again on the next calls."""
+        for p in paths:
+            for parent in Path(os.path.abspath(p)).parents:
+                if self.sealed.pop(segment_key(parent), None) is not None:
+                    break
+
+    def segment(self, path, full, now):
+        key = segment_key(path)
+        mtime = os.stat(path).st_mtime_ns
+        have = self.sealed.get(key)
+        if have is not None and have['mtime'] == mtime and have['stable'] and not full:
+            return key, have['bytes']
+        size = tree_bytes(path)
+        if full and have is not None and have['stable'] and have['mtime'] == mtime and have['bytes'] != size:
+            self.mismatches.append({'segment': key, 'cached': have['bytes'], 'counted': size, 'unix': round(now, 3)})
+        # Stable: the same modification time at two counts, the second made SETTLE_SECONDS after it (a publisher's
+        # cleanup in the tick of its link is long done by then; one held longer changes the time when it resumes).
+        self.sealed[key] = {'mtime': mtime, 'bytes': size,
+                            'stable': have is not None and have['mtime'] == mtime and os.stat(path).st_mtime_ns ==
+                            mtime and now - mtime / 1e9 >= SETTLE_SECONDS}
+        return key, size
+
+    def total(self, roots, now=None):
+        """The bytes under `roots`, as `tree_bytes` counts them. A link outside the sealed segments that resolves into
+        a chain segment (a way to write into one without touching it) makes the call count every segment
+        (`links` records it)."""
+        now = time.time() if now is None else now
+        full = self.last_full is None or now - self.last_full >= self.full_seconds
+        result = self._total(roots, now, full)
+        if result is None:
+            self.links_unix = now
+            result = self._total(roots, now, True, record=False)
+        return result
+
+    def _total(self, roots, now, full, record=True):
+        seen, total = set(), 0
+        chains_dirs = [Path(os.path.realpath(Path(r) / 'chains')) for r in roots]
+
+        def into_segment(path):
+            real = Path(os.path.realpath(path))
+            return any(q.parent.parent in chains_dirs and SEGMENT_DIR.fullmatch(q.name) for q in [real, *real.parents])
+        for root in roots:
+            for dirpath, dirnames, names in os.walk(root):
+                for name in names:
+                    file = os.path.join(dirpath, name)
+                    if record and not full and os.path.islink(file) and into_segment(file):
+                        self.links.append({'link': file, 'unix': round(now, 3)})
+                        return None
+                    try:
+                        total += os.path.getsize(file)
+                    except OSError:
+                        pass
+                walk = []
+                for d in dirnames:
+                    path = os.path.join(dirpath, d)
+                    if SEGMENT_DIR.fullmatch(d) and Path(dirpath).parent.name == 'chains' and \
+                            Path(dirpath).parent.parent == Path(root) and not os.path.islink(path) and \
+                            os.path.exists(os.path.join(path, 'completion.json')):
+                        try:
+                            key, size = self.segment(path, full, now)
+                        except OSError:  # removed while counted
+                            continue
+                        seen.add(key)
+                        total += size
+                    else:
+                        if record and not full and os.path.islink(path) and into_segment(path):
+                            self.links.append({'link': path, 'unix': round(now, 3)})
+                            return None
+                        walk.append(d)
+                dirnames[:] = walk
+        for key in [k for k in self.sealed if k not in seen]:  # removed segments
+            del self.sealed[key]
+        if full:
+            self.last_full = now
+        return total
+
+
 def under(path, roots):
     path = Path(path).resolve()
     return any(path == Path(r).resolve() or Path(r).resolve() in path.parents for r in roots)
 
 
-def guard(roots, cap_bytes, next_bytes=0, chains=(), caches=None):
+def guard(roots, cap_bytes, next_bytes=0, chains=(), caches=None, counter=None):
     """The per-node byte guard: refuses (exit 1) when the W5 trees plus the next segment would pass the cap. For
     each chain manifest given, its full states and weights-only snapshots on disk are reported by kind, and every
     one of them must lie under a guarded root (a snapshot directory outside the roots would escape the cap).
-    `caches` (manifest path to `IndexCache`) gives the same report from the chains' active records."""
-    used = sum(tree_bytes(r) for r in roots)
+    `caches` (manifest path to `IndexCache`) gives the same report from the chains' active records, and `counter`
+    (a `ByteCounter`) the same used bytes without walking finished segments again."""
+    used = sum(tree_bytes(r) for r in roots) if counter is None else counter.total(roots)
     kinds, escaped = [], []
     for chain_path in chains:
         cache = (caches or {}).get(Path(chain_path).as_posix())
