@@ -1747,8 +1747,8 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True):
         doc = retention.plan(info['path'], snap_from, index_cache(caches, info['path']))
         # The look is found again on an index at least as new as the plan's, so a look boundary the plan already
         # saw is recorded and kept before anything is deleted.
-        _, fresh = chain_index(info['path'], caches)
-        info = dict(info, records=fresh)
+        fresh_chain, fresh = chain_index(info['path'], caches)
+        info = dict(info, chain=fresh_chain, records=fresh)
         looks[n] = look(info, plan['r_nom_usec'])
         keep = protected_paths(info, {looks[n]['boundary']} if looks.get(n) else set())
         doc['checkpoints'] = [i for i in doc['checkpoints'] if i['path'] not in keep]

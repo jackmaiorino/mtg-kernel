@@ -173,6 +173,21 @@ def update_files(seg_root, iteration):
     return files
 
 
+def trajectories_intact(files):
+    """Every trajectory and EX1 sidecar the update's collection receipt names (`trajectories`, `ex1.episodes`) is
+    among `files` and matches its pin (one already rolled off makes the update missing, never a partial sample)."""
+    collection = next((p for rel, p in files if rel.endswith('collect/collection.json')), None)
+    if collection is None:
+        return False
+    have = {Path(os.path.abspath(p)) for _, p in files}
+    doc = read_json(collection)
+    for pin in doc.get('trajectories', []) + ((doc.get('ex1') or {}).get('episodes') or []):
+        path = Path(os.path.abspath(pin['path']))
+        if path not in have or not path.exists() or sha_file(path) != pin['sha256']:
+            return False
+    return True
+
+
 # ---------------------------------------------------------------- staging (on the node, by supervise)
 
 def staging_dir(root):
@@ -196,7 +211,7 @@ def stage_update(root, arm, chain, seed_root, rec, seg_root, api):
     """Compresses one selected update into staging (ENTRY.json last). Returns the entry, or None if its files are
     gone."""
     files = update_files(seg_root, rec['iteration'])
-    if files is None or not all(p.exists() for _, p in files):
+    if files is None or not all(p.exists() for _, p in files) or not trajectories_intact(files):
         return None
     library, compress, decompress = api
     out = entry_dir(staging_dir(root), arm, chain, rec['update'])
@@ -213,10 +228,20 @@ def stage_update(root, arm, chain, seed_root, rec, seg_root, api):
              'after_state_sha256': rec['after_state_sha256'], 'files': items, 'library': library,
              'level': ZSTD_LEVEL, 'raw_bytes': sum(i['bytes'] for i in items),
              'zst_bytes': sum(i['zst_bytes'] for i in items), 'staged_unix': round(time.time(), 3)}
+    sync_entry(root, out)  # every frame's name durable before ENTRY.json makes the entry visible
     write_json(out / 'ENTRY.json', entry)
-    for d in sorted({q.parent for q in out.rglob('*')}, key=lambda q: -len(q.parts)):
-        sync_ancestors(d, staging_dir(root).parent)  # every name durable before the watermark passes it
+    sync_entry(root, out)
     return entry
+
+
+def sync_entry(root, out):
+    """The entry directory's files and every directory up to the staging root's parent, durable."""
+    for f in Path(out).rglob('*'):
+        if f.is_file():
+            with open(f, 'r+b') as h:  # Windows commits only a writable handle
+                os.fsync(h.fileno())
+    for d in sorted({q.parent for q in Path(out).rglob('*')} | {Path(out)}, key=lambda q: -len(q.parts)):
+        sync_ancestors(d, staging_dir(root).parent)
 
 
 def stage(root, arm, chain, seed_root, chain_doc, records, api=None):
@@ -231,7 +256,9 @@ def stage(root, arm, chain, seed_root, chain_doc, records, api=None):
         if selected(selection_hash(seed_root, rec['update'])):
             api = api or zstd_api()
             done = entry_dir(staging_dir(root), arm, chain, rec['update']) / 'ENTRY.json'
-            if not done.exists():
+            if done.exists():  # an earlier cycle staged it; its names are made durable again before the watermark
+                sync_entry(root, done.parent)
+            else:
                 if stage_update(root, arm, chain, seed_root, rec, chain_doc['segments'][rec['segment']]['root'],
                                 api) is None:
                     prog['missing'].append(rec['update'])
@@ -383,7 +410,7 @@ def publish(store, key, src, entry):
     require(remove_tree(tmp), f'{tmp} could not be cleared')
     bad = copy_frames(src, tmp, entry)
     if bad:
-        remove_tree(tmp)
+        require(remove_tree(tmp), f'{tmp}: a failed copy could not be removed')
         return bad
     write_json(tmp / 'ENTRY.json', entry)
     for d in sorted({p.parent for p in tmp.rglob('*')} | {tmp}, key=lambda p: -len(p.parts)):
@@ -394,15 +421,39 @@ def publish(store, key, src, entry):
     return []
 
 
-def repair(store, key, src, entry):
-    """A kept entry's missing or damaged frames rewritten in place from the staged copy, one at a time, each damaged
-    file removed before its replacement is written (so the store never holds more than its accounted bytes)."""
+def sweep(dest, kept):
+    """Removes files in a kept entry's directory that it does not record (a temporary file of an interrupted
+    repair), so the store holds only accounted bytes."""
+    want = {f'{i["path"]}.zst' for i in kept['files']} | {'ENTRY.json'}
+    for f in Path(dest).rglob('*'):
+        if f.is_file() and f.relative_to(dest).as_posix() not in want:
+            f.unlink()
+            require(not f.exists(), f'{f}: a stray file could not be removed')
+
+
+def sync_kept(store, dest):
+    """A kept entry's files and directory chain up to the store, durable (before a staged copy of it goes)."""
+    for f in Path(dest).rglob('*'):
+        if f.is_file():
+            with open(f, 'r+b') as h:  # Windows commits only a writable handle
+                os.fsync(h.fileno())
+    for d in sorted({q.parent for q in Path(dest).rglob('*')} | {Path(dest)}, key=lambda q: -len(q.parts)):
+        sync_ancestors(d, store)
+
+
+def repair(store, key, src, kept):
+    """A kept entry's missing or damaged frames rewritten in place from a staged copy, one at a time and only from
+    staged frames whose hash is the one the manifest recorded (`kept`, its add event), each damaged file removed
+    before its replacement is written, so the store never holds more than its accounted bytes. Returns the frames
+    it could not restore."""
     dest, bad = entry_dir(store, *key), []
-    for item in entry['files']:
+    sweep(dest, kept)
+    for item in kept['files']:
         target = dest / f'{item["path"]}.zst'
         if target.exists() and sha_file(target) == item['zst_sha256']:
             continue
-        data = (Path(src) / f'{item["path"]}.zst').read_bytes()
+        staged = Path(src) / f'{item["path"]}.zst'
+        data = staged.read_bytes() if staged.exists() else b''
         if sha_bytes(data) != item['zst_sha256']:
             bad.append(item['path'])
             continue
@@ -456,6 +507,12 @@ def ship(staging, store, arm_quota=ARM_QUOTA_BYTES, total_cap=TOTAL_CAP_BYTES):
     report = {'shipped': 0, 'refused': 0, 'evicted': 0, 'duplicates': 0, 'repaired': 0, 'orphans_removed': 0,
               'failed': []}
     with store_lock(store):
+        sync_ancestors(store, Path(os.path.abspath(store)).anchor)  # a new store's own entry durable too
+        manifest = store / 'MANIFEST.jsonl'
+        if manifest.exists():  # what an earlier ship appended may not have reached the disk yet
+            with open(manifest, 'r+b') as h:
+                os.fsync(h.fileno())
+            sync_dir(store)
         kept, cutoff, fate = store_state(store)
         arms = {arm: Arm(kept.get(arm, {})) for arm in SAMPLED_ARMS}
         # Frames left by an interrupted ship (published without their manifest line, or an unfinished copy).
@@ -473,12 +530,15 @@ def ship(staging, store, arm_quota=ARM_QUOTA_BYTES, total_cap=TOTAL_CAP_BYTES):
             key = (entry['arm'], entry['chain'], entry['update'])
             src, arm, digest = entry_path.parent, arms[entry['arm']], entry['selection_sha256']
             if fate.get(key) == 'kept':  # shipped before; its frames are checked and repaired from this copy
-                if not frames_intact(entry_dir(store, *key), entry):
-                    bad = repair(store, key, src, entry)
+                recorded = kept[key[0]][key]
+                if not frames_intact(entry_dir(store, *key), recorded):
+                    bad = repair(store, key, src, recorded)
                     if bad:
                         report['failed'].append({'entry': entry_path.as_posix(), 'files': bad})
                         continue
                     report['repaired'] += 1
+                sweep(entry_dir(store, *key), recorded)
+                sync_kept(store, entry_dir(store, *key))
                 report['duplicates'] += 1
             elif key in fate:  # evicted or refused before
                 report['duplicates'] += 1

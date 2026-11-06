@@ -156,6 +156,32 @@ class StagingTests(unittest.TestCase):
         self.assertEqual(base, segments + 2 * 4 * plan['arms']['F']['segment_updates'] *
                          plan['arms']['F']['bytes_per_update'] + expected)
 
+    def test_an_update_whose_trajectory_is_gone_is_missing_not_partial(self):
+        self.gone_is_missing('episode-*.json')
+
+    def test_an_update_whose_sidecar_is_gone_is_missing_not_partial(self):
+        self.gone_is_missing('ex1-*.json')
+
+    def gone_is_missing(self, pattern):
+        manifest = self.plan['chains']['x8-1']['manifest']
+        while True:
+            self.advance('x8-1', 2)
+            _, records = retention.index(manifest)
+            chosen = self.selected_updates(records)
+            if chosen:
+                break
+        segs = chains.read(manifest)['segments']
+        rec = next(r for r in records if r['update'] == chosen[0])
+        for ep in Path(segs[rec['segment']]['root']).glob(
+                f'iterations/{rec["iteration"]:06d}/attempt-*/collect/{pattern}'):
+            ep.unlink()
+        self.cycle()
+        progress = replay_sample.progress(self.node.root, 'X8', 'x8-1')
+        self.assertIn(chosen[0], progress['missing'])
+        self.assertFalse(replay_sample.entry_dir(self.node.root / 'replay-sample', 'X8', 'x8-1', chosen[0]).exists()
+                         and (replay_sample.entry_dir(self.node.root / 'replay-sample', 'X8', 'x8-1', chosen[0]) /
+                              'ENTRY.json').exists())
+
     def test_an_ended_chains_pending_staging_stays_reserved(self):
         self.advance('x8-1', 12)
         _, records = retention.index(self.plan['chains']['x8-1']['manifest'])
@@ -187,7 +213,10 @@ def fake_entry(staging, arm, chain, seed_root, update, size):
     a = d / 'attempt-000000'
     upd = jwrite(a / 'update' / 'update.json', {'after_state_sha256': f'{update:064x}'})
     (a / 'collect').mkdir(parents=True, exist_ok=True)
-    (a / 'collect' / 'episode-0000.json').write_text(json.dumps({'x': os.urandom(size // 2).hex()}))
+    ep = a / 'collect' / 'episode-0000.json'
+    ep.write_text(json.dumps({'x': os.urandom(size // 2).hex()}))
+    jwrite(a / 'collect' / 'collection.json', {'trajectories': [{'path': ep.as_posix(),
+                                                                 'sha256': replay_sample.sha_file(ep)}]})
     jwrite(d / 'complete.json', {'update': {'path': upd.as_posix()}})
     rec = {'update': update, 'boundary': update + 1, 'iteration': update, 'after_state_sha256': f'{update:064x}'}
     with mock.patch.object(replay_sample, 'staging_dir', lambda root: Path(staging)):
@@ -313,6 +342,26 @@ class ShipTests(unittest.TestCase):
         self.assertTrue((store / 'MANIFEST.jsonl').read_bytes().endswith(b'\n'))
         self.assertNotIn(b'"ar\n', (store / 'MANIFEST.jsonl').read_bytes())
         replay_sample.manifest_events(store)  # the hash chain holds
+
+    def test_repair_uses_only_the_recorded_frames(self):
+        a, _ = self.nodes('h')
+        entry = sorted(a.glob('*/*/u*/ENTRY.json'))[0]
+        doc = json.loads(entry.read_text())
+        keep = self.t / 'h-copy'
+        shutil.copytree(entry.parent, keep / doc['arm'] / doc['chain'] / entry.parent.name)
+        store = self.t / 'store'
+        replay_sample.ship(a, store)
+        dest = replay_sample.entry_dir(store, doc['arm'], doc['chain'], doc['update'])
+        frame = next(dest.rglob('episode-*.zst'))
+        frame.unlink()
+        (frame.parent / 'stray.tmp').write_bytes(b'z' * 50)  # an interrupted repair's temporary file
+        staged = next((keep / doc['arm'] / doc['chain'] / entry.parent.name).rglob('episode-*.zst'))
+        staged.write_bytes(b'other bytes')  # a restaged copy that is not the recorded one
+        report = replay_sample.ship(keep, store)
+        self.assertEqual(len(report['failed']), 1)
+        self.assertFalse(frame.exists())
+        self.assertTrue(list(keep.glob('*/*/u*/ENTRY.json')))  # kept for a later repair
+        self.assertFalse((frame.parent / 'stray.tmp').exists())  # unaccounted bytes never stay
 
     def test_an_orphan_that_cannot_be_removed_stops_the_ship(self):
         a, _ = self.nodes('o')
