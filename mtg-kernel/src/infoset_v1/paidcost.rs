@@ -1230,8 +1230,8 @@ fn desynced_receipt_world(d_left: bool, desync: bool) -> Result<Vec<u8>, String>
 #[derive(Clone, Copy, Default)]
 struct ExtraV1 {
     /// The Shaman's record also names a card of another name in the
-    /// opponent's library, which V never saw: the R1 untracked test refuses
-    /// that reference (a second refusing test).
+    /// opponent's library, which V never saw: a second refusing test (the
+    /// seam test) refuses that reference.
     untracked: bool,
     /// Sol code review on ruling 19, finding 1: the paid reference names the
     /// copy that left at its first epoch out of the library (D's public
@@ -1472,8 +1472,8 @@ fn reveal_only_units_refuse_with_one_reason_in_both_worlds() {
 }
 
 /// Lead ruling 19: a unit with a second refusing test stays C5. The same
-/// worlds, with a further live reference to a card V never saw: R1
-/// untracked refuses it, so neither world refuses with the reveal subclass.
+/// worlds, with a further live reference to a card V never saw: the seam
+/// test refuses it, so neither world refuses with the reveal subclass.
 #[test]
 fn a_second_refusing_test_keeps_a_reveal_unit_c5() {
     let (d, c) = (
@@ -1487,9 +1487,12 @@ fn a_second_refusing_test_keeps_a_reveal_unit_c5() {
         !e.contains(crate::infoset_v1::export::R1_SAME_NAME_HAND_REVEAL_DETAIL),
         "a second refusing test keeps the unit C5: {e}"
     );
+    // The further reference is to a card of another name V never tracked,
+    // so its creation bound is the game start, and a later hand seam of its
+    // name refuses it: the seam test, the first of the other C5 tests.
     assert!(
-        e.starts_with("R1:export |") && e.contains("untracked object"),
-        "R1 untracked refuses: {e}"
+        e.starts_with("R1:same_name_hand |"),
+        "the seam test refuses the second reference: {e}"
     );
 }
 
@@ -1516,8 +1519,12 @@ fn a_companion_is_flagged_before_the_seam_test() {
             desynced_receipt_world_with(false, desync, extra),
         );
         eprintln!("companion, desync {desync}: D left {d:?} / C left {c:?}");
-        assert!(d.is_err(), "the unit refuses (desync {desync})");
         assert_eq!(reason(&d), reason(&c), "one reason (desync {desync})");
+        assert_eq!(
+            reason(&d).as_deref(),
+            Some("R1:same_name_hand_reveal"),
+            "the reveal rule alone refuses (desync {desync})"
+        );
     }
 }
 
@@ -1538,8 +1545,12 @@ fn an_arena_reference_to_a_revealed_name_refuses_alike() {
             desynced_receipt_world_with(false, desync, extra),
         );
         eprintln!("arena, desync {desync}: D left {d:?} / C left {c:?}");
-        assert!(d.is_err(), "the unit refuses (desync {desync})");
         assert_eq!(reason(&d), reason(&c), "one reason (desync {desync})");
+        assert_eq!(
+            reason(&d).as_deref(),
+            Some("R1:same_name_hand_reveal"),
+            "the reveal rule alone refuses (desync {desync})"
+        );
     }
 }
 
@@ -1901,13 +1912,16 @@ fn a_hand_epoch_reference_and_a_ninjutsu_departure_agree() {
         "{:?}",
         ExportErrorV1::refuse(
             crate::infoset_v1::RefusalCodeV1::R1,
-            crate::infoset_v1::export::R1_SAME_NAME_HAND_DETAIL
+            crate::infoset_v1::export::R1_SAME_NAME_HAND_REVEAL_DETAIL
         )
     );
+    // Lead ruling 19: D's public return revealed its name, so the reveal
+    // rule refuses the hand-epoch reference, and no other test refuses the
+    // unit: the reveal subclass in both worlds.
     assert_eq!(
         a,
         Err(refused),
-        "the hand-epoch reference refuses same_name_hand"
+        "the hand-epoch reference refuses by the reveal rule alone"
     );
     // The control: the record names D at its graveyard epoch, from before
     // the hand (not a hand epoch). The construction reveals D right after
