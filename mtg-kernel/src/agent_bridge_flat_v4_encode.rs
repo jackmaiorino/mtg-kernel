@@ -187,7 +187,10 @@ pub(crate) fn with_known_hand_masked_observation_v1(
 ) -> Result<Value, FlatV4EncodeErrorV1> {
     let digest = known_hand_masked_observation_sha256_v1(encoded)?;
     if let Value::Object(m) = &mut value {
-        m.insert(KNOWN_HAND_MASKED_OBSERVATION_FIELD_V1.into(), Value::String(digest));
+        m.insert(
+            KNOWN_HAND_MASKED_OBSERVATION_FIELD_V1.into(),
+            Value::String(digest),
+        );
     }
     Ok(value)
 }
@@ -336,7 +339,9 @@ mod tests {
                         .and_then(Value::as_array)
                         .is_some_and(|a| !a.is_empty())
                     {
-                        return m.get_mut("effective_subtype_ids").and_then(Value::as_array_mut);
+                        return m
+                            .get_mut("effective_subtype_ids")
+                            .and_then(Value::as_array_mut);
                     }
                     m.values_mut().find_map(first_subtypes)
                 }
@@ -404,10 +409,15 @@ mod tests {
                 }
                 checked += 1;
                 let row = (turn % u64::from(decision.legal_action_count)) as u32;
-                session.step(decision.episode_id, decision.step, row).unwrap();
+                session
+                    .step(decision.episode_id, decision.step, row)
+                    .unwrap();
             }
         }
-        assert!(checked >= 200 && flipped >= 50, "checked {checked}, flipped {flipped}");
+        assert!(
+            checked >= 200 && flipped >= 50,
+            "checked {checked}, flipped {flipped}"
+        );
     }
 
     fn max_integer(value: &Value) -> u64 {

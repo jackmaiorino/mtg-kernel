@@ -1725,15 +1725,16 @@ pub(crate) fn batch_twin_v1(
             }
             lapsed = !end.split;
             let batch = projection.batch_of(bounds, end.item);
-            let twin = projection.objects.iter().enumerate().find(|(i, other)| {
-                let other_obj = state.objects.get(ObjectId(*i as u32));
-                *i != r.object.0 as usize
-                    && other_obj.owner == o.owner
-                    && card_name(other_obj.card_def) == card_name(o.card_def)
-                    && other.spans.iter().filter_map(|s| s.end).any(|e| {
-                        e.from == end.from && projection.batch_of(bounds, e.item) == batch
-                    })
-            });
+            let twin =
+                projection.objects.iter().enumerate().find(|(i, other)| {
+                    let other_obj = state.objects.get(ObjectId(*i as u32));
+                    *i != r.object.0 as usize
+                        && other_obj.owner == o.owner
+                        && card_name(other_obj.card_def) == card_name(o.card_def)
+                        && other.spans.iter().filter_map(|s| s.end).any(|e| {
+                            e.from == end.from && projection.batch_of(bounds, e.item) == batch
+                        })
+                });
             if let Some((i, _)) = twin {
                 return Some((g, end.item, end.from, ObjectId(i as u32)));
             }

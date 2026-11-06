@@ -51,7 +51,11 @@ impl PayloadV1 {
         }
         // Likewise an optional-cost record (amendment 43.9): only the
         // viewer's own reshape.
-        if surface.optional_cost.as_ref().is_some_and(|o| o.player != viewer) {
+        if surface
+            .optional_cost
+            .as_ref()
+            .is_some_and(|o| o.player != viewer)
+        {
             return None;
         }
         let mut payload = Self {

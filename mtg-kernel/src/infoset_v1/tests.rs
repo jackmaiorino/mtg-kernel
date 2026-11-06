@@ -1227,14 +1227,19 @@ fn optional_cost_and_madness_records_travel_and_import() {
             // after it (trigger ordering) the producer still refuses.
             let announcing = s.game_state().engine.pending_cast.is_some();
             let Some(p) = super::payload::PayloadV1::new(&x, s, v, 0) else {
-                assert!(k == 1 && !announcing, "seed {seed}: the {k} record does not travel");
+                assert!(
+                    k == 1 && !announcing,
+                    "seed {seed}: the {k} record does not travel"
+                );
                 return;
             };
             assert!(
                 p.surface.optional_cost.is_some() || p.surface.madness_reprompt.is_some(),
                 "seed {seed}: no record"
             );
-            let imported = p.import().unwrap_or_else(|e| panic!("seed {seed}: import: {e}"));
+            let imported = p
+                .import()
+                .unwrap_or_else(|e| panic!("seed {seed}: import: {e}"));
             let (FastActorResponseV1::Decision(d), FastActorResponseV1::Decision(e)) =
                 (s.current_response(), imported.current_response())
             else {
@@ -1252,7 +1257,10 @@ fn optional_cost_and_madness_records_travel_and_import() {
             break;
         }
     }
-    assert!(seen.iter().all(|&n| n > 0), "witnesses (optional cost, madness): {seen:?}");
+    assert!(
+        seen.iter().all(|&n| n > 0),
+        "witnesses (optional cost, madness): {seen:?}"
+    );
 }
 
 /// Amendment 43.9, cut 1 (`same_name_batch`): the move of the spell being
@@ -1269,12 +1277,17 @@ fn optional_cost_and_madness_records_travel_and_import() {
 /// the cut removes).
 #[test]
 fn the_announced_spell_moves_in_the_open_batch() {
-    use crate::card_def::CARD_DEFS;
     use super::projection::ProjectionV1;
+    use crate::card_def::CARD_DEFS;
     let former = |p: &ProjectionV1, marks: &[(usize, usize)]| -> Vec<usize> {
         let mut out: Vec<usize> = marks
             .iter()
-            .map(|&(h, j)| p.stamps.iter().take_while(|&&(e, n)| e <= h && n <= j).count())
+            .map(|&(h, j)| {
+                p.stamps
+                    .iter()
+                    .take_while(|&&(e, n)| e <= h && n <= j)
+                    .count()
+            })
             .filter(|&b| b < p.stamps.len())
             .collect();
         out.sort_unstable();
@@ -1284,7 +1297,11 @@ fn the_announced_spell_moves_in_the_open_batch() {
     let mut pending = 0;
     let mut witnesses = 0;
     let mut closed_checked = 0;
-    for (decks, seeds) in [(["Burn", "Burn"], 0..30_u64), (["Faeries", "Faeries"], 0..30), (["Rally", "Rally"], 0..30)] {
+    for (decks, seeds) in [
+        (["Burn", "Burn"], 0..30_u64),
+        (["Faeries", "Faeries"], 0..30),
+        (["Rally", "Rally"], 0..30),
+    ] {
         for seed in seeds {
             play(decks, 9_100 + seed, 500, |s, v| {
                 let st = s.game_state();
@@ -1305,7 +1322,9 @@ fn the_announced_spell_moves_in_the_open_batch() {
                     .iter()
                     .filter_map(|x| x.end)
                     .find(|e| e.item == open)
-                    .unwrap_or_else(|| panic!("seed {seed}: the open item is not the spell's move"));
+                    .unwrap_or_else(|| {
+                        panic!("seed {seed}: the open item is not the spell's move")
+                    });
                 assert_eq!(p.batch_of(&bounds, open), usize::MAX, "seed {seed}");
                 // Batches are runs of consecutive items: every two
                 // consecutive closed items keep their former relation.
@@ -1330,7 +1349,9 @@ fn the_announced_spell_moves_in_the_open_batch() {
                         && other.owner == owner
                         && CARD_DEFS[other.card_def as usize].name == name
                         && o.spans.iter().filter_map(|x| x.end).any(|e| {
-                            e.from == end.from && e.item != open && old_batch(e.item) == old_batch(open)
+                            e.from == end.from
+                                && e.item != open
+                                && old_batch(e.item) == old_batch(open)
                         })
                 }) {
                     witnesses += 1;

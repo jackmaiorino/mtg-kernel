@@ -466,9 +466,11 @@ pub(crate) fn validate_madness_reprompt_in_state_v1(
         return Err("madness context: card".into());
     }
     let object = state.objects.get(card);
-    let madness = object.v4.spell_cast_origin.as_ref().is_some_and(|origin| {
-        matches!(origin.route, crate::state::SpellCastRouteV4::Madness)
-    });
+    let madness = object
+        .v4
+        .spell_cast_origin
+        .as_ref()
+        .is_some_and(|origin| matches!(origin.route, crate::state::SpellCastRouteV4::Madness));
     let cast = state
         .engine
         .pending_cast

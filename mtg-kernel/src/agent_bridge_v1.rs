@@ -3701,7 +3701,12 @@ mod tests {
     fn infoset_v1_preview_flat_extension_equals_the_committed_one() {
         let field = crate::agent_bridge_flat_v4_encode::KNOWN_HAND_MASKED_OBSERVATION_FIELD_V1;
         let mut compared = 0u64;
-        for (deck, seed) in [("CawGates", 5_u64), ("Faeries", 7), ("Spy", 3), ("Wildfire", 6)] {
+        for (deck, seed) in [
+            ("CawGates", 5_u64),
+            ("Faeries", 7),
+            ("Spy", 3),
+            ("Wildfire", 6),
+        ] {
             let mut server = SpellbenchBridgeServerV1::with_options(
                 SpellbenchEngineIdentityV1::with_source_revision(None),
                 SpellbenchBridgeOptionsV1 {
