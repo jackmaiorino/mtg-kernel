@@ -94,6 +94,10 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
   records the chain's close, so the unfrozen gap of at most one cycle is on record).
 - Byte guard: each verdict reserves 5 segments per measured chain (one in flight, GUARD_SEGMENTS = 4 admitted)
   and two F segments per box (fillers do not wait on the guard; their hot set is bounded).
+- Replay sample (section 7.5.6, tools/w5/replay_sample.py): each cycle stages the selected updates of Stage 1's X8
+  and XS chains (zstd, inside the W5 root, so the byte guard counts it) before rolling retention, which keeps the
+  files of any selected update not yet staged; each verdict reserves the frames of the selected updates it may
+  admit. `replay_sample.py ship` copies the staging to E: with hash checks and the per-arm quota.
 - `supervise --loop` keeps each chain's index in memory across cycles (`retention.IndexCache`): a cycle reads only
   the index file's new lines and the receipts past them, and the rolling plan and the guard skip records whose
   full-state files are all gone and old segments whose trajectories are gone (nothing writes into a completed
@@ -140,6 +144,7 @@ sys.path.insert(0, str(HERE.parent / 'ex1'))
 import qual  # noqa: E402
 import retention  # noqa: E402
 import w5box  # noqa: E402
+import replay_sample  # noqa: E402
 import xact  # noqa: E402
 
 INPUTS_SCHEMA = 'w5-chains-inputs/v1'
@@ -170,6 +175,7 @@ EXIT_STOP, EXIT_ROOM, EXIT_FAILED = 5, 7, 8
 FAILED_ENDS = ('chain-failure', 'operator')  # END reasons whose recorded last valid boundary is the endpoint
 PAIR_ONLY_KEYS = {'ex1', 'preparation_workers', 'output_directory', 'chain_ledger', 'collection_workers'}
 TOOL_FILES = {'chains.py': HERE / 'chains.py', 'retention.py': HERE / 'retention.py', 'xact.py': HERE / 'xact.py',
+              'replay_sample.py': HERE / 'replay_sample.py',
               'w5box.py': HERE / 'w5box.py', 'qual.py': HERE.parent / 'ex1' / 'qual.py',
               'target_ref.py': HERE.parent / 'ex1' / 'target_ref.py'}
 NAME = re.compile(r'[a-z0-9][a-z0-9-]{0,31}')
@@ -1446,7 +1452,33 @@ def guard_reservation(plan, root):
                 if (rdir / 'spec.json').exists() and not (rdir / 'RECEIPT.json').exists():
                     updates = read(rdir / 'spec.json')['replay']['updates']
                     replays += updates * plan['arms'][c['arm']]['bytes_per_update']
-    return (GUARD_SEGMENTS + 1) * measured + 2 * boxes * segment('F') + replays
+    staging = 0  # the replay sample's frames of the selected updates it may stage (exact: hash-selected): through
+    for n, c in plan['chains'].items():  # what this verdict may admit, or an ended chain's last update
+        if replay_sample.sampled(plan['stage'], c['arm']):
+            if writing(root, n):
+                last = (admitted(chain_dir(root, n)) + GUARD_SEGMENTS) * plan['arms'][c['arm']]['segment_updates'] - 1
+            else:
+                last = latest(read(c['manifest']))[0] - 1
+            staging += replay_sample.reservation(root, c['arm'], n, c['seed_root'], last,
+                                                 plan['arms'][c['arm']]['bytes_per_update'])
+    return (GUARD_SEGMENTS + 1) * measured + 2 * boxes * segment('F') + replays + staging
+
+
+def sample_cycle(plan, root, infos):
+    """The replay sample (tools/w5/replay_sample.py): every selected update of a sampled chain is staged before
+    rolling retention runs. A chain whose staging fails keeps its unstaged selected files
+    (`replay_sample.protected`)."""
+    out = {}
+    for n, c in sorted(plan['chains'].items()):
+        info = infos.get(n)
+        if info is None or not replay_sample.sampled(plan['stage'], c['arm']):
+            continue
+        try:
+            out[n] = replay_sample.stage(root, c['arm'], n, c['seed_root'], info['chain'], info['records'])
+        except (replay_sample.SampleError, OSError, ValueError) as exc:
+            out[n] = {'error': str(exc)}
+            log(root, chain=n, event='replay-sample-error', reason=str(exc))
+    return out
 
 
 def supervised(root, name):
@@ -1704,6 +1736,7 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True):
     # GUARD_SEGMENTS more) is inside the next verdict's reservation and the per-chain hot cap.
     ceilings = {n: admitted(chain_dir(root, n)) + GUARD_SEGMENTS for n, c in plan['chains'].items()
                 if c['arm'] in MEASURED and writing(root, n)}
+    report['replay_sample'] = sample_cycle(plan, root, infos)
     for n in sorted(n for n in names if n in plan['chains']):
         info = infos[n]
         if info['end'] is not None or read_end(root, n) is not None or not info['records']:
@@ -1713,11 +1746,15 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True):
         doc = retention.plan(info['path'], snap_from, index_cache(caches, info['path']))
         # The look is found again on an index at least as new as the plan's, so a look boundary the plan already
         # saw is recorded and kept before anything is deleted.
-        _, fresh = chain_index(info['path'], caches)
-        info = dict(info, records=fresh)
+        fresh_chain, fresh = chain_index(info['path'], caches)
+        info = dict(info, chain=fresh_chain, records=fresh)
         looks[n] = look(info, plan['r_nom_usec'])
         keep = protected_paths(info, {looks[n]['boundary']} if looks.get(n) else set())
         doc['checkpoints'] = [i for i in doc['checkpoints'] if i['path'] not in keep]
+        c = plan['chains'][n]
+        if replay_sample.sampled(plan['stage'], c['arm']):  # selected updates not yet staged keep their files
+            sample = replay_sample.protected(root, c['arm'], n, c['seed_root'], info['chain'], fresh)
+            doc['trajectories'] = [i for i in doc['trajectories'] if i['path'] not in sample]
         (root / 'retention').mkdir(parents=True, exist_ok=True)
         removed = retention.apply(doc, root / 'retention' / f'{n}.jsonl')
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
