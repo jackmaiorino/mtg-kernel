@@ -111,6 +111,13 @@ pub(crate) const R1_SAME_NAME_BATCH_DETAIL: &str =
 pub(crate) const R1_SAME_NAME_HAND_DETAIL: &str =
     "a live reference names one of two same-name copies in the opponent's hand that V cannot tell apart";
 
+/// R1's detail when the reveal-triggered moves-without-events rule
+/// (amendment 43.8 sections 7 and 8) is the sole test refusing the unit:
+/// the wire subclass `same_name_hand_reveal`, ineligible by definition, not
+/// a C5 fault (lead ruling 19). Any other refusing test keeps the unit C5.
+pub(crate) const R1_SAME_NAME_HAND_REVEAL_DETAIL: &str =
+    "a live reference names an earlier incarnation of a revealed name in the opponent's hand (reveal rule only)";
+
 fn refuse(code: RefusalCodeV1, detail: impl Into<String>) -> ExportErrorV1 {
     ExportErrorV1::refuse(code, detail)
 }
@@ -609,6 +616,141 @@ pub(crate) fn seam_bound_v1(projection: &ProjectionV1, r: &RefV1) -> Option<usiz
     bound
 }
 
+/// An epochless reference beside a reference to the same object at an epoch
+/// V tracked, in the same item (a target and its target contract): it names
+/// that tracked incarnation, so the seam test skips it.
+fn companion_exempt_v1(
+    projection: &ProjectionV1,
+    refs: &[(RefV1, &'static str)],
+    r: &RefV1,
+) -> bool {
+    r.generations.is_empty()
+        && r.container_seq.is_some()
+        && refs.iter().any(|(t, reg)| {
+            *reg == "live"
+                && t.object == r.object
+                && t.container_seq == r.container_seq
+                && !t.generations.is_empty()
+                && t.generations
+                    .iter()
+                    .all(|&g| projection.tracked_at(t.object, g).is_some())
+        })
+}
+
+/// The outcome of amendment 43.8's `same_name_hand` tests over the live
+/// references (amendment 43.10 and lead ruling 19).
+#[derive(Debug, Default)]
+pub(crate) struct SameNameHandV1<'a> {
+    /// The first reference the seam test refuses ([`seam_bound_v1`]): the
+    /// unit refuses `same_name_hand`, a C5 fault.
+    pub seam: Option<&'a RefV1>,
+    /// The references the reveal-triggered rule refuses, in the export's
+    /// order, with their same-item companions (an epochless reference beside
+    /// a refused one names the same incarnation). Lead ruling 19: when no
+    /// other test refuses the unit, it refuses `same_name_hand_reveal`,
+    /// ineligible by definition.
+    pub reveal: Vec<&'a RefV1>,
+}
+
+impl SameNameHandV1<'_> {
+    /// Whether the reveal-triggered rule refuses this reference.
+    pub(crate) fn reveal_refuses(&self, r: &RefV1) -> bool {
+        self.reveal.contains(&r)
+    }
+}
+
+/// Amendment 43.8's reveal-triggered rule for one live reference to an
+/// opponent-owned object.
+fn reveal_rule_v1(projection: &ProjectionV1, r: &RefV1, name: &str) -> bool {
+    // Moves without committed events (an aborted cast back to the hand)
+    // put a copy's native epochs ahead of the walk's, so a reference to
+    // an earlier incarnation of it cannot be placed by the spans. The
+    // engine reveals such a card in the hand; any reveal of a card of
+    // the name in the opponent's hand that is not a search outcome may
+    // be one (the wire cannot tell), so by name, after one, a live
+    // reference to an incarnation of an opponent object of that name
+    // before its current span (or with none) refuses alike (43.7's
+    // desync rule, triggered from V's transcript; Sol design review 1,
+    // finding 2).
+    !r.membership
+        && projection.revealed.iter().any(|d| card_name(*d) == name)
+        && r.generations.iter().any(|&g| {
+            projection
+                .current_span(r.object)
+                .is_none_or(|s| g < s.start_gen)
+        })
+}
+
+/// Amendment 43.8's `same_name_hand` tests over the live references. First
+/// the reveal-triggered rule flags every reference it refuses, then their
+/// same-item epochless companions (an epochless reference beside a flagged
+/// one in the same item names that incarnation); a flagged reference takes
+/// no later test that reads its spans (the rule exists because such a
+/// reference cannot be placed by them). Then every other reference takes
+/// the seam test, in the export's order. Flagging comes first so that no
+/// companion meets the seam test before its flag (Sol code review on lead
+/// ruling 19, finding 1). The export refuses `same_name_hand` on a seam
+/// refusal; the refusal log reads the same function (amendment 43.10).
+pub(crate) fn same_name_hand_v1<'a>(
+    state: &GameState,
+    projection: &ProjectionV1,
+    refs: &'a [(RefV1, &'static str)],
+    opp: PlayerId,
+) -> SameNameHandV1<'a> {
+    let mut out = SameNameHandV1::default();
+    let opp_live =
+        |r: &RefV1, region: &str| region == "live" && state.objects.get(r.object).owner == opp;
+    for (r, region) in refs {
+        if opp_live(r, region)
+            && reveal_rule_v1(
+                projection,
+                r,
+                card_name(state.objects.get(r.object).card_def),
+            )
+        {
+            out.reveal.push(r);
+        }
+    }
+    let flagged: Vec<&RefV1> = out.reveal.clone();
+    for (r, region) in refs {
+        if *region == "live"
+            && r.generations.is_empty()
+            && r.container_seq.is_some()
+            && !out.reveal_refuses(r)
+            && flagged
+                .iter()
+                .any(|t| t.object == r.object && t.container_seq == r.container_seq)
+        {
+            out.reveal.push(r);
+        }
+    }
+    for (r, region) in refs {
+        if !opp_live(r, region) || out.reveal_refuses(r) {
+            continue;
+        }
+        let name = card_name(state.objects.get(r.object).card_def);
+        // An epochless reference beside a reference to the same object at
+        // an epoch V tracked, in the same item (a target and its target
+        // contract), names that tracked incarnation: as that reference. The
+        // same item, not another item of the same source (Sol code review
+        // 1 on 43.8, finding 2).
+        if companion_exempt_v1(projection, refs, r) {
+            continue;
+        }
+        if let Some(b) = seam_bound_v1(projection, r) {
+            if projection
+                .seams
+                .iter()
+                .any(|(item, d)| *item > b && card_name(*d) == name)
+            {
+                out.seam = Some(r);
+                return out;
+            }
+        }
+    }
+    out
+}
+
 /// The exported state of one viewer at one decision.
 pub(crate) fn export_v1(
     input: &ExportInputV1<'_>,
@@ -782,75 +924,51 @@ pub(crate) fn export_v1(
     // opponent's hand in V's transcript after the reference's creation
     // bound. It reads V's transcript only and runs before every test that
     // reads spans.
-    for (r, region) in &refs {
-        if *region != "live" {
-            continue;
-        }
-        let o = state.objects.get(r.object);
-        if o.owner != opp {
-            continue;
-        }
-        let name = card_name(o.card_def);
-        // Moves without committed events (an aborted cast back to the hand)
-        // put a copy's native epochs ahead of the walk's, so a reference to
-        // an earlier incarnation of it cannot be placed by the spans. The
-        // engine reveals such a card in the hand; any reveal of a card of
-        // the name in the opponent's hand that is not a search outcome may
-        // be one (the wire cannot tell), so by name, after one, a live
-        // reference to an incarnation of an opponent object of that name
-        // before its current span (or with none) refuses alike (43.7's
-        // desync rule, triggered from V's transcript; Sol design review 1,
-        // finding 2).
-        if !r.membership
-            && projection.revealed.iter().any(|d| card_name(*d) == name)
-            && r.generations.iter().any(|&g| {
-                projection
-                    .current_span(r.object)
-                    .is_none_or(|s| g < s.start_gen)
-            })
-        {
-            return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
-        }
-        // An epochless reference beside a reference to the same object at
-        // an epoch V tracked, in the same item (a target and its target
-        // contract), names that tracked incarnation: as that reference. The
-        // same item, not another item of the same source (Sol code review
-        // 1 on 43.8, finding 2).
-        if r.generations.is_empty()
-            && r.container_seq.is_some()
-            && refs.iter().any(|(t, reg)| {
-                *reg == "live"
-                    && t.object == r.object
-                    && t.container_seq == r.container_seq
-                    && !t.generations.is_empty()
-                    && t.generations
-                        .iter()
-                        .all(|&g| projection.tracked_at(t.object, g).is_some())
-            })
-        {
-            continue;
-        }
-        if let Some(b) = seam_bound_v1(&projection, r) {
-            if projection
-                .seams
-                .iter()
-                .any(|(item, d)| *item > b && card_name(*d) == name)
-            {
-                return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
-            }
-        }
+    // Lead ruling 19: a unit the reveal-triggered rule refuses is ineligible
+    // (`same_name_hand_reveal`) only when it is the sole refusing test, so
+    // every other test still runs, on every reference it does not refuse,
+    // and the export refuses with the reveal subclass only where it would
+    // otherwise deliver (the end of this function).
+    let hand = same_name_hand_v1(state, &projection, &refs, opp);
+    if hand.seam.is_some() {
+        return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
     }
+    // A reference the reveal rule refuses, wherever the rewrite meets it
+    // (the state walk or an arena object's own fields): the flagged set, or
+    // the rule itself for an arena reference walked apart. Each use is
+    // recorded, and any use makes the export refuse with the reveal
+    // subclass at its end, never deliver (Sol code review on lead ruling
+    // 19, finding 2).
+    let reveal_used = std::cell::Cell::new(false);
+    let reveal_placeholder = |r: &RefV1| -> bool {
+        let hit = r.class == ClassV1::Live
+            && (hand.reveal_refuses(r)
+                || (state.objects.get(r.object).owner == opp
+                    && reveal_rule_v1(
+                        &projection,
+                        r,
+                        card_name(state.objects.get(r.object).card_def),
+                    )));
+        if hit {
+            reveal_used.set(true);
+        }
+        hit
+    };
 
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
-        if *region == "live" && batch_twin_v1(state, &projection, &bounds, r).is_some() {
+        if *region == "live"
+            && !hand.reveal_refuses(r)
+            && batch_twin_v1(state, &projection, &bounds, r).is_some()
+        {
             return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_BATCH_DETAIL));
         }
     }
 
-    // R1b (a name-level, public-event predicate), then R1 and R2.
+    // R1b (a name-level, public-event predicate), then R1 and R2. A
+    // reference the reveal-triggered rule refused takes none of them.
     for (r, region) in &refs {
-        if *region != "live" {
+        if *region != "live" || hand.reveal_refuses(r) {
             continue;
         }
         for &g in &r.generations {
@@ -891,7 +1009,7 @@ pub(crate) fn export_v1(
         }
     }
     for (r, region) in &refs {
-        if *region != "live" || projection.tracked(r.object) {
+        if *region != "live" || projection.tracked(r.object) || hand.reveal_refuses(r) {
             continue;
         }
         if pinned_untracked.contains(&r.object) || paid_tomb(r) {
@@ -1375,7 +1493,11 @@ pub(crate) fn export_v1(
     {
         let mut resolve = |r: RefV1| -> Result<ResolvedV1, ExportErrorV1> {
             let o = r.object;
-            if paid_tomb(&r) {
+            // Lead ruling 19: a reference the reveal-triggered rule refused
+            // becomes a placeholder tombstone, so that the rest of the export
+            // runs every other test; the export then refuses with the reveal
+            // subclass instead of delivering these bytes.
+            if paid_tomb(&r) || reveal_placeholder(&r) {
                 let def = state.objects.get(o).card_def;
                 let id = tomb_base + tombstones.len() as u32;
                 tombstones.push(template(state.objects.get(o).owner, def, Zone::Command, 0));
@@ -1479,6 +1601,14 @@ pub(crate) fn export_v1(
         let current = state.objects.get(*id).zone_change_count;
         {
             let mut resolve = |r: RefV1| -> Result<ResolvedV1, ExportErrorV1> {
+                // Lead ruling 19: a placeholder (the referencing object's
+                // own handle); these bytes are never delivered.
+                if reveal_placeholder(&r) {
+                    let own = new_id.get(id).copied().ok_or_else(|| {
+                        refuse(RefusalCodeV1::R2, "a tracked object with no handle")
+                    })?;
+                    return Ok(Some((own, vec![0; r.generations.len()])));
+                }
                 let Some(&nid) = new_id.get(&r.object) else {
                     return Err(refuse(
                         RefusalCodeV1::R1,
@@ -1680,6 +1810,11 @@ pub(crate) fn export_v1(
     out.resample_future_randomness_for_search_v3(INFOSET_RNG_SEED_V1);
     crate::effect::refresh_binding_fingerprints_v1(&mut out);
     static_assertions(&out, &handles, v)?;
+    // Lead ruling 19: every other test passed, so the reveal-triggered rule
+    // is the sole refusing test: ineligible by definition, not C5.
+    if !hand.reveal.is_empty() || reveal_used.get() {
+        return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_REVEAL_DETAIL));
+    }
     let bytes = canonical_bytes(&out, &handles);
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     Ok(InfosetV1 {
@@ -2358,8 +2493,30 @@ pub(crate) fn seam_refs_v1(state: &GameState, viewer: PlayerId) -> Vec<String> {
     }
     let mut out = Vec::new();
     let opp = viewer.opponent();
+    // Amendment 43.10: the test that refused, from the export's own
+    // function, first; then the references the seam test reads (the
+    // same-item companion exemption applied).
+    let hand = same_name_hand_v1(state, &projection, &refs, opp);
+    let first = match (hand.seam, hand.reveal.first()) {
+        (Some(r), _) => Some(("seam", r)),
+        (None, Some(r)) => Some(("reveal", *r)),
+        (None, None) => None,
+    };
+    if let Some((branch, r)) = first {
+        out.push(format!(
+            "refused by {branch}: object {} {} gens {:?} paid {} container {:?}",
+            r.object.0,
+            card_name(state.objects.get(r.object).card_def),
+            r.generations,
+            r.paid_cost,
+            r.container,
+        ));
+    }
     for (r, region) in &refs {
         if *region != "live" || state.objects.get(r.object).owner != opp {
+            continue;
+        }
+        if companion_exempt_v1(&projection, &refs, r) {
             continue;
         }
         let Some(b) = seam_bound_v1(&projection, r) else {
