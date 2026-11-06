@@ -41,6 +41,11 @@ impl NativeFlatTensorizerV4 {
         self.scratch.set_state_digest_v1(on);
     }
 
+    /// The canonical observation JSON of the last successful `fill`.
+    pub(crate) fn canonical_observation_v1(&self) -> &[u8] {
+        self.scratch.canonical_observation_v1()
+    }
+
     pub(crate) fn fill(
         &mut self,
         decision: FlatScoringDecisionViewV4<'_>,

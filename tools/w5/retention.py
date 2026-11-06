@@ -20,7 +20,8 @@ Rules (frozen in the design):
 - Full states: X chains keep every boundary b with b % 64 == 0. C chains keep b % 4096 == 0, and b % 64 == 0
   within the most recent 4,096 updates. Every other checkpoint is pruned once its segment and the next one are
   complete (a live segment resumes from its own checkpoints and the next segment's source).
-- Trajectories: kept for the most recent 64 complete segments (rolling).
+- Trajectories (`collect/episode-*.json` and their EX1/W5 search-target sidecars `collect/ex1-*.json`): kept for
+  the most recent 64 complete segments (rolling).
 - Projection (C chain): R-hat(t) = CPU(t) + rate(last 24 h, or since launch) x (7 days - t).
 - Snapshots (X chain): from the first update whose ledger passes 0.85 R-hat, every update keeps a weights-only
   snapshot while R_i is open, if (measured snapshot bytes) x (projected updates between 0.85 and 1.10 R-hat) fits
@@ -71,6 +72,8 @@ FULL_STRIDE = 64
 C_LONG_STRIDE = 4096
 C_RECENT = 4096
 TRAJECTORY_SEGMENTS = 64
+# A trajectory and its search-target sidecar roll off together.
+TRAJECTORY_GLOBS = ('*/attempt-*/collect/episode-*.json', '*/attempt-*/collect/ex1-*.json')
 DAY = 86400.0
 HORIZON = 7 * DAY
 SNAPSHOT_TRIGGER = 0.85
@@ -479,7 +482,8 @@ def plan(chain_path, snapshot_from=None, cache=None):
     for s in done[:-TRAJECTORY_SEGMENTS] if len(done) > TRAJECTORY_SEGMENTS else []:
         if cache is not None and s in cache.swept:
             continue
-        found = sorted(Path(segs[s]['root'], 'iterations').glob('*/attempt-*/collect/episode-*.json'))
+        found = sorted(p for pattern in TRAJECTORY_GLOBS
+                       for p in Path(segs[s]['root'], 'iterations').glob(pattern))
         for path in found:
             trajectories.append({'segment': s, 'path': path.as_posix(), 'bytes': path.stat().st_size})
         if cache is not None and not found:

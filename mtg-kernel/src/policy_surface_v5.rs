@@ -406,6 +406,80 @@ pub struct SurfaceContextV1 {
     /// every other decision, so those payloads keep their bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discard: Option<DiscardContextV1>,
+    /// A live optional-cost reshape (amendment 43.9): the paying player, the
+    /// payable sub-costs and the stage. Id-free; absent at every other
+    /// decision, so those payloads keep their bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optional_cost: Option<crate::surface_v2::OptionalCostReshapePublicV2>,
+    /// The surface's one-shot madness reprompt exemption (amendment 43.9):
+    /// the card being cast for its madness cost, in the producer's native
+    /// id until it is renamed to a canonical arena index. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub madness_reprompt: Option<ObjectId>,
+}
+
+/// Amendment 43.9: the import's fail-closed check of a carried
+/// optional-cost record against the imported state: the engine's pending
+/// optional cost is the viewer's, with the same payable sub-costs, and the
+/// `Which` stage is reached only when both are payable.
+pub(crate) fn validate_optional_cost_in_state_v1(
+    o: &crate::surface_v2::OptionalCostReshapePublicV2,
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<(), String> {
+    let Some(pending) = state.engine.pending_optional_cost.as_ref() else {
+        return Err("optional-cost context: no pending optional cost".into());
+    };
+    if o.player != viewer || pending.player != viewer {
+        return Err("optional-cost context: player".into());
+    }
+    if (o.discard_payable, o.sacrifice_payable)
+        != (pending.discard_payable, pending.sacrifice_payable)
+        || !(o.discard_payable || o.sacrifice_payable)
+    {
+        return Err("optional-cost context: payable sub-costs".into());
+    }
+    if o.stage == crate::surface_v2::OptionalCostStagePublicV2::Which
+        && !(o.discard_payable && o.sacrifice_payable)
+    {
+        return Err("optional-cost context: stage".into());
+    }
+    Ok(())
+}
+
+/// Amendment 43.9: the import's fail-closed check of a carried madness
+/// exemption: a tracked (`C:`) card cast by its madness route (its current
+/// incarnation's cast origin) that is the spell being announced. The
+/// exemption is armed when that announcement begins and travels only while
+/// it lasts (Sol design review 2 on cut 2: a card already on the stack
+/// cannot show that its exemption is unconsumed); after it, the producer
+/// still refuses R2 `madness_reprompt`.
+pub(crate) fn validate_madness_reprompt_in_state_v1(
+    card: ObjectId,
+    state: &GameState,
+    handles: &[String],
+) -> Result<(), String> {
+    let tracked = handles
+        .get(card.0 as usize)
+        .is_some_and(|h| h.starts_with("C:"));
+    if card.0 as usize >= state.objects.len() {
+        return Err("madness context: card".into());
+    }
+    let object = state.objects.get(card);
+    let madness = object
+        .v4
+        .spell_cast_origin
+        .as_ref()
+        .is_some_and(|origin| matches!(origin.route, crate::state::SpellCastRouteV4::Madness));
+    let cast = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .is_some_and(|p| p.spell == card);
+    if !tracked || !madness || !cast {
+        return Err("madness context: card".into());
+    }
+    Ok(())
 }
 
 /// A live discard reshape (amendment 43.1 part 2): the discarding player,
@@ -729,6 +803,9 @@ impl PolicySurfaceV5 {
 
     /// None while the surface holds object-naming progress (a combat scan,
     /// a blocker reshape, a Hunter trigger order).
+    // Amendment 43.9: the payload path reads the records directly; tests
+    // and fixture imports still use the plain context.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn infoset_context_v1(&self) -> Option<SurfaceContextV1> {
         if self.scan.is_some() || self.hunter_order_v45.is_some() {
             return None;
@@ -738,6 +815,8 @@ impl PolicySurfaceV5 {
             hunter_order_enabled_v45: self.hunter_order_enabled_v45,
             combat: None,
             discard: None,
+            optional_cost: None,
+            madness_reprompt: None,
         })
     }
 
@@ -753,18 +832,29 @@ impl PolicySurfaceV5 {
             chosen: d.chosen.clone(),
             remaining_needed: d.remaining_needed,
         });
+        // Amendment 43.9: a live optional-cost reshape and the madness
+        // exemption travel as their own records (the madness card in native
+        // ids, renamed by the producer).
+        let optional_cost = public.optional_cost.clone();
+        let madness_reprompt = public.madness_cast_reprompt_exemption;
         let Some(scan) = &self.scan else {
-            if discard.is_none() || self.hunter_order_v45.is_some() || public.blockers.is_some() {
-                return self.infoset_context_v1();
+            if self.hunter_order_v45.is_some() || public.blockers.is_some() {
+                return None;
             }
             return Some(SurfaceContextV1 {
                 scalars: self.inner.infoset_scalars_with_reshapes_v1()?,
                 hunter_order_enabled_v45: self.hunter_order_enabled_v45,
                 combat: None,
                 discard,
+                optional_cost,
+                madness_reprompt,
             });
         };
-        if self.hunter_order_v45.is_some() || discard.is_some() {
+        if self.hunter_order_v45.is_some()
+            || discard.is_some()
+            || optional_cost.is_some()
+            || madness_reprompt.is_some()
+        {
             return None;
         }
         let blockers = public.blockers;
@@ -806,6 +896,8 @@ impl PolicySurfaceV5 {
             hunter_order_enabled_v45: self.hunter_order_enabled_v45,
             combat: Some(combat),
             discard: None,
+            optional_cost: None,
+            madness_reprompt: None,
         })
     }
 
@@ -830,6 +922,19 @@ impl PolicySurfaceV5 {
         } else {
             "other_surface"
         }
+    }
+
+    /// Restores a carried optional-cost record (amendment 43.9).
+    pub(crate) fn set_optional_cost_reshape_v1(
+        &mut self,
+        o: &crate::surface_v2::OptionalCostReshapePublicV2,
+    ) {
+        self.inner.set_optional_cost_reshape_v1(o);
+    }
+
+    /// Restores a carried madness reprompt exemption (amendment 43.9).
+    pub(crate) fn set_madness_reprompt_v1(&mut self, card: ObjectId) {
+        self.inner.set_madness_reprompt_v1(card);
     }
 
     /// Restores a carried discard record (amendment 43.1 part 2) with the

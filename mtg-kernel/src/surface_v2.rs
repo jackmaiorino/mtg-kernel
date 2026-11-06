@@ -731,20 +731,24 @@ impl HarnessSurfaceV2 {
     /// The id-free throttle and mana-activity context the W1 export carries
     /// (`infoset_v1`); None while a reshape or exemption that names objects
     /// is active.
+    // Amendment 43.9: the payload path reads the records directly; tests
+    // and fixture imports still use the plain context.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn infoset_context_v1(&self) -> Option<HarnessSurfaceScalarsV1> {
-        if self.blockers.is_some() || self.discard.is_some() {
+        if self.blockers.is_some()
+            || self.discard.is_some()
+            || self.optional_cost.is_some()
+            || self.madness_cast_reprompt_exemption.is_some()
+        {
             return None;
         }
         self.infoset_scalars_with_reshapes_v1()
     }
 
-    /// As `infoset_context_v1`, while a blocker or discard reshape may be
-    /// active: the payload's combat and discard records (amendment 43.1)
-    /// carry those reshapes themselves.
+    /// The scalars alone, while a reshape or the madness exemption may be
+    /// active: the payload's combat, discard, optional-cost and madness
+    /// records (amendments 43.1 and 43.9) carry those themselves.
     pub(crate) fn infoset_scalars_with_reshapes_v1(&self) -> Option<HarnessSurfaceScalarsV1> {
-        if self.optional_cost.is_some() || self.madness_cast_reprompt_exemption.is_some() {
-            return None;
-        }
         Some(HarnessSurfaceScalarsV1 {
             combat_priority_spent: self.combat_priority_spent,
             combat_priority_round_seen: self.combat_priority_round_seen,
@@ -766,6 +770,27 @@ impl HarnessSurfaceV2 {
             accumulated: b.accumulated.clone(),
             current_attacker: b.current_attacker,
         });
+    }
+
+    /// The optional-cost reshape a carried record restores (amendment 43.9):
+    /// its player, payable sub-costs and stage, which the import checked
+    /// against the imported state's pending optional cost.
+    pub(crate) fn set_optional_cost_reshape_v1(&mut self, o: &OptionalCostReshapePublicV2) {
+        self.optional_cost = Some(OptionalCostReshape {
+            player: o.player,
+            discard_payable: o.discard_payable,
+            sacrifice_payable: o.sacrifice_payable,
+            stage: match o.stage {
+                OptionalCostStagePublicV2::Use => OptionalCostStage::Use,
+                OptionalCostStagePublicV2::Which => OptionalCostStage::Which,
+            },
+        });
+    }
+
+    /// The one-shot madness reprompt exemption a carried record restores
+    /// (amendment 43.9): the card being cast for its madness cost.
+    pub(crate) fn set_madness_reprompt_v1(&mut self, card: ObjectId) {
+        self.madness_cast_reprompt_exemption = Some(card);
     }
 
     /// The discard reshape a carried discard record restores (amendment

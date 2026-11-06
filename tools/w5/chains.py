@@ -319,8 +319,9 @@ def next_source(native):
 
 def quarantine(native, dest_root):
     """mtg-kernel#336: an iteration without complete.json is moved aside, so the run reruns it fresh. Its bulk
-    (trajectories, checkpoints, S containers, and any staging file of an unfinished publication) is regenerable and
-    deleted first, so the attempt keeps only its records and moved-aside attempts never grow a chain's hot bytes."""
+    (trajectories and their ex1 sidecars, checkpoints, S containers, and any staging file of an unfinished
+    publication) is regenerable and deleted first, so the attempt keeps only its records and moved-aside attempts
+    never grow a chain's hot bytes."""
     moved = []
     iterations = Path(native) / 'iterations'
     if not iterations.exists():
@@ -329,8 +330,8 @@ def quarantine(native, dest_root):
         if not (d / 'complete.json').exists():
             for f in sorted(d.rglob('*')):
                 base = f.name.lstrip('.')
-                if f.is_file() and not f.is_symlink() and (base.endswith('.stage') or base.startswith('episode-')
-                                                             or f.suffix == '.bin' or base == 'checkpoint.json'):
+                if f.is_file() and not f.is_symlink() and (base.endswith('.stage') or base.startswith(
+                        ('episode-', 'ex1-')) or f.suffix == '.bin' or base == 'checkpoint.json'):
                     f.unlink()  # a staging file (`.<name>.stage`) is an unfinished publication: never a record
             dest = Path(dest_root) / 'interrupted' / f'{Path(native).name}-{d.name}-{time.time_ns()}'
             dest.parent.mkdir(parents=True, exist_ok=True)
