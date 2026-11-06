@@ -2881,6 +2881,10 @@ fn validate_copy_prefix_for_mode_v1(state: &GameState, mode: ObservationTextMode
 #[path = "rl/complete_copy_prefix_scope_tests.rs"]
 mod complete_copy_prefix_scope_tests;
 
+#[cfg(test)]
+#[path = "rl/effect_order_tests.rs"]
+mod effect_order_tests;
+
 fn public_restricted_mana_v1(
     state: &GameState,
     text_mode: ObservationTextModeV2,
@@ -11013,8 +11017,17 @@ fn continuous_effects_common_v2(
         ))
     })?;
     let mut out = Vec::new();
-    for (host_id, host) in state.objects.iter() {
-        if host.zone != Zone::Battlefield {
+    // Hosts in public battlefield order (seat 0, then seat 1, each in entry
+    // order), never arena order: the effect list is model input in list
+    // order, and arena ids are not a function of the observer's information
+    // (the W1 information-set import renumbers them, so arena order made
+    // the imported and native observations of one state differ).
+    for &host_id in state.players[0]
+        .battlefield
+        .iter()
+        .chain(state.players[1].battlefield.iter())
+    {
+        if state.objects.get(host_id).zone != Zone::Battlefield {
             continue;
         }
         for (equipment_id, equipment) in engine::attached_equipment_profiles(state, host_id) {
