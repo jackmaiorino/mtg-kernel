@@ -1105,6 +1105,8 @@ def rebound_h(opponent_bytes: bytes, import_bytes: bytes, envelope_bytes: bytes,
     envelope changes in that one field (one occurrence of the old head in its bytes); the import and the opponent
     change only in the pin (path and hash) of the file below them. Returns the rebound (envelope, import, opponent)."""
     require(len(head) == 40 and all(c in "0123456789abcdef" for c in head), "the build head must be a full commit")
+    require(Path(envelope_path).is_absolute() and Path(import_path).is_absolute(),
+            "rebound H pins must be absolute paths (the native loader refuses relative ones)")
     opponent, imp, envelope = json.loads(opponent_bytes), json.loads(import_bytes), json.loads(envelope_bytes)
     require(opponent["source"]["play_import"]["sha256"] == sha256_bytes(import_bytes), "the import is not H's")
     require(imp["transfer_envelope"]["sha256"] == sha256_bytes(envelope_bytes), "the envelope is not H's import's")
@@ -1130,7 +1132,7 @@ def rebound_h(opponent_bytes: bytes, import_bytes: bytes, envelope_bytes: bytes,
 def rebind_h(panel_def, import_file, envelope_file, head: str, out) -> dict:
     """H rebound to the floor build's `head`, written under `out` with its record. `import_file` and `envelope_file`
     are Step C's H files at their current location (moved trees), checked against the pins in the panel's opponent."""
-    out = Path(out)
+    out = Path(out).resolve()   # the native loader needs absolute pins (registry_transfer_source.rs)
     require(not (out / "h-rebind.json").exists(), f"{out} already holds an H rebind")
     panel = read_json(panel_def)
     anchor_floor_panel(panel)
@@ -1232,9 +1234,10 @@ def floor_run(floor_path, evaluator, workers: str = FLOOR_WORKERS) -> dict:
     require(floor.get("schema") == FLOOR_SCHEMA, "not an S0 floor")
     require(sha256_file(evaluator) == floor["evaluator"]["sha256"], "the evaluator is not the floor's")
     ladder = [int(x) for x in workers.split(",")]
-    require(ladder and ladder[0] == 1 and all(a < b for a, b in zip(ladder, ladder[1:]))
+    require(len(ladder) >= 2 and ladder[0] == 1 and all(a < b for a, b in zip(ladder, ladder[1:]))
             and all(FLOOR_QUALIFY_SAMPLE % k == 0 for k in ladder),
-            f"the worker ladder starts at 1, increases and divides the {FLOOR_QUALIFY_SAMPLE}-game sample")
+            f"the worker ladder starts at 1, has a parallel count, increases and divides the "
+            f"{FLOOR_QUALIFY_SAMPLE}-game sample (COMPUTE-POLICY item 2)")
     for role in ("s0", "b512"):
         plan_path = checked(floor["plans"][role], f"{role} plan")
         root = plan_path.parent

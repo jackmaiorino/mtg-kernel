@@ -864,6 +864,19 @@ class HRebindTests(unittest.TestCase):
             self.assertEqual(opponent, new_opp)
             with self.assertRaisesRegex(s0.S0Error, "already holds"):
                 s0.rebind_h(panel, moved / "i.json", moved / "e.json", NEW_HEAD, tmp / "h")
+            # A relative --out still writes absolute pins; relative pins are refused by the derivation.
+            cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                rel = s0.rebind_h(panel, moved / "i.json", moved / "e.json", NEW_HEAD, Path("rel-h"))
+            finally:
+                os.chdir(cwd)
+            self.assertTrue(Path(s0.read_json(rel["to"]["import"]["path"])["transfer_envelope"]["path"]).is_absolute())
+            self.assertTrue(Path(s0.read_json(rel["to"]["opponent"]["path"])["source"]["play_import"]["path"])
+                            .is_absolute())
+            opp_bytes = Path(rec["from"]["opponent"]["path"]).read_bytes()
+            with self.assertRaisesRegex(s0.S0Error, "absolute"):
+                s0.rebound_h(opp_bytes, imp.read_bytes(), env.read_bytes(), NEW_HEAD, Path("e.json"), Path("i.json"))
 
     def test_rebind_refusals(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -919,9 +932,29 @@ class HRebindTests(unittest.TestCase):
             exe = tmp / "eval.exe"
             exe.write_bytes(b"x")
             (tmp / "floor.json").write_text(json.dumps({"schema": s0.FLOOR_SCHEMA, "evaluator": s0.pin(exe)}))
-            for bad in ("2,4", "1,4,2", "1,2,3", "1,2,4,8,12"):
+            for bad in ("1", "2,4", "1,4,2", "1,2,3", "1,2,4,8,12"):
                 with self.assertRaisesRegex(s0.S0Error, "worker ladder"):
                     s0.floor_run(tmp / "floor.json", exe, bad)
+            # A valid ladder reaches the runner's qualification unchanged, then the run, for both panels.
+            calls = []
+            for role in ("s0", "b512"):
+                (tmp / role).mkdir()
+                (tmp / role / "plan.json").write_text("{}")
+            floor = {"schema": s0.FLOOR_SCHEMA, "evaluator": s0.pin(exe),
+                     "plans": {r: s0.pin(tmp / r / "plan.json") for r in ("s0", "b512")}}
+            (tmp / "floor.json").write_text(json.dumps(floor))
+
+            def fake_runner(*args):
+                calls.append(args)
+                if args[0] == "qualify":
+                    root = Path(args[args.index("--root") + 1])
+                    root.mkdir(parents=True)
+                    (root / "receipt.json").write_text("{}")
+
+            with mock.patch.object(s0, "runner", fake_runner):
+                s0.floor_run(tmp / "floor.json", exe, "1,2,4,8,16")
+            self.assertEqual([c[0] for c in calls], ["qualify", "run", "qualify", "run"])
+            self.assertTrue(all(c[c.index("--workers") + 1] == "1,2,4,8,16" for c in calls if c[0] == "qualify"))
 
 
 class RecipeTests(unittest.TestCase):
