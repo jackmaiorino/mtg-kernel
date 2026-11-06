@@ -1323,7 +1323,7 @@ fn desynced_receipt_world_with(
     }
     if extra.arena {
         let x = st.stack[i].source;
-        st.objects.get_mut(x).v4.melira_protection_v1 = Some(vec![d_contract.clone()]);
+        st.objects.get_mut(x).v4.melira_protection_v1 = Some(vec![d_contract]);
     }
     if extra.untracked {
         let other = st.players[o.index()]
@@ -1332,7 +1332,7 @@ fn desynced_receipt_world_with(
             .copied()
             .find(|x| st.objects.get(*x).card_def != lembas)
             .expect("a library card of another name");
-        let mut extra = st.stack[i].v4.paid_cost_refs[0].clone();
+        let mut extra = st.stack[i].v4.paid_cost_refs[0];
         extra.object = other;
         extra.zone_change_count = st.objects.get(other).zone_change_count;
         st.stack[i].v4.paid_cost_refs.push(extra);
@@ -1482,7 +1482,7 @@ fn a_second_refusing_test_keeps_a_reveal_unit_c5() {
     );
     eprintln!("out of step, untracked too: D left {d:?} / C left {c:?}");
     assert_eq!(d, c, "the refusal reason agrees whichever copy left");
-    let e = d.as_ref().err().expect("the unit refuses");
+    let e = d.as_ref().expect_err("the unit refuses");
     assert!(
         !e.contains(crate::infoset_v1::export::R1_SAME_NAME_HAND_REVEAL_DETAIL),
         "a second refusing test keeps the unit C5: {e}"

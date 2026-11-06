@@ -655,7 +655,7 @@ pub(crate) struct SameNameHandV1<'a> {
 impl SameNameHandV1<'_> {
     /// Whether the reveal-triggered rule refuses this reference.
     pub(crate) fn reveal_refuses(&self, r: &RefV1) -> bool {
-        self.reveal.iter().any(|f| *f == r)
+        self.reveal.contains(&r)
     }
 }
 
