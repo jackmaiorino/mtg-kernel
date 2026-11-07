@@ -2583,7 +2583,7 @@ def stage0_exit(records, r_nom_usec=None):
         r_source = 'given'
     days = {}
     for name, arm in sorted(arms.items()):
-        if name == 'C':
+        if name not in ('X8', 'XS'):  # the W5 X projections and response (C and the extra C-recipe arms are not X)
             continue
         arm['projected_days_to_r_nom'] = r_nom_usec / arm['box_cpu_usec_per_wall_second_mean'] / retention.DAY
         arm['projected_days_slowest_box'] = r_nom_usec / arm['box_cpu_usec_per_wall_second_min'] / retention.DAY
