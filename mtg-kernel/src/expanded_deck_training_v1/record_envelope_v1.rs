@@ -164,11 +164,7 @@ impl AdmittedV1 {
             return Ok(());
         }
         match self.0 {
-            Some(declared)
-                if record_length_v1(verified, u64::MAX).ok() == Some(declared) =>
-            {
-                Ok(())
-            }
+            Some(declared) if record_length_v1(verified, u64::MAX).ok() == Some(declared) => Ok(()),
             _ => Err("a sealed record differs from the one its batch admitted".into()),
         }
     }
@@ -338,9 +334,16 @@ mod tests {
         let plain = write("plain.json", &[b' '; 1000]);
         let missing = directory.join("missing.json");
         let bound = 512u64 << 20;
-        let seen =
-            admit_batch_v1([big.as_path(), plain.as_path(), missing.as_path(), directory.as_path()], bound)
-                .unwrap();
+        let seen = admit_batch_v1(
+            [
+                big.as_path(),
+                plain.as_path(),
+                missing.as_path(),
+                directory.as_path(),
+            ],
+            bound,
+        )
+        .unwrap();
         assert_eq!(
             seen,
             [
