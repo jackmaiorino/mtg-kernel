@@ -23670,6 +23670,421 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/SaprolingToken.java",
    "is_token": true
+  },
+  {
+   "name": "Undiscovered Paradise",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "premodern-full-english-breakfast",
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "return_to_hand",
+    "untap_step"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UndiscoveredParadise.java"
+  },
+  {
+   "name": "Avatar of Woe",
+   "engine_capability": "full",
+   "mana_cost": "{6}{B}{B}",
+   "mana_value": 8,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Avatar"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "fear",
+    "cost_reduction",
+    "tap",
+    "destroy",
+    "cant_be_regenerated"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AvatarOfWoe.java"
+  },
+  {
+   "name": "Exhume",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "reanimate",
+    "each_player_chooses"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/Exhume.java"
+  },
+  {
+   "name": "Life // Death",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 3,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "split_card",
+    "animate_lands",
+    "reanimate",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LifeDeath.java"
+  },
+  {
+   "name": "Petradon",
+   "engine_capability": "full",
+   "mana_cost": "{6}{R}{R}",
+   "mana_value": 8,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Nightmare",
+    "Beast"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "linked_exile",
+    "leaves_battlefield_trigger",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/Petradon.java"
+  },
+  {
+   "name": "Phantom Nishoba",
+   "engine_capability": "full",
+   "mana_cost": "{5}{G}{W}",
+   "mana_value": 7,
+   "colors": [
+    "W",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Cat",
+    "Beast",
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "trample",
+    "enters_with_counters",
+    "damage_trigger",
+    "damage_prevention"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhantomNishoba.java"
+  },
+  {
+   "name": "Putrid Imp",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Imp"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "discard_cost",
+    "flying",
+    "threshold",
+    "cant_block"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PutridImp.java"
+  },
+  {
+   "name": "Hermit Druid",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Druid"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "tap",
+    "reveal_until",
+    "mill"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HermitDruid.java"
+  },
+  {
+   "name": "Krosan Reclamation",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flashback",
+    "shuffle_graveyard_cards"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KrosanReclamation.java"
+  },
+  {
+   "name": "Karmic Guide",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}{W}",
+   "mana_value": 5,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Angel",
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "protection_from_color",
+    "echo",
+    "etb_trigger",
+    "reanimate"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KarmicGuide.java"
+  },
+  {
+   "name": "Battlefield Scrounger",
+   "engine_capability": "full",
+   "mana_cost": "{3}{G}{G}",
+   "mana_value": 5,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Centaur"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "threshold",
+    "graveyard_to_library_cost",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BattlefieldScrounger.java"
+  },
+  {
+   "name": "Reflecting Pool",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G",
+    "C"
+   ],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "any_type_a_land_could_produce"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/ReflectingPool.java"
+  },
+  {
+   "name": "Phyrexian Devourer",
+   "engine_capability": "full",
+   "mana_cost": "{6}",
+   "mana_value": 6,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Construct"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "state_trigger",
+    "exile_top_cost",
+    "counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianDevourer.java"
   }
  ]
 }

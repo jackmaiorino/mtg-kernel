@@ -10,15 +10,6 @@ use crate::state::{GameState, Target, Zone};
 /// The most graveyard cards Krosan Reclamation targets.
 const MOST_CARDS: usize = 2;
 
-/// Whether `target` is one of this module's filters.
-pub(crate) fn owns(target: StandardTargetV1) -> bool {
-    matches!(
-        target,
-        StandardTargetV1::PlayerThenUpToTwoOfTheirGraveyardCardsV1
-            | StandardTargetV1::TwoLandsV1
-    )
-}
-
 /// How many targets this module's filter takes, and how many at least:
 /// a player, then up to two of their graveyard cards (Krosan Reclamation),
 /// or exactly two lands (Petradon).

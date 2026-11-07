@@ -836,7 +836,8 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
-    if let Some(targets) = crate::eternal_premodern_p2c_v1::targets::legal_targets(target, prefix, state)
+    if let Some(targets) =
+        crate::eternal_premodern_p2c_v1::targets::legal_targets(target, prefix, state)
     {
         return targets;
     }

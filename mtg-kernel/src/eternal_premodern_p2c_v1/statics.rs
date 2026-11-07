@@ -1,11 +1,16 @@
-//! Static abilities and engine hooks of the Premodern wave P2c cards:
-//! Akroma's printed protection and Triskelion's "enters with" counters.
+//! Static abilities and engine hooks of the Premodern wave P2c cards.
 
-use super::{AKROMA, TRISKELION};
-use crate::card_def::{mana_color_mask, CARD_DEFS};
-use crate::ids::ObjectId;
+use super::{
+    p2c_state, read_state, AKROMA, AVATAR_OF_WOE, BATTLEFIELD_SCROUNGER, KARMIC_GUIDE,
+    PHANTOM_NISHOBA, PHYREXIAN_DEVOURER, PUTRID_IMP, REFLECTING_POOL, TRISKELION,
+    UNDISCOVERED_PARADISE,
+};
+use crate::card_def::{mana_color_mask, CardType, CARD_DEFS};
+use crate::eternal_legacy_e9a_v1::{active_named, live_link, TurnV1};
+use crate::event::{self, DamageProposed, ProposedEvent};
+use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
-use crate::state::GameState;
+use crate::state::{GameState, Target, Zone};
 
 fn name_of(state: &GameState, object: ObjectId) -> Option<&'static str> {
     let live = state.objects.try_get(object)?;
@@ -14,40 +19,65 @@ fn name_of(state: &GameState, object: ObjectId) -> Option<&'static str> {
         .map(|def| def.name)
 }
 
-/// Akroma's "protection from black and from red", as a color mask.
+/// Threshold: seven or more cards in `player`'s graveyard.
+fn threshold(state: &GameState, player: PlayerId) -> bool {
+    crate::effect::controller_graveyard_card_count(state, player) >= 7
+}
+
+/// The definition id of Phyrexian Devourer, if the catalog has it.
+pub(crate) fn devourer_id() -> Option<u16> {
+    static ID: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    *ID.get_or_init(|| crate::card_def::card_id_by_name(PHYREXIAN_DEVOURER))
+}
+
+/// Whether `object` is a Phantom Nishoba on the battlefield (or one that
+/// just left, for the damage it dealt).
+pub(crate) fn is_nishoba(state: &GameState, object: ObjectId) -> bool {
+    name_of(state, object) == Some(PHANTOM_NISHOBA)
+}
+
+/// Printed protection from colors, as a color mask: Akroma ("protection
+/// from black and from red") and Karmic Guide ("protection from black").
 pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
-    if name_of(state, host) == Some(AKROMA)
-        && crate::eternal_premodern_p1b_v1::active_named(state, host, AKROMA)
-    {
-        mana_color_mask(ManaColor::B) | mana_color_mask(ManaColor::R)
-    } else {
-        0
+    match name_of(state, host) {
+        Some(AKROMA) if active_named(state, host, AKROMA) => {
+            mana_color_mask(ManaColor::B) | mana_color_mask(ManaColor::R)
+        }
+        Some(KARMIC_GUIDE) if active_named(state, host, KARMIC_GUIDE) => {
+            mana_color_mask(ManaColor::B)
+        }
+        _ => 0,
     }
 }
 
-/// Triskelion: "enters with three +1/+1 counters on it."
+/// "Enters with N +1/+1 counters": Triskelion (three) and Phantom Nishoba
+/// (seven).
 pub(crate) fn apply_entry_counters(
     state: &mut GameState,
     object: ObjectId,
     input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
 ) {
-    if name_of(state, object) != Some(TRISKELION) {
-        return;
-    }
+    let count = match name_of(state, object) {
+        Some(TRISKELION) => 3,
+        Some(PHANTOM_NISHOBA) => 7,
+        _ => return,
+    };
     let live = state.objects.get(object);
-    if live.zone != crate::state::Zone::Battlefield || live.v4.face_index != 0 {
+    if live.zone != Zone::Battlefield || live.v4.face_index != 0 {
         return;
     }
     let controller = live.controller;
-    match crate::doubling_season_v48::entry_amount(state, input, controller, 3).and_then(|amount| {
-        state
-            .objects
-            .get(object)
-            .counters
-            .plus1_plus1
-            .checked_add(amount)
-            .ok_or_else(|| "entry counter overflow".to_string())
-    }) {
+    match crate::doubling_season_v48::entry_amount(state, input, controller, count).and_then(
+        |amount| {
+            state
+                .objects
+                .get(object)
+                .counters
+                .plus1_plus1
+                .checked_add(amount)
+                .ok_or_else(|| "entry counter overflow".to_string())
+        },
+    ) {
         Ok(total) => state.objects.get_mut(object).counters.plus1_plus1 = total,
         Err(_) => {
             state.engine.halted = Some((
@@ -55,5 +85,217 @@ pub(crate) fn apply_entry_counters(
                 object,
             ))
         }
+    }
+}
+
+// ---- Undiscovered Paradise ----------------------------------------------------------
+
+/// Called after `land` was tapped for mana: an Undiscovered Paradise owes
+/// its return to hand in its controller's next untap step.
+pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
+    if name_of(state, land) != Some(UNDISCOVERED_PARADISE)
+        || !active_named(state, land, UNDISCOVERED_PARADISE)
+    {
+        return;
+    }
+    let link = live_link(state, land);
+    let returns = &mut p2c_state(state).paradise_returns;
+    if !returns.contains(&link) {
+        returns.push(link);
+    }
+}
+
+/// Untap step: "as you untap your permanents, return Undiscovered Paradise
+/// to its owner's hand". Whether `object` was returned instead of untapped.
+pub(crate) fn return_at_untap(state: &mut GameState, object: ObjectId) -> bool {
+    let Some(p2c) = read_state(state) else {
+        return false;
+    };
+    if p2c.paradise_returns.is_empty() {
+        return false;
+    }
+    let link = live_link(state, object);
+    if !p2c.paradise_returns.contains(&link) || state.objects.get(object).zone != Zone::Battlefield
+    {
+        return false;
+    }
+    p2c_state(state)
+        .paradise_returns
+        .retain(|entry| *entry != link);
+    event::propose_and_commit(state, ProposedEvent::zone_change(object, Zone::Hand));
+    true
+}
+
+// ---- Reflecting Pool ------------------------------------------------------------------
+
+/// Whether a land `player` controls other than a Reflecting Pool could
+/// produce `color` (or colorless) mana right now, ignoring whether it is
+/// tapped.
+pub(crate) fn other_land_could_produce(
+    state: &GameState,
+    player: PlayerId,
+    color: ManaColor,
+) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .any(|land| {
+            let live = state.objects.get(land);
+            if live.zone != Zone::Battlefield
+                || live.controller != player
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, land)
+            {
+                return false;
+            }
+            let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
+                return false;
+            };
+            if def.name == REFLECTING_POOL
+                || !def.has_type(CardType::Land)
+                || !def.has_mana_ability()
+            {
+                return false;
+            }
+            def.primary_mana_ability_choices(live.v4.chosen_color)
+                .contains(&color)
+                || def
+                    .restricted_mana_abilities
+                    .iter()
+                    .any(|restricted| restricted.colors.contains(&color))
+                || def
+                    .additional_mana_abilities
+                    .iter()
+                    .enumerate()
+                    .any(|(index, additional)| {
+                        additional.colors.contains(&color)
+                            && def
+                                .additional_mana_ability_conditions
+                                .get(index)
+                                .copied()
+                                .flatten()
+                                .is_none_or(|condition| {
+                                    crate::engine::mana_ability_condition_holds(
+                                        player, land, condition, state,
+                                    )
+                                })
+                    })
+        })
+}
+
+/// The colors the payment planner may take from a Reflecting Pool: every
+/// type a land its controller controls could produce.
+pub(crate) fn pool_colors(state: &GameState, land: ObjectId) -> Vec<ManaColor> {
+    if name_of(state, land) != Some(REFLECTING_POOL) {
+        return Vec::new();
+    }
+    let controller = state.objects.get(land).controller;
+    [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+        ManaColor::C,
+    ]
+    .into_iter()
+    .filter(|&color| other_land_could_produce(state, controller, color))
+    .collect()
+}
+
+// ---- Life ---------------------------------------------------------------------------
+
+/// The timestamp of the Life that made `object` a 1/1 creature this turn.
+fn life_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
+    let p2c = read_state(state)?;
+    if p2c.life_lands.is_empty() {
+        return None;
+    }
+    let live = state.objects.try_get(object)?;
+    let now = TurnV1::now(state);
+    p2c.life_lands
+        .iter()
+        .find(|(link, turn, _)| {
+            link.object == object
+                && link.zone_change_count == live.zone_change_count
+                && *turn == now
+        })
+        .map(|(_, _, timestamp)| *timestamp)
+}
+
+/// Life: a land it animated is a creature (and still a land).
+pub(crate) fn is_life_land(state: &GameState, object: ObjectId) -> bool {
+    state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| live.zone == Zone::Battlefield)
+        && life_timestamp(state, object).is_some()
+}
+
+/// Life: layer 7b base power and toughness of 1/1.
+pub(crate) fn base_power_toughness(state: &GameState, object: ObjectId) -> Option<(i16, i16, u64)> {
+    life_timestamp(state, object)
+        .filter(|_| is_life_land(state, object))
+        .map(|timestamp| (1, 1, timestamp))
+}
+
+// ---- Combat and power ---------------------------------------------------------------
+
+/// Avatar of Woe's fear ("can't be blocked except by artifact creatures
+/// and/or black creatures") and Putrid Imp's "can't block" with threshold.
+pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
+    if active_named(state, attacker, AVATAR_OF_WOE) {
+        let black =
+            crate::engine::object_color_mask(state, blocker) & mana_color_mask(ManaColor::B) != 0;
+        if !black && !crate::engine::object_has_type(state, blocker, CardType::Artifact) {
+            return false;
+        }
+    }
+    if active_named(state, blocker, PUTRID_IMP)
+        && threshold(state, state.objects.get(blocker).controller)
+    {
+        return false;
+    }
+    true
+}
+
+/// Putrid Imp: "As long as seven or more cards are in your graveyard, it
+/// gets +1/+1."
+pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i128) {
+    if active_named(state, object, PUTRID_IMP)
+        && threshold(state, state.objects.get(object).controller)
+    {
+        (1, 1)
+    } else {
+        (0, 0)
+    }
+}
+
+/// Phantom Nishoba: "If damage would be dealt to this creature, prevent that
+/// damage. Remove a +1/+1 counter from it." Whether `damage` is prevented.
+pub(crate) fn prevent_damage(state: &mut GameState, damage: &DamageProposed) -> bool {
+    let Target::Object(target) = damage.target else {
+        return false;
+    };
+    if damage.amount <= 0 || !active_named(state, target, PHANTOM_NISHOBA) {
+        return false;
+    }
+    let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+    if *counters > 0 {
+        *counters -= 1;
+    }
+    true
+}
+
+/// Activation restrictions: Battlefield Scrounger needs threshold.
+pub(crate) fn activation_allowed(
+    state: &GameState,
+    source: ObjectId,
+    name: &str,
+    ability_index: usize,
+) -> bool {
+    match (name, ability_index) {
+        (BATTLEFIELD_SCROUNGER, 0) => threshold(state, state.objects.get(source).controller),
+        _ => true,
     }
 }

@@ -159,6 +159,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_premodern_p2a_v1::P2aStateV1::is_empty"
     )]
     pub p2a: crate::eternal_premodern_p2a_v1::P2aStateV1,
+    /// Premodern wave P2c's state (`eternal_premodern_p2c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p2c_v1::P2cStateV1::is_empty"
+    )]
+    pub p2c: crate::eternal_premodern_p2c_v1::P2cStateV1,
     /// Premodern wave P2d's state (`eternal_premodern_p2d_v1`).
     #[serde(
         default,
@@ -390,6 +396,8 @@ pub enum EternalOpV1 {
     P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1),
     /// A leaf owned by Premodern wave P2a's module.
     P2aV1(crate::eternal_premodern_p2a_v1::P2aOpV1),
+    /// A leaf owned by Premodern wave P2c's module.
+    P2cV1(crate::eternal_premodern_p2c_v1::P2cOpV1),
     /// A leaf owned by Premodern wave P2d's module.
     P2dV1(crate::eternal_premodern_p2d_v1::P2dOpV1),
     /// A leaf owned by Premodern wave P1a's module.
@@ -451,6 +459,7 @@ impl EternalOpV1 {
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             EternalOpV1::P1bV1(op) => op.contains_player_choice(),
             EternalOpV1::P2aV1(op) => op.contains_player_choice(),
+            EternalOpV1::P2cV1(op) => op.contains_player_choice(),
             EternalOpV1::P2dV1(op) => op.contains_player_choice(),
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
             EternalOpV1::P2bV1(op) => op.contains_player_choice(),
@@ -971,6 +980,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::P1bV1(op) => crate::eternal_premodern_p1b_v1::execute(op, ctx, state),
         EternalOpV1::P2aV1(op) => crate::eternal_premodern_p2a_v1::execute(op, ctx, state),
+        EternalOpV1::P2cV1(op) => crate::eternal_premodern_p2c_v1::execute(op, ctx, state),
         EternalOpV1::P2dV1(op) => crate::eternal_premodern_p2d_v1::execute(op, ctx, state),
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
         EternalOpV1::P2bV1(op) => crate::eternal_premodern_p2b_v1::execute(op, ctx, state),
@@ -1465,6 +1475,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_e9b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_legacy_e9a_v1::statics::blocker_allowed(state, blocker)
         && crate::eternal_premodern_p2d_v1::statics::blocker_allowed(state, blocker)
+        && crate::eternal_premodern_p2c_v1::statics::blocker_allowed(state, attacker, blocker)
         && crate::eternal_premodern_p1a_v1::statics::blocker_allowed(state, attacker, blocker)
 }
 
@@ -1708,6 +1719,8 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_legacy_e9a_v1::delayed_triggers(
         state, events,
     ));
+    // Queues into wave P1a's queue, which is drained below.
+    crate::eternal_premodern_p2c_v1::delayed_triggers(state, events);
     triggers.extend(crate::eternal_premodern_p1b_v1::delayed_triggers(
         state, events,
     ));
@@ -1772,7 +1785,8 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     {
         return true;
     }
-    if e3::delayed_effect_matches(name, effect)
+    if crate::eternal_premodern_p2c_v1::delayed_effect_matches(name, effect)
+        || e3::delayed_effect_matches(name, effect)
         || crate::eternal_e9b_v1::delayed_effect_matches(name, effect)
     {
         return true;
@@ -1827,6 +1841,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_legacy_e7a_v1::begin_turn(state, player);
     crate::eternal_legacy_e8a_v1::begin_turn(state, player);
     crate::eternal_legacy_e9a_v1::begin_turn(state, player);
+    crate::eternal_premodern_p2c_v1::begin_turn(state, player);
     crate::eternal_premodern_p2d_v1::begin_turn(state, player);
     crate::eternal_premodern_p1a_v1::begin_turn(state, player);
     crate::eternal_premodern_p2b_v1::begin_turn(state, player);

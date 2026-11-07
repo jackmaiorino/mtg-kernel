@@ -353,6 +353,8 @@ pub(crate) fn special_activation(
 /// Eumidian Hatchery: "Put a hatchling counter on this land." Called after
 /// `land` was tapped for mana.
 pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
+    // Undiscovered Paradise's return (Premodern wave P2c).
+    crate::eternal_premodern_p2c_v1::statics::after_tapped_for_mana(state, land);
     // Gemstone Mine's mining counters (wave P1a).
     crate::eternal_premodern_p1a_v1::statics::after_tapped_for_mana(state, land);
     if definition_name(state, land) != Some(EUMIDIAN_HATCHERY)
@@ -415,6 +417,9 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     // Shared Triumph's chosen type (wave P2d).
     let triumph = crate::eternal_premodern_p2d_v1::statics::controlled_boost(state, object);
     boost = (boost.0 + triumph.0, boost.1 + triumph.1);
+    // Putrid Imp's threshold (wave P2c).
+    let imp = crate::eternal_premodern_p2c_v1::statics::controlled_boost(state, object);
+    boost = (boost.0 + imp.0, boost.1 + imp.1);
     if active_named(state, object, KNIGHT_OF_THE_RELIQUARY) {
         let lands = graveyard_lands(state, controller);
         boost.0 += lands;

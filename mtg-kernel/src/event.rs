@@ -2879,6 +2879,13 @@ pub fn apply_replacements(
         {
             return None;
         }
+        // Phantom Nishoba (Premodern wave P2c).
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_premodern_p2c_v1::statics::prevent_damage(state, damage)
+        {
+            return None;
+        }
     }
     loop {
         let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))

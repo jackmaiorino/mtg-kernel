@@ -2,7 +2,7 @@
 //! Full English Breakfast cards built so far.
 #![cfg(feature = "eternal-fixtures")]
 
-use mtg_kernel::card_def::{card_id_by_name, CardDef, Keywords, Subtype, CARD_DEFS};
+use mtg_kernel::card_def::{card_id_by_name, CardDef, CardType, Keywords, Subtype, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
@@ -460,4 +460,544 @@ fn verdant_force_makes_a_saproling_in_each_upkeep() {
     assert_eq!(tokens.len(), 1);
     assert_eq!(power_toughness(&state, tokens[0]), (1, 1));
     assert!(controls(&state, P1, "Saproling Token").is_empty());
+}
+
+// ---- Reanimator ------------------------------------------------------------------------
+
+fn fill_graveyard(state: &mut GameState, player: PlayerId, count: usize) {
+    for _ in 0..count {
+        put(state, player, "Island", Zone::Graveyard);
+    }
+}
+
+/// Plays on, attacking with `attackers`, until the blockers are declared;
+/// returns the legal blockers of that decision.
+fn attack_and_get_blockers(
+    state: &mut GameState,
+    attackers: &[ObjectId],
+) -> Vec<(ObjectId, Vec<ObjectId>)> {
+    for _ in 0..200 {
+        match next(state) {
+            Decision::DeclareAttackers { .. } => {
+                act(state, Action::DeclareAttackers(attackers.to_vec()))
+            }
+            Decision::DeclareBlockers { legal_blockers, .. } => return legal_blockers,
+            // No block was possible: the decision never came.
+            Decision::CastSpellOrPass { .. }
+                if matches!(
+                    state.step,
+                    Step::DeclareBlockers | Step::CombatDamage | Step::EndCombat | Step::Main2
+                ) =>
+            {
+                return Vec::new()
+            }
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => act(state, first_answer(other)),
+        }
+    }
+    panic!("blockers were never declared");
+}
+
+#[test]
+fn undiscovered_paradise_taps_for_any_color_and_returns_next_untap_step() {
+    let mut state = islands();
+    let paradise = put(&mut state, P0, "Undiscovered Paradise", Zone::Battlefield);
+    let other = put(&mut state, P0, "Undiscovered Paradise", Zone::Battlefield);
+    next(&mut state);
+    for color in [ManaColor::W, ManaColor::R] {
+        let mut probe = state.clone();
+        act(
+            &mut probe,
+            Action::ActivateManaAbilityChoice(paradise, color),
+        );
+        assert_eq!(mana(&probe, P0, color), 1);
+    }
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(paradise, ManaColor::R),
+    );
+    assert_eq!(mana(&state, P0, ManaColor::R), 1);
+    // The untapped one is not returned: only the tapped-for-mana land is.
+    run_until(&mut state, |s| zone(s, paradise) == Zone::Hand, |_, _| None);
+    assert!(hand_contains(&state, P0, paradise));
+    assert_eq!(zone(&state, other), Zone::Battlefield);
+}
+
+#[test]
+fn reflecting_pool_adds_types_other_lands_could_produce() {
+    let mut state = islands();
+    let pool_land = put(&mut state, P0, "Reflecting Pool", Zone::Battlefield);
+    next(&mut state);
+    assert!(engine::step(
+        &mut state,
+        Action::ActivateManaAbilityChoice(pool_land, ManaColor::G)
+    )
+    .is_err());
+    put(&mut state, P0, "Treva's Ruins", Zone::Battlefield);
+    put(&mut state, P1, "Swamp", Zone::Battlefield);
+    next(&mut state);
+    assert!(engine::step(
+        &mut state,
+        Action::ActivateManaAbilityChoice(pool_land, ManaColor::B)
+    )
+    .is_err());
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(pool_land, ManaColor::U),
+    );
+    assert_eq!(mana(&state, P0, ManaColor::U), 1);
+
+    // The planner can pay with it even while Treva's Ruins is tapped.
+    let mut state = islands();
+    let pool_land = put(&mut state, P0, "Reflecting Pool", Zone::Battlefield);
+    let ruins = put(&mut state, P0, "Treva's Ruins", Zone::Battlefield);
+    state.objects.get_mut(ruins).tapped = true;
+    let study = put(&mut state, P0, "Careful Study", Zone::Hand);
+    assert!(castable(&mut state, study));
+    cast(&mut state, study, &[]);
+    next(&mut state);
+    assert!(state.objects.get(pool_land).tapped);
+}
+
+#[test]
+fn avatar_of_woe_costs_six_less_with_ten_creature_cards_and_has_fear() {
+    let mut state = islands();
+    let avatar = put(&mut state, P0, "Avatar of Woe", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 0);
+    assert!(!castable(&mut state, avatar), "nine creature cards");
+    for _ in 0..5 {
+        put(&mut state, P0, "Llanowar Elves", Zone::Graveyard);
+    }
+    for _ in 0..4 {
+        put(&mut state, P1, "Llanowar Elves", Zone::Graveyard);
+    }
+    put(&mut state, P1, "Island", Zone::Graveyard);
+    assert!(!castable(&mut state, avatar), "nine creature cards");
+    put(&mut state, P1, "Llanowar Elves", Zone::Graveyard);
+    assert!(castable(&mut state, avatar), "ten creature cards in all");
+    cast(&mut state, avatar, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, avatar), Zone::Battlefield);
+    assert_eq!(power_toughness(&state, avatar), (6, 5));
+
+    // Fear: only black and artifact creatures block it.
+    let mut state = islands();
+    let avatar = put(&mut state, P0, "Avatar of Woe", Zone::Battlefield);
+    let green = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let black = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    let artifact = put(&mut state, P1, "Triskelion", Zone::Battlefield);
+    let blockers = attack_and_get_blockers(&mut state, &[avatar]);
+    let can_block = |creature: ObjectId| {
+        blockers
+            .iter()
+            .any(|(attacker, blockers)| *attacker == avatar && blockers.contains(&creature))
+    };
+    assert!(!can_block(green));
+    assert!(can_block(black));
+    assert!(can_block(artifact));
+}
+
+#[test]
+fn avatar_of_woe_destroys_a_creature_that_cannot_regenerate() {
+    let mut state = islands();
+    let avatar = put(&mut state, P0, "Avatar of Woe", Zone::Battlefield);
+    let victim = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    activate(&mut state, avatar, 0, &[Target::Object(victim)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, victim), Zone::Graveyard);
+    assert!(state.objects.get(avatar).tapped);
+}
+
+#[test]
+fn exhume_lets_each_player_choose_a_creature_from_their_graveyard() {
+    let mut state = islands();
+    let exhume = put(&mut state, P0, "Exhume", Zone::Hand);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Graveyard);
+    let piledriver = put(&mut state, P0, "Goblin Piledriver", Zone::Graveyard);
+    let specter = put(&mut state, P1, "Hypnotic Specter", Zone::Graveyard);
+    let angel = put(&mut state, P1, "Exalted Angel", Zone::Graveyard);
+    let spell = put(&mut state, P1, "Careful Study", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    cast(&mut state, exhume, &[]);
+    let mut seats = Vec::new();
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            player,
+            ..
+        } => {
+            seats.push(player);
+            Action::ChooseEffectTarget(legal_targets[1])
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(seats, vec![P0, P1], "the active player chooses first");
+    assert_eq!(zone(&state, piledriver), Zone::Battlefield);
+    assert_eq!(zone(&state, angel), Zone::Battlefield);
+    assert_eq!(zone(&state, elves), Zone::Graveyard);
+    assert_eq!(zone(&state, specter), Zone::Graveyard);
+    assert_eq!(zone(&state, spell), Zone::Graveyard);
+    assert_eq!(state.objects.get(angel).controller, P1);
+
+    // A lone creature card needs no choice, and an empty graveyard is fine.
+    let mut state = islands();
+    let exhume = put(&mut state, P0, "Exhume", Zone::Hand);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    cast(&mut state, exhume, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
+}
+#[test]
+fn life_animates_lands_until_end_of_turn_and_death_reanimates_for_life() {
+    let mut state = islands();
+    let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    let enemy = put(&mut state, P1, "Island", Zone::Battlefield);
+    let card = put(&mut state, P0, "Life // Death", Zone::Hand);
+    assert_eq!(def("Life // Death").mana_value, 3);
+    assert_eq!(
+        def("Life // Death").adventure.as_ref().map(|d| d.name),
+        Some("Death")
+    );
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast_split_half(&mut state, card, 0, &[]);
+    settled(&mut state);
+    for land in [forest, island] {
+        assert!(engine::object_has_type(&state, land, CardType::Creature));
+        assert!(engine::object_has_type(&state, land, CardType::Land));
+        assert!(!engine::object_has_type(&state, land, CardType::Artifact));
+        assert_eq!(power_toughness(&state, land), (1, 1));
+    }
+    assert!(!engine::object_has_type(&state, enemy, CardType::Creature));
+    assert_eq!(zone(&state, card), Zone::Graveyard);
+    // They are lands again after the turn ends.
+    run_until(&mut state, |s| s.active_player == P1, |_, _| None);
+    assert!(!engine::object_has_type(&state, forest, CardType::Creature));
+
+    let mut state = islands();
+    let angel = put(&mut state, P0, "Exalted Angel", Zone::Graveyard);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Graveyard);
+    let card = put(&mut state, P0, "Life // Death", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    cast_split_half(&mut state, card, 1, &[Target::Object(angel)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, angel), Zone::Battlefield);
+    assert_eq!(zone(&state, elves), Zone::Graveyard);
+    assert_eq!(
+        state.players[0].life, 14,
+        "six life for a mana value of six"
+    );
+    assert_eq!(zone(&state, card), Zone::Graveyard);
+}
+
+/// Casts one half of a split card: `half` 0 is the first, 1 the second.
+fn cast_split_half(state: &mut GameState, card: ObjectId, half: usize, targets: &[Target]) {
+    assert!(castable(state, card));
+    act(state, Action::CastSpell(card));
+    let mut targets = targets.iter();
+    loop {
+        match next(state) {
+            Decision::ChooseSpellMode { .. } => act(state, Action::ChooseSpellMode(half as u8)),
+            Decision::ChooseCastMode { options, .. } => act(
+                state,
+                Action::ChooseCastMode(options[half.min(options.len() - 1)]),
+            ),
+            Decision::ChooseTargets { legal_targets, .. } => {
+                let target = targets.next().copied().unwrap_or(legal_targets[0]);
+                assert!(legal_targets.contains(&target), "{target:?}");
+                act(state, Action::ChooseTarget(target));
+            }
+            _ => return,
+        }
+    }
+}
+
+#[test]
+fn petradon_exiles_two_lands_and_returns_them_when_it_leaves() {
+    let mut state = islands();
+    let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
+    let island = put(&mut state, P1, "Island", Zone::Battlefield);
+    let keep = put(&mut state, P1, "Swamp", Zone::Battlefield);
+    let petradon = put(&mut state, P0, "Petradon", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::R], 6);
+    cast(&mut state, petradon, &[]);
+    let mut picks = vec![Target::Object(forest), Target::Object(island)].into_iter();
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            let pick = picks.next().expect("two picks");
+            assert!(legal_targets.contains(&pick), "{pick:?}");
+            Action::ChooseTarget(pick)
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, petradon), Zone::Battlefield);
+    assert_eq!(zone(&state, forest), Zone::Exile);
+    assert_eq!(zone(&state, island), Zone::Exile);
+    assert_eq!(zone(&state, keep), Zone::Battlefield);
+    assert_eq!(power_toughness(&state, petradon), (5, 6));
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    activate(&mut state, petradon, 0, &[]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, petradon), (6, 6));
+
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(petradon, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert_eq!(zone(&state, forest), Zone::Battlefield);
+    assert_eq!(zone(&state, island), Zone::Battlefield);
+    assert_eq!(state.objects.get(forest).controller, P0);
+    assert_eq!(state.objects.get(island).controller, P1, "owner's control");
+}
+
+#[test]
+fn phantom_nishoba_prevents_damage_for_a_counter_and_gains_life() {
+    let mut state = islands();
+    let nishoba = put(&mut state, P0, "Phantom Nishoba", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::W], 5);
+    cast(&mut state, nishoba, &[]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, nishoba), (7, 7));
+    assert!(keyword(&state, nishoba, Keywords::TRAMPLE));
+    let triskelion = put(&mut state, P0, "Triskelion", Zone::Battlefield);
+    state.objects.get_mut(triskelion).counters.plus1_plus1 = 3;
+    activate(&mut state, triskelion, 0, &[Target::Object(nishoba)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(nishoba).damage, 0);
+    assert_eq!(
+        power_toughness(&state, nishoba),
+        (6, 6),
+        "one counter fewer"
+    );
+    assert_eq!(zone(&state, nishoba), Zone::Battlefield);
+
+    // Dealing combat damage gains that much life.
+    state.objects.get_mut(nishoba).summoning_sick = false;
+    run_until(
+        &mut state,
+        |s| s.players[1].life < 20,
+        |_, decision| match decision {
+            Decision::DeclareAttackers { .. } => Some(Action::DeclareAttackers(vec![nishoba])),
+            _ => None,
+        },
+    );
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 14);
+    assert_eq!(state.players[0].life, 26);
+}
+
+#[test]
+fn putrid_imp_gets_threshold_boost_cannot_block_and_flies_for_a_discard() {
+    let mut state = islands();
+    let imp = put(&mut state, P0, "Putrid Imp", Zone::Battlefield);
+    assert_eq!(power_toughness(&state, imp), (1, 1));
+    fill_graveyard(&mut state, P0, 6);
+    assert_eq!(power_toughness(&state, imp), (1, 1));
+    fill_graveyard(&mut state, P0, 1);
+    assert_eq!(power_toughness(&state, imp), (2, 2));
+
+    // With threshold it cannot block; without, it can.
+    for (cards, can_block) in [(7, false), (6, true)] {
+        let mut state = islands();
+        state.active_player = P1;
+        state.priority_player = P1;
+        let imp = put(&mut state, P0, "Putrid Imp", Zone::Battlefield);
+        let attacker = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+        fill_graveyard(&mut state, P0, cards);
+        let blockers = attack_and_get_blockers(&mut state, &[attacker]);
+        let allowed = blockers.iter().any(|(_, list)| list.contains(&imp));
+        assert_eq!(allowed, can_block, "{cards} cards");
+    }
+
+    let mut state = islands();
+    let imp = put(&mut state, P0, "Putrid Imp", Zone::Battlefield);
+    put(&mut state, P0, "Island", Zone::Hand);
+    assert!(!keyword(&state, imp, Keywords::FLYING));
+    activate(&mut state, imp, 0, &[]);
+    settle_with(&mut state, |_, decision| first_answer(decision));
+    assert!(keyword(&state, imp, Keywords::FLYING));
+    assert!(state.players[0].hand.is_empty());
+}
+// ---- Full English Breakfast ------------------------------------------------------------
+
+#[test]
+fn hermit_druid_reveals_until_a_basic_land() {
+    let mut state = game(&["Careful Study"; 20]);
+    let forest = put(&mut state, P0, "Forest", Zone::Library);
+    let first = put(&mut state, P0, "Careful Study", Zone::Library);
+    let second = put(&mut state, P0, "Careful Study", Zone::Library);
+    let druid = put(&mut state, P0, "Hermit Druid", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    activate(&mut state, druid, 0, &[]);
+    settled(&mut state);
+    assert!(hand_contains(&state, P0, forest));
+    assert_eq!(zone(&state, first), Zone::Graveyard);
+    assert_eq!(zone(&state, second), Zone::Graveyard);
+    assert_eq!(state.players[0].graveyard.len(), 2);
+    assert!(state.objects.get(druid).tapped);
+
+    // No basic land: the whole library is revealed and put into the graveyard.
+    let mut state = game(&["Careful Study"; 20]);
+    let druid = put(&mut state, P0, "Hermit Druid", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    activate(&mut state, druid, 0, &[]);
+    settled(&mut state);
+    assert!(state.players[0].library.is_empty());
+    assert_eq!(state.players[0].graveyard.len(), 20);
+    assert!(state.players[0].hand.is_empty());
+}
+
+#[test]
+fn krosan_reclamation_shuffles_up_to_two_cards_and_has_flashback() {
+    let mut state = islands();
+    let reclamation = put(&mut state, P0, "Krosan Reclamation", Zone::Hand);
+    let one = put(&mut state, P0, "Llanowar Elves", Zone::Graveyard);
+    let two = put(&mut state, P0, "Goblin Piledriver", Zone::Graveyard);
+    let three = put(&mut state, P0, "Exalted Angel", Zone::Graveyard);
+    let library = state.players[0].library.len();
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(
+        &mut state,
+        reclamation,
+        &[Target::Player(P0), Target::Object(one), Target::Object(two)],
+    );
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets {
+            can_finish: true, ..
+        } => Action::FinishEffectSelection,
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, one), Zone::Library);
+    assert_eq!(zone(&state, two), Zone::Library);
+    assert_eq!(zone(&state, three), Zone::Graveyard);
+    assert_eq!(state.players[0].library.len(), library + 2);
+    assert_eq!(zone(&state, reclamation), Zone::Graveyard);
+
+    // Flashback {1}{G}: with no target cards, only the player.
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    assert!(castable(&mut state, reclamation));
+    act(&mut state, Action::CastSpell(reclamation));
+    let mut chose_player = false;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { legal_targets, .. } if !chose_player => {
+            chose_player = true;
+            assert!(legal_targets.contains(&Target::Player(P0)));
+            Action::ChooseTarget(Target::Player(P0))
+        }
+        Decision::ChooseTargets {
+            can_finish: true, ..
+        } => Action::FinishEffectSelection,
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, reclamation), Zone::Exile);
+}
+
+#[test]
+fn karmic_guide_reanimates_and_has_echo() {
+    let mut state = islands();
+    let guide = put(&mut state, P0, "Karmic Guide", Zone::Hand);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Graveyard);
+    put(&mut state, P0, "Island", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 3);
+    cast(&mut state, guide, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(elves)]);
+            Action::ChooseTarget(Target::Object(elves))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, guide), Zone::Battlefield);
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
+    assert!(keyword(&state, guide, Keywords::FLYING));
+    let specter = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    assert!(engine::damage_is_prevented_by_protection(
+        &state,
+        specter,
+        Target::Object(guide)
+    ));
+
+    // Unpaid echo sacrifices it in its controller's next upkeep.
+    let turn = state.turn;
+    let mut unpaid = state.clone();
+    run_until(
+        &mut unpaid,
+        |s| s.turn > turn && s.active_player == P0 && s.step == Step::Main1,
+        |_, decision| match decision {
+            Decision::ChooseEffectOption { .. } => Some(Action::ChooseEffectOption(1)),
+            _ => None,
+        },
+    );
+    assert_eq!(zone(&unpaid, guide), Zone::Graveyard);
+    // Paid echo ({3}{W}{W}) keeps it.
+    for _ in 0..3 {
+        put(&mut state, P0, "Island", Zone::Battlefield);
+    }
+    for _ in 0..2 {
+        put(&mut state, P0, "Plains", Zone::Battlefield);
+    }
+    run_until(
+        &mut state,
+        |s| s.turn > turn && s.active_player == P0 && s.step == Step::Main1,
+        |_, decision| match decision {
+            Decision::ChooseEffectOption { .. } => Some(Action::ChooseEffectOption(0)),
+            _ => None,
+        },
+    );
+    assert_eq!(zone(&state, guide), Zone::Battlefield);
+}
+
+#[test]
+fn battlefield_scrounger_needs_threshold_and_moves_three_cards_to_the_library() {
+    let mut state = islands();
+    let scrounger = put(&mut state, P0, "Battlefield Scrounger", Zone::Battlefield);
+    assert_eq!(power_toughness(&state, scrounger), (3, 3));
+    assert!(def("Battlefield Scrounger")
+        .subtypes
+        .contains(&Subtype::Centaur));
+    fill_graveyard(&mut state, P0, 6);
+    assert!(!activatable(&mut state, scrounger, 0), "six cards");
+    fill_graveyard(&mut state, P0, 1);
+    let library = state.players[0].library.len();
+    activate(&mut state, scrounger, 0, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCostTargets { candidates, .. } => Action::ChooseCostTarget(candidates[0]),
+        other => first_answer(other),
+    });
+    assert_eq!(power_toughness(&state, scrounger), (6, 6));
+    assert_eq!(state.players[0].graveyard.len(), 4);
+    assert_eq!(state.players[0].library.len(), library + 3);
+    // Once each turn.
+    fill_graveyard(&mut state, P0, 3);
+    assert!(!activatable(&mut state, scrounger, 0), "once each turn");
+}
+
+#[test]
+fn phyrexian_devourer_grows_by_the_exiled_card_and_is_sacrificed_at_seven_power() {
+    let mut state = islands();
+    let devourer = put(&mut state, P0, "Phyrexian Devourer", Zone::Battlefield);
+    let cheap = put(&mut state, P0, "Unearth", Zone::Library);
+    activate(&mut state, devourer, 0, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, cheap), Zone::Exile);
+    assert_eq!(power_toughness(&state, devourer), (2, 2));
+
+    let big = put(&mut state, P0, "Triskelion", Zone::Library);
+    activate(&mut state, devourer, 0, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, big), Zone::Exile);
+    assert_eq!(zone(&state, devourer), Zone::Graveyard, "power 8");
+
+    // A land exiled adds nothing.
+    let mut state = islands();
+    let devourer = put(&mut state, P0, "Phyrexian Devourer", Zone::Battlefield);
+    activate(&mut state, devourer, 0, &[]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, devourer), (1, 1));
+    assert_eq!(state.players[0].library.len(), 19);
 }
