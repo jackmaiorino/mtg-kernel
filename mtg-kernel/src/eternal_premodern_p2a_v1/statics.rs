@@ -3,12 +3,11 @@
 //! Dragon, Krosan Tusker, Black Vise and Bane of the Living.
 
 use super::{
-    active_named, active_permanents, definition, definition_name, live_link, p2a, p2a_state,
-    queue_trigger, read_state, P2aOpV1, BANE_OF_THE_LIVING, BLACK_VISE, CONTAMINATION,
-    ETERNAL_DRAGON, FORSAKEN_CITY, FUTURE_SIGHT, KROSAN_TUSKER, ROOT_MAZE, STASIS, TAINTED_FIELD,
-    TAINTED_WOOD,
+    active_named, definition_name, live_link, p2a, p2a_state, queue_trigger, read_state, P2aOpV1,
+    BANE_OF_THE_LIVING, BLACK_VISE, CONTAMINATION, ETERNAL_DRAGON, FORSAKEN_CITY, FUTURE_SIGHT,
+    KROSAN_TUSKER, ROOT_MAZE, STASIS, TAINTED_FIELD, TAINTED_WOOD,
 };
-use crate::card_def::{CardType, TargetSpec, CARD_DEFS};
+use crate::card_def::{CardType, CARD_DEFS};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::{Cost, ManaColor, Pip};
 use crate::state::{AbilitySourceContractV4, GameState, Step, Zone};
@@ -322,22 +321,4 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         None,
     );
     Ok(true)
-}
-
-/// The spec used when a hook asks for a trigger without a target.
-#[allow(dead_code)]
-fn no_target() -> TargetSpec {
-    TargetSpec::None
-}
-
-/// The definition of `object`, for hooks that compare printed text.
-#[allow(dead_code)]
-fn def_of(state: &GameState, object: ObjectId) -> Option<&'static crate::card_def::CardDef> {
-    definition(state, object)
-}
-
-/// Whether any active permanent named `name` is on the battlefield.
-#[allow(dead_code)]
-fn any_active(state: &GameState, name: &str) -> bool {
-    active_permanents(state, name, None).next().is_some()
 }

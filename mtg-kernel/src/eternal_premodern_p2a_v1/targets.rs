@@ -23,11 +23,6 @@ pub(crate) fn counts(target: StandardTargetV1) -> Option<(u8, u8)> {
     owns(target).then_some((1 + MOST_CARDS as u8, 1))
 }
 
-/// Whether `target` takes a player in slot `slot`.
-pub(crate) fn player_slot(target: StandardTargetV1, slot: usize) -> bool {
-    owns(target) && slot == 0
-}
-
 /// The legal choices for this module's filter `target` after the chosen
 /// `prefix`, or `None` for every other filter: any player, then the cards in
 /// that player's graveyard not chosen yet.
