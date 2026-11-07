@@ -5,7 +5,7 @@
 use super::*;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Instant;
@@ -277,8 +277,10 @@ pub(super) fn read_trajectories_v1(
     // A file parsed ahead by an idle collection worker yields that parse of
     // exactly these bytes instead of a second one.
     let parsed_ahead = AtomicUsize::new(0);
+    let claimed = AtomicU64::new(0);
     let read = |ordinal: usize| {
         let bytes = read_pinned_bytes(&pins[ordinal])?;
+        let length = claim_record_v1(&claimed, &bytes)?;
         let episode =
             match trajectory_parse_ahead_v1::take_trajectory_v1(&pins[ordinal].sha256, &bytes) {
                 Some(episode) => {
@@ -292,10 +294,7 @@ pub(super) fn read_trajectories_v1(
             };
         // The batch bound counts record bytes, sealed (`record_envelope_v1`)
         // or not.
-        Ok((
-            record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?,
-            episode,
-        ))
+        Ok((length, episode))
     };
     let episodes = if workers == 1 {
         (0..pins.len())
@@ -310,6 +309,24 @@ pub(super) fn read_trajectories_v1(
         pins.len()
     );
     Ok(episodes)
+}
+
+/// Claims `bytes`' record length against a batch's running total `claimed`
+/// and returns it. A sealed file (`record_envelope_v1`) is refused before it
+/// is opened once the claimed total passes the batch bound, so small sealed
+/// files cannot expand past it before the batch check
+/// (`read_trajectory_batch_v1`); plain files are already in memory and keep
+/// exactly their previous checks and errors.
+fn claim_record_v1(claimed: &AtomicU64, bytes: &[u8]) -> Result<u64, String> {
+    let length = record_envelope_v1::record_length_v1(bytes, MAX_FILE_BYTES)?;
+    let total = claimed
+        .fetch_add(length, Ordering::Relaxed)
+        .saturating_add(length);
+    ensure(
+        !record_envelope_v1::is_sealed_v1(bytes) || total <= MAX_BATCH_BYTES,
+        "trajectory batch exceeds 512 MiB CPU ingestion bound",
+    )?;
+    Ok(length)
 }
 
 /// Process-wide cache of loaded opponent models keyed by their pinned source.

@@ -546,3 +546,26 @@ fn phase1_gae_loss_selection_wire_shape_is_exact() {
     let round_tripped: ExpandedLossSelectionV1 = serde_json::from_value(value).unwrap();
     assert_eq!(round_tripped, selection);
 }
+
+/// Sealed records claim their opened length and are refused before opening
+/// once a batch's claims pass the bound; plain records only accumulate (their
+/// bound is checked after reading, as before).
+#[test]
+fn sealed_records_claim_their_opened_length_against_the_batch_bound() {
+    use super::super::record_envelope_v1::RecordEnvelopeV1;
+    let record = vec![b' '; 4096];
+    let sealed = RecordEnvelopeV1::Zstd1.seal_v1(&record).unwrap().into_owned();
+    assert!(sealed.len() < record.len());
+    let claimed = AtomicU64::new(0);
+    assert_eq!(claim_record_v1(&claimed, &sealed).unwrap(), 4096);
+    assert_eq!(claim_record_v1(&claimed, &record).unwrap(), 4096);
+    assert_eq!(claimed.load(Ordering::Relaxed), 8192);
+    let near = AtomicU64::new(MAX_BATCH_BYTES - 4096);
+    assert_eq!(claim_record_v1(&near, &sealed).unwrap(), 4096);
+    assert_eq!(
+        claim_record_v1(&near, &sealed).unwrap_err(),
+        "trajectory batch exceeds 512 MiB CPU ingestion bound"
+    );
+    let plain = AtomicU64::new(MAX_BATCH_BYTES);
+    assert_eq!(claim_record_v1(&plain, &record).unwrap(), 4096);
+}

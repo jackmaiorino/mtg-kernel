@@ -123,6 +123,10 @@ enum SlotV1 {
 
 struct EntryV1 {
     bytes: Arc<Vec<u8>>,
+    /// What the entry counts against the retained-bytes bound: its record
+    /// length, which for a sealed file (`record_envelope_v1`) is the opened
+    /// length, so held parses stay bounded as before.
+    charge: usize,
     slots: [SlotV1; 2],
 }
 
@@ -143,7 +147,7 @@ struct StateV1 {
 impl StateV1 {
     fn remove_v1(&mut self, key: &str) {
         if let Some(entry) = self.entries.remove(key) {
-            self.retained_bytes -= entry.bytes.len();
+            self.retained_bytes -= entry.charge;
             self.order.retain(|live| live != key);
         }
     }
@@ -272,20 +276,26 @@ pub(super) fn offer_serialized_v1(
 }
 
 fn insert_v1(sha256: &str, bytes: Vec<u8>, slots: [SlotV1; 2]) {
+    // A plain file is charged its length, as before; a sealed one its record
+    // length, and one whose header is unreadable is never held.
+    let Ok(charge) = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES) else {
+        return;
+    };
+    let charge = charge as usize;
     let shared = shared_v1();
     let mut state = lock_v1(shared);
-    if bytes.len() > PARSE_AHEAD_RETAINED_BYTES_V1 || state.entries.contains_key(sha256) {
+    if charge > PARSE_AHEAD_RETAINED_BYTES_V1 || state.entries.contains_key(sha256) {
         return;
     }
-    while state.retained_bytes + bytes.len() > PARSE_AHEAD_RETAINED_BYTES_V1 {
+    while state.retained_bytes + charge > PARSE_AHEAD_RETAINED_BYTES_V1 {
         let Some(oldest) = state.order.pop_front() else {
             break;
         };
         if let Some(entry) = state.entries.remove(&oldest) {
-            state.retained_bytes -= entry.bytes.len();
+            state.retained_bytes -= entry.charge;
         }
     }
-    state.retained_bytes += bytes.len();
+    state.retained_bytes += charge;
     state.order.push_back(sha256.to_owned());
     for (queue, slot) in state.queues.iter_mut().zip(&slots) {
         if matches!(slot, SlotV1::Queued) {
@@ -296,6 +306,7 @@ fn insert_v1(sha256: &str, bytes: Vec<u8>, slots: [SlotV1; 2]) {
         sha256.to_owned(),
         EntryV1 {
             bytes: Arc::new(bytes),
+            charge,
             slots,
         },
     );
