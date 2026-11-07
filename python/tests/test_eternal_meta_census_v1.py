@@ -43,6 +43,32 @@ class EternalMetaCensusTest(unittest.TestCase):
         self.assertEqual(legacy["decks"][3]["unsupported_mainboard_cards"], ["Lurrus"])
         self.assertEqual(report["union_card_status"], {"full": 1, "fdn_only": 1, "missing": 3})
 
+    def test_full75_share_ranks_missing_sideboard_cards_of_playable_decks(self):
+        snapshot = {"source": "fixture", "captured": "2026-10-26", "formats": {"vintage": [
+            # The companion is listed among the 15, as in the snapshot.
+            {"archetype": "a", "share": 10.0, "mainboard": [[4, "Bolt"]],
+             "sideboard": [[1, "Lurrus"], [2, "Bolt"]], "companion": "Lurrus"},
+            # A card may take two sideboard rows.
+            {"archetype": "b", "share": 6.0, "mainboard": [[4, "Bolt"]],
+             "sideboard": [[1, "Crypt"], [1, "Crypt"], [2, "Priest"]]},
+            {"archetype": "c", "share": 3.0, "mainboard": [[4, "Bolt"]], "sideboard": [[2, "Priest"]]},
+            # An unplayable mainboard adds no sideboard demand.
+            {"archetype": "d", "share": 20.0, "mainboard": [[4, "Daze"]], "sideboard": [[2, "Priest"]]},
+        ]}}
+        report = census.census(snapshot, full={"Bolt", "Lurrus"}, fdn_only={"Crypt"})
+        vintage = report["formats"]["vintage"]
+        self.assertEqual(vintage["playable_share"], 19.0)
+        self.assertEqual(vintage["full75_share"], 10.0)
+        self.assertEqual(vintage["sideboard_unsupported_by_share"],
+                         [["Priest", 9.0, "missing", 2], ["Crypt", 6.0, "fdn_only", 1]])
+        self.assertEqual([row["full75_playable"] for row in vintage["decks"]], [True, False, False, False])
+        self.assertEqual(vintage["decks"][1]["unsupported_sideboard_cards"], ["Crypt", "Priest"])
+        self.assertEqual(vintage["decks"][1]["sideboard_unsupported"], 2)
+        self.assertEqual(report["union_sideboard_unsupported"], 2)
+        text = census.markdown(report, top=5)
+        self.assertIn("| vintage | 4 | 5 | 2 | 1 | 2 | 19.0% of 39.0% | 10.0% |", text)
+        self.assertIn("- Priest (9.0%, 2 decks, missing)", text)
+
     def test_registries_load_with_disjoint_status(self):
         full, fdn_only = census.load_status()
         self.assertIn("Lightning Bolt", full)

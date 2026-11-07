@@ -14,6 +14,12 @@ A deck is playable when every mainboard card and its companion, if it has
 one, are ``full``. Shares are the
 snapshot's metagame percentages, so the playable share is the fraction of the
 field the eternal build can play.
+
+A playable deck's full 75 is playable when its sideboard is ``full`` too. The
+snapshot lists a companion among the sideboard's 15 cards, as tournament
+decklists do, so the companion is required for the mainboard and is not
+counted again as a missing sideboard card. The missing sideboard cards of
+playable decks are ranked by the summed share of the decks that need them.
 """
 
 from __future__ import annotations
@@ -76,10 +82,14 @@ def classify(name: str, full: set[str], fdn_only: set[str]) -> str:
 def census(snapshot: dict[str, Any], full: set[str], fdn_only: set[str]) -> dict[str, Any]:
     formats = {}
     union: dict[str, str] = {}
+    union_sideboard: set[str] = set()
     for fmt, archetypes in snapshot["formats"].items():
         share_by_card: dict[str, float] = defaultdict(float)
+        sideboard_share: dict[str, float] = defaultdict(float)
+        sideboard_decks: dict[str, int] = defaultdict(int)
         rows = []
         playable = 0.0
+        full75 = 0.0
         for archetype in archetypes:
             main = {name for _, name in archetype["mainboard"]}
             if archetype.get("companion"):
@@ -88,8 +98,14 @@ def census(snapshot: dict[str, Any], full: set[str], fdn_only: set[str]) -> dict
             status = {name: classify(name, full, fdn_only) for name in main | side}
             union.update(status)
             missing_main = sorted(name for name in main if status[name] != "full")
+            missing_side = sorted(name for name in side if status[name] != "full")
             if not missing_main:
                 playable += archetype["share"]
+                if not missing_side:
+                    full75 += archetype["share"]
+                for name in missing_side:
+                    sideboard_share[name] += archetype["share"]
+                    sideboard_decks[name] += 1
             for name, value in status.items():
                 if value != "full":
                     share_by_card[name] += archetype["share"]
@@ -98,9 +114,12 @@ def census(snapshot: dict[str, Any], full: set[str], fdn_only: set[str]) -> dict
                 "share": archetype["share"],
                 "mainboard_distinct": len(main),
                 "mainboard_unsupported": len(missing_main),
-                "sideboard_unsupported": sum(1 for name in side if status[name] != "full"),
+                "sideboard_unsupported": len(missing_side),
                 "unsupported_mainboard_cards": missing_main,
+                "unsupported_sideboard_cards": missing_side,
+                "full75_playable": not missing_main and not missing_side,
             })
+        union_sideboard |= set(sideboard_share)
         distinct = {name for archetype in archetypes for zone in ("mainboard", "sideboard")
                     for _, name in archetype[zone]}
         counts = {key: sum(1 for name in distinct if classify(name, full, fdn_only) == key)
@@ -109,31 +128,43 @@ def census(snapshot: dict[str, Any], full: set[str], fdn_only: set[str]) -> dict
             "archetypes": len(archetypes),
             "listed_share": round(sum(a["share"] for a in archetypes), 1),
             "playable_share": round(playable, 1),
+            "full75_share": round(full75, 1),
             "distinct_cards": len(distinct),
             "card_status": counts,
             "unsupported_by_share": [
                 [name, round(share, 1), classify(name, full, fdn_only)]
                 for name, share in sorted(share_by_card.items(), key=lambda kv: (-kv[1], kv[0]))
             ],
+            # Missing sideboard cards of playable decks: name, summed share,
+            # status and the number of playable decks that list the card.
+            "sideboard_unsupported_by_share": [
+                [name, round(share, 1), classify(name, full, fdn_only), sideboard_decks[name]]
+                for name, share in sorted(sideboard_share.items(), key=lambda kv: (-kv[1], kv[0]))
+            ],
             "decks": rows,
         }
     totals = {key: sum(1 for value in union.values() if value == key) for key in STATUSES}
     return {"schema": "eternal_meta_census/v1", "source": snapshot["source"],
-            "captured": snapshot["captured"], "union_card_status": totals, "formats": formats}
+            "captured": snapshot["captured"], "union_card_status": totals,
+            "union_sideboard_unsupported": len(union_sideboard), "formats": formats}
 
 
 def markdown(report: dict[str, Any], top: int) -> str:
     lines = [f"Snapshot {report['source']} captured {report['captured']}.", "",
-             "| Format | Archetypes | Distinct cards | Full | FDN only | Missing | Playable share |",
-             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
+             "| Format | Archetypes | Distinct cards | Full | FDN only | Missing | Playable share | Full 75 |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for fmt, value in report["formats"].items():
         status = value["card_status"]
         lines.append(f"| {fmt} | {value['archetypes']} | {value['distinct_cards']} | {status['full']} | "
                      f"{status['fdn_only']} | {status['missing']} | {value['playable_share']}% of "
-                     f"{value['listed_share']}% |")
+                     f"{value['listed_share']}% | {value['full75_share']}% |")
     for fmt, value in report["formats"].items():
         lines += ["", f"### {fmt}: unsupported cards by metagame share", ""]
         lines += [f"- {name} ({share}%, {status})" for name, share, status in value["unsupported_by_share"][:top]]
+    for fmt, value in report["formats"].items():
+        lines += ["", f"### {fmt}: unsupported sideboard cards of playable decks", ""]
+        lines += [f"- {name} ({share}%, {decks} decks, {status})"
+                  for name, share, status, decks in value["sideboard_unsupported_by_share"][:top]]
     return "\n".join(lines) + "\n"
 
 
@@ -152,8 +183,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(markdown(report, args.top))
     else:
         for fmt, value in report["formats"].items():
-            print(fmt, value["card_status"], f"playable {value['playable_share']}% of {value['listed_share']}%")
-        print("union", report["union_card_status"])
+            print(fmt, value["card_status"], f"playable {value['playable_share']}% of {value['listed_share']}%,",
+                  f"full 75 {value['full75_share']}%, sideboard missing {len(value['sideboard_unsupported_by_share'])}")
+        print("union", report["union_card_status"], "sideboard missing", report["union_sideboard_unsupported"])
     return 0
 
 
