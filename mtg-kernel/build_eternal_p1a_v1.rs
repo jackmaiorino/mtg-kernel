@@ -232,7 +232,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Weathered Wayfarer" => &WEATHERED_WAYFARER,
         "Wild Mongrel" => &WILD_MONGREL,
         "Withered Wretch" => &WITHERED_WRETCH,
-        _ => super::build_eternal_s1d_v1::activated_ability_recipes_for(name),
+        _ => &[],
     }
 }
 
@@ -309,7 +309,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::AnyPlayer",
             "crate::eternal_premodern_p1a_v1::vision_charm_mill",
         ),
-        _ => return super::build_eternal_s1d_v1::special_for(name),
+        _ => return None,
     })
 }
 
@@ -337,7 +337,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Foil" => "Some(AltCostDef { components: &[CostComponent::DiscardIslandAndAnotherCardV1], condition: AltCostCondition::Always })",
         "Thwart" => "Some(AltCostDef { components: &[CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count: 3, filter: PermanentFilterDef::LandWithSubtype(Subtype::Island) }], condition: AltCostCondition::Always })",
         "Exalted Angel" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 3, x_count: 0 })], condition: AltCostCondition::DisguiseFromHand })",
-        _ => super::build_eternal_s1d_v1::alt_cost_for(name),
+        _ => "None",
     }
 }
 
@@ -379,7 +379,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         "Barbarian Ring" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
         "Skirk Prospector" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(Subtype::Goblin), amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
-        _ => super::build_eternal_s1d_v1::mana_ability_def_for(name),
+        _ => "None",
     }
 }
 
@@ -391,21 +391,21 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
 pub(super) fn adventure_for(name: &str) -> &'static str {
     match name {
         "Fire // Ice" => "Some(AdventureDef { name: \"Ice\", cost: Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::AnyPermanent, effect: ability_effect_program_eternal_premodern_p1a_v1_ice })",
-        _ => super::build_eternal_s1d_v1::adventure_for(name),
+        _ => "None",
     }
 }
 
 pub(super) fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
     match name {
         "Fire // Ice" => Some(program("crate::eternal_premodern_p1a_v1::ice")),
-        _ => super::build_eternal_s1d_v1::adventure_effect_recipe_for(name),
+        _ => None,
     }
 }
 
 pub(super) fn adventure_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Fire // Ice" => Some("Ice"),
-        _ => super::build_eternal_s1d_v1::adventure_face_name_for(name),
+        _ => None,
     }
 }
 
@@ -417,7 +417,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Funeral Charm" => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: crate::eternal_premodern_p1a_v1::funeral_charm_pump })",
         "Vision Charm" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_premodern_p1a_v1::vision_charm_lands })",
-        _ => super::build_eternal_s1d_v1::mode2_for(name),
+        _ => "None",
     }
 }
 
@@ -427,7 +427,7 @@ pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Funeral Charm" => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: crate::eternal_premodern_p1a_v1::funeral_charm_swampwalk })",
         "Vision Charm" => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: crate::eternal_premodern_p1a_v1::vision_charm_phase })",
-        _ => super::build_eternal_s1d_v1::mode3_for(name),
+        _ => "None",
     }
 }
 
@@ -491,6 +491,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Wild Mongrel" => "activated:discard:pump_1_1:becomes_chosen_color",
         "Foil" => "alt:discard_island_and_another;spell:counter_target",
         "Thwart" => "alt:return_three_islands;spell:counter_target",
-        _ => super::build_eternal_s1d_v1::trigger_recipe_for(name),
+        _ => "none",
     }
 }

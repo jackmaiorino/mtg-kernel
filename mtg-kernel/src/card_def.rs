@@ -444,7 +444,7 @@ pub enum Subtype {
     Mystic,
     /// Appended for the eternal catalog's wave S1d (Nylea's Disciple,
     /// Stonehorn Dignitary, Standard Bearer and Coalition Honor Guard).
-    Centaur,
+    Centaur = 360,
     Rhino,
     Flagbearer,
 }
@@ -1066,9 +1066,9 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
-            209 => Subtype::Centaur,
-            210 => Subtype::Rhino,
-            211 => Subtype::Flagbearer,
+            360 => Subtype::Centaur,
+            361 => Subtype::Rhino,
+            362 => Subtype::Flagbearer,
             _ => return None,
         })
     }

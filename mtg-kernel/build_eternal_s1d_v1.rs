@@ -88,7 +88,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Circle of Protection: Blue" => &CIRCLE_OF_PROTECTION_BLUE,
         "Navigator's Compass" => &NAVIGATORS_COMPASS,
         "Martyr of Sands" => &MARTYR_OF_SANDS,
-        _ => &[],
+        _ => super::build_eternal_e9b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -171,7 +171,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::S1dV1(crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1::ArtifactOrEnchantmentThenUpToOneOtherV1))",
             "crate::eternal_sideboard_s1d_v1::return_to_dust",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e9b_v1::special_for(name),
     })
 }
 
@@ -179,12 +179,12 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Origin of Metalbending" => "Some(ModeDef { target_spec: TargetSpec::ControlledCreature, effect: crate::eternal_sideboard_s1d_v1::origin_of_metalbending_counter })",
-        _ => "None",
+        _ => super::build_eternal_e9b_v1::mode2_for(name),
     }
 }
 
-pub(super) fn mode3_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn mode3_for(name: &str) -> &'static str {
+    super::build_eternal_e9b_v1::mode3_for(name)
 }
 
 /// Overload: the Adventure form of the card, cast from hand for the overload
@@ -229,7 +229,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Firebending Lesson" => Some("{4}"),
-        _ => None,
+        _ => super::build_eternal_e9b_v1::kicker_cost_for(name),
     }
 }
 
@@ -260,7 +260,7 @@ pub(super) fn attachment_for(name: &str) -> &'static str {
 pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str>> {
     match name {
         "Gruul Turf" => Some(vec!["R"]),
-        _ => None,
+        _ => super::build_eternal_e9b_v1::primary_mana_ability_colors(name),
     }
 }
 
@@ -269,7 +269,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         // "{T}: Add {R}{G}." One activation adds both colors at once.
         "Gruul Turf" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::R, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_e9b_v1::mana_ability_def_for(name),
     }
 }
 
@@ -294,6 +294,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "ability:choose_blue_source:prevent_next_damage_to_you_from_it_this_turn"
         }
         "Waterbending Lesson" => "spell:draw_3:discard_unless_waterbend_2",
-        _ => "none",
+        _ => super::build_eternal_e9b_v1::trigger_recipe_for(name),
     }
 }
