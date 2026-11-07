@@ -4,6 +4,9 @@ use super::*;
 use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Model {
