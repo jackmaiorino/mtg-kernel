@@ -2362,7 +2362,13 @@ def drop_trees(plan):
     """A passing record's qualification chains: their segment trees (regenerable bulk) are removed."""
     removed = 0
     for n in plan['chains']:
+        arm_file = plan['arms'][plan['chains'][n]['arm']]['file']['path']
+        scratch_root = read(arm_file).get('scratch_root')
         for seg in sorted(chain_dir(plan['root'], n).glob('seg-*')):
+            if scratch_root and mounted(seg):  # a scratch segment cut by the phase's end: its RAM bulk goes too
+                removed += retention.tree_bytes(seg)
+                unmount(seg)
+                shutil.rmtree(Path(scratch_root) / n / seg.name, ignore_errors=True)
             if seg.is_dir() and not is_link(seg):
                 removed += retention.tree_bytes(seg)
                 shutil.rmtree(seg)
