@@ -22,8 +22,8 @@ draw stream is fixed before any update runs.
 
 Verification (fail closed). A ladder state b > 0 is the output checkpoint of the segment that ends at b: the segment
 must be complete with all L iterations, and its checkpoint must hash to its receipt's pin (`next_source`, as every
-segment's start). The chain's `LADDER.json` records each state's hash at its first use; every later roster build
-requires the same hash, so a rewritten receipt or checkpoint stops the chain instead of changing a roster. Boundary 0
+segment's start). The chain's `LADDER.json` records each state's checkpoint and after-state hashes at its first use;
+every later roster build requires the same hashes, so a rewritten receipt or checkpoint stops the chain instead of changing a roster. Boundary 0
 is the parent's dose pin (checked by the config build). A missing or corrupt state raises `chains.Stop`.
 """
 import copy
@@ -132,17 +132,26 @@ def ladder(parent_source, segments, offset, stride, record_path, next_source, ch
                 raise LadderError(f'the segment ending at ladder boundary {b} ({root}) is not complete')
             try:
                 source = next_source(root)
+                complete = json.loads((root / 'iterations' / f'{seg["updates"] - 1:06d}' / 'complete.json')
+                                      .read_text(encoding='utf-8'))
+                after = json.loads(Path(complete['update']['path']).read_text(encoding='utf-8'))['after_state_sha256']
             except Exception as exc:  # chains.Stop: a missing checkpoint or one that differs from its receipt
                 raise LadderError(f'ladder state {b}: {exc}') from exc
         pinned = source.get('checkpoint')
         if not pinned or not pinned.get('sha256'):
             raise LadderError(f'ladder state {b} has no checkpoint pin')
+        # The checkpoint file hash pins the bytes this chain plays (the file names its own run's paths, so replicas in
+        # other roots differ); the after-state hash is the root-independent identity of the state.
+        entry = {'sha256': pinned['sha256'], 'path': pinned['path'],
+                 'after_state_sha256': None if b == 0 else after}
         have = record['states'].get(str(b))
         if have is None:
-            record['states'][str(b)] = {'sha256': pinned['sha256'], 'path': pinned['path']}
+            record['states'][str(b)] = entry
             added = True
-        elif have['sha256'] != pinned['sha256']:
-            raise LadderError(f'ladder state {b} hashes to {pinned["sha256"]}, recorded {have["sha256"]}')
+        elif (have['sha256'], have.get('after_state_sha256')) != (entry['sha256'], entry['after_state_sha256']):
+            raise LadderError(f'ladder state {b} hashes to {pinned["sha256"]} (after state '
+                              f'{entry["after_state_sha256"]}), recorded {have["sha256"]} '
+                              f'({have.get("after_state_sha256")})')
         out.append((b, source))
     if added:
         record_path.parent.mkdir(parents=True, exist_ok=True)

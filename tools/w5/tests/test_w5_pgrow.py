@@ -174,6 +174,8 @@ class Chains(unittest.TestCase):
                     rec = after[b]
                     pin = {'path': rec['checkpoint']['path'], 'sha256': rec['checkpoint']['sha256']}
                 self.assertEqual(ladder['states'][str(b)]['sha256'], pin['sha256'])
+                self.assertEqual(ladder['states'][str(b)]['after_state_sha256'],
+                                 after[b]['after_state_sha256'] if b else None)
                 if f'ladder-u{b}' in named:
                     self.assertEqual(named[f'ladder-u{b}']['checkpoint'], pin)
         self.assertEqual({o['id'] for it in cfgs[0]['iterations'] for e in it['episodes']
