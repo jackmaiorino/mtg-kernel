@@ -230,7 +230,8 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
             checkpoint_feature_contract_v1(&pin_v1).unwrap()
         );
     }
-    let converted = convert_checkpoint_v1_to_v2(&from(&sealed_v1), &root.join("sealed.ckpt")).unwrap();
+    let converted =
+        convert_checkpoint_v1_to_v2(&from(&sealed_v1), &root.join("sealed.ckpt")).unwrap();
     let converted: PinnedFileV1 = serde_json::from_value(converted["output"].clone()).unwrap();
     assert_eq!(converted.sha256, pin_v2.sha256);
     let exported =
