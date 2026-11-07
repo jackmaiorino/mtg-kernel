@@ -598,7 +598,7 @@ fn masticore_pings_regenerates_and_costs_a_discard_each_upkeep() {
         assert_eq!(zone(&state, card) == Zone::Graveyard, survives);
     }
     // With no card to discard it is sacrificed.
-    let mut state = game(&[]);
+    let mut state = islands();
     let masticore = put(&mut state, P0, "Masticore", Zone::Battlefield);
     to_next_turn(&mut state, |_, _| None);
     assert_eq!(zone(&state, masticore), Zone::Graveyard);

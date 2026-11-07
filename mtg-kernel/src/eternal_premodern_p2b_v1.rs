@@ -121,8 +121,6 @@ pub enum P2bOpV1 {
     /// Caller of the Claw: a 2/2 Bear for each nontoken creature put into
     /// its controller's graveyard from the battlefield this turn.
     CallerBearsV1,
-    /// Yavimaya Granger: may search for a basic land. A choice.
-    GrangerSearchV1,
     /// Echo: pay the echo cost or sacrifice the source. May be a choice.
     EchoUpkeepV1,
     /// Echo: pay the source's echo cost.
@@ -145,7 +143,6 @@ impl P2bOpV1 {
         matches!(
             self,
             Self::SurvivalSearchV1
-                | Self::GrangerSearchV1
                 | Self::EchoUpkeepV1
                 | Self::MasticoreUpkeepV1
         )
@@ -338,9 +335,13 @@ fn acolyte_enters() -> EffectOp {
 }
 
 /// Yavimaya Granger: "you may search your library for a basic land card, put
-/// that card onto the battlefield tapped, then shuffle."
+/// that card onto the battlefield tapped, then shuffle." The search must be
+/// the trigger's own root effect for its choice to authenticate.
 fn granger_enters() -> EffectOp {
-    p2b(P2bOpV1::GrangerSearchV1)
+    EffectOp::SearchLibraryToBattlefieldTapped {
+        player: PlayerRef::Controller,
+        filter: LibraryCardFilter::BasicLand,
+    }
 }
 
 /// Fading: "remove a fade counter from it. If you can't, sacrifice it."
@@ -489,7 +490,6 @@ pub(crate) fn execute(op: &P2bOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         // Choices and frame-pushing leaves run in `drive`.
         P2bOpV1::SurvivalSearchV1
-        | P2bOpV1::GrangerSearchV1
         | P2bOpV1::EchoUpkeepV1
         | P2bOpV1::MasticoreUpkeepV1 => halt(state, ctx.source),
     }
@@ -511,17 +511,6 @@ pub(crate) fn drive(
                 EffectOp::SearchLibraryToHand {
                     player: PlayerRef::Controller,
                     filter: LibraryCardFilter::CardWithTypeV1(CardType::Creature),
-                },
-                &path,
-            );
-            Ok(false)
-        }
-        P2bOpV1::GrangerSearchV1 => {
-            push_frame(
-                continuation,
-                EffectOp::SearchLibraryToBattlefieldTapped {
-                    player: PlayerRef::Controller,
-                    filter: LibraryCardFilter::BasicLand,
                 },
                 &path,
             );
@@ -709,14 +698,14 @@ fn note_upkeep(state: &mut GameState, events: &[CommittedEvent]) {
         let CommittedEvent::UpkeepBegan { player } = *event else {
             continue;
         };
-        let Some(p2b) = read_state(state) else {
+        let Some(owed) = read_state(state).map(|record| record.echo_owed.clone()) else {
             continue;
         };
-        if p2b.echo_owed.is_empty() {
+        if owed.is_empty() {
             continue;
         }
         let (due, waiting): (Vec<_>, Vec<_>) =
-            p2b.echo_owed.iter().copied().partition(|link| {
+            owed.into_iter().partition(|link| {
                 link_live_in(state, *link, Zone::Battlefield)
                     && state.objects.get(link.object).controller == player
             });
