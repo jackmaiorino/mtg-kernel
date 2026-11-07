@@ -197,7 +197,11 @@ class Chains(unittest.TestCase):
         self.run_segments(plan, 'g1', 6)
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '10'}):  # mid segment 2, after the first addition
             self.assertEqual(self.run_segments(plan, 'g2', 6), chains.EXIT_FAILED)
-        (self.node.root / 'chains' / 'g2' / 'LADDER.json').unlink()  # a crash before the record: rebuilt equal
+        record = self.node.root / 'chains' / 'g2' / 'LADDER.json'
+        kept = record.read_bytes()
+        record.unlink()  # a lost record is refused, never pinned again from the current files
+        self.assertEqual(self.run_segments(plan, 'g2', 1), chains.w5box.EXIT_REFUSED)
+        record.write_bytes(kept)
         self.assertEqual(self.run_segments(plan, 'g2', 4), chains.EXIT_ROOM)
         _, r1 = self.records(plan, 'g1')
         _, r2 = self.records(plan, 'g2')

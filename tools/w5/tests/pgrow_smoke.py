@@ -54,11 +54,12 @@ def make(a):
 
 def run_once(arm, path, native, logs, kill_after):
     """The trainer with the reaper beside it (chains.run_reaped); with `kill_after` (iterations of this segment)
-    the trainer's process group is killed once that many iterations have completed."""
+    the trainer's process group is killed once that many iterations have completed. Returns (exit, killed), where
+    killed means a SIGKILL reached the trainer's group and the trainer then exited by that signal."""
     if kill_after is None:
         code, _, _ = chains.run_reaped(arm, path, None, logs, native)
         return code, False
-    stop = threading.Event()
+    stop, sent = threading.Event(), []
 
     def watch():
         while not stop.wait(0.2):
@@ -68,6 +69,7 @@ def run_once(arm, path, native, logs, kill_after):
                         if p.name.isdigit() and Path(p, 'cmdline').read_bytes().split(b'\0')[-2:-1] == \
                                 [str(path).encode()]:
                             os.killpg(int(p.name), signal.SIGKILL)
+                            sent.append(int(p.name))
                     except (OSError, IndexError, ProcessLookupError):
                         pass
                 return
@@ -78,7 +80,7 @@ def run_once(arm, path, native, logs, kill_after):
     finally:
         stop.set()
         t.join()
-    return code, True
+    return code, bool(sent) and code == -signal.SIGKILL
 
 
 def trim(arm, man, native, s):
@@ -112,9 +114,18 @@ def main(argv=None):
     ap.add_argument('--kill-at', type=int)
     ap.add_argument('--out', required=True)
     a = ap.parse_args(argv)
-    root = Path(a.root)
+    root = Path(a.root).resolve()
+    if a.kill_at is not None and not 0 <= a.kill_at < a.segments * a.segment_updates - 1:
+        ap.error('--kill-at must name an update inside the smoke, before its last')
     if root.exists():
-        shutil.rmtree(root)
+        ap.error(f'{root} exists: the smoke writes a fresh root only')
+    node = chains.read(a.node_inputs)
+    owned = [node['root'], node.get('scratch_root')] + [str(Path(node[k]).parent) for k in
+                                                         ('trainer', 'base', 'layout', 'container_tool')]
+    for other in filter(None, owned):
+        o = Path(other).resolve()
+        if root == o or o in root.parents or root in o.parents:
+            ap.error(f'{root} overlaps {o}, which the node production plan uses')
     _, plan = make(a)
     arm = chains.load_arm(plan['arms'][a.arm]['file']['path'])
     man_path = Path(plan['chains']['g1']['manifest'])
@@ -174,8 +185,8 @@ def main(argv=None):
                'affinity': sorted(os.sched_getaffinity(0))}
     chains.write(a.out, receipt)
     print(json.dumps({k: receipt[k] for k in ('wall_seconds', 'mean_per_update_wall_seconds', 'killed')}))
-    return 0 if all(x['complete'] or x['killed'] for x in segs) and len(states) >= a.segments * a.segment_updates \
-        else 1
+    ok = all(x['complete'] or x['killed'] for x in segs) and len(states) >= a.segments * a.segment_updates
+    return 0 if ok and (a.kill_at is None or killed) else 1
 
 
 if __name__ == '__main__':

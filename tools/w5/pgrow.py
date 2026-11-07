@@ -22,9 +22,11 @@ draw stream is fixed before any update runs.
 
 Verification (fail closed). A ladder state b > 0 is the output checkpoint of the segment that ends at b: the segment
 must be complete with all L iterations, and its checkpoint must hash to its receipt's pin (`next_source`, as every
-segment's start). The chain's `LADDER.json` records each state's checkpoint and after-state hashes at its first use;
-every later roster build requires the same hashes, so a rewritten receipt or checkpoint stops the chain instead of changing a roster. Boundary 0
-is the parent's dose pin (checked by the config build). A missing or corrupt state raises `chains.Stop`.
+segment's start). The chain's `LADDER.json` records each state's checkpoint and after-state hashes at its first
+appearance (fsynced with its directory before the segment is appended); a member's later use requires the same
+hashes, and a record that lacks a state the manifest already reached refuses, so a rewritten receipt or checkpoint,
+or a lost record, stops the chain instead of changing a roster. Boundary 0 is the parent's dose pin (checked by the
+config build). A missing or corrupt state raises `chains.Stop`.
 """
 import copy
 import hashlib
@@ -121,6 +123,12 @@ def ladder(parent_source, segments, offset, stride, record_path, next_source, ch
             (chain is not None and record.get('chain') != chain):
         raise LadderError(f'{record_path} is not this chain\'s ladder record at stride {stride}')
     ends = {seg['offset'] + seg['updates']: seg for seg in segments}
+    # Every state to date at the manifest's last segment was recorded (and fsynced) before that segment was appended,
+    # so one missing now means the record was lost or edited: refuse rather than pin it again from current files.
+    if segments:
+        lost = [b for b in boundaries(max(seg['offset'] for seg in segments), stride) if str(b) not in record['states']]
+        if lost:
+            raise LadderError(f'{record_path} lacks established ladder states {lost[:8]}')
     bounds = boundaries(offset, stride)
     members = set(bounds if select is None else select(bounds))
     out, added = [], False
@@ -169,6 +177,12 @@ def ladder(parent_source, segments, offset, stride, record_path, next_source, ch
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, record_path)
+        if os.name != 'nt':  # the rename is durable before the segment that relies on it is appended
+            fd = os.open(record_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
     return out
 
 
