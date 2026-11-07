@@ -149,12 +149,12 @@ def main(argv=None):
         if a.kill_at is not None and not killed and s * a.segment_updates <= a.kill_at < (s + 1) * a.segment_updates:
             kill_after = a.kill_at - s * a.segment_updates + 1
         code, was_kill = run_once(arm, path, native, cdir / 'logs', kill_after)
+        complete = (native / 'completion.json').exists()
         if was_kill:
             cut = s
         if killed and complete and s == cut:
             recovered = True  # the cut segment, reset, completed on a later attempt
         killed = killed or was_kill
-        complete = (native / 'completion.json').exists()
         cfg = chains.read(path)
         rows = sorted((native / 'iterations').glob('*/complete.json'))
         mtimes = [p.stat().st_mtime for p in rows]
