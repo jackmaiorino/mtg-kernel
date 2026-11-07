@@ -1898,8 +1898,12 @@ pub fn enable_public_shroud_v1(state: &mut GameState) {
     state.public_shroud_v1 = true;
 }
 
-/// Each seat's shroud: Solitary Confinement's "You have shroud."
+/// Each seat's shroud: Solitary Confinement's "You have shroud." Only the
+/// eternal catalog has a card that grants it.
 fn public_player_shroud_v1(state: &GameState) -> [bool; 2] {
+    if !cfg!(feature = "eternal-fixtures") {
+        return [false; 2];
+    }
     [PlayerId::P0, PlayerId::P1]
         .map(|player| crate::eternal_premodern_p1b_v1::statics::player_has_shroud(state, player))
 }
