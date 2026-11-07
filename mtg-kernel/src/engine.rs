@@ -8968,6 +8968,10 @@ fn spell_cost_generic_modifiers_v1(
             .saturating_add(crate::eternal_premodern_p1b_v1::statics::spell_tax(
                 state, types, caster,
             ))
+            // Glowrider (Premodern wave P2d).
+            .saturating_add(crate::eternal_premodern_p2d_v1::statics::spell_tax(
+                state, types,
+            ))
     } else {
         increase
     };

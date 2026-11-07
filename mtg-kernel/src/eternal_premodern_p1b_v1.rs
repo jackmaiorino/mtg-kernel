@@ -771,8 +771,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         PARALLAX_WAVE => &WAVE_TRIGGERS,
         SOLITARY_CONFINEMENT => &CONFINEMENT_TRIGGERS,
         TSABOS_WEB => &TSABOS_WEB_TRIGGERS,
-        // Premodern wave P1a names disjoint cards.
-        _ => crate::eternal_premodern_p1a_v1::triggers_for(name),
+        // Premodern wave P2d, then P1a, name disjoint cards.
+        _ => crate::eternal_premodern_p2d_v1::triggers_for(name),
     }
 }
 

@@ -1798,6 +1798,14 @@ pub(crate) fn protected_from_creatures(state: &GameState, target: ObjectId) -> b
         return false;
     };
     let turn = state.turn_key_v1();
+    // Beloved Chaplain's printed protection (Premodern wave P2d).
+    if live.zone == Zone::Battlefield
+        && crate::eternal_premodern_p2d_v1::statics::printed_protection_from_creatures(
+            state, target,
+        )
+    {
+        return true;
+    }
     live.zone == Zone::Battlefield
         && state.eternal_v1.as_ref().is_some_and(|eternal| {
             eternal

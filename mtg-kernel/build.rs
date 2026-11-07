@@ -35,6 +35,7 @@ mod build_eternal_lurrus_v1;
 mod build_eternal_p1a_v1;
 mod build_eternal_p1b_v1;
 mod build_eternal_p2a_v1;
+mod build_eternal_p2d_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -11509,6 +11510,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Specter" => "Subtype::Specter",
         "Shade" => "Subtype::Shade",
         "Mystic" => "Subtype::Mystic",
+        "Soltari" => "Subtype::Soltari",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

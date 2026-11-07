@@ -35,13 +35,14 @@ def _uint(value: Any, field: str) -> int:
 class LimitedClientV1:
     def __init__(self, command: Sequence[str], *, timeout_s: float = 10.0,
                  engine_priority: bool = False, foundations_combat: bool = False,
-                 london_mulligans: bool = False) -> None:
+                 london_mulligans: bool = False, public_shroud: bool = False) -> None:
         if timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE)
         self.timeout_s = timeout_s
-        self.schema_version = 4 if london_mulligans else (3 if foundations_combat else (2 if engine_priority else 1))
+        self.schema_version = (5 if public_shroud else 4 if london_mulligans else
+                               3 if foundations_combat else 2 if engine_priority else 1)
         self.lines: queue.Queue[bytes | None] = queue.Queue()
         self.stderr: deque[bytes] = deque(maxlen=20)
         self.next_request = 0
@@ -109,10 +110,14 @@ class LimitedClientV1:
             raise LimitedSessionError("unexpected Limited combat rules")
         if self.schema_version < 3 and "combat_rules" in reply:
             raise LimitedSessionError("unexpected combat rules in earlier schema")
-        if self.schema_version == 4 and reply.get("mulligan_rules") != "london_v1":
+        if self.schema_version >= 4 and reply.get("mulligan_rules") != "london_v1":
             raise LimitedSessionError("unexpected Limited mulligan rules")
         if self.schema_version < 4 and "mulligan_rules" in reply:
             raise LimitedSessionError("unexpected mulligan rules in earlier schema")
+        if self.schema_version == 5 and reply.get("observation_rules") != "public_shroud_v1":
+            raise LimitedSessionError("unexpected Limited observation rules")
+        if self.schema_version < 5 and "observation_rules" in reply:
+            raise LimitedSessionError("unexpected observation rules in earlier schema")
         if reply.get("request_id") != request["request_id"]:
             raise LimitedSessionError("response request_id mismatch")
         _uint(reply.get("card_db_hash"), "card_db_hash")
@@ -188,10 +193,11 @@ class LimitedClientV1:
 
 def smoke(command: Sequence[str], decks: tuple[ImportedDeck, ImportedDeck], *, seed: int = 1,
           max_steps: int = 4096, engine_priority: bool = False,
-          foundations_combat: bool = False, london_mulligans: bool = False) -> dict[str, Any]:
+          foundations_combat: bool = False, london_mulligans: bool = False,
+          public_shroud: bool = False) -> dict[str, Any]:
     with LimitedClientV1(command, engine_priority=engine_priority,
                          foundations_combat=foundations_combat,
-                         london_mulligans=london_mulligans) as client:
+                         london_mulligans=london_mulligans, public_shroud=public_shroud) as client:
         reply = client.reset(decks, env_seed=seed, max_steps=max_steps)
         for _ in range(max_steps):
             if reply["response_type"] == "terminal":
@@ -214,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=4096)
     modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--public-shroud-v1", action="store_true",
+                       help="opt into schema 5, schema 4 with shroud in the policy observation")
     modes.add_argument("--london-mulligans-v1", action="store_true",
                        help="opt into schema 4, London mulligans and Foundations combat")
     modes.add_argument("--foundations-combat-v1", action="store_true",
@@ -226,7 +234,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("provide two --deck paths, a u64 seed and a positive step bound")
         decks = tuple(parse_dck(path.read_text(encoding="utf-8-sig")) for path in args.deck)
         command = [str(args.binary.resolve())]
-        if args.london_mulligans_v1:
+        if args.public_shroud_v1:
+            command.append("--public-shroud-v1")
+        elif args.london_mulligans_v1:
             command.append("--london-mulligans-v1")
         elif args.foundations_combat_v1:
             command.append("--foundations-combat-v1")
@@ -234,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             command.append("--engine-priority-v1")
         result = smoke(command, decks, seed=args.seed, max_steps=args.max_steps,
                        engine_priority=args.engine_priority_v1, foundations_combat=args.foundations_combat_v1,
-                       london_mulligans=args.london_mulligans_v1)
+                       london_mulligans=args.london_mulligans_v1, public_shroud=args.public_shroud_v1)
         print(json.dumps(result, sort_keys=True, indent=2))
         return 0 if result["terminal"].get("terminal_classification") == "natural" else 2
     except (OSError, ValueError, LimitedSessionError) as exc:

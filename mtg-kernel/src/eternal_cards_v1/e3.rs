@@ -1337,6 +1337,10 @@ pub(crate) fn damage_prevented_by_protection(
                 || crate::eternal_vintage_e7b_v1::statics::protected_from_source(
                     state, object, source,
                 )
+                // Devoted Caretaker (wave P2d).
+                || crate::eternal_premodern_p2d_v1::statics::protected_from_source(
+                    state, object, source,
+                )
         }
         Target::StackItem(_) => false,
     };
@@ -1568,6 +1572,12 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     }
     // Bane of the Living's X (Premodern wave P2a).
     if let Some(decision) = crate::eternal_premodern_p2a_v1::statics::entry_choice_decision(state)
+
+    {
+        return Some(decision);
+    }
+    // Shared Triumph's creature type (Premodern wave P2d).
+    if let Some(decision) = crate::eternal_premodern_p2d_v1::statics::entry_choice_decision(state)
     {
         return Some(decision);
     }
@@ -1659,6 +1669,10 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_premodern_p2a_v1::statics::answer_entry_choice(state, option)? {
+
+        return Ok(());
+    }
+    if crate::eternal_premodern_p2d_v1::statics::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;
@@ -2058,6 +2072,10 @@ pub(crate) fn object_targetable(
                 || crate::eternal_vintage_e7b_v1::statics::protected_from_source(
                     state, object, source,
                 )
+                // Devoted Caretaker (wave P2d).
+                || crate::eternal_premodern_p2d_v1::statics::protected_from_source(
+                    state, object, source,
+                )
         })
     {
         return false;
@@ -2391,6 +2409,10 @@ pub(crate) fn cant_attack(state: &GameState, object: ObjectId) -> bool {
     }
     // Goblin Goon (wave P1a).
     if crate::eternal_premodern_p1a_v1::statics::cant_attack(state, object) {
+        return true;
+    }
+    // Veteran Brawlers (wave P2d).
+    if crate::eternal_premodern_p2d_v1::statics::cant_attack(state, object) {
         return true;
     }
     e3(state).is_some_and(|e3| {

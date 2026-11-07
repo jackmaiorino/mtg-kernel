@@ -219,7 +219,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Bane of the Living" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 3, x_count: 0 })], condition: AltCostCondition::DisguiseFromHand })",
-        _ => super::build_eternal_p1a_v1::alt_cost_for(name),
+        _ => super::build_eternal_p2d_v1::alt_cost_for(name),
     }
 }
 
@@ -227,7 +227,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Dromar's Charm" => "Some(ModeDef { target_spec: TargetSpec::AnySpellOnStack, effect: crate::eternal_premodern_p2a_v1::dromars_charm_counter })",
-        _ => super::build_eternal_p1a_v1::mode2_for(name),
+        _ => super::build_eternal_p2d_v1::mode2_for(name),
     }
 }
 
@@ -236,7 +236,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Dromar's Charm" => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: crate::eternal_premodern_p2a_v1::dromars_charm_shrink })",
-        _ => super::build_eternal_p1a_v1::mode3_for(name),
+        _ => super::build_eternal_p2d_v1::mode3_for(name),
     }
 }
 

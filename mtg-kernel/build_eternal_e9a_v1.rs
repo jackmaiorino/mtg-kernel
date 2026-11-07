@@ -301,7 +301,7 @@ pub(super) fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => super::build_eternal_p1a_v1::flashback_for(name),
+        _ => super::build_eternal_p2d_v1::flashback_for(name),
     }
 }
 
@@ -337,7 +337,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         "Cephalid Coliseum" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
         "Eumidian Hatchery" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfPayLife(1), amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
-        _ => super::build_eternal_p1a_v1::mana_ability_def_for(name),
+        _ => super::build_eternal_p2d_v1::mana_ability_def_for(name),
     }
 }
 

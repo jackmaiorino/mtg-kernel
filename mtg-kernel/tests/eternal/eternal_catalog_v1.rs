@@ -2,6 +2,8 @@
 //! registry unchanged, then `data/eternal_v1/cards_v1.json`. Snapshot decks
 //! whose whole mainboard and companion are Full resolve and play to natural
 //! terminals, with both a fixed action preference and seeded random actions.
+//! Games run on the Limited schema 5 session, whose policy observation
+//! reports shroud on permanents and players.
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
@@ -17,7 +19,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 129] = [
+const PLAYABLE: [(&str, &str); 132] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -184,18 +186,15 @@ const PLAYABLE: [(&str, &str); 129] = [
     ("premodern", "premodern-landstill-uw-control"),
     ("premodern", "premodern-psychatog"),
     ("premodern", "premodern-grow"),
+    ("premodern", "premodern-enchantress"),
+    ("premodern", "premodern-white-weenie"),
+    ("premodern", "premodern-mono-red-control"),
     ("premodern", "premodern-the-rock"),
     ("premodern", "premodern-mono-black-control"),
     ("premodern", "premodern-bw-control"),
     ("premodern", "premodern-stasis"),
     ("premodern", "premodern-other-control"),
 ];
-
-/// Fully supported decks that are not in `PLAYABLE`: the schema 4 public-session
-/// observation has no public keyword representation for a permanent's shroud,
-/// so a session refuses a game where Argothian Enchantress or Sterling Grove
-/// grants it. Representing it is a protocol change.
-const KNOWN_GAP: [(&str, &str); 1] = [("premodern", "premodern-enchantress")];
 
 fn read_json(relative: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -297,7 +296,6 @@ fn playable_snapshot_decks_match_the_tracked_list() {
                 .all(fully_supported)
         })
         .map(|deck| (deck.format.clone(), deck.archetype.clone()))
-        .filter(|key| !KNOWN_GAP.contains(&(key.0.as_str(), key.1.as_str())))
         .collect();
     let expected: BTreeSet<(String, String)> = PLAYABLE
         .iter()
@@ -391,9 +389,10 @@ fn is_companion_action(action: &Value) -> bool {
 /// fails closed while an Escape cast stages its graveyard exile (Sleep of the
 /// Dead, and every nonland card under Underworld Breach) and once an extra
 /// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
-/// Time Vault's ability), and while any permanent has shroud (Sylvan
-/// Safekeeper's ability), so these games never begin either; the engine
-/// paths are covered by the rules tests. Every other action is admitted.
+/// Time Vault's ability), so these games never begin either; the engine
+/// paths are covered by the rules tests. Every other action is admitted:
+/// schema 5 reports shroud (Sylvan Safekeeper's ability, Argothian
+/// Enchantress, Sterling Grove, Solitary Confinement).
 fn session_can_follow(action: &Value, decision: &Value) -> bool {
     let s = &action["semantic"];
     if !matches!(
@@ -410,9 +409,6 @@ fn session_can_follow(action: &Value, decision: &Value) -> bool {
         CARD_DEFS[id].name,
         "Emrakul, the Aeons Torn" | "Time Walk" | "Time Vault"
     ) {
-        return false;
-    }
-    if s["action_kind"] == "activate_ability" && CARD_DEFS[id].name == "Sylvan Safekeeper" {
         return false;
     }
     s["action_kind"] != "cast_spell"
@@ -529,8 +525,8 @@ struct Game {
 /// chosen action kinds and spells cast per seat.
 fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
     const MAX_STEPS: usize = 131_072;
-    let mut server = LimitedJsonlServerV1::new_with_london_mulligans_v1();
-    let mut request = json!({"schema_version":4,"request_type":"reset","request_id":"reset",
+    let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+    let mut request = json!({"schema_version":5,"request_type":"reset","request_id":"reset",
         "decks":decks,"episode_id":seed,"env_seed":seed,
         "max_physical_decisions":65536,"max_policy_steps":MAX_STEPS})
     .to_string();
@@ -673,7 +669,7 @@ last actions:
             )
             .or_default() += 1;
         request =
-            json!({"schema_version":4,"request_type":"step","request_id":format!("step-{index}"),
+            json!({"schema_version":5,"request_type":"step","request_id":format!("step-{index}"),
             "episode_id":decision["episode_id"],"expected_step":decision["step"],
             "selected_index":action["selected_index"],"selected_action_id":action["stable_id"]})
             .to_string();

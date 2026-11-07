@@ -772,6 +772,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::DividedTwoDamageAnyTargetsV1 => ObjF::PlayerOrPermanent,
         S::CreatureManaValueAtMostV1(_) => creature(),
         S::OpponentArtifactV1 => typed(CardType::Artifact),
+        S::ArtifactOrLandV1 | S::ControlledPermanentV1 => ObjF::Permanent,
     }
 }
 
@@ -797,6 +798,7 @@ pub(super) fn standard_target_origin(
         | S::UpToTwoControlledArtifactsOrCreatures
         | S::AttackingClericRogueWarriorOrWizardV1
         | S::AnyNumberControlledNonlandNontokenPermanentsV1
+        | S::ControlledPermanentV1
         | S::TwoControlledArtifactsCreaturesOrLandsV1 => {
             (Some(ZoneF::Battlefield), Some(RelF::You))
         }
@@ -831,6 +833,7 @@ pub(super) fn standard_target_origin(
         | S::UpToOnePlayerV1
         | S::CreaturePowerAtMostTreasureCountersV1
         | S::AssemblyWorkerCreatureV1
+        | S::ArtifactOrLandV1
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
@@ -900,6 +903,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         }
         S::OpponentArtifactV1 => {
             object(out, standard_target_obj(filter), relation, zone);
+        }
+        S::ArtifactOrLandV1 | S::ControlledPermanentV1 => {
+            object(out, standard_target_obj(filter), relation, zone);
+            // Vocabulary gap: an artifact-or-land union has no facet.
+            out.atoms.push(Atom::Opaque);
         }
         S::UpToOnePlayerV1 => {
             out.target(TargetAtom::UpTo);

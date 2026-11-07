@@ -10,14 +10,16 @@ fn main() -> io::Result<()> {
         [flag] if flag == "--engine-priority-v1" => 2,
         [flag] if flag == "--foundations-combat-v1" => 3,
         [flag] if flag == "--london-mulligans-v1" => 4,
+        [flag] if flag == "--public-shroud-v1" => 5,
         _ => {
-            eprintln!("usage: kernel_limited_env [--engine-priority-v1 | --foundations-combat-v1 | --london-mulligans-v1]");
+            eprintln!("usage: kernel_limited_env [--engine-priority-v1 | --foundations-combat-v1 | --london-mulligans-v1 | --public-shroud-v1]");
             std::process::exit(2);
         }
     };
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     let mut server = match mode {
+        5 => LimitedJsonlServerV1::new_with_public_shroud_v1(),
         4 => LimitedJsonlServerV1::new_with_london_mulligans_v1(),
         3 => LimitedJsonlServerV1::new_with_foundations_combat_v1(),
         2 => LimitedJsonlServerV1::new_with_engine_priority_v1(),
