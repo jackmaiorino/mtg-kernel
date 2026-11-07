@@ -105,6 +105,7 @@ class Scratch(unittest.TestCase):
         seg1 = self.cdir / 'seg-00001'
         tmp = self.cdir / '.seg-00000.persist'
         write(tmp / 'completion.json', b'{}')
+        write(tmp / chains.PERSIST_MARKER, b'{}')
         self.native.mkdir(parents=True)  # the empty directory an unmount leaves
         iteration(chains.scratch_dir(self.arm, self.cdir, seg1), 0)
         seg1.mkdir(parents=True)
@@ -125,6 +126,31 @@ class Scratch(unittest.TestCase):
         chains.persist(self.arm, self.native, self.cdir)
         bins = sorted(p.relative_to(self.native).as_posix() for p in self.native.rglob('*.bin'))
         self.assertEqual(bins, ['iterations/000002/attempt-000000/update/s-train-state.bin'])
+
+    def test_settle_discards_an_unmarked_staging_copy(self):
+        root = self.cdir.parent.parent
+        tmp = self.cdir / '.seg-00000.persist'
+        write(tmp / 'completion.json', b'{}')  # a copy cut before its marker
+        self.native.mkdir(parents=True)
+        man = {'segments': [{'root': self.native.as_posix()}]}
+        with mock.patch.object(chains, 'log'):
+            chains.scratch_settle(self.arm, root, self.cdir, man)
+        self.assertFalse(tmp.exists())
+        self.assertFalse((self.native / 'completion.json').exists())
+
+    def test_persist_writes_its_marker(self):
+        iteration(self.target, 0)
+        self.native.mkdir(parents=True)
+        self.mounts.add(self.native)
+        chains.persist(self.arm, self.native, self.cdir)
+        self.assertTrue((self.native / chains.PERSIST_MARKER).exists())
+
+    def test_read_config_reads_the_gzip_form(self):
+        import retention
+        cfg = self.cdir / 'segments' / 'seg-00000.json'
+        write(cfg, b'{"iterations": [1]}')
+        chains.compress_config(cfg)
+        self.assertEqual(retention.read_config(cfg), {'iterations': [1]})
 
     def test_compress_config(self):
         cfg = self.cdir / 'segments' / 'seg-00000.json'

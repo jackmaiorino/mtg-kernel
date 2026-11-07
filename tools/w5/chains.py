@@ -493,6 +493,10 @@ def make_plan(inputs_path):
             scratch_root = inputs.get('scratch_root')
             require(a == 'C' and stage == '0', f'{a}: scratch segments are for C-arm chains (net-8 or S parent) in Stage 0 plans only')
             require(scratch_root and Path(scratch_root).is_absolute(), f'{a}: scratch needs an absolute scratch_root')
+            require(length % retention.FULL_STRIDE == 0 and retention.C_LONG_STRIDE % length == 0,
+                    f'{a}: a scratch segment length divides {retention.C_LONG_STRIDE} and is a multiple of '
+                    f'{retention.FULL_STRIDE}, so segment ends hold every ladder state')
+            require(r_nom is None, f'{a}: scratch keeps no look state (no r_nom_usec)')
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
@@ -789,6 +793,7 @@ SCRATCH_BULK = ('episode-', 'ex1-')
 REAP_EVERY = 0.5
 # Regenerable per-iteration and per-run records (commands, inputs, the run identity) are persisted gzip-compressed
 # as <name>.gz; receipts (complete.json, update.json, collection.json, completion.json) stay plain for the index.
+PERSIST_MARKER = '.scratch-persisted.json'  # written last (fsynced): only a marked staging copy is promoted
 SCRATCH_GZIP = ('collect-command.json', 'update-command.json', 'update-input.json', 'run.json')
 
 
@@ -841,7 +846,7 @@ def persist(arm, native, cdir):
             keep[upd / Path(state['path']).name] = state['sha256']
     tmp = Path(cdir) / f'.{native.name}.persist'
     shutil.rmtree(tmp, ignore_errors=True)
-    copied = 0
+    copied, files = 0, []
     for f in sorted(target.rglob('*')):
         if not f.is_file() or f.is_symlink():
             continue
@@ -857,18 +862,36 @@ def persist(arm, native, cdir):
             dst = dst.with_name(dst.name + '.gz')
             with open(f, 'rb') as src, gzip.open(dst, 'wb', compresslevel=1) as out:
                 shutil.copyfileobj(src, out)
-            copied += dst.stat().st_size
-            continue
-        shutil.copy2(f, dst)
-        copied += f.stat().st_size
+        else:
+            shutil.copy2(f, dst)
+        fsync_path(dst)
+        copied += dst.stat().st_size
+        files.append(dst.relative_to(tmp).as_posix())
     for f, digest in keep.items():
         dst = tmp / f.relative_to(target)
         require(dst.exists() and sha(dst) == digest, f'{dst} is missing or differs from its pin')
     tmp.mkdir(parents=True, exist_ok=True)
-    unmount(native)
-    os.rename(tmp, native)  # replaces the empty segment directory left by the unmount
+    for d in sorted({(tmp / f).parent for f in files} | {tmp}, key=lambda q: -len(q.parts)):
+        fsync_path(d)
+    marker = tmp / PERSIST_MARKER
+    marker.write_text(json.dumps({'files': len(files), 'bytes': copied,
+                                  'kept': {f.relative_to(target).as_posix(): d for f, d in keep.items()}}) + '\n')
+    fsync_path(marker)
+    fsync_path(tmp)
+    with retention.index_lock(Path(cdir) / 'chain.json'):  # supervise's index scans wait out the swap
+        unmount(native)
+        os.rename(tmp, native)  # replaces the empty segment directory left by the unmount
+        fsync_path(native.parent)
     shutil.rmtree(target, ignore_errors=True)
     return copied
+
+
+def fsync_path(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def compress_config(config_path):
@@ -888,9 +911,13 @@ def mounted(native):
     return os.path.ismount(native)
 
 
-def unmount(native):
-    if mounted(native):
-        subprocess.run([shutil.which('umount') or '/bin/umount', str(native)], check=True)
+def unmount(native, tries=20):
+    for _ in range(tries):
+        if not mounted(native):
+            break
+        r = subprocess.run([shutil.which('umount') or '/bin/umount', str(native)], capture_output=True)
+        if r.returncode != 0:
+            time.sleep(0.5)  # EBUSY while a reader holds a file open: retry
     require(not mounted(native) and Path(native).is_dir() and not any(Path(native).iterdir()),
             f'{native} is still mounted or not empty after the unmount')
 
@@ -915,14 +942,20 @@ def run_reaped(arm, config_path, deadline, logs, native):
 
 
 def scratch_settle(arm, root, cdir, man):
-    """Before a segment: finish an interrupted swap, persist any ended scratch segment, and reset an unfinished
-    one (its scratch directory emptied and mounted again, so the trainer starts it fresh)."""
-    for seg in man['segments']:
+    """First in each driver cycle: finish an interrupted swap (only a staging copy whose marker was written),
+    persist an ended scratch segment, and reset an unfinished one (unmounted, its scratch directory removed, so the
+    trainer starts it fresh on a new mount). Only the last two segments can be in these states."""
+    for seg in man['segments'][-2:]:
         native = Path(seg['root'])
         tmp = cdir / f'.{native.name}.persist'
         if tmp.exists() and not mounted(native) and (not native.exists() or not any(native.iterdir())):
-            os.rename(tmp, native)  # the driver stopped between the unmount and the rename
-            log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
+            if (tmp / PERSIST_MARKER).exists():
+                with retention.index_lock(cdir / 'chain.json'):
+                    os.rename(tmp, native)  # the driver stopped between the unmount and the rename
+                log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
+            else:
+                shutil.rmtree(tmp)  # a copy cut before its marker: the segment reruns
+                log(root, chain=cdir.name, event='scratch-staging-discarded', segment=native.name)
         if mounted(native) and (native / 'completion.json').exists():
             n = persist(arm, native, cdir)
             z = compress_config(seg['config']) if seg.get('config') else 0
@@ -979,9 +1012,12 @@ def drive_locked(a, arm, root, cdir, man_path):
         log(root, chain=a.chain, event='launched')
     deadline = man['launched_unix'] + arm['c_wall_seconds'] if arm['recipe'] == 'C' else None
     waiting = None
+    scratch = bool(arm.get('scratch_root'))
     while True:
         if (cdir / 'END.json').exists():
             return 0
+        if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
+            scratch_settle(arm, root, cdir, man)
         if stopped(root, cdir):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
@@ -1003,9 +1039,6 @@ def drive_locked(a, arm, root, cdir, man_path):
             time.sleep(GUARD_POLL)
             continue
         waiting = None
-        scratch = bool(arm.get('scratch_root'))
-        if scratch:
-            scratch_settle(arm, root, cdir, man)
         s, path, native = current_segment(arm, man, man_path, a.ledger_source)
         if scratch:
             scratch_link(arm, cdir, native)
