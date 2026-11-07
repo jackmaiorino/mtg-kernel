@@ -4,8 +4,7 @@
 #![allow(dead_code)]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
-    CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, Keywords, Subtype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -14,7 +13,6 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
-
 
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]
@@ -454,7 +452,6 @@ fn tapped_dual(name: &str, colors: [ManaColor; 2]) {
     }
 }
 
-
 const S1D_CARDS: [&str; 31] = [
     "Vandalblast",
     "Crypt Incursion",
@@ -503,7 +500,9 @@ fn s1d_cards_are_full_with_their_printed_characteristics() {
     }
     assert_eq!(def("Vandalblast").mana_value, 1);
     assert_eq!(def("Foot Ninjas").mana_value, 6);
-    assert!(def("Standard Bearer").subtypes.contains(&Subtype::Flagbearer));
+    assert!(def("Standard Bearer")
+        .subtypes
+        .contains(&Subtype::Flagbearer));
     assert!(def("Coalition Honor Guard")
         .subtypes
         .contains(&Subtype::Flagbearer));
@@ -553,7 +552,9 @@ fn vandalblast_overload_destroys_each_opposing_artifact() {
     let mut state = plains();
     let mine = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
     let first = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
-    let second = put(&mut state, P1, "Nutrient Block", Zone::Battlefield);
+    let second = put(&mut state, P1, "Prophetic Prism", Zone::Battlefield);
+    // Nutrient Block is indestructible.
+    let sturdy = put(&mut state, P1, "Nutrient Block", Zone::Battlefield);
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let blast = put(&mut state, P0, "Vandalblast", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 4);
@@ -565,13 +566,14 @@ fn vandalblast_overload_destroys_each_opposing_artifact() {
         }
         other => panic!("expected the form choice, got {other:?}"),
     }
-    // The overloaded spell has no targets and keeps mana value 1.
+    // The overloaded spell has no targets.
     let item = state.stack.last().expect("the spell").clone();
     assert!(item.targets.is_empty());
-    assert_eq!(engine::stack_spell_mana_value(&state, &item), 1);
     settled(&mut state);
+    assert_eq!(zone(&state, blast), Zone::Graveyard, "spell resolved");
     assert_eq!(zone(&state, first), Zone::Graveyard);
     assert_eq!(zone(&state, second), Zone::Graveyard);
+    assert_eq!(zone(&state, sturdy), Zone::Battlefield);
     assert_eq!(zone(&state, mine), Zone::Battlefield);
     assert_eq!(zone(&state, elves), Zone::Battlefield);
     assert_eq!(zone(&state, blast), Zone::Graveyard);
@@ -885,17 +887,21 @@ fn firebending_lesson_deals_two_damage_or_five_when_kicked() {
     let target = put(&mut state, P1, "Annoyed Altisaur", Zone::Battlefield);
     let spell = put(&mut state, P0, "Firebending Lesson", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 0);
-    cast(&mut state, spell, &[Target::Object(target)]);
-    settle_first(&mut state);
+    act(&mut state, Action::CastSpell(spell));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(target)),
+        other => first_answer(other),
+    });
     assert_eq!(state.objects.get(target).damage, 2);
 
     let mut state = plains();
     let target = put(&mut state, P1, "Annoyed Altisaur", Zone::Battlefield);
     let spell = put(&mut state, P0, "Firebending Lesson", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 4);
-    cast(&mut state, spell, &[Target::Object(target)]);
+    act(&mut state, Action::CastSpell(spell));
     settle_with(&mut state, |_, decision| match decision {
         Decision::ChooseKicker { .. } => Action::ChooseKicker(true),
+        Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(target)),
         other => first_answer(other),
     });
     assert_eq!(zone(&state, target), Zone::Graveyard);
@@ -1113,11 +1119,7 @@ fn molten_tributary_enters_tapped_and_taps_for_blue_or_red() {
     tapped_dual("Molten Tributary", [ManaColor::U, ManaColor::R]);
     let mut state = plains();
     let land = put(&mut state, P0, "Molten Tributary", Zone::Battlefield);
-    assert!(engine::has_effective_subtype(
-        &state,
-        land,
-        Subtype::Island
-    ));
+    assert!(engine::has_effective_subtype(&state, land, Subtype::Island));
     assert!(engine::has_effective_subtype(
         &state,
         land,

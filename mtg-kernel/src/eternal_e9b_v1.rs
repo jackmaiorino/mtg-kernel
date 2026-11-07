@@ -947,7 +947,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         ),
         THIEF_OF_EXISTENCE if *effect == thief_draw() => TargetSpec::TargetOpponent,
         VAMPIRE_SOVEREIGN if *effect == sovereign_drain() => TargetSpec::TargetOpponent,
-        _ => TargetSpec::None,
+        _ => return crate::eternal_sideboard_s1d_v1::trigger_target_spec(name, effect),
     })
 }
 

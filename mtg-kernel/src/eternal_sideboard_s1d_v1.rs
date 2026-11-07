@@ -545,8 +545,7 @@ fn return_controlled_land() -> EffectOp {
 const GAIN_THREE_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, gain_three)];
 const MONARCH_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, become_monarch)];
 const DRAW_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, draw_one)];
-const DEVOTION_TRIGGERS: [TriggeredAbilityDef; 1] =
-    [trigger(TriggerCondition::Etb, devotion_life)];
+const DEVOTION_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, devotion_life)];
 const SKIP_COMBAT_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::Etb, skip_combat)];
 const KAROO_TRIGGERS: [TriggeredAbilityDef; 1] =
@@ -660,11 +659,13 @@ fn waterbend_finishable(state: &GameState, player: PlayerId, remaining: u8) -> b
     if crate::engine::can_pay_effect_mana(player, &[], remaining, state) {
         return true;
     }
-    waterbend_permanents(state, player).into_iter().any(|object| {
-        let mut simulated = state.clone();
-        simulated.objects.get_mut(object).tapped = true;
-        waterbend_finishable(&simulated, player, remaining - 1)
-    })
+    waterbend_permanents(state, player)
+        .into_iter()
+        .any(|object| {
+            let mut simulated = state.clone();
+            simulated.objects.get_mut(object).tapped = true;
+            waterbend_finishable(&simulated, player, remaining - 1)
+        })
 }
 
 pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
@@ -880,8 +881,7 @@ pub(crate) fn drive(
             Ok(false)
         }
         S1dOpV1::CompassChooseV1 => {
-            let Some(land) = bound_target_in(&continuation.ctx, state, 0, Zone::Battlefield)
-            else {
+            let Some(land) = bound_target_in(&continuation.ctx, state, 0, Zone::Battlefield) else {
                 return Ok(false);
             };
             let link = live_link(state, land);
