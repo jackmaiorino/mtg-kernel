@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'ex1'))
@@ -639,11 +640,18 @@ def zstd_frame(data):
 
 
 class RecordEnvelopeTests(unittest.TestCase):
-    def test_qual_reads_plain_and_sealed_records(self):
-        record = json.dumps({'decisions': [{'step': 1, 'tensor': [0, 1065353216] * 50}]}).encode()
-        frame = zstd_frame(record)
+    """qual.open_record fails closed exactly where the trainer's reader (record_envelope_v1::open_v1) does."""
+
+    RECORD = json.dumps({'decisions': [{'step': 1, 'tensor': [0, 1065353216] * 50}]}).encode()
+
+    def frame(self, data=None):
+        frame = zstd_frame(self.RECORD if data is None else data)
         if frame is None:
             self.skipTest('no zstd implementation on this host')
+        return frame
+
+    def check_backend(self):
+        record, frame = self.RECORD, self.frame()
         self.assertTrue(frame.startswith(qual.ZSTD_MAGIC))
         self.assertEqual(qual.open_record(frame), record)
         self.assertEqual(qual.open_record(record), record)  # a plain record is returned as it is
@@ -652,6 +660,35 @@ class RecordEnvelopeTests(unittest.TestCase):
             sealed.write_bytes(frame)
             plain.write_bytes(record)
             self.assertEqual(qual.read(sealed), qual.read(plain))
+        refused = {
+            'two frames': frame + self.frame(b''),
+            'trailing byte': frame + b'\0',
+            'truncated': frame[:-1],
+            'nested': self.frame(frame),
+        }
+        for name, data in refused.items():
+            with self.subTest(name), self.assertRaises((ValueError, OSError)):
+                qual.open_record(data)
+        with self.assertRaisesRegex(ValueError, 'size limit'):
+            qual.open_record(frame, cap=len(record) - 1)
+        self.assertEqual(qual.open_record(frame, cap=len(record)), record)
+
+    def test_default_backend(self):
+        self.check_backend()
+
+    def test_command_line_backend(self):
+        if not shutil.which('zstd'):
+            self.skipTest('no zstd command line tool on this host')
+        blocked = {'compression': None, 'compression.zstd': None, 'zstandard': None}
+        with mock.patch.dict(sys.modules, blocked):
+            self.check_backend()
+
+    def test_a_frame_without_a_declared_size_is_refused(self):
+        frame = bytearray(self.frame())
+        frame[4] &= 0x3f  # frame content size flag 0
+        frame[4] &= ~0x20 & 0xff  # not single segment, so no size field at all
+        with self.assertRaisesRegex(ValueError, 'declares its content size'):
+            qual.zstd_frame_content_size(bytes(frame))
 
 
 if __name__ == '__main__':
