@@ -635,7 +635,10 @@ def zstd_frame(data):
     except ImportError:
         pass
     if shutil.which('zstd'):
-        return subprocess.run(['zstd', '-q', '-c'], input=data, stdout=subprocess.PIPE, check=True).stdout
+        with tempfile.TemporaryDirectory() as tmp:  # a file input, so the frame declares its content size
+            source = Path(tmp) / 'record'
+            source.write_bytes(data)
+            return subprocess.run(['zstd', '-q', '-c', str(source)], stdout=subprocess.PIPE, check=True).stdout
     return None
 
 
