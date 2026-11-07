@@ -876,11 +876,9 @@ pub(crate) fn execute(op: &P2aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         P2aOpV1::BlessingShuffleV1 => blessing_shuffle(ctx, state),
         P2aOpV1::BlessingMilledV1 => {
             // "When this card is put into your graveyard from your library":
-            // checked again as the ability resolves.
-            let Some(card) = graveyard_ability_source(ctx, state) else {
-                return;
-            };
-            let owner = state.objects.get(card).owner;
+            // no condition is checked again, so the owner (the trigger's
+            // controller) shuffles even if the card has left the graveyard.
+            let owner = ctx.controller;
             let cards = state.players[owner.index()]
                 .graveyard
                 .iter()

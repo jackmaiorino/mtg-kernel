@@ -855,6 +855,30 @@ fn gaeas_blessing_shuffles_the_graveyard_in_when_milled() {
     assert_eq!(zone(&state, blessing), Zone::Library);
     assert_eq!(zone(&state, old), Zone::Library);
     assert!(state.players[0].graveyard.is_empty());
+    // It shuffles even if Blessing left the graveyard in response.
+    let mut state = game(&["Island"; 10]);
+    let old = put(&mut state, P0, "Forest", Zone::Graveyard);
+    let blessing = put(&mut state, P0, "Gaea's Blessing", Zone::Library);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(blessing, Zone::Graveyard),
+    );
+    if let Decision::OrderTriggers { pending, .. } = next(&mut state) {
+        act(
+            &mut state,
+            Action::OrderTriggers((0..pending.len()).collect()),
+        );
+    }
+    next(&mut state);
+    assert_eq!(state.stack.len(), 1, "the trigger is on the stack");
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(blessing, Zone::Exile),
+    );
+    settled(&mut state);
+    assert_eq!(zone(&state, blessing), Zone::Exile);
+    assert_eq!(zone(&state, old), Zone::Library);
+    assert!(state.players[0].graveyard.is_empty());
     // Put into the graveyard from anywhere else, it does nothing.
     let mut state = game(&["Island"; 10]);
     let old = put(&mut state, P0, "Forest", Zone::Graveyard);
