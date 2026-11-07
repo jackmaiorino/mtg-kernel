@@ -1080,23 +1080,27 @@ fn high_market_and_phyrexian_tower_sacrifice_creatures() {
     assert_eq!(state.players[0].life, 21);
     assert!(state.objects.get(market).tapped);
 
+    // The free ability adds {C}; sacrificing a creature adds {B}{B}.
     let mut state = islands();
     let tower = put(&mut state, P0, "Phyrexian Tower", Zone::Battlefield);
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     next(&mut state);
-    act(&mut state, Action::ActivateManaAbility(tower));
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(tower, ManaColor::C),
+    );
     assert_eq!(mana(&state, P0, ManaColor::C), 1);
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
     let mut state = islands();
     let tower = put(&mut state, P0, "Phyrexian Tower", Zone::Battlefield);
-    let elves2 = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     next(&mut state);
     act(
         &mut state,
-        Action::ActivateManaAbilityWithCostTarget(tower, ManaColor::B, elves2),
+        Action::ActivateManaAbilityWithCostTarget(tower, ManaColor::B, elves),
     );
     assert_eq!(mana(&state, P0, ManaColor::B), 2);
-    assert_eq!(zone(&state, elves2), Zone::Graveyard);
-    let _ = elves;
+    assert_eq!(zone(&state, elves), Zone::Graveyard);
 }
 
 // ---- Contamination ----------------------------------------------------------------------

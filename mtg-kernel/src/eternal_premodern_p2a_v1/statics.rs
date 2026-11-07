@@ -5,7 +5,8 @@
 use super::{
     active_named, active_permanents, definition, definition_name, live_link, p2a, p2a_state,
     queue_trigger, read_state, P2aOpV1, BANE_OF_THE_LIVING, BLACK_VISE, CONTAMINATION,
-    ETERNAL_DRAGON, FORSAKEN_CITY, FUTURE_SIGHT, KROSAN_TUSKER, ROOT_MAZE, STASIS,
+    ETERNAL_DRAGON, FORSAKEN_CITY, FUTURE_SIGHT, KROSAN_TUSKER, ROOT_MAZE, STASIS, TAINTED_FIELD,
+    TAINTED_WOOD,
 };
 use crate::card_def::{CardType, TargetSpec, CARD_DEFS};
 use crate::ids::{ObjectId, PlayerId};
@@ -100,6 +101,38 @@ pub(crate) fn produces_only_black(state: &GameState, land: ObjectId) -> bool {
         && active_with_id(state, static_ids().contamination, CONTAMINATION, None)
             .next()
             .is_some()
+}
+
+// ---- The Tainted lands ----------------------------------------------------------------
+
+/// Tainted Wood: "{T}: Add {B} or {G}. Activate only if you control a
+/// Swamp." and Tainted Field: "{T}: Add {W} or {B}. ..." The colors beyond
+/// the {C} of the land's free ability that the payment planner may also tap
+/// it for: its second mana ability is a free tap, so it is as automatic a
+/// source as the first once its condition holds.
+pub(crate) fn tainted_colors(state: &GameState, land: ObjectId) -> &'static [ManaColor] {
+    let colors: &'static [ManaColor] = match definition_name(state, land) {
+        Some(TAINTED_WOOD) => &[ManaColor::B, ManaColor::G],
+        Some(TAINTED_FIELD) => &[ManaColor::W, ManaColor::B],
+        _ => return &[],
+    };
+    let controller = state.objects.get(land).controller;
+    let swamp = state.players[controller.index()]
+        .battlefield
+        .iter()
+        .any(|&object| {
+            state.objects.get(object).zone == Zone::Battlefield
+                && crate::engine::has_effective_subtype(
+                    state,
+                    object,
+                    crate::card_def::Subtype::Swamp,
+                )
+        });
+    if swamp {
+        colors
+    } else {
+        &[]
+    }
 }
 
 // ---- Future Sight -------------------------------------------------------------------
