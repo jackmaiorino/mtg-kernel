@@ -131,6 +131,7 @@ slowest box is reported beside it); a single-arm full node stands in for Stage 1
 """
 import argparse
 import copy
+import gzip
 import json
 import math
 import os
@@ -786,6 +787,9 @@ def current_segment(arm, man, man_path, ledger_source):
 
 SCRATCH_BULK = ('episode-', 'ex1-')
 REAP_EVERY = 0.5
+# Regenerable per-iteration and per-run records (commands, inputs, the run identity) are persisted gzip-compressed
+# as <name>.gz; receipts (complete.json, update.json, collection.json, completion.json) stay plain for the index.
+SCRATCH_GZIP = ('collect-command.json', 'update-command.json', 'update-input.json', 'run.json')
 
 
 def scratch_dir(arm, cdir, native):
@@ -843,6 +847,12 @@ def persist(arm, native, cdir):
             continue  # an unfinished iteration (a wall cut): its records are not a boundary
         dst = tmp / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
+        if f.name in SCRATCH_GZIP:
+            dst = dst.with_name(dst.name + '.gz')
+            with open(f, 'rb') as src, gzip.open(dst, 'wb', compresslevel=1) as out:
+                shutil.copyfileobj(src, out)
+            copied += dst.stat().st_size
+            continue
         shutil.copy2(f, dst)
         copied += f.stat().st_size
     if keep is not None:
@@ -854,6 +864,19 @@ def persist(arm, native, cdir):
     os.rename(tmp, native)  # replaces the empty segment directory left by the unmount
     shutil.rmtree(target, ignore_errors=True)
     return copied
+
+
+def compress_config(config_path):
+    """A finished scratch segment's config (regenerable from the pins by `arm_config`) is kept as <name>.gz."""
+    path = Path(config_path)
+    if not path.exists():
+        return 0
+    gz = path.with_name(path.name + '.gz')
+    with open(path, 'rb') as src, gzip.open(gz.with_name(gz.name + '.tmp'), 'wb', compresslevel=1) as out:
+        shutil.copyfileobj(src, out)
+    os.replace(gz.with_name(gz.name + '.tmp'), gz)
+    path.unlink()
+    return gz.stat().st_size
 
 
 def mounted(native):
@@ -897,7 +920,9 @@ def scratch_settle(arm, root, cdir, man):
             log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
         if mounted(native) and (native / 'completion.json').exists():
             n = persist(arm, native, cdir)
-            log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True)
+            z = compress_config(seg['config']) if seg.get('config') else 0
+            log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True,
+                config_gz_bytes=z)
     if man['segments']:
         native = Path(man['segments'][-1]['root'])
         if not (native / 'completion.json').exists() and (mounted(native) or native.exists()):
@@ -988,7 +1013,9 @@ def drive_locked(a, arm, root, cdir, man_path):
         if (native / 'completion.json').exists():
             if scratch:
                 n = persist(arm, native, cdir)
-                log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped)
+                z = compress_config(path)
+                log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped,
+                    config_gz_bytes=z)
             log(root, chain=a.chain, event='segment-done', segment=s)
             continue
         if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept

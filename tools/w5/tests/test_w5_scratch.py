@@ -78,7 +78,8 @@ class Scratch(unittest.TestCase):
         chains.persist(self.arm, self.native, self.cdir)
         self.assertFalse(self.target.exists())
         self.assertFalse(chains.mounted(self.native))
-        self.assertTrue((self.native / 'run.json').exists())
+        self.assertTrue((self.native / 'run.json.gz').exists())
+        self.assertFalse((self.native / 'run.json').exists())
         files = sorted(p.relative_to(self.native).as_posix() for p in self.native.rglob('*') if p.is_file())
         self.assertNotIn('iterations/000003/attempt-000000/update/update.json', files)  # unfinished iteration
         self.assertEqual([f for f in files if f.endswith('checkpoint.json')],
@@ -113,6 +114,14 @@ class Scratch(unittest.TestCase):
         self.assertFalse(tmp.exists())
         self.assertFalse(chains.mounted(seg1))
         self.assertFalse(chains.scratch_dir(self.arm, self.cdir, seg1).exists())
+
+    def test_compress_config(self):
+        cfg = self.cdir / 'segments' / 'seg-00000.json'
+        write(cfg, b'{"iterations": []}' * 100)
+        chains.compress_config(cfg)
+        self.assertFalse(cfg.exists())
+        import gzip
+        self.assertEqual(gzip.open(cfg.with_name('seg-00000.json.gz')).read(), b'{"iterations": []}' * 100)
 
     def test_plan_accepts_scratch_only_for_c_in_stage_0(self):
         src = Path(chains.__file__).read_text(encoding='utf-8')
