@@ -158,10 +158,13 @@ ARM_SCHEMA = 'w5-arm/v1'
 END_SCHEMA = 'w5-chain-end/v1'
 PAIR_SCHEMA = 'w5-pair/v1'
 SEGCHECK_SCHEMA = 'w5-segcheck/v1'
-ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None)}  # recipe, retention arm
-MEASURED = ('C', 'X8', 'XS')
+ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
+        'CS': ('C', 'C'), 'CP': ('C', 'C')}  # recipe, retention arm
+# CS and CP: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S parent, a pool base)
+EXTRA_C = ('CS', 'CP')
+MEASURED = ('C', 'X8', 'XS') + EXTRA_C
 STAGES = ('0', '1a', '1b')
-SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64}
+SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256}
 HOT_CAP_BYTES = 60 * 10**9
 BYTE_CAP = 560 * 10**9
 HOLD_DAYS = 7
@@ -458,6 +461,8 @@ def make_plan(inputs_path):
     used = {c['arm'] for c in chains_in.values()} | {'F'}
     for a in used:
         require(a in ARMS and a in arms_in, f'arm {a} is unknown or has no inputs')
+    require(not (used & set(EXTRA_C)) or (stage == '0' and independent),
+            f'arms {sorted(EXTRA_C)} run only in independent Stage 0 plans')
     if stage == '1a':
         require({c['arm'] for c in chains_in.values()} == {'C', 'X8'}, 'Stage 1a runs C and X8 chains')
     if stage == '1b':
@@ -493,10 +498,11 @@ def make_plan(inputs_path):
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
-               'c_wall_seconds': c_wall if a == 'C' else None, 'tools': tools}
+               'c_wall_seconds': c_wall if recipe == 'C' and a != 'F' else None, 'tools': tools}
         if spec.get('scratch'):
             scratch_root = inputs.get('scratch_root')
-            require(a == 'C' and stage == '0', f'{a}: scratch segments are for C-arm chains (net-8 or S parent) in Stage 0 plans only')
+            require(recipe == 'C' and a != 'F' and stage == '0',
+                    f'{a}: scratch segments are for C-recipe chains (net-8 or S parent) in Stage 0 plans only')
             require(scratch_root and Path(scratch_root).is_absolute(), f'{a}: scratch needs an absolute scratch_root')
             require(length % retention.FULL_STRIDE == 0 and retention.C_LONG_STRIDE % length == 0,
                     f'{a}: a scratch segment length divides {retention.C_LONG_STRIDE} and is a multiple of '
@@ -533,6 +539,7 @@ def make_plan(inputs_path):
             p = c['pair']
             require(type(p) is int and p >= 1, f'{name}: pair must be a positive integer')
             require(stage == '0' or seed_root == f'w5/chain{p}', f'{name}: Stage 1 seed root is w5/chain<pair>')
+            require(a not in EXTRA_C, f'{name}: a {a} chain has no pair')
             role = 'C' if a == 'C' else 'X'
             require(role not in pairs.setdefault(p, {}), f'pair {p} has two {role} chains')
             pairs[p][role] = name
