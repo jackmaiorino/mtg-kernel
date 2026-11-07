@@ -1281,8 +1281,11 @@ pub fn convert_no_state_digest_v1(
                 .into_iter()
                 .find(|p| p.name == STATE_ENCODER_WEIGHT)
                 .ok_or("state encoder weight is missing")?;
+            // A sealed checkpoint (`record_envelope_v1`) converts from its
+            // record, with every check of a plain one.
+            let sealed = read_pinned_bytes(pin)?;
             let bytes = converted_checkpoint_bytes_v1(
-                &read_pinned_bytes(pin)?,
+                &super::record_envelope_v1::open_v1(&sealed, super::MAX_FILE_BYTES)?,
                 &converted_contract,
                 &runtime.values,
             )?;

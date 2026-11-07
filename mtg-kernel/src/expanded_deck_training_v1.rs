@@ -5826,7 +5826,9 @@ pub fn convert_checkpoint_v1_to_v2(
         .checkpoint
         .as_ref()
         .ok_or("conversion requires a source with a checkpoint")?;
-    let bytes = read_pinned_bytes(v1)?;
+    // A sealed v1 checkpoint (`record_envelope_v1`) converts from its record.
+    let sealed = read_pinned_bytes(v1)?;
+    let bytes = record_envelope_v1::open_v1(&sealed, MAX_FILE_BYTES)?;
     let container = checkpoint_container_v1::convert_v1_bytes(&bytes)?;
     let (_, before) = initialize_any_math_v1(source)?;
     let written = publish_checkpoint_file_v1(output, &container)?;
