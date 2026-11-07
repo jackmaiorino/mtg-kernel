@@ -152,6 +152,31 @@ class Scratch(unittest.TestCase):
         chains.compress_config(cfg)
         self.assertEqual(retention.read_config(cfg), {'iterations': [1]})
 
+    def test_settle_ends_a_persisted_wall_cut(self):
+        root = self.cdir.parent.parent
+        for i in range(2):
+            iteration(self.target, i)
+        iteration(self.target, 2, done=False)
+        self.native.mkdir(parents=True)
+        self.mounts.add(self.native)
+        chains.persist(self.arm, self.native, self.cdir)  # the cut was persisted; the driver stopped before END
+        man = {'segments': [{'root': self.native.as_posix(), 'offset': 0, 'updates': 256}]}
+        arm = dict(self.arm, arm='C')
+        with mock.patch.object(chains, 'log'):
+            chains.scratch_settle(arm, root, self.cdir, man)
+        end = json.loads((self.cdir / 'END.json').read_text())
+        self.assertEqual((end['reason'], end['last_valid_boundary']), ('c-wall', 2))
+        self.assertTrue((self.native / 'iterations' / '000001' / 'complete.json').exists())
+
+    def test_latest_persisted_skips_a_mounted_segment(self):
+        seg0, seg1 = self.cdir / 'seg-00000', self.cdir / 'seg-00001'
+        iteration(seg0, 0)
+        iteration(seg1, 0)
+        self.mounts.add(seg1)
+        man = {'segments': [{'root': seg0.as_posix(), 'offset': 0}, {'root': seg1.as_posix(), 'offset': 1}]}
+        self.assertEqual(chains.latest(man)[0], 2)
+        self.assertEqual(chains.latest(man, persisted=True)[0], 1)
+
     def test_compress_config(self):
         cfg = self.cdir / 'segments' / 'seg-00000.json'
         write(cfg, b'{"iterations": []}' * 100)

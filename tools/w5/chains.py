@@ -536,6 +536,8 @@ def make_plan(inputs_path):
         if stage == '0':
             require(not seed_root.startswith(('w5/chain', 'w5/filler')) and seed_root != 'w5/0b',
                     f'{name}: Stage 0 seed roots stay out of Stage 1 and 0b namespaces')
+        require(not (arms[a].get('scratch_root') and c.get('pair') is not None),
+                f'{name}: a scratch chain has no pair (W5 selection replays need the every-64 states)')
         chains[name] = {'arm': a, 'slot': slot, 'seed_root': seed_root, 'pair': c.get('pair'),
                         'manifest': None if a == 'F' else (root / 'chains' / name / 'chain.json').as_posix()}
     seeds = {}
@@ -684,10 +686,13 @@ def stopped(root, cdir):
     return (Path(root) / 'STOP').exists() or (Path(cdir) / 'STOP').exists()
 
 
-def latest(man):
-    """(latest boundary, its receipt or None) from the manifest's segments."""
+def latest(man, persisted=False):
+    """(latest boundary, its receipt or None) from the manifest's segments; with `persisted`, an in-flight
+    (mounted) scratch segment is skipped, so the boundary survives a reboot."""
     segs = man['segments']
     for seg in reversed(segs):
+        if persisted and mounted(seg['root']):
+            continue
         n = completed(seg['root'])
         if n:
             return seg['offset'] + n, read(Path(seg['root']) / 'iterations' / f'{n - 1:06d}' / 'complete.json')
@@ -787,7 +792,10 @@ def current_segment(arm, man, man_path, ledger_source):
 # segment ends (complete, or cut by the C wall), the records and the newest checkpoint are copied to a directory
 # on the root's volume, the mount is removed, and the copy replaces the (empty) segment directory by one rename.
 # An unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
-# persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively).
+# persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively). Full states are kept
+# at segment ends only, so the recent-window stride of a scratch C chain is its segment length (at most 255 updates
+# of replay rebuild any boundary) and the 4,096 ladder is exact; scratch chains therefore take no pair (W5 selection)
+# and no look. An END (wall, operator, OOM) names a persisted boundary only.
 
 SCRATCH_BULK = ('episode-', 'ex1-')
 REAP_EVERY = 0.5
@@ -871,7 +879,8 @@ def persist(arm, native, cdir):
         dst = tmp / f.relative_to(target)
         require(dst.exists() and sha(dst) == digest, f'{dst} is missing or differs from its pin')
     tmp.mkdir(parents=True, exist_ok=True)
-    for d in sorted({(tmp / f).parent for f in files} | {tmp}, key=lambda q: -len(q.parts)):
+    dirs = {tmp} | {q for q in tmp.rglob('*') if q.is_dir()}
+    for d in sorted(dirs, key=lambda q: -len(q.parts)):  # every directory entry is durable before the marker
         fsync_path(d)
     marker = tmp / PERSIST_MARKER
     marker.write_text(json.dumps({'files': len(files), 'bytes': copied,
@@ -963,11 +972,31 @@ def scratch_settle(arm, root, cdir, man):
                 config_gz_bytes=z)
     if man['segments']:
         native = Path(man['segments'][-1]['root'])
+        if not mounted(native) and (native / PERSIST_MARKER).exists() and \
+                not (native / 'completion.json').exists():
+            # a persisted wall cut whose END was not written (the driver stopped in between)
+            boundary, receipt = latest(man, persisted=True)
+            write_once(cdir / 'END.json', end_doc(cdir.name, arm['arm'], 'c-wall', boundary, receipt, 'driver',
+                                                  recovered=True))
+            log(root, chain=cdir.name, event='end', reason='c-wall', boundary=boundary, recovered=True)
+            return
         if not (native / 'completion.json').exists() and (mounted(native) or native.exists()):
             had = completed(native)
             unmount(native)  # refuses a non-empty segment directory on the root volume (not a scratch segment)
             shutil.rmtree(scratch_dir(arm, cdir, native), ignore_errors=True)
             log(root, chain=cdir.name, event='scratch-reset', segment=native.name, discarded_iterations=had)
+
+
+def release_scratch(plan, name, man):
+    """An ended chain's in-flight scratch segment (never persisted, past its END) is unmounted and dropped."""
+    if not man['segments']:
+        return
+    native = Path(man['segments'][-1]['root'])
+    if mounted(native):
+        arm = read(plan['arms'][plan['chains'][name]['arm']]['file']['path'])
+        unmount(native)
+        if arm.get('scratch_root'):
+            shutil.rmtree(scratch_dir(arm, native.parent, native), ignore_errors=True)
 
 
 def scratch_link(arm, cdir, native):
@@ -1018,6 +1047,8 @@ def drive_locked(a, arm, root, cdir, man_path):
             return 0
         if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
             scratch_settle(arm, root, cdir, man)
+            if (cdir / 'END.json').exists():
+                return 0
         if stopped(root, cdir):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
@@ -1139,9 +1170,10 @@ def run(a):
         return 0
     if code == w5box.EXIT_OOM and c['arm'] in MEASURED:
         man = read(chain_dir(root, a.chain) / 'chain.json')
-        boundary, receipt = latest(man)
+        boundary, receipt = latest(man, persisted=True)
         write_once(chain_dir(root, a.chain) / 'END.json',
                    end_doc(a.chain, c['arm'], 'chain-failure', boundary, receipt, 'run', cause='oom kill'))
+        release_scratch(plan, a.chain, man)
     return code
 
 
@@ -1172,7 +1204,7 @@ def end_cmd(a):
     require(a.chain in plan['chains'] and plan['chains'][a.chain]['arm'] in MEASURED, 'not a measured chain')
     root = Path(plan['root'])
     man = read(chain_dir(root, a.chain) / 'chain.json')
-    top, _ = latest(man)  # receipts only: the index cache is supervise's to write
+    top, _ = latest(man, persisted=True)  # receipts only (persisted ones for a scratch arm)
     boundary = top if a.boundary is None else a.boundary
     require(0 <= boundary <= top, f'boundary must be 0 to {top}')
     receipt = receipt_at(man, boundary) if boundary else None
