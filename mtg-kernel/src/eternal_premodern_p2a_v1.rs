@@ -304,19 +304,6 @@ pub(crate) fn battlefield(state: &GameState) -> impl Iterator<Item = ObjectId> +
         .filter(move |&object| state.objects.get(object).zone == Zone::Battlefield)
 }
 
-/// The battlefield permanents named `name` whose printed abilities apply,
-/// controlled by `controller` if given.
-pub(crate) fn active_permanents<'a>(
-    state: &'a GameState,
-    name: &'a str,
-    controller: Option<PlayerId>,
-) -> impl Iterator<Item = ObjectId> + 'a {
-    battlefield(state).filter(move |&object| {
-        active_named(state, object, name)
-            && controller.is_none_or(|player| state.objects.get(object).controller == player)
-    })
-}
-
 /// The resolving ability's source, if it is still the incarnation that
 /// created the ability, on the battlefield.
 fn live_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
