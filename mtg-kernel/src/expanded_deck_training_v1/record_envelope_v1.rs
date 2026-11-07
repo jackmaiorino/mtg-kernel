@@ -68,7 +68,7 @@ impl RecordEnvelopeV1 {
     /// The bytes to publish for a record whose unsealed bytes are `bytes`.
     /// `Zstd1` refuses input that already looks sealed (a record is sealed
     /// once) and checks that the frame opens to exactly `bytes`.
-    pub(crate) fn seal_v1<'a>(self, bytes: &'a [u8]) -> Result<Cow<'a, [u8]>, String> {
+    pub(crate) fn seal_v1(self, bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
         match self {
             Self::None => Ok(Cow::Borrowed(bytes)),
             Self::Zstd1 => {
@@ -137,6 +137,61 @@ pub(crate) fn record_length_v1(bytes: &[u8], cap: u64) -> Result<u64, String> {
     } else {
         Ok(bytes.len() as u64)
     }
+}
+
+/// The longest zstd frame header: magic, descriptor, window, a 4-byte
+/// dictionary id and an 8-byte content size.
+const FRAME_HEADER_MAX_BYTES_V1: usize = 18;
+
+/// The error of a batch refused by [`admit_batch_v1`]: the update's own
+/// batch-bound error, so both checks read the same.
+pub(crate) const BATCH_BOUND_ERROR_V1: &str =
+    "trajectory batch exceeds 512 MiB CPU ingestion bound";
+
+/// Refuses, before any file of the batch is opened, a batch that holds a
+/// sealed file and whose record lengths, in order, pass `bound`. A file's
+/// record length is its sealed frame's declared content size, read from the
+/// frame header in its first bytes, else its length on disk. Nothing is
+/// verified here: a file that cannot be read or measured counts as empty and
+/// fails its own pinned read later, exactly as before; a file whose bytes
+/// differ later fails its pin check before it is opened, so the declared sizes
+/// admitted here bound what is decoded. A batch without a sealed file is
+/// always admitted, so plain runs keep their checks and errors.
+pub(crate) fn admit_batch_v1<'a>(
+    paths: impl IntoIterator<Item = &'a std::path::Path>,
+    bound: u64,
+) -> Result<(), String> {
+    use std::io::Read;
+    let mut total = 0u64;
+    let mut sealed = false;
+    for path in paths {
+        let length = (|| -> Option<u64> {
+            let mut file = std::fs::File::open(path).ok()?;
+            let mut header = [0u8; FRAME_HEADER_MAX_BYTES_V1];
+            let mut filled = 0;
+            while filled < header.len() {
+                match file.read(&mut header[filled..]).ok()? {
+                    0 => break,
+                    read => filled += read,
+                }
+            }
+            if is_sealed_v1(&header[..filled]) {
+                sealed = true;
+                let declared = zstd::zstd_safe::get_frame_content_size(&header[..filled]);
+                (declared != zstd::zstd_safe::CONTENTSIZE_ERROR
+                    && declared != zstd::zstd_safe::CONTENTSIZE_UNKNOWN)
+                    .then_some(declared)
+            } else {
+                file.metadata().ok().map(|metadata| metadata.len())
+            }
+        })()
+        .unwrap_or(0);
+        total = total.saturating_add(length);
+    }
+    if sealed && total > bound {
+        return Err(BATCH_BOUND_ERROR_V1.into());
+    }
+    Ok(())
 }
 
 fn sealed_content_length_v1(bytes: &[u8], cap: u64) -> Result<usize, String> {
@@ -211,6 +266,53 @@ mod tests {
         // A checkpoint container or JSON never looks sealed.
         assert!(!is_sealed_v1(b"MTGCKPT\0"));
         assert!(!is_sealed_v1(b"{}"));
+    }
+
+    /// A frame header declaring `declared` content bytes, followed by one
+    /// empty last raw block: it measures as `declared` and never opens.
+    fn declared_only_frame(declared: u64) -> Vec<u8> {
+        let mut frame = ZSTD_MAGIC_V1.to_vec();
+        frame.push(0xe0); // 8-byte content size, single segment, no checksum or dictionary
+        frame.extend_from_slice(&declared.to_le_bytes());
+        frame.extend_from_slice(&[0x01, 0x00, 0x00]);
+        frame
+    }
+
+    #[test]
+    fn a_batch_is_admitted_in_order_from_its_declared_sizes_before_any_is_opened() {
+        let directory = std::env::temp_dir().join(format!(
+            "record-envelope-admit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let write = |name: &str, bytes: &[u8]| {
+            let path = directory.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let big = write("big.json", &declared_only_frame(300 << 20));
+        assert_eq!(
+            record_length_v1(&std::fs::read(&big).unwrap(), u64::MAX).unwrap(),
+            300 << 20
+        );
+        assert!(open_v1(&std::fs::read(&big).unwrap(), u64::MAX).is_err());
+        let plain = write("plain.json", &[b' '; 1000]);
+        let missing = directory.join("missing.json");
+        let bound = 512u64 << 20;
+        admit_batch_v1([big.as_path(), plain.as_path(), missing.as_path()], bound).unwrap();
+        assert_eq!(
+            admit_batch_v1([big.as_path(), big.as_path()], bound).unwrap_err(),
+            BATCH_BOUND_ERROR_V1
+        );
+        // The same total with no sealed file is admitted: plain batches keep
+        // their own checks.
+        admit_batch_v1([plain.as_path(); 3], 2000).unwrap();
+        assert!(admit_batch_v1([plain.as_path(), big.as_path()], (300 << 20) + 999).is_err());
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

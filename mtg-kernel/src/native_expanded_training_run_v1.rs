@@ -1195,6 +1195,12 @@ fn validate_collection_episodes_with_sampler_v1(
     // and report the first failing trajectory exactly as the serial loop did.
     // A file parsed ahead by an idle collection worker yields that parse of
     // exactly these bytes instead of a second one.
+    // Sealed files (`record_envelope_v1`) open only within the update's batch
+    // bound, decided in pin order before any is opened.
+    crate::expanded_deck_training_v1::record_envelope_v1::admit_batch_v1(
+        trajectories.iter().map(|pin| pin.path.as_path()),
+        ARTIFACT_CAP,
+    )?;
     let parsed_ahead = std::sync::atomic::AtomicUsize::new(0);
     let saved: Vec<Result<CollectionTrajectoryFieldsV1, String>> = std::thread::scope(|scope| {
         let parsed_ahead = &parsed_ahead;
