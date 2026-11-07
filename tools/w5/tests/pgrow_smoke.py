@@ -187,8 +187,8 @@ def main(argv=None):
     per = [x['per_update_wall_seconds'] for x in segs if x['per_update_wall_seconds']]
     receipt = {'schema': 'w5-pgrow-smoke/v1', 'arm': a.arm, 'arm_file': plan['arms'][a.arm]['file'],
                'ladder': arm.get('ladder'), 'seed_root': a.seed_root, 'segment_updates': a.segment_updates,
-               'trainer': arm['trainer'], 'tools': arm['tools'], 'kill_at': a.kill_at, 'killed': killed, 'recovered': recovered,
-               'segments': segs, 'states': states,
+               'trainer': arm['trainer'], 'tools': arm['tools'], 'kill_at': a.kill_at, 'killed': killed,
+               'recovered': recovered, 'segments': segs, 'states': states,
                'ladder_record': chains.read(cdir / 'LADDER.json') if (cdir / 'LADDER.json').exists() else None,
                'wall_seconds': round(time.time() - t0, 3),
                'mean_per_update_wall_seconds': round(sum(per) / len(per), 4) if per else None,
