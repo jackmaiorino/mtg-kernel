@@ -442,6 +442,11 @@ pub enum Subtype {
     Specter,
     Shade,
     Mystic,
+    /// Appended for the eternal catalog's wave S1d (Nylea's Disciple,
+    /// Stonehorn Dignitary, Standard Bearer and Coalition Honor Guard).
+    Centaur = 360,
+    Rhino,
+    Flagbearer,
 }
 
 impl Subtype {
@@ -816,6 +821,12 @@ impl Subtype {
         Subtype::Shade,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mystic,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Centaur,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Rhino,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Flagbearer,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1055,6 +1066,9 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
+            360 => Subtype::Centaur,
+            361 => Subtype::Rhino,
+            362 => Subtype::Flagbearer,
             _ => return None,
         })
     }
@@ -1273,6 +1287,9 @@ impl Subtype {
             Subtype::Specter => true,
             Subtype::Shade => true,
             Subtype::Mystic => true,
+            Subtype::Centaur => true,
+            Subtype::Rhino => true,
+            Subtype::Flagbearer => true,
         }
     }
 
@@ -1376,6 +1393,9 @@ impl Subtype {
                     | Subtype::Specter
                     | Subtype::Shade
                     | Subtype::Mystic
+                    | Subtype::Centaur
+                    | Subtype::Rhino
+                    | Subtype::Flagbearer
             )
         {
             return true;
@@ -3858,7 +3878,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xbaca_d3c1_a636_ec7d;
+        const EXPECTED_ETERNAL: u64 = 0xd6d1_b192_4c3f_99b5;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

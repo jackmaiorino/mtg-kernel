@@ -2850,6 +2850,13 @@ pub fn apply_replacements(
         if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
             return None;
         }
+        // Circle of Protection: Blue (wave S1d).
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_sideboard_s1d_v1::statics::consume_circle_shield(state, damage)
+        {
+            return None;
+        }
         // Moment's Peace, Ethereal Haze and Tangle.
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented

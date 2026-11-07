@@ -404,6 +404,35 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
+  `statics`) and `build_eternal_s1d_v1.rs`, whose tables end every fall-through
+  chain: the 31 Pauper sideboard cards of the metagame snapshot. Overload
+  (Vandalblast, Electrickery) is the Adventure form of the card that split cards
+  use, cast from hand with the overload cost, sending the card to the graveyard,
+  with no targets and the printed mana value on the stack (118.9c). Circle of
+  Protection: Blue offers a choice among the blue objects in the public zones and
+  records a shield (source incarnation, player, turn) that the damage replacement
+  pass uses up. Flagbearer (Standard Bearer, Coalition Honor Guard) filters the
+  legal targets of the last target slot of a spell or ability being announced
+  against the opponent of the Flagbearer's controller. Stonehorn Dignitary's skip
+  is a pending flag the step machine reads as the combat phase would begin.
+  Spreading Seas joins wave E8a's land-type setter (the enchanted land is an
+  Island and loses its other land types and abilities); Navigator's Compass adds
+  a land type and its mana ability until end of turn, the way Yavimaya does for
+  Forests. Waterbend is an option list (tap an artifact or creature, or pay the
+  rest with mana) that offers only completable branches. Martyr of Sands is one
+  ability per X from 1 to 10, offered when the hand holds X white cards, which are
+  revealed as the ability is put on the stack. Call Damage Control is one spell
+  with up to two target cards of different types from the graveyard (artifact,
+  creature, enchantment or land), each returned independently. New target shapes
+  are `StandardTargetV1::S1dV1`. New subtypes: Centaur, Rhino and Flagbearer.
+  Known gaps: Martyr of Sands reveals the first X white cards of the hand rather
+  than a chosen set; Flagbearer's restriction is exact for single-target spells
+  and abilities and, for several targets, applies only to the last slot; a spell
+  cast from the graveyard or by a free cast cannot be overloaded (Overload is an
+  alternative cost); Circle of Protection: Blue cannot name a source in a hand or
+  a library; policy observation v5 does not show the shields.
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every

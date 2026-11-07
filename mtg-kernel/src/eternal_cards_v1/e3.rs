@@ -1039,6 +1039,9 @@ pub(crate) fn drive(
             crate::eternal_legacy_e8a_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::drive(state, continuation, op, path),
+        EternalOpV1::S1dV1(op) => {
+            crate::eternal_sideboard_s1d_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::E9aV1(op) => {
             crate::eternal_legacy_e9a_v1::drive(state, continuation, op, path)
         }
