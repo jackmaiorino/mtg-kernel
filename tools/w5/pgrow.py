@@ -99,6 +99,16 @@ def check_history(doc, stride, parent_source):
             raise ValueError(f'history state {st["id"]} differs from its pin ({ck["path"]})')
         if ck['sha256'] == parent:
             raise ValueError(f'history state {st["id"]} is the fork state itself (the arm parent)')
+    # Complete coverage: generation g holds every ladder boundary below its cut (cuts[g], the boundary the next
+    # generation forked at; the last generation's cut is the fork), generations 1 to G, none skipped.
+    cuts = {int(g): c for g, c in (doc.get('cuts') or {}).items()}
+    gens = sorted({g for g, _ in keys})
+    if gens != list(range(1, len(gens) + 1)) or sorted(cuts) != gens or \
+            cuts[gens[-1]] != (doc.get('fork') or {}).get('boundary') or \
+            any(type(c) is not int or c <= 0 or c % stride for c in cuts.values()) or \
+            keys != [(g, b) for g in gens for b in range(0, cuts[g], stride)]:
+        raise ValueError('history states must cover every ladder boundary below each generation\'s cut '
+                         '(cuts), generations 1 to the fork\'s, none skipped')
     return states
 
 
@@ -363,10 +373,11 @@ def write_history(chain_manifest, until, stride, out, copy_to=None):
                 [member_id(b) for b in reached] if i not in record['states']]
         if lost:
             raise LadderError(f'{path} lacks established ladder states {lost[:8]}')
-    inherited = []
+    inherited, cuts = [], {}
     if (arm.get('ladder') or {}).get('history'):
         if arm['ladder']['stride'] != stride:
             raise LadderError('a fork of a fork keeps its lineage\'s stride')
+        cuts = json.loads(Path(arm['ladder']['history']['path']).read_text(encoding='utf-8'))['cuts']
         for i, source, after in history_states(arm['ladder'], parent_source):
             g, b = (int(x) for x in re.fullmatch(r'ladder-h(\d+)-u(\d+)', i).groups())
             ck = source['checkpoint']
@@ -376,6 +387,7 @@ def write_history(chain_manifest, until, stride, out, copy_to=None):
             inherited.append({'id': i, 'generation': g, 'boundary': b, 'checkpoint': place(ck),
                               'after_state_sha256': after})
     generation = max((st['generation'] for st in inherited), default=0) + 1
+    cuts = dict(cuts, **{str(generation): until})
     fork_source, fork_after = segment_end(until)
     check_recorded(record, member_id(until), fork_source['checkpoint']['sha256'], fork_after)
     states = list(inherited)
@@ -393,7 +405,7 @@ def write_history(chain_manifest, until, stride, out, copy_to=None):
                        'after_state_sha256': after})
     doc = {'schema': HISTORY_SCHEMA, 'chain': man['chain'], 'seed_root': man['seed_root'], 'stride': stride,
            'fork': {'boundary': until, 'checkpoint': fork_source['checkpoint'], 'after_state_sha256': fork_after},
-           'states': states}
+           'cuts': cuts, 'states': states}
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(doc, indent=1, sort_keys=True) + '\n', encoding='utf-8', newline='\n')
     parent = Path(str(out).removesuffix('.json') + '.parent.json')

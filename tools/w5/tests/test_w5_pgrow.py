@@ -409,6 +409,7 @@ class Chains(unittest.TestCase):
                                             copy_to=self.node.t / 'fork2' / 'objects')
         self.assertEqual([st['id'] for st in doc2['states']],
                          ['ladder-h1-u0', 'ladder-h1-u8', 'ladder-h2-u0', 'ladder-h2-u8'])
+        self.assertEqual(doc2['cuts'], {'1': 16, '2': 16})
         self.assertEqual(doc2['states'][2]['checkpoint']['sha256'], fork['source']['checkpoint']['sha256'])
         _, f2plan = self.fork_plan(hist2, parent2, 'fork2', 'f2', 3)
         self.assertEqual(self.run_segments(f2plan, 'f2', 1), chains.EXIT_ROOM)
@@ -442,6 +443,13 @@ class Chains(unittest.TestCase):
                        [dict(doc['states'][1], id='ladder-h9-u8')], list(reversed(doc['states']))):
             with self.assertRaisesRegex(chains.Stop, 'ascending order'):
                 self.fork_plan(jwrite(self.node.t / 'h2.json', dict(doc, states=states)), parent, 'forkbad2', 'f7', 3)
+        # Coverage: an interior ladder state left out, a missing or wrong cut, or a skipped generation refuses.
+        doc2 = json.loads(hist2.read_text())
+        for bad in (dict(doc, states=doc['states'][:1]), dict(doc, cuts={}), dict(doc, cuts={'1': 24}),
+                    dict(doc2, states=doc2['states'][:1] + doc2['states'][2:])):
+            with self.assertRaisesRegex(chains.Stop, 'cover every ladder boundary'):
+                self.fork_plan(jwrite(self.node.t / 'h3.json', bad), parent if bad.get('cuts', {}).get('2') is None
+                               else parent2, 'forkbad3', 'f8', 3)
 
 
 if __name__ == '__main__':
