@@ -191,6 +191,12 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
             fields.restricted_mana_abilities = format!("&[RestrictedManaAbilityDef {{ colors: {ANY_COLOR}, restriction: ManaSpendRestrictionDef::LegendarySpell }}]");
             fields.additional_mana_ability_conditions = format!("&[{}]", ["W","U","B","R","G"].map(|color| format!("Some(ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(ManaColor::{color}))")).join(", "));
         }
+        // Eternal catalog (Premodern wave P2a): the Tainted lands' second
+        // mana ability needs "a Swamp" (a Verge's condition with one
+        // subtype named twice).
+        "Tainted Wood" | "Tainted Field" => {
+            fields.additional_mana_ability_conditions = "&[Some(ManaAbilityConditionDef::ControllerControlsPermanentWithEitherSubtype { first: Subtype::Swamp, second: Subtype::Swamp })]".to_string();
+        }
         "Starting Town" => {
             fields.enters_tapped_unless_controller =
                 "Some(EntersTappedUnlessControllerDef::WithinOwnFirstTurns(3))".to_string();
@@ -251,6 +257,11 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         }
         "Treetop Village" => {
             fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 3, toughness: 3, artifact: false, colors: &[ManaColor::G], subtypes: &[Subtype::Ape], keywords: Keywords::TRAMPLE })".to_string();
+        }
+        // Eternal catalog (Premodern wave P2d): Ghitu Encampment "becomes a
+        // 2/1 red Warrior creature with first strike until end of turn".
+        "Ghitu Encampment" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 2, toughness: 1, artifact: false, colors: &[ManaColor::R], subtypes: &[Subtype::Warrior], keywords: Keywords::FIRST_STRIKE })".to_string();
         }
         "Soulstone Sanctuary" => {
             fields.animation = "Some(AnimationDef { until_end_of_turn: false, power: 3, toughness: 3, artifact: false, colors: &[], subtypes: Subtype::CREATURE_TYPES, keywords: Keywords::VIGILANCE })".to_string();

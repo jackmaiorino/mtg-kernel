@@ -1968,7 +1968,9 @@ pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId)
 
 /// Whether `object` has shadow (Dauthi Voidwalker).
 fn has_shadow(state: &GameState, object: ObjectId) -> bool {
+    // Soltari Monk and Soltari Priest (Premodern wave P2d).
     active_named(state, object, DAUTHI_VOIDWALKER)
+        || crate::eternal_premodern_p2d_v1::statics::has_shadow(state, object)
 }
 
 /// Shadow (702.28b): "This creature can block or be blocked by only

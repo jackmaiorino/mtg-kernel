@@ -305,6 +305,12 @@ pub mod eternal_premodern_p1a_v1;
 /// Premodern Enchantress, Replenish, Oath, Landstill, Psychatog and Grow
 /// card programs of the eternal catalog (wave P1b).
 pub mod eternal_premodern_p1b_v1;
+/// Premodern The Rock, Mono-Black Control, BW Control, Stasis and Other
+/// Control card programs of the eternal catalog (wave P2a).
+pub mod eternal_premodern_p2a_v1;
+/// Premodern White Weenie and Mono-Red Control card programs of the eternal
+/// catalog (wave P2d).
+pub mod eternal_premodern_p2d_v1;
 /// Premodern Survival and Madness Threshold card programs of the eternal
 /// catalog (wave P2b).
 pub mod eternal_premodern_p2b_v1;

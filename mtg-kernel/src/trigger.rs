@@ -5589,6 +5589,12 @@ fn triggers_from_events(
         new_triggers.extend(crate::eternal_premodern_p1a_v1::delayed_triggers(
             state, events,
         ));
+        // Bane of the Living queues its trigger as its X is paid, which may
+        // be from floating mana alone (Premodern wave P2a).
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_premodern_p2a_v1::delayed_triggers(
+            state, events,
+        ));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;

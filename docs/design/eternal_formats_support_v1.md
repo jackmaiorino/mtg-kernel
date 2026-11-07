@@ -487,7 +487,9 @@ reporting as E1 to E9:
 | --- | --- | ---: | --- |
 | P0 | Snapshot, capture tool, the catalog reads both snapshots | 0 | Premodern 0% |
 | P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
-| P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census, 62% playable through sessions (Enchantress is a known gap) |
+| P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census; Enchantress plays through sessions once schema 5 reports shroud |
+| P2a | The Rock, Mono-Black Control, BW Control, Stasis, Other Control | 31 | Premodern 70% to 79% by the census |
+| P2d | White Weenie, Mono-Red Control (Beloved Chaplain, Devoted Caretaker, Glowrider, Mother of Runes, Nova Cleric, Shared Triumph, Soltari Monk, Soltari Priest, Avalanche Riders, Earthquake, Firebolt, Ghitu Encampment, Pillage, Stone Rain, Veteran Brawlers) | 15 | two decks, 2% of the field |
 | P2b | Survival, Madness Threshold, and the cards Elves shares with them (17 of 19; Birchlore Rangers and Thornscape Battlemage stay out) | 17 | Survival and Madness Threshold playable (4%); Elves needs Birchlore Rangers, Thornscape Battlemage and wave P2a's Genesis and Wall of Blossoms |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
@@ -519,14 +521,14 @@ Aura of Silence taxes its opponents' artifact and enchantment spells. Mishra's F
 Treetop Village reuse the Standard manland animation, Serra's Sanctum Tolarian Academy's
 yield, and Skycloud Expanse is a paid additional mana ability adding a fixed bundle.
 
+The schema 4 public-session observation cannot represent shroud, so a session refused games
+where Argothian Enchantress or Sterling Grove gave a permanent shroud. The catalog games now
+run on Limited schema 5, the [public shroud contract](limited_public_shroud_v1.md), whose
+policy observation reports shroud on permanents and players, and Enchantress is in `PLAYABLE`.
+Schema 4 still refuses those games, and now also refuses Solitary Confinement's player shroud,
+which it never represented.
+
 Known gaps:
-- Premodern Enchantress is fully supported by the catalog but is not in `PLAYABLE` (it is
-  `KNOWN_GAP` in `tests/eternal/eternal_catalog_v1.rs`). The schema 4 public-session observation
-  cannot represent a battlefield permanent's shroud, as granted by Argothian Enchantress or
-  Sterling Grove, so a session refuses such a game (`refuse_unrepresented_shroud`; Solitary
-  Confinement's player shroud is not checked by that guard). Representing it is a protocol
-  change outside P1b. The census counts the deck as Full (Premodern 70%); excluding it, 62% of
-  the field (11 decks) plays through sessions.
 - Fade, treasure and depletion counters live in module state: effects that read or move
   counters generally (none in the catalog) and policy observations don't see them.
 - Replenish leaves in the graveyard an Aura whose enchant rule neither `AttachmentDef` nor
@@ -546,6 +548,50 @@ Known gaps:
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
 so the catalog needs no format legality check.
+
+P2d is built in `src/eternal_premodern_p2d_v1.rs` (with `statics` and `targets` submodules)
+and `build_eternal_p2d_v1.rs`, whose tables sit between P1b's and P1a's (subtype ids from 240;
+P2a takes 209 upward). New primitives:
+
+- Shadow (Soltari Monk and Priest) joins Dauthi Voidwalker's rule in `eternal_e9b_v1`: a
+  shadow creature blocks and is blocked only by shadow creatures. Printed protection from a
+  color joins P1a's mask (`eternal_legacy_e9a_v1::statics::protection_mask`), and Beloved
+  Chaplain's protection from creatures joins Seasoned Dungeoneer's checks (targeting by a
+  creature's ability, damage from a creature, blocking by a creature).
+- Mother of Runes reuses wave E9a's protection record (Sejiri Steppe) with the color chosen on
+  resolution. Devoted Caretaker records protection from instant and sorcery spells until end
+  of turn per permanent (`P2dStateV1::spell_protection`); it stops targeting by such a spell
+  (also while the card is being cast) and damage from it.
+- Shared Triumph chooses its creature type as it enters (the as-enters chain of
+  `eternal_cards_v1::e3`, one option per creature type among all objects in the game) and
+  boosts creatures of that type through the controlled-boost hook. Glowrider adds a generic
+  cost for every noncreature spell of either player through the spell cost modifiers.
+- Echo (Avalanche Riders): entering records that the creature owes echo; the controller's next
+  upkeep queues one trigger (a hook, so there is no trigger on later upkeeps) that offers
+  paying {3}{R} (taken from the automatic mana planner, or the creature is sacrificed if it
+  cannot be paid) or sacrificing.
+- Veteran Brawlers' restrictions read untapped lands when attackers and blockers are declared.
+- Pillage and Devoted Caretaker use new `StandardTargetV1` filters (an artifact or land; a
+  permanent you control). Earthquake damages in one batch; Nova Cleric destroys in one batch.
+  Stone Rain is the Standard destroy-land spell, Firebolt a 2-damage burn spell with flashback.
+  Ghitu Encampment reuses the Standard manland animation.
+
+Observation: shadow and printed protection are not keyword flags of the schema 4 policy
+observation, but like Dauthi Voidwalker's shadow and Knight of Stromgald's protection they are
+printed on the card the observation names, and every blocking and targeting choice offered is
+already legal under them. Protection that Mother of Runes or Devoted Caretaker grants until end
+of turn is not visible in the observation (as Sejiri Steppe's is not); no game step depends on
+it, because only legal actions are offered. Representing granted protection and shadow as
+public facts is a protocol change outside P2d.
+
+Known gaps (P2d):
+- Echo is owed only by the controller who first controlled the creature: a creature that
+  changes control owes no echo to its new controller. Its cost is paid by the automatic mana
+  planner without a choice of sources.
+- Shared Triumph offers only creature types of cards in the game when it enters.
+- Protection from instant and sorcery spells counts a card in hand, graveyard, exile or
+  library being cast as a spell, so an instant's activated ability from those zones (none in
+  the catalog) would be treated as one.
 
 P1a is built in `src/eternal_premodern_p1a_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1a_v1.rs`, whose tables wave P1b's fall through to. New primitives:
@@ -595,6 +641,61 @@ later color-setting effect from another wave (Oko's Elk) does not override it. E
 Angel's life gain trigger reads its printed ability with last-known information, so damage
 an effect deals for it after it left the battlefield (Legolas's Quick Reflexes) still
 triggers it. Neither interaction needs a Premodern card.
+
+### P2a
+
+P2a is built in `src/eternal_premodern_p2a_v1.rs` (with `statics` and `targets` submodules) and
+`build_eternal_p2a_v1.rs`, which sit between E9a's tables and wave P1b's. No card needs a new
+creature type. New primitives:
+
+- Morph with an X cost (Bane of the Living) extends P1a's morph. Turning it face up pays {B}{B}
+  as the special action, then its controller announces X, from 0 to the generic mana they can
+  still pay, as an as-enters style choice (`entry_choice_decision`), pays it, and a
+  hook-queued "turned face up" trigger gives every creature -X/-X until end of turn. With no mana
+  to spare no choice is offered.
+- Contamination replaces the mana a land adds: the colors a land offers, the activation and the
+  payment planner all see a single {B}. The land's own ability still runs (City of Brass still
+  deals damage, Gemstone Mine still loses a counter); mana already floating is unchanged.
+- Stasis ("players skip their untap steps") and Forsaken City ("doesn't untap during your untap
+  step") are untap-step restrictions beside Tsabo's Web; Root Maze joins Archon of Emeria's tapped
+  entries. Forsaken City's upkeep trigger offers a card from hand to exile, and none declines.
+- Future Sight extends Bolas's Citadel's library permissions: the top card is revealed to both
+  players (each observer's knowledge is refreshed before a priority decision, as for the Citadel),
+  and its controller may play a land from the top or cast any other card from the top for its mana
+  cost. A controller who also has a Citadel casts through the Citadel while they can pay the life.
+- Cards in a graveyard act through hook-queued triggers: Genesis at its owner's upkeep (target
+  creature card announced as the trigger is put on the stack, {2}{G} paid on resolution), Nether
+  Spirit (only while it is the only creature card there, checked again on resolution), Gaea's
+  Blessing when it goes from a library to a graveyard, and Eternal Dragon's activated return, which
+  is allowed only in its owner's upkeep. Academy Rector and Veteran Explorer use dies triggers
+  that function from the graveyard and the engine's library searches to the battlefield.
+- Pernicious Deed's {X} is one ability per X from 0 to 8, the largest mana value in the Premodern
+  pool; the controller picks which to activate. The engine's announced X for activated abilities
+  belongs to a Standard card.
+- Black Vise records its chosen opponent as it enters (the one opponent of this kernel) and its
+  trigger is queued as that player's upkeep begins. Gerrard's Verdict's discards are chosen by
+  the target player (all of a hand of two or fewer), then the caster gains 3 life per land. Gaea's
+  Blessing's targets are a player and up to three cards in that player's graveyard
+  (`StandardTargetV1::PlayerThenUpToThreeOfTheirGraveyardCardsV1`). Stasis's and Contamination's
+  upkeep costs are choices between the cost and a sacrifice. Krosan Tusker's "When you cycle"
+  trigger is queued as the cycling cost is paid, like the Decrees'.
+- Diabolic Tutor reuses Demonic Tutor's program; Wall of Blossoms, Ravenous Rats, Ravenous
+  Baloth, Vindicate, Innocent Blood, Zombie Infestation, High Market, Phyrexian Tower and the Tainted
+  lands use existing recipes (the Tainted lands are a Verge with "a Swamp" as both subtypes).
+
+Known gaps:
+- Pernicious Deed cannot pay an X above 8.
+- Under Contamination a land's "{T}, Sacrifice a creature" ability (Phyrexian Tower) is not
+  offered, since it adds the same single {B} as tapping the land.
+- Stasis and Forsaken City stop permanents untapping; other things an untap step does (phasing in,
+  day and night) still happen.
+- Academy Rector's search may find an Aura, which the engine puts onto the battlefield with no
+  host rather than leaving it in the library (no Aura is in Other Control's list).
+- Veteran Explorer's search is not optional: each player searches, choosing no card is a search
+  that finds nothing, and every player shuffles.
+- The Tainted lands' second ability is an automatic payment source while a Swamp is controlled
+  (the planner reads the gated colors from `statics::tainted_colors`); a Verge's is not.
+- Black Vise's chosen opponent is not a choice, and its record does not follow a change of control.
 
 P2b is built in `src/eternal_premodern_p2b_v1.rs` (with a `statics` submodule) and
 `build_eternal_p2b_v1.rs`, the tail of the recipe chain that wave P1a's tables fall through to.

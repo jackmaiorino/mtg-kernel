@@ -198,7 +198,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Psychatog" => &PSYCHATOG,
         "Sterling Grove" => &STERLING_GROVE,
         "Treetop Village" => &TREETOP_VILLAGE,
-        _ => super::build_eternal_p1a_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_p2d_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -257,7 +257,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_premodern_p1b_v1::wrath_of_god",
         ),
-        _ => return super::build_eternal_p1a_v1::special_for(name),
+        _ => return super::build_eternal_p2d_v1::special_for(name),
     })
 }
 
@@ -266,7 +266,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Argothian Enchantress" => &["Keywords::SHROUD"],
         "Angel Token" => &["Keywords::FLYING"],
-        _ => super::build_eternal_p1a_v1::keywords_for(name),
+        _ => super::build_eternal_p2d_v1::keywords_for(name),
     }
 }
 
@@ -278,7 +278,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Sickening Dreams" => "Some(&[CostComponent::DiscardCards(1)])",
-        _ => super::build_eternal_p1a_v1::additional_cost_for(name),
+        _ => super::build_eternal_p2d_v1::additional_cost_for(name),
     }
 }
 
@@ -376,6 +376,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Treetop Village" => "enters_tapped;activated:animate_3_3_green_ape_trample",
         "Tsabo's Web" => "etb:draw_1;static:lands_with_nonmana_abilities_dont_untap",
         "Wrath of God" => "spell:destroy_all_creatures:cant_be_regenerated",
-        _ => super::build_eternal_p1a_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_p2d_v1::trigger_recipe_for(name),
     }
 }

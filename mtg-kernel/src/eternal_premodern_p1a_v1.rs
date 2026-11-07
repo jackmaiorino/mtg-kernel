@@ -385,7 +385,7 @@ fn p1a(op: P1aOpV1) -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P1aV1(op)))
 }
 
-fn halt(state: &mut GameState, source: ObjectId) {
+pub(crate) fn halt(state: &mut GameState, source: ObjectId) {
     state.engine.halted = Some((
         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
         source,
@@ -405,7 +405,7 @@ fn bind(state: &GameState, object: ObjectId) -> EffectObjectBinding {
     }
 }
 
-fn has_type(state: &GameState, object: ObjectId, card_type: CardType) -> bool {
+pub(crate) fn has_type(state: &GameState, object: ObjectId, card_type: CardType) -> bool {
     crate::engine::object_has_type(state, object, card_type)
 }
 
@@ -415,7 +415,7 @@ fn is_goblin(state: &GameState, object: ObjectId) -> bool {
 
 /// The resolving ability's source, if it is still the incarnation that
 /// created the ability, on the battlefield.
-fn live_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
+pub(crate) fn live_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
     let contract = ctx.ability_source_contract?;
     let live = state.objects.try_get(contract.source)?;
     (live.zone == Zone::Battlefield && live.zone_change_count == contract.zone_change_count)
@@ -424,7 +424,7 @@ fn live_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
 
 /// Target `index`, if it is an object still legal for the resolving spell
 /// or ability under `spec`.
-fn legal_object_target(
+pub(crate) fn legal_object_target(
     ctx: &ExecCtx,
     state: &GameState,
     index: usize,
@@ -481,7 +481,7 @@ fn legal_any_target(ctx: &ExecCtx, state: &GameState, spec: TargetSpec) -> Optio
     .then_some(target)
 }
 
-fn queue_trigger(
+pub(crate) fn queue_trigger(
     state: &mut GameState,
     source: AbilitySourceContractV4,
     controller: PlayerId,
@@ -504,7 +504,7 @@ fn shuffle(state: &mut GameState, player: PlayerId) -> Result<(), String> {
 
 /// Destroys `objects` as one simultaneous event: indestructible permanents
 /// stay, and a regeneration shield replaces a destruction.
-fn destroy_batch(state: &mut GameState, objects: Vec<ObjectId>) {
+pub(crate) fn destroy_batch(state: &mut GameState, objects: Vec<ObjectId>) {
     let destroyed = objects
         .into_iter()
         .filter(|&id| {
@@ -524,7 +524,7 @@ fn destroy_batch(state: &mut GameState, objects: Vec<ObjectId>) {
 
 /// Destroys `object` through the engine's destroy leaf (indestructible and
 /// regeneration apply).
-fn destroy(ctx: &ExecCtx, state: &mut GameState, object: ObjectId) {
+pub(crate) fn destroy(ctx: &ExecCtx, state: &mut GameState, object: ObjectId) {
     let mut ctx = ctx.clone();
     ctx.targets = vec![Target::Object(object)];
     ctx.target_contracts = Vec::new();
@@ -539,7 +539,7 @@ fn destroy(ctx: &ExecCtx, state: &mut GameState, object: ObjectId) {
 
 /// Records that `creature`'s current incarnation can't be regenerated this
 /// turn.
-fn forbid_regeneration(state: &mut GameState, creature: ObjectId) {
+pub(crate) fn forbid_regeneration(state: &mut GameState, creature: ObjectId) {
     let record = (live_link(state, creature), TurnV1::now(state));
     let records = &mut p1a_state(state).no_regeneration;
     if !records.contains(&record) {
