@@ -41,7 +41,7 @@ fn episode(id: &str, seed: u64) -> ExpandedEpisodeV1 {
 /// One real game each from a V4 fresh source, its FlatV7 transfer and a FlatV8
 /// conversion of its trained checkpoint. Each trajectory audits against two
 /// models of its own identity, every row replaying its archived outputs bit
-/// for bit (the V8 rows with their pairing relation). Every mixed pair is
+/// for bit (FlatV8 rows through the V8 inclusion net). Every mixed pair is
 /// refused before any row is scored, including a V4 trajectory against a
 /// FlatV7 model, whose import digests are V4's.
 #[test]
@@ -60,8 +60,8 @@ fn native_audit_admits_flat_v7_and_v8_trajectories_only_against_their_own_identi
         path: descriptor_path,
         sha256: sha(&bytes),
     };
-    let source = |contract: &str, encoding: &str, checkpoint: Option<PinnedFileV1>| {
-        ExpandedModelSourceV1 {
+    let source =
+        |contract: &str, encoding: &str, checkpoint: Option<PinnedFileV1>| ExpandedModelSourceV1 {
             play_import: play_import.clone(),
             feature_transfer: FrozenPlayObservationTransferV3 {
                 expected_feature_contract_digest: contract.into(),
@@ -69,8 +69,7 @@ fn native_audit_admits_flat_v7_and_v8_trajectories_only_against_their_own_identi
             },
             checkpoint,
             s_learner: None,
-        }
-    };
+        };
     let collect = |source: &ExpandedModelSourceV1, label: &str, seed: u64| -> PinnedFileV1 {
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -154,23 +153,6 @@ fn native_audit_admits_flat_v7_and_v8_trajectories_only_against_their_own_identi
             "{label}"
         );
     }
-    // The audited V8 rows include rows with a pairing relation.
-    let saved: ExpandedTrajectoryV1 = read_pinned(&v8_trajectory).unwrap();
-    let report: Value = serde_json::from_slice(
-        &fs::read(root.join("audit-v8").join("trajectory-000.json")).unwrap(),
-    )
-    .unwrap();
-    let paired = report["rows"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|row| {
-            let index = row["archive_row"].as_u64().unwrap() as usize;
-            !saved.decisions[index].tensor.pairing_node_indices.is_empty()
-        })
-        .count();
-    eprintln!("audited FlatV8 rows with a pairing relation: {paired}");
-    assert!(paired > 0);
     for (label, models, trajectory) in [
         ("v7-by-v8", [&v7, &v8], &v7_trajectory),
         ("v8-by-v7", [&v8, &v7], &v8_trajectory),

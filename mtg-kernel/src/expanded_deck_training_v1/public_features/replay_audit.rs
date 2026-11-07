@@ -1,7 +1,7 @@
 //! CPU-only scoring of the same archived actor-visible tensors by fixed models.
 //! No session reconstruction, optimizer update, sampler draw or terminal lookup.
 use super::*;
-use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
+use crate::sideboard_play_policy_v1::{FrozenPlayDecisionScoresV1, FRESH_FEATURE_IDENTITY_V8};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(test)]
@@ -87,18 +87,28 @@ impl AuditPolicy {
                 auxiliary.validate_tokens(&tensor.common.object_card_ids)?;
                 policy.replay(&tensor, auxiliary)
             }
-            Self::Native(policy) => match policy.feature_identity_v1().generation {
-                FreshLineageGenerationV1::V3 => {
-                    policy.score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
-                        common: row.tensor.tensor(),
-                    })
+            Self::Native(policy) => {
+                let common = row.tensor.tensor();
+                let pairing = &row.tensor.pairing_node_indices;
+                let identity = policy.feature_identity_v1();
+                if identity == FRESH_FEATURE_IDENTITY_V8 {
+                    // FlatV8 rows replay through the V8 inclusion net with
+                    // their recorded pairing relation, as the update does.
+                    return policy.score_replay_tensor_v1(identity.generation, common, pairing);
                 }
-                FreshLineageGenerationV1::V4 => {
-                    policy.score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
-                        common: row.tensor.tensor(),
-                    })
+                ensure(
+                    pairing.is_empty(),
+                    "only a FlatV8 model replays a pairing relation",
+                )?;
+                match identity.generation {
+                    FreshLineageGenerationV1::V3 => {
+                        policy.score_training_tensor_v3(&NativeFlatDecisionTensorV3 { common })
+                    }
+                    FreshLineageGenerationV1::V4 => {
+                        policy.score_training_tensor_v4(&NativeFlatDecisionTensorV4 { common })
+                    }
                 }
-            },
+            }
         }
     }
 }
@@ -165,11 +175,16 @@ fn read_trajectory(
                 let AuditPolicy::Native(policy) = &model.policy else {
                     return Err("native trajectories require native expanded models".into());
                 };
-                let identity = policy.actual_model_identity_v1();
+                // A trajectory records its collector's effective identity
+                // (`collect_episode_hooked_v1`). `actual_model_identity_v1`
+                // keeps the import's V4 digests for a FlatV7 or FlatV8
+                // transfer, so the model side uses the same derivations.
                 ensure(
-                    identity.feature_contract_digest == t.feature_contract_digest
-                        && identity.feature_encoding_digest == t.feature_encoding_digest
-                        && identity.card_db_hash == t.card_db_hash,
+                    no_state_digest_v1::effective_contract_digest_v1(policy)
+                        == t.feature_contract_digest
+                        && policy.feature_identity_v1().feature_encoding_digest
+                            == t.feature_encoding_digest
+                        && policy.actual_model_identity_v1().card_db_hash == t.card_db_hash,
                     "native trajectory/model feature identity differs",
                 )?;
             }
