@@ -816,11 +816,12 @@ def reap(native):
     return n
 
 
-def persist(native, cdir):
+def persist(arm, native, cdir):
     """Copies a scratch segment's records and its newest checkpoint to the root's volume and swaps the copy in at
     the segment's path. Returns the bytes copied."""
     native = Path(native)
-    target = Path(os.path.realpath(native))
+    require(mounted(native), f'{native} is not a mounted scratch segment')
+    target = scratch_dir(arm, cdir, native)
     reap(native)
     its = target / 'iterations'
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
@@ -895,7 +896,7 @@ def scratch_settle(arm, root, cdir, man):
             os.rename(tmp, native)  # the driver stopped between the unmount and the rename
             log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
         if mounted(native) and (native / 'completion.json').exists():
-            n = persist(native, cdir)
+            n = persist(arm, native, cdir)
             log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True)
     if man['segments']:
         native = Path(man['segments'][-1]['root'])
@@ -986,12 +987,12 @@ def drive_locked(a, arm, root, cdir, man_path):
             code, killed = run_trainer(arm, path, deadline, cdir)
         if (native / 'completion.json').exists():
             if scratch:
-                n = persist(native, cdir)
+                n = persist(arm, native, cdir)
                 log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped)
             log(root, chain=a.chain, event='segment-done', segment=s)
             continue
         if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept
-            n = persist(native, cdir)
+            n = persist(arm, native, cdir)
             log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
         boundary, receipt = latest(man)
         if killed:
