@@ -37,6 +37,8 @@ pub(crate) const THASSAS_ORACLE: &str = "Thassa's Oracle";
 pub(crate) const BRAIN_FREEZE: &str = "Brain Freeze";
 pub(crate) const TENDRILS_OF_AGONY: &str = "Tendrils of Agony";
 pub(crate) const GALVANIC_RELAY: &str = "Galvanic Relay";
+pub(crate) const GRAPESHOT: &str = "Grapeshot";
+pub(crate) const EMPTY_THE_WARRENS: &str = "Empty the Warrens";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1025,6 +1027,9 @@ pub(crate) fn drive(
             crate::eternal_legacy_e8a_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::drive(state, continuation, op, path),
+        EternalOpV1::S1bV1(op) => {
+            crate::eternal_sideboard_s1b_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::E9aV1(op) => {
             crate::eternal_legacy_e9a_v1::drive(state, continuation, op, path)
         }
@@ -1765,7 +1770,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => &FLUSTERSTORM_TRIGGERS,
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT
+        | EMPTY_THE_WARRENS => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
@@ -1779,7 +1785,8 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     match name {
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
-        | TENDRILS_OF_AGONY | GALVANIC_RELAY | THASSAS_ORACLE | EMRAKUL | ATRAXA
+        | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT | EMPTY_THE_WARRENS | THASSAS_ORACLE
+        | EMRAKUL | ATRAXA
         | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
     }
@@ -2142,6 +2149,8 @@ pub(crate) fn has_storm(name: &str) -> bool {
         || name == BRAIN_FREEZE
         || name == TENDRILS_OF_AGONY
         || name == GALVANIC_RELAY
+        || name == GRAPESHOT
+        || name == EMPTY_THE_WARRENS
 }
 
 /// Whether a Storm trigger copies a targeted spell, whose copies may choose
@@ -2327,7 +2336,8 @@ pub(crate) fn delayed_triggers(
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => {
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT
+        | EMPTY_THE_WARRENS => {
             matches!(effect, EffectOp::CreateStormCopies { .. })
         }
         dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),

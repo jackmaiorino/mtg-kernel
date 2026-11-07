@@ -1250,7 +1250,15 @@ pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> boo
         .try_get(object)
         .is_some_and(|live| live.zone == Zone::Battlefield)
         && crate::engine::object_has_type(state, object, CardType::Artifact)
-        && active_permanents(state, NULL_ROD, None).next().is_some()
+        && (active_permanents(state, NULL_ROD, None).next().is_some()
+            // Stony Silence (wave S1b) says the same of artifacts.
+            || active_permanents(
+                state,
+                crate::eternal_sideboard_s1b_v1::STONY_SILENCE,
+                None,
+            )
+            .next()
+            .is_some())
 }
 
 /// Pithing Needle: "Activated abilities of sources with the chosen name

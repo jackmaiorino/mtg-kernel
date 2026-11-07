@@ -442,6 +442,10 @@ pub enum Subtype {
     Specter,
     Shade,
     Mystic,
+    /// Appended for the eternal catalog's wave S1b (Gaddock Teeg), with
+    /// stable ids 320 to 339 reserved for that wave.
+    Kithkin = 320,
+    Advisor = 321,
 }
 
 impl Subtype {
@@ -816,6 +820,10 @@ impl Subtype {
         Subtype::Shade,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mystic,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Kithkin,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Advisor,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1055,6 +1063,8 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
+            320 => Subtype::Kithkin,
+            321 => Subtype::Advisor,
             _ => return None,
         })
     }
@@ -1273,6 +1283,8 @@ impl Subtype {
             Subtype::Specter => true,
             Subtype::Shade => true,
             Subtype::Mystic => true,
+            Subtype::Kithkin => true,
+            Subtype::Advisor => true,
         }
     }
 
@@ -1376,6 +1388,8 @@ impl Subtype {
                     | Subtype::Specter
                     | Subtype::Shade
                     | Subtype::Mystic
+                    | Subtype::Kithkin
+                    | Subtype::Advisor
             )
         {
             return true;

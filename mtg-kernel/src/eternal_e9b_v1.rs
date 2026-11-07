@@ -925,13 +925,17 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         SOWING_MYCOSPAWN => &SOWING_MYCOSPAWN_TRIGGERS,
         THIEF_OF_EXISTENCE => &THIEF_OF_EXISTENCE_TRIGGERS,
         VAMPIRE_SOVEREIGN => &VAMPIRE_SOVEREIGN_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_sideboard_s1b_v1::triggers_for(name),
     }
 }
 
 /// Target specs of this module's triggered abilities, per ability. `None`
 /// for every other card.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to wave S1b's cards, so they answer first.
+    if let Some(spec) = crate::eternal_sideboard_s1b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     let own = triggers_for(name)
         .iter()
         .any(|trigger| (trigger.effect)() == *effect)

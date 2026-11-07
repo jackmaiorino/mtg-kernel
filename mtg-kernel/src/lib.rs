@@ -288,6 +288,8 @@ pub mod eternal_legacy_e7a_v1;
 pub mod eternal_legacy_e8a_v1;
 /// Legacy long-tail card programs of the eternal catalog (wave E9a).
 pub mod eternal_legacy_e9a_v1;
+/// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).
+pub mod eternal_sideboard_s1b_v1;
 /// Vintage Lurrus card programs and companions of the eternal catalog (wave
 /// E4b).
 pub mod eternal_lurrus_v1;

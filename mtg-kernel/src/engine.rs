@@ -9880,6 +9880,10 @@ fn maximum_payable_x(
                     state,
                 )
             })
+            // Toxic Deluge: at most the life its caster has (wave S1b).
+            .or_else(|| {
+                crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.controller, state)
+            })
             .unwrap_or(u8::MAX);
     let payable = |x| {
         pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
@@ -28154,6 +28158,14 @@ fn finalize_owned_cast(
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
+    // Toxic Deluge: "As an additional cost to cast this spell, pay X life."
+    #[cfg(feature = "eternal-fixtures")]
+    if x_value > 0 && crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
+        event::propose_and_commit(
+            state,
+            ProposedEvent::life_loss(pending.controller, i32::from(x_value)),
+        );
+    }
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     crate::fake_your_own_death_v50::spell_custody::publish_spell(state, stack_item_id)?;
     if matches!(

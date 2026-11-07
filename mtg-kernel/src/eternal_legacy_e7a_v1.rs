@@ -2667,6 +2667,10 @@ pub(crate) fn extra_land_candidates(state: &GameState, player: PlayerId) -> Vec<
 /// paying one: from exile (suspend) or from a hand under a free-cast
 /// permission.
 pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
+    // Deafening Silence, Gaddock Teeg and Meddling Mage (wave S1b).
+    if crate::eternal_sideboard_s1b_v1::cast_prohibited(state, player, card) {
+        return true;
+    }
     let Some(live) = state.objects.try_get(card) else {
         return false;
     };

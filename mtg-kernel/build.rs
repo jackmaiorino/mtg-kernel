@@ -31,6 +31,7 @@ mod build_eternal_e8a_v1;
 mod build_eternal_e8b_v1;
 mod build_eternal_e9a_v1;
 mod build_eternal_e9b_v1;
+mod build_eternal_s1b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_p1a_v1;
 mod build_eternal_p1b_v1;
@@ -11503,6 +11504,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Specter" => "Subtype::Specter",
         "Shade" => "Subtype::Shade",
         "Mystic" => "Subtype::Mystic",
+        "Kithkin" => "Subtype::Kithkin",
+        "Advisor" => "Subtype::Advisor",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

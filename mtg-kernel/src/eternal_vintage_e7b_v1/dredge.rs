@@ -25,6 +25,8 @@ const LIFE_FROM_THE_LOAM: &str = "Life from the Loam";
 /// A card's dredge number.
 pub(crate) fn dredge_count(name: &str) -> Option<u8> {
     match name {
+        // Shenanigans (wave S1b).
+        "Shenanigans" => Some(1),
         GOLGARI_GRAVE_TROLL => Some(6),
         STINKWEED_IMP => Some(5),
         GOLGARI_THUG => Some(4),
