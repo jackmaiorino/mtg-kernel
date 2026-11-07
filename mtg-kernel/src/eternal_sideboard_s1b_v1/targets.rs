@@ -68,7 +68,6 @@ pub(crate) fn legal_targets(
     prefix: &[Target],
     state: &GameState,
 ) -> Option<Vec<Target>> {
-    use StandardTargetV1 as S;
     if !owns(target) {
         return None;
     }
