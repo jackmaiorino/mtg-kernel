@@ -328,7 +328,7 @@ pub(crate) fn apply_entry(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
     if live.zone != Zone::Battlefield
         || live.v4.face_index != 0
-        || !definition_name(state, object).is_some_and(|name| echo_cost(name).is_some())
+        || definition_name(state, object).is_none_or(|name| echo_cost(name).is_none())
     {
         return;
     }
