@@ -824,6 +824,7 @@ impl Subtype {
         Subtype::Mystic,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Soltari,
+        #[cfg(feature = "eternal-fixtures")]
         Subtype::Masticore,
     ];
 
