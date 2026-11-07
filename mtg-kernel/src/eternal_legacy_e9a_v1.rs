@@ -884,7 +884,11 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
-    // Premodern wave P1a's cards fall through from this module's tables.
+    // Premodern wave P2a's cards fall through from this module's tables, then
+    // P1b's and P1a's.
+    if let Some(spec) = crate::eternal_premodern_p2a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if let Some(spec) = crate::eternal_premodern_p1a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }

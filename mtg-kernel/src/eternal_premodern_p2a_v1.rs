@@ -124,6 +124,8 @@ pub enum P2aOpV1 {
     /// Contamination's upkeep: sacrifice it unless its controller sacrifices
     /// a creature. May be a choice.
     ContaminationUpkeepV1,
+    /// Contamination: its controller sacrifices a creature of their choice.
+    ContaminationCreatureV1,
     /// Stasis's upkeep: sacrifice it unless its controller pays {U}. May be
     /// a choice.
     StasisUpkeepV1,
@@ -159,6 +161,7 @@ impl P2aOpV1 {
             self,
             Self::VerdictV1
                 | Self::ContaminationUpkeepV1
+                | Self::ContaminationCreatureV1
                 | Self::StasisUpkeepV1
                 | Self::CityUpkeepV1
                 | Self::GenesisOfferV1
@@ -318,8 +321,15 @@ fn live_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
 fn graveyard_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
     let contract = ctx.ability_source_contract?;
     let live = state.objects.try_get(contract.source)?;
+    // A graveyard ability is frozen with its graveyard incarnation; a dies
+    // trigger, with the battlefield incarnation that just died.
+    let incarnation = if contract.zone == Zone::Battlefield {
+        contract.zone_change_count.checked_add(1)?
+    } else {
+        contract.zone_change_count
+    };
     (live.zone == Zone::Graveyard
-        && live.zone_change_count == contract.zone_change_count
+        && live.zone_change_count == incarnation
         && state.players[live.owner.index()]
             .graveyard
             .contains(&contract.source))
@@ -933,6 +943,7 @@ pub(crate) fn execute(op: &P2aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         P2aOpV1::VerdictV1
         | P2aOpV1::RectorOfferV1
         | P2aOpV1::ContaminationUpkeepV1
+        | P2aOpV1::ContaminationCreatureV1
         | P2aOpV1::StasisUpkeepV1
         | P2aOpV1::CityUpkeepV1
         | P2aOpV1::GenesisOfferV1
@@ -1098,11 +1109,19 @@ pub(crate) fn drive(
                     controller: PlayerRef::Controller,
                     options: vec![
                         p2a(P2aOpV1::SacrificeSourceV1),
-                        EffectOp::SacrificeCreature {
-                            player: PlayerRef::Controller,
-                            filter: crate::effect::CreatureSacrificeFilter::Any,
-                        },
+                        p2a(P2aOpV1::ContaminationCreatureV1),
                     ],
+                },
+                &path,
+            );
+            Ok(false)
+        }
+        P2aOpV1::ContaminationCreatureV1 => {
+            push_frame(
+                continuation,
+                EffectOp::SacrificeCreature {
+                    player: PlayerRef::Controller,
+                    filter: crate::effect::CreatureSacrificeFilter::Any,
                 },
                 &path,
             );
