@@ -7,9 +7,10 @@ history-relative opponent kinds are refused (segments would change them), so eac
 opponents (`ladder-u<boundary>`), fixed when its config is derived.
 
 A fork (`history`): a CG chain started from another chain's state at boundary U (its arm parent) can carry that chain's
-ladder before U as a pinned prefix (`ladder-h<boundary>`, a `w5-ladder-history/v1` document written by `pgrow.py
-history`), so "the chain's own ladder to date" spans the lineage it forked from. History states come first in ladder
-order; the fork's own states follow (its boundary 0 is the fork state itself).
+ladder before U as a pinned prefix (`ladder-h<generation>-u<boundary>`, a `w5-ladder-history/v1` document written by
+`pgrow.py history`, bound to the arm parent by its `fork` checkpoint), so "the chain's own ladder to date" spans the
+lineage it forked from, a fork of a fork included. History states come first in ladder order; the fork's own states
+follow (its boundary 0 is the fork state itself).
 
 Determinism. For segment s at global update offset o = s L:
 - the ladder to date is the history (if any), then every boundary b = k stride with 0 <= b <= o (stride is a multiple
@@ -37,6 +38,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 ARM_KEYS = ('stride', 'roster_max', 'replaces', 'test_stride', 'history')
@@ -62,8 +64,10 @@ def member_id(boundary):
     return f'ladder-u{boundary}'
 
 
-def history_id(boundary):
-    return f'ladder-h{boundary}'
+def history_id(generation, boundary):
+    """A history member: the state at `boundary` of the lineage's `generation`-th chain (1 the chain that started
+    from the arm parent of the first fork, 2 that fork, and so on), so ids never collide along a lineage."""
+    return f'ladder-h{generation}-u{boundary}'
 
 
 def sha_file(path):
@@ -75,21 +79,26 @@ def sha_file(path):
 
 
 def check_history(doc, stride, parent_source):
-    """A `w5-ladder-history/v1` document's states, checked: boundaries ascending multiples of the stride, every
-    checkpoint present at its pin, none the fork state itself (the arm parent, the fork's boundary 0)."""
+    """A `w5-ladder-history/v1` document's states, checked: ids `ladder-h<generation>-u<boundary>` in ascending
+    (generation, boundary) order at stride multiples, every checkpoint present at its pin, none the fork state, and
+    the document's `fork` (the state it was cut at) the arm parent itself, so a history only joins its own lineage."""
     if doc.get('schema') != HISTORY_SCHEMA or doc.get('stride') != stride:
         raise ValueError(f'the history is not a {HISTORY_SCHEMA} document at stride {stride}')
-    states = doc.get('states') or []
-    bounds = [st.get('boundary') for st in states]
-    if not states or any(type(b) is not int or b < 0 or b % stride for b in bounds) or bounds != sorted(set(bounds)):
-        raise ValueError('history boundaries must be distinct ascending multiples of the stride')
     parent = (parent_source.get('checkpoint') or {}).get('sha256')
+    if not parent or ((doc.get('fork') or {}).get('checkpoint') or {}).get('sha256') != parent:
+        raise ValueError('the history was cut at another state than the arm parent (its fork checkpoint differs)')
+    states = doc.get('states') or []
+    keys = [(st.get('generation'), st.get('boundary')) for st in states]
+    if not states or any(type(g) is not int or g < 1 or type(b) is not int or b < 0 or b % stride for g, b in keys) \
+            or keys != sorted(set(keys)) or [st.get('id') for st in states] != [history_id(g, b) for g, b in keys]:
+        raise ValueError('history states must be distinct ladder-h<generation>-u<boundary> states in ascending order '
+                         'at multiples of the stride')
     for st in states:
         ck = st['checkpoint']
         if not Path(ck['path']).exists() or sha_file(ck['path']) != ck['sha256']:
-            raise ValueError(f'history state {st["boundary"]} differs from its pin ({ck["path"]})')
+            raise ValueError(f'history state {st["id"]} differs from its pin ({ck["path"]})')
         if ck['sha256'] == parent:
-            raise ValueError(f'history state {st["boundary"]} is the fork state itself (the arm parent)')
+            raise ValueError(f'history state {st["id"]} is the fork state itself (the arm parent)')
     return states
 
 
@@ -135,18 +144,22 @@ def check_spec(spec, base, segment_updates, long_stride, parent_source=None, pin
 
 def history_states(spec, parent_source):
     """[(id, source, after_state_sha256)] of the arm's pinned history (none without one): the parent's source (same
-    lineage, same import) with each history checkpoint; the document is re-checked against the arm's pin."""
+    lineage, same import) with each history checkpoint; the document is re-checked against the arm's pin and its
+    fork state against the parent."""
     pinned = spec.get('history')
     if not pinned:
         return []
     if not Path(pinned['path']).exists() or sha_file(pinned['path']) != pinned['sha256']:
         raise LadderError(f'the ladder history {pinned["path"]} differs from its pin')
     doc = json.loads(Path(pinned['path']).read_text(encoding='utf-8'))
+    if ((doc.get('fork') or {}).get('checkpoint') or {}).get('sha256') != \
+            (parent_source.get('checkpoint') or {}).get('sha256'):
+        raise LadderError('the ladder history was cut at another state than the arm parent')
     out = []
     for st in doc['states']:
         source = copy.deepcopy(parent_source)
         source['checkpoint'] = dict(st['checkpoint'])
-        out.append((history_id(st['boundary']), source, st.get('after_state_sha256')))
+        out.append((st['id'], source, st.get('after_state_sha256')))
     return out
 
 
@@ -281,60 +294,84 @@ def apply(cfg, spec, states, seed_root, segment, offset):
 
 
 def write_history(chain_manifest, until, stride, out, copy_to=None):
-    """`pgrow.py history`: a fork's ladder prefix from a chain (any C-recipe chain with segment ends at the stride),
-    every ladder state before boundary `until`, each checkpoint verified against its receipt; with `copy_to`, each
-    checkpoint is copied there by content (`<sha256>.json`, so the fork no longer reads the source chain's tree), and
-    `<out>.parent.json` is the fork's dose record (the source's state at `until`, its source with that checkpoint)."""
+    """`pgrow.py history`: a fork's ladder prefix from a chain cut at boundary `until` (a positive stride multiple at
+    a segment end): the chain's inherited history, if it is itself a fork (re-verified against its arm pin), then its
+    own ladder states before `until` as generation g + 1 (g the inherited generation, 0 for a chain without history),
+    each checkpoint verified against its receipt or pin. With `copy_to`, every checkpoint, the cut state's included,
+    is copied there by content (`<sha256>.json`), so the fork reads no other tree. `<out>.parent.json` is the fork's
+    dose record (the cut state: the chain's source there with that checkpoint); the history's `fork` names it."""
+    import gzip
     import shutil
     man = json.loads(Path(chain_manifest).read_text(encoding='utf-8'))
     ends = {seg['offset'] + seg['updates']: seg for seg in man['segments']}
     if until <= 0 or until % stride or until not in ends:
         raise LadderError(f'the fork boundary {until} must be a positive multiple of {stride} at a segment end')
 
-    def state(b):
+    def place(ck):
+        """A verified checkpoint pin, copied by content under `copy_to` when given."""
+        if not Path(ck['path']).exists() or sha_file(ck['path']) != ck['sha256']:
+            raise LadderError(f'{ck["path"]} is missing or differs from its pin')
+        if not copy_to:
+            return dict(ck)
+        dst = Path(copy_to) / f'{ck["sha256"]}.json'
+        if not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ck['path'], dst.with_name(dst.name + '.tmp'))
+            os.replace(dst.with_name(dst.name + '.tmp'), dst)
+        if sha_file(dst) != ck['sha256']:
+            raise LadderError(f'{dst} differs from {ck["sha256"]}')
+        return {'path': dst.as_posix(), 'sha256': ck['sha256']}
+
+    def segment_end(b):
         root = Path(ends[b]['root'])
-        complete = json.loads((root / 'iterations' / f'{ends[b]["updates"] - 1:06d}' / 'complete.json')
-                              .read_text(encoding='utf-8'))
         if not (root / 'completion.json').exists():
             raise LadderError(f'the segment ending at {b} is not complete')
+        complete = json.loads((root / 'iterations' / f'{ends[b]["updates"] - 1:06d}' / 'complete.json')
+                              .read_text(encoding='utf-8'))
         upd = Path(complete['update']['path'])
-        ck = upd.parent / 'checkpoint.json'
-        digest = complete['output_identity']['checkpoint_sha256']
-        if not ck.exists() or sha_file(ck) != digest:
-            raise LadderError(f'{ck} is missing or differs from its receipt pin')
-        if copy_to:
-            dst = Path(copy_to) / f'{digest}.json'
-            if not dst.exists():
-                Path(copy_to).mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(ck, dst.with_name(dst.name + '.tmp'))
-                os.replace(dst.with_name(dst.name + '.tmp'), dst)
-            if sha_file(dst) != digest:
-                raise LadderError(f'{dst} differs from {digest}')
-            ck = dst
+        ck = {'path': (upd.parent / 'checkpoint.json').as_posix(),
+              'sha256': complete['output_identity']['checkpoint_sha256']}
         source = copy.deepcopy(complete['source'])
-        source['checkpoint'] = {'path': Path(ck).as_posix(), 'sha256': digest}
-        after = json.loads(upd.read_text(encoding='utf-8'))['after_state_sha256']
-        return source, after
-    states = []
-    parent_source, _ = state(until) if until else (None, None)
+        source['checkpoint'] = place(ck)
+        return source, json.loads(upd.read_text(encoding='utf-8'))['after_state_sha256']
+
+    arm = json.loads(Path(man['arm_file']['path']).read_text(encoding='utf-8'))
+    if sha_file(man['arm_file']['path']) != man['arm_file']['sha256']:
+        raise LadderError('the chain\'s arm file differs from its manifest pin')
+    parent_source = json.loads(Path(arm['parent']['path']).read_text(encoding='utf-8'))['source']
+    inherited = []
+    if (arm.get('ladder') or {}).get('history'):
+        if arm['ladder']['stride'] != stride:
+            raise LadderError('a fork of a fork keeps its lineage\'s stride')
+        for i, source, after in history_states(arm['ladder'], parent_source):
+            g, b = (int(x) for x in re.fullmatch(r'ladder-h(\d+)-u(\d+)', i).groups())
+            ck = source['checkpoint']
+            if sha_file(ck['path']) != ck['sha256']:
+                raise LadderError(f'inherited history state {i} differs from its pin')
+            inherited.append({'id': i, 'generation': g, 'boundary': b, 'checkpoint': place(ck),
+                              'after_state_sha256': after})
+    generation = max((st['generation'] for st in inherited), default=0) + 1
+    fork_source, fork_after = segment_end(until)
+    states = list(inherited)
     for b in range(0, until, stride):
         if b == 0:
-            first = man['segments'][0]
-            cfg_path = Path(first['config'])
-            cfg = json.loads(cfg_path.read_text(encoding='utf-8')) if cfg_path.exists() else \
-                json.loads(__import__('gzip').open(str(cfg_path) + '.gz', 'rt', encoding='utf-8').read())
-            ck = cfg['initial_source']['checkpoint']
-            if sha_file(ck['path']) != ck['sha256']:
-                raise LadderError(f'the source chain parent {ck["path"]} differs from its pin')
-            states.append({'boundary': 0, 'checkpoint': ck, 'after_state_sha256': None})
-            continue
-        source, after = state(b)
-        states.append({'boundary': b, 'checkpoint': source['checkpoint'], 'after_state_sha256': after})
+            first = Path(man['segments'][0]['config'])
+            cfg = json.loads(first.read_text(encoding='utf-8')) if first.exists() else \
+                json.loads(gzip.open(str(first) + '.gz', 'rt', encoding='utf-8').read())
+            ck, after = place(cfg['initial_source']['checkpoint']), None
+        else:
+            source, after = segment_end(b)
+            ck = source['checkpoint']
+        states.append({'id': history_id(generation, b), 'generation': generation, 'boundary': b, 'checkpoint': ck,
+                       'after_state_sha256': after})
     doc = {'schema': HISTORY_SCHEMA, 'chain': man['chain'], 'seed_root': man['seed_root'], 'stride': stride,
-           'until': until, 'states': states}
+           'fork': {'boundary': until, 'checkpoint': fork_source['checkpoint'], 'after_state_sha256': fork_after},
+           'states': states}
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(doc, indent=1, sort_keys=True) + '\n', encoding='utf-8', newline='\n')
     parent = Path(str(out).removesuffix('.json') + '.parent.json')
-    parent.write_text(json.dumps({'origin': {'chain': man['chain'], 'boundary': until}, 'source': parent_source},
+    parent.write_text(json.dumps({'origin': {'chain': man['chain'], 'boundary': until,
+                                             'after_state_sha256': fork_after}, 'source': fork_source},
                                  indent=1, sort_keys=True) + '\n', encoding='utf-8', newline='\n')
     return doc, parent
 

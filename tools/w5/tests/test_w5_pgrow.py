@@ -320,61 +320,86 @@ class Chains(unittest.TestCase):
         self.assertEqual(a['iterations'][1]['episodes'], b['iterations'][0]['episodes'])
         self.assertEqual({o['id'] for o in a['opponents']}, {'a48', 'ladder-u0'})
 
+    def fork_plan(self, hist, parent, label, name, slot):
+        return self.plan({'stride': STRIDE, 'test_stride': True, 'history': str(hist)}, label=label,
+                         chains_in={name: {'arm': 'CG', 'slot': slot, 'seed_root': f'pg/{name}'}}, parent=str(parent))
+
     def test_a_fork_carries_its_source_chains_ladder(self):
         """A CG chain forked at boundary 16 of g1 (`pgrow.py history`) plays g1's ladder before 16 (u0 = b512, u8)
-        as ladder-h states, then its own (its u0 is g1's state at 16)."""
+        as generation-1 history, then its own states (its u0 is g1's state at 16); every input is a copy, so the
+        fork runs with g1's tree and b512's original gone. A fork of that fork keeps both generations."""
         _, plan = self.plan()
         self.assertEqual(self.run_segments(plan, 'g1', 5), chains.EXIT_ROOM)
+        objects = self.node.t / 'fork' / 'objects'
         hist = self.node.t / 'fork' / 'history.json'
-        doc, parent = pgrow.write_history(plan['chains']['g1']['manifest'], 16, STRIDE, hist,
-                                          copy_to=self.node.t / 'fork' / 'objects')
-        self.assertEqual([st['boundary'] for st in doc['states']], [0, 8])
+        doc, parent = pgrow.write_history(plan['chains']['g1']['manifest'], 16, STRIDE, hist, copy_to=objects)
+        self.assertEqual([st['id'] for st in doc['states']], ['ladder-h1-u0', 'ladder-h1-u8'])
         b512 = json.loads(self.node.b512.read_text())['source']['checkpoint']
-        self.assertEqual(doc['states'][0]['checkpoint'], b512)
+        self.assertEqual(doc['states'][0]['checkpoint']['sha256'], b512['sha256'])
         _, records = self.records(plan, 'g1')
         after = {r['boundary']: r['after_state_sha256'] for r in records}
         self.assertEqual(doc['states'][1]['after_state_sha256'], after[8])
-        self.assertTrue(doc['states'][1]['checkpoint']['path'].startswith((self.node.t / 'fork' / 'objects')
-                                                                          .as_posix()))
         fork = json.loads(parent.read_text())
-        self.assertEqual(fork['origin'], {'chain': 'g1', 'boundary': 16})
-        _, fplan = self.plan({'stride': STRIDE, 'test_stride': True, 'history': str(hist)}, label='fork',
-                             chains_in={'f1': {'arm': 'CG', 'slot': 2, 'seed_root': 'pg/f1'}}, parent=str(parent))
+        self.assertEqual(fork['origin'], {'chain': 'g1', 'boundary': 16, 'after_state_sha256': after[16]})
+        self.assertEqual(doc['fork']['checkpoint'], fork['source']['checkpoint'])
+        for ck in [st['checkpoint'] for st in doc['states']] + [fork['source']['checkpoint']]:
+            self.assertTrue(ck['path'].startswith(objects.as_posix()), ck)
+        # The inputs stand alone: the source chain's tree and the original b512 checkpoint go.
+        shutil.rmtree(self.node.root / 'chains' / 'g1')
+        Path(b512['path']).rename(Path(b512['path']).with_name('moved.ckpt'))
+        _, fplan = self.fork_plan(hist, parent, 'fork', 'f1', 2)
         arm = json.loads(Path(fplan['arms']['CG']['file']['path']).read_text())
         self.assertEqual(arm['ladder']['history'], chains.pin(hist))
-        self.assertEqual(self.run_segments(fplan, 'f1', 3), chains.EXIT_ROOM)
+        self.assertEqual(self.run_segments(fplan, 'f1', 5), chains.EXIT_ROOM)
         cfgs = self.configs('f1')
         ids = [{o['id'] for o in c['opponents'] if o['id'].startswith('ladder-')} for c in cfgs]
-        self.assertTrue(ids[0] <= {'ladder-h0', 'ladder-h8', 'ladder-u0'} and 'ladder-h8' in set().union(*ids))
-        self.assertTrue(ids[2] <= {'ladder-h0', 'ladder-h8', 'ladder-u0', 'ladder-u8'})
+        self.assertTrue(ids[0] <= {'ladder-h1-u0', 'ladder-h1-u8', 'ladder-u0'})
+        self.assertIn('ladder-h1-u8', set().union(*ids))
+        self.assertTrue(ids[2] <= {'ladder-h1-u0', 'ladder-h1-u8', 'ladder-u0', 'ladder-u8'})
         named = {o['id']: o['source'] for c in cfgs for o in c['opponents']}
         self.assertEqual(named['ladder-u0']['checkpoint'], fork['source']['checkpoint'])
         ladder = json.loads((self.node.root / 'chains' / 'f1' / 'LADDER.json').read_text())
-        self.assertEqual(sorted(ladder['states']), ['ladder-h0', 'ladder-h8', 'ladder-u0', 'ladder-u8'])
-        # A changed history file refuses at load (its arm pin), and a corrupt history checkpoint refuses at use.
+        self.assertEqual(sorted(ladder['states']), ['ladder-h1-u0', 'ladder-h1-u8', 'ladder-u0', 'ladder-u16',
+                                                    'ladder-u8'])
+        # A fork of the fork, cut at f1's boundary 16: generation 1 (g1's) and generation 2 (f1's) states.
+        hist2 = self.node.t / 'fork2' / 'history.json'
+        doc2, parent2 = pgrow.write_history(fplan['chains']['f1']['manifest'], 16, STRIDE, hist2,
+                                            copy_to=self.node.t / 'fork2' / 'objects')
+        self.assertEqual([st['id'] for st in doc2['states']],
+                         ['ladder-h1-u0', 'ladder-h1-u8', 'ladder-h2-u0', 'ladder-h2-u8'])
+        self.assertEqual(doc2['states'][2]['checkpoint']['sha256'], fork['source']['checkpoint']['sha256'])
+        _, f2plan = self.fork_plan(hist2, parent2, 'fork2', 'f2', 3)
+        self.assertEqual(self.run_segments(f2plan, 'f2', 1), chains.EXIT_ROOM)
+        self.assertEqual({o['id'] for o in self.configs('f2')[0]['opponents'] if o['id'].startswith('ladder-')} -
+                         {'ladder-h1-u0', 'ladder-h1-u8', 'ladder-h2-u0', 'ladder-h2-u8', 'ladder-u0'}, set())
+        # A history only joins its own lineage: f1's history with g1-unrelated parent, or f2's parent, refuses.
+        with self.assertRaisesRegex(chains.Stop, 'another state than the arm parent'):
+            self.fork_plan(hist, parent2, 'mismatch', 'f4', 3)
+        with self.assertRaisesRegex(chains.Stop, 'another state than the arm parent'):
+            self.fork_plan(hist2, self.node.b512, 'mismatch2', 'f5', 3)
+        # A corrupt history checkpoint refuses at use; a changed history file refuses at load (its arm pin).
         cp = Path(doc['states'][1]['checkpoint']['path'])
         good = cp.read_bytes()
         cp.write_bytes(b'corrupt')
         man = json.loads(Path(fplan['chains']['f1']['manifest']).read_text())
-        with self.assertRaisesRegex(chains.Stop, 'ladder-h8'):
+        with self.assertRaisesRegex(chains.Stop, 'ladder-h1-u8'):
             chains.chain_ladder(chains.load_arm(fplan['arms']['CG']['file']['path']), man,
                                 self.node.root / 'chains' / 'f1', 12)
         cp.write_bytes(good)
         hist.write_text(hist.read_text() + ' ')
         with self.assertRaisesRegex(chains.Stop, 'ladder history'):
             chains.load_arm(fplan['arms']['CG']['file']['path'])
-        # The plan refuses a history holding the fork state itself, or off-stride boundaries.
-        bad = dict(doc, states=doc['states'] + [{'boundary': 16, 'checkpoint': fork['source']['checkpoint'],
+        # The plan refuses a history holding the fork state itself, or ids off the lineage pattern or stride.
+        doc = json.loads(hist.read_text())
+        bad = dict(doc, states=doc['states'] + [{'id': 'ladder-h1-u16', 'generation': 1, 'boundary': 16,
+                                                  'checkpoint': fork['source']['checkpoint'],
                                                   'after_state_sha256': after[16]}])
         with self.assertRaisesRegex(chains.Stop, 'fork state itself'):
-            self.plan({'stride': STRIDE, 'test_stride': True, 'history': str(jwrite(self.node.t / 'h1.json', bad))},
-                      label='forkbad1', chains_in={'f2': {'arm': 'CG', 'slot': 3, 'seed_root': 'pg/f2'}},
-                      parent=str(parent))
-        bad = dict(doc, states=[dict(doc['states'][1], boundary=5)])
-        with self.assertRaisesRegex(chains.Stop, 'multiples of the stride'):
-            self.plan({'stride': STRIDE, 'test_stride': True, 'history': str(jwrite(self.node.t / 'h2.json', bad))},
-                      label='forkbad2', chains_in={'f3': {'arm': 'CG', 'slot': 3, 'seed_root': 'pg/f3'}},
-                      parent=str(parent))
+            self.fork_plan(jwrite(self.node.t / 'h1.json', bad), parent, 'forkbad1', 'f6', 3)
+        for states in ([dict(doc['states'][1], boundary=5, id='ladder-h1-u5')],
+                       [dict(doc['states'][1], id='ladder-h9-u8')], list(reversed(doc['states']))):
+            with self.assertRaisesRegex(chains.Stop, 'ascending order'):
+                self.fork_plan(jwrite(self.node.t / 'h2.json', dict(doc, states=states)), parent, 'forkbad2', 'f7', 3)
 
 
 if __name__ == '__main__':
