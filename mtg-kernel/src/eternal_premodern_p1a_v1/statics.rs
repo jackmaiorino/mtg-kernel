@@ -71,7 +71,8 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
         return Keywords::NONE;
     }
     let controller = live.controller;
-    let mut keywords = Keywords::NONE;
+    // Vintara Snapper's conditional shroud (wave P2b).
+    let mut keywords = crate::eternal_premodern_p2b_v1::statics::granted_keywords(state, object);
     if crate::engine::has_effective_subtype(state, object, Subtype::Goblin)
         && active_permanents(state, GOBLIN_WARCHIEF, Some(controller))
             .next()
@@ -91,10 +92,12 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     let Some(live) = state.objects.try_get(object) else {
         return (0, 0);
     };
+    // Deranged Hermit's Squirrel lord (wave P2b).
+    let lord = crate::eternal_premodern_p2b_v1::statics::controlled_boost(state, object);
     if active_named(state, object, MYSTIC_ENFORCER) && threshold(state, live.controller) {
-        (3, 3)
+        (3 + lord.0, 3 + lord.1)
     } else {
-        (0, 0)
+        lord
     }
 }
 
@@ -499,7 +502,7 @@ fn split_spell_colors(state: &GameState, id: ObjectId) -> Option<u8> {
 /// Morph (702.37): Exalted Angel. Cast face down through disguise's
 /// face-down cast, without disguise's ward.
 pub(crate) fn is_morph(name: &str) -> bool {
-    name == EXALTED_ANGEL
+    name == EXALTED_ANGEL || crate::eternal_premodern_p2b_v1::statics::is_morph(name)
 }
 
 /// Exalted Angel's morph cost, {2}{W}{W}.
@@ -528,10 +531,12 @@ pub(crate) fn morph_cost(state: &GameState, id: ObjectId) -> Option<Cost> {
         return None;
     }
     let def = CARD_DEFS.get(usize::from(live.card_def))?;
-    if def.name != EXALTED_ANGEL
-        || crate::continuous_characteristics_v1::removal_timestamp(state, id).is_some()
-    {
+    if crate::continuous_characteristics_v1::removal_timestamp(state, id).is_some() {
         return None;
     }
-    Some(EXALTED_ANGEL_MORPH)
+    if def.name == EXALTED_ANGEL {
+        return Some(EXALTED_ANGEL_MORPH);
+    }
+    // Nantuko Vigilante (wave P2b).
+    crate::eternal_premodern_p2b_v1::statics::morph_cost_of(def.name)
 }

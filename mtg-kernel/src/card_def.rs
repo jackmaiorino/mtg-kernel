@@ -445,6 +445,9 @@ pub enum Subtype {
     /// Appended for the eternal catalog's Premodern wave P2d (Soltari Monk
     /// and Soltari Priest). Stable ids from 240 leave 209 to 239 to wave P2a.
     Soltari = 240,
+    /// Appended for the eternal catalog's Premodern wave P2b (Masticore). Wave
+    /// P2b's creature type ids start at 260.
+    Masticore = 260,
     /// Appended for the eternal catalog's Premodern wave P2c (Verdant
     /// Force's Saproling token). Ids from 280 are reserved for this wave.
     Saproling = 280,
@@ -826,6 +829,7 @@ impl Subtype {
         Subtype::Mystic,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Soltari,
+        Subtype::Masticore,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Saproling,
         #[cfg(feature = "eternal-fixtures")]
@@ -1070,6 +1074,7 @@ impl Subtype {
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
             240 => Subtype::Soltari,
+            260 => Subtype::Masticore,
             280 => Subtype::Saproling,
             281 => Subtype::Centaur,
             _ => return None,
@@ -1291,6 +1296,7 @@ impl Subtype {
             Subtype::Shade => true,
             Subtype::Mystic => true,
             Subtype::Soltari => true,
+            Subtype::Masticore => true,
             Subtype::Saproling => true,
             Subtype::Centaur => true,
         }
@@ -1397,6 +1403,7 @@ impl Subtype {
                     | Subtype::Shade
                     | Subtype::Mystic
                     | Subtype::Soltari
+                    | Subtype::Masticore
                     | Subtype::Saproling
                     | Subtype::Centaur
             )
@@ -1970,6 +1977,9 @@ pub enum PermanentFilterDef {
     /// unblocked attacker you control to hand"). Appended for the eternal
     /// catalog.
     UnblockedAttackingCreatureV1,
+    /// A permanent with this effective subtype (Wirewood Symbiote's "Return an
+    /// Elf you control to its owner's hand"). Appended for Premodern wave P2b.
+    WithSubtypeV1(Subtype),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -3897,6 +3907,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
+        const EXPECTED_ETERNAL: u64 = 0x8c08_92b1_b108_579e;
         const EXPECTED_ETERNAL: u64 = 0x6187_3833_ede6_5656;
         const EXPECTED_ETERNAL: u64 = 0xf179_3e17_1875_4acf;
         assert_eq!(

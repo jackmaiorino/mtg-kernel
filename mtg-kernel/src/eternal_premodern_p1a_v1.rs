@@ -919,12 +919,17 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         POWDER_KEG => &POWDER_KEG_TRIGGERS,
         RITHS_GROVE => &RITHS_GROVE_TRIGGERS,
         SIEGE_GANG_COMMANDER => &SIEGE_GANG_TRIGGERS,
-        _ => &[],
+        // Premodern wave P2b names disjoint cards.
+        _ => crate::eternal_premodern_p2b_v1::triggers_for(name),
     }
 }
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // Premodern wave P2b's cards fall through from this module's tables.
+    if let Some(spec) = crate::eternal_premodern_p2b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !triggers_for(name)
         .iter()
         .any(|trigger| (trigger.effect)() == *effect)
@@ -966,6 +971,9 @@ fn gempalm_trigger() -> EffectOp {
 
 /// Queued and delayed triggers owned by this module's cards.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    if crate::eternal_premodern_p2b_v1::delayed_effect_matches(name, effect) {
+        return true;
+    }
     if name == GEMPALM_INCINERATOR && *effect == gempalm_trigger() {
         return true;
     }
