@@ -831,12 +831,12 @@ fn caller_of_the_claw_makes_a_bear_for_each_nontoken_creature_that_died_this_tur
     let token = put(&mut state, P0, "Goblin Token", Zone::Battlefield);
     let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let survivor = put(&mut state, P0, "Wirewood Symbiote", Zone::Battlefield);
+    let caller = put(&mut state, P0, "Caller of the Claw", Zone::Hand);
     for creature in [elves, birds, token, theirs] {
         to_graveyard(&mut state, creature);
     }
     settled(&mut state);
     assert_eq!(zone(&state, survivor), Zone::Battlefield);
-    let caller = put(&mut state, P0, "Caller of the Claw", Zone::Hand);
     enter(&mut state, caller);
     settled(&mut state);
     let bears = controls(&state, P0, "Bear Token");
@@ -849,6 +849,19 @@ fn caller_of_the_claw_makes_a_bear_for_each_nontoken_creature_that_died_this_tur
     enter(&mut state, second);
     settled(&mut state);
     assert_eq!(controls(&state, P0, "Bear Token").len(), 2);
+}
+
+#[test]
+fn creature_deaths_leave_no_eternal_state_without_a_caller_of_the_claw() {
+    let mut state = islands();
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    assert!(state.eternal_v1.is_none());
+    to_graveyard(&mut state, elves);
+    settled(&mut state);
+    assert!(
+        state.eternal_v1.is_none(),
+        "no Caller, so nothing is tracked"
+    );
 }
 
 fn has_subtype(state: &GameState, object: ObjectId, subtype: Subtype) -> bool {

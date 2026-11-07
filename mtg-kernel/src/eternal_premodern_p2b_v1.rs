@@ -632,7 +632,8 @@ fn note_arrivals(state: &mut GameState, events: &[CommittedEvent]) {
         let owner = live.owner.index();
         arrived[owner] = arrived[owner].saturating_add(1);
     }
-    if arrived == [0, 0] {
+    // Games without a Caller of the Claw keep no state of this module.
+    if arrived == [0, 0] || !caller_in_game(state) {
         return;
     }
     let now = TurnV1::now(state);
@@ -650,6 +651,26 @@ fn note_arrivals(state: &mut GameState, events: &[CommittedEvent]) {
             })
         }
     }
+}
+
+/// Whether a Caller of the Claw is in any zone of the game, either player's.
+fn caller_in_game(state: &GameState) -> bool {
+    static CALLER: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    let Some(caller) = *CALLER.get_or_init(|| card_id_by_name(CALLER_OF_THE_CLAW)) else {
+        return false;
+    };
+    let is_caller = |object: &ObjectId| {
+        state
+            .objects
+            .try_get(*object)
+            .is_some_and(|live| live.card_def == caller)
+    };
+    state.players.iter().any(|seat| {
+        seat.hand.iter().any(is_caller)
+            || seat.library.iter().any(is_caller)
+            || seat.graveyard.iter().any(is_caller)
+            || seat.battlefield.iter().any(is_caller)
+    }) || state.exile.iter().any(is_caller)
 }
 
 /// Nantuko Vigilante: "When this creature is turned face up, destroy target
