@@ -2330,8 +2330,9 @@ def stop_chains(plan, names):
 def reached(plan, name, updates):
     """The chain has completed update N - 1 (boundary N): its receipt exists (N is whole segments)."""
     length = plan['arms'][plan['chains'][name]['arm']]['segment_updates']
-    return (chain_dir(plan['root'], name) / f'seg-{updates // length - 1:05d}' / 'iterations' /
-            f'{length - 1:06d}' / 'complete.json').exists()
+    seg = chain_dir(plan['root'], name) / f'seg-{updates // length - 1:05d}'
+    # a scratch segment counts once persisted (unmounted): the measurement reads the index, which skips mounts
+    return (seg / 'iterations' / f'{length - 1:06d}' / 'complete.json').exists() and not mounted(seg)
 
 
 def end_phase(plan, procs, poll):
