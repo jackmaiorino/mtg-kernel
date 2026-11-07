@@ -774,13 +774,15 @@ fn dromars_charm_gains_life_counters_or_shrinks() {
     state.priority_player = P1;
     pool(&mut state, P1, &[ManaColor::G], 1);
     cast(&mut state, victim, &[]);
-    state.priority_player = P0;
+    next(&mut state);
+    act(&mut state, Action::Pass);
     pool(
         &mut state,
         P0,
         &[ManaColor::W, ManaColor::U, ManaColor::B],
         0,
     );
+    assert!(castable(&mut state, charm));
     act(&mut state, Action::CastSpell(charm));
     settle_with(&mut state, |_, decision| match decision {
         Decision::ChooseSpellMode { .. } => Action::ChooseSpellMode(1),
