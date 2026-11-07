@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 51] = [
+const PLAYABLE_75: [(&str, &str); 67] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -77,6 +77,7 @@ const PLAYABLE_75: [(&str, &str); 51] = [
     ("pauper", "pauper-izzet-terror"),
     ("pauper", "pauper-boros-synthesizer"),
     ("pauper", "burn-3854fe58-5ff9-4046-bac9-ae9617c3caf5"),
+    ("pauper", "pauper-dimir-terror"),
     ("pauper", "pauper-grixis-faeries"),
     ("pauper", "pauper-azorius-gates"),
     ("pauper", "pauper-boros-bully"),
@@ -89,13 +90,28 @@ const PLAYABLE_75: [(&str, &str); 51] = [
     ("pauper", "pauper-esper-faeries"),
     ("pauper", "pauper-izzet-faeries"),
     ("pauper", "pauper-4c-ephemerate"),
+    ("legacy", "legacy-dimir-tempo"),
+    ("legacy", "legacy-boros-energy"),
+    ("legacy", "legacy-izzet-delver"),
     ("legacy", "legacy-doomsday"),
+    ("legacy", "legacy-eldrazi"),
+    ("legacy", "legacy-aluren"),
+    ("legacy", "legacy-hogaak-moonshadow"),
+    ("legacy", "legacy-omni-tell"),
+    ("legacy", "legacy-cephalid-breakfast"),
+    ("legacy", "legacy-esper-control"),
     ("legacy", "legacy-reanimator"),
+    ("legacy", "legacy-temur-delver"),
+    ("vintage", "vintage-esper-lurrus-control"),
+    ("vintage", "vintage-lurrus-po"),
     ("vintage", "vintage-blue-tinker"),
     ("vintage", "vintage-stiflenought"),
+    ("vintage", "vintage-lurrus-drs"),
     ("vintage", "vintage-red-prison"),
     ("vintage", "vintage-sultai-psychic-frog"),
+    ("vintage", "vintage-rug-control"),
     ("vintage", "vintage-eldrazi"),
+    ("vintage", "vintage-grixis-lurrus-control"),
 ];
 
 fn id(name: &str) -> u16 {

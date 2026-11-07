@@ -34,6 +34,7 @@ mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_p1a_v1;
 mod build_eternal_p1b_v1;
+mod build_eternal_s1a_v1;
 mod build_eternal_s1c_v1;
 mod build_eternal_s1d_v1;
 mod build_eternal_v1;

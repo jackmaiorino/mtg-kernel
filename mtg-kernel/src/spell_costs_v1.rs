@@ -894,8 +894,13 @@ fn selected_spell_mana_costs_for_source_grant_v1(
             crate::eternal_cards_v1::outside_hand_cast_reduction(state, source, player),
         );
         // Anointed Peacekeeper: spells with the chosen name cost {2} more.
+        // Disruptor Flute: spells with the chosen name cost {3} more.
         selected.own_generic_increase =
-            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player);
+            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player)
+                .saturating_add(crate::eternal_sideboard_s1a_v1::statics::flute_spell_tax(
+                    state,
+                    definition.object_name,
+                ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
         if matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)

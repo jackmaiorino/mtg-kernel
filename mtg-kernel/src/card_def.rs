@@ -2382,6 +2382,9 @@ pub enum AltCostCondition {
     /// "If this spell is the first spell you've cast this game" (Once Upon a
     /// Time, `eternal_legacy_e8a_v1`). Appended for the eternal catalog.
     FirstSpellThisGameV1,
+    /// "If an opponent controls a Plains and you control a Swamp" (Massacre,
+    /// `eternal_sideboard_s1a_v1`). Appended for the eternal catalog.
+    OpponentPlainsYouSwampV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback

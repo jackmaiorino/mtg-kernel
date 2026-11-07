@@ -29,7 +29,7 @@ const REBUILD: [ActivatedAbilityRecipe; 1] = [cycling(&[ManaCost("{2}"), Discard
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Rebuild" => &REBUILD,
-        _ => super::build_eternal_e9b_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_s1a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -88,7 +88,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_sideboard_s1c_v1::dark_petition",
         ),
-        _ => return super::build_eternal_e9b_v1::special_for(name),
+        _ => return super::build_eternal_s1a_v1::special_for(name),
     })
 }
 
@@ -106,7 +106,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
             "Keywords::VIGILANCE",
             "Keywords::LIFELINK",
         ],
-        _ => super::build_eternal_e9b_v1::keywords_for(name),
+        _ => super::build_eternal_s1a_v1::keywords_for(name),
     }
 }
 
@@ -116,7 +116,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Snapback" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::Always })",
         "Ravenous Trap" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 0, x_count: 0 })], condition: AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1 })",
-        _ => super::build_eternal_e9a_v1::alt_cost_for(name),
+        _ => super::build_eternal_s1a_v1::alt_cost_for(name),
     }
 }
 
@@ -140,6 +140,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Ravenous Trap" => "spell:exile_target_players_graveyard;alt_cost:zero_if_opponent_three_cards_to_graveyard_this_turn",
         "Hullbreacher" => "replacement:opponent_draw_except_first_in_draw_step:create_treasure",
         "Sphinx of the Steel Wind" => "static:protection_from_red_and_green",
-        _ => super::build_eternal_e9b_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_s1a_v1::trigger_recipe_for(name),
     }
 }

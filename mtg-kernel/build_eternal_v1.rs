@@ -575,6 +575,7 @@ pub(super) fn mode3_for(name: &str) -> &'static str {
 pub(super) fn adventure_for(name: &str) -> &'static str {
     match name {
         "Brazen Borrower" => "Some(AdventureDef { name: \"Petty Theft\", cost: Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OpponentNonlandPermanent), effect: ability_effect_program_eternal_cards_v1_return_target_to_owners_hand })",
+        "Rough // Tumble" => super::build_eternal_s1a_v1::adventure_for(name),
         _ => super::build_eternal_p1a_v1::adventure_for(name),
     }
 }
@@ -584,6 +585,7 @@ pub(super) fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRec
         "Brazen Borrower" => Some(AbilityEffectRecipe::StandardProgram(
             "crate::eternal_cards_v1::return_target_to_owners_hand",
         )),
+        "Rough // Tumble" => super::build_eternal_s1a_v1::adventure_effect_recipe_for(name),
         _ => super::build_eternal_p1a_v1::adventure_effect_recipe_for(name),
     }
 }
@@ -591,6 +593,7 @@ pub(super) fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRec
 pub(super) fn adventure_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Brazen Borrower" => Some("Petty Theft"),
+        "Rough // Tumble" => super::build_eternal_s1a_v1::adventure_face_name_for(name),
         _ => super::build_eternal_p1a_v1::adventure_face_name_for(name),
     }
 }

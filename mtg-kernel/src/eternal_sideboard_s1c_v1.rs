@@ -313,7 +313,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         WURMCOIL_ENGINE => &WURMCOIL_ENGINE_TRIGGERS,
         ARGENTUM_MASTICORE => &ARGENTUM_MASTICORE_TRIGGERS,
-        _ => crate::eternal_e9b_v1::triggers_for(name),
+        _ => crate::eternal_sideboard_s1a_v1::triggers_for(name),
     }
 }
 

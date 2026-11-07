@@ -5287,6 +5287,9 @@ fn materialize_event_v1(
             // Dauthi Voidwalker exiles instead, with a void counter.
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_e9b_v1::replace_zone_change(state, &mut z, !mode.is_scene());
+            // Rest in Peace, Leyline of the Void and Containment Priest.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;

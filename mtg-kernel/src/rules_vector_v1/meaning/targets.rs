@@ -774,6 +774,12 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::CreatureOrPlaneswalkerManaValueAtMostV1(_) | S::OpponentCreatureOrEnchantmentV1 => {
             ObjF::Permanent
         }
+        S::NoncreatureArtifactOrEnchantmentV1
+        | S::BlackOrRedPermanentV1
+        | S::UpToTwoArtifactsOrEnchantmentsV1 => ObjF::Permanent,
+        S::CreaturePowerOrToughnessAtMostOneV1 => creature(),
+        S::EnchantmentInstantOrSorcerySpellV1 => ObjF::Spell,
+        S::NonbasicLandCardInAGraveyardV1 => ObjF::AnyCard,
     }
 }
 
@@ -814,9 +820,9 @@ pub(super) fn standard_target_origin(
         | S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_)
         | S::OpponentArtifactV1
         | S::OpponentCreatureOrEnchantmentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
-        S::LandCardInAGraveyardV1 | S::InstantOrSorceryCardInAGraveyardV1 => {
-            (Some(ZoneF::Graveyard), None)
-        }
+        S::LandCardInAGraveyardV1
+        | S::InstantOrSorceryCardInAGraveyardV1
+        | S::NonbasicLandCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
         S::UpToOneLandCardInOwnGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             (Some(ZoneF::Graveyard), Some(RelF::You))
         }
@@ -825,6 +831,7 @@ pub(super) fn standard_target_origin(
         }
         S::InstantOrSorcerySpellV1
         | S::SpellWithSingleTargetV1
+        | S::EnchantmentInstantOrSorcerySpellV1
         | S::TriggeredAbilityOrColorlessSpellV1 => (Some(ZoneF::Stack), None),
         S::AnotherNonlandPermanent
         | S::UpToEightCreaturesOrPlaneswalkersV74
@@ -833,6 +840,10 @@ pub(super) fn standard_target_origin(
         | S::UpToOnePlayerV1
         | S::CreaturePowerAtMostTreasureCountersV1
         | S::AssemblyWorkerCreatureV1
+        | S::NoncreatureArtifactOrEnchantmentV1
+        | S::BlackOrRedPermanentV1
+        | S::CreaturePowerOrToughnessAtMostOneV1
+        | S::UpToTwoArtifactsOrEnchantmentsV1
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
         | S::S1dV1(_)
@@ -922,6 +933,17 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         }
         S::OpponentCreatureOrEnchantmentV1 => {
             object(out, ObjF::Permanent, relation, zone);
+        }
+        S::NoncreatureArtifactOrEnchantmentV1
+        | S::BlackOrRedPermanentV1
+        | S::CreaturePowerOrToughnessAtMostOneV1
+        | S::UpToTwoArtifactsOrEnchantmentsV1
+        | S::NonbasicLandCardInAGraveyardV1
+        | S::EnchantmentInstantOrSorcerySpellV1 => {
+            object(out, standard_target_obj(filter), relation, zone);
+            // Vocabulary gap: the exact refinement (color, type union or
+            // size bound) has no facet.
+            out.atoms.push(Atom::Opaque);
         }
         S::UpToOnePlayerV1 => {
             out.target(TargetAtom::UpTo);

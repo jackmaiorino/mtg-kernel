@@ -179,12 +179,12 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Origin of Metalbending" => "Some(ModeDef { target_spec: TargetSpec::ControlledCreature, effect: crate::eternal_sideboard_s1d_v1::origin_of_metalbending_counter })",
-        _ => super::build_eternal_e9b_v1::mode2_for(name),
+        _ => super::build_eternal_s1a_v1::mode2_for(name),
     }
 }
 
 pub(super) fn mode3_for(name: &str) -> &'static str {
-    super::build_eternal_e9b_v1::mode3_for(name)
+    super::build_eternal_s1a_v1::mode3_for(name)
 }
 
 /// Overload: the Adventure form of the card, cast from hand for the overload

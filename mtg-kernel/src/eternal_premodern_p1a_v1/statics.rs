@@ -422,8 +422,11 @@ pub(crate) fn land_type_setter(
 /// Split cards (708): Fire // Ice. The second half is cast as the card's
 /// Adventure form, and goes to the graveyard as it resolves.
 pub(crate) fn split_card(name: &str) -> bool {
-    // Wave S1d's overload cards share the second-form machinery.
-    name == FIRE_ICE || crate::eternal_sideboard_s1d_v1::statics::is_overload(name)
+    // Wave S1d's overload cards share the second-form machinery; Rough //
+    // Tumble (sideboard wave S1a) is split the same way.
+    name == FIRE_ICE
+        || crate::eternal_sideboard_s1d_v1::statics::is_overload(name)
+        || name == crate::eternal_sideboard_s1a_v1::ROUGH_TUMBLE
 }
 
 /// The split card spell `item`'s half: `true` for the second.

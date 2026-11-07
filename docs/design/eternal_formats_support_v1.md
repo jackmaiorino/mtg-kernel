@@ -404,9 +404,35 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1a, built in `src/eternal_sideboard_s1a_v1.rs` (with `statics` and `targets` submodules)
+  and `build_eternal_s1a_v1.rs`, linked just before E9b in the recipe chain: Legacy sideboard
+  cards. Rest in Peace, Leyline of the Void and Containment Priest join the zone-change
+  replacement hook Dauthi Voidwalker uses (exile instead of a graveyard; exile a nontoken
+  creature entering from anywhere but the stack). Leyline's opening-hand permission is offered
+  as the first upkeep begins, as Chancellor of the Annex's reveal is. Disruptor Flute names a
+  card as Anointed Peacekeeper does: spells with the name cost {3} more (own-spell increase) and
+  its non-mana activated abilities are prohibited like Pithing Needle's. Choke is an untap-step
+  prohibition, Defense Grid a spell tax by the caster's turn, Dread of Night a power/toughness
+  modifier. Mass effects (Rough // Tumble, a split card through the Adventure form; Brotherhood's
+  End; Meltdown; Serenity; Massacre's -2/-2 on exact incarnations) are `S1aOpV1` leaves, and
+  Massacre adds `AltCostCondition::OpponentPlainsYouSwampV1`. Lavinia's cast restriction is a
+  cast prohibition (X judged as 0), and her counter reads the mana a cast spent
+  (`payment.commit`), recorded only while she is in play. Carpet of Flowers is queued by the
+  main-phase hook as a choice of color and amount, clamped to the Islands at resolution.
+  Surgical Extraction exiles every same-named card of the owner's graveyard, hand and library
+  and shuffles. New target shapes: noncreature artifact or enchantment, black or red permanent,
+  creature with power or toughness 1 or less, up to two artifacts and/or enchantments, an
+  enchantment, instant or sorcery spell, and a non-basic-land card in a graveyard.
+
+  Known gaps: Surgical Extraction's "any number" always takes every match. Lavinia judges X
+  as 0 and does not restrict casts made during resolution. Left out of the wave: Damping
+  Sphere (its land replacement spans the mana planner and every mana yield path), Collective
+  Brutality (escalate), Stronghold Gambit, Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
+  of Saint Katherine (miracle is Terminus-only and its cost needs generic mana) and From the
+  Ashes.
 - S1c (issue #365, Vintage-only sideboard cards), built in `src/eternal_sideboard_s1c_v1.rs`
-  (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked just before E9b in
-  the recipe chains (after E8a and S1d). Bounce-all (Hurkyl's Recall, Rebuild with
+  (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked late in the recipe
+  chains (after E8a and S1d, before S1a and E9b). Bounce-all (Hurkyl's Recall, Rebuild with
   its cycling), Virtue's Ruin's destroy-all, Feed the Swarm's life loss (the destroyed
   permanent's mana value), Lithomantic Barrage's 5 damage to a white and/or blue target,
   Dark Petition's spell mastery mana and Wurmcoil Engine's two tokens (deathtouch and
@@ -435,7 +461,7 @@ New, each built once in the first wave that needs it:
   not choose the order of the two replacements.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
-  S1c and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
+  S1c, S1a and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
   (Vandalblast, Electrickery) is the Adventure form of the card that split cards
   use, cast from hand with the overload cost, sending the card to the graveyard,
   with no targets and the printed mana value on the stack (118.9c). Circle of
@@ -558,6 +584,7 @@ S1 progress (census after each wave; full 75 share, then missing sideboard cards
 | Baseline | | 45.5%, 32 | 5.9%, 69 | 0.7%, 36 |
 | S1d (Pauper) | 31 | 94.9%, 1 | 5.9%, 69 | 0.7%, 36 |
 | S1c (Vintage) | 17 | 94.9%, 1 | 5.9%, 69 | 5.9%, 19 |
+| S1a (Legacy) | 24 | 95.2%, 0 | 46.0%, 46 | 25.7%, 14 |
 
 ## Execution
 
