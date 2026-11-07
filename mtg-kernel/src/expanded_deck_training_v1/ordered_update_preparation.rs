@@ -327,8 +327,12 @@ pub(super) fn read_trajectories_v1(
 ///
 /// 32 entries hold a W5 pool roster (17 fixed opponents and the current
 /// model) across iterations; at 8 the roster evicted itself and most pool
-/// episodes paid a full load. An entry holds one policy and its verified
-/// files (about 25 MB for net-8), so a full cache is under 1 GB.
+/// episodes paid a full load. An entry holds one policy and every verified
+/// file of its load: for a W5 net-8 opponent, a 15 MB checkpoint container
+/// plus its import inputs (about 30 MB in all; a 20 MB v1 JSON checkpoint or
+/// a converted source, which also keeps its base's files, holds more). The
+/// bound counts entries, not bytes, so 32 large sources can hold 1 to 2 GB;
+/// a run holds only the sources it plays.
 const OPPONENT_CACHE_ENTRIES: usize = 32;
 
 struct CachedOpponentV1 {
