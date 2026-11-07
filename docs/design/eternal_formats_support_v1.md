@@ -422,6 +422,43 @@ Gameplay support is engineering, not playing-strength evidence. Policy encoders,
 and Spellbench entries for eternal formats are separate work; frozen Pauper encoders keep
 refusing unsupported state.
 
+## Sideboards
+
+Once a deck's mainboard plays, its sideboard is next. The **full 75 playable share** is the
+summed share of playable decks whose sideboard is Full too. The census reports it with the
+missing sideboard cards of playable decks, ranked by the summed share of the decks that list
+them (`sideboard_unsupported_by_share`, with each card's deck count).
+
+The snapshot lists a companion among the sideboard's 15 cards, as tournament decklists do:
+all twelve companion decks (two Legacy Yorion lists with 80-card mainboards, ten Vintage
+Lurrus lists) have 15-card sideboards that include it. The census counts the companion once,
+as part of the deck. Other snapshot facts a best-of-three builder has to accept: two
+sideboards have 14 cards, seven mainboards have 61 or 62, and a card can take two rows of one
+zone (the counts add).
+
+Baseline (main after E9a and E9b; S0):
+
+| Format | Playable | Full 75 | Missing sideboard cards |
+| --- | ---: | ---: | ---: |
+| Pauper | 95.2% | 45.5% | 32 |
+| Legacy | 90.0% | 5.9% | 69 |
+| Vintage | 98.1% | 0.7% | 36 |
+
+That is 126 distinct cards. Completing decks greedily by share per new card, 45 of them reach
+81% (Pauper), 53% (Legacy) and 87% (Vintage); all 126 reach the playable shares.
+
+Stages, one PR each (S1 is one PR per wave):
+
+- S0: the census measure above.
+- S1: sideboard cards in waves, Legacy first, with the card contract of E1 to E9.
+- S2: an eternal best-of-three harness under `eternal-fixtures`: format-aware deck size
+  bounds (at least 60 mainboard cards, at most 15 sideboard cards with the companion
+  among them), a companion-aware game builder and a catalog best-of-three test with a
+  seeded random sideboarding policy. Pauper's exact 60/15 registration and its frozen
+  sideboard policy are unchanged.
+- S3: an owner-private outside-the-game zone for wish effects (Burning Wish, Karn, the
+  Great Creator's -2, Learn, Extrapolate the Impossible), replacing the best-of-one stubs.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
