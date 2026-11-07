@@ -1167,6 +1167,7 @@ def run(a):
     code = subprocess.call(cmd)
     log(root, chain=a.chain, event='run-exit', exit=code)
     if read_end(root, a.chain) is not None:
+        release_scratch(plan, a.chain, read(chain_dir(root, a.chain) / 'chain.json'))  # the box's driver is gone
         return 0
     if code == w5box.EXIT_OOM and c['arm'] in MEASURED:
         man = read(chain_dir(root, a.chain) / 'chain.json')
@@ -1782,7 +1783,7 @@ def end_oom_failures(plan, root):
     for n, c in sorted(plan['chains'].items()):
         if c['arm'] in MEASURED and read_end(root, n) is None and oom_closed(root, n):
             man = read(chain_dir(root, n) / 'chain.json')
-            boundary, receipt = latest(man)
+            boundary, receipt = latest(man, persisted=True)
             if write_once(chain_dir(root, n) / 'END.json',
                           end_doc(n, c['arm'], 'chain-failure', boundary, receipt, 'supervise', cause='oom kill')):
                 log(root, chain=n, event='end', reason='chain-failure', cause='oom kill', boundary=boundary)
