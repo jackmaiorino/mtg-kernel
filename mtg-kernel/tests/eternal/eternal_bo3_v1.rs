@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 15] = [
+const PLAYABLE_75: [(&str, &str); 47] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -31,17 +31,64 @@ const PLAYABLE_75: [(&str, &str); 15] = [
         "pauper",
         "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
     ),
+    ("pauper", "tron-c244ab01-c9e3-400d-8db1-6d717616b7e2"),
+    ("pauper", "pauper-grixis-affinity"),
+    ("pauper", "pauper-spy-combo"),
+    ("pauper", "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"),
     ("pauper", "pauper-mono-red-rally"),
     ("pauper", "pauper-esper-affinity"),
+    (
+        "pauper",
+        "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    ),
+    ("pauper", "pauper-ruby-storm"),
+    ("pauper", "pauper-jund-wildfire"),
     ("pauper", "pauper-golgari-gardens"),
     (
         "pauper",
         "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424",
     ),
+    ("pauper", "pauper-white-aggro"),
+    ("pauper", "pauper-familiars"),
+    ("pauper", "pauper-esper-ephemerate"),
+    (
+        "pauper",
+        "pauper-turbo-fog-fe589501-15e6-4511-b259-e066f9f36c51",
+    ),
+    (
+        "pauper",
+        "pauper-mono-blue-faeries-f7d232c7-2c3c-4459-b219-f3e8d9abbec6",
+    ),
+    ("pauper", "pauper-dimir-affinity"),
+    ("pauper", "pauper-jeskai-ephemerate"),
+    ("pauper", "pauper-gruul-ponza"),
     ("pauper", "pauper-rakdos-madness"),
+    ("pauper", "pauper-boros-moxite"),
+    (
+        "pauper",
+        "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    ),
+    ("pauper", "pauper-snacker-gates"),
+    ("pauper", "pauper-mardu-synthesizer"),
+    ("pauper", "pauper-food-gardens"),
+    ("pauper", "pauper-gruul-ramp"),
+    ("pauper", "pauper-glintblade"),
+    ("pauper", "pauper-4c-affinity"),
+    ("pauper", "pauper-izzet-terror"),
+    ("pauper", "pauper-boros-synthesizer"),
     ("pauper", "burn-3854fe58-5ff9-4046-bac9-ae9617c3caf5"),
+    ("pauper", "pauper-grixis-faeries"),
     ("pauper", "pauper-azorius-gates"),
+    ("pauper", "pauper-boros-bully"),
+    ("pauper", "pauper-azorius-faeries"),
+    ("pauper", "pauper-4c-pestilence"),
+    (
+        "pauper",
+        "pauper-4c-synthesizer-f5246896-123e-417c-9560-63c3c542a0da",
+    ),
     ("pauper", "pauper-esper-faeries"),
+    ("pauper", "pauper-izzet-faeries"),
+    ("pauper", "pauper-4c-ephemerate"),
     ("legacy", "legacy-doomsday"),
     ("legacy", "legacy-reanimator"),
     ("vintage", "vintage-red-prison"),

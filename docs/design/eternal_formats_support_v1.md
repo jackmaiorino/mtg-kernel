@@ -522,6 +522,13 @@ gap: policy observation v5 describes an effect option only by its index, so a po
 the option order from its own sideboard; the opponent does not observe Extrapolate's two
 revealed cards apart from that order.
 
+S1 progress (census after each wave; full 75 share, then missing sideboard cards):
+
+| Wave | Cards | Pauper | Legacy | Vintage |
+| --- | ---: | --- | --- | --- |
+| Baseline | | 45.5%, 32 | 5.9%, 69 | 0.7%, 36 |
+| S1d (Pauper) | 31 | 94.9%, 1 | 5.9%, 69 | 0.7%, 36 |
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
