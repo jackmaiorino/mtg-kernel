@@ -121,11 +121,6 @@ pub enum P2aOpV1 {
     BaneShrinkV1 { x: u16 },
     /// Sacrifice the resolving ability's source.
     SacrificeSourceV1,
-    /// Contamination's upkeep: sacrifice it unless its controller sacrifices
-    /// a creature. May be a choice.
-    ContaminationUpkeepV1,
-    /// Contamination: its controller sacrifices a creature of their choice.
-    ContaminationCreatureV1,
     /// Stasis's upkeep: sacrifice it unless its controller pays {U}. May be
     /// a choice.
     StasisUpkeepV1,
@@ -160,8 +155,6 @@ impl P2aOpV1 {
         matches!(
             self,
             Self::VerdictV1
-                | Self::ContaminationUpkeepV1
-                | Self::ContaminationCreatureV1
                 | Self::StasisUpkeepV1
                 | Self::CityUpkeepV1
                 | Self::GenesisOfferV1
@@ -660,8 +653,26 @@ fn blossoms_enters() -> EffectOp {
 }
 
 /// Contamination: "sacrifice Contamination unless you sacrifice a creature."
+/// A controller with no creature sacrifices it outright. The choice is a
+/// branch of the trigger's own program, which a sacrifice choice requires.
 fn contamination_upkeep() -> EffectOp {
-    p2a(P2aOpV1::ContaminationUpkeepV1)
+    EffectOp::Conditional {
+        cond: crate::effect::EffectCond::PlayerControlsPermanentType {
+            player: PlayerRef::Controller,
+            card_type: CardType::Creature,
+        },
+        then: Box::new(EffectOp::Choice {
+            controller: PlayerRef::Controller,
+            options: vec![
+                p2a(P2aOpV1::SacrificeSourceV1),
+                EffectOp::SacrificeCreature {
+                    player: PlayerRef::Controller,
+                    filter: crate::effect::CreatureSacrificeFilter::Any,
+                },
+            ],
+        }),
+        else_: Box::new(p2a(P2aOpV1::SacrificeSourceV1)),
+    }
 }
 
 /// Stasis: "sacrifice Stasis unless you pay {U}."
@@ -942,8 +953,6 @@ pub(crate) fn execute(op: &P2aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         // Choices and frame-pushing leaves run in `drive`.
         P2aOpV1::VerdictV1
         | P2aOpV1::RectorOfferV1
-        | P2aOpV1::ContaminationUpkeepV1
-        | P2aOpV1::ContaminationCreatureV1
         | P2aOpV1::StasisUpkeepV1
         | P2aOpV1::CityUpkeepV1
         | P2aOpV1::GenesisOfferV1
@@ -1090,42 +1099,6 @@ pub(crate) fn drive(
                 path,
             );
             Ok(true)
-        }
-        P2aOpV1::ContaminationUpkeepV1 => {
-            let Some(contamination) = live_ability_source(&continuation.ctx, state) else {
-                return Ok(false);
-            };
-            let has_creature = battlefield(state).any(|object| {
-                state.objects.get(object).controller == controller
-                    && has_type(state, object, CardType::Creature)
-            });
-            if !has_creature {
-                sacrifice(state, contamination, controller);
-                return Ok(false);
-            }
-            push_frame(
-                continuation,
-                EffectOp::Choice {
-                    controller: PlayerRef::Controller,
-                    options: vec![
-                        p2a(P2aOpV1::SacrificeSourceV1),
-                        p2a(P2aOpV1::ContaminationCreatureV1),
-                    ],
-                },
-                &path,
-            );
-            Ok(false)
-        }
-        P2aOpV1::ContaminationCreatureV1 => {
-            push_frame(
-                continuation,
-                EffectOp::SacrificeCreature {
-                    player: PlayerRef::Controller,
-                    filter: crate::effect::CreatureSacrificeFilter::Any,
-                },
-                &path,
-            );
-            Ok(false)
         }
         P2aOpV1::StasisUpkeepV1 => {
             let Some(stasis) = live_ability_source(&continuation.ctx, state) else {

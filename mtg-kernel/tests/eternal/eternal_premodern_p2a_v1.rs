@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, Keywords, Subtype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};
