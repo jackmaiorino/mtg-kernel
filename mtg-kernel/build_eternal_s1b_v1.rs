@@ -167,9 +167,7 @@ pub(super) fn ward_cost_for(name: &str) -> &'static str {
 
 /// Printed evergreen keywords, in printed order.
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
-    match name {
-        _ => super::build_eternal_e9b_v1::keywords_for(name),
-    }
+    super::build_eternal_e9b_v1::keywords_for(name)
 }
 
 /// Deafening Clarion's second choice.
