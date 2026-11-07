@@ -392,6 +392,112 @@ class StageFTests(unittest.TestCase):
         self.assertTrue(plan)
 
 
+class VanishingEntry:
+    """A listed file that is gone by the time it is stat'ed: `before` runs (the concurrent move or delete), then
+    stat raises FileNotFoundError. A POSIX DirEntry.stat is a system call and fails this way; Windows serves it
+    from the listing, so this stand-in makes the race the same on both."""
+
+    def __init__(self, entry, before=lambda: None):
+        self._entry, self._before = entry, before
+
+    def __getattr__(self, name):
+        return getattr(self._entry, name)
+
+    def stat(self, *args, **kwargs):
+        self._before()
+        raise FileNotFoundError(2, "No such file or directory", self._entry.path)
+
+
+class StageFTreeBytesTests(unittest.TestCase):
+    """tree_bytes beside a running thin and purge: the supervisor and every storage admission call it while the
+    drivers move bulk into `_hold-thin` and delete it from there (mtg-kernel#536)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "stagef"
+        self.root.mkdir()
+
+    def file(self, path, size):
+        path = self.root / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * size)
+        return path
+
+    def listings(self, hook):
+        """os.scandir whose every listing passes through hook(folder, entries), which returns the entries to serve."""
+        real = os.scandir
+        return mock.patch.object(stagef.os, "scandir", lambda path=".": hook(Path(path), list(real(path))))
+
+    def test_a_quiet_tree_counts_every_file_once_holding_folder_included(self):
+        self.file("a.bin", 3)
+        self.file("chains/x/native/b.bin", 5)
+        self.file("_hold-thin/x/native/c.bin", 7)
+        self.file("_hold-thin/y/d.bin", 11)
+        self.assertEqual(stagef.tree_bytes(self.root), 3 + 5 + 7 + 11)
+        self.assertEqual(stagef.tree_bytes(self.root / "chains"), 5)
+        self.assertEqual(stagef.tree_bytes(self.root / "missing"), 0)
+
+    def test_a_file_that_vanishes_between_its_listing_and_its_stat_counts_nothing(self):
+        self.file("keep.bin", 5)
+        gone = self.file("_hold-thin/r2-p2-o/update/checkpoint.json", 10)      # purge deletes it after the listing
+        self.file("_hold-thin/r2-p2-o/update/update.json", 20)
+
+        def hook(folder, entries):
+            return [VanishingEntry(e, gone.unlink) if e.name == gone.name else e for e in entries]
+
+        with self.listings(hook):
+            self.assertEqual(stagef.tree_bytes(self.root), 5 + 20)
+        self.assertFalse(gone.exists())
+
+    def test_a_folder_that_vanishes_before_it_is_listed_counts_nothing(self):
+        self.file("keep.bin", 5)
+        self.file("_hold-thin/r2-p2-o/a.bin", 10)
+        self.file("chains/x/b.bin", 20)
+
+        def hook(folder, entries):
+            if folder == self.root / "chains":                      # emptied and removed after chains/ was listed
+                (self.root / "chains" / "x" / "b.bin").unlink()
+                (self.root / "chains" / "x").rmdir()
+            return entries
+
+        with self.listings(hook):
+            self.assertEqual(stagef.tree_bytes(self.root), 5 + 10)
+
+    def test_a_file_thin_moves_into_the_holding_folder_during_the_walk_is_still_counted(self):
+        moving = self.file("chains/x/native/update/checkpoint.json", 100)
+        self.file("_hold-thin/y/held.bin", 7)
+        dest = self.root / "_hold-thin" / "x" / "native" / "update" / "checkpoint.json"
+
+        def move():
+            dest.parent.mkdir(parents=True)
+            os.replace(moving, dest)
+
+        def hook(folder, entries):
+            if folder == self.root:                  # the order that reaches the holding folder before chains/
+                return sorted(entries, key=lambda e: e.name, reverse=True)
+            if folder == moving.parent:              # thin renames the file out after the walk listed it
+                return [VanishingEntry(e, move) if e.name == moving.name else e for e in entries]
+            return entries
+
+        with self.listings(hook):
+            self.assertEqual(stagef.tree_bytes(self.root), 100 + 7)
+        self.assertTrue(dest.exists() and not moving.exists())
+
+    def test_a_linked_holding_folder_is_neither_followed_nor_counted(self):
+        self.file("keep.bin", 5)
+        outside = Path(self.tmp.name) / "outside"
+        (outside / "x").mkdir(parents=True)
+        (outside / "x" / "big.bin").write_bytes(b"x" * 1000)
+        hold = self.root / "_hold-thin"
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(outside), str(hold))
+        else:
+            os.symlink(outside, hold)
+        self.assertEqual(stagef.tree_bytes(self.root), 5)
+
+
 class StageFReadTests(unittest.TestCase):
     def test_case_lists(self):
         cases = stagef_read.all_cases()["pairs"]
