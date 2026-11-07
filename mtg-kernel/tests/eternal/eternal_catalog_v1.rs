@@ -771,3 +771,70 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
         "no game put a companion into its owner's hand"
     );
 }
+
+/// A deck of `lands` and four copies of each of nine spells.
+fn stress_deck(lands: &[(&str, u32)], spells: [&str; 9]) -> CustomDeckV1 {
+    let count = |name: &str, count: u32| CustomCardCountV1 {
+        name: name.to_owned(),
+        count: count as _,
+    };
+    CustomDeckV1 {
+        cards: lands
+            .iter()
+            .map(|(name, copies)| count(name, *copies))
+            .chain(spells.iter().map(|name| count(name, 4)))
+            .collect(),
+        companion: None,
+    }
+}
+
+/// Premodern wave P2a's statics (Stasis, Contamination, Root Maze, Forsaken
+/// City, Future Sight, Black Vise) are rare in the snapshot decks, so two
+/// decks full of them play each other through public sessions, both seats
+/// with ranked and with seeded random actions.
+#[test]
+fn p2a_statics_decks_finish_and_replay_through_public_sessions() {
+    let blue_green = stress_deck(
+        &[("Island", 10), ("Forest", 10), ("Forsaken City", 4)],
+        [
+            "Future Sight",
+            "Stasis",
+            "Root Maze",
+            "Upheaval",
+            "Mana Short",
+            "Genesis",
+            "Wall of Blossoms",
+            "Gaea's Blessing",
+            "Veteran Explorer",
+        ],
+    );
+    let white_black = stress_deck(
+        &[("Swamp", 12), ("Plains", 8), ("Tainted Field", 4)],
+        [
+            "Contamination",
+            "Black Vise",
+            "Bane of the Living",
+            "Nevinyrral's Disk",
+            "Vindicate",
+            "Gerrard's Verdict",
+            "Eternal Dragon",
+            "Innocent Blood",
+            "Zombie Infestation",
+        ],
+    );
+    for (pair, seed) in [
+        ([blue_green.clone(), white_black.clone()], 0x5032_4100_u64),
+        ([white_black, blue_green], 0x5032_4101),
+    ] {
+        for policy in [
+            Policy::Ranked,
+            Policy::Random(seed),
+            Policy::Random(seed + 16),
+            Policy::Random(seed + 32),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+        }
+    }
+}
