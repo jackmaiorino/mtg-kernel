@@ -362,7 +362,8 @@ fn game_builder_uses_the_companion_only_while_it_qualifies() {
         Err(EternalBo3ErrorV1::GameOneSideboarded { .. })
     ));
     let mut changed = deck.registered_configuration().mainboard().to_vec();
-    changed[0] = id("Brainstorm");
+    // Black Lotus is in neither zone of this deck.
+    changed[0] = id("Black Lotus");
     assert!(matches!(
         deck.admit_configuration_v1(
             2,
