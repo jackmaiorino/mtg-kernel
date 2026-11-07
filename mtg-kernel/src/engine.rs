@@ -396,6 +396,14 @@ pub struct RuntimeRulesV1 {
     /// reads no hidden state, so whether an ordering stage appears tells the
     /// other seat nothing about hidden cards.
     pub auto_unobservable_graveyard_order: bool,
+    /// A loss ends the game before any further decision (104.3, 704.5).
+    /// Off, the historical engine can expose one more decision after a
+    /// state-based action set `has_lost` inside a continuation (issue #433:
+    /// Highway Robbery's sacrifice branch draws from an empty library, then
+    /// the loser receives priority). Omitted from snapshots while off, so
+    /// `RESOLUTION_BOUNDARY_V1` keeps its serialized bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub loss_ends_game: bool,
 }
 
 impl RuntimeRulesV1 {
@@ -403,6 +411,14 @@ impl RuntimeRulesV1 {
     /// LANES/spy-fix-first-handoff-20261010).
     pub const RESOLUTION_BOUNDARY_V1: Self = Self {
         auto_unobservable_graveyard_order: true,
+        loss_ends_game: false,
+    };
+
+    /// The loss-terminal fix alone (issue #433,
+    /// docs/design/loss_terminal_rules_v1.md).
+    pub const LOSS_TERMINAL_V1: Self = Self {
+        auto_unobservable_graveyard_order: false,
+        loss_ends_game: true,
     };
 
     pub fn is_default(&self) -> bool {
@@ -12023,7 +12039,26 @@ fn native_validation_stage<T, E>(_stage: &'static str, result: Result<T, E>) -> 
     result
 }
 
+/// Drives the game to its next decision. With `RuntimeRulesV1::
+/// loss_ends_game` on, a loss ends the game before any decision is exposed:
+/// the loop below checks for game over only at its top, and a stage can run
+/// state-based actions that set `has_lost` and then fall through to a later
+/// decision in the same pass (issue #433). Default rules keep that
+/// historical transition.
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    let decision = advance_until_decision_historical(state);
+    if !state.engine.runtime_rules.loss_ends_game
+        || matches!(
+            decision,
+            Decision::GameOver { .. } | Decision::Halted { .. }
+        )
+    {
+        return decision;
+    }
+    check_game_over(state).unwrap_or(decision)
+}
+
+fn advance_until_decision_historical(state: &mut GameState) -> Decision {
     if let Err(_error) = time_stop_v1::validate(state)
         .and_then(|_| ordinary_cleanup_v1::validate(state))
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
@@ -32806,6 +32841,118 @@ mod tests {
             state.objects.get(snacker).tapped,
             "\"return... to the battlefield tapped\""
         );
+    }
+
+    /// Issue #433: Highway Robbery's sacrifice branch draws two from P0's
+    /// empty library, and the state-based actions that draw continuation
+    /// runs set P0's `has_lost`. P0 keeps an untapped Mountain and a
+    /// Lightning Bolt, so a priority decision after the loss is a real
+    /// choice. Returns the final state and every exposed decision with the
+    /// state hash it was exposed in.
+    fn highway_robbery_from_an_empty_library(
+        rules: RuntimeRulesV1,
+    ) -> (GameState, Vec<(Decision, u64)>) {
+        let mut state = ready_game_in_main1(3);
+        state.engine.runtime_rules = rules;
+        let robbery = put_in_hand(&mut state, PlayerId::P0, "Highway Robbery");
+        put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+        step(&mut state, Action::CastSpell(robbery)).unwrap();
+        let mut exposed = Vec::new();
+        loop {
+            let decision = advance_until_decision(&mut state);
+            exposed.push((decision.clone(), state.state_hash()));
+            let action = match decision {
+                Decision::CastSpellOrPass { .. } if !state.stack.is_empty() => Action::Pass,
+                Decision::ChooseOptionalCost {
+                    sacrifice_payable: true,
+                    ..
+                } => Action::ChooseOptionalCost(OptionalCostChoice::SacrificeLand),
+                Decision::ChooseCostTargets { candidates, .. } => Action::ChooseCostTarget(
+                    candidates
+                        .into_iter()
+                        .find(|&land| state.objects.get(land).tapped)
+                        .expect("a Mountain tapped to cast Highway Robbery"),
+                ),
+                _ => return (state, exposed),
+            };
+            step(&mut state, action).unwrap();
+        }
+    }
+
+    #[test]
+    fn highway_robbery_loss_still_exposes_priority_under_default_rules() {
+        // The historical transition, pinned so default rules stay unchanged:
+        // P0 has lost and is still asked to act.
+        let (mut state, exposed) = highway_robbery_from_an_empty_library(RuntimeRulesV1::default());
+        assert!(state.players[0].has_lost);
+        match &exposed.last().expect("decisions").0 {
+            Decision::CastSpellOrPass {
+                player,
+                castable_spells,
+                ..
+            } => {
+                assert_eq!(*player, PlayerId::P0);
+                assert!(!castable_spells.is_empty(), "Lightning Bolt is castable");
+            }
+            other => panic!("expected the historical priority decision, got {other:?}"),
+        }
+        step(&mut state, Action::Pass).unwrap();
+        assert_eq!(
+            advance_until_decision(&mut state),
+            Decision::GameOver {
+                winner: Some(PlayerId::P1)
+            },
+            "the next terminal check ends the game"
+        );
+    }
+
+    #[test]
+    fn loss_terminal_v1_ends_the_game_instead_of_exposing_priority_after_a_loss() {
+        let (_, historical) = highway_robbery_from_an_empty_library(RuntimeRulesV1::default());
+        let (mut state, exposed) =
+            highway_robbery_from_an_empty_library(RuntimeRulesV1::LOSS_TERMINAL_V1);
+        assert!(state.players[0].has_lost);
+        let (last, before) = exposed.split_last().expect("decisions");
+        assert_eq!(
+            before,
+            &historical[..historical.len() - 1],
+            "identical decisions and state hashes until the loss"
+        );
+        let over = Decision::GameOver {
+            winner: Some(PlayerId::P1),
+        };
+        assert_eq!(last.0, over);
+        assert_eq!(
+            advance_until_decision(&mut state),
+            over,
+            "and it stays over"
+        );
+    }
+
+    /// Issue #433: the flag adds no snapshot bytes while off, so default and
+    /// `resolution-boundary-v1` states keep theirs, and old bytes still load.
+    #[test]
+    fn loss_ends_game_serializes_only_when_on() {
+        let boundary = r#"{"auto_unobservable_graveyard_order":true}"#;
+        assert_eq!(
+            serde_json::to_string(&RuntimeRulesV1::RESOLUTION_BOUNDARY_V1).unwrap(),
+            boundary
+        );
+        assert_eq!(
+            serde_json::from_str::<RuntimeRulesV1>(boundary).unwrap(),
+            RuntimeRulesV1::RESOLUTION_BOUNDARY_V1
+        );
+        let on = serde_json::to_string(&RuntimeRulesV1::LOSS_TERMINAL_V1).unwrap();
+        assert_eq!(
+            on,
+            r#"{"auto_unobservable_graveyard_order":false,"loss_ends_game":true}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<RuntimeRulesV1>(&on).unwrap(),
+            RuntimeRulesV1::LOSS_TERMINAL_V1
+        );
+        assert!(RuntimeRulesV1::default().is_default());
+        assert!(!RuntimeRulesV1::LOSS_TERMINAL_V1.is_default());
     }
 
     #[test]
