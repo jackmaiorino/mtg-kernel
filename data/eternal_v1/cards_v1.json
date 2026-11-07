@@ -21454,6 +21454,556 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/ElephantToken.java",
    "is_token": true
+  },
+  {
+   "name": "Spell Snare",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "counter_target",
+    "mana_value_restriction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SpellSnare.java"
+  },
+  {
+   "name": "Hurkyl's Recall",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-beseech-storm",
+    "vintage-blue-tinker",
+    "vintage-lurrus-po",
+    "vintage-other-shops"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "bounce",
+    "target_player",
+    "artifact"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HurkylsRecall.java"
+  },
+  {
+   "name": "Mystical Dispute",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-esper-lurrus-control",
+    "vintage-sultai-psychic-frog"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "counter_target",
+    "cost_reduction",
+    "counter_unless_pays"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MysticalDispute.java"
+  },
+  {
+   "name": "Long Goodbye",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-fastbond-lands",
+    "vintage-oath-of-druids",
+    "vintage-scam"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "cant_be_countered",
+    "destroy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LongGoodbye.java"
+  },
+  {
+   "name": "Snapback",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "bounce",
+    "alternative_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Snapback.java"
+  },
+  {
+   "name": "Hullbreacher",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Merfolk",
+    "Pirate"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-paradoxical-outcome",
+    "vintage-rug-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "draw_replacement",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/Hullbreacher.java"
+  },
+  {
+   "name": "Wurmcoil Engine",
+   "engine_capability": "full",
+   "mana_cost": "{6}",
+   "mana_value": 6,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Wurm"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-sphere-shops"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "deathtouch",
+    "lifelink",
+    "dies_trigger",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WurmcoilEngine.java"
+  },
+  {
+   "name": "Light of Day",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "static_ability",
+    "cant_attack",
+    "cant_block"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LightOfDay.java"
+  },
+  {
+   "name": "Dark Petition",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}",
+   "mana_value": 5,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "tutor",
+    "spell_mastery",
+    "add_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DarkPetition.java"
+  },
+  {
+   "name": "Rebuild",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "bounce",
+    "artifact",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/Rebuild.java"
+  },
+  {
+   "name": "Lithomantic Barrage",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-blue-tinker",
+    "vintage-lurrus-vault-key"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "cant_be_countered",
+    "damage",
+    "conditional_damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LithomanticBarrage.java"
+  },
+  {
+   "name": "Sphinx of the Steel Wind",
+   "engine_capability": "full",
+   "mana_cost": "{5}{W}{U}{B}",
+   "mana_value": 8,
+   "colors": [
+    "W",
+    "U",
+    "B"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Sphinx"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-blue-tinker"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "first_strike",
+    "vigilance",
+    "lifelink",
+    "protection_from_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SphinxOfTheSteelWind.java"
+  },
+  {
+   "name": "Virtue's Ruin",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-grixis-lurrus-control",
+    "vintage-sultai-psychic-frog"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_all",
+    "white_creatures"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VirtuesRuin.java"
+  },
+  {
+   "name": "Feed the Swarm",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-grixis-lurrus-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy",
+    "lose_life"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FeedTheSwarm.java"
+  },
+  {
+   "name": "Urborg, Tomb of Yawgmoth",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B"
+   ],
+   "decks": [
+    "legacy-mono-black-pox",
+    "legacy-sultai-depths",
+    "vintage-fastbond-lands",
+    "vintage-stiflenought"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "land_type_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UrborgTombOfYawgmoth.java"
+  },
+  {
+   "name": "Deathtouch Wurm Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Wurm"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "deathtouch"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/WurmToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Lifelink Wurm Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Wurm"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "lifelink"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/WurmToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Argentum Masticore",
+   "engine_capability": "full",
+   "mana_cost": "{5}",
+   "mana_value": 5,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Masticore"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jewel-shops",
+    "vintage-other-shops",
+    "vintage-raker-shops",
+    "vintage-sphere-shops"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "first_strike",
+    "protection_from_multicolored",
+    "upkeep_trigger",
+    "discard",
+    "destroy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/ArgentumMasticore.java"
   }
  ]
 }

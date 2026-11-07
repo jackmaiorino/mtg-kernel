@@ -431,7 +431,9 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
 pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     // Printed protection from a color (wave P1a).
     let printed = crate::eternal_premodern_p1a_v1::statics::protection_mask(state, host);
-    printed | granted_protection_mask(state, host)
+    printed
+        | crate::eternal_sideboard_s1c_v1::statics::protection_mask(state, host)
+        | granted_protection_mask(state, host)
 }
 
 /// Sejiri Steppe's protection until end of turn, as a mask.

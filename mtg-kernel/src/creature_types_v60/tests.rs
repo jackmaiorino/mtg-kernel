@@ -102,6 +102,7 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
         (Subtype::Specter, 206, CreatureTypeV60::Specter),
         (Subtype::Shade, 207, CreatureTypeV60::Shade),
         (Subtype::Mystic, 208, CreatureTypeV60::Mystic),
+        (Subtype::Masticore, 340, CreatureTypeV60::Masticore),
     ] {
         assert_eq!(subtype.stable_id(), id);
         assert_eq!(canonical_native_type(subtype), Some(kind));

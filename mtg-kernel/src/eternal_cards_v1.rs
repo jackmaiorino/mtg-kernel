@@ -372,6 +372,8 @@ pub enum EternalOpV1 {
     P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1),
     /// A leaf owned by Premodern wave P1a's module.
     P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1),
+    /// A leaf owned by wave S1c's module.
+    S1cV1(crate::eternal_sideboard_s1c_v1::S1cOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -427,6 +429,7 @@ impl EternalOpV1 {
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             EternalOpV1::P1bV1(op) => op.contains_player_choice(),
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1cV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -935,6 +938,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::P1bV1(op) => crate::eternal_premodern_p1b_v1::execute(op, ctx, state),
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
+        EternalOpV1::S1cV1(op) => crate::eternal_sideboard_s1c_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1426,6 +1430,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_e9b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_legacy_e9a_v1::statics::blocker_allowed(state, blocker)
         && crate::eternal_premodern_p1a_v1::statics::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_sideboard_s1c_v1::statics::blocker_allowed(state, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1586,14 +1591,14 @@ pub(crate) fn note_delve_exile(state: &mut GameState, spell: ObjectId, exiled: &
 /// Marks the active player's turn-based draw, which Orcish Bowmasters
 /// ignores. Recorded only in games with an Orcish Bowmasters.
 pub(crate) fn note_draw_step_draw(state: &mut GameState, player: PlayerId) {
-    let Some(bowmasters) = card_id_by_name(ORCISH_BOWMASTERS) else {
-        return;
-    };
-    if !state
-        .objects
-        .iter()
-        .any(|(_, object)| object.card_def == bowmasters)
-    {
+    let has_bowmasters = card_id_by_name(ORCISH_BOWMASTERS).is_some_and(|bowmasters| {
+        state
+            .objects
+            .iter()
+            .any(|(_, object)| object.card_def == bowmasters)
+    });
+    // Hullbreacher (wave S1c) ignores the same draw.
+    if !has_bowmasters && !crate::eternal_sideboard_s1c_v1::statics::needs_draw_step_marker(state) {
         return;
     }
     let marker = DrawStepDrawV1 {

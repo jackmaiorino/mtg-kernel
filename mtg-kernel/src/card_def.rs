@@ -442,6 +442,8 @@ pub enum Subtype {
     Specter,
     Shade,
     Mystic,
+    /// Appended for the eternal catalog's wave S1c (Argentum Masticore).
+    Masticore = 340,
 }
 
 impl Subtype {
@@ -816,6 +818,8 @@ impl Subtype {
         Subtype::Shade,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mystic,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Masticore,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1055,6 +1059,7 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
+            340 => Subtype::Masticore,
             _ => return None,
         })
     }
@@ -1273,6 +1278,7 @@ impl Subtype {
             Subtype::Specter => true,
             Subtype::Shade => true,
             Subtype::Mystic => true,
+            Subtype::Masticore => true,
         }
     }
 
@@ -1376,6 +1382,7 @@ impl Subtype {
                     | Subtype::Specter
                     | Subtype::Shade
                     | Subtype::Mystic
+                    | Subtype::Masticore
             )
         {
             return true;
@@ -2765,6 +2772,9 @@ pub enum DynamicCountDef {
     /// One iff a chosen spell target is a tapped battlefield permanent
     /// (Ride's End). Appended for the eternal catalog.
     SpellTargetsTappedPermanentV1,
+    /// One iff a chosen spell target is a blue spell on the stack (Mystical
+    /// Dispute). Appended for the eternal catalog's wave S1c.
+    SpellTargetsBlueSpellV1,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
