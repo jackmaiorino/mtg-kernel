@@ -11193,7 +11193,9 @@ fn activate_contaminated_land(
     checkpoint: bool,
 ) -> Result<(), String> {
     if choice != ManaColor::B || cost_target.is_some() {
-        return Err(format!("{source} can only produce {{B}} with no cost object"));
+        return Err(format!(
+            "{source} can only produce {{B}} with no cost object"
+        ));
     }
     let mut raw = ManaColorSetV1::new();
     available_mana_ability_choices_unreplaced_into(player, source, state, &mut raw);
@@ -11201,7 +11203,9 @@ fn activate_contaminated_land(
         .as_slice()
         .iter()
         .copied()
-        .find(|&color| mana_ability_cost_targets_for_choice(player, source, color, state).is_empty())
+        .find(|&color| {
+            mana_ability_cost_targets_for_choice(player, source, color, state).is_empty()
+        })
         .ok_or_else(|| format!("{source} cannot currently produce mana"))?;
     let seat = &state.players[player.index()];
     let pool_before = seat.mana_pool;

@@ -1571,9 +1571,7 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
         return Some(decision);
     }
     // Bane of the Living's X (Premodern wave P2a).
-    if let Some(decision) = crate::eternal_premodern_p2a_v1::statics::entry_choice_decision(state)
-
-    {
+    if let Some(decision) = crate::eternal_premodern_p2a_v1::statics::entry_choice_decision(state) {
         return Some(decision);
     }
     // Shared Triumph's creature type (Premodern wave P2d).
@@ -1668,7 +1666,6 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_premodern_p2a_v1::statics::answer_entry_choice(state, option)? {
-
         return Ok(());
     }
     if crate::eternal_premodern_p2d_v1::statics::answer_entry_choice(state, option)? {
