@@ -46,6 +46,18 @@ for line in sys.stdin:
             raise RuntimeError("schema-4 request required")
     if mode == "earlier-with-mulligans":
         reply["mulligan_rules"] = "london_v1"
+    if mode.startswith("shroud"):
+        reply["schema_version"] = 5
+        reply["priority_mode"] = "engine_windows_v1"
+        reply["combat_rules"] = "foundations_v1"
+        reply["mulligan_rules"] = "london_v1"
+        reply["observation_rules"] = "wrong" if mode == "shroud-wrong" else "public_shroud_v1"
+        if mode == "shroud-missing":
+            reply.pop("observation_rules")
+        if request["schema_version"] != 5:
+            raise RuntimeError("schema-5 request required")
+    if mode == "london-with-observation-rules":
+        reply["observation_rules"] = "public_shroud_v1"
     if request["request_type"] == "reset":
         if request["decks"][1]["cards"][0]["name"] == "Missing":
             reply.update(response_type="error", error={"code":"unsupported_deck","message":"seat 1"})
@@ -150,6 +162,19 @@ class LimitedClientTest(unittest.TestCase):
                               ("earlier-with-mulligans", False)):
             with self.subTest(mode=mode, enabled=enabled):
                 with LimitedClientV1(self.command(mode), london_mulligans=enabled) as client:
+                    with self.assertRaises(LimitedSessionError):
+                        client.reset(self.decks)
+                    self.assertTrue(client.closed)
+
+    def test_public_shroud_requires_schema_five_and_its_observation_rules(self) -> None:
+        first = smoke(self.command("shroud"), self.decks, public_shroud=True)
+        self.assertEqual(first, smoke(self.command("shroud"), self.decks, public_shroud=True))
+        self.assertEqual(first["schema"], "kernel_limited_smoke/v5")
+        for mode, enabled in (("london", True), ("shroud-wrong", True), ("shroud-missing", True),
+                              ("shroud", False), ("london-with-observation-rules", False)):
+            with self.subTest(mode=mode, enabled=enabled):
+                options = {"public_shroud": True} if enabled else {"london_mulligans": True}
+                with LimitedClientV1(self.command(mode), **options) as client:
                     with self.assertRaises(LimitedSessionError):
                         client.reset(self.decks)
                     self.assertTrue(client.closed)

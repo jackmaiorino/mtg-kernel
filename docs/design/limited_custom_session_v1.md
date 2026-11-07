@@ -64,6 +64,8 @@ suppressed priority windows. Schema 2 adds engine priority; schema 3 adds
 Foundations combat. Schema 4 adds two-player London mulligans and is selected
 with `--london-mulligans-v1`. Its replies identify `mulligan_rules: london_v1`,
 `combat_rules: foundations_v1` and `priority_mode: engine_windows_v1`.
+Schema 5 (`--public-shroud-v1`, `observation_rules: public_shroud_v1`) is
+schema 4 under the [public shroud contract](limited_public_shroud_v1.md).
 
 The schema-4 opening menu contains `choose_london_mulligan` actions with
 `mulligan: false` (keep) and `mulligan: true`. Both announcements precede each
