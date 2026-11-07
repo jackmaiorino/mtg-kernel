@@ -246,9 +246,10 @@ pub(crate) fn drive(
             let options = eligible(state, controller, |card| card != *first)
                 .into_iter()
                 .map(|second| {
-                    outside(OutsideGameOpV1::ExtrapolateRevealedV1 {
-                        cards: [*first, second],
-                    })
+                    // The opponent sees the two cards in card id order.
+                    let mut cards = [*first, second];
+                    cards.sort_unstable();
+                    outside(OutsideGameOpV1::ExtrapolateRevealedV1 { cards })
                 })
                 .collect();
             push_options(continuation, PlayerRef::Controller, options, &path);
