@@ -488,6 +488,11 @@ def make_plan(inputs_path):
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
                'c_wall_seconds': c_wall if a == 'C' else None, 'tools': tools}
+        if spec.get('scratch'):
+            scratch_root = inputs.get('scratch_root')
+            require(a == 'C' and stage == '0', f'{a}: scratch segments are for C chains in Stage 0 plans only')
+            require(scratch_root and Path(scratch_root).is_absolute(), f'{a}: scratch needs an absolute scratch_root')
+            doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
@@ -767,6 +772,146 @@ def current_segment(arm, man, man_path, ledger_source):
     return s, path, native
 
 
+# ---------------------------------------------------------------- scratch segments (RAM-backed transient files)
+#
+# An arm with `scratch_root` (C only) runs each segment in a scratch directory (e.g. under /dev/shm) behind a
+# symlink at the segment's usual path, so every config, receipt and record keeps the path it would have on the
+# root's volume. While the trainer runs, a reaper in the driver deletes the transient bulk of every completed
+# iteration but the newest (trajectories and checkpoints: regenerable, never read again by the run). When the
+# segment ends (complete, or cut by the C wall), the records and the newest checkpoint are copied to a real
+# directory on the root's volume, which replaces the symlink (two renames), and the scratch directory goes. An
+# unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
+# persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively).
+
+SCRATCH_BULK = ('episode-', 'ex1-')
+REAP_EVERY = 0.5
+
+
+def scratch_dir(arm, cdir, native):
+    return Path(arm['scratch_root']) / Path(cdir).name / Path(native).name
+
+
+def scratch_bulk(path):
+    base = path.name.lstrip('.')
+    return base.startswith(SCRATCH_BULK) or base == 'checkpoint.json' or path.suffix == '.bin' or \
+        base.endswith('.stage')
+
+
+def reap(native):
+    """Deletes the transient bulk of every completed iteration except the newest; returns the number of files."""
+    its = Path(native) / 'iterations'
+    if not its.exists():
+        return 0
+    done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists())
+    n = 0
+    for d in done[:-1]:
+        for f in d.rglob('*'):
+            if f.is_file() and not f.is_symlink() and scratch_bulk(f):
+                try:
+                    f.unlink()
+                    n += 1
+                except FileNotFoundError:
+                    pass
+    return n
+
+
+def persist(native, cdir):
+    """Copies a scratch segment's records and its newest checkpoint to the root's volume and swaps the copy in at
+    the segment's path. Returns the bytes copied."""
+    native = Path(native)
+    target = Path(os.path.realpath(native))
+    reap(native)
+    its = target / 'iterations'
+    done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
+    newest = done[-1] if done else None
+    keep = None
+    if newest is not None:
+        keep = attempt_dir(newest, read(newest / 'complete.json')) / 'update' / 'checkpoint.json'
+    tmp = Path(cdir) / f'.{native.name}.persist'
+    shutil.rmtree(tmp, ignore_errors=True)
+    copied = 0
+    for f in sorted(target.rglob('*')):
+        if not f.is_file() or f.is_symlink():
+            continue
+        rel = f.relative_to(target)
+        if scratch_bulk(f) and not (keep is not None and f == keep):
+            continue
+        if rel.parts[:1] == ('iterations',) and len(rel.parts) > 1 and not (target / 'iterations' / rel.parts[1] /
+                                                                           'complete.json').exists():
+            continue  # an unfinished iteration (a wall cut): its records are not a boundary
+        dst = tmp / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, dst)
+        copied += f.stat().st_size
+    if keep is not None:
+        dst = tmp / keep.relative_to(target)
+        require(sha(dst) == read(newest / 'complete.json')['output_identity']['checkpoint_sha256'],
+                f'{dst} differs from its pin')
+    tmp.mkdir(parents=True, exist_ok=True)
+    swap(native, tmp)
+    shutil.rmtree(target, ignore_errors=True)
+    return copied
+
+
+def swap(native, tmp):
+    aside = native.parent / f'.{native.name}.link'
+    if aside.is_symlink() or aside.exists():
+        aside.unlink()
+    os.rename(native, aside)
+    os.rename(tmp, native)
+    aside.unlink()
+
+
+def run_reaped(arm, config_path, deadline, logs, native):
+    """run_trainer with the reaper running beside it in this (the chain's) process; returns (code, killed,
+    files reaped)."""
+    import threading
+    stop, count = threading.Event(), [0]
+
+    def loop():
+        while not stop.wait(REAP_EVERY):
+            count[0] += reap(native)
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    try:
+        code, killed = run_trainer(arm, config_path, deadline, logs)
+    finally:
+        stop.set()
+        t.join()
+    return code, killed, count[0]
+
+
+def scratch_settle(arm, root, cdir, man):
+    """Before a segment: finish an interrupted swap, persist any ended scratch segment, and reset an unfinished
+    one (its scratch directory emptied, so the trainer starts it fresh)."""
+    for seg in man['segments']:
+        native = Path(seg['root'])
+        tmp = cdir / f'.{native.name}.persist'
+        if not native.is_symlink() and not native.exists() and tmp.exists():
+            os.rename(tmp, native)  # the driver stopped between the two renames
+            log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
+        if native.is_symlink() and (native / 'completion.json').exists():
+            n = persist(native, cdir)
+            log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True)
+    if man['segments']:
+        native = Path(man['segments'][-1]['root'])
+        if native.is_symlink() and not (native / 'completion.json').exists():
+            target = scratch_dir(arm, cdir, native)
+            had = completed(native) if Path(os.path.realpath(native)).exists() else 0
+            shutil.rmtree(target, ignore_errors=True)
+            target.mkdir(parents=True, exist_ok=True)
+            log(root, chain=cdir.name, event='scratch-reset', segment=native.name, discarded_iterations=had)
+
+
+def scratch_link(arm, cdir, native):
+    """The segment's scratch directory behind a symlink at its usual path (created once)."""
+    target = scratch_dir(arm, cdir, native)
+    target.mkdir(parents=True, exist_ok=True)
+    if not Path(native).is_symlink():
+        require(not Path(native).exists(), f'{native} exists on the root volume; a scratch arm cannot reuse it')
+        os.symlink(target, native, target_is_directory=True)
+
+
 def drive(a):
     arm = load_arm(a.arm_file)
     root = Path(arm['root'])
@@ -820,13 +965,27 @@ def drive_locked(a, arm, root, cdir, man_path):
             time.sleep(GUARD_POLL)
             continue
         waiting = None
+        scratch = bool(arm.get('scratch_root'))
+        if scratch:
+            scratch_settle(arm, root, cdir, man)
         s, path, native = current_segment(arm, man, man_path, a.ledger_source)
+        if scratch:
+            scratch_link(arm, cdir, native)
         moved = quarantine(native, cdir)
         log(root, chain=a.chain, event='segment', segment=s, config=pin(path), moved=moved)
-        code, killed = run_trainer(arm, path, deadline, cdir)
+        if scratch:
+            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native)
+        else:
+            code, killed = run_trainer(arm, path, deadline, cdir)
         if (native / 'completion.json').exists():
+            if scratch:
+                n = persist(native, cdir)
+                log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped)
             log(root, chain=a.chain, event='segment-done', segment=s)
             continue
+        if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept
+            n = persist(native, cdir)
+            log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
         boundary, receipt = latest(man)
         if killed:
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
