@@ -771,6 +771,9 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::CreatureManaValueAtMostV1(_) => creature(),
         S::OpponentArtifactV1 => typed(CardType::Artifact),
         S::S1dV1(_) => ObjF::AnyCard,
+        S::CreatureOrPlaneswalkerManaValueAtMostV1(_) | S::OpponentCreatureOrEnchantmentV1 => {
+            ObjF::Permanent
+        }
     }
 }
 
@@ -809,7 +812,8 @@ pub(super) fn standard_target_origin(
         | S::OpponentThenUpToOneTheirCreatureV1
         | S::UpToOneOpponentCreatureOrPlaneswalkerV1
         | S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_)
-        | S::OpponentArtifactV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        | S::OpponentArtifactV1
+        | S::OpponentCreatureOrEnchantmentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
         S::LandCardInAGraveyardV1 | S::InstantOrSorceryCardInAGraveyardV1 => {
             (Some(ZoneF::Graveyard), None)
         }
@@ -832,6 +836,7 @@ pub(super) fn standard_target_origin(
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
         | S::S1dV1(_)
+        | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1
         | S::UpToTwoAnyTargets
@@ -904,6 +909,19 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             // Wave S1d's filters (a power bound, flying, a land you control,
             // a distinct-type graveyard pair) have no facet.
             out.atoms.push(Atom::Opaque);
+        }
+        S::CreatureOrPlaneswalkerManaValueAtMostV1(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: ObjF::Permanent,
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+        }
+        S::OpponentCreatureOrEnchantmentV1 => {
+            object(out, ObjF::Permanent, relation, zone);
         }
         S::UpToOnePlayerV1 => {
             out.target(TargetAtom::UpTo);

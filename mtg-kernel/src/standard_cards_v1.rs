@@ -382,6 +382,13 @@ pub enum StandardTargetV1 {
     OpponentArtifactV1,
     /// A filter of eternal wave S1d (`eternal_sideboard_s1d_v1::targets`).
     S1dV1(crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1),
+    /// "Target creature or planeswalker with mana value N or less" (Long
+    /// Goodbye). Wave S1c's filters follow
+    /// (`eternal_sideboard_s1c_v1::targets`).
+    CreatureOrPlaneswalkerManaValueAtMostV1(u8),
+    /// "Target creature or enchantment an opponent controls" (Feed the
+    /// Swarm).
+    OpponentCreatureOrEnchantmentV1,
 }
 
 impl StandardTargetV1 {
@@ -814,6 +821,11 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
+    if let Some(targets) =
+        crate::eternal_sideboard_s1c_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1041,6 +1053,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_sideboard_s1c_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1236,6 +1253,9 @@ pub(crate) fn target_matches(
         | StandardTargetV1::OpponentArtifactV1 => false,
         // Answered by `eternal_sideboard_s1d_v1::targets` above.
         StandardTargetV1::S1dV1(_) => false,
+        // Answered by `eternal_sideboard_s1c_v1::targets` above.
+        StandardTargetV1::CreatureOrPlaneswalkerManaValueAtMostV1(_)
+        | StandardTargetV1::OpponentCreatureOrEnchantmentV1 => false,
     }
 }
 

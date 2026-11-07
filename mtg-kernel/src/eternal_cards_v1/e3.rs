@@ -285,6 +285,8 @@ pub enum E3ChoiceKindV1 {
     E8aV1(crate::eternal_legacy_e8a_v1::E8aChoiceV1),
     /// A wave E9b choice (`eternal_e9b_v1`).
     E9bV1(crate::eternal_e9b_v1::E9bChoiceV1),
+    /// A wave S1c choice (`eternal_sideboard_s1c_v1`).
+    S1cV1(crate::eternal_sideboard_s1c_v1::S1cChoiceV1),
     /// A wave E9a choice (`eternal_legacy_e9a_v1`).
     E9aV1(crate::eternal_legacy_e9a_v1::E9aChoiceV1),
     /// A Premodern wave P1b choice (`eternal_premodern_p1b_v1`).
@@ -339,6 +341,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::E9bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::S1cV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         if let E3ChoiceKindV1::E9aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
@@ -390,6 +395,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::S1cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1aV1(kind) => kind.public_purpose(),
@@ -444,6 +450,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E8aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::S1cV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -738,6 +745,13 @@ pub(crate) fn finish_selection(
         E3ChoiceKindV1::E9bV1(kind) => {
             crate::eternal_e9b_v1::finish_selection(state, continuation, choice, kind, bindings)
         }
+        E3ChoiceKindV1::S1cV1(kind) => crate::eternal_sideboard_s1c_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
     }
 }
 
@@ -1041,6 +1055,9 @@ pub(crate) fn drive(
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::drive(state, continuation, op, path),
         EternalOpV1::S1dV1(op) => {
             crate::eternal_sideboard_s1d_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::S1cV1(op) => {
+            crate::eternal_sideboard_s1c_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::E9aV1(op) => {
             crate::eternal_legacy_e9a_v1::drive(state, continuation, op, path)
@@ -2385,6 +2402,10 @@ pub(crate) fn cant_attack(state: &GameState, object: ObjectId) -> bool {
     }
     // Goblin Goon (wave P1a).
     if crate::eternal_premodern_p1a_v1::statics::cant_attack(state, object) {
+        return true;
+    }
+    // Light of Day (wave S1c).
+    if crate::eternal_sideboard_s1c_v1::statics::cant_attack(state, object) {
         return true;
     }
     e3(state).is_some_and(|e3| {

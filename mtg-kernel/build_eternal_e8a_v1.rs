@@ -320,7 +320,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Valgavoth's Lair" => &["Keywords::HEXPROOF"],
         "White Orchid Phantom" => &["Keywords::FLYING", "Keywords::FIRST_STRIKE"],
         "Insect Artifact Token" => &["Keywords::FLYING"],
-        _ => super::build_eternal_e9b_v1::keywords_for(name),
+        _ => super::build_eternal_s1c_v1::keywords_for(name),
     }
 }
 
@@ -341,7 +341,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Once Upon a Time" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 0, x_count: 0 })], condition: AltCostCondition::FirstSpellThisGameV1 })",
         "Bitter Triumph" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 1, x_count: 0 }), CostComponent::PayLife(3)], condition: AltCostCondition::Always })",
         "Hogaak, Arisen Necropolis" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Hybrid(ManaColor::B, ManaColor::G), Pip::Hybrid(ManaColor::B, ManaColor::G)], generic: 5, x_count: 0 })], condition: AltCostCondition::Always })",
-        _ => super::build_eternal_e9a_v1::alt_cost_for(name),
+        _ => super::build_eternal_s1c_v1::alt_cost_for(name),
     }
 }
 
@@ -359,7 +359,7 @@ pub(super) fn additional_cost_for(name: &str) -> &'static str {
 pub(super) fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
         "Thought Monitor" => "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })",
-        _ => "None",
+        _ => super::build_eternal_s1c_v1::generic_cost_reduction_for(name),
     }
 }
 

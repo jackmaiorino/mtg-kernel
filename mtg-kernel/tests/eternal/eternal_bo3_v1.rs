@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 47] = [
+const PLAYABLE_75: [(&str, &str); 51] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -91,7 +91,11 @@ const PLAYABLE_75: [(&str, &str); 47] = [
     ("pauper", "pauper-4c-ephemerate"),
     ("legacy", "legacy-doomsday"),
     ("legacy", "legacy-reanimator"),
+    ("vintage", "vintage-blue-tinker"),
+    ("vintage", "vintage-stiflenought"),
     ("vintage", "vintage-red-prison"),
+    ("vintage", "vintage-sultai-psychic-frog"),
+    ("vintage", "vintage-eldrazi"),
 ];
 
 fn id(name: &str) -> u16 {

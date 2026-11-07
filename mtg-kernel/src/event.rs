@@ -3755,6 +3755,17 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
     }
+    // Hullbreacher: an opponent's draw (other than the first of their draw
+    // step) becomes a Treasure token for its controller (eternal wave S1c).
+    #[cfg(feature = "eternal-fixtures")]
+    if let ProposedEvent::Draw(draw) = &event {
+        if let Some(owner) =
+            crate::eternal_sideboard_s1c_v1::statics::hullbreacher_replaces_draw(state, draw.player)
+        {
+            crate::eternal_sideboard_s1c_v1::statics::create_treasure(state, owner);
+            return;
+        }
+    }
     if matches!(&event,ProposedEvent::CreateToken(t) if !crate::doubling_season_v48::sources(state,t.controller).is_empty())
     {
         batch_without_linked_aura_v1(state, vec![event]);

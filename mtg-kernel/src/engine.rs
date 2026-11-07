@@ -7941,6 +7941,14 @@ fn alt_cost_condition_met(
         card_def::AltCostCondition::OpponentCastThreeSpellsThisTurnV1 => {
             state.players[player.opponent().index()].spells_cast_this_turn >= 3
         }
+        // Ravenous Trap (eternal wave S1c).
+        card_def::AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_sideboard_s1c_v1::statics::opponent_cards_to_graveyard_this_turn(
+                    state,
+                    player.opponent(),
+                ) >= 3
+        }
         card_def::AltCostCondition::DashV1 => origin_zone == Zone::Hand,
         // Teamwork's creatures are chosen and checked by the convoke
         // selection (`standard_cast_convoke`).
@@ -9139,6 +9147,19 @@ pub(crate) fn normal_cast_reduction_count(
                     .is_some_and(|object| object.zone == Zone::Battlefield && object.tapped)
             }))
         }
+        card_def::DynamicCountDef::SpellTargetsBlueSpellV1 => {
+            let blue = card_def::mana_color_mask(ManaColor::U);
+            u32::from(targets.iter().any(|target| {
+                let Target::Object(id) = target else {
+                    return false;
+                };
+                state
+                    .objects
+                    .try_get(*id)
+                    .is_some_and(|object| object.zone == Zone::Stack)
+                    && object_color_mask(state, *id) & blue != 0
+            }))
+        }
         card_def::DynamicCountDef::SpellTargetsTappedCreature => {
             u32::from(targets.iter().any(|target| {
                 let Target::Object(id) = target else {
@@ -9184,6 +9205,7 @@ fn normal_cast_cost_depends_on_targets(def: &card_def::CardDef) -> bool {
             reducer.count,
             card_def::DynamicCountDef::SpellTargetsTappedCreature
                 | card_def::DynamicCountDef::SpellTargetsTappedPermanentV1
+                | card_def::DynamicCountDef::SpellTargetsBlueSpellV1
         )
     })
 }
@@ -23382,6 +23404,12 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "eternal-fixtures")]
     for subtype in crate::eternal_sideboard_s1d_v1::statics::extra_land_types(state, id) {
         subtype_ids.push(subtype.stable_id());
+    }
+    // Urborg, Tomb of Yawgmoth: "Each land is a Swamp in addition to its
+    // other land types." (eternal wave S1c)
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1c_v1::statics::is_extra_swamp(state, id) {
+        subtype_ids.push(card_def::Subtype::Swamp.stable_id());
     }
     subtype_ids.sort_unstable();
     if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()

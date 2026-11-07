@@ -88,7 +88,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Circle of Protection: Blue" => &CIRCLE_OF_PROTECTION_BLUE,
         "Navigator's Compass" => &NAVIGATORS_COMPASS,
         "Martyr of Sands" => &MARTYR_OF_SANDS,
-        _ => super::build_eternal_e9b_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_s1c_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -171,7 +171,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::S1dV1(crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1::ArtifactOrEnchantmentThenUpToOneOtherV1))",
             "crate::eternal_sideboard_s1d_v1::return_to_dust",
         ),
-        _ => return super::build_eternal_e9b_v1::special_for(name),
+        _ => return super::build_eternal_s1c_v1::special_for(name),
     })
 }
 
@@ -294,6 +294,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "ability:choose_blue_source:prevent_next_damage_to_you_from_it_this_turn"
         }
         "Waterbending Lesson" => "spell:draw_3:discard_unless_waterbend_2",
-        _ => super::build_eternal_e9b_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_s1c_v1::trigger_recipe_for(name),
     }
 }

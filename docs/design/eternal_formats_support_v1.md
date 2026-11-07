@@ -404,9 +404,38 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1c (issue #365, Vintage-only sideboard cards), built in `src/eternal_sideboard_s1c_v1.rs`
+  (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked just before E9b in
+  the recipe chains (after E8a and S1d). Bounce-all (Hurkyl's Recall, Rebuild with
+  its cycling), Virtue's Ruin's destroy-all, Feed the Swarm's life loss (the destroyed
+  permanent's mana value), Lithomantic Barrage's 5 damage to a white and/or blue target,
+  Dark Petition's spell mastery mana and Wurmcoil Engine's two tokens (deathtouch and
+  lifelink Wurms) are module leaves. Spell Snare is a mana value 2 spell target; Mystical
+  Dispute's {2} reduction is `DynamicCountDef::SpellTargetsBlueSpellV1`; Snapback reuses
+  the blue-card exile alternative cost; Ravenous Trap adds
+  `AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1`, which counts the
+  opponent's cards moved to a graveyard since the last upkeep began. New target shapes
+  (`StandardTargetV1`): a creature or planeswalker with mana value N or less (Long
+  Goodbye) and a creature or enchantment an opponent controls (Feed the Swarm). Light of
+  Day's attack and block ban are engine hooks, Urborg extends Yavimaya's extra land type
+  and mana ability to Swamps, and Sphinx of the Steel Wind adds protection from red and
+  green to the color protection mask. Hullbreacher replaces an opponent's draw (except
+  their first draw step draw, tracked by Bowmasters' draw step marker) with a Treasure for
+  its controller in `propose_and_commit_inner`. Argentum Masticore's upkeep trigger is
+  two selections (`E3ChoiceKindV1::S1cV1`): the card to discard (or none, sacrificing
+  it), then the reflexive destroy target among the opponent's nonland permanents with
+  mana value at most the discarded card's; it shares Stonecoil Serpent's protection from
+  multicolored and adds the Masticore creature type (stable id 340). Not in this wave:
+  Archon of Absolution and Overencumbered (attack costs and taxes have no engine path),
+  Azure Beastbinder, Unable to Scream and Suspend (timed or aura-based ability removal
+  with new characteristics), Apostle's Blessing (protection from artifacts), Sickening
+  Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
+  Phyrexia (subtype grant on reanimation).
+  Known gap: Hullbreacher replaces a draw before dredge can, so the drawing player does
+  not choose the order of the two replacements.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
-  `statics`) and `build_eternal_s1d_v1.rs`, whose tables end every fall-through
-  chain: the 31 Pauper sideboard cards of the metagame snapshot. Overload
+  `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
+  S1c and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
   (Vandalblast, Electrickery) is the Adventure form of the card that split cards
   use, cast from hand with the overload cost, sending the card to the graveyard,
   with no targets and the printed mana value on the stack (118.9c). Circle of
@@ -528,6 +557,7 @@ S1 progress (census after each wave; full 75 share, then missing sideboard cards
 | --- | ---: | --- | --- | --- |
 | Baseline | | 45.5%, 32 | 5.9%, 69 | 0.7%, 36 |
 | S1d (Pauper) | 31 | 94.9%, 1 | 5.9%, 69 | 0.7%, 36 |
+| S1c (Vintage) | 17 | 94.9%, 1 | 5.9%, 69 | 5.9%, 19 |
 
 ## Execution
 

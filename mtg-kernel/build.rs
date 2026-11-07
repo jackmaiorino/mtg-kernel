@@ -34,6 +34,7 @@ mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_p1a_v1;
 mod build_eternal_p1b_v1;
+mod build_eternal_s1c_v1;
 mod build_eternal_s1d_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -2859,6 +2860,8 @@ enum StackSpellFilter {
     Creature,
     /// "Target spell with mana value 1" (Mental Misstep).
     ManaValueOneV1,
+    /// "Target spell with mana value 2" (Spell Snare).
+    ManaValueTwoV1,
 }
 
 impl MillPlayer {
@@ -2881,6 +2884,7 @@ impl StackSpellFilter {
             StackSpellFilter::Artifact => "artifact",
             StackSpellFilter::Creature => "creature",
             StackSpellFilter::ManaValueOneV1 => "mana_value_1",
+            StackSpellFilter::ManaValueTwoV1 => "mana_value_2",
         }
     }
 
@@ -2896,6 +2900,7 @@ impl StackSpellFilter {
             StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
             StackSpellFilter::Creature => "TargetSpec::CreatureSpellOnStack",
             StackSpellFilter::ManaValueOneV1 => "TargetSpec::SpellWithManaValueV1(1)",
+            StackSpellFilter::ManaValueTwoV1 => "TargetSpec::SpellWithManaValueV1(2)",
         }
     }
 }
@@ -11522,6 +11527,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Specter" => "Subtype::Specter",
         "Shade" => "Subtype::Shade",
         "Mystic" => "Subtype::Mystic",
+        "Masticore" => "Subtype::Masticore",
         "Centaur" => "Subtype::Centaur",
         "Rhino" => "Subtype::Rhino",
         "Flagbearer" => "Subtype::Flagbearer",

@@ -442,6 +442,8 @@ pub enum Subtype {
     Specter,
     Shade,
     Mystic,
+    /// Appended for the eternal catalog's wave S1c (Argentum Masticore).
+    Masticore = 340,
     /// Appended for the eternal catalog's wave S1d (Nylea's Disciple,
     /// Stonehorn Dignitary, Standard Bearer and Coalition Honor Guard).
     Centaur = 360,
@@ -822,6 +824,8 @@ impl Subtype {
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mystic,
         #[cfg(feature = "eternal-fixtures")]
+        Subtype::Masticore,
+        #[cfg(feature = "eternal-fixtures")]
         Subtype::Centaur,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Rhino,
@@ -1066,6 +1070,7 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
+            340 => Subtype::Masticore,
             360 => Subtype::Centaur,
             361 => Subtype::Rhino,
             362 => Subtype::Flagbearer,
@@ -1287,6 +1292,7 @@ impl Subtype {
             Subtype::Specter => true,
             Subtype::Shade => true,
             Subtype::Mystic => true,
+            Subtype::Masticore => true,
             Subtype::Centaur => true,
             Subtype::Rhino => true,
             Subtype::Flagbearer => true,
@@ -1393,6 +1399,7 @@ impl Subtype {
                     | Subtype::Specter
                     | Subtype::Shade
                     | Subtype::Mystic
+                    | Subtype::Masticore
                     | Subtype::Centaur
                     | Subtype::Rhino
                     | Subtype::Flagbearer
@@ -2355,6 +2362,10 @@ pub enum AltCostCondition {
     /// "If an opponent cast three or more spells this turn" (Mindbreak
     /// Trap). Appended for the eternal catalog.
     OpponentCastThreeSpellsThisTurnV1,
+    /// Ravenous Trap: "If an opponent had three or more cards put into their
+    /// graveyard from anywhere this turn". Appended for the eternal catalog's
+    /// wave S1c.
+    OpponentThreeCardsToGraveyardThisTurnV1,
     /// Dash (702.109): cast from hand for this cost; the permanent gains
     /// haste and returns to its owner's hand at the beginning of the next
     /// end step (Ragavan, `eternal_vintage_e7b_v1`). Appended for the
@@ -2785,6 +2796,9 @@ pub enum DynamicCountDef {
     /// One iff a chosen spell target is a tapped battlefield permanent
     /// (Ride's End). Appended for the eternal catalog.
     SpellTargetsTappedPermanentV1,
+    /// One iff a chosen spell target is a blue spell on the stack (Mystical
+    /// Dispute). Appended for the eternal catalog's wave S1c.
+    SpellTargetsBlueSpellV1,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
