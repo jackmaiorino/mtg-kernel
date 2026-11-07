@@ -422,7 +422,8 @@ pub(crate) fn land_type_setter(
 /// Split cards (708): Fire // Ice. The second half is cast as the card's
 /// Adventure form, and goes to the graveyard as it resolves.
 pub(crate) fn split_card(name: &str) -> bool {
-    name == FIRE_ICE
+    // Wave S1d's overload cards share the second-form machinery.
+    name == FIRE_ICE || crate::eternal_sideboard_s1d_v1::statics::is_overload(name)
 }
 
 /// The split card spell `item`'s half: `true` for the second.
@@ -446,6 +447,10 @@ pub(crate) fn split_spell_mana_value(state: &GameState, item: &StackItem) -> Opt
     let def = definition(state, item.source)?;
     if !split_card(def.name) || item.kind != StackItemKind::Spell {
         return None;
+    }
+    // Overload (702.96) changes the cost, not the mana value (118.9c).
+    if crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name) {
+        return Some(def.mana_value);
     }
     let cost = if second_half(state, item)? {
         def.adventure.as_ref()?.cost

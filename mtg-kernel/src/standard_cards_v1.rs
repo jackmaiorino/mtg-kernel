@@ -380,11 +380,16 @@ pub enum StandardTargetV1 {
     CreatureManaValueAtMostV1(u8),
     /// "Target artifact defending player controls" (Goblin Vandal).
     OpponentArtifactV1,
+    /// A filter of eternal wave S1d (`eternal_sideboard_s1d_v1::targets`).
+    S1dV1(crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1),
 }
 
 impl StandardTargetV1 {
     /// How many targets this filter takes, and how many at least.
     pub(crate) fn counts(self) -> (u8, u8) {
+        if let Some(counts) = crate::eternal_sideboard_s1d_v1::targets::counts(self) {
+            return counts;
+        }
         if let Some(counts) = crate::eternal_legacy_e9a_v1::targets::counts(self) {
             return counts;
         }
@@ -533,7 +538,8 @@ impl StandardTargetV1 {
                 | Self::ArtifactCardInOwnGraveyardManaValueAtMostV1(_)
                 | Self::CreatureCardInAGraveyardV1
                 | Self::UpToThreeLandCardsInOwnGraveyardV1
-        ) || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
+        ) || crate::eternal_sideboard_s1d_v1::targets::in_graveyard(self)
+            || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
             || crate::eternal_legacy_e9a_v1::targets::in_graveyard(self)
     }
 
@@ -556,7 +562,8 @@ impl StandardTargetV1 {
             Self::InstantOrSorcerySpellV1
                 | Self::SpellWithSingleTargetV1
                 | Self::TriggeredAbilityOrColorlessSpellV1
-        ) || crate::eternal_vintage_e7b_v1::targets::on_stack(self)
+        ) || crate::eternal_sideboard_s1d_v1::targets::on_stack(self)
+            || crate::eternal_vintage_e7b_v1::targets::on_stack(self)
     }
 }
 
@@ -766,6 +773,11 @@ pub(crate) fn legal_targets(
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
+    if let Some(targets) =
+        crate::eternal_sideboard_s1d_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
     if let Some(targets) = eternal_e5a_legal_targets(target, controller, prefix, state) {
         return targets;
     }
@@ -992,6 +1004,11 @@ pub(crate) fn target_matches(
         return false;
     };
     if let Some(matches) =
+        crate::eternal_sideboard_s1d_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_vintage_e7b_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1217,6 +1234,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::DividedTwoDamageAnyTargetsV1
         | StandardTargetV1::CreatureManaValueAtMostV1(_)
         | StandardTargetV1::OpponentArtifactV1 => false,
+        // Answered by `eternal_sideboard_s1d_v1::targets` above.
+        StandardTargetV1::S1dV1(_) => false,
     }
 }
 

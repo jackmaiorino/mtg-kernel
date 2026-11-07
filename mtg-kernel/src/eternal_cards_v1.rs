@@ -141,6 +141,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_e9b_v1::E9bStateV1::is_empty"
     )]
     pub e9b: crate::eternal_e9b_v1::E9bStateV1,
+    /// Wave S1d's state (`eternal_sideboard_s1d_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1d_v1::S1dStateV1::is_empty"
+    )]
+    pub s1d: crate::eternal_sideboard_s1d_v1::S1dStateV1,
     /// Wave E9a's state (`eternal_legacy_e9a_v1`).
     #[serde(
         default,
@@ -366,6 +372,8 @@ pub enum EternalOpV1 {
     E8aV1(crate::eternal_legacy_e8a_v1::E8aOpV1),
     /// A leaf owned by wave E9b's module.
     E9bV1(crate::eternal_e9b_v1::E9bOpV1),
+    /// A leaf owned by wave S1d's module.
+    S1dV1(crate::eternal_sideboard_s1d_v1::S1dOpV1),
     /// A leaf owned by wave E9a's module.
     E9aV1(crate::eternal_legacy_e9a_v1::E9aOpV1),
     /// A leaf owned by Premodern wave P1b's module.
@@ -424,6 +432,7 @@ impl EternalOpV1 {
             EternalOpV1::E8bV1(op) => op.contains_player_choice(),
             EternalOpV1::E8aV1(op) => op.contains_player_choice(),
             EternalOpV1::E9bV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1dV1(op) => op.contains_player_choice(),
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             EternalOpV1::P1bV1(op) => op.contains_player_choice(),
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
@@ -932,6 +941,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E8bV1(op) => crate::eternal_pauper_e8b_v1::execute(op, ctx, state),
         EternalOpV1::E8aV1(op) => crate::eternal_legacy_e8a_v1::execute(op, ctx, state),
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::execute(op, ctx, state),
+        EternalOpV1::S1dV1(op) => crate::eternal_sideboard_s1d_v1::execute(op, ctx, state),
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::P1bV1(op) => crate::eternal_premodern_p1b_v1::execute(op, ctx, state),
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),

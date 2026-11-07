@@ -925,7 +925,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         SOWING_MYCOSPAWN => &SOWING_MYCOSPAWN_TRIGGERS,
         THIEF_OF_EXISTENCE => &THIEF_OF_EXISTENCE_TRIGGERS,
         VAMPIRE_SOVEREIGN => &VAMPIRE_SOVEREIGN_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_sideboard_s1d_v1::triggers_for(name),
     }
 }
 
@@ -937,7 +937,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         .any(|trigger| (trigger.effect)() == *effect)
         || delayed_effect_matches(name, effect);
     if !own {
-        return None;
+        return crate::eternal_sideboard_s1d_v1::trigger_target_spec(name, effect);
     }
     Some(match name {
         BOGGART_TRAWLER if *effect == exile_target_graveyard() => TargetSpec::AnyPlayer,
@@ -2059,12 +2059,15 @@ pub(crate) fn special_activation(
 /// This module's Auras that the Standard Aura entry attaches: Wild Growth
 /// ("Enchant land").
 pub(crate) fn is_aura(def: &CardDef) -> bool {
-    def.name == WILD_GROWTH
+    def.name == WILD_GROWTH || crate::eternal_sideboard_s1d_v1::is_aura(def)
 }
 
 /// Whether this module's Aura `def` may enchant `host`. `None` for every
 /// other definition.
 pub(crate) fn aura_host_legal(def: &CardDef, host: ObjectId, state: &GameState) -> Option<bool> {
+    if let Some(legal) = crate::eternal_sideboard_s1d_v1::aura_host_legal(def, host, state) {
+        return Some(legal);
+    }
     (def.name == WILD_GROWTH).then(|| {
         state.objects.get(host).zone == Zone::Battlefield
             && crate::engine::object_has_type(state, host, CardType::Land)

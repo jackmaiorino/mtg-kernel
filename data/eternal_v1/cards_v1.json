@@ -21454,6 +21454,955 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/ElephantToken.java",
    "is_token": true
+  },
+  {
+   "name": "Vandalblast",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-4c-affinity",
+    "pauper-4c-ephemerate",
+    "pauper-4c-pestilence",
+    "pauper-4c-synthesizer-f5246896-123e-417c-9560-63c3c542a0da",
+    "pauper-boros-synthesizer",
+    "pauper-grixis-affinity",
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-grixis-faeries",
+    "pauper-gruul-ramp",
+    "pauper-izzet-faeries",
+    "pauper-izzet-terror",
+    "pauper-jeskai-ephemerate",
+    "pauper-jund-wildfire",
+    "pauper-snacker-gates",
+    "pauper-spy-combo",
+    "tron-c244ab01-c9e3-400d-8db1-6d717616b7e2"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "destroy_artifact",
+    "overload"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/Vandalblast.java"
+  },
+  {
+   "name": "Crypt Incursion",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-4c-ephemerate",
+    "tron-c244ab01-c9e3-400d-8db1-6d717616b7e2"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "graveyard_exile",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CryptIncursion.java"
+  },
+  {
+   "name": "Circle of Protection: Blue",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "tron-c244ab01-c9e3-400d-8db1-6d717616b7e2"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "damage_prevention",
+    "source_choice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CircleOfProtectionBlue.java"
+  },
+  {
+   "name": "Call Damage Control",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "graveyard_return",
+    "choose_up_to_two"
+   ]
+  },
+  {
+   "name": "Nylea's Disciple",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Centaur",
+    "Archer"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-spy-combo"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "life_gain",
+    "devotion"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NyleasDisciple.java"
+  },
+  {
+   "name": "Scattershot Archer",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Archer"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "tap_ability",
+    "damage_flying"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/ScattershotArcher.java"
+  },
+  {
+   "name": "Sentinel's Eyes",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "vigilance",
+    "escape"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SentinelsEyes.java"
+  },
+  {
+   "name": "Stonehorn Dignitary",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Rhino",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-esper-ephemerate",
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "skip_combat"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StonehornDignitary.java"
+  },
+  {
+   "name": "Standard Bearer",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Flagbearer"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-azorius-faeries",
+    "pauper-boros-bully",
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-white-aggro"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "flagbearer",
+    "targeting_restriction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StandardBearer.java"
+  },
+  {
+   "name": "Firebending Lesson",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Lesson"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "kicker",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FirebendingLesson.java"
+  },
+  {
+   "name": "Gruul Turf",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R",
+    "G"
+   ],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "bounce_land"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GruulTurf.java"
+  },
+  {
+   "name": "It'll Quench Ya!",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Lesson"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "counter_unless_pay"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/ItllQuenchYa.java"
+  },
+  {
+   "name": "Origin of Metalbending",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Lesson"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "modal",
+    "destroy_artifact_or_enchantment",
+    "counters",
+    "indestructible"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OriginOfMetalbending.java"
+  },
+  {
+   "name": "Waterbending Lesson",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [
+    "Lesson"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "draw",
+    "waterbend"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WaterbendingLesson.java"
+  },
+  {
+   "name": "Drown in Sorrow",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-4c-pestilence",
+    "pauper-dimir-affinity",
+    "pauper-food-gardens"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "mass_pump",
+    "scry"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DrownInSorrow.java"
+  },
+  {
+   "name": "Palace Sentinels",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-azorius-faeries",
+    "pauper-white-aggro"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "etb_trigger",
+    "monarch"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PalaceSentinels.java"
+  },
+  {
+   "name": "Deglamer",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-gruul-ponza",
+    "pauper-gruul-ramp"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "shuffle_into_library"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Deglamer.java"
+  },
+  {
+   "name": "Martyr of Sands",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "reveal_cost",
+    "sacrifice_cost",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MartyrOfSands.java"
+  },
+  {
+   "name": "Navigator's Compass",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-4c-synthesizer-f5246896-123e-417c-9560-63c3c542a0da",
+    "pauper-boros-synthesizer",
+    "pauper-glintblade",
+    "pauper-mardu-synthesizer"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "life_gain",
+    "tap_ability",
+    "land_type_change"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NavigatorsCompass.java"
+  },
+  {
+   "name": "Last Breath",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "exile",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LastBreath.java"
+  },
+  {
+   "name": "Electrickery",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-boros-moxite",
+    "pauper-boros-synthesizer"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "damage",
+    "overload"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/Electrickery.java"
+  },
+  {
+   "name": "Faerie Trickery",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Faerie"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-turbo-fog-fe589501-15e6-4511-b259-e066f9f36c51"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "counter",
+    "exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FaerieTrickery.java"
+  },
+  {
+   "name": "Sagittars' Volley",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-turbo-fog-fe589501-15e6-4511-b259-e066f9f36c51"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy",
+    "damage_flying"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SagittarsVolley.java"
+  },
+  {
+   "name": "Spreading Seas",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-blue-faeries-f7d232c7-2c3c-4459-b219-f3e8d9abbec6"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "aura",
+    "enchant_land",
+    "etb_trigger",
+    "land_type_change"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SpreadingSeas.java"
+  },
+  {
+   "name": "Holy Light",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "mass_pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HolyLight.java"
+  },
+  {
+   "name": "Ultimate Alliance",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "damage_per_creature"
+   ]
+  },
+  {
+   "name": "Coalition Honor Guard",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Flagbearer"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-snacker-gates"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "flagbearer",
+    "targeting_restriction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CoalitionHonorGuard.java"
+  },
+  {
+   "name": "Molten Tributary",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Island",
+    "Mountain"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U",
+    "R"
+   ],
+   "decks": [
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "enters_tapped",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoltenTributary.java"
+  },
+  {
+   "name": "Return to Dust",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "exile",
+    "artifact_enchantment_removal"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/ReturnToDust.java"
+  },
+  {
+   "name": "Arashin Cleric",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-azorius-faeries"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "etb_trigger",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/ArashinCleric.java"
+  },
+  {
+   "name": "Foot Ninjas",
+   "engine_capability": "full",
+   "mana_cost": "{4}{W/B}{W/B}",
+   "mana_value": 6,
+   "colors": [
+    "W",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Ninja"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-azorius-faeries"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "sneak",
+    "alt_cost",
+    "etb_trigger",
+    "life_gain"
+   ]
   }
  ]
 }

@@ -287,7 +287,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Orim's Chant" => Some("{W}"),
-        _ => None,
+        _ => super::build_eternal_s1d_v1::kicker_cost_for(name),
     }
 }
 
@@ -317,7 +317,7 @@ pub(super) fn escape_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_s1d_v1::escape_for(name),
     }
 }
 

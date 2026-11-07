@@ -770,6 +770,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::DividedTwoDamageAnyTargetsV1 => ObjF::PlayerOrPermanent,
         S::CreatureManaValueAtMostV1(_) => creature(),
         S::OpponentArtifactV1 => typed(CardType::Artifact),
+        S::S1dV1(_) => ObjF::AnyCard,
     }
 }
 
@@ -830,6 +831,7 @@ pub(super) fn standard_target_origin(
         | S::AssemblyWorkerCreatureV1
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
+        | S::S1dV1(_)
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1
         | S::UpToTwoAnyTargets
@@ -897,6 +899,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         }
         S::OpponentArtifactV1 => {
             object(out, standard_target_obj(filter), relation, zone);
+        }
+        S::S1dV1(_) => {
+            // Wave S1d's filters (a power bound, flying, a land you control,
+            // a distinct-type graveyard pair) have no facet.
+            out.atoms.push(Atom::Opaque);
         }
         S::UpToOnePlayerV1 => {
             out.target(TargetAtom::UpTo);

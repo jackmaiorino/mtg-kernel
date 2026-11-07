@@ -313,7 +313,7 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
 pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str>> {
     match name {
         "Skycloud Expanse" => Some(vec![]),
-        _ => None,
+        _ => super::build_eternal_s1d_v1::primary_mana_ability_colors(name),
     }
 }
 

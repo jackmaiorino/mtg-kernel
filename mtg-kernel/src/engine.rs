@@ -3893,6 +3893,27 @@ fn legal_targets_for_controller_from_source_unframed(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> Vec<Target> {
+    #[allow(unused_mut)]
+    let mut legal = legal_targets_unrestricted_v1(spec, targets_chosen, controller, source, state);
+    // Standard Bearer and Coalition Honor Guard: Flagbearers must be chosen.
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1d_v1::statics::restrict_to_flagbearers(
+        state,
+        controller,
+        targets_chosen,
+        target_count(spec) as usize,
+        &mut legal,
+    );
+    legal
+}
+
+fn legal_targets_unrestricted_v1(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> Vec<Target> {
     if spec
         == TargetSpec::StandardV1(
             crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
@@ -20942,6 +20963,13 @@ fn advance_step(state: &mut GameState) {
     if state.step == Step::EndCombat {
         state.engine.combat.reset_preserving_rules();
     }
+    // Stonehorn Dignitary: "target opponent skips their next combat phase."
+    #[cfg(feature = "eternal-fixtures")]
+    if next == Step::BeginCombat
+        && crate::eternal_sideboard_s1d_v1::statics::take_combat_skip(state, state.active_player)
+    {
+        next = Step::Main2;
+    }
     // Solitary Confinement: "Skip your draw step." (Premodern wave P1b)
     #[cfg(feature = "eternal-fixtures")]
     if next == Step::Draw
@@ -23349,6 +23377,11 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_legacy_e7a_v1::is_extra_forest(state, id) {
         subtype_ids.push(card_def::Subtype::Forest.stable_id());
+    }
+    // Navigator's Compass: a basic land type in addition to the others.
+    #[cfg(feature = "eternal-fixtures")]
+    for subtype in crate::eternal_sideboard_s1d_v1::statics::extra_land_types(state, id) {
+        subtype_ids.push(subtype.stable_id());
     }
     subtype_ids.sort_unstable();
     if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()
@@ -28810,6 +28843,11 @@ fn push_paid_activation(
             pending.ability_index,
         );
         crate::eternal_premodern_p1b_v1::statics::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+        );
+        crate::eternal_sideboard_s1d_v1::statics::activation_paid(
             state,
             pending.source,
             pending.ability_index,

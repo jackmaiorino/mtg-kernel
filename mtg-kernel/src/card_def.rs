@@ -442,6 +442,11 @@ pub enum Subtype {
     Specter,
     Shade,
     Mystic,
+    /// Appended for the eternal catalog's wave S1d (Nylea's Disciple,
+    /// Stonehorn Dignitary, Standard Bearer and Coalition Honor Guard).
+    Centaur,
+    Rhino,
+    Flagbearer,
 }
 
 impl Subtype {
@@ -816,6 +821,12 @@ impl Subtype {
         Subtype::Shade,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mystic,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Centaur,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Rhino,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Flagbearer,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1055,6 +1066,9 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
+            209 => Subtype::Centaur,
+            210 => Subtype::Rhino,
+            211 => Subtype::Flagbearer,
             _ => return None,
         })
     }
@@ -1273,6 +1287,9 @@ impl Subtype {
             Subtype::Specter => true,
             Subtype::Shade => true,
             Subtype::Mystic => true,
+            Subtype::Centaur => true,
+            Subtype::Rhino => true,
+            Subtype::Flagbearer => true,
         }
     }
 
@@ -1376,6 +1393,9 @@ impl Subtype {
                     | Subtype::Specter
                     | Subtype::Shade
                     | Subtype::Mystic
+                    | Subtype::Centaur
+                    | Subtype::Rhino
+                    | Subtype::Flagbearer
             )
         {
             return true;

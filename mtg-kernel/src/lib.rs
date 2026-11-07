@@ -277,6 +277,8 @@ pub mod eternal_e5a_v1;
 /// Pauper and Vintage long-tail card programs of the eternal catalog (wave
 /// E9b).
 pub mod eternal_e9b_v1;
+/// Pauper sideboard card programs of the eternal catalog (wave S1d).
+pub mod eternal_sideboard_s1d_v1;
 /// Legacy aggro, Eldrazi and control card programs of the eternal catalog
 /// (wave E5b).
 pub mod eternal_legacy_e5b_v1;
