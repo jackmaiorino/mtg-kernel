@@ -34,6 +34,7 @@ mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_p1a_v1;
 mod build_eternal_p1b_v1;
+mod build_eternal_p2b_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -3142,6 +3143,9 @@ enum AbilityCostRecipe {
     DiscardSelf,
     SacrificeSelf,
     ReturnControlledLandWithSubtype(&'static str),
+    /// A controlled permanent with this subtype returned to its owner's hand
+    /// (Wirewood Symbiote's "Return an Elf you control").
+    ReturnControlledPermanentWithSubtype(&'static str),
     ExileSelf,
     TapOtherUntappedControlledPermanentWithSubtype(&'static str),
     SacrificeControlled {
@@ -6435,6 +6439,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => format!(
             "CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandWithSubtype(Subtype::{subtype}))"
         ),
+        AbilityCostRecipe::ReturnControlledPermanentWithSubtype(subtype) => format!(
+            "CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::WithSubtypeV1(Subtype::{subtype}))"
+        ),
         AbilityCostRecipe::ExileSelf => "CostComponent::ExileSelf".to_string(),
         AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype(subtype) => format!(
             "CostComponent::TapOtherUntappedControlledPermanentWithSubtype({})",
@@ -6500,6 +6507,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => {
             format!("return_controlled_land_with_subtype:{subtype}")
+        }
+        AbilityCostRecipe::ReturnControlledPermanentWithSubtype(subtype) => {
+            format!("return_controlled_permanent_with_subtype:{subtype}")
         }
         AbilityCostRecipe::ExileSelf => "exile_self".to_string(),
         AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
@@ -11503,6 +11513,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Specter" => "Subtype::Specter",
         "Shade" => "Subtype::Shade",
         "Mystic" => "Subtype::Mystic",
+        "Masticore" => "Subtype::Masticore",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

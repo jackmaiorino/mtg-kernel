@@ -442,6 +442,9 @@ pub enum Subtype {
     Specter,
     Shade,
     Mystic,
+    /// Appended for the eternal catalog's Premodern wave P2b (Masticore). Wave
+    /// P2b's creature type ids start at 260.
+    Masticore = 260,
 }
 
 impl Subtype {
@@ -816,6 +819,8 @@ impl Subtype {
         Subtype::Shade,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mystic,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Masticore,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1055,6 +1060,7 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
+            260 => Subtype::Masticore,
             _ => return None,
         })
     }
@@ -1273,6 +1279,7 @@ impl Subtype {
             Subtype::Specter => true,
             Subtype::Shade => true,
             Subtype::Mystic => true,
+            Subtype::Masticore => true,
         }
     }
 
@@ -1376,6 +1383,7 @@ impl Subtype {
                     | Subtype::Specter
                     | Subtype::Shade
                     | Subtype::Mystic
+                    | Subtype::Masticore
             )
         {
             return true;
@@ -1947,6 +1955,9 @@ pub enum PermanentFilterDef {
     /// unblocked attacker you control to hand"). Appended for the eternal
     /// catalog.
     UnblockedAttackingCreatureV1,
+    /// A permanent with this effective subtype (Wirewood Symbiote's "Return an
+    /// Elf you control to its owner's hand"). Appended for Premodern wave P2b.
+    WithSubtypeV1(Subtype),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

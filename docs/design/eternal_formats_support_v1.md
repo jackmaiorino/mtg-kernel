@@ -451,6 +451,7 @@ reporting as E1 to E9:
 | P0 | Snapshot, capture tool, the catalog reads both snapshots | 0 | Premodern 0% |
 | P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
 | P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census, 62% playable through sessions (Enchantress is a known gap) |
+| P2b | Survival, Madness Threshold, and the cards Elves shares with them (17 of 19; Birchlore Rangers and Thornscape Battlemage stay out) | 17 | Survival and Madness Threshold playable (4%); Elves needs Birchlore Rangers, Thornscape Battlemage and wave P2a's Genesis and Wall of Blossoms |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -557,3 +558,44 @@ later color-setting effect from another wave (Oko's Elk) does not override it. E
 Angel's life gain trigger reads its printed ability with last-known information, so damage
 an effect deals for it after it left the battlefield (Legolas's Quick Reflexes) still
 triggers it. Neither interaction needs a Premodern card.
+
+P2b is built in `src/eternal_premodern_p2b_v1.rs` (with a `statics` submodule) and
+`build_eternal_p2b_v1.rs`, the tail of the recipe chain that wave P1a's tables fall through to.
+Its cards: Birds of Paradise, Caller of the Claw, Deranged Hermit, Gaea's Cradle, Multani's
+Acolyte, Nantuko Vigilante, Survival of the Fittest, Wirewood Symbiote, Yavimaya Granger,
+Masticore, Arrogant Wurm, Blastoderm, Chatter of the Squirrel, Glory, Tireless Tribe, Vintara
+Snapper and Yavimaya Hollow, plus the Bear token. New primitives:
+
+- Echo (Deranged Hermit, Multani's Acolyte, Yavimaya Granger): a permanent that enters is
+  recorded, and at its controller's next upkeep the hook queues a trigger that pays the echo
+  cost (the automatic mana planner pays) or sacrifices it, one option when the cost can be paid
+  and a plain sacrifice when it cannot. Fading 3 (Blastoderm) keeps its own fade counters in
+  module state, as P1b's Parallax Wave does.
+- Gaea's Cradle is a printed mana ability whose amount is the creatures its controller
+  controls (the amount Priest of Titania counts for Elves). Yavimaya Hollow regenerates its
+  target with wave E7b's regeneration shield. Glory's ability activates from the graveyard and
+  records protection from the chosen color for every creature its controller then controls
+  (wave E9a's protection records). Masticore's upkeep is Solitary Confinement's choice with a
+  sacrifice option; its regeneration is wave E7b's.
+- Survival of the Fittest's cost is an ordinary one-card discard whose candidates are limited
+  to creature cards where the discard is chosen, counted and checked
+  (`statics::discard_cost_allows`). Wirewood Symbiote's "Return an Elf you control" is the
+  existing return-a-permanent cost with a new subtype filter (`PermanentFilterDef::WithSubtypeV1`).
+- Caller of the Claw counts the nontoken creatures put into each player's graveyard from the
+  battlefield per turn; the hook reads each batch while the creature's last-known information
+  is on record.
+- Morph is now keyed by name in `statics::is_morph` and `statics::morph_cost`, so Nantuko
+  Vigilante ({1}{G}) joins Exalted Angel; its turned-face-up trigger is queued from the
+  `TurnedFaceUp` event. Deranged Hermit's Squirrel lord and Vintara Snapper's conditional
+  shroud are P1a-chain hooks (`controlled_boost`, `granted_keywords`). Masticore is the first
+  Masticore creature type (stable id 260).
+
+Known gaps: Birchlore Rangers is left out: "Tap two untapped Elves you control" is a mana
+ability with two object costs, but a mana-ability action carries one cost target
+(`Action::ActivateManaAbilityWithCostTarget`, read by the flat policy encodings), so it cannot be
+announced faithfully. Thornscape Battlemage is left out: it has two independent kickers ({R}
+and/or {W}), and a card has one kicker cost and one kicked flag. Elves therefore stays out of
+`PLAYABLE` (it also needs Genesis and Wall of Blossoms from wave P2a). Echo ignores a change of
+control between entering and the upkeep. Glory's protection applies to the creatures its
+controller controls as it resolves. Madness Threshold's Blastoderm and Vintara Snapper have
+shroud, so its games need the public shroud representation of Limited schema 5.
