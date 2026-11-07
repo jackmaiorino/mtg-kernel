@@ -96,6 +96,7 @@ BYTES_PER_UPDATE = 53_000_000          # qualification: trajectories up to 32 MB
 BYTE_CAP = 400_000_000_000             # ruling R6: at most 400 GB across D: and E:
 RESERVE_GIB = 60.0
 THIN = {"hold_days": 7}
+HOLD_DIR = "_hold-thin"                # under the run root: thin moves uncited bulk into it, purge deletes from it
 SEGMENT = 100                          # updates per segment after the hold
 BYTES_CHECK_S = 600
 POLL_S = 30
@@ -429,21 +430,44 @@ def is_link(path):
 
 
 def tree_bytes(root):
-    """Bytes of regular files under root; links and junctions are neither followed nor counted."""
-    total, stack = 0, [Path(root)]
-    while stack:
-        d = stack.pop()
-        try:
-            entries = list(os.scandir(d))
-        except FileNotFoundError:
-            continue
-        for e in entries:
-            if e.is_symlink() or (hasattr(e, "is_junction") and e.is_junction()):
+    """Bytes of regular files under root; links and junctions are neither followed nor counted.
+
+    Safe beside a running thin or purge: the supervisor and every storage admission call this while drivers write
+    bulk, move it into the holding folder and delete it from there. A file that vanishes between its listing and its
+    stat (on POSIX a DirEntry.stat is a system call), or a folder that vanishes before it is listed, is gone and
+    counts nothing. Thin renames files from the chains' folders into the holding folder on the same volume, so a
+    moved file is in exactly one of the two at any instant; the holding folder is therefore walked after everything
+    else, and a file moved during the walk counts at least once (twice if it was counted before the move), never in
+    neither. A purged file really is gone. So the walk errs high around thin, which keeps the byte cap and storage
+    admission conservative. It cannot see bytes written during the walk (`room` adds the unfinished segments' bytes
+    for that) or an interrupted iteration that quarantine moves aside during it (at most one iteration)."""
+    def walk(top, skip=None):
+        total, stack = 0, [Path(top)]
+        while stack:
+            d = stack.pop()
+            try:
+                entries = list(os.scandir(d))
+            except FileNotFoundError:           # the folder vanished before it was listed
                 continue
-            if e.is_dir(follow_symlinks=False):
-                stack.append(Path(e.path))
-            elif e.is_file(follow_symlinks=False):
-                total += e.stat(follow_symlinks=False).st_size
+            for e in entries:
+                try:
+                    if e.is_symlink() or (hasattr(e, "is_junction") and e.is_junction()):
+                        continue
+                    if e.is_dir(follow_symlinks=False):
+                        child = Path(e.path)
+                        if child != skip:
+                            stack.append(child)
+                    elif e.is_file(follow_symlinks=False):
+                        total += e.stat(follow_symlinks=False).st_size
+                except FileNotFoundError:       # the entry vanished between its listing and its stat
+                    continue
+        return total
+
+    root = Path(root)
+    hold = root / HOLD_DIR
+    total = walk(root, skip=hold)
+    if hold.is_dir() and not is_link(hold):
+        total += walk(hold)
     return total
 
 
@@ -477,7 +501,7 @@ def thin_chain(plan, name, apply):
                     continue
                 if is_link(path) or sha(path) != digest:
                     raise SystemExit(f"stop: {path} is a link or differs from the hash its records pin")
-                dest = root / "_hold-thin" / name / path.relative_to(Path(chain["native"]).parent)
+                dest = root / HOLD_DIR / name / path.relative_to(Path(chain["native"]).parent)
                 files += 1
                 size += path.stat().st_size
                 if apply:
@@ -567,7 +591,7 @@ def purge_held(plan, apply):
     if apply and held_lock is None:
         return {"files": 0, "bytes": 0, "deleted": False, "busy": True}
     try:
-        hold = root / "_hold-thin"
+        hold = root / HOLD_DIR
         if is_link(hold):
             raise SystemExit(f"stop: {hold} is a link")
         real_hold = Path(os.path.realpath(hold))
