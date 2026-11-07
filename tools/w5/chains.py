@@ -25,8 +25,9 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
 - `arms`: per arm (C, X8, XS, and always F, the frozen filler): `parent` (dose record: the source the chain starts
   from), `workers`, `memory_max_bytes`, `bytes_per_update`, optional `segment_updates`, `base` and `throughput`
   (a `w5-box-throughput/v1` record), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
-  Stage 0 plans) `ladder` (`stride`, `roster_max`, `replaces`, `test_stride`: pgrow.py; the base's fixed-parent share
-  plays a per-segment roster drawn from the chain's own checkpoint ladder, each state verified before use);
+  Stage 0 plans) `ladder` (`stride`, `roster_max`, `replaces`, `test_stride`, and for a fork `history`: pgrow.py;
+  the base's fixed-parent share plays a per-segment roster drawn from the chain's own checkpoint ladder, each state
+  verified before use);
 - `chains`: name to `{arm, slot, seed_root, pair}` (F: a filler box, no pair, run by supervise through `w5box.py
   fill`, not by `run`; XS in Stage 1b: `partner`, the Stage 1a C
   chain in the same root; Stage 0 chains may omit the pair, e.g. a box throughput run with every box on one
@@ -361,8 +362,10 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     if source is not None:
         cfg['initial_source'] = source
     if arm.get('ladder'):
-        states = ladder if ladder is not None else [(0, copy.deepcopy(parent['source']))]
         try:
+            states = ladder if ladder is not None else \
+                [(i, src) for i, src, _ in pgrow.history_states(arm['ladder'], parent['source'])] + \
+                [(pgrow.member_id(0), copy.deepcopy(parent['source']))]
             pgrow.apply(cfg, arm['ladder'], states, seed_root, offset // arm['segment_updates'], offset)
         except pgrow.LadderError as exc:
             raise Stop(str(exc)) from exc
@@ -373,10 +376,10 @@ def chain_ladder(arm, man, cdir, offset):
     """A CG chain's verified ladder to date at `offset` (pgrow.ladder; LADDER.json in the chain directory)."""
     try:
         spec = arm['ladder']
-        return pgrow.ladder(read(arm['parent']['path'])['source'], man['segments'], offset, spec['stride'],
+        return pgrow.ladder(read(arm['parent']['path'])['source'], man['segments'], offset, spec,
                             Path(cdir) / 'LADDER.json', next_source, man['chain'],
-                            lambda bounds: pgrow.roster(man['seed_root'], offset // arm['segment_updates'], bounds,
-                                                        spec['roster_max']))
+                            lambda ids: pgrow.roster(man['seed_root'], offset // arm['segment_updates'], ids,
+                                                     spec['roster_max']))
     except pgrow.LadderError as exc:
         raise Stop(str(exc)) from exc
 
@@ -519,7 +522,8 @@ def make_plan(inputs_path):
         ladder = None
         if a == 'CG':
             try:
-                ladder = pgrow.check_spec(spec.get('ladder'), base_doc, length, retention.C_LONG_STRIDE)
+                ladder = pgrow.check_spec(spec.get('ladder'), base_doc, length, retention.C_LONG_STRIDE,
+                                          read(spec['parent'])['source'], pin)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
         else:
@@ -719,6 +723,8 @@ def load_arm(path):
     require(arm['tools'] == tools_shas(), 'the W5 tools differ from the arm file pins')
     for key in ('trainer', 'base', 'parent'):
         check_pin(arm[key], key)
+    if (arm.get('ladder') or {}).get('history'):
+        check_pin(arm['ladder']['history'], 'the ladder history')
     if arm['frozen']:
         check_pin(arm['frozen'], 'the frozen-constants record')
     return arm

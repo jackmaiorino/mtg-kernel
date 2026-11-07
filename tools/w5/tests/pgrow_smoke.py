@@ -8,7 +8,8 @@ each segment's roster (ladder boundaries, drawn members and their hashes), the p
 (between consecutive iteration receipts, so segment start is apart) and the segment start overhead.
 
   pgrow_smoke.py --root DIR --node-inputs PLAN-INPUTS.json --arm CG|C --segments N --segment-updates L
-                 [--stride S] [--roster-max K] [--seed-root R] [--kill-at U] --out RECEIPT.json
+                 [--stride S] [--roster-max K] [--seed-root R] [--kill-at U] [--parent P --history H]
+                 --out RECEIPT.json
 
 `--node-inputs` is the node's production plan inputs (python, trainer, container tool, base, layout, the C parent):
 only those pins are reused; the root, the arm and the chain are this smoke's own. Run it pinned to spare threads
@@ -32,13 +33,15 @@ import chains  # noqa: E402
 
 def make(a):
     node = chains.read(a.node_inputs)
-    parent = node['arms']['C']['parent']
+    parent = a.parent or node['arms']['C']['parent']
     arm = {'parent': parent, 'workers': a.workers, 'memory_max_bytes': 8 << 30, 'bytes_per_update': 1000000,
            'segment_updates': a.segment_updates}
     arms = {'F': dict(arm, segment_updates=64)}
     if a.arm == 'CG':
         arms['CG'] = dict(arm, ladder={'stride': a.stride, 'roster_max': a.roster_max,
                                        'test_stride': a.stride % 4096 != 0})
+        if a.history:
+            arms['CG']['ladder']['history'] = a.history
     else:
         arms['C'] = arm
     inputs = {'schema': chains.INPUTS_SCHEMA, 'stage': '0', 'label': 'smoke', 'node': node['node'],
@@ -112,6 +115,8 @@ def main(argv=None):
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--seed-root', default='chains-20261107/pgrow-smoke')
     ap.add_argument('--kill-at', type=int)
+    ap.add_argument('--parent', help='a fork: the dose record `pgrow.py history` wrote (default: the node C parent)')
+    ap.add_argument('--history', help='a fork: the `w5-ladder-history/v1` document (CG only)')
     ap.add_argument('--out', required=True)
     a = ap.parse_args(argv)
     root = Path(a.root).resolve()
@@ -151,10 +156,10 @@ def main(argv=None):
         segs.append({'segment': s, 'exit': code, 'complete': complete, 'killed': was_kill, 'moved': len(moved),
                      'config_sha256': chains.sha(path),
                      'roster': {o['id']: o['source']['checkpoint']['sha256'] for o in cfg['opponents']
-                                if o['id'].startswith('ladder-u')},
+                                if o['id'].startswith(('ladder-u', 'ladder-h'))},
                      'draws': {k: sum(1 for it in cfg['iterations'] for e in it['episodes']
                                       if e['opponent'].get('id') == k) for k in
-                               [o['id'] for o in cfg['opponents'] if o['id'].startswith('ladder-u')]},
+                               [o['id'] for o in cfg['opponents'] if o['id'].startswith(('ladder-u', 'ladder-h'))]},
                      'wall_seconds': round(time.time() - start, 3),
                      'start_overhead_seconds': round(mtimes[0] - start, 3) if mtimes and not moved else None,
                      'per_update_wall_seconds': round((mtimes[-1] - mtimes[0]) / (len(mtimes) - 1), 4)
