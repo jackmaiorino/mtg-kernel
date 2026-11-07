@@ -1254,6 +1254,33 @@ fn foretelling_is_offered_only_during_its_owners_turn() {
     assert!(!abilities.contains(&(behold, 0)));
 }
 
+/// Issue #531: a foretold card leaves its owner's hand face down. Under the
+/// opt-in name-level rule the other player cannot tell which card left, so
+/// every row of that hand ends, as for any hidden departure. The historical
+/// rule keeps the rows of cards that did not move.
+#[test]
+fn foretelling_ends_every_known_hand_row_only_by_name() {
+    for by_name in [false, true] {
+        let mut state = islands();
+        if by_name {
+            state.enable_hand_departures_by_name_v1();
+        }
+        let behold = put(&mut state, P0, "Behold the Multiverse", Zone::Hand);
+        let island = put(&mut state, P0, "Island", Zone::Hand);
+        state.reveal_hand_card(P1, P0, island).unwrap();
+        pool(&mut state, P0, &[], 2);
+        act(&mut state, Action::ActivateAbility(behold, 0));
+        assert_eq!(zone(&state, behold), Zone::Exile);
+        let rows: Vec<ObjectId> = state
+            .known_hand_cards(P1, P0)
+            .iter()
+            .map(|row| row.object)
+            .collect();
+        let expected = if by_name { vec![] } else { vec![island] };
+        assert_eq!(rows, expected, "by name: {by_name}");
+    }
+}
+
 #[test]
 fn stream_of_thought_mills_four_and_shuffles_up_to_four_back() {
     let mut state = islands();

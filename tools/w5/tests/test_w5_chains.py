@@ -143,6 +143,60 @@ class ChainTests(unittest.TestCase):
 
     # ------------------------------------------------------------ plan
 
+    def test_independent_plan_holds_no_box_and_starts_no_filler(self):
+        path, plan = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'},
+                                          'c2': {'arm': 'C', 'slot': 1, 'seed_root': 'oc/c2'}},
+                                    c_wall_seconds=1.5, independent=True, label='indep')
+        self.assertIs(plan['independent'], True)
+        box = json.loads(Path(plan['arms']['C']['w5box_plan']['path']).read_text())
+        self.assertEqual({n: s['handoff'] for n, s in box['chains'].items()}, {'c1': False, 'c2': False})
+        with mock.patch.object(chains, 'occupancy', side_effect=AssertionError('no fills')):
+            report = chains.cycle(plan, path)
+        self.assertIsNone(report['fills'])
+        with self.assertRaises(chains.Stop):
+            self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'},
+                                 'f2': {'arm': 'F', 'slot': 1, 'seed_root': 'oc/f2'}},
+                           c_wall_seconds=1.5, independent=True, label='indepf')
+        with self.assertRaises(chains.Stop):
+            self.node.plan('1a', {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/chain1'},
+                                  'x1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/chain1'}},
+                           independent=True, label='indep1a')
+
+    def test_extra_c_arms_in_an_independent_plan(self):
+        arm = {'parent': str(self.node.s0), 'workers': 1, 'memory_max_bytes': 1 << 30, 'bytes_per_update': 1000,
+               'segment_updates': 4}
+        specs = {'s1': {'arm': 'CS', 'slot': 0, 'seed_root': 'oc/s1'},
+                 'p1': {'arm': 'CP', 'slot': 1, 'seed_root': 'oc/p1'}}
+        inputs = json.loads(Path(self.node.inputs('0', specs, label='extra', c_wall_seconds=1.5,
+                                                  independent=True)).read_text())
+        inputs['arms']['CS'] = arm
+        inputs['arms']['CP'] = dict(arm, parent=str(self.node.b512))
+        path, plan = chains.make_plan(jwrite(self.node.t / 'extra.json', inputs))
+        self.assertEqual(sorted(plan['arms']), ['CP', 'CS', 'F'])
+        for a in ('CS', 'CP'):
+            doc = json.loads(Path(plan['arms'][a]['file']['path']).read_text())
+            self.assertEqual((doc['recipe'], doc['retention_arm'], doc['c_wall_seconds']), ('C', 'C', 1.5))
+        inputs.pop('independent')
+        with self.assertRaises(chains.Stop):
+            chains.make_plan(jwrite(self.node.t / 'extra2.json', dict(inputs, label='extra2')))
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'the w5box node log is Linux only')
+    def test_independent_plan_thaws_after_an_oom_end(self):
+        path, plan = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'},
+                                          'c2': {'arm': 'C', 'slot': 1, 'seed_root': 'oc/c2'}},
+                                    c_wall_seconds=1.5, independent=True, label='indepoom')
+        node = w5box.NodeLog(self.node.root / 'state')
+        with node.locked():
+            node.append({'event': 'outage-start', 'box_slot': 0, 'handoff': True, 'id': 'c1/0/handoff/1',
+                         'chain': 'c1', 'instance': 0, 'reason': 'oom', 'affected': []})
+        self.assertIn(0, w5box.NodeLog.state(*node.read())['open_outages'])
+        report = chains.cycle(plan, path)
+        self.assertEqual(report['released_boxes'], [])  # c1 has not ended: the outage stays
+        jwrite(self.node.root / 'chains' / 'c1' / 'END.json', {'chain': 'c1', 'reason': 'chain-failure'})
+        report = chains.cycle(plan, path)
+        self.assertEqual(report['released_boxes'], [0])
+        self.assertEqual(w5box.NodeLog.state(*node.read())['open_outages'], {})
+
     def test_plan_pins_the_arm_files_and_is_idempotent(self):
         path, plan = self.node.stage0()
         first = chains.sha(path)

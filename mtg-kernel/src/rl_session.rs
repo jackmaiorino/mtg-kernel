@@ -7958,6 +7958,18 @@ impl FastActorSessionV1 {
         self.state.engine.spellbench_neutral_v1.choices = true;
     }
 
+    /// Opts this game into name-level hand departures (issue #531, see
+    /// `GameState::hand_departures_by_name_v1`): known-hand rows never tell
+    /// which copy of a name left a hand. Changes what observations show, so
+    /// it is a new runtime identity, refused after the first policy step.
+    pub fn enable_hand_departures_by_name_v1(&mut self) -> Result<(), String> {
+        if self.policy_step_count != 0 {
+            return Err("name-level hand departures are a reset-only option".into());
+        }
+        self.state.enable_hand_departures_by_name_v1();
+        Ok(())
+    }
+
     /// Audit-only counterpart to
     /// [`RlEpisodeSessionV1::privileged_core_environment_hash`]. It is never
     /// computed by reset/step and therefore does not tax the actor loop.
