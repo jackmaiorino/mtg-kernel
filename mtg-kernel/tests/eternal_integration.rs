@@ -32,6 +32,8 @@ mod eternal_pauper_e8b_v1;
 mod eternal_premodern_p1a_v1;
 #[path = "eternal/eternal_premodern_p1b_v1.rs"]
 mod eternal_premodern_p1b_v1;
+#[path = "eternal/eternal_public_shroud_v1.rs"]
+mod eternal_public_shroud_v1;
 #[path = "eternal/eternal_sideboard_s1a_v1.rs"]
 mod eternal_sideboard_s1a_v1;
 #[path = "eternal/eternal_sideboard_s1b_v1.rs"]

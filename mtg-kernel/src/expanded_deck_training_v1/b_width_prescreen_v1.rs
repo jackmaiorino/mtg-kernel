@@ -3666,7 +3666,7 @@ fn staging_chain_v1(config: &PrescreenConfigV1, chain: &PrescreenChainV1) -> Res
         .ok_or("the parent has no checkpoint")?;
     let checkpoint_bytes = check_pin_v1(checkpoint)?;
     let digests: CheckpointDigestsV1 = serde_json::from_slice(
-        super::checkpoint_container_v1::metadata_view_v1(&checkpoint_bytes)?,
+        &super::checkpoint_container_v1::metadata_view_v1(&checkpoint_bytes)?,
     )
     .map_err(err)?;
     ensure(

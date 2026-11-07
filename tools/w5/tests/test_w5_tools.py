@@ -1,12 +1,17 @@
 """W5 tools: the w5-xact-v1 mirror and the retention, budget and selection rules, on synthetic chain trees."""
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'ex1'))
 import capture0b  # noqa: E402
+import qual  # noqa: E402
 import retention  # noqa: E402
 import xact  # noqa: E402
 
@@ -615,6 +620,78 @@ class Capture0bTests(unittest.TestCase):
         self.assertFalse(capture0b.parity(self.root / 'late', self.root / 'vl')['equal'])
         with self.assertRaises(SystemExit):  # 0b-only jobs have no value-leaf records
             capture0b.convert_vl(self.root / 'plain', 16000, 'x', 'b' * 64)
+
+
+def zstd_frame(data):
+    """One zstd frame of `data` with its content size, or None when no zstd is available here."""
+    try:
+        from compression import zstd
+        return zstd.compress(data)
+    except ImportError:
+        pass
+    try:
+        import zstandard
+        return zstandard.ZstdCompressor().compress(data)
+    except ImportError:
+        pass
+    if shutil.which('zstd'):
+        with tempfile.TemporaryDirectory() as tmp:  # a file input, so the frame declares its content size
+            source = Path(tmp) / 'record'
+            source.write_bytes(data)
+            return subprocess.run(['zstd', '-q', '-c', str(source)], stdout=subprocess.PIPE, check=True).stdout
+    return None
+
+
+class RecordEnvelopeTests(unittest.TestCase):
+    """qual.open_record fails closed exactly where the trainer's reader (record_envelope_v1::open_v1) does."""
+
+    RECORD = json.dumps({'decisions': [{'step': 1, 'tensor': [0, 1065353216] * 50}]}).encode()
+
+    def frame(self, data=None):
+        frame = zstd_frame(self.RECORD if data is None else data)
+        if frame is None:
+            self.skipTest('no zstd implementation on this host')
+        return frame
+
+    def check_backend(self):
+        record, frame = self.RECORD, self.frame()
+        self.assertTrue(frame.startswith(qual.ZSTD_MAGIC))
+        self.assertEqual(qual.open_record(frame), record)
+        self.assertEqual(qual.open_record(record), record)  # a plain record is returned as it is
+        with tempfile.TemporaryDirectory() as tmp:
+            sealed, plain = Path(tmp) / 'sealed.json', Path(tmp) / 'plain.json'
+            sealed.write_bytes(frame)
+            plain.write_bytes(record)
+            self.assertEqual(qual.read(sealed), qual.read(plain))
+        refused = {
+            'two frames': frame + self.frame(b''),
+            'trailing byte': frame + b'\0',
+            'truncated': frame[:-1],
+            'nested': self.frame(frame),
+        }
+        for name, data in refused.items():
+            with self.subTest(name), self.assertRaises((ValueError, OSError)):
+                qual.open_record(data)
+        with self.assertRaisesRegex(ValueError, 'size limit'):
+            qual.open_record(frame, cap=len(record) - 1)
+        self.assertEqual(qual.open_record(frame, cap=len(record)), record)
+
+    def test_default_backend(self):
+        self.check_backend()
+
+    def test_command_line_backend(self):
+        if not shutil.which('zstd'):
+            self.skipTest('no zstd command line tool on this host')
+        blocked = {'compression': None, 'compression.zstd': None, 'zstandard': None}
+        with mock.patch.dict(sys.modules, blocked):
+            self.check_backend()
+
+    def test_a_frame_without_a_declared_size_is_refused(self):
+        frame = bytearray(self.frame())
+        frame[4] &= 0x3f  # frame content size flag 0
+        frame[4] &= ~0x20 & 0xff  # not single segment, so no size field at all
+        with self.assertRaisesRegex(ValueError, 'declares its content size'):
+            qual.zstd_frame_content_size(bytes(frame))
 
 
 if __name__ == '__main__':

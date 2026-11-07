@@ -1082,6 +1082,22 @@ pub struct PublicObservationProjectionV5 {
     pub foundations_combat: Option<PublicFoundationsCombatV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_mulligans: Option<PublicLondonMulligansV1>,
+    /// Shroud on permanents and players, present in every observation of a
+    /// game under the public shroud contract (Limited schema 5) and absent
+    /// otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_shroud: Option<PublicShroudV1>,
+}
+
+/// Shroud under the public shroud contract (Limited schema 5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicShroudV1 {
+    /// Battlefield permanents with shroud (Argothian Enchantress, Sterling
+    /// Grove's grant, Sylvan Safekeeper's ability), seat 0's battlefield
+    /// first, each in public battlefield order.
+    pub permanents: Vec<CardStableRefV1>,
+    /// Each seat's shroud (Solitary Confinement).
+    pub players: [bool; 2],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1871,9 +1887,51 @@ fn refuse_unrepresented_twinflame(state: &GameState, accept: bool) -> Result<()>
     Ok(())
 }
 fn refuse_unrepresented_shroud(state: &GameState) -> Result<()> {
-    refuse_unrepresented_shroud_for_akroma(state, false)
+    refuse_unrepresented_shroud_in_mode(state, false, false)
 }
-fn refuse_unrepresented_shroud_for_akroma(state: &GameState, accept_akroma: bool) -> Result<()> {
+
+/// Opts a fresh game into the public shroud contract (Limited schema 5):
+/// its policy observations report shroud on permanents and players
+/// (`PublicObservationProjectionV5::public_shroud`) instead of refusing it.
+/// Every other observation of the game keeps refusing shroud.
+pub fn enable_public_shroud_v1(state: &mut GameState) {
+    state.public_shroud_v1 = true;
+}
+
+/// Each seat's shroud: Solitary Confinement's "You have shroud." Only the
+/// eternal catalog has a card that grants it.
+fn public_player_shroud_v1(state: &GameState) -> [bool; 2] {
+    if !cfg!(feature = "eternal-fixtures") {
+        return [false; 2];
+    }
+    [PlayerId::P0, PlayerId::P1]
+        .map(|player| crate::eternal_premodern_p1b_v1::statics::player_has_shroud(state, player))
+}
+
+fn public_shroud_v1(state: &GameState) -> Result<PublicShroudV1> {
+    let mut permanents = Vec::new();
+    for player in &state.players {
+        for &id in &player.battlefield {
+            if engine::has_effective_keyword(state, id, Keywords::SHROUD) {
+                permanents.push(card_ref(state, id)?);
+            }
+        }
+    }
+    Ok(PublicShroudV1 {
+        permanents,
+        players: public_player_shroud_v1(state),
+    })
+}
+
+/// `public_shroud` is true only while building the schema 5 policy
+/// observation (`ObservationTextModeV2::PublicShroudV5Artifact`), which
+/// represents shroud. Every other observation refuses a permanent's or a
+/// player's shroud.
+fn refuse_unrepresented_shroud_in_mode(
+    state: &GameState,
+    accept_akroma: bool,
+    public_shroud: bool,
+) -> Result<()> {
     if crate::doubling_season_v48::requires_successor(state) {
         return Err(RlContractError(
             "effect token and counter replacement requires a distinct safe producer".into(),
@@ -1886,12 +1944,20 @@ fn refuse_unrepresented_shroud_for_akroma(state: &GameState, accept_akroma: bool
         crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state)
             .map_err(RlContractError)?;
     }
+    if public_shroud {
+        return Ok(());
+    }
     if state.objects.iter().any(|(id, object)| {
         object.zone == Zone::Battlefield
             && engine::has_effective_keyword(state, id, Keywords::SHROUD)
     }) {
         return Err(RlContractError(
             "shroud requires an explicit public keyword representation".into(),
+        ));
+    }
+    if public_player_shroud_v1(state).contains(&true) {
+        return Err(RlContractError(
+            "player shroud requires an explicit public representation".into(),
         ));
     }
     Ok(())
@@ -2042,6 +2108,10 @@ pub fn observe_v2(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ObservationTextModeV2 {
     FullArtifact,
+    /// `FullArtifact` for a game under the public shroud contract (Limited
+    /// schema 5): shroud on permanents and players is reported instead of
+    /// refused. Only `observe_policy_v5` selects it.
+    PublicShroudV5Artifact,
     // Private construction mode. Only the distinct V51 DTO publishes this
     // storage, together with its mandatory exact battlefield card roster.
     RavenousV51Artifact,
@@ -2082,6 +2152,7 @@ impl ObservationTextModeV2 {
     fn kernel_version(self) -> String {
         match self {
             Self::FullArtifact
+            | Self::PublicShroudV5Artifact
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
             | Self::NextFiveV59Artifact
@@ -2102,6 +2173,7 @@ impl ObservationTextModeV2 {
     fn card_name(self, card_id: u16) -> String {
         match self {
             Self::FullArtifact
+            | Self::PublicShroudV5Artifact
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
             | Self::NextFiveV59Artifact
@@ -2441,7 +2513,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             .map_err(RlContractError)?;
     }
     if !accept_faebloom {
-        refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+        refuse_unrepresented_shroud_in_mode(
+            state,
+            accept_akroma,
+            text_mode == ObservationTextModeV2::PublicShroudV5Artifact,
+        )?;
     }
     if !matches!(
         text_mode,
@@ -2694,7 +2770,11 @@ pub fn observe_policy_v5(
         physical_decision_id,
         substep_index,
         substep_count,
-        text_mode: ObservationTextModeV2::FullArtifact,
+        text_mode: if state.public_shroud_v1 {
+            ObservationTextModeV2::PublicShroudV5Artifact
+        } else {
+            ObservationTextModeV2::FullArtifact
+        },
     })?;
     observation.visible_projection_hash = visible_projection_hash_v5(&observation)?;
     Ok(observation)
@@ -2807,6 +2887,9 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
             foundations_combat: public_foundations_combat_v1(state)?,
+            public_shroud: (text_mode == ObservationTextModeV2::PublicShroudV5Artifact)
+                .then(|| public_shroud_v1(state))
+                .transpose()?,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -3142,7 +3225,11 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
             .map_err(RlContractError)?;
     }
     if !accept_faebloom {
-        refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+        refuse_unrepresented_shroud_in_mode(
+            state,
+            accept_akroma,
+            text_mode == ObservationTextModeV2::PublicShroudV5Artifact,
+        )?;
     }
     if !matches!(
         text_mode,
@@ -5476,6 +5563,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
             london_mulligans: public_london_mulligans_v1(state),
+            public_shroud: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,

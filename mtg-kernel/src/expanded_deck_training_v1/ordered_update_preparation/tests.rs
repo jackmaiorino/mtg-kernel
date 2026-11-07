@@ -503,6 +503,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
         training_math: TrainingMathV1::PlatformLibm,
         record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
+        record_envelope: Default::default(),
         output_directory: PathBuf::from("prepared-output"),
     };
     let value = serde_json::to_value(explicit).unwrap();
@@ -544,4 +545,47 @@ fn phase1_gae_loss_selection_wire_shape_is_exact() {
     );
     let round_tripped: ExpandedLossSelectionV1 = serde_json::from_value(value).unwrap();
     assert_eq!(round_tripped, selection);
+}
+
+/// A batch whose sealed files declare more than the bound together is
+/// refused with the batch-bound error before any file is opened, whatever the
+/// worker count: the files below verify against their pins but never open.
+#[test]
+fn sealed_batches_are_admitted_before_any_file_is_opened() {
+    let directory = std::env::temp_dir().join(format!(
+        "ordered-admit-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&directory).unwrap();
+    // A frame header declaring 300 MiB and one empty last raw block.
+    let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0xe0];
+    frame.extend_from_slice(&(300u64 << 20).to_le_bytes());
+    frame.extend_from_slice(&[0x01, 0x00, 0x00]);
+    let pins: Vec<PinnedFileV1> = (0..2)
+        .map(|index| {
+            let path = directory.join(format!("episode-{index:04}.json"));
+            fs::write(&path, &frame).unwrap();
+            PinnedFileV1 {
+                path,
+                sha256: sha(&frame),
+            }
+        })
+        .collect();
+    for workers in [1, 2] {
+        assert_eq!(
+            read_trajectories_v1(&pins, workers).unwrap_err(),
+            "trajectory batch exceeds 512 MiB CPU ingestion bound"
+        );
+    }
+    // One such file alone is admitted, verified, and fails only when opened.
+    let error = read_trajectories_v1(&pins[..1], 1).unwrap_err();
+    assert_ne!(
+        error,
+        "trajectory batch exceeds 512 MiB CPU ingestion bound"
+    );
+    fs::remove_dir_all(&directory).unwrap();
 }

@@ -481,13 +481,23 @@ pub(crate) fn document_v1(bytes: &[u8]) -> Result<&[u8], String> {
 }
 
 /// `bytes` themselves for a v1 JSON checkpoint, or the container's JSON
-/// document: the view a metadata probe parses.
-pub(crate) fn metadata_view_v1(bytes: &[u8]) -> Result<&[u8], String> {
-    if is_container_v1(bytes) {
-        document_v1(bytes)
-    } else {
-        Ok(bytes)
+/// document: the view a metadata probe parses. A sealed checkpoint
+/// (`record_envelope_v1`) is opened first.
+pub(crate) fn metadata_view_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
+    match open_record_v1(bytes)? {
+        Cow::Borrowed(bytes) if is_container_v1(bytes) => document_v1(bytes).map(Cow::Borrowed),
+        Cow::Borrowed(bytes) => Ok(Cow::Borrowed(bytes)),
+        Cow::Owned(bytes) if is_container_v1(&bytes) => {
+            Ok(Cow::Owned(document_v1(&bytes)?.to_vec()))
+        }
+        Cow::Owned(bytes) => Ok(Cow::Owned(bytes)),
     }
+}
+
+/// The record bytes of a checkpoint file's bytes: a sealed file
+/// (`record_envelope_v1`) opened, anything else as it is.
+fn open_record_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
+    super::record_envelope_v1::open_v1(bytes, super::MAX_FILE_BYTES)
 }
 
 /// Decodes a container into the checkpoint it encodes. Refuses anything that
@@ -530,20 +540,25 @@ pub(crate) fn export_v1(bytes: &[u8]) -> Result<Vec<u8>, String> {
 
 /// `bytes` themselves for a v1 JSON checkpoint, or the exported v1 JSON of a
 /// container: the JSON-compatibility view (design 4.1, interface 2).
+/// A sealed file (`record_envelope_v1`) is opened first, so this is also the
+/// JSON view of any sealed JSON record.
 pub(crate) fn json_document_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
-    if is_container_v1(bytes) {
-        export_v1(bytes).map(Cow::Owned)
+    let record = open_record_v1(bytes)?;
+    if is_container_v1(&record) {
+        export_v1(&record).map(Cow::Owned)
     } else {
-        Ok(Cow::Borrowed(bytes))
+        Ok(record)
     }
 }
 
-/// The checkpoint either format encodes (design 4.1, interface 3).
+/// The checkpoint either format encodes (design 4.1, interface 3), sealed
+/// (`record_envelope_v1`) or not.
 pub(crate) fn parse_checkpoint_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
-    if is_container_v1(bytes) {
-        decode_v1(bytes)
+    let record = open_record_v1(bytes)?;
+    if is_container_v1(&record) {
+        decode_v1(&record)
     } else {
-        serde_json::from_slice(bytes).map_err(|e| e.to_string())
+        serde_json::from_slice(&record).map_err(|e| e.to_string())
     }
 }
 

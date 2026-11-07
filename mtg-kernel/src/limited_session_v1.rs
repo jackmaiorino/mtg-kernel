@@ -5,6 +5,8 @@
 //! Schema 3 adds Foundations damage assignment and trample. These modes
 //! retain the unconditional opening hand and policy V5 action representation.
 //! Schema 4 adds London mulligans before normal turn progression.
+//! Schema 5 adds the public shroud contract to schema 4: policy observations
+//! report shroud on permanents and players instead of refusing such games.
 //! This plumbing does not claim complete Limited rules or FDN support.
 
 use crate::card_def::{card_id_by_name, CARD_DEFS, KERNEL_CARDDB_HASH};
@@ -23,6 +25,7 @@ pub const LIMITED_SCHEMA_V1: u32 = 1;
 pub const LIMITED_ENGINE_PRIORITY_SCHEMA_V1: u32 = 2;
 pub const LIMITED_FOUNDATIONS_COMBAT_SCHEMA_V1: u32 = 3;
 pub const LIMITED_LONDON_MULLIGANS_SCHEMA_V1: u32 = 4;
+pub const LIMITED_PUBLIC_SHROUD_SCHEMA_V1: u32 = 5;
 /// A process input bound, not a Magic format rule.
 pub const MAX_CUSTOM_DECK_CARDS_V1: usize = 10_000;
 pub const MAX_LIMITED_LINE_BYTES_V1: usize = 8 * 1024 * 1024;
@@ -313,6 +316,8 @@ pub struct LimitedReplyV1 {
     pub combat_rules: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mulligan_rules: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_rules: Option<String>,
     pub request_id: Option<String>,
     pub kernel_version: String,
     pub card_db_hash: u64,
@@ -328,6 +333,7 @@ impl LimitedReplyV1 {
             priority_mode: None,
             combat_rules: None,
             mulligan_rules: None,
+            observation_rules: None,
             request_id,
             kernel_version: KERNEL_VERSION.to_string(),
             card_db_hash: KERNEL_CARDDB_HASH,
@@ -372,6 +378,7 @@ pub struct LimitedJsonlServerV1 {
     priority_mode: PriorityModeV1,
     foundations_combat: bool,
     london_mulligans: bool,
+    public_shroud: bool,
     active: Option<RlEpisodeSessionV1>,
     /// The immediate exchange only, matching the existing JSONL retry model.
     last_exchange: Option<(LimitedRequestV1, String)>,
@@ -409,7 +416,19 @@ impl LimitedJsonlServerV1 {
         }
     }
 
+    /// Schema 4 under the public shroud contract: policy observations report
+    /// shroud on permanents and players (`rl::enable_public_shroud_v1`).
+    pub fn new_with_public_shroud_v1() -> Self {
+        Self {
+            public_shroud: true,
+            ..Self::new_with_london_mulligans_v1()
+        }
+    }
+
     fn schema_version(&self) -> u32 {
+        if self.public_shroud {
+            return LIMITED_PUBLIC_SHROUD_SCHEMA_V1;
+        }
         if self.london_mulligans {
             return LIMITED_LONDON_MULLIGANS_SCHEMA_V1;
         }
@@ -426,6 +445,9 @@ impl LimitedJsonlServerV1 {
         reply.schema_version = self.schema_version();
         if self.london_mulligans {
             reply.mulligan_rules = Some("london_v1".to_string());
+        }
+        if self.public_shroud {
+            reply.observation_rules = Some("public_shroud_v1".to_string());
         }
         if self.foundations_combat {
             reply.combat_rules = Some("foundations_v1".to_string());
@@ -529,7 +551,7 @@ impl LimitedJsonlServerV1 {
                     content_identity_with_outside(&ids[seat], companions[seat], &outside[seat])
                 });
                 let session = if self.london_mulligans {
-                    RlEpisodeSessionV1::reset_with_custom_decks_companions_and_london_v1(
+                    RlEpisodeSessionV1::reset_with_custom_decks_companions_london_and_shroud_v1(
                         *episode_id,
                         *env_seed,
                         *max_physical_decisions,
@@ -541,6 +563,7 @@ impl LimitedJsonlServerV1 {
                         self.priority_mode,
                         self.foundations_combat,
                         true,
+                        self.public_shroud,
                     )
                 } else if companions.iter().any(Option::is_some) {
                     return LimitedReplyV1::error(
@@ -754,6 +777,7 @@ mod tests {
             LimitedJsonlServerV1::new_with_engine_priority_v1(),
             LimitedJsonlServerV1::new_with_foundations_combat_v1(),
             LimitedJsonlServerV1::new_with_london_mulligans_v1(),
+            LimitedJsonlServerV1::new_with_public_shroud_v1(),
         ] {
             let reset = json!({"request_type":"reset", "schema_version":server.schema_version(),
                 "request_id":"initial", "episode_id":7, "env_seed":123,

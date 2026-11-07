@@ -18,7 +18,9 @@ import copy
 import hashlib
 import json
 import statistics
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -31,8 +33,86 @@ KAPPA = 1.0
 MASK = (1 << 63) - 1
 
 
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+RECORD_CAP = 512 * 1024 * 1024  # the trainer's per-file bound (MAX_FILE_BYTES)
+
+
+def zstd_frame_content_size(data, cap=RECORD_CAP):
+    """The declared content size of `data`, which must be exactly one zstd frame (the record_envelope_v1 rule):
+    the frame header must declare a content size of at most `cap`, and walking the frame's block headers (and its
+    checksum, when flagged) must end exactly at the end of `data`. Raises ValueError otherwise."""
+    if not data.startswith(ZSTD_MAGIC) or len(data) < 6:
+        raise ValueError("not a zstd frame")
+    descriptor = data[4]
+    fcs_flag, single_segment, checksum, dict_flag = descriptor >> 6, (descriptor >> 5) & 1, (descriptor >> 2) & 1, \
+        descriptor & 3
+    if descriptor & 0x08:
+        raise ValueError("zstd frame header has its reserved bit set")
+    at = 5 + (0 if single_segment else 1) + (0, 1, 2, 4)[dict_flag]
+    size_bytes = (1 if single_segment else 0, 2, 4, 8)[fcs_flag]
+    if size_bytes == 0:
+        raise ValueError("a record envelope declares its content size")
+    if len(data) < at + size_bytes:
+        raise ValueError("truncated zstd frame header")
+    size = int.from_bytes(data[at:at + size_bytes], "little") + (256 if size_bytes == 2 else 0)
+    if size > cap:
+        raise ValueError("record envelope content exceeds its size limit")
+    at += size_bytes
+    while True:
+        if len(data) < at + 3:
+            raise ValueError("truncated zstd block header")
+        header = int.from_bytes(data[at:at + 3], "little")
+        last, kind, block = header & 1, (header >> 1) & 3, header >> 3
+        if kind == 3:
+            raise ValueError("reserved zstd block type")
+        at += 3 + (1 if kind == 1 else block)
+        if last:
+            break
+    at += 4 if checksum else 0
+    if at != len(data):
+        raise ValueError("a record envelope is exactly one zstd frame")
+    return size
+
+
+def open_record(data, cap=RECORD_CAP):
+    """The record bytes of a published file: a sealed record (mtg-kernel `record_envelope_v1`, one zstd frame of
+    the record's exact bytes) opened, anything else as it is. Fails closed like the Rust reader: exactly one frame,
+    a declared content size within `cap`, output of exactly that length, content not itself sealed. Decodes with
+    Python 3.14's compression.zstd, else the zstandard package, else the zstd command line tool."""
+    if not data.startswith(ZSTD_MAGIC):
+        return data
+    size = zstd_frame_content_size(data, cap)
+    try:
+        from compression import zstd
+        decoder = zstd.ZstdDecompressor()
+        content = decoder.decompress(data, max_length=size + 1)
+        if not decoder.eof or decoder.unused_data:
+            raise ValueError("a record envelope is exactly one zstd frame")
+    except ImportError:
+        try:
+            import zstandard
+            content = zstandard.ZstdDecompressor().decompress(data, max_output_size=size)
+        except ImportError:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp) / "record.zst"
+                source.write_bytes(data)
+                proc = subprocess.Popen(["zstd", "-q", "-d", "-c", str(source)], stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL)
+                content = proc.stdout.read(size + 1)  # never more than one byte past the declared size
+                if len(content) > size:
+                    proc.kill()
+                proc.stdout.close()
+                if proc.wait() != 0 and len(content) <= size:
+                    raise ValueError("zstd could not decode the record envelope")
+    if len(content) != size:
+        raise ValueError("record envelope content length differs from its frame")
+    if content.startswith(ZSTD_MAGIC):
+        raise ValueError("a record envelope holds unsealed record bytes only")
+    return content
+
+
 def read(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return json.loads(open_record(Path(path).read_bytes()).decode("utf-8"))
 
 
 def sha(path):

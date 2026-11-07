@@ -24,6 +24,7 @@ current documentation paths from their original Git paths.
 - [Engine priority windows, schema 2](design/limited_priority_windows_v1.md)
 - [Foundations combat damage, schema 3](design/fdn_combat_damage_v1.md)
 - [London mulligans, schema 4](design/fdn_london_mulligans_v1.md) and [validation](reports/fdn_london_mulligans_v1_validation.md)
+- [Public shroud, schema 5](design/limited_public_shroud_v1.md)
 - [Foundations scope and implementation milestones](design/fdn_limited_implementation_v1.md); full coverage remains tracked in [issue #110](https://github.com/jackmaiorino/mtg-kernel/issues/110)
 - [MageZero Standard fixture catalog](../data/standard/magezero_v1/README.md) and [engineering completion](reports/standard_completion_v1.md)
 
