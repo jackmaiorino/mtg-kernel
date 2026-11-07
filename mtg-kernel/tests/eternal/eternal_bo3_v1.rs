@@ -4,7 +4,9 @@
 //! builder and the match driver keep their rules.
 #![cfg(feature = "eternal-fixtures")]
 
-use crate::eternal_catalog_v1::{fully_supported, play, snapshot_decks, Policy, KNOWN_GAP};
+use crate::eternal_catalog_v1::{
+    fully_supported, play_with_outside, snapshot_decks, Policy, KNOWN_GAP,
+};
 use mtg_kernel::bo3_match::{GameOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1};
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::eternal_bo3_v1::{
@@ -534,7 +536,14 @@ fn play_match(decks: [EternalRegisteredDeckV1; 2], seed: u64) -> MatchRecord {
             .start_game_v1(chooser, PlayDrawChoiceV1::Play, configurations)
             .unwrap();
         let game_seed = seed.wrapping_mul(8).wrapping_add(u64::from(game_index));
-        let played = play(game.session_decks(), game_seed, Policy::Random(game_seed));
+        // The game's sideboard (without a companion in use) is outside the
+        // game, where wish and learn effects find it.
+        let played = play_with_outside(
+            game.session_decks(),
+            Some(game.session_outside_the_game()),
+            game_seed,
+            Policy::Random(game_seed),
+        );
         record.games += 1;
         record.transcripts.push(played.transcript_sha256);
         let mut exchanges = 0;

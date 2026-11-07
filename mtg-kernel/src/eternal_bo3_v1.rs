@@ -321,6 +321,13 @@ impl EternalPreparedGameV1 {
     pub fn session_decks(&self) -> [CustomDeckV1; 2] {
         [0, 1].map(|seat| self.game_deck(self.player_in_seat(seat)).deck.clone())
     }
+
+    /// Both seats' cards outside the game as decklist rows, in seat order:
+    /// the session reset's `outside_the_game`.
+    pub fn session_outside_the_game(&self) -> [Vec<CustomCardCountV1>; 2] {
+        [0, 1]
+            .map(|seat| rows_from_ids(&self.game_deck(self.player_in_seat(seat)).outside_the_game))
+    }
 }
 
 /// An eternal best-of-three match: two registrations of one format and the

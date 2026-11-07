@@ -241,7 +241,8 @@ pub enum E7aOpV1 {
     GalvanicRelayV1,
     /// Gamble's search. A choice.
     GambleV1,
-    /// Burning Wish: no card outside the game; exile it as it resolves.
+    /// Burning Wish exiles itself as it resolves (its reveal is
+    /// `eternal_outside_game_v1`'s).
     BurningWishV1,
     /// Discard the controller's hand (Song of Creation).
     DiscardHandV1,
@@ -751,10 +752,14 @@ pub fn animate_dead() -> EffectOp {
 }
 
 /// Burning Wish: "You may reveal a sorcery card you own from outside the
-/// game and put it into your hand. Exile Burning Wish." A best-of-one game
-/// has no cards outside the game, so it only exiles itself.
+/// game and put it into your hand. Exile Burning Wish." The reveal reads the
+/// outside-the-game zone (`eternal_outside_game_v1`), empty in best-of-one
+/// games.
 pub fn burning_wish() -> EffectOp {
-    e7a(E7aOpV1::BurningWishV1)
+    EffectOp::Sequence(vec![
+        crate::eternal_outside_game_v1::wish_sorcery(),
+        e7a(E7aOpV1::BurningWishV1),
+    ])
 }
 
 /// Cabal Therapy: "Choose a nonland card name. Target player reveals their

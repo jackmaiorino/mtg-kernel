@@ -159,6 +159,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_premodern_p1a_v1::P1aStateV1::is_empty"
     )]
     pub p1a: crate::eternal_premodern_p1a_v1::P1aStateV1,
+    /// Each player's cards outside the game (`eternal_outside_game_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_outside_game_v1::OutsideGameStateV1::is_empty"
+    )]
+    pub outside_game: crate::eternal_outside_game_v1::OutsideGameStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -372,6 +378,8 @@ pub enum EternalOpV1 {
     P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1),
     /// A leaf owned by Premodern wave P1a's module.
     P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1),
+    /// A leaf owned by the outside-the-game zone's module (wishes, learn).
+    OutsideGameV1(crate::eternal_outside_game_v1::OutsideGameOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -427,6 +435,7 @@ impl EternalOpV1 {
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             EternalOpV1::P1bV1(op) => op.contains_player_choice(),
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
+            EternalOpV1::OutsideGameV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -935,6 +944,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::P1bV1(op) => crate::eternal_premodern_p1b_v1::execute(op, ctx, state),
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
+        EternalOpV1::OutsideGameV1(op) => crate::eternal_outside_game_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];

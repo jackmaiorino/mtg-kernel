@@ -5890,6 +5890,7 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             card_ids,
             [None, None],
+            [Vec::new(), Vec::new()],
             priority_mode,
             foundations_combat,
             london_mulligans,
@@ -5897,7 +5898,8 @@ impl RlEpisodeSessionV1 {
     }
 
     /// `reset_with_custom_decks_and_london_v1` with each seat's companion,
-    /// put face up in exile before the game begins.
+    /// put face up in exile before the game begins, and each seat's cards
+    /// outside the game (`eternal_outside_game_v1`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn reset_with_custom_decks_companions_and_london_v1(
         episode_id: u64,
@@ -5907,6 +5909,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
+        outside_the_game: [Vec<u16>; 2],
         priority_mode: crate::surface_v2::PriorityModeV1,
         foundations_combat: bool,
         london_mulligans: bool,
@@ -5940,6 +5943,8 @@ impl RlEpisodeSessionV1 {
         if companions.iter().any(Option::is_some) {
             crate::eternal_lurrus_v1::add_companions(&mut state, companions);
         }
+        // Inert for empty lists, so best-of-one games keep their state.
+        crate::eternal_outside_game_v1::set_outside_the_game(&mut state, outside_the_game);
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));
         let mut session = Self {

@@ -192,6 +192,59 @@ fn content_identity_with_companion(ids: &[u16], companion: Option<u16>) -> Strin
     format!("custom-v1:{:x}", hash.finalize())
 }
 
+/// One seat's cards outside the game, sorted by id: fully supported,
+/// nontoken cards within the custom-deck input bound.
+fn resolve_outside_the_game(rows: &[CustomCardCountV1]) -> Result<Vec<u16>, String> {
+    let mut ids = Vec::new();
+    for row in rows {
+        if row.count == 0 {
+            return Err(format!("zero copies of {:?} outside the game", row.name));
+        }
+        let id = card_id_by_name(&row.name)
+            .ok_or_else(|| format!("unknown card {:?} outside the game", row.name))?;
+        let card = &CARD_DEFS[id as usize];
+        if card.is_token || !card.has_full_support() {
+            return Err(format!(
+                "card {:?} outside the game is a token or lacks full engine support",
+                row.name
+            ));
+        }
+        if ids.len() + row.count as usize > MAX_CUSTOM_DECK_CARDS_V1 {
+            return Err(format!(
+                "cards outside the game exceed the {MAX_CUSTOM_DECK_CARDS_V1}-card input limit"
+            ));
+        }
+        ids.extend(std::iter::repeat_n(id, row.count as usize));
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+/// A deck's identity with its cards outside the game after the mainboard
+/// and companion. A deck with none keeps `content_identity_with_companion`.
+fn content_identity_with_outside(ids: &[u16], companion: Option<u16>, outside: &[u16]) -> String {
+    if outside.is_empty() {
+        return content_identity_with_companion(ids, companion);
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"kernel_custom_deck/v1\0");
+    hash.update(KERNEL_CARDDB_HASH.to_le_bytes());
+    hash.update((ids.len() as u64).to_le_bytes());
+    for id in ids {
+        hash.update(id.to_le_bytes());
+    }
+    if let Some(companion) = companion {
+        hash.update(b"companion/v1\0");
+        hash.update(companion.to_le_bytes());
+    }
+    hash.update(b"outside_the_game/v1\0");
+    hash.update((outside.len() as u64).to_le_bytes());
+    for id in outside {
+        hash.update(id.to_le_bytes());
+    }
+    format!("custom-v1:{:x}", hash.finalize())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "request_type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LimitedRequestV1 {
@@ -203,6 +256,12 @@ pub enum LimitedRequestV1 {
         env_seed: u64,
         max_physical_decisions: u64,
         max_policy_steps: u64,
+        /// Each seat's cards outside the game (a best-of-three game's
+        /// sideboard without a companion in use), which wish and learn
+        /// effects read. Absent from the wire and every deck identity when
+        /// unset; it needs the London mulligan schema, as companions do.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outside_the_game: Option<[Vec<CustomCardCountV1>; 2]>,
     },
     Step {
         schema_version: u32,
@@ -437,15 +496,25 @@ impl LimitedJsonlServerV1 {
                 env_seed,
                 max_physical_decisions,
                 max_policy_steps,
+                outside_the_game,
                 ..
             } => {
                 let mut ids = [Vec::new(), Vec::new()];
                 let mut companions = [None, None];
+                let mut outside = [Vec::new(), Vec::new()];
                 for (seat, deck) in decks.iter().enumerate() {
-                    match deck.resolve_with_companion() {
-                        Ok((resolved, companion)) => {
+                    let resolved = deck.resolve_with_companion().and_then(|resolved| {
+                        let cards = match outside_the_game {
+                            Some(rows) => resolve_outside_the_game(&rows[seat])?,
+                            None => Vec::new(),
+                        };
+                        Ok((resolved, cards))
+                    });
+                    match resolved {
+                        Ok(((resolved, companion), cards)) => {
                             ids[seat] = resolved;
                             companions[seat] = companion;
+                            outside[seat] = cards;
                         }
                         Err(error) => {
                             return LimitedReplyV1::error(
@@ -456,8 +525,9 @@ impl LimitedJsonlServerV1 {
                         }
                     }
                 }
-                let deck_ids = [0, 1]
-                    .map(|seat| content_identity_with_companion(&ids[seat], companions[seat]));
+                let deck_ids = [0, 1].map(|seat| {
+                    content_identity_with_outside(&ids[seat], companions[seat], &outside[seat])
+                });
                 let session = if self.london_mulligans {
                     RlEpisodeSessionV1::reset_with_custom_decks_companions_and_london_v1(
                         *episode_id,
@@ -467,6 +537,7 @@ impl LimitedJsonlServerV1 {
                         deck_ids,
                         [&ids[0], &ids[1]],
                         companions,
+                        outside,
                         self.priority_mode,
                         self.foundations_combat,
                         true,
@@ -476,6 +547,12 @@ impl LimitedJsonlServerV1 {
                         Some(request_id),
                         "unsupported_deck",
                         "companions need the London mulligan schema",
+                    );
+                } else if outside.iter().any(|cards| !cards.is_empty()) {
+                    return LimitedReplyV1::error(
+                        Some(request_id),
+                        "unsupported_deck",
+                        "cards outside the game need the London mulligan schema",
                     );
                 } else {
                     RlEpisodeSessionV1::reset_with_custom_decks_v1(

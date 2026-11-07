@@ -141,8 +141,8 @@ New, each built once in the first wave that needs it:
   trigger and Mana Vault's draw-step trigger are queued by engine hooks; Vexing Bauble and
   Void Mirror read the mana each cast spent; Trinisphere raises a spell's total to three;
   Archon of Emeria's cast limit and tapped nonbasic lands; Clarion Conqueror and Karn's
-  "can't be activated" statics; Karn's wish finds nothing outside the game in
-  best-of-one mainboard sessions and so chooses only from exile; Urza's Saga gains its
+  "can't be activated" statics; Karn's wish reads S3's outside-the-game zone beside
+  exile (empty in best-of-one mainboard sessions); Urza's Saga gains its
   chapter abilities; Phyrexian Metamorph enters as a copy the way Assimilation Aegis
   copies; Witch Enchanter's land face reuses E3's modal land back (Sink into Stupor);
   Anointed Peacekeeper names any registry card by letter, then name; Chancellor of the
@@ -220,7 +220,7 @@ New, each built once in the first wave that needs it:
   Arena's {R}{R} goes to the restricted pool so a creature spell paid with it gains
   haste. Manifest dread puts a face-down 2/2 without ward. Improvise is the convoke
   payment over artifacts paying generic mana only. Blast Zone's X is one ability per X
-  from 0 to 7. Burning Wish finds nothing outside the game. Cabal Therapy names a card
+  from 0 to 7. Burning Wish reads S3's outside-the-game zone. Cabal Therapy names a card
   by first letter, then name. Resolution choices (Ghost Quarter, Gamble, Goblin
   Engineer, Archon of Cruelty, Phyrexian Dreadnought, manifest dread) use
   `E3ChoiceKindV1::E7aV1`.
@@ -245,8 +245,8 @@ New, each built once in the first wave that needs it:
   (Beseech the Mirror's search and free cast from the hand, Flash, Vampiric Tutor,
   Ugin's search). Oath of Druids and Forbidden Orchard are hook-queued triggers;
   Urza's Workshop's two colorless abilities are one with the larger yield.
-  Extrapolate the Impossible, like Karn's wish, finds nothing outside the game in a
-  best-of-one mainboard game. Kozilek's Command is an Eldrazi instant; the Kindred card
+  Extrapolate the Impossible, like Karn's wish, reads S3's outside-the-game zone (empty
+  in a best-of-one mainboard game). Kozilek's Command is an Eldrazi instant; the Kindred card
   type is not modeled.
 - E8b, built in `src/eternal_pauper_e8b_v1.rs` and `build_eternal_e8b_v1.rs`: splice
   onto Arcane is announced like replicate's count (the spliced Desperate Rituals in hand,
@@ -270,7 +270,7 @@ New, each built once in the first wave that needs it:
   Twinned Vision's discard belongs to its flashback only and it reads the cast origin;
   Geothermal Crevice's sacrifice ability is an additional fixed-bundle mana ability.
   Crypt Rats' X is one ability per X from 1 to 10, each costing X black mana. Learn
-  finds no Lesson outside the game, so it is "you may discard a card to draw a card".
+  reads S3's outside-the-game zone for a Lesson, or discards a card to draw a card.
 - E6b, built in `src/eternal_pauper_e6b_v1.rs` and `build_eternal_e6b_v1.rs`: creature
   Auras reuse `AuraCreatureStatic`, and an engine hook multiplies Ancestral Mask's and
   Ethereal Armor's bonus by their enchantment counts. Auras that enchant a land or a
@@ -473,6 +473,21 @@ mainboard cards before games two and three, from the registered configuration ea
 `tests/eternal/eternal_bo3_v1.rs` tracks the decks whose full 75 is Full (`PLAYABLE_75`) and
 plays each against the next deck of its format in a seeded match with random actions, checking
 natural terminals, replay and that sided-in cards are cast.
+
+S3 is `src/eternal_outside_game_v1.rs`. Each player's cards outside the game (a best-of-three
+game's sideboard without a companion in use) are a sorted list in the eternal module state,
+set at reset from the custom-deck session's optional `outside_the_game` rows (London schema
+only, part of that seat's deck identity when present). No zone list holds them, so no public
+projection or opponent observation sees them. Burning Wish, Karn, the Great Creator's -2,
+learn (First Day of Class) and Extrapolate the Impossible offer their eligible cards as
+effect options in card id order, the decline first where the effect is optional (Karn's
+exile choice is its first option and may choose nothing; learn adds "discard a card, then
+draw a card" while its controller has a card in hand). The chosen card leaves the list and
+enters its owner's hand as a new object that the opponent knows. Extrapolate's controller
+picks two different names one at a time and the opponent picks between them by index. Known
+gap: policy observation v5 describes an effect option only by its index, so a policy reads
+the option order from its own sideboard; the opponent does not observe Extrapolate's two
+revealed cards apart from that order.
 
 ## Execution
 
