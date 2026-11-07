@@ -277,8 +277,6 @@ pub mod eternal_e5a_v1;
 /// Pauper and Vintage long-tail card programs of the eternal catalog (wave
 /// E9b).
 pub mod eternal_e9b_v1;
-/// Vintage-only sideboard card programs of the eternal catalog (wave S1c).
-pub mod eternal_sideboard_s1c_v1;
 /// Legacy aggro, Eldrazi and control card programs of the eternal catalog
 /// (wave E5b).
 pub mod eternal_legacy_e5b_v1;
@@ -307,6 +305,8 @@ pub mod eternal_premodern_p1a_v1;
 /// Premodern Enchantress, Replenish, Oath, Landstill, Psychatog and Grow
 /// card programs of the eternal catalog (wave P1b).
 pub mod eternal_premodern_p1b_v1;
+/// Vintage-only sideboard card programs of the eternal catalog (wave S1c).
+pub mod eternal_sideboard_s1c_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;

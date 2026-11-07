@@ -8,8 +8,8 @@
 //! card's current Oracle text and, where present, its XMage source.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
-use crate::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
 use crate::card_def::Keywords;
+use crate::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
 use crate::effect::{
     EffectContinuation, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, PlayerRef,
 };
@@ -239,6 +239,13 @@ pub fn snapback() -> EffectOp {
     EffectOp::MoveObject {
         object: ObjectRef::Target(0),
         to_zone: Zone::Hand,
+    }
+}
+
+/// Ravenous Trap: "Exile all cards from target player's graveyard."
+pub fn ravenous_trap() -> EffectOp {
+    EffectOp::ExilePlayersGraveyard {
+        player: PlayerRef::Target(0),
     }
 }
 
@@ -677,6 +684,33 @@ pub(crate) mod statics {
                     marker.turn == state.turn_key_v1() && marker.player == drawer
                 });
         (!first_in_draw_step).then_some(controller)
+    }
+
+    /// Ravenous Trap: how many cards `player` owns that were put into a
+    /// graveyard from anywhere this turn (since the last upkeep began).
+    pub(crate) fn opponent_cards_to_graveyard_this_turn(
+        state: &GameState,
+        player: PlayerId,
+    ) -> usize {
+        let history = &state.engine.event_history;
+        let start = history
+            .iter()
+            .rposition(|event| matches!(event, crate::event::CommittedEvent::UpkeepBegan { .. }))
+            .map_or(0, |index| index + 1);
+        history[start..]
+            .iter()
+            .filter(|event| {
+                let crate::event::CommittedEvent::ZoneChange { object, to, .. } = event else {
+                    return false;
+                };
+                *to == Zone::Graveyard
+                    && state.objects.try_get(*object).is_some_and(|live| {
+                        live.owner == player
+                            && !live.v4.is_token
+                            && live.spell_copy_origin.is_none()
+                    })
+            })
+            .count()
     }
 
     /// Creates the Treasure token Hullbreacher's replacement gives `player`.

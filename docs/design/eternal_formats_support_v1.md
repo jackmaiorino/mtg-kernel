@@ -404,6 +404,34 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1c (issue #365, Vintage-only sideboard cards), built in `src/eternal_sideboard_s1c_v1.rs`
+  (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked just before E9b in
+  the recipe chains (E8a falls through to it). Bounce-all (Hurkyl's Recall, Rebuild with
+  its cycling), Virtue's Ruin's destroy-all, Feed the Swarm's life loss (the destroyed
+  permanent's mana value), Lithomantic Barrage's 5 damage to a white and/or blue target,
+  Dark Petition's spell mastery mana and Wurmcoil Engine's two tokens (deathtouch and
+  lifelink Wurms) are module leaves. Spell Snare is a mana value 2 spell target; Mystical
+  Dispute's {2} reduction is `DynamicCountDef::SpellTargetsBlueSpellV1`; Snapback reuses
+  the blue-card exile alternative cost; Ravenous Trap adds
+  `AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1`, which counts the
+  opponent's cards moved to a graveyard since the last upkeep began. New target shapes
+  (`StandardTargetV1`): a creature or planeswalker with mana value N or less (Long
+  Goodbye) and a creature or enchantment an opponent controls (Feed the Swarm). Light of
+  Day's attack and block ban are engine hooks, Urborg extends Yavimaya's extra land type
+  and mana ability to Swamps, and Sphinx of the Steel Wind adds protection from red and
+  green to the color protection mask. Hullbreacher replaces an opponent's draw (except
+  their first draw step draw, tracked by Bowmasters' draw step marker) with a Treasure for
+  its controller in `propose_and_commit_inner`. Argentum Masticore's upkeep trigger is
+  two selections (`E3ChoiceKindV1::S1cV1`): the card to discard (or none, sacrificing
+  it), then the reflexive destroy target among the opponent's nonland permanents with
+  mana value at most the discarded card's; it shares Stonecoil Serpent's protection from
+  multicolored and adds the Masticore creature type (stable id 340). Not in this wave:
+  Archon of Absolution and Overencumbered (attack costs and taxes have no engine path),
+  Azure Beastbinder, Unable to Scream and Suspend (timed or aura-based ability removal
+  with new characteristics), Apostle's Blessing (protection from artifacts), Sickening
+  Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
+  Phyrexia (subtype grant on reanimation).
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every

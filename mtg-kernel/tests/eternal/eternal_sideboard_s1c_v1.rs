@@ -15,7 +15,6 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]
 }
@@ -71,12 +70,6 @@ fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> Objec
         Zone::Library => seat.library.insert(0, object),
         _ => panic!("helper zone"),
     }
-    object
-}
-
-fn token(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
-    let object = put(state, player, name, Zone::Battlefield);
-    state.objects.get_mut(object).v4.is_token = true;
     object
 }
 
@@ -197,35 +190,6 @@ fn settle_first(state: &mut GameState) {
     settle_with(state, |_, decision| first_answer(decision));
 }
 
-/// Settles, choosing `object` whenever a selection or target offers it.
-fn settle_choosing(state: &mut GameState, object: ObjectId) {
-    settle_with(state, |_, decision| match decision {
-        Decision::ChooseTargets { legal_targets, .. }
-            if legal_targets.contains(&Target::Object(object)) =>
-        {
-            Action::ChooseTarget(Target::Object(object))
-        }
-        Decision::ChooseEffectTargets { legal_targets, .. }
-            if legal_targets.contains(&Target::Object(object)) =>
-        {
-            Action::ChooseEffectTarget(Target::Object(object))
-        }
-        Decision::ChooseCostTargets { candidates, .. } if candidates.contains(&object) => {
-            Action::ChooseCostTarget(object)
-        }
-        other => first_answer(other),
-    });
-}
-
-/// Settles, answering effect options with `option` and otherwise with the
-/// first legal answer.
-fn settle_option(state: &mut GameState, option: u16) {
-    settle_with(state, |_, decision| match decision {
-        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(option),
-        other => first_answer(other),
-    });
-}
-
 fn priority(state: &mut GameState) -> (Vec<ObjectId>, Vec<(ObjectId, u8)>) {
     match next(state) {
         Decision::CastSpellOrPass {
@@ -253,20 +217,6 @@ fn cast(state: &mut GameState, spell: ObjectId, targets: &[Target]) {
         state.objects.get(spell).name
     );
     act(state, Action::CastSpell(spell));
-    for target in targets {
-        choose_target(state, *target);
-    }
-}
-
-/// Casts the modal `spell` choosing `mode` (chosen silently when it is the
-/// only legal one), then its targets.
-fn cast_mode(state: &mut GameState, spell: ObjectId, mode: u8, targets: &[Target]) {
-    assert!(castable(state, spell));
-    act(state, Action::CastSpell(spell));
-    if let Decision::ChooseSpellMode { legal_modes, .. } = next(state) {
-        assert!(legal_modes.contains(&mode), "{mode} not in {legal_modes:?}");
-        act(state, Action::ChooseSpellMode(mode));
-    }
     for target in targets {
         choose_target(state, *target);
     }
@@ -364,28 +314,6 @@ fn pass_until(state: &mut GameState, stop: impl Fn(&GameState) -> bool) {
     run_until(state, stop, |_, _| None);
 }
 
-/// P0 attacks with `attackers` in this turn's combat, then the game plays
-/// on to P0's second main phase with an empty stack. `answer` answers other
-/// choices.
-fn attack_with(
-    state: &mut GameState,
-    attackers: Vec<ObjectId>,
-    answer: impl FnMut(&GameState, &Decision) -> Option<Action>,
-) {
-    pass_until(state, |state| state.step == Step::DeclareAttackers);
-    act(state, Action::DeclareAttackers(attackers));
-    run_until(
-        state,
-        |state| {
-            state.step == Step::Main2
-                && state.stack.is_empty()
-                && state.engine.pending_triggers.is_empty()
-                && state.engine.pending_effect.is_none()
-        },
-        answer,
-    );
-}
-
 /// P0 attacks with `attacker`; the creatures P1 may block it with.
 fn legal_blockers(state: &mut GameState, attacker: ObjectId) -> Vec<ObjectId> {
     pass_until(state, |state| state.step == Step::DeclareAttackers);
@@ -417,7 +345,7 @@ fn mana(state: &GameState, player: PlayerId, color: ManaColor) -> u8 {
     state.players[player.index()].mana_pool[color.pool_index()]
 }
 
-const S1C_CARDS: [&str; 18] = [
+const S1C_CARDS: [&str; 19] = [
     "Argentum Masticore",
     "Dark Petition",
     "Feed the Swarm",
@@ -428,6 +356,7 @@ const S1C_CARDS: [&str; 18] = [
     "Long Goodbye",
     "Mystical Dispute",
     "Rebuild",
+    "Ravenous Trap",
     "Snapback",
     "Spell Snare",
     "Sphinx of the Steel Wind",
@@ -456,9 +385,14 @@ fn every_s1c_card_is_full() {
 #[test]
 fn spell_snare_targets_only_mana_value_two_spells() {
     let mut state = plains();
-    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Hand);
+    let inspector = put(&mut state, P0, "Dauthi Voidwalker", Zone::Hand);
     let snare = put(&mut state, P0, "Spell Snare", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::W, ManaColor::U], 1);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::U],
+        0,
+    );
     cast(&mut state, inspector, &[]);
     assert!(
         cast_targets(&state, snare).contains(&Target::Object(inspector)),
@@ -515,30 +449,43 @@ fn rebuild_returns_every_artifact_and_cycles() {
     assert_eq!(state.players[0].hand.len(), hand, "one card out, one drawn");
 }
 
+/// P1 casts `spell` (paid with `colored` and `colorless` mana) at instant
+/// speed after P0 passes, then passes so that P0 holds priority with the
+/// spell on the stack.
+fn opponent_casts(
+    state: &mut GameState,
+    spell: ObjectId,
+    colored: &[ManaColor],
+    colorless: u8,
+    targets: &[Target],
+) {
+    act(state, Action::Pass);
+    pool(state, P1, colored, colorless);
+    cast(state, spell, targets);
+    act(state, Action::Pass);
+}
+
 #[test]
 fn mystical_dispute_costs_two_less_only_against_a_blue_spell() {
+    // Against a blue spell it costs {U}.
     let mut state = plains();
-    let breacher = put(&mut state, P0, "Hullbreacher", Zone::Hand);
+    let breacher = put(&mut state, P1, "Hullbreacher", Zone::Hand);
     let dispute = put(&mut state, P0, "Mystical Dispute", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 2);
-    cast(&mut state, breacher, &[]);
-    // Only {U} is left: payable only through the reduction.
-    state.players[0].mana_pool = Default::default();
+    opponent_casts(&mut state, breacher, &[ManaColor::U], 2, &[]);
     pool(&mut state, P0, &[ManaColor::U], 0);
     cast(&mut state, dispute, &[Target::Object(breacher)]);
     settle_first(&mut state);
     assert_eq!(zone(&state, breacher), Zone::Graveyard, "countered unless {{3}}");
 
+    // Against a nonblue spell it costs the full {2}{U}.
     let mut state = plains();
-    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Hand);
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
     let dispute = put(&mut state, P0, "Mystical Dispute", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::W], 1);
-    cast(&mut state, inspector, &[]);
+    opponent_casts(&mut state, bolt, &[ManaColor::R], 0, &[Target::Player(P0)]);
     pool(&mut state, P0, &[ManaColor::U], 0);
-    assert!(
-        !castable(&mut state, dispute),
-        "a nonblue spell leaves the full cost of {{2}}{{U}}"
-    );
+    assert!(!castable(&mut state, dispute), "{{U}} is not enough");
+    pool(&mut state, P0, &[], 2);
+    assert!(castable(&mut state, dispute), "{{2}}{{U}}");
 }
 
 #[test]
@@ -652,7 +599,11 @@ fn dark_petition_adds_mana_only_with_spell_mastery() {
         pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 3);
         cast(&mut state, petition, &[]);
         settle_first(&mut state);
-        assert_eq!(mana(&state, P0, ManaColor::B), mana_black, "{spells} spells");
+        assert_eq!(
+            mana(&state, P0, ManaColor::B),
+            mana_black,
+            "{spells} spells"
+        );
     }
 }
 
@@ -678,7 +629,10 @@ fn feed_the_swarm_costs_life_equal_to_the_mana_value() {
     pool(&mut state, P0, &[ManaColor::B], 1);
     let targets = cast_targets(&state, feed);
     assert!(targets.contains(&Target::Object(breacher)));
-    assert!(!targets.contains(&Target::Object(own)), "an opponent controls");
+    assert!(
+        !targets.contains(&Target::Object(own)),
+        "an opponent controls"
+    );
     cast(&mut state, feed, &[Target::Object(breacher)]);
     settled(&mut state);
     assert_eq!(zone(&state, breacher), Zone::Graveyard);
@@ -711,7 +665,12 @@ fn lithomantic_barrage_deals_five_to_white_and_blue_targets() {
 #[test]
 fn sphinx_of_the_steel_wind_has_protection_from_red_and_green() {
     let mut state = plains();
-    let sphinx = put(&mut state, P1, "Sphinx of the Steel Wind", Zone::Battlefield);
+    let sphinx = put(
+        &mut state,
+        P1,
+        "Sphinx of the Steel Wind",
+        Zone::Battlefield,
+    );
     let barrage = put(&mut state, P0, "Lithomantic Barrage", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 0);
     assert!(
@@ -726,13 +685,30 @@ fn sphinx_of_the_steel_wind_has_protection_from_red_and_green() {
 #[test]
 fn urborg_makes_every_land_a_swamp() {
     let mut state = plains();
-    let urborg = put(&mut state, P0, "Urborg, Tomb of Yawgmoth", Zone::Battlefield);
+    let urborg = put(
+        &mut state,
+        P0,
+        "Urborg, Tomb of Yawgmoth",
+        Zone::Battlefield,
+    );
     let plains_land = put(&mut state, P1, "Plains", Zone::Battlefield);
-    assert!(engine::has_effective_subtype(&state, plains_land, Subtype::Swamp));
-    assert!(engine::has_effective_subtype(&state, urborg, Subtype::Swamp));
+    assert!(engine::has_effective_subtype(
+        &state,
+        plains_land,
+        Subtype::Swamp
+    ));
+    assert!(engine::has_effective_subtype(
+        &state,
+        urborg,
+        Subtype::Swamp
+    ));
     let mut state = plains();
     let plains_land = put(&mut state, P1, "Plains", Zone::Battlefield);
-    assert!(!engine::has_effective_subtype(&state, plains_land, Subtype::Swamp));
+    assert!(!engine::has_effective_subtype(
+        &state,
+        plains_land,
+        Subtype::Swamp
+    ));
 }
 
 #[test]
@@ -741,6 +717,38 @@ fn argentum_masticore_sacrifices_unless_its_controller_discards() {
     let mut state = plains();
     let masticore = put(&mut state, P0, "Argentum Masticore", Zone::Battlefield);
     state.players[0].hand.clear();
-    pass_until(&mut state, |state| state.turn >= 3 && state.active_player == P0 && state.step == Step::Main1);
+    pass_until(&mut state, |state| {
+        state.turn >= 3 && state.active_player == P0 && state.step == Step::Main1
+    });
     assert_eq!(zone(&state, masticore), Zone::Graveyard);
+}
+#[test]
+fn ravenous_trap_is_free_after_three_cards_hit_the_opponents_graveyard() {
+    let mut state = plains();
+    let trap = put(&mut state, P0, "Ravenous Trap", Zone::Hand);
+    assert!(
+        !castable(&mut state, trap),
+        "no mana and no graveyard cards"
+    );
+    for _ in 0..3 {
+        let card = put(&mut state, P1, "Plains", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(card, Zone::Graveyard),
+        );
+    }
+    let mut state = state;
+    assert_eq!(state.players[1].graveyard.len(), 3);
+    assert!(castable(&mut state, trap), "three cards this turn");
+    act(&mut state, Action::CastSpell(trap));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { options, .. } => {
+            assert!(options.contains(&CastMode::Alternative));
+            Action::ChooseCastMode(CastMode::Alternative)
+        }
+        Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Player(P1)),
+        other => first_answer(other),
+    });
+    assert!(state.players[1].graveyard.is_empty(), "exiled");
+    assert_eq!(state.exile.len(), 3);
 }

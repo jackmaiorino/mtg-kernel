@@ -2342,6 +2342,10 @@ pub enum AltCostCondition {
     /// "If an opponent cast three or more spells this turn" (Mindbreak
     /// Trap). Appended for the eternal catalog.
     OpponentCastThreeSpellsThisTurnV1,
+    /// Ravenous Trap: "If an opponent had three or more cards put into their
+    /// graveyard from anywhere this turn". Appended for the eternal catalog's
+    /// wave S1c.
+    OpponentThreeCardsToGraveyardThisTurnV1,
     /// Dash (702.109): cast from hand for this cost; the permanent gains
     /// haste and returns to its owner's hand at the beginning of the next
     /// end step (Ragavan, `eternal_vintage_e7b_v1`). Appended for the
@@ -3868,7 +3872,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xbaca_d3c1_a636_ec7d;
+        const EXPECTED_ETERNAL: u64 = 0x237c_7c00_3a5a_56ba;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

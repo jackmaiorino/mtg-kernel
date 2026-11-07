@@ -7920,6 +7920,14 @@ fn alt_cost_condition_met(
         card_def::AltCostCondition::OpponentCastThreeSpellsThisTurnV1 => {
             state.players[player.opponent().index()].spells_cast_this_turn >= 3
         }
+        // Ravenous Trap (eternal wave S1c).
+        card_def::AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_sideboard_s1c_v1::statics::opponent_cards_to_graveyard_this_turn(
+                    state,
+                    player.opponent(),
+                ) >= 3
+        }
         card_def::AltCostCondition::DashV1 => origin_zone == Zone::Hand,
         // Teamwork's creatures are chosen and checked by the convoke
         // selection (`standard_cast_convoke`).

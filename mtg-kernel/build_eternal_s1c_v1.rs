@@ -74,6 +74,11 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureOrPlaneswalkerManaValueAtMostV1(3))",
             "crate::eternal_sideboard_s1c_v1::long_goodbye",
         ),
+        // Its {0} cost is `alt_cost_for` below.
+        "Ravenous Trap" => spell(
+            "TargetSpec::AnyPlayer",
+            "crate::eternal_sideboard_s1c_v1::ravenous_trap",
+        ),
         // Its blue-card exile is `alt_cost_for` below.
         "Snapback" => spell(
             "TargetSpec::Creature",
@@ -110,6 +115,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Snapback" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::Always })",
+        "Ravenous Trap" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 0, x_count: 0 })], condition: AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1 })",
         _ => super::build_eternal_e9a_v1::alt_cost_for(name),
     }
 }
@@ -131,6 +137,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Argentum Masticore" => "upkeep:sacrifice_unless_discard;discard_this_way:destroy_target_opponent_nonland_permanent_mana_value_at_most_discarded;static:protection_from_multicolored",
         "Light of Day" => "static:black_creatures_cant_attack_or_block",
         "Urborg, Tomb of Yawgmoth" => "static:each_land_is_a_swamp",
+        "Ravenous Trap" => "spell:exile_target_players_graveyard;alt_cost:zero_if_opponent_three_cards_to_graveyard_this_turn",
         "Hullbreacher" => "replacement:opponent_draw_except_first_in_draw_step:create_treasure",
         "Sphinx of the Steel Wind" => "static:protection_from_red_and_green",
         _ => super::build_eternal_e9b_v1::trigger_recipe_for(name),

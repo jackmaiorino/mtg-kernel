@@ -22004,6 +22004,37 @@
     "destroy"
    ],
    "java_file": "Mage.Sets/src/mage/cards/a/ArgentumMasticore.java"
+  },
+  {
+   "name": "Ravenous Trap",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Trap"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-counter-vine",
+    "vintage-eldrazi"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "alternative_cost",
+    "exile_graveyard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RavenousTrap.java"
   }
  ]
 }
