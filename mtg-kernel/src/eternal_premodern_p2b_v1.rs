@@ -142,9 +142,7 @@ impl P2bOpV1 {
     pub(crate) fn contains_player_choice(&self) -> bool {
         matches!(
             self,
-            Self::SurvivalSearchV1
-                | Self::EchoUpkeepV1
-                | Self::MasticoreUpkeepV1
+            Self::SurvivalSearchV1 | Self::EchoUpkeepV1 | Self::MasticoreUpkeepV1
         )
     }
 }
@@ -356,10 +354,8 @@ fn masticore_upkeep() -> EffectOp {
 
 const CALLER_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, caller_enters)];
 const HERMIT_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, hermit_enters)];
-const ACOLYTE_TRIGGERS: [TriggeredAbilityDef; 1] =
-    [trigger(TriggerCondition::Etb, acolyte_enters)];
-const GRANGER_TRIGGERS: [TriggeredAbilityDef; 1] =
-    [trigger(TriggerCondition::Etb, granger_enters)];
+const ACOLYTE_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, acolyte_enters)];
+const GRANGER_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, granger_enters)];
 const BLASTODERM_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(YOUR_UPKEEP, fading_upkeep)];
 const MASTICORE_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(YOUR_UPKEEP, masticore_upkeep)];
 
@@ -425,8 +421,7 @@ pub(crate) fn execute(op: &P2bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let now = TurnV1::now(state);
             for creature in creatures {
                 let record = (live_link(state, creature), *color, now);
-                let protections =
-                    &mut crate::eternal_legacy_e9a_v1::e9a_state(state).protections;
+                let protections = &mut crate::eternal_legacy_e9a_v1::e9a_state(state).protections;
                 if !protections.contains(&record) {
                     protections.push(record);
                 }
@@ -489,9 +484,9 @@ pub(crate) fn execute(op: &P2bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         // Choices and frame-pushing leaves run in `drive`.
-        P2bOpV1::SurvivalSearchV1
-        | P2bOpV1::EchoUpkeepV1
-        | P2bOpV1::MasticoreUpkeepV1 => halt(state, ctx.source),
+        P2bOpV1::SurvivalSearchV1 | P2bOpV1::EchoUpkeepV1 | P2bOpV1::MasticoreUpkeepV1 => {
+            halt(state, ctx.source)
+        }
     }
 }
 
@@ -704,11 +699,10 @@ fn note_upkeep(state: &mut GameState, events: &[CommittedEvent]) {
         if owed.is_empty() {
             continue;
         }
-        let (due, waiting): (Vec<_>, Vec<_>) =
-            owed.into_iter().partition(|link| {
-                link_live_in(state, *link, Zone::Battlefield)
-                    && state.objects.get(link.object).controller == player
-            });
+        let (due, waiting): (Vec<_>, Vec<_>) = owed.into_iter().partition(|link| {
+            link_live_in(state, *link, Zone::Battlefield)
+                && state.objects.get(link.object).controller == player
+        });
         p2b_state(state).echo_owed = waiting;
         for link in due {
             let source = AbilitySourceContractV4::capture(state, link.object);

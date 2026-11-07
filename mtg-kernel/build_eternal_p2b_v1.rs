@@ -83,7 +83,9 @@ const TIRELESS_TRIBE: [ActivatedAbilityRecipe; 1] = [instant(
 const WIREWOOD_SYMBIOTE: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
     max_activations_per_turn: Some(1),
     ..instant(
-        &[AbilityCostRecipe::ReturnControlledPermanentWithSubtype("Elf")],
+        &[AbilityCostRecipe::ReturnControlledPermanentWithSubtype(
+            "Elf",
+        )],
         AbilityEffectRecipe::UntapTarget,
         "Creature",
     )

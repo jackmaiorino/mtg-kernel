@@ -6538,7 +6538,9 @@ fn permanent_matches_return_filter(
         }
         PermanentFilterDef::Artifact => object_has_type(state, object_id, CardType::Artifact),
         PermanentFilterDef::CreatureV1 => object_has_type(state, object_id, CardType::Creature),
-        PermanentFilterDef::WithSubtypeV1(subtype) => has_effective_subtype(state, object_id, subtype),
+        PermanentFilterDef::WithSubtypeV1(subtype) => {
+            has_effective_subtype(state, object_id, subtype)
+        }
         PermanentFilterDef::TappedCreatureV1 => {
             object.tapped && object_has_type(state, object_id, CardType::Creature)
         }
@@ -13234,19 +13236,17 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
         let hand = &state.players[pending_discard.player.index()].hand;
         if chosen.len() as u32 != pending_discard.count
             || unique.len() != chosen.len()
-            || !chosen
-                .iter()
-                .all(|object| {
-                    hand.contains(object)
-                        && Some(*object) != exclude
-                        && exclude.is_none_or(|cost_source| {
-                            crate::eternal_premodern_p2b_v1::statics::discard_cost_allows(
-                                state,
-                                cost_source,
-                                *object,
-                            )
-                        })
-                })
+            || !chosen.iter().all(|object| {
+                hand.contains(object)
+                    && Some(*object) != exclude
+                    && exclude.is_none_or(|cost_source| {
+                        crate::eternal_premodern_p2b_v1::statics::discard_cost_allows(
+                            state,
+                            cost_source,
+                            *object,
+                        )
+                    })
+            })
         {
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
             return;

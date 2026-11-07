@@ -414,8 +414,12 @@ fn p2b_cards_are_full_with_their_printed_characteristics() {
         def("Nantuko Vigilante").subtypes,
         &[Subtype::Insect, Subtype::Druid, Subtype::Mutant]
     );
-    assert!(def("Gaea's Cradle").supertypes.contains(&mtg_kernel::card_def::Supertype::Legendary));
-    assert!(def("Yavimaya Hollow").supertypes.contains(&mtg_kernel::card_def::Supertype::Legendary));
+    assert!(def("Gaea's Cradle")
+        .supertypes
+        .contains(&mtg_kernel::card_def::Supertype::Legendary));
+    assert!(def("Yavimaya Hollow")
+        .supertypes
+        .contains(&mtg_kernel::card_def::Supertype::Legendary));
 }
 
 // ---- Lands and mana ---------------------------------------------------------------
@@ -427,7 +431,10 @@ fn birds_of_paradise_taps_for_any_color() {
     assert!(keyword(&state, birds, Keywords::FLYING));
     assert_eq!(power_toughness(&state, birds), (0, 1));
     next(&mut state);
-    act(&mut state, Action::ActivateManaAbilityChoice(birds, ManaColor::R));
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(birds, ManaColor::R),
+    );
     assert_eq!(mana(&state, P0, ManaColor::R), 1);
     assert!(state.objects.get(birds).tapped);
 }
@@ -530,10 +537,7 @@ fn wirewood_symbiote_returns_an_elf_to_untap_a_creature_once_each_turn() {
     assert_eq!(zone(&state, elves), Zone::Hand);
     let again = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     assert!(again != elves);
-    assert!(
-        !activatable(&mut state, symbiote, 0),
-        "only once each turn"
-    );
+    assert!(!activatable(&mut state, symbiote, 0), "only once each turn");
 }
 
 #[test]
@@ -563,7 +567,10 @@ fn glory_gives_protection_from_a_color_while_in_the_graveyard() {
     // WUBRG order: red.
     settle_picking(&mut state, 3, None);
     let targets = bolt_targets(&mut state);
-    assert!(!targets.contains(&Target::Object(elves)), "protection from red");
+    assert!(
+        !targets.contains(&Target::Object(elves)),
+        "protection from red"
+    );
     assert!(!targets.contains(&Target::Object(live_glory)));
     assert!(targets.contains(&Target::Player(P1)));
 }
@@ -632,7 +639,10 @@ fn blastoderm_has_shroud_and_fades_after_three_upkeeps() {
 fn vintara_snapper_has_shroud_while_you_control_no_untapped_lands() {
     let mut state = islands();
     let snapper = put(&mut state, P0, "Vintara Snapper", Zone::Battlefield);
-    assert!(keyword(&state, snapper, Keywords::SHROUD), "no lands at all");
+    assert!(
+        keyword(&state, snapper, Keywords::SHROUD),
+        "no lands at all"
+    );
     let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
     assert!(!keyword(&state, snapper, Keywords::SHROUD));
     put(&mut state, P1, "Forest", Zone::Battlefield);

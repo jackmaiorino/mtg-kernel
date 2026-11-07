@@ -35,8 +35,7 @@ pub(crate) fn echo_cost(name: &str) -> Option<(&'static [ManaColor], u8)> {
 /// (702.30a) and Blastoderm's three fade counters (fading 3).
 pub(crate) fn apply_entry_counters(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
-    if live.zone != Zone::Battlefield || live.v4.face_index != 0 || live.v4.face_down_v1.is_some()
-    {
+    if live.zone != Zone::Battlefield || live.v4.face_index != 0 || live.v4.face_down_v1.is_some() {
         return;
     }
     let Some(name) = definition_name(state, object) else {
