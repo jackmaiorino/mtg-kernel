@@ -594,7 +594,9 @@ card of its controller's graveyard, which needs a permanent whose definition, ab
 and activated abilities follow another card while the top card changes; the engine reads all of
 these from the object's own card definition and has no copiable-values layer for permanents
 (only token copies at creation), so Full English Breakfast is not playable. Reanimator is
-playable.
+playable. Phantom Nishoba's life gain reads the creature when its trigger is collected, so a
+Nishoba that has lost its abilities (Dress Down) and dies from the same damage it deals still
+gains that life.
 
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
