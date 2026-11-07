@@ -48,7 +48,12 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
     episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given."""
     source = dose["source"]
-    assert sha(source["checkpoint"]["path"]) == source["checkpoint"]["sha256"], "parent differs from its dose pin"
+    # An S source starting from its initial train state (W5's XS parent, S0) has no checkpoint; its pin is
+    # `s_learner.initial` (s_learner_v1.rs).
+    pinned = source["checkpoint"] if source.get("checkpoint") is not None else \
+        (source.get("s_learner") or {}).get("initial")
+    assert pinned is not None, "the parent has neither a checkpoint nor an S initial state"
+    assert sha(pinned["path"]) == pinned["sha256"], "parent differs from its dose pin"
     plan = base["iterations"]
     iterations = []
     for i in range(updates):

@@ -38,6 +38,15 @@ def dose(t, name):
         'path': '/imports/flat-v4.json', 'sha256': '1' * 64}}})
 
 
+def s_dose(t, name):
+    """An S source at its initial train state (XS's parent): no checkpoint, the pin is `s_learner.initial`."""
+    st = Path(t) / f'{name}.bin'
+    st.write_text(f'{name} S state')
+    return jwrite(Path(t) / f'{name}-dose.json', {'source': {'checkpoint': None, 'play_import': {
+        'path': '/imports/flat-v4.json', 'sha256': '1' * 64},
+        's_learner': {'schema': 'w5-s-learner/v1', 'initial': chains.pin(st)}}})
+
+
 def base_doc(kinds=('current', 'fixed')):
     return {'schema': 'test-base', 'opponents': [{'id': 'd6107922'}], 'iterations': [
         {'episodes': [{'episode': {'learner_seat': s}, 'opponent': {'kind': k}} for s, k in enumerate(kinds)]}]}
@@ -49,7 +58,7 @@ class Node:
     def __init__(self, tmp, boxes=4):
         self.t = Path(tmp)
         self.root = self.t / 'node'
-        self.b512, self.s0 = dose(self.t, 'b512'), dose(self.t, 's0')
+        self.b512, self.s0 = dose(self.t, 'b512'), s_dose(self.t, 's0')
         self.base = jwrite(self.t / 'base.json', base_doc())
         topology = {'online': list(range(boxes)), 'domains': [[[i] for i in range(boxes)]]}
         self.layout = jwrite(self.t / 'layout.json', dict(w5box.compute_layout(topology, 1, 0), host_class='test'))
