@@ -449,6 +449,11 @@ def make_plan(inputs_path):
     require(r_nom is None or (type(r_nom) is int and r_nom > 0), 'r_nom_usec must be a positive integer')
     require(stage == '0' or r_nom is not None, 'Stage 1 needs the frozen R_nom (r_nom_usec)')
     byte_cap = int(inputs.get('byte_cap', BYTE_CAP))
+    # Independent chains (Stage 0 plans only): no W5 matched-work holds. A closing chain's box does not freeze the
+    # node's other chains (w5box `handoff` off) and supervise starts no filler in an ended chain's box.
+    independent = inputs.get('independent', False)
+    require(independent in (True, False), 'independent is true or false')
+    require(not independent or stage == '0', 'independent chains are a Stage 0 plan option')
     arms_in, chains_in = inputs['arms'], inputs['chains']
     used = {c['arm'] for c in chains_in.values()} | {'F'}
     for a in used:
@@ -622,7 +627,7 @@ def make_plan(inputs_path):
                'cgroup_root': inputs['cgroup_root'], 'state_root': (root / 'state').as_posix(),
                'isolation': inputs.get('isolation', 'partition-root'), 'stage': stage,
                'env': {'PYTHONDONTWRITEBYTECODE': '1'}, 'filler': filler,
-               'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'], handoff=True)
+               'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'], handoff=not independent)
                           for n, c in sorted(chains.items()) if c['arm'] == a}}
         if arms_in[a].get('throughput'):
             doc['throughput'] = pin(arms_in[a]['throughput'])
@@ -634,6 +639,7 @@ def make_plan(inputs_path):
             'cgroup_root': inputs['cgroup_root'], 'byte_cap': byte_cap,
             'hold_days': float(inputs.get('hold_days', HOLD_DAYS)),
             'x_cap_seconds': x_cap, 'c_wall_seconds': c_wall, 'r_nom_usec': r_nom, **common, 'tools': tools,
+            **({'independent': True} if independent else {}),
             'arms': {a: {'file': pin(arm_paths[a]), 'w5box_plan': w5plans.get(a),
                          'throughput': bool(arms_in[a].get('throughput')),
                          'segment_updates': arms[a]['segment_updates'],
@@ -2059,7 +2065,7 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
     report['kills'] = enforce_ends(plan, root)
-    report['fills'] = occupancy(plan, root) if fills else None
+    report['fills'] = occupancy(plan, root) if fills and not plan.get('independent') else None
     report['purged'] = purge_hold(root, plan['hold_days'], now)
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]

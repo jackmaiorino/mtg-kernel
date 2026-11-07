@@ -143,6 +143,21 @@ class ChainTests(unittest.TestCase):
 
     # ------------------------------------------------------------ plan
 
+    def test_independent_plan_holds_no_box_and_starts_no_filler(self):
+        path, plan = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'},
+                                          'c2': {'arm': 'C', 'slot': 1, 'seed_root': 'oc/c2'}},
+                                    c_wall_seconds=1.5, independent=True, label='indep')
+        self.assertIs(plan['independent'], True)
+        box = json.loads(Path(plan['arms']['C']['w5box_plan']['path']).read_text())
+        self.assertEqual({n: s['handoff'] for n, s in box['chains'].items()}, {'c1': False, 'c2': False})
+        with mock.patch.object(chains, 'occupancy', side_effect=AssertionError('no fills')):
+            report = chains.cycle(plan, path)
+        self.assertIsNone(report['fills'])
+        with self.assertRaises(chains.Stop):
+            self.node.plan('1a', {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/chain1'},
+                                  'x1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/chain1'}},
+                           independent=True, label='indep1a')
+
     def test_plan_pins_the_arm_files_and_is_idempotent(self):
         path, plan = self.node.stage0()
         first = chains.sha(path)
