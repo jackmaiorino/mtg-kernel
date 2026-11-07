@@ -1197,7 +1197,7 @@ fn validate_collection_episodes_with_sampler_v1(
     // exactly these bytes instead of a second one.
     // Sealed files (`record_envelope_v1`) open only within the update's batch
     // bound, decided in pin order before any is opened.
-    crate::expanded_deck_training_v1::record_envelope_v1::admit_batch_v1(
+    let admitted = crate::expanded_deck_training_v1::record_envelope_v1::admit_batch_v1(
         trajectories.iter().map(|pin| pin.path.as_path()),
         ARTIFACT_CAP,
     )?;
@@ -1206,9 +1206,11 @@ fn validate_collection_episodes_with_sampler_v1(
         let parsed_ahead = &parsed_ahead;
         let handles: Vec<_> = trajectories
             .iter()
-            .map(|trajectory| {
+            .zip(&admitted)
+            .map(|(trajectory, admitted)| {
                 scope.spawn(move || -> Result<CollectionTrajectoryFieldsV1, String> {
                     let bytes = read_pin_bounded_bytes(trajectory, ARTIFACT_CAP)?;
+                    admitted.check_v1(&bytes)?;
                     match take_collection_fields_v1(&trajectory.sha256, &bytes) {
                         Some(fields) => {
                             parsed_ahead.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

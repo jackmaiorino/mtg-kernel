@@ -4414,6 +4414,11 @@ fn execute_update_inner_v1(
         "output directory already exists",
     )?;
     if source.s_learner.is_some() {
+        // The S update writes its own records; it takes no envelope.
+        ensure(
+            record_envelope.is_none(),
+            "a record envelope is not available with an S learner update",
+        )?;
         return s_learner_v1::execute_s_update_v1(s_learner_v1::SUpdateInputsV1 {
             source,
             trajectories,

@@ -279,9 +279,13 @@ pub(super) fn read_trajectories_v1(
     let parsed_ahead = AtomicUsize::new(0);
     // Sealed files (`record_envelope_v1`) open only within the batch bound,
     // decided in pin order before any is opened.
-    record_envelope_v1::admit_batch_v1(pins.iter().map(|pin| pin.path.as_path()), MAX_BATCH_BYTES)?;
+    let admitted = record_envelope_v1::admit_batch_v1(
+        pins.iter().map(|pin| pin.path.as_path()),
+        MAX_BATCH_BYTES,
+    )?;
     let read = |ordinal: usize| {
         let bytes = read_pinned_bytes(&pins[ordinal])?;
+        admitted[ordinal].check_v1(&bytes)?;
         let length = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?;
         let episode =
             match trajectory_parse_ahead_v1::take_trajectory_v1(&pins[ordinal].sha256, &bytes) {

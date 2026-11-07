@@ -148,24 +148,56 @@ const FRAME_HEADER_MAX_BYTES_V1: usize = 18;
 pub(crate) const BATCH_BOUND_ERROR_V1: &str =
     "trajectory batch exceeds 512 MiB CPU ingestion bound";
 
+/// What [`admit_batch_v1`] saw of one file: its declared content size when
+/// it was a sealed regular file with a readable frame header, else nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AdmittedV1(Option<u64>);
+
+impl AdmittedV1 {
+    /// Checks a file's verified bytes against what admission saw of it: a
+    /// sealed file must be the sealed file of the same declared size that
+    /// admission counted, so the admitted total bounds what is opened even
+    /// if a file changed between admission and its pinned read. Plain bytes
+    /// never expand and pass as before.
+    pub(crate) fn check_v1(self, verified: &[u8]) -> Result<(), String> {
+        if !is_sealed_v1(verified) {
+            return Ok(());
+        }
+        match self.0 {
+            Some(declared)
+                if record_length_v1(verified, u64::MAX).ok() == Some(declared) =>
+            {
+                Ok(())
+            }
+            _ => Err("a sealed record differs from the one its batch admitted".into()),
+        }
+    }
+}
+
 /// Refuses, before any file of the batch is opened, a batch that holds a
 /// sealed file and whose record lengths, in order, pass `bound`. A file's
 /// record length is its sealed frame's declared content size, read from the
-/// frame header in its first bytes, else its length on disk. Nothing is
-/// verified here: a file that cannot be read or measured counts as empty and
-/// fails its own pinned read later, exactly as before; a file whose bytes
-/// differ later fails its pin check before it is opened, so the declared sizes
-/// admitted here bound what is decoded. A batch without a sealed file is
-/// always admitted, so plain runs keep their checks and errors.
+/// frame header in its first bytes, else its length on disk. Only regular
+/// files are opened, as the pinned readers check. Nothing is verified here:
+/// a file that cannot be read or measured counts as empty and fails its own
+/// pinned read later, exactly as before. Returns what was seen of each file,
+/// which its reader checks against the verified bytes before opening them
+/// ([`AdmittedV1::check_v1`]). A batch without a sealed file is always
+/// admitted, so plain runs keep their checks and errors.
 pub(crate) fn admit_batch_v1<'a>(
     paths: impl IntoIterator<Item = &'a std::path::Path>,
     bound: u64,
-) -> Result<(), String> {
+) -> Result<Vec<AdmittedV1>, String> {
     use std::io::Read;
     let mut total = 0u64;
     let mut sealed = false;
+    let mut admitted = Vec::new();
     for path in paths {
+        let mut seen = AdmittedV1(None);
         let length = (|| -> Option<u64> {
+            if !std::fs::metadata(path).ok()?.is_file() {
+                return None;
+            }
             let mut file = std::fs::File::open(path).ok()?;
             let mut header = [0u8; FRAME_HEADER_MAX_BYTES_V1];
             let mut filled = 0;
@@ -178,20 +210,23 @@ pub(crate) fn admit_batch_v1<'a>(
             if is_sealed_v1(&header[..filled]) {
                 sealed = true;
                 let declared = zstd::zstd_safe::get_frame_content_size(&header[..filled]);
-                (declared != zstd::zstd_safe::CONTENTSIZE_ERROR
+                let declared = (declared != zstd::zstd_safe::CONTENTSIZE_ERROR
                     && declared != zstd::zstd_safe::CONTENTSIZE_UNKNOWN)
-                    .then_some(declared)
+                    .then_some(declared);
+                seen = AdmittedV1(declared);
+                declared
             } else {
                 file.metadata().ok().map(|metadata| metadata.len())
             }
         })()
         .unwrap_or(0);
         total = total.saturating_add(length);
+        admitted.push(seen);
     }
     if sealed && total > bound {
         return Err(BATCH_BOUND_ERROR_V1.into());
     }
-    Ok(())
+    Ok(admitted)
 }
 
 fn sealed_content_length_v1(bytes: &[u8], cap: u64) -> Result<usize, String> {
@@ -303,7 +338,24 @@ mod tests {
         let plain = write("plain.json", &[b' '; 1000]);
         let missing = directory.join("missing.json");
         let bound = 512u64 << 20;
-        admit_batch_v1([big.as_path(), plain.as_path(), missing.as_path()], bound).unwrap();
+        let seen =
+            admit_batch_v1([big.as_path(), plain.as_path(), missing.as_path(), directory.as_path()], bound)
+                .unwrap();
+        assert_eq!(
+            seen,
+            [
+                AdmittedV1(Some(300 << 20)),
+                AdmittedV1(None),
+                AdmittedV1(None),
+                AdmittedV1(None)
+            ]
+        );
+        // A reader opens a sealed file only if admission counted that file.
+        let big_bytes = std::fs::read(&big).unwrap();
+        seen[0].check_v1(&big_bytes).unwrap();
+        seen[1].check_v1(&[b' '; 1000]).unwrap();
+        assert!(seen[1].check_v1(&big_bytes).is_err());
+        assert!(AdmittedV1(Some(1)).check_v1(&big_bytes).is_err());
         assert_eq!(
             admit_batch_v1([big.as_path(), big.as_path()], bound).unwrap_err(),
             BATCH_BOUND_ERROR_V1
