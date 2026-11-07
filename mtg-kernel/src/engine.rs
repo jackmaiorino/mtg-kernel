@@ -396,6 +396,14 @@ pub struct RuntimeRulesV1 {
     /// reads no hidden state, so whether an ordering stage appears tells the
     /// other seat nothing about hidden cards.
     pub auto_unobservable_graveyard_order: bool,
+    /// A loss ends the game before any further decision (704.5, 104.2a).
+    /// Off, the historical engine can still expose a decision after a
+    /// state-based action set `has_lost` inside a continuation (issue #433:
+    /// Highway Robbery's sacrifice branch draws from an empty library, then
+    /// the loser receives priority). Omitted from snapshots while off, so
+    /// `RESOLUTION_BOUNDARY_V1` keeps its serialized bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub loss_ends_game: bool,
 }
 
 impl RuntimeRulesV1 {
@@ -403,6 +411,14 @@ impl RuntimeRulesV1 {
     /// LANES/spy-fix-first-handoff-20261010).
     pub const RESOLUTION_BOUNDARY_V1: Self = Self {
         auto_unobservable_graveyard_order: true,
+        loss_ends_game: false,
+    };
+
+    /// The loss-terminal fix alone (issue #433,
+    /// docs/design/loss_terminal_rules_v1.md).
+    pub const LOSS_TERMINAL_V1: Self = Self {
+        auto_unobservable_graveyard_order: false,
+        loss_ends_game: true,
     };
 
     pub fn is_default(&self) -> bool {
@@ -12023,7 +12039,26 @@ fn native_validation_stage<T, E>(_stage: &'static str, result: Result<T, E>) -> 
     result
 }
 
+/// Drives the game to its next decision. With `RuntimeRulesV1::
+/// loss_ends_game` on, a loss ends the game before any decision is exposed:
+/// the loop below checks for game over only at its top, and a stage can run
+/// state-based actions that set `has_lost` and then fall through to a later
+/// decision in the same pass (issue #433). Default rules keep that
+/// historical transition.
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    let decision = advance_until_decision_historical(state);
+    if !state.engine.runtime_rules.loss_ends_game
+        || matches!(
+            decision,
+            Decision::GameOver { .. } | Decision::Halted { .. }
+        )
+    {
+        return decision;
+    }
+    check_game_over(state).unwrap_or(decision)
+}
+
+fn advance_until_decision_historical(state: &mut GameState) -> Decision {
     if let Err(_error) = time_stop_v1::validate(state)
         .and_then(|_| ordinary_cleanup_v1::validate(state))
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
@@ -27626,7 +27661,11 @@ fn materialize_begin_cast_with_quote_v1(
         None
     };
 
-    move_to_stack(state, spell_id, origin_zone);
+    let disguised = def
+        .alt_cost
+        .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)
+        && origin_zone == Zone::Hand;
+    move_to_stack(state, spell_id, origin_zone, disguised);
     if let Some(permission) = graveyard_adventure {
         state
             .objects
@@ -27655,11 +27694,7 @@ fn materialize_begin_cast_with_quote_v1(
     // independently frozen pre-move evidence only after that reset, before
     // either the placeholder or its duplicate source contract is created.
     state.objects.get_mut(spell_id).v4.spell_cast_origin = Some(cast_origin);
-    if def
-        .alt_cost
-        .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)
-        && origin_zone == Zone::Hand
-    {
+    if disguised {
         state.objects.get_mut(spell_id).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
             disguised: true,
             lookers: 1 << player.index(),
@@ -29036,8 +29071,9 @@ fn push_paid_activation(
 /// Hand-or-graveyard -> Stack zone bookkeeping. Not routed through
 /// `event::commit` (which explicitly panics on a Stack destination):
 /// casting is an engine action, not a `MoveObject` effect leaf any card
-/// program emits.
-fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+/// program emits. `face_down`: the spell is announced face down (Disguise),
+/// so the other player does not see which card left the hand.
+fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone, face_down: bool) {
     let reset_stash = state.objects.get(id).counters.stash != 0;
     if reset_stash {
         event::record_counter_lki(state, id);
@@ -29056,7 +29092,11 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
         }
         _ => state.players[owner.index()].hand.retain(|&x| x != id),
     }
-    state.forget_hand_object(id);
+    if from_zone == Zone::Hand {
+        state.forget_departing_hand_object(id, !face_down);
+    } else {
+        state.forget_hand_object(id);
+    }
     state.clear_object_relations(id);
     let turn = state.turn_key_v1();
     let object = state.objects.get_mut(id);
@@ -32808,6 +32848,118 @@ mod tests {
         );
     }
 
+    /// Issue #433: Highway Robbery's sacrifice branch draws two from P0's
+    /// empty library, and the state-based actions that draw continuation
+    /// runs set P0's `has_lost`. P0 keeps an untapped Mountain and a
+    /// Lightning Bolt, so a priority decision after the loss is a real
+    /// choice. Returns the final state and every exposed decision with the
+    /// state hash it was exposed in.
+    fn highway_robbery_from_an_empty_library(
+        rules: RuntimeRulesV1,
+    ) -> (GameState, Vec<(Decision, u64)>) {
+        let mut state = ready_game_in_main1(3);
+        state.engine.runtime_rules = rules;
+        let robbery = put_in_hand(&mut state, PlayerId::P0, "Highway Robbery");
+        put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+        step(&mut state, Action::CastSpell(robbery)).unwrap();
+        let mut exposed = Vec::new();
+        loop {
+            let decision = advance_until_decision(&mut state);
+            exposed.push((decision.clone(), state.state_hash()));
+            let action = match decision {
+                Decision::CastSpellOrPass { .. } if !state.stack.is_empty() => Action::Pass,
+                Decision::ChooseOptionalCost {
+                    sacrifice_payable: true,
+                    ..
+                } => Action::ChooseOptionalCost(OptionalCostChoice::SacrificeLand),
+                Decision::ChooseCostTargets { candidates, .. } => Action::ChooseCostTarget(
+                    candidates
+                        .into_iter()
+                        .find(|&land| state.objects.get(land).tapped)
+                        .expect("a Mountain tapped to cast Highway Robbery"),
+                ),
+                _ => return (state, exposed),
+            };
+            step(&mut state, action).unwrap();
+        }
+    }
+
+    #[test]
+    fn highway_robbery_loss_still_exposes_priority_under_default_rules() {
+        // The historical transition, pinned so default rules stay unchanged:
+        // P0 has lost and is still asked to act.
+        let (mut state, exposed) = highway_robbery_from_an_empty_library(RuntimeRulesV1::default());
+        assert!(state.players[0].has_lost);
+        match &exposed.last().expect("decisions").0 {
+            Decision::CastSpellOrPass {
+                player,
+                castable_spells,
+                ..
+            } => {
+                assert_eq!(*player, PlayerId::P0);
+                assert!(!castable_spells.is_empty(), "Lightning Bolt is castable");
+            }
+            other => panic!("expected the historical priority decision, got {other:?}"),
+        }
+        step(&mut state, Action::Pass).unwrap();
+        assert_eq!(
+            advance_until_decision(&mut state),
+            Decision::GameOver {
+                winner: Some(PlayerId::P1)
+            },
+            "the next terminal check ends the game"
+        );
+    }
+
+    #[test]
+    fn loss_terminal_v1_ends_the_game_instead_of_exposing_priority_after_a_loss() {
+        let (_, historical) = highway_robbery_from_an_empty_library(RuntimeRulesV1::default());
+        let (mut state, exposed) =
+            highway_robbery_from_an_empty_library(RuntimeRulesV1::LOSS_TERMINAL_V1);
+        assert!(state.players[0].has_lost);
+        let (last, before) = exposed.split_last().expect("decisions");
+        assert_eq!(
+            before,
+            &historical[..historical.len() - 1],
+            "identical decisions and state hashes until the loss"
+        );
+        let over = Decision::GameOver {
+            winner: Some(PlayerId::P1),
+        };
+        assert_eq!(last.0, over);
+        assert_eq!(
+            advance_until_decision(&mut state),
+            over,
+            "and it stays over"
+        );
+    }
+
+    /// Issue #433: the flag adds no snapshot bytes while off, so default and
+    /// `resolution-boundary-v1` states keep theirs, and old bytes still load.
+    #[test]
+    fn loss_ends_game_serializes_only_when_on() {
+        let boundary = r#"{"auto_unobservable_graveyard_order":true}"#;
+        assert_eq!(
+            serde_json::to_string(&RuntimeRulesV1::RESOLUTION_BOUNDARY_V1).unwrap(),
+            boundary
+        );
+        assert_eq!(
+            serde_json::from_str::<RuntimeRulesV1>(boundary).unwrap(),
+            RuntimeRulesV1::RESOLUTION_BOUNDARY_V1
+        );
+        let on = serde_json::to_string(&RuntimeRulesV1::LOSS_TERMINAL_V1).unwrap();
+        assert_eq!(
+            on,
+            r#"{"auto_unobservable_graveyard_order":false,"loss_ends_game":true}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<RuntimeRulesV1>(&on).unwrap(),
+            RuntimeRulesV1::LOSS_TERMINAL_V1
+        );
+        assert!(RuntimeRulesV1::default().is_default());
+        assert!(!RuntimeRulesV1::LOSS_TERMINAL_V1.is_default());
+    }
+
     #[test]
     fn plot_then_free_cast_on_a_later_turn() {
         let mut state = ready_game_in_main1(2);
@@ -35359,7 +35511,7 @@ mod tests {
             &mut parent_reused,
             ProposedEvent::zone_change(chain, Zone::Graveyard),
         );
-        move_to_stack(&mut parent_reused, chain, Zone::Graveyard);
+        move_to_stack(&mut parent_reused, chain, Zone::Graveyard, false);
         parent_reused.stack.push(original_item);
         assert_ne!(
             parent_reused.objects.get(chain).zone_change_count,

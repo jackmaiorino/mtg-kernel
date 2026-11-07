@@ -1054,12 +1054,26 @@ pub enum EpisodeRuntimeRulesV1 {
     /// with a Delve card).
     #[serde(rename = "resolution-boundary-v1")]
     ResolutionBoundaryV1,
+    /// `engine::RuntimeRulesV1::LOSS_TERMINAL_V1`: no decision after a
+    /// player has lost (issue #433, docs/design/loss_terminal_rules_v1.md).
+    #[serde(rename = "loss-terminal-v1")]
+    LossTerminalV1,
+    /// Both rules above, for a study already on `resolution-boundary-v1`
+    /// (refused for a game with a Delve card).
+    #[serde(rename = "resolution-boundary-loss-terminal-v1")]
+    ResolutionBoundaryLossTerminalV1,
 }
 
 impl EpisodeRuntimeRulesV1 {
     pub fn rules(self) -> crate::engine::RuntimeRulesV1 {
+        use crate::engine::RuntimeRulesV1;
         match self {
-            Self::ResolutionBoundaryV1 => crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+            Self::ResolutionBoundaryV1 => RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+            Self::LossTerminalV1 => RuntimeRulesV1::LOSS_TERMINAL_V1,
+            Self::ResolutionBoundaryLossTerminalV1 => RuntimeRulesV1 {
+                loss_ends_game: true,
+                ..RuntimeRulesV1::RESOLUTION_BOUNDARY_V1
+            },
         }
     }
 }
@@ -12314,6 +12328,40 @@ pub(crate) mod tests {
             started.elapsed().as_secs_f64()
         );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Issue #433: the named profiles carrying the loss-terminal rule, and
+    /// the unchanged name and rules of `resolution-boundary-v1`.
+    #[test]
+    fn runtime_rules_profiles_name_their_engine_rules() {
+        use crate::engine::RuntimeRulesV1;
+        for (profile, name, rules) in [
+            (
+                EpisodeRuntimeRulesV1::ResolutionBoundaryV1,
+                "resolution-boundary-v1",
+                RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+            ),
+            (
+                EpisodeRuntimeRulesV1::LossTerminalV1,
+                "loss-terminal-v1",
+                RuntimeRulesV1::LOSS_TERMINAL_V1,
+            ),
+            (
+                EpisodeRuntimeRulesV1::ResolutionBoundaryLossTerminalV1,
+                "resolution-boundary-loss-terminal-v1",
+                RuntimeRulesV1 {
+                    auto_unobservable_graveyard_order: true,
+                    loss_ends_game: true,
+                },
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(profile).unwrap(), name);
+            assert_eq!(
+                serde_json::from_value::<EpisodeRuntimeRulesV1>(name.into()).unwrap(),
+                profile
+            );
+            assert_eq!(profile.rules(), rules);
+        }
     }
 
     mod pauper_opening_tests;

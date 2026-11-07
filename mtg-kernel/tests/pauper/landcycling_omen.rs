@@ -13,6 +13,7 @@ use mtg_kernel::card_def::{
 };
 use mtg_kernel::effect::{EffectOp, LibraryCardFilter, PlayerRef};
 use mtg_kernel::engine::{self, Action, Decision, UnsupportedMechanic};
+use mtg_kernel::event::{propose_and_commit, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{Cost, ManaColor, Pip};
 use mtg_kernel::rl::{legal_action_candidates_v1, observe_v2};
@@ -308,6 +309,86 @@ fn forestcycling_and_swampcycling_pay_from_hand_and_search_the_right_subtype() {
             .iter()
             .any(|known| known.object == selected));
         assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+    }
+}
+
+/// The names P1's native observation lists as known in P0's hand.
+fn p1_known_p0_hand_names(state: &GameState) -> Vec<String> {
+    observe_v2(state, &HarnessSurfaceV2::new(), PlayerId::P1, 0)
+        .unwrap()
+        .known_hand_cards[PlayerId::P0.index()]
+    .iter()
+    .map(|card| card.card_name.clone())
+    .collect()
+}
+
+/// Issue #531's shape (W1 soak game g-bc9b): P0 forestcycles Generous Ent,
+/// finding and revealing a Snow-Covered Forest, then draws a second
+/// Snow-Covered Forest that P1 never sees. Returns the state at P0's next
+/// priority, the revealed copy and the drawn copy.
+fn revealed_and_drawn_snow_forests(by_name: bool) -> (GameState, ObjectId, ObjectId) {
+    let mut state = ready_main(&["Snow-Covered Forest"; 3], 0x4b48_5f35_3331_0000);
+    if by_name {
+        state.enable_hand_departures_by_name_v1();
+    }
+    add_mana(&mut state, ManaColor::C, 1);
+    let ent = put_object(&mut state, PlayerId::P0, "Generous Ent", Zone::Hand);
+    let (_, legal) = activate_landcycling_to_search(&mut state, ent);
+    let Target::Object(revealed) = legal[0] else {
+        panic!("the search offers library objects");
+    };
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(revealed)),
+    )
+    .unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert_eq!(p1_known_p0_hand_names(&state), vec!["Snow-Covered Forest"]);
+    propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
+    let drawn = *state.players[0].hand.last().unwrap();
+    assert_ne!(drawn, revealed);
+    assert_eq!(
+        state.objects.get(drawn).card_def,
+        card_id("Snow-Covered Forest")
+    );
+    assert_eq!(p1_known_p0_hand_names(&state), vec!["Snow-Covered Forest"]);
+    (state, revealed, drawn)
+}
+
+/// Issue #531: P0 plays one of its two Snow-Covered Forests. P1 sees a
+/// Snow-Covered Forest leave P0's hand but cannot tell which copy. Under the
+/// opt-in name-level rule P1's row of the name ends whichever copy P0
+/// played. The historical rule, which trained policies and frozen studies
+/// were built on, keeps the revealed copy's row when the drawn copy is
+/// played.
+#[test]
+fn a_same_name_land_drop_ends_the_revealed_forest_row_by_name() {
+    for by_name in [false, true] {
+        for play_revealed in [false, true] {
+            let (mut state, revealed, drawn) = revealed_and_drawn_snow_forests(by_name);
+            let (played, kept) = if play_revealed {
+                (revealed, drawn)
+            } else {
+                (drawn, revealed)
+            };
+            engine::step(&mut state, Action::PlayLand(played)).unwrap();
+            engine::advance_until_decision(&mut state);
+            assert_eq!(state.objects.get(played).zone, Zone::Battlefield);
+            assert!(state.players[0].hand.contains(&kept));
+            let expected: &[&str] = if by_name || play_revealed {
+                &[]
+            } else {
+                &["Snow-Covered Forest"]
+            };
+            assert_eq!(
+                p1_known_p0_hand_names(&state),
+                expected,
+                "by name: {by_name}, played the revealed copy: {play_revealed}"
+            );
+        }
     }
 }
 

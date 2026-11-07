@@ -7988,6 +7988,18 @@ impl FastActorSessionV1 {
         self.state.engine.spellbench_neutral_v1.choices = true;
     }
 
+    /// Opts this game into name-level hand departures (issue #531, see
+    /// `GameState::hand_departures_by_name_v1`): known-hand rows never tell
+    /// which copy of a name left a hand. Changes what observations show, so
+    /// it is a new runtime identity, refused after the first policy step.
+    pub fn enable_hand_departures_by_name_v1(&mut self) -> Result<(), String> {
+        if self.policy_step_count != 0 {
+            return Err("name-level hand departures are a reset-only option".into());
+        }
+        self.state.enable_hand_departures_by_name_v1();
+        Ok(())
+    }
+
     /// Audit-only counterpart to
     /// [`RlEpisodeSessionV1::privileged_core_environment_hash`]. It is never
     /// computed by reset/step and therefore does not tax the actor loop.
@@ -13737,6 +13749,98 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{label}: offered answer refused: {error:?}"));
             assert_flat_v2_offers_exactly_the_completable_answers(&next, label);
         }
+    }
+
+    /// Issue #433: a flat-action V2 session (as training uses) whose next
+    /// advance finishes Highway Robbery's sacrifice branch, drawing two from
+    /// P0's empty library. P0 keeps an untapped Mountain and a Lightning
+    /// Bolt, so a priority decision after the loss is a real choice.
+    fn highway_robbery_loss_session(rules: crate::engine::RuntimeRulesV1) -> FastActorSessionV1 {
+        use crate::engine::{advance_until_decision, step, Action, Decision, OptionalCostChoice};
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.engine.runtime_rules = rules;
+        for _ in 0..3 {
+            add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
+        }
+        let mut hand = Vec::new();
+        for name in ["Highway Robbery", "Lightning Bolt"] {
+            let card_def = card_id_by_name(name).unwrap();
+            let id = state.objects.push(GameObject {
+                card_def,
+                name: name.to_string(),
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Hand,
+                tapped: false,
+                summoning_sick: false,
+                damage: 0,
+                counters: Counters::default(),
+                attachments: Vec::new(),
+                v4: ObjectStateV4::from_card_def(card_def),
+                spell_copy_origin: None,
+                plotted_turn: None,
+                zone_change_count: 0,
+            });
+            state.players[0].hand.push(id);
+            hand.push(id);
+        }
+        step(&mut state, Action::CastSpell(hand[0])).unwrap();
+        loop {
+            let action = match advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } if !state.stack.is_empty() => Action::Pass,
+                Decision::ChooseOptionalCost {
+                    sacrifice_payable: true,
+                    ..
+                } => Action::ChooseOptionalCost(OptionalCostChoice::SacrificeLand),
+                Decision::ChooseCostTargets { candidates, .. } => {
+                    let land = candidates
+                        .into_iter()
+                        .find(|&land| state.objects.get(land).tapped)
+                        .expect("a Mountain tapped to cast Highway Robbery");
+                    step(&mut state, Action::ChooseCostTarget(land)).unwrap();
+                    assert!(!state.players[0].has_lost, "the draw has not happened yet");
+                    return flat_v2_session_from_state(state);
+                }
+                other => panic!("unexpected decision before the loss: {other:?}"),
+            };
+            step(&mut state, action).unwrap();
+        }
+    }
+
+    #[test]
+    fn flat_v2_session_asks_a_lost_player_to_act_under_default_rules() {
+        // The historical transition, pinned so default rules stay unchanged:
+        // the published decision belongs to P0, who has already lost.
+        let session = highway_robbery_loss_session(crate::engine::RuntimeRulesV1::default());
+        assert!(session.state.players[0].has_lost);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected the historical decision");
+        };
+        assert_eq!(decision.acting_player, PlayerSeatV1::P0);
+        assert!(
+            decision.legal_action_count > 1,
+            "a real choice (Lightning Bolt)"
+        );
+    }
+
+    #[test]
+    fn flat_v2_session_with_loss_terminal_v1_ends_instead_of_asking_a_lost_player() {
+        let session = highway_robbery_loss_session(crate::engine::RuntimeRulesV1::LOSS_TERMINAL_V1);
+        assert!(session.state.players[0].has_lost);
+        let FastActorResponseV1::Terminal(terminal) = session.current_response() else {
+            panic!("expected the game to be over, not a decision for a lost player");
+        };
+        assert_eq!(terminal.winner, Some(PlayerSeatV1::P1));
+        assert_eq!(terminal.terminal_code, TerminalSafeCodeV2::NaturalGameOver);
+        assert_eq!(terminal.terminal_reason, "game_over");
+        assert_eq!(
+            (terminal.policy_step_count, terminal.physical_decision_count),
+            (0, 0),
+            "no decision was published or counted"
+        );
     }
 
     /// Issue #186 (Affinity vs Elves, goad): flat-action V2 sessions, which

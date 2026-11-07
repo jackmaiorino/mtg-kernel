@@ -260,6 +260,10 @@ class Stage0ExitTests(unittest.TestCase):
         self.assertGreater(xs['projected_days_slowest_box'], xs['projected_days_to_r_nom'])
         self.assertEqual(out['declared_response_reading']['branch'], 'launch')
         self.assertEqual(out['declared_response_reading']['worst_arm'], 'XS')
+        # an extra C-recipe arm (CS, CP) is never projected as X, however slow
+        out = chains.stage0_exit([c, record('X8', [3.6e6] * 6), record('CS', [0.5e6] * 6)])
+        self.assertNotIn('projected_days_to_r_nom', out['arms']['CS'])
+        self.assertEqual(out['declared_response_reading']['branch'], 'launch')
         # 12 days: the cap response, ceil(1.2 x 12) = 15 days.
         out = chains.stage0_exit([c, record('X8', [3.0e6 * 7 / 12] * 6)])
         self.assertEqual((out['declared_response_reading']['branch'], out['declared_response_reading']['x_cap_days']),
