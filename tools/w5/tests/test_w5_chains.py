@@ -220,6 +220,30 @@ class ChainTests(unittest.TestCase):
         self.assertEqual((man['arm'], man['arm_name'], man['seed_root'], man['segments']), ('X', 'X8', 'w5/q1', []))
         self.assertEqual(plan['pairs'], {'1': {'C': 'c1', 'X': 'x1', 'c_external': False}})
 
+    def test_record_envelope_is_an_optional_c_recipe_arm_key(self):
+        _, plain = self.node.stage0()
+        plain_arm = json.loads(Path(plain['arms']['C']['file']['path']).read_text())
+        self.assertNotIn('record_envelope', plain_arm)  # absent: every existing arm file keeps its bytes
+        self.assertNotIn('record_envelope', chains.arm_config(plain_arm, 'w5/q1', 0, 4, self.node.t / 'p'))
+        inputs = json.loads(self.node.inputs('0', {'ce1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'}},
+                                             label='env').read_text())
+        inputs['arms']['C']['record_envelope'] = 'zstd1'
+        _, plan = chains.make_plan(jwrite(self.node.t / 'env.json', inputs))
+        arm = json.loads(Path(plan['arms']['C']['file']['path']).read_text())
+        self.assertEqual(arm['record_envelope'], 'zstd1')
+        self.assertNotEqual(plan['arms']['C']['file']['sha256'], plain['arms']['C']['file']['sha256'])
+        self.assertEqual(chains.recipe_identity(arm)['record_envelope'], 'zstd1')
+        self.assertEqual(chains.arm_config(arm, 'w5/q1', 0, 4, self.node.t / 'e')['record_envelope'], 'zstd1')
+        self.assertIn('record_envelope', chains.PAIR_ONLY_KEYS)  # it changes bytes on disk, never a game
+        for arm_name, value in (('C', 'zstd'), ('X8', 'zstd1')):
+            bad = json.loads(json.dumps(inputs))
+            bad['label'] = 'bad'
+            bad['arms'][arm_name]['record_envelope'] = value
+            bad['chains'] = {'cb1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'},
+                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'}}
+            with self.assertRaisesRegex(chains.Stop, 'record_envelope'):
+                chains.make_plan(jwrite(self.node.t / f'bad-{arm_name}.json', bad))
+
     def test_r_nom_is_frozen_in_the_manifests(self):
         self.node.stage0(r_nom_usec=100)
         with self.assertRaisesRegex(chains.Stop, 'R_nom is frozen'):

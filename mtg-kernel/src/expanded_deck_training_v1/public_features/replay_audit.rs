@@ -251,6 +251,8 @@ fn audit_one(
     kind: TrajectoryKind,
 ) -> Result<(Value, usize), String> {
     let bytes = read_pinned_bytes(pin)?;
+    // A sealed trajectory (`record_envelope_v1`) is audited as its record.
+    let bytes = super::super::record_envelope_v1::open_v1(&bytes, MAX_FILE_BYTES)?;
     let trajectory = read_trajectory(&bytes, kind, models)?;
     let learner = trajectory.episode.learner_seat;
     let eligible: Vec<_> = trajectory

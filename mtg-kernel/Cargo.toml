@@ -22,6 +22,10 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 # `compress` only exports sha2's own compress512 (resumable digests).
 sha2 = { version = "0.10", features = ["compress"] }
+# Opt-in record envelope (`record_envelope_v1`): one zstd frame around a
+# published trajectory or checkpoint. Pinned exactly (with zstd-sys in
+# Cargo.lock): the sealed bytes, and so their pins, depend on the version.
+zstd = { version = "=0.11.2", default-features = false }
 
 [features]
 viewer-recording-v1 = ["gameplay-decision-trace-v1"]
