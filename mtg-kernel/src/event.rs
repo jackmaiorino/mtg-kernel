@@ -7116,7 +7116,18 @@ fn materialize_zone_change_v1(
         };
 
     remove_from_zone(state, owner, id, from_zone);
-    state.forget_hand_object(id);
+    if from_zone == Zone::Hand && to_zone != Zone::Hand {
+        // The other player sees which card left unless it goes to a library
+        // position they are not shown or onto the battlefield face down.
+        let named = match to_zone {
+            Zone::Library => library_insert_visibility == LibraryInsertVisibility::Public,
+            Zone::Battlefield => entering_face_down.is_none(),
+            _ => true,
+        };
+        state.forget_departing_hand_object(id, named);
+    } else {
+        state.forget_hand_object(id);
+    }
     state.clear_object_relations(id);
     if from_zone == Zone::Battlefield {
         // 506.4: leaving the battlefield removes it from combat.
@@ -7979,6 +7990,142 @@ mod tests {
         assert!(stale_state
             .known_hand_cards(PlayerId::P1, PlayerId::P0)
             .is_empty());
+    }
+
+    /// Issue #531 fixture: P0 draws `library` in order; P1 is shown the
+    /// cards at `shown` (draw indices). Returns the state and P0's hand.
+    fn hand_with_shown_cards(
+        library: &[u16],
+        shown: &[usize],
+        by_name: bool,
+    ) -> (GameState, Vec<ObjectId>) {
+        let mut state =
+            GameState::new_from_libraries(library, &[4, 5, 6], |c| format!("card-{c}"), 1);
+        if by_name {
+            state.enable_hand_departures_by_name_v1();
+        }
+        let hand: Vec<ObjectId> = library
+            .iter()
+            .map(|_| state.draw_card(PlayerId::P0).unwrap())
+            .collect();
+        for &i in shown {
+            state
+                .reveal_hand_card(PlayerId::P1, PlayerId::P0, hand[i])
+                .unwrap();
+        }
+        (state, hand)
+    }
+
+    fn p1_rows_of_p0(state: &GameState) -> Vec<ObjectId> {
+        state
+            .known_hand_cards(PlayerId::P1, PlayerId::P0)
+            .iter()
+            .map(|entry| entry.object)
+            .collect()
+    }
+
+    /// Issue #531: an unseen copy of a revealed card's name leaves the hand
+    /// publicly. The historical rule keeps the revealed copy's row (frozen
+    /// consumers depend on it); the name-level rule ends it, because P1
+    /// cannot tell which copy left. A departure of the revealed copy itself
+    /// ends its row under both rules, and other names are untouched.
+    #[test]
+    fn a_named_same_name_departure_ends_the_row_only_by_name() {
+        for by_name in [false, true] {
+            // Two copies of definition 1, then definition 2; P1 saw the
+            // first copy and the definition-2 card.
+            let (mut unseen_left, hand) = hand_with_shown_cards(&[1, 1, 2], &[0, 2], by_name);
+            let (known, unseen, other) = (hand[0], hand[1], hand[2]);
+            propose_and_commit(
+                &mut unseen_left,
+                ProposedEvent::zone_change(unseen, Zone::Graveyard),
+            );
+            let expected = if by_name {
+                vec![other]
+            } else {
+                vec![known, other]
+            };
+            assert_eq!(p1_rows_of_p0(&unseen_left), expected, "by name: {by_name}");
+
+            let (mut known_left, _) = hand_with_shown_cards(&[1, 1, 2], &[0, 2], by_name);
+            propose_and_commit(
+                &mut known_left,
+                ProposedEvent::zone_change(known, Zone::Graveyard),
+            );
+            assert_eq!(
+                p1_rows_of_p0(&known_left),
+                vec![other],
+                "by name: {by_name}"
+            );
+            // Neither rule shows P1 anything of P0's own row.
+            assert!(known_left
+                .known_hand_cards(PlayerId::P0, PlayerId::P0)
+                .is_empty());
+        }
+    }
+
+    /// Issue #531: with two shown copies of a name and an unseen third, the
+    /// unseen copy's departure leaves P1 one row of the name.
+    #[test]
+    fn two_shown_copies_keep_one_row_after_an_unseen_copy_leaves() {
+        let (mut state, hand) = hand_with_shown_cards(&[1, 1, 1], &[0, 1], true);
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(hand[2], Zone::Graveyard),
+        );
+        assert_eq!(p1_rows_of_p0(&state).len(), 1);
+        assert!(state.players[0].hand.contains(&p1_rows_of_p0(&state)[0]));
+    }
+
+    /// Issue #531: under the name-level rule a card put on the library at a
+    /// position P1 is not shown ends every row (any known card may be the
+    /// one that left), while a public insertion is read by name. The
+    /// historical rule keeps the rows of cards that did not move.
+    #[test]
+    fn a_hidden_departure_ends_every_row_only_by_name() {
+        for by_name in [false, true] {
+            let (mut hidden, hand) = hand_with_shown_cards(&[1, 1, 2], &[0, 2], by_name);
+            let (known, unseen, other) = (hand[0], hand[1], hand[2]);
+            propose_and_commit(
+                &mut hidden,
+                ProposedEvent::private_top_library_insert(unseen),
+            );
+            let expected = if by_name { vec![] } else { vec![known, other] };
+            assert_eq!(p1_rows_of_p0(&hidden), expected, "by name: {by_name}");
+
+            let (mut public, _) = hand_with_shown_cards(&[1, 1, 2], &[0, 2], by_name);
+            propose_and_commit(
+                &mut public,
+                ProposedEvent::public_library_insert(unseen, LibraryPlacement::Top),
+            );
+            let expected = if by_name {
+                vec![other]
+            } else {
+                vec![known, other]
+            };
+            assert_eq!(p1_rows_of_p0(&public), expected, "by name: {by_name}");
+        }
+    }
+
+    /// Issue #531: the opt-in adds no snapshot bytes or hash input while
+    /// off; on, it is serialized, survives a round trip and is hashed.
+    #[test]
+    fn the_name_level_opt_in_is_absent_from_historical_bytes() {
+        let (off, _) = hand_with_shown_cards(&[1, 1, 2], &[0], false);
+        let (on, _) = hand_with_shown_cards(&[1, 1, 2], &[0], true);
+        let off_json = serde_json::to_value(&off).unwrap();
+        assert!(off_json.get("hand_departures_by_name_v1").is_none());
+        let on_json = serde_json::to_value(&on).unwrap();
+        assert_eq!(
+            on_json["hand_departures_by_name_v1"],
+            serde_json::json!(true)
+        );
+        let restored: GameState = serde_json::from_value(on_json).unwrap();
+        assert!(restored.hand_departures_by_name_v1);
+        assert_eq!(restored.state_hash(), on.state_hash());
+        let mut toggled = off.clone();
+        toggled.hand_departures_by_name_v1 = true;
+        assert_ne!(toggled.state_hash(), off.state_hash());
     }
 
     #[test]
