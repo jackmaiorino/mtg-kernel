@@ -291,6 +291,9 @@ pub enum E3ChoiceKindV1 {
     P1bV1(crate::eternal_premodern_p1b_v1::P1bChoiceV1),
     /// A Premodern wave P1a choice (`eternal_premodern_p1a_v1`).
     P1aV1(crate::eternal_premodern_p1a_v1::P1aChoiceV1),
+    /// A choice owned by the outside-the-game zone's module (Karn's exile
+    /// card, learn's discard).
+    OutsideGameV1(crate::eternal_outside_game_v1::OutsideGameChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -345,6 +348,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::P1aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::OutsideGameV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -387,6 +393,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::OutsideGameV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
             | E3ChoiceKindV1::OracleV1 { .. }
@@ -684,6 +691,13 @@ pub(crate) fn finish_selection(
             bindings,
         ),
         E3ChoiceKindV1::P1aV1(kind) => crate::eternal_premodern_p1a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::OutsideGameV1(kind) => crate::eternal_outside_game_v1::finish_selection(
             state,
             continuation,
             choice,

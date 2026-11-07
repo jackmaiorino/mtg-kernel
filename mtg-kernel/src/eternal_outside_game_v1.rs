@@ -17,11 +17,15 @@
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{CardType, Subtype, CARD_DEFS};
-use crate::effect::{EffectContinuation, EffectFrame, EffectOp, ExecCtx, PlayerRef};
+use crate::effect::{
+    EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx, PlayerRef,
+};
+use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::eternal_cards_v1::EternalOpV1;
+use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardOpV1;
-use crate::state::{GameObject, GameState, ObjectStateV4, Zone};
+use crate::state::{GameObject, GameState, ObjectStateV4, Target, Zone};
 use serde::{Deserialize, Serialize};
 
 /// Each player's cards outside the game, sorted by card id. Absent from the
@@ -90,6 +94,36 @@ pub enum OutsideGameOpV1 {
     /// Reveal one `card` from the controller's cards outside the game and
     /// put it into their hand.
     PutIntoHandV1 { card: u16 },
+    /// Karn's choice of up to one face-up artifact card its controller owns
+    /// in exile, put into their hand. A choice.
+    KarnExileV1,
+    /// Learn's "discard a card to draw a card": the card to discard. A
+    /// choice.
+    LearnDiscardV1,
+}
+
+/// Resolution choices owned by this module, carried as
+/// `E3ChoiceKindV1::OutsideGameV1`. They are typed choices rather than
+/// generic object selections because the wish effects build them as they
+/// resolve.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OutsideGameChoiceV1 {
+    /// Karn, the Great Creator's -2: up to one face-up artifact card the
+    /// chooser owns in exile.
+    KarnExileV1,
+    /// Learn: exactly one card from the chooser's hand to discard.
+    LearnDiscardV1,
+}
+
+impl OutsideGameChoiceV1 {
+    /// Whether the candidates are hidden from the other player.
+    pub(crate) fn chooser_private(&self) -> bool {
+        matches!(self, Self::LearnDiscardV1)
+    }
+
+    pub(crate) fn public_purpose(&self) -> crate::rl::TargetSelectionPurposeV4 {
+        crate::rl::TargetSelectionPurposeV4::CardSelection
+    }
 }
 
 impl OutsideGameOpV1 {
@@ -207,7 +241,7 @@ pub(crate) fn drive(
         OutsideGameOpV1::KarnWishV1 => {
             // The exile choice may itself choose nothing, so it is also the
             // way to decline.
-            let mut options = vec![crate::eternal_vintage_v1::karn_exile_selection()];
+            let mut options = vec![outside(OutsideGameOpV1::KarnExileV1)];
             let cards = eligible(state, controller, |card| has_type(card, CardType::Artifact));
             options.extend(put_options(&cards));
             push_options(continuation, PlayerRef::Controller, options, &path);
@@ -215,20 +249,39 @@ pub(crate) fn drive(
         OutsideGameOpV1::LearnV1 => {
             let mut options = vec![decline()];
             if !state.players[controller.index()].hand.is_empty() {
-                options.push(EffectOp::Sequence(vec![
-                    EffectOp::DiscardCards {
-                        player: PlayerRef::Controller,
-                        count: 1,
-                    },
-                    EffectOp::DrawCards {
-                        player: PlayerRef::Controller,
-                        count: 1,
-                    },
-                ]));
+                options.push(outside(OutsideGameOpV1::LearnDiscardV1));
             }
             let lessons = eligible(state, controller, is_lesson);
             options.extend(put_options(&lessons));
             push_options(continuation, PlayerRef::Controller, options, &path);
+        }
+        OutsideGameOpV1::KarnExileV1 => {
+            let cards = exiled_artifacts(state, controller);
+            if !cards.is_empty() {
+                offer(
+                    continuation,
+                    OutsideGameChoiceV1::KarnExileV1,
+                    controller,
+                    cards,
+                    0,
+                    path,
+                );
+                return Ok(true);
+            }
+        }
+        OutsideGameOpV1::LearnDiscardV1 => {
+            let cards = crate::standard_cards_v1::hand_candidates(state, controller);
+            if !cards.is_empty() {
+                offer(
+                    continuation,
+                    OutsideGameChoiceV1::LearnDiscardV1,
+                    controller,
+                    cards,
+                    1,
+                    path,
+                );
+                return Ok(true);
+            }
         }
         OutsideGameOpV1::ExtrapolateV1 => {
             let cards = eligible(state, controller, |_| true);
@@ -262,6 +315,100 @@ pub(crate) fn drive(
         }
     }
     Ok(false)
+}
+
+/// The face-up artifact cards `player` owns in exile.
+fn exiled_artifacts(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    state
+        .exile
+        .iter()
+        .copied()
+        .filter(|&object| {
+            let live = state.objects.get(object);
+            live.owner == player
+                && live.zone == Zone::Exile
+                && live.v4.face_down_v1.is_none()
+                && has_type(live.card_def, CardType::Artifact)
+        })
+        .map(|object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Exile,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect()
+}
+
+/// Stages one of this module's selections of exactly `min` to one card.
+fn offer(
+    continuation: &mut EffectContinuation,
+    kind: OutsideGameChoiceV1,
+    player: PlayerId,
+    bindings: Vec<EffectObjectBinding>,
+    min: u16,
+    path: Vec<u16>,
+) {
+    let remaining = continuation.frames.clone();
+    crate::eternal_cards_v1::e3::offer(
+        continuation,
+        E3ChoiceV1 {
+            kind: E3ChoiceKindV1::OutsideGameV1(kind),
+            player,
+            candidates: bindings
+                .iter()
+                .map(|binding| Target::Object(binding.object))
+                .collect(),
+            bindings,
+            min,
+            max: 1,
+            ordered: false,
+            path,
+            remaining,
+        },
+    );
+}
+
+/// Applies an answered selection. `Ok(true)` would mean it staged a further
+/// choice; neither does.
+pub(crate) fn finish_selection(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    choice: &E3ChoiceV1,
+    kind: &OutsideGameChoiceV1,
+    bindings: Vec<EffectObjectBinding>,
+) -> Result<bool, String> {
+    match kind {
+        OutsideGameChoiceV1::KarnExileV1 => {
+            if let Some(card) = bindings.first() {
+                let live = state.objects.get(card.object);
+                if live.owner != choice.player || live.v4.face_down_v1.is_some() {
+                    return Err("Karn's exiled card changed".into());
+                }
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(card.object, Zone::Hand),
+                );
+            }
+            Ok(false)
+        }
+        OutsideGameChoiceV1::LearnDiscardV1 => {
+            let [card] = bindings.as_slice() else {
+                return Err("learn discards exactly one card".into());
+            };
+            event::propose_and_commit_batch(
+                state,
+                vec![ProposedEvent::zone_change(card.object, Zone::Graveyard)],
+            );
+            // The draw runs in the interpreter, where dredge may replace it.
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                },
+                path: choice.path.clone(),
+            });
+            Ok(false)
+        }
+    }
 }
 
 /// The plain executor: only the put is a plain leaf; the choices run in

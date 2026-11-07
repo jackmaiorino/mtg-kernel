@@ -289,11 +289,11 @@ fn learn_reveals_a_lesson_or_discards_to_draw() {
     cast(&mut state, class);
     choose_option(&mut state, P0, 3, 1);
     match settle(&mut state) {
-        Some(Decision::Discard { choices, .. }) => {
-            assert_eq!(choices, vec![bolt]);
-            act(&mut state, Action::Discard(vec![bolt]));
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(legal_targets, vec![Target::Object(bolt)]);
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(bolt)));
         }
-        other => panic!("expected the discard, got {other:?}"),
+        other => panic!("expected the card to discard, got {other:?}"),
     }
     settled(&mut state);
     assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);

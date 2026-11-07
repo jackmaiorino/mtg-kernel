@@ -482,8 +482,12 @@ projection or opponent observation sees them. Burning Wish, Karn, the Great Crea
 learn (First Day of Class) and Extrapolate the Impossible offer their eligible cards as
 effect options in card id order, the decline first where the effect is optional (Karn's
 exile choice is its first option and may choose nothing; learn adds "discard a card, then
-draw a card" while its controller has a card in hand). The chosen card leaves the list and
-enters its owner's hand as a new object that the opponent knows. Extrapolate's controller
+draw a card" while its controller has a card in hand). Karn's exile card and learn's discard
+are this module's typed resolution choices (`OutsideGameChoiceV1`), because the engine's
+generic object selection and nonterminal discard must sit at a fixed position of the card's
+own program, while these options are built as the effect resolves; learn's draw still runs in
+the interpreter, so dredge can replace it. The chosen card leaves the list and enters its
+owner's hand as a new object that the opponent knows. Extrapolate's controller
 picks two different names one at a time and the opponent picks between them by index. Known
 gap: policy observation v5 describes an effect option only by its index, so a policy reads
 the option order from its own sideboard; the opponent does not observe Extrapolate's two
