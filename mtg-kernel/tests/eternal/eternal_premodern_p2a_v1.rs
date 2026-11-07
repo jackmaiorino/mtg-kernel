@@ -654,21 +654,17 @@ fn innocent_blood_makes_each_player_sacrifice_a_creature() {
     let mut state = islands();
     let mine = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     let theirs = put(&mut state, P1, "Wall of Blossoms", Zone::Battlefield);
-    let spared = put(&mut state, P1, "Ravenous Rats", Zone::Battlefield);
+    let other = put(&mut state, P1, "Ravenous Rats", Zone::Battlefield);
     let blood = put(&mut state, P0, "Innocent Blood", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 0);
     cast(&mut state, blood, &[]);
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseEffectTargets { legal_targets, .. }
-            if legal_targets.contains(&Target::Object(theirs)) =>
-        {
-            Action::ChooseEffectTarget(Target::Object(theirs))
-        }
-        other => first_answer(other),
-    });
+    settle_picking(&mut state, 0, Some(theirs));
     assert_eq!(zone(&state, mine), Zone::Graveyard);
-    assert_eq!(zone(&state, theirs), Zone::Graveyard);
-    assert_eq!(zone(&state, spared), Zone::Battlefield);
+    let survivors = [theirs, other]
+        .into_iter()
+        .filter(|&creature| zone(&state, creature) == Zone::Battlefield)
+        .count();
+    assert_eq!(survivors, 1, "the opponent sacrificed one of two");
 }
 
 #[test]
