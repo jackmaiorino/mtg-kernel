@@ -1921,6 +1921,26 @@ def close_handoffs(plan, root):
     return closed
 
 
+def release_ended_boxes(plan, root):
+    """Independent plans: an outage w5box opened for a chain that has since ended (END written, no live instance;
+    with handoff off only an OOM kill opens one) is closed, so the node's other chains thaw. No filler is started."""
+    node = w5box.NodeLog(Path(root) / 'state')
+    if not node.path.exists():
+        return []
+    closed = []
+    with node.locked():
+        records, torn = node.read()
+        for slot, outage in sorted(w5box.NodeLog.state(records, torn)['open_outages'].items()):
+            n = outage.get('chain')
+            if outage.get('handoff') and n in plan['chains'] and read_end(root, n) is not None and not live(root, n):
+                node.append({'event': 'restored', 'outage_id': outage['id'], 'box_slot': slot, 'chain': n,
+                             'how': 'chain-ended-independent', 'source': 'w5-chains'})
+                closed.append(slot)
+    if closed:
+        w5box.enforce_node(read(fill_plan(plan)), node, 'chain-ended-independent')
+    return closed
+
+
 def fill_plan(plan):
     """A measured arm's w5box plan (every plan of a stage carries the same filler and roots)."""
     return next(spec['w5box_plan']['path'] for a, spec in sorted(plan['arms'].items())
@@ -2073,7 +2093,11 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
     report['kills'] = enforce_ends(plan, root)
-    report['fills'] = occupancy(plan, root) if fills and not plan.get('independent') else None
+    if plan.get('independent'):
+        report['fills'] = None
+        report['released_boxes'] = release_ended_boxes(plan, root)
+    else:
+        report['fills'] = occupancy(plan, root) if fills else None
     report['purged'] = purge_hold(root, plan['hold_days'], now)
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]

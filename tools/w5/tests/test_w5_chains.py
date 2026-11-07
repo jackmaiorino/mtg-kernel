@@ -180,6 +180,23 @@ class ChainTests(unittest.TestCase):
         with self.assertRaises(chains.Stop):
             chains.make_plan(jwrite(self.node.t / 'extra2.json', dict(inputs, label='extra2')))
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'the w5box node log is Linux only')
+    def test_independent_plan_thaws_after_an_oom_end(self):
+        path, plan = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'},
+                                          'c2': {'arm': 'C', 'slot': 1, 'seed_root': 'oc/c2'}},
+                                    c_wall_seconds=1.5, independent=True, label='indepoom')
+        node = w5box.NodeLog(self.node.root / 'state')
+        with node.locked():
+            node.append({'event': 'outage-start', 'box_slot': 0, 'handoff': True, 'id': 'c1/0/handoff/1',
+                         'chain': 'c1', 'instance': 0, 'reason': 'oom', 'affected': []})
+        self.assertIn(0, w5box.NodeLog.state(*node.read())['open_outages'])
+        report = chains.cycle(plan, path)
+        self.assertEqual(report['released_boxes'], [])  # c1 has not ended: the outage stays
+        jwrite(self.node.root / 'chains' / 'c1' / 'END.json', {'chain': 'c1', 'reason': 'chain-failure'})
+        report = chains.cycle(plan, path)
+        self.assertEqual(report['released_boxes'], [0])
+        self.assertEqual(w5box.NodeLog.state(*node.read())['open_outages'], {})
+
     def test_plan_pins_the_arm_files_and_is_idempotent(self):
         path, plan = self.node.stage0()
         first = chains.sha(path)
