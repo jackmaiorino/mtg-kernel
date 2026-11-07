@@ -83,6 +83,15 @@ def main():
         # An S source at its initial train state has no checkpoint; `s_learner.initial` pins it (s_learner_v1.rs).
         pinned = source['checkpoint'] or source['s_learner']['initial']
         assert h(pinned['path']) == pinned['sha256'], 'source differs'
+        # A named opponent with a checkpoint (a CG ladder member): its pin is checked, as the native collection
+        # boundary does, and its hash enters the output checkpoint, so a chain's states depend on its roster.
+        named = {o['id']: o.get('source') for o in cfg.get('opponents', [])}
+        played = []
+        for e in item['episodes']:
+            src = named.get(e['opponent'].get('id')) if e['opponent'].get('kind') == 'fixed' else None
+            if src and src.get('checkpoint'):
+                assert h(src['checkpoint']['path']) == src['checkpoint']['sha256'], 'opponent differs'
+                played.append(src['checkpoint']['sha256'])
         burn(knob(cfg, 'burn', x) or 0.0)
         time.sleep(knob(cfg, 'sleep', x) or 0.0)
         (a / 'collect').mkdir(parents=True, exist_ok=True)
@@ -92,8 +101,10 @@ def main():
         if x:  # EX1's search-target sidecar beside the trajectory
             (a / 'collect' / 'ex1-0000.json').write_text(json.dumps({'ids': ids, 'targets': [[0.25, 0.75]]}))
         ck = a / 'update' / 'checkpoint.json'
-        ck.write_text(json.dumps({'from': pinned['sha256'], 'ids': ids,
-                                  'search': (cfg.get('ex1') or {}).get('w5')}))
+        content = {'from': pinned['sha256'], 'ids': ids, 'search': (cfg.get('ex1') or {}).get('w5')}
+        if played:
+            content['opponents'] = played
+        ck.write_text(json.dumps(content))
         c = a / 'collect' / 'collection.json'
         collection = {'collection_elapsed_seconds': 0.1, 'trajectories': [{'path': ep.as_posix(), 'sha256': h(ep)}]}
         if x:  # the sidecars' pins, as the native collector records them

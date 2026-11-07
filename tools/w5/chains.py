@@ -24,7 +24,10 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
 `x_cap_seconds`, `r_nom_usec`, `c_wall_seconds` (Stage 0 only; Stage 1 is the frozen 7 days), and
 - `arms`: per arm (C, X8, XS, and always F, the frozen filler): `parent` (dose record: the source the chain starts
   from), `workers`, `memory_max_bytes`, `bytes_per_update`, optional `segment_updates`, `base` and `throughput`
-  (a `w5-box-throughput/v1` record), and for X arms `budget`, `coefficient`, `dose`;
+  (a `w5-box-throughput/v1` record), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
+  Stage 0 plans) `ladder` (`stride`, `roster_max`, `replaces`, `test_stride`, and for a fork `history`: pgrow.py;
+  the base's fixed-parent share plays a per-segment roster drawn from the chain's own checkpoint ladder, each state
+  verified before use);
 - `chains`: name to `{arm, slot, seed_root, pair}` (F: a filler box, no pair, run by supervise through `w5box.py
   fill`, not by `run`; XS in Stage 1b: `partner`, the Stage 1a C
   chain in the same root; Stage 0 chains may omit the pair, e.g. a box throughput run with every box on one
@@ -146,6 +149,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'ex1'))
+import pgrow  # noqa: E402
 import qual  # noqa: E402
 import retention  # noqa: E402
 import w5box  # noqa: E402
@@ -159,12 +163,13 @@ END_SCHEMA = 'w5-chain-end/v1'
 PAIR_SCHEMA = 'w5-pair/v1'
 SEGCHECK_SCHEMA = 'w5-segcheck/v1'
 ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
-        'CS': ('C', 'C'), 'CP': ('C', 'C')}  # recipe, retention arm
-# CS and CP: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S parent, a pool base)
-EXTRA_C = ('CS', 'CP')
+        'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C')}  # recipe, retention arm
+# CS, CP and CG: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S parent, a pool
+# base). CG (P-grow, pgrow.py) also plays its own checkpoint ladder in the base's fixed-parent share.
+EXTRA_C = ('CS', 'CP', 'CG')
 MEASURED = ('C', 'X8', 'XS') + EXTRA_C
 STAGES = ('0', '1a', '1b')
-SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256}
+SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256}
 HOT_CAP_BYTES = 60 * 10**9
 BYTE_CAP = 560 * 10**9
 HOLD_DAYS = 7
@@ -183,7 +188,7 @@ EXIT_STOP, EXIT_ROOM, EXIT_FAILED = 5, 7, 8
 FAILED_ENDS = ('chain-failure', 'operator')  # END reasons whose recorded last valid boundary is the endpoint
 PAIR_ONLY_KEYS = {'ex1', 'preparation_workers', 'output_directory', 'chain_ledger', 'collection_workers'}
 TOOL_FILES = {'chains.py': HERE / 'chains.py', 'retention.py': HERE / 'retention.py', 'xact.py': HERE / 'xact.py',
-              'replay_sample.py': HERE / 'replay_sample.py',
+              'replay_sample.py': HERE / 'replay_sample.py', 'pgrow.py': HERE / 'pgrow.py',
               'w5box.py': HERE / 'w5box.py', 'qual.py': HERE.parent / 'ex1' / 'qual.py',
               'target_ref.py': HERE.parent / 'ex1' / 'target_ref.py'}
 NAME = re.compile(r'[a-z0-9][a-z0-9-]{0,31}')
@@ -344,16 +349,39 @@ def quarantine(native, dest_root):
     return moved
 
 
-def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_source=None):
+def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_source=None, ladder=None):
     """The arm's segment config: EX1's construction keyed by the seed root (xact.build_config), sliced at the
-    global update `offset`; `source` replaces the parent for every segment after the first."""
+    global update `offset`; `source` replaces the parent for every segment after the first. A CG arm's replaced
+    episodes then play its ladder roster (pgrow.apply): `ladder` is the chain's verified ladder to date
+    (pgrow.ladder), by default the parent alone (a chain's first segments, segcheck)."""
     x = arm['x'] or {}
-    cfg = xact.build_config(read(arm['base']['path']), read(arm['parent']['path']), native, seed_root, offset,
+    parent = read(arm['parent']['path'])
+    cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
                             updates, arm['workers'], x.get('budget'), x.get('coefficient'), x.get('dose', 'primary'),
                             ledger_source)
     if source is not None:
         cfg['initial_source'] = source
+    if arm.get('ladder'):
+        try:
+            states = ladder if ladder is not None else \
+                [(i, src) for i, src, _ in pgrow.history_states(arm['ladder'], parent['source'])] + \
+                [(pgrow.member_id(0), copy.deepcopy(parent['source']))]
+            pgrow.apply(cfg, arm['ladder'], states, seed_root, offset // arm['segment_updates'], offset)
+        except pgrow.LadderError as exc:
+            raise Stop(str(exc)) from exc
     return cfg
+
+
+def chain_ladder(arm, man, cdir, offset):
+    """A CG chain's verified ladder to date at `offset` (pgrow.ladder; LADDER.json in the chain directory)."""
+    try:
+        spec = arm['ladder']
+        return pgrow.ladder(read(arm['parent']['path'])['source'], man['segments'], offset, spec,
+                            Path(cdir) / 'LADDER.json', next_source, man['chain'],
+                            lambda ids: pgrow.roster(man['seed_root'], offset // arm['segment_updates'], ids,
+                                                     spec['roster_max']))
+    except pgrow.LadderError as exc:
+        raise Stop(str(exc)) from exc
 
 
 def run_trainer(arm, config_path, deadline=None, logs=None):
@@ -399,8 +427,11 @@ def history_relative(base):
 
 def recipe_identity(arm):
     """What a chain's segments depend on; a manifest with segments refuses a plan that changes it."""
-    return {k: arm[k] for k in ('arm', 'recipe', 'base', 'parent', 'x', 'workers', 'segment_updates',
-                                'c_wall_seconds')} | {'trainer_sha256': arm['trainer']['sha256']}
+    identity = {k: arm[k] for k in ('arm', 'recipe', 'base', 'parent', 'x', 'workers', 'segment_updates',
+                                    'c_wall_seconds')} | {'trainer_sha256': arm['trainer']['sha256']}
+    if arm.get('ladder'):
+        identity['ladder'] = arm['ladder']  # absent otherwise: existing manifests unchanged
+    return identity
 
 
 def pair_difference(a, b, allowed=PAIR_ONLY_KEYS):
@@ -485,8 +516,18 @@ def make_plan(inputs_path):
                 f'{a}: {retention.TRAJECTORY_SEGMENTS + 1 + GUARD_SEGMENTS} segments of {length} updates at {bpu} '
                 'bytes pass the 60 GB per-chain hot cap')
         base = pin(spec.get('base', inputs['base']))
-        require(not history_relative(read(base['path'])), f'{a}: the base uses history-relative opponents, which '
+        base_doc = read(base['path'])
+        require(not history_relative(base_doc), f'{a}: the base uses history-relative opponents, which '
                 'segments would change')
+        ladder = None
+        if a == 'CG':
+            try:
+                ladder = pgrow.check_spec(spec.get('ladder'), base_doc, length, retention.C_LONG_STRIDE,
+                                          read(spec['parent'])['source'], pin)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
+        else:
+            require('ladder' not in spec, f'{a}: only a CG arm plays a checkpoint ladder')
         x = None
         if recipe == 'X':
             require(type(spec.get('budget')) is int and spec['budget'] > 0 and spec.get('dose') in xact.DOSES
@@ -509,6 +550,8 @@ def make_plan(inputs_path):
                     f'{retention.FULL_STRIDE}, so segment ends hold every ladder state')
             require(r_nom is None, f'{a}: scratch keeps no look state (no r_nom_usec)')
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
+        if ladder is not None:
+            doc['ladder'] = ladder  # CG only: other arm files unchanged
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
@@ -680,6 +723,8 @@ def load_arm(path):
     require(arm['tools'] == tools_shas(), 'the W5 tools differ from the arm file pins')
     for key in ('trainer', 'base', 'parent'):
         check_pin(arm[key], key)
+    if (arm.get('ladder') or {}).get('history'):
+        check_pin(arm['ladder']['history'], 'the ladder history')
     if arm['frozen']:
         check_pin(arm['frozen'], 'the frozen-constants record')
     return arm
@@ -783,7 +828,8 @@ def current_segment(arm, man, man_path, ledger_source):
         s = len(segs)
     native = cdir / f'seg-{s:05d}'
     source = next_source(segs[s - 1]['root']) if s > 0 else None
-    cfg = arm_config(arm, man['seed_root'], s * length, length, native, source, ledger_source)
+    ladder = chain_ladder(arm, man, cdir, s * length) if arm.get('ladder') else None
+    cfg = arm_config(arm, man['seed_root'], s * length, length, native, source, ledger_source, ladder)
     path = cdir / 'segments' / f'seg-{s:05d}.json'
     if path.exists():
         require(read(path) == cfg, f'{path} differs from the segment config derived from the pins')
