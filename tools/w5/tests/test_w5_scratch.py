@@ -187,7 +187,7 @@ class Scratch(unittest.TestCase):
 
     def test_plan_accepts_scratch_only_for_c_in_stage_0(self):
         src = Path(chains.__file__).read_text(encoding='utf-8')
-        self.assertIn("a == 'C' and stage == '0'", src)
+        self.assertIn("recipe == 'C' and a != 'F' and stage == '0'", src)
 
 
 if __name__ == '__main__':
