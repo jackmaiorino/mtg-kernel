@@ -106,9 +106,18 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
         assert_eq!(subtype.stable_id(), id);
         assert_eq!(canonical_native_type(subtype), Some(kind));
     }
+    // Wave P2d's ids start at 240 (209 to 239 belong to wave P2a).
+    assert_eq!(Subtype::Soltari.stable_id(), 240);
+    assert_eq!(native_subtype(240), Some(Subtype::Soltari));
+    assert_eq!(
+        canonical_native_type(Subtype::Soltari),
+        Some(CreatureTypeV60::Soltari)
+    );
     assert_eq!(canonical.len(), 152);
     assert!(native_subtype(209).is_none());
     assert!(Subtype::from_stable_id(209).is_none());
+    assert!(native_subtype(241).is_none());
+    assert!(Subtype::from_stable_id(241).is_none());
     assert!(Subtype::from_stable_id(u16::MAX).is_none());
     for (alias, normal, expected) in [
         (Subtype::BirdAllCaps, Subtype::Bird, CreatureTypeV60::Bird),

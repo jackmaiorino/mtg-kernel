@@ -21454,6 +21454,462 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/ElephantToken.java",
    "is_token": true
+  },
+  {
+   "name": "Beloved Chaplain",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "protection_from_creatures"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BelovedChaplain.java"
+  },
+  {
+   "name": "Devoted Caretaker",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "protection_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DevotedCaretaker.java"
+  },
+  {
+   "name": "Glowrider",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie",
+    "premodern-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_increase"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Glowrider.java"
+  },
+  {
+   "name": "Mother of Runes",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "protection_grant",
+    "color_choice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MotherofRunes.java"
+  },
+  {
+   "name": "Nova Cleric",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "board_wipe"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NovaCleric.java"
+  },
+  {
+   "name": "Shared Triumph",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "choose_creature_type",
+    "anthem"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SharedTriumph.java"
+  },
+  {
+   "name": "Soltari Monk",
+   "engine_capability": "full",
+   "mana_cost": "{W}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Soltari",
+    "Monk",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "protection_from_color",
+    "shadow"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SoltariMonk.java"
+  },
+  {
+   "name": "Soltari Priest",
+   "engine_capability": "full",
+   "mana_cost": "{W}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Soltari",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "protection_from_color",
+    "shadow"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SoltariPriest.java"
+  },
+  {
+   "name": "Avalanche Riders",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Nomad"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "haste",
+    "echo",
+    "etb_trigger",
+    "land_destruction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AvalancheRiders.java"
+  },
+  {
+   "name": "Earthquake",
+   "engine_capability": "full",
+   "mana_cost": "{X}{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "damage_each_creature",
+    "damage_each_player"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/Earthquake.java"
+  },
+  {
+   "name": "Firebolt",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "damage",
+    "flashback"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/Firebolt.java"
+  },
+  {
+   "name": "Ghitu Encampment",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R"
+   ],
+   "decks": [
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "land_animation",
+    "activated_ability",
+    "first_strike"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GhituEncampment.java"
+  },
+  {
+   "name": "Pillage",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target",
+    "land_destruction",
+    "cant_be_regenerated"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/Pillage.java"
+  },
+  {
+   "name": "Stone Rain",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target",
+    "land_destruction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StoneRain.java"
+  },
+  {
+   "name": "Veteran Brawlers",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "attack_restriction",
+    "block_restriction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VeteranBrawlers.java"
   }
  ]
 }
