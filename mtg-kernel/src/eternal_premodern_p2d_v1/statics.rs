@@ -13,7 +13,7 @@ use crate::eternal_legacy_e9a_v1::{
 };
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
-use crate::state::{GameState, StackItemKind, Zone};
+use crate::state::{GameState, Zone};
 
 // ---- Protection and shadow ---------------------------------------------------------------
 
@@ -81,11 +81,9 @@ fn source_is_instant_or_sorcery_spell(state: &GameState, source: ObjectId) -> bo
         return false;
     }
     match live.zone {
-        Zone::Stack => state
-            .stack
-            .iter()
-            .any(|item| item.kind == StackItemKind::Spell && item.source == source),
-        Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Library => true,
+        // A card on the stack is a spell, also while it resolves (its item has
+        // left the stack by then).
+        Zone::Stack | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Library => true,
         _ => false,
     }
 }

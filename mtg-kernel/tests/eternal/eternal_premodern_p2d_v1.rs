@@ -602,6 +602,7 @@ fn devoted_caretaker_protects_from_instant_and_sorcery_spells() {
     act(&mut state, Action::CastSpell(quake));
     announce_x(&mut state, 1);
     settled(&mut state);
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
     assert_eq!(
         state.objects.get(elves).damage,
         0,
