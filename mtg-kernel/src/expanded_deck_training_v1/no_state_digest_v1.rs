@@ -685,7 +685,7 @@ pub(super) fn names_another_file_v1(checkpoint: &[u8]) -> Result<bool, String> {
     #[cfg(test)]
     PROBES_FOR_TEST_V1.with(|probes| probes.set(probes.get() + 1));
     let view = super::checkpoint_container_v1::metadata_view_v1(checkpoint)?;
-    let probe: ArchiveProbeV1 = serde_json::from_slice(view).map_err(err)?;
+    let probe: ArchiveProbeV1 = serde_json::from_slice(&view).map_err(err)?;
     Ok(probe.archive_distillation.is_some())
 }
 

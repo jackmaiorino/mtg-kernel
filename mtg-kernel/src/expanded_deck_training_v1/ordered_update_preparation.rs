@@ -285,9 +285,17 @@ pub(super) fn read_trajectories_v1(
                     parsed_ahead.fetch_add(1, Ordering::Relaxed);
                     episode
                 }
-                None => serde_json::from_slice(&bytes).map_err(err)?,
+                None => {
+                    serde_json::from_slice(&record_envelope_v1::open_v1(&bytes, MAX_FILE_BYTES)?)
+                        .map_err(err)?
+                }
             };
-        Ok((bytes.len() as u64, episode))
+        // The batch bound counts record bytes, sealed (`record_envelope_v1`)
+        // or not.
+        Ok((
+            record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?,
+            episode,
+        ))
     };
     let episodes = if workers == 1 {
         (0..pins.len())

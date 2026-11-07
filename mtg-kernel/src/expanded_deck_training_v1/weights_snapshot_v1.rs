@@ -44,8 +44,11 @@ fn parameters_sha256_v1(parameters: &[ParameterBitsV1]) -> Result<String, String
 }
 
 /// Cuts a weights-only snapshot from the pinned full checkpoint `input`.
+/// A sealed checkpoint (`record_envelope_v1`) is opened first; the snapshot
+/// itself is always written unsealed.
 pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value, String> {
-    let bytes = read_pinned_bytes(input)?;
+    let sealed = read_pinned_bytes(input)?;
+    let bytes = super::record_envelope_v1::open_v1(&sealed, super::MAX_FILE_BYTES)?;
     ensure(
         decode_weights_snapshot_v1(&bytes).is_err(),
         "the input is already a weights snapshot",

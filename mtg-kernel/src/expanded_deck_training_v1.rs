@@ -117,12 +117,14 @@ mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
+pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub mod weights_snapshot_v1;
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
+pub use record_envelope_v1::RecordEnvelopeV1;
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
 };
@@ -3439,6 +3441,11 @@ pub enum ExpandedTrainingCommandV1 {
         /// EX1's collection hook; omitted when absent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ex1: Option<ex1_collect_v1::Ex1CollectOptionsV1>,
+        /// The record envelope of the published trajectories
+        /// (`record_envelope_v1`); omitted for the default (none), so every
+        /// existing command keeps its bytes and publishes plain JSON.
+        #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
+        record_envelope: RecordEnvelopeV1,
         output_directory: PathBuf,
     },
     Update {
@@ -3521,6 +3528,11 @@ pub enum ExpandedTrainingCommandV1 {
         /// written before the default switch keeps its bytes.
         #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_auto")]
         record_format: CheckpointRecordFormatV1,
+        /// The record envelope of the published checkpoint
+        /// (`record_envelope_v1`); omitted for the default (none), so every
+        /// existing command keeps its bytes and publishes the plain record.
+        #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
+        record_envelope: RecordEnvelopeV1,
         output_directory: PathBuf,
     },
     /// Separate E policy supervision, full Adam and unchanged sampler.
@@ -3700,6 +3712,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
+            RecordEnvelopeV1::None,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -3725,6 +3738,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             Some(teacher),
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
+            RecordEnvelopeV1::None,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
             source,
@@ -3752,6 +3766,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
+            RecordEnvelopeV1::None,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -3779,6 +3794,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             Some(ex1),
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
+            RecordEnvelopeV1::None,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -3889,6 +3905,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             collection_sampler,
             training_math,
             ex1,
+            record_envelope,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
@@ -3898,6 +3915,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             collection_sampler,
             training_math,
             ex1,
+            record_envelope,
             output_directory,
         ),
         ExpandedTrainingCommandV1::Collect {
@@ -4072,6 +4090,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             training_math,
             record_format,
+            RecordEnvelopeV1::None,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -4086,6 +4105,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             line_b,
             training_math,
             record_format,
+            record_envelope,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
@@ -4106,6 +4126,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 None,
                 training_math,
                 record_format,
+                record_envelope,
             )
         }
     }
@@ -4274,6 +4295,7 @@ fn execute_update_v1(
     soft_q: Option<SoftQTeacherOptionsV1>,
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
+    record_envelope: RecordEnvelopeV1,
 ) -> Result<Value, String> {
     execute_update_inner_v1(
         source,
@@ -4293,6 +4315,7 @@ fn execute_update_v1(
         None,
         training_math,
         record_format,
+        record_envelope,
     )
 }
 
@@ -4318,6 +4341,7 @@ fn execute_update_inner_v1(
     ex1: Option<ex1_update_v1::Ex1UpdateOptionsV1>,
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
+    record_envelope: RecordEnvelopeV1,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -5469,15 +5493,19 @@ fn execute_update_inner_v1(
     // choice cannot disagree with the scope gate; an explicit v2 outside the
     // gate is refused by name.
     let record_format = record_format.resolve_v1(&checkpoint)?;
-    let checkpoint_pin = match record_format {
+    // An envelope (`record_envelope_v1`) seals exactly these record bytes;
+    // the default publishes them as they are.
+    let record = match record_format {
         CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => {
-            publish_json(&output_directory, "checkpoint.json", &checkpoint)?
+            serialize_json_v1("checkpoint.json", &checkpoint)?
         }
-        CheckpointRecordFormatV1::V2 => {
-            let bytes = checkpoint_container_v1::encode_v1(&checkpoint)?;
-            publish_json_bytes_v1(&output_directory, "checkpoint.json", &bytes)?
-        }
+        CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint)?,
     };
+    let checkpoint_pin = publish_json_bytes_v1(
+        &output_directory,
+        "checkpoint.json",
+        &record_envelope.seal_owned_v1(record)?,
+    )?;
     // Readback exercises the real same-format continuation loader.
     let resumed_source = ExpandedModelSourceV1 {
         checkpoint: Some(checkpoint_pin.clone()),
@@ -5708,7 +5736,7 @@ fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
     let bytes = read_pinned_bytes(pin)?;
-    serde_json::from_slice(checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
+    serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
@@ -5826,9 +5854,11 @@ pub fn convert_checkpoint_v1_to_v2(
 }
 
 /// Exports a pinned checkpoint container as its v1 JSON checkpoint at
-/// `output`: the bytes `publish_json` writes for the same checkpoint.
+/// `output`: the bytes `publish_json` writes for the same checkpoint. A
+/// sealed container (`record_envelope_v1`) is opened first.
 pub fn export_checkpoint_v2_to_v1(v2: &PinnedFileV1, output: &Path) -> Result<Value, String> {
-    let bytes = read_pinned_bytes(v2)?;
+    let sealed = read_pinned_bytes(v2)?;
+    let bytes = record_envelope_v1::open_v1(&sealed, MAX_FILE_BYTES)?;
     ensure(
         checkpoint_container_v1::is_container_v1(&bytes),
         "the input is not a checkpoint container",

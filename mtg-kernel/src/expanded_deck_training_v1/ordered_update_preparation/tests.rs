@@ -503,6 +503,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
         training_math: TrainingMathV1::PlatformLibm,
         record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
+        record_envelope: Default::default(),
         output_directory: PathBuf::from("prepared-output"),
     };
     let value = serde_json::to_value(explicit).unwrap();

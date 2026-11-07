@@ -403,6 +403,7 @@ fn the_default_record_format_is_never_serialized() {
         line_b: None,
         training_math: TrainingMathV1::PlatformLibm,
         record_format,
+        record_envelope: Default::default(),
         output_directory: "out".into(),
     };
     let auto = serde_json::to_string(&prepared(CheckpointRecordFormatV1::default())).unwrap();

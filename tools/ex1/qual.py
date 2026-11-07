@@ -18,6 +18,7 @@ import copy
 import hashlib
 import json
 import statistics
+import subprocess
 import sys
 from pathlib import Path
 
@@ -31,8 +32,30 @@ KAPPA = 1.0
 MASK = (1 << 63) - 1
 
 
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def open_record(data):
+    """The record bytes of a published file: a sealed record (mtg-kernel `record_envelope_v1`, one zstd frame of
+    the record's exact bytes) opened, anything else as it is. Uses Python 3.14's compression.zstd, else the
+    zstandard package, else the zstd command line tool."""
+    if not data.startswith(ZSTD_MAGIC):
+        return data
+    try:
+        from compression import zstd
+        return zstd.decompress(data)
+    except ImportError:
+        pass
+    try:
+        import zstandard
+        return zstandard.ZstdDecompressor().decompress(data)
+    except ImportError:
+        pass
+    return subprocess.run(["zstd", "-q", "-d", "-c"], input=data, stdout=subprocess.PIPE, check=True).stdout
+
+
 def read(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return json.loads(open_record(Path(path).read_bytes()).decode("utf-8"))
 
 
 def sha(path):

@@ -1,12 +1,16 @@
 """W5 tools: the w5-xact-v1 mirror and the retention, budget and selection rules, on synthetic chain trees."""
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'ex1'))
 import capture0b  # noqa: E402
+import qual  # noqa: E402
 import retention  # noqa: E402
 import xact  # noqa: E402
 
@@ -615,6 +619,39 @@ class Capture0bTests(unittest.TestCase):
         self.assertFalse(capture0b.parity(self.root / 'late', self.root / 'vl')['equal'])
         with self.assertRaises(SystemExit):  # 0b-only jobs have no value-leaf records
             capture0b.convert_vl(self.root / 'plain', 16000, 'x', 'b' * 64)
+
+
+def zstd_frame(data):
+    """One zstd frame of `data` with its content size, or None when no zstd is available here."""
+    try:
+        from compression import zstd
+        return zstd.compress(data)
+    except ImportError:
+        pass
+    try:
+        import zstandard
+        return zstandard.ZstdCompressor().compress(data)
+    except ImportError:
+        pass
+    if shutil.which('zstd'):
+        return subprocess.run(['zstd', '-q', '-c'], input=data, stdout=subprocess.PIPE, check=True).stdout
+    return None
+
+
+class RecordEnvelopeTests(unittest.TestCase):
+    def test_qual_reads_plain_and_sealed_records(self):
+        record = json.dumps({'decisions': [{'step': 1, 'tensor': [0, 1065353216] * 50}]}).encode()
+        frame = zstd_frame(record)
+        if frame is None:
+            self.skipTest('no zstd implementation on this host')
+        self.assertTrue(frame.startswith(qual.ZSTD_MAGIC))
+        self.assertEqual(qual.open_record(frame), record)
+        self.assertEqual(qual.open_record(record), record)  # a plain record is returned as it is
+        with tempfile.TemporaryDirectory() as tmp:
+            sealed, plain = Path(tmp) / 'sealed.json', Path(tmp) / 'plain.json'
+            sealed.write_bytes(frame)
+            plain.write_bytes(record)
+            self.assertEqual(qual.read(sealed), qual.read(plain))
 
 
 if __name__ == '__main__':
