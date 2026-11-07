@@ -430,7 +430,8 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
 /// as a mask.
 pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     // Printed protection from a color (wave P1a).
-    let printed = crate::eternal_premodern_p1a_v1::statics::protection_mask(state, host);
+    let printed = crate::eternal_premodern_p1a_v1::statics::protection_mask(state, host)
+        | crate::eternal_premodern_p2c_v1::statics::protection_mask(state, host);
     printed | granted_protection_mask(state, host)
 }
 

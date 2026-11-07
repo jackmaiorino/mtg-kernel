@@ -34,6 +34,7 @@ mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_p1a_v1;
 mod build_eternal_p1b_v1;
+mod build_eternal_p2c_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -3572,7 +3573,7 @@ fn special_for(name: &str) -> Special {
         _ => fdn_program_for(name)
             .or_else(|| standard_program_for(name))
             .or_else(|| build_standard_v1::special_for(name))
-            .or_else(|| build_eternal_v1::special_for(name))
+            .or_else(|| build_eternal_p2c_v1::special_for(name))
             .unwrap_or(Special::None),
     }
 }
@@ -4541,7 +4542,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::TOXIC_1");
     }
     keywords.extend(build_standard_v1::keywords_for(&card.name));
-    keywords.extend(build_eternal_v1::keywords_for(&card.name));
+    keywords.extend(build_eternal_p2c_v1::keywords_for(&card.name));
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -6404,7 +6405,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             max_activations_per_turn: None,
         }],
         _ => match build_standard_v1::activated_ability_recipes_for(name) {
-            [] => build_eternal_v1::activated_ability_recipes_for(name),
+            [] => build_eternal_p2c_v1::activated_ability_recipes_for(name),
             recipes => recipes,
         },
     }
@@ -7671,7 +7672,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
             "cast_spell:mode_before_targets:spell_you_dont_control_to_owners_hand|nonland_permanent_to_owners_hand|no_mode"
         }
         _ => match build_standard_v1::trigger_recipe_for(name) {
-            "none" => build_eternal_v1::trigger_recipe_for(name),
+            "none" => build_eternal_p2c_v1::trigger_recipe_for(name),
             recipe => recipe,
         },
     }
@@ -11503,6 +11504,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Specter" => "Subtype::Specter",
         "Shade" => "Subtype::Shade",
         "Mystic" => "Subtype::Mystic",
+        "Saproling" => "Subtype::Saproling",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

@@ -442,6 +442,9 @@ pub enum Subtype {
     Specter,
     Shade,
     Mystic,
+    /// Appended for the eternal catalog's Premodern wave P2c (Verdant
+    /// Force's Saproling token). Ids from 280 are reserved for this wave.
+    Saproling = 280,
 }
 
 impl Subtype {
@@ -816,6 +819,8 @@ impl Subtype {
         Subtype::Shade,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mystic,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Saproling,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1055,6 +1060,7 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
+            280 => Subtype::Saproling,
             _ => return None,
         })
     }
@@ -1273,6 +1279,7 @@ impl Subtype {
             Subtype::Specter => true,
             Subtype::Shade => true,
             Subtype::Mystic => true,
+            Subtype::Saproling => true,
         }
     }
 
@@ -1376,6 +1383,7 @@ impl Subtype {
                     | Subtype::Specter
                     | Subtype::Shade
                     | Subtype::Mystic
+                    | Subtype::Saproling
             )
         {
             return true;
@@ -3858,7 +3866,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xbaca_d3c1_a636_ec7d;
+        const EXPECTED_ETERNAL: u64 = 0xf179_3e17_1875_4acf;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

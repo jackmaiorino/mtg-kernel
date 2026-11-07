@@ -711,6 +711,11 @@ const ORCISH_BOWMASTERS_TRIGGERS: [TriggeredAbilityDef; 2] = [
 
 /// Triggered abilities of this module's cards.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+    // Premodern wave P2c's cards head the chain.
+    let p2c = crate::eternal_premodern_p2c_v1::triggers_for(name);
+    if !p2c.is_empty() {
+        return p2c;
+    }
     match name {
         MELDED_MOXITE => &MELDED_MOXITE_TRIGGERS,
         INVENTORS_AXE => &INVENTORS_AXE_TRIGGERS,
@@ -734,6 +739,10 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // Premodern wave P2c.
+    if let Some(spec) = crate::eternal_premodern_p2c_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Legolas's Quick Reflexes' trigger, granted to any creature (wave E9a).
     if let Some(spec) = crate::eternal_legacy_e9a_v1::granted_trigger_target_spec(effect) {
         return Some(spec);
@@ -1490,6 +1499,7 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_vintage_e7b_v1::statics::apply_entry_counters(state, object, input);
     crate::eternal_legacy_e8a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_legacy_e9a_v1::statics::apply_entry_counters(state, object, input);
+    crate::eternal_premodern_p2c_v1::statics::apply_entry_counters(state, object, input);
     crate::eternal_premodern_p1b_v1::statics::apply_entry_counters(state, object);
     crate::eternal_premodern_p1a_v1::statics::apply_entry_counters(state, object);
     let Some(name) = definition_name(state, object) else {

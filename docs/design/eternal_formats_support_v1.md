@@ -488,6 +488,7 @@ reporting as E1 to E9:
 | P0 | Snapshot, capture tool, the catalog reads both snapshots | 0 | Premodern 0% |
 | P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
 | P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census, 62% playable through sessions (Enchantress is a known gap) |
+| P2c | Reanimator, Full English Breakfast (in progress: 7 of 21 cards so far) | 7 | no deck is complete yet; see below |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -541,6 +542,17 @@ Known gaps:
 - Parallax Wave's leaves trigger does not check whether its abilities were active as it left.
 - An Opalescence or Sterling Grove entering by a path that skips the entry-counter hook is
   recorded at the next trigger collection instead.
+
+P2c is built in `src/eternal_premodern_p2c_v1.rs` (with a `statics` submodule) and
+`build_eternal_p2c_v1.rs`, which `build.rs` asks before `build_eternal_v1` and whose runtime
+tables head the `eternal_cards_v1` chains. So far it holds Akroma (printed protection from
+black and red joins the protection mask), Careful Study, Palinchron, Treva's Ruins (the Lair
+entry is Rith's Grove's), Triskelion ("enters with" counters), Unearth (with cycling) and
+Verdant Force (an each-upkeep trigger making Saproling tokens; `Subtype::Saproling = 280`). The
+other fourteen cards (Avatar of Woe, Battlefield Scrounger, Exhume, Hermit Druid, Karmic
+Guide, Krosan Reclamation, Life // Death, Petradon, Phantom Nishoba, Phyrexian Devourer,
+Putrid Imp, Reflecting Pool, Undiscovered Paradise, Volrath's Shapeshifter) are not
+implemented, so neither Reanimator nor Full English Breakfast is complete.
 
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
