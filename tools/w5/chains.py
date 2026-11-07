@@ -524,6 +524,7 @@ def make_plan(inputs_path):
         require(type(slot) is int and 0 <= slot < boxes and slot not in slots, f'{name}: bad or repeated slot')
         slots.add(slot)
         if a == 'F':
+            require(not independent, f'{name}: an independent plan has no filler boxes')
             require('pair' not in c, f'{name}: a filler has no pair')
             require(stage == '0' or seed_root == f'w5/filler{slot}', f'{name}: filler seed root is w5/filler<slot>')
         elif c.get('pair') is None:  # Stage 0 only: e.g. a box throughput run, every box on one seed root

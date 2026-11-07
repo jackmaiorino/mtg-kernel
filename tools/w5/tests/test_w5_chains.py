@@ -154,6 +154,10 @@ class ChainTests(unittest.TestCase):
             report = chains.cycle(plan, path)
         self.assertIsNone(report['fills'])
         with self.assertRaises(chains.Stop):
+            self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'},
+                                 'f2': {'arm': 'F', 'slot': 1, 'seed_root': 'oc/f2'}},
+                           c_wall_seconds=1.5, independent=True, label='indepf')
+        with self.assertRaises(chains.Stop):
             self.node.plan('1a', {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/chain1'},
                                   'x1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/chain1'}},
                            independent=True, label='indep1a')
