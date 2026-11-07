@@ -324,7 +324,12 @@ pub(super) fn read_trajectories_v1(
 /// (`verify_collection_opponent_sources_v1`). A source of any other kind, or
 /// whose checkpoint names a further file (a phase-1 archive-distillation
 /// parent), is not kept and loads in full every time.
-const OPPONENT_CACHE_ENTRIES: usize = 8;
+///
+/// 32 entries hold a W5 pool roster (17 fixed opponents and the current
+/// model) across iterations; at 8 the roster evicted itself and most pool
+/// episodes paid a full load. An entry holds one policy and its verified
+/// files (about 25 MB for net-8), so a full cache is under 1 GB.
+const OPPONENT_CACHE_ENTRIES: usize = 32;
 
 struct CachedOpponentV1 {
     source: ExpandedModelSourceV1,
