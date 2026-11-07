@@ -631,7 +631,11 @@ fn bolas_citadel_casts_force_of_will_from_the_top_for_life() {
     cast(&mut state, force, &[Target::Object(bolt)]);
     settled(&mut state);
     assert_eq!(zone(&state, force), Zone::Graveyard);
-    assert_eq!(zone(&state, bolt), Zone::Graveyard, "the Bolt was countered");
+    assert_eq!(
+        zone(&state, bolt),
+        Zone::Graveyard,
+        "the Bolt was countered"
+    );
     assert_eq!(
         state.players[0].life, 15,
         "five life for Force of Will and no Bolt damage"
