@@ -451,6 +451,7 @@ reporting as E1 to E9:
 | P0 | Snapshot, capture tool, the catalog reads both snapshots | 0 | Premodern 0% |
 | P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
 | P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census, 62% playable through sessions (Enchantress is a known gap) |
+| P2d | White Weenie, Mono-Red Control (Beloved Chaplain, Devoted Caretaker, Glowrider, Mother of Runes, Nova Cleric, Shared Triumph, Soltari Monk, Soltari Priest, Avalanche Riders, Earthquake, Firebolt, Ghitu Encampment, Pillage, Stone Rain, Veteran Brawlers) | 15 | two decks, 2% of the field |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -508,6 +509,50 @@ Known gaps:
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
 so the catalog needs no format legality check.
+
+P2d is built in `src/eternal_premodern_p2d_v1.rs` (with `statics` and `targets` submodules)
+and `build_eternal_p2d_v1.rs`, whose tables sit between P1b's and P1a's (subtype ids from 240;
+P2a takes 209 upward). New primitives:
+
+- Shadow (Soltari Monk and Priest) joins Dauthi Voidwalker's rule in `eternal_e9b_v1`: a
+  shadow creature blocks and is blocked only by shadow creatures. Printed protection from a
+  color joins P1a's mask (`eternal_legacy_e9a_v1::statics::protection_mask`), and Beloved
+  Chaplain's protection from creatures joins Seasoned Dungeoneer's checks (targeting by a
+  creature's ability, damage from a creature, blocking by a creature).
+- Mother of Runes reuses wave E9a's protection record (Sejiri Steppe) with the color chosen on
+  resolution. Devoted Caretaker records protection from instant and sorcery spells until end
+  of turn per permanent (`P2dStateV1::spell_protection`); it stops targeting by such a spell
+  (also while the card is being cast) and damage from it.
+- Shared Triumph chooses its creature type as it enters (the as-enters chain of
+  `eternal_cards_v1::e3`, one option per creature type among all objects in the game) and
+  boosts creatures of that type through the controlled-boost hook. Glowrider adds a generic
+  cost for every noncreature spell of either player through the spell cost modifiers.
+- Echo (Avalanche Riders): entering records that the creature owes echo; the controller's next
+  upkeep queues one trigger (a hook, so there is no trigger on later upkeeps) that offers
+  paying {3}{R} (taken from the automatic mana planner, or the creature is sacrificed if it
+  cannot be paid) or sacrificing.
+- Veteran Brawlers' restrictions read untapped lands when attackers and blockers are declared.
+- Pillage and Devoted Caretaker use new `StandardTargetV1` filters (an artifact or land; a
+  permanent you control). Earthquake damages in one batch; Nova Cleric destroys in one batch.
+  Stone Rain is the Standard destroy-land spell, Firebolt a 2-damage burn spell with flashback.
+  Ghitu Encampment reuses the Standard manland animation.
+
+Observation: shadow and printed protection are not keyword flags of the schema 4 policy
+observation, but like Dauthi Voidwalker's shadow and Knight of Stromgald's protection they are
+printed on the card the observation names, and every blocking and targeting choice offered is
+already legal under them. Protection that Mother of Runes or Devoted Caretaker grants until end
+of turn is not visible in the observation (as Sejiri Steppe's is not); no game step depends on
+it, because only legal actions are offered. Representing granted protection and shadow as
+public facts is a protocol change outside P2d.
+
+Known gaps (P2d):
+- Echo is owed only by the controller who first controlled the creature: a creature that
+  changes control owes no echo to its new controller. Its cost is paid by the automatic mana
+  planner without a choice of sources.
+- Shared Triumph offers only creature types of cards in the game when it enters.
+- Protection from instant and sorcery spells counts a card in hand, graveyard, exile or
+  library being cast as a spell, so an instant's activated ability from those zones (none in
+  the catalog) would be treated as one.
 
 P1a is built in `src/eternal_premodern_p1a_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1a_v1.rs`, whose tables wave P1b's fall through to. New primitives:

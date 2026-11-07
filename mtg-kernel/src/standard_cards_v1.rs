@@ -380,6 +380,11 @@ pub enum StandardTargetV1 {
     CreatureManaValueAtMostV1(u8),
     /// "Target artifact defending player controls" (Goblin Vandal).
     OpponentArtifactV1,
+    /// "Target artifact or land" (Pillage). Premodern wave P2d's filters
+    /// follow (`eternal_premodern_p2d_v1::targets`).
+    ArtifactOrLandV1,
+    /// "Target permanent you control" (Devoted Caretaker).
+    ControlledPermanentV1,
 }
 
 impl StandardTargetV1 {
@@ -389,6 +394,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1b_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p2d_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
@@ -798,6 +806,11 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_premodern_p2d_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_premodern_p1a_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -1020,6 +1033,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_premodern_p2d_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_premodern_p1a_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1217,6 +1235,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::DividedTwoDamageAnyTargetsV1
         | StandardTargetV1::CreatureManaValueAtMostV1(_)
         | StandardTargetV1::OpponentArtifactV1 => false,
+        // Answered by `eternal_premodern_p2d_v1::targets` above.
+        StandardTargetV1::ArtifactOrLandV1 | StandardTargetV1::ControlledPermanentV1 => false,
     }
 }
 
