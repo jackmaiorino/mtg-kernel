@@ -163,6 +163,25 @@ def history_states(spec, parent_source):
     return out
 
 
+def complete_segment(seg, b):
+    """Refuses unless the segment ending at ladder boundary `b` is complete: its completion marker and every one of its
+    iteration receipts (000000 to updates - 1) present. Returns its last receipt."""
+    root = Path(seg['root'])
+    its = root / 'iterations'
+    if not (root / 'completion.json').exists() or \
+            not all((its / f'{i:06d}' / 'complete.json').exists() for i in range(seg['updates'])):
+        raise LadderError(f'the segment ending at ladder boundary {b} ({root}) is not complete')
+    return json.loads((its / f'{seg["updates"] - 1:06d}' / 'complete.json').read_text(encoding='utf-8'))
+
+
+def check_recorded(record, i, sha256, after):
+    """Refuses a state whose hashes differ from its first-use record entry (no entry: nothing to compare)."""
+    have = record['states'].get(i)
+    if have is not None and (have['sha256'], have.get('after_state_sha256')) != (sha256, after):
+        raise LadderError(f'ladder state {i} hashes to {sha256} (after state {after}), recorded {have["sha256"]} '
+                          f'({have.get("after_state_sha256")})')
+
+
 def boundaries(offset, stride):
     """The ladder boundaries to date for a segment starting at global update `offset`."""
     return list(range(0, offset + 1, stride))
@@ -223,14 +242,9 @@ def ladder(parent_source, segments, offset, spec, record_path, next_source, chai
             seg = ends.get(b)
             if seg is None:
                 raise LadderError(f'no segment ends at ladder boundary {b}')
-            root = Path(seg['root'])
-            done = len(list((root / 'iterations').glob('*/complete.json'))) if (root / 'iterations').exists() else 0
-            if not (root / 'completion.json').exists() or done != seg['updates']:
-                raise LadderError(f'the segment ending at ladder boundary {b} ({root}) is not complete')
+            complete = complete_segment(seg, b)
             try:
-                source = next_source(root)
-                complete = json.loads((root / 'iterations' / f'{seg["updates"] - 1:06d}' / 'complete.json')
-                                      .read_text(encoding='utf-8'))
+                source = next_source(Path(seg['root']))
                 after = json.loads(Path(complete['update']['path']).read_text(encoding='utf-8'))['after_state_sha256']
             except Exception as exc:  # chains.Stop: a missing checkpoint or one that differs from its receipt
                 raise LadderError(f'ladder state {b}: {exc}') from exc
@@ -240,14 +254,10 @@ def ladder(parent_source, segments, offset, spec, record_path, next_source, chai
         # The checkpoint file hash pins the bytes this chain plays (the file names its own run's paths, so replicas in
         # other roots differ); the after-state hash is the root-independent identity of the state.
         entry = {'sha256': pinned['sha256'], 'path': pinned['path'], 'after_state_sha256': after}
-        have = record['states'].get(i)
-        if have is None:
+        if i not in record['states']:
             record['states'][i] = entry
             added = True
-        elif (have['sha256'], have.get('after_state_sha256')) != (entry['sha256'], entry['after_state_sha256']):
-            raise LadderError(f'ladder state {i} hashes to {pinned["sha256"]} (after state '
-                              f'{entry["after_state_sha256"]}), recorded {have["sha256"]} '
-                              f'({have.get("after_state_sha256")})')
+        check_recorded(record, i, entry['sha256'], entry['after_state_sha256'])
         if i in members:
             out.append((i, source))
     if added:
@@ -323,11 +333,7 @@ def write_history(chain_manifest, until, stride, out, copy_to=None):
         return {'path': dst.as_posix(), 'sha256': ck['sha256']}
 
     def segment_end(b):
-        root = Path(ends[b]['root'])
-        if not (root / 'completion.json').exists():
-            raise LadderError(f'the segment ending at {b} is not complete')
-        complete = json.loads((root / 'iterations' / f'{ends[b]["updates"] - 1:06d}' / 'complete.json')
-                              .read_text(encoding='utf-8'))
+        complete = complete_segment(ends[b], b)
         upd = Path(complete['update']['path'])
         ck = {'path': (upd.parent / 'checkpoint.json').as_posix(),
               'sha256': complete['output_identity']['checkpoint_sha256']}
@@ -339,6 +345,20 @@ def write_history(chain_manifest, until, stride, out, copy_to=None):
     if sha_file(man['arm_file']['path']) != man['arm_file']['sha256']:
         raise LadderError('the chain\'s arm file differs from its manifest pin')
     parent_source = json.loads(Path(arm['parent']['path']).read_text(encoding='utf-8'))['source']
+    # A CG source's first-use record pins every state it has used: the export must agree with it, and a CG chain
+    # past its first segment without one (lost) refuses, as its own next segment would.
+    record = {'states': {}}
+    if arm.get('ladder'):
+        path = Path(chain_manifest).parent / 'LADDER.json'
+        if path.exists():
+            record = json.loads(path.read_text(encoding='utf-8'))
+        if record.get('chain', man['chain']) != man['chain'] or record.get('stride', stride) != stride:
+            raise LadderError(f'{path} is not this chain\'s ladder record at stride {stride}')
+        reached = boundaries(max(seg['offset'] for seg in man['segments']), stride)
+        lost = [i for i in [i for i, _, _ in history_states(arm['ladder'], parent_source)] +
+                [member_id(b) for b in reached] if i not in record['states']]
+        if lost:
+            raise LadderError(f'{path} lacks established ladder states {lost[:8]}')
     inherited = []
     if (arm.get('ladder') or {}).get('history'):
         if arm['ladder']['stride'] != stride:
@@ -348,10 +368,12 @@ def write_history(chain_manifest, until, stride, out, copy_to=None):
             ck = source['checkpoint']
             if sha_file(ck['path']) != ck['sha256']:
                 raise LadderError(f'inherited history state {i} differs from its pin')
+            check_recorded(record, i, ck['sha256'], after)
             inherited.append({'id': i, 'generation': g, 'boundary': b, 'checkpoint': place(ck),
                               'after_state_sha256': after})
     generation = max((st['generation'] for st in inherited), default=0) + 1
     fork_source, fork_after = segment_end(until)
+    check_recorded(record, member_id(until), fork_source['checkpoint']['sha256'], fork_after)
     states = list(inherited)
     for b in range(0, until, stride):
         if b == 0:
@@ -362,6 +384,7 @@ def write_history(chain_manifest, until, stride, out, copy_to=None):
         else:
             source, after = segment_end(b)
             ck = source['checkpoint']
+        check_recorded(record, member_id(b), ck['sha256'], after)
         states.append({'id': history_id(generation, b), 'generation': generation, 'boundary': b, 'checkpoint': ck,
                        'after_state_sha256': after})
     doc = {'schema': HISTORY_SCHEMA, 'chain': man['chain'], 'seed_root': man['seed_root'], 'stride': stride,

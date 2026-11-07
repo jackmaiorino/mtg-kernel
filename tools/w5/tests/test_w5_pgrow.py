@@ -324,6 +324,40 @@ class Chains(unittest.TestCase):
         return self.plan({'stride': STRIDE, 'test_stride': True, 'history': str(hist)}, label=label,
                          chains_in={name: {'arm': 'CG', 'slot': slot, 'seed_root': f'pg/{name}'}}, parent=str(parent))
 
+    def test_history_export_refuses_what_the_chain_would(self):
+        """`pgrow.py history` refuses a source state the chain's own next segment would refuse: a checkpoint and
+        receipt rewritten to match (its LADDER.json pin differs), a lost LADDER.json, and a segment missing an
+        intermediate receipt."""
+        _, plan = self.plan()
+        self.assertEqual(self.run_segments(plan, 'g1', 5), chains.EXIT_ROOM)
+        man_path = plan['chains']['g1']['manifest']
+        man = json.loads(Path(man_path).read_text())
+        cdir = self.node.root / 'chains' / 'g1'
+        out = self.node.t / 'exp' / 'history.json'
+        pgrow.write_history(man_path, 16, STRIDE, out)  # intact
+        complete = Path(man['segments'][1]['root']) / 'iterations' / f'{SEG - 1:06d}' / 'complete.json'
+        doc = json.loads(complete.read_text())
+        ck = Path(json.loads(complete.read_text())['update']['path']).parent / 'checkpoint.json'
+        good, good_doc = ck.read_bytes(), complete.read_text()
+        ck.write_bytes(b'other weights')
+        doc['output_identity']['checkpoint_sha256'] = chains.sha(ck)
+        complete.write_text(json.dumps(doc))
+        with self.assertRaisesRegex(pgrow.LadderError, 'ladder-u8 hashes to'):
+            pgrow.write_history(man_path, 16, STRIDE, out)
+        ck.write_bytes(good)
+        complete.write_text(good_doc)
+        record = (cdir / 'LADDER.json').read_bytes()
+        (cdir / 'LADDER.json').unlink()
+        with self.assertRaisesRegex(pgrow.LadderError, 'lacks established ladder states'):
+            pgrow.write_history(man_path, 16, STRIDE, out)
+        (cdir / 'LADDER.json').write_bytes(record)
+        middle = Path(man['segments'][1]['root']) / 'iterations' / '000001' / 'complete.json'
+        middle.rename(middle.with_name('complete.json.moved'))
+        with self.assertRaisesRegex(pgrow.LadderError, 'not complete'):
+            pgrow.write_history(man_path, 16, STRIDE, out)
+        with self.assertRaisesRegex(chains.Stop, 'not complete'):  # the chain's own ladder check agrees
+            chains.chain_ladder(chains.load_arm(plan['arms']['CG']['file']['path']), man, cdir, 16)
+
     def test_a_fork_carries_its_source_chains_ladder(self):
         """A CG chain forked at boundary 16 of g1 (`pgrow.py history`) plays g1's ladder before 16 (u0 = b512, u8)
         as generation-1 history, then its own states (its u0 is g1's state at 16); every input is a copy, so the
