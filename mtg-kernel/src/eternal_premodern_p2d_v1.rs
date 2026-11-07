@@ -34,7 +34,7 @@ use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_legacy_e9a_v1::{battlefield, definition_name, live_link, TurnV1};
 use crate::eternal_premodern_p1a_v1::{
     destroy, destroy_batch, forbid_regeneration, halt, has_type, legal_object_target,
-    live_ability_source, queue_trigger, QueuedTriggerV1,
+    live_ability_source, queue_trigger,
 };
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
@@ -71,9 +71,6 @@ pub(crate) fn echo_cost(name: &str) -> Option<(&'static [ManaColor], u8)> {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct P2dStateV1 {
-    /// Triggers detected by hooks, waiting for the next trigger collection.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub queued_triggers: Vec<QueuedTriggerV1>,
     /// Avalanche Riders that came under a player's control since that
     /// player's last upkeep.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -338,6 +335,22 @@ pub(crate) fn apply_entry(state: &mut GameState, object: ObjectId) {
     due.push((link, controller));
 }
 
+/// Called as `object` came under `controller`'s control: a creature with echo
+/// owes it at that player's next upkeep (702.30a).
+pub(crate) fn control_changed(state: &mut GameState, object: ObjectId, controller: PlayerId) {
+    let live = state.objects.get(object);
+    if live.zone != Zone::Battlefield
+        || live.v4.face_index != 0
+        || definition_name(state, object).is_none_or(|name| echo_cost(name).is_none())
+    {
+        return;
+    }
+    let link = live_link(state, object);
+    let due = &mut p2d_state(state).echo_due;
+    due.retain(|(entry, _)| entry.object != object);
+    due.push((link, controller));
+}
+
 /// The triggers this module's hooks set off in this collection.
 pub(crate) fn delayed_triggers(
     state: &mut GameState,
@@ -376,26 +389,7 @@ pub(crate) fn delayed_triggers(
         }
     }
     prune(state);
-    let Some(eternal) = state.eternal_v1.as_mut() else {
-        return Vec::new();
-    };
-    if eternal.p2d.queued_triggers.is_empty() {
-        return Vec::new();
-    }
-    std::mem::take(&mut eternal.p2d.queued_triggers)
-        .into_iter()
-        .map(|queued| {
-            let mut pending = crate::eternal_cards_v1::delayed_trigger(
-                queued.source,
-                queued.controller,
-                queued.effect,
-            );
-            if let Some(spec) = queued.target_spec {
-                pending.target_spec = spec;
-            }
-            pending
-        })
-        .collect()
+    Vec::new()
 }
 
 /// The beginning of a turn ends the last turn's records.

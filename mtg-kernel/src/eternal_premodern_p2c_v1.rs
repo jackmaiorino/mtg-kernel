@@ -85,6 +85,10 @@ pub struct P2cStateV1 {
     /// or queued.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub devourer_triggered: Vec<ObjectLinkV4>,
+    /// While a batch of simultaneous damage is being replaced: the Phantom
+    /// Nishoba incarnations that already lost their counter for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nishoba_batch: Option<Vec<ObjectLinkV4>>,
 }
 
 impl P2cStateV1 {
@@ -132,6 +136,9 @@ pub enum P2cOpV1 {
     DevourerCountersV1,
     /// Sacrifice the resolving ability's source.
     SacrificeSourceV1,
+    /// Palinchron: return the resolving ability's source to its owner's hand
+    /// if that incarnation is still on the battlefield.
+    ReturnSourceV1,
     /// Phantom Nishoba: gain `amount` life.
     NishobaLifeV1 { amount: i32 },
 }
@@ -227,10 +234,7 @@ pub fn careful_study() -> EffectOp {
 
 /// Palinchron: "Return Palinchron to its owner's hand."
 pub fn return_source_to_hand() -> EffectOp {
-    EffectOp::MoveObject {
-        object: ObjectRef::ThisSource,
-        to_zone: Zone::Hand,
-    }
+    p2c(P2cOpV1::ReturnSourceV1)
 }
 
 /// Exhume: "Each player puts a creature card from their graveyard onto the
@@ -506,6 +510,11 @@ pub(crate) fn execute(op: &P2cOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
             event::log_sacrifice(state, source);
             event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Graveyard));
+        }
+        P2cOpV1::ReturnSourceV1 => {
+            if let Some(source) = live_ability_source(ctx, state) {
+                event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Hand));
+            }
         }
         P2cOpV1::NishobaLifeV1 { amount } => {
             if *amount > 0 {
@@ -830,15 +839,19 @@ fn note_devourer_power(state: &mut GameState) {
         let link = live_link(state, object);
         let big = crate::engine::effective_power(state, object) >= 7;
         let known = read_state(state).is_some_and(|p2c| p2c.devourer_triggered.contains(&link));
-        if big && !known {
+        let outstanding = known && devourer_trigger_outstanding(state, object);
+        if known && !outstanding {
+            // 603.8: the previous instance left the stack (resolved, or
+            // countered), so the trigger may trigger again.
+            p2c_state(state)
+                .devourer_triggered
+                .retain(|entry| *entry != link);
+        }
+        if big && !outstanding {
             p2c_state(state).devourer_triggered.push(link);
             let controller = state.objects.get(object).controller;
             let contract = AbilitySourceContractV4::capture(state, object);
             queue_trigger(state, contract, controller, devourer_sacrifice(), None);
-        } else if !big && known {
-            p2c_state(state)
-                .devourer_triggered
-                .retain(|entry| *entry != link);
         }
     }
     // Forget incarnations that left the battlefield.
@@ -851,6 +864,28 @@ fn note_devourer_power(state: &mut GameState) {
     if read_state(state).is_some_and(|p2c| p2c.devourer_triggered != live) {
         p2c_state(state).devourer_triggered = live;
     }
+}
+
+/// Whether an instance of Phyrexian Devourer's state trigger for `object` is
+/// queued, waiting to be put on the stack, or on the stack.
+fn devourer_trigger_outstanding(state: &GameState, object: ObjectId) -> bool {
+    let effect = devourer_sacrifice();
+    state.stack.iter().any(|item| {
+        item.kind == crate::state::StackItemKind::TriggeredAbility
+            && item.source == object
+            && item.inline_effect.as_ref() == Some(&effect)
+    }) || state
+        .engine
+        .pending_triggers
+        .iter()
+        .any(|pending| pending.source == object && pending.effect == effect)
+        || state.eternal_v1.as_ref().is_some_and(|eternal| {
+            eternal
+                .p1a
+                .queued_triggers
+                .iter()
+                .any(|queued| queued.source.source == object && queued.effect == effect)
+        })
 }
 
 /// The beginning of a turn ends the last turn's records.

@@ -1001,3 +1001,242 @@ fn phyrexian_devourer_grows_by_the_exiled_card_and_is_sacrificed_at_seven_power(
     assert_eq!(power_toughness(&state, devourer), (1, 1));
     assert_eq!(state.players[0].library.len(), 19);
 }
+
+// ---- Fix round (review findings on PR #565) -------------------------------------------
+
+/// A: two blockers deal combat damage to Phantom Nishoba at once, and only
+/// one counter comes off for the batch.
+#[test]
+fn phantom_nishoba_loses_one_counter_per_batch_of_simultaneous_damage() {
+    let mut state = islands();
+    let nishoba = put(&mut state, P0, "Phantom Nishoba", Zone::Battlefield);
+    state.objects.get_mut(nishoba).counters.plus1_plus1 = 7;
+    let first = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let second = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    run_until(
+        &mut state,
+        |s| s.step == Step::EndCombat,
+        |_, decision| match decision {
+            Decision::DeclareAttackers { .. } => Some(Action::DeclareAttackers(vec![nishoba])),
+            Decision::DeclareBlockers { .. } => Some(Action::DeclareBlockers(vec![
+                (first, nishoba),
+                (second, nishoba),
+            ])),
+            _ => None,
+        },
+    );
+    assert_eq!(state.objects.get(nishoba).damage, 0);
+    assert_eq!(
+        state.objects.get(nishoba).counters.plus1_plus1,
+        6,
+        "one counter for the whole batch"
+    );
+}
+
+/// A: damage that cannot be prevented is dealt, and the prevention effect
+/// still removes its counter (615.12).
+#[test]
+fn phantom_nishoba_takes_unpreventable_damage_and_still_loses_a_counter() {
+    let mut state = islands();
+    let nishoba = put(&mut state, P0, "Phantom Nishoba", Zone::Battlefield);
+    state.objects.get_mut(nishoba).counters.plus1_plus1 = 7;
+    state
+        .engine
+        .until_end_of_turn
+        .push(engine::UntilEndOfTurnEffect::DamageCannotBePrevented {
+            timestamp: 1_000_000,
+            duration: engine::EffectDuration::EndOfTurn,
+        });
+    let triskelion = put(&mut state, P0, "Triskelion", Zone::Battlefield);
+    state.objects.get_mut(triskelion).counters.plus1_plus1 = 3;
+    activate(&mut state, triskelion, 0, &[Target::Object(nishoba)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(nishoba).damage, 1, "dealt");
+    assert_eq!(state.objects.get(nishoba).counters.plus1_plus1, 6);
+}
+
+/// A: without its abilities (Dress Down) Phantom Nishoba prevents nothing
+/// and gains no life from the damage it deals.
+#[test]
+fn phantom_nishoba_without_abilities_neither_prevents_nor_gains_life() {
+    let mut state = islands();
+    let dress_down = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress_down, &[]);
+    settled(&mut state);
+    let nishoba = put(&mut state, P0, "Phantom Nishoba", Zone::Battlefield);
+    state.objects.get_mut(nishoba).counters.plus1_plus1 = 7;
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Object(nishoba)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(nishoba).damage, 3, "not prevented");
+    assert_eq!(state.objects.get(nishoba).counters.plus1_plus1, 7);
+
+    state.objects.get_mut(nishoba).damage = 0;
+    run_until(
+        &mut state,
+        |s| s.players[1].life < 20,
+        |_, decision| match decision {
+            Decision::DeclareAttackers { .. } => Some(Action::DeclareAttackers(vec![nishoba])),
+            _ => None,
+        },
+    );
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 13);
+    assert_eq!(state.players[0].life, 20, "no life gain without abilities");
+}
+
+/// B: with Dress Down on the battlefield a creature enters without its
+/// "enters with counters" replacement (614.12).
+#[test]
+fn entry_counters_are_not_applied_while_abilities_are_removed() {
+    let mut state = islands();
+    let dress_down = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress_down, &[]);
+    settled(&mut state);
+    let triskelion = put(&mut state, P0, "Triskelion", Zone::Hand);
+    pool(&mut state, P0, &[], 6);
+    cast(&mut state, triskelion, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, triskelion), Zone::Battlefield);
+    assert_eq!(state.objects.get(triskelion).counters.plus1_plus1, 0);
+    let nishoba = put(&mut state, P0, "Phantom Nishoba", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::W], 5);
+    cast(&mut state, nishoba, &[]);
+    settled(&mut state);
+    // Without its seven counters the 0/0 dies.
+    assert_eq!(zone(&state, nishoba), Zone::Graveyard);
+}
+
+fn top_trigger(state: &GameState) -> Option<Target> {
+    state
+        .stack
+        .last()
+        .filter(|item| item.kind == mtg_kernel::state::StackItemKind::TriggeredAbility)
+        .map(|item| Target::StackItem(item.v4.stack_item_id))
+}
+
+/// C: a state trigger triggers again once its previous instance left the
+/// stack (603.8): a Stifled sacrifice trigger is replaced while the power
+/// stays at 7 or more.
+#[test]
+fn phyrexian_devourer_triggers_again_after_its_trigger_was_countered() {
+    let mut state = islands();
+    let devourer = put(&mut state, P0, "Phyrexian Devourer", Zone::Battlefield);
+    let big = put(&mut state, P0, "Triskelion", Zone::Library);
+    let stifle = put(&mut state, P0, "Stifle", Zone::Hand);
+    activate(&mut state, devourer, 0, &[]);
+    run_until(&mut state, |s| top_trigger(s).is_some(), |_, _| None);
+    assert_eq!(zone(&state, big), Zone::Exile);
+    let trigger = top_trigger(&state).unwrap();
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, stifle, &[trigger]);
+    settled(&mut state);
+    assert_eq!(zone(&state, stifle), Zone::Graveyard);
+    assert_eq!(
+        zone(&state, devourer),
+        Zone::Graveyard,
+        "the second instance sacrificed it"
+    );
+}
+
+/// D: Palinchron's bounce does nothing if it left the battlefield first.
+#[test]
+fn palinchron_bounce_does_nothing_after_it_left_the_battlefield() {
+    let mut state = islands();
+    let palinchron = put(&mut state, P0, "Palinchron", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 2);
+    activate(&mut state, palinchron, 0, &[]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert!(!state.stack.is_empty());
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(palinchron, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert_eq!(zone(&state, palinchron), Zone::Graveyard);
+    assert!(!hand_contains(&state, P0, palinchron));
+}
+
+/// E: Reflecting Pool reads what each other land could produce now: a land
+/// changed to a Swamp by Vision Charm gives {B} and no longer {U}.
+#[test]
+fn reflecting_pool_follows_a_land_type_change() {
+    let mut state = islands();
+    let pool_land = put(&mut state, P0, "Reflecting Pool", Zone::Battlefield);
+    put(&mut state, P0, "Island", Zone::Battlefield);
+    let charm = put(&mut state, P0, "Vision Charm", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    act(&mut state, Action::CastSpell(charm));
+    let mut option = 0;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseSpellMode { .. } => Action::ChooseSpellMode(1),
+        Decision::ChooseEffectOption { .. } => {
+            option += 1;
+            // The Island type, then the Swamp type.
+            Action::ChooseEffectOption(if option == 1 { 1 } else { 2 })
+        }
+        other => first_answer(other),
+    });
+    next(&mut state);
+    // The Island is a Swamp now: the Pool has the one color, black.
+    act(&mut state, Action::ActivateManaAbility(pool_land));
+    assert_eq!(mana(&state, P0, ManaColor::B), 1);
+    assert_eq!(mana(&state, P0, ManaColor::U), 0);
+}
+
+/// E: "could produce" ignores activation conditions (Tainted Field without a
+/// Swamp still counts for {W} and {B}).
+#[test]
+fn reflecting_pool_ignores_activation_conditions_of_other_lands() {
+    let mut state = islands();
+    let pool_land = put(&mut state, P0, "Reflecting Pool", Zone::Battlefield);
+    put(&mut state, P0, "Tainted Field", Zone::Battlefield);
+    next(&mut state);
+    assert!(engine::step(
+        &mut state,
+        Action::ActivateManaAbilityChoice(pool_land, ManaColor::R)
+    )
+    .is_err());
+    for color in [ManaColor::W, ManaColor::B] {
+        let mut probe = state.clone();
+        act(
+            &mut probe,
+            Action::ActivateManaAbilityChoice(pool_land, color),
+        );
+        assert_eq!(mana(&probe, P0, color), 1);
+    }
+}
+
+/// F: an untap step skipped by Stasis does not return Undiscovered
+/// Paradise; the next untap step that happens does.
+#[test]
+fn undiscovered_paradise_stays_through_a_skipped_untap_step() {
+    let mut state = islands();
+    let paradise = put(&mut state, P0, "Undiscovered Paradise", Zone::Battlefield);
+    let stasis = put(&mut state, P0, "Stasis", Zone::Battlefield);
+    next(&mut state);
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(paradise, ManaColor::R),
+    );
+    let turn = state.turn;
+    run_until(
+        &mut state,
+        |s| s.turn > turn && s.active_player == P0 && s.step == Step::Upkeep,
+        |_, decision| match decision {
+            Decision::ChooseEffectBoolean { .. } => Some(Action::ChooseEffectBoolean(false)),
+            _ => None,
+        },
+    );
+    assert_eq!(zone(&state, paradise), Zone::Battlefield, "untap skipped");
+    assert!(state.objects.get(paradise).tapped);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(stasis, Zone::Graveyard),
+    );
+    run_until(&mut state, |s| zone(s, paradise) == Zone::Hand, |_, _| None);
+    assert!(hand_contains(&state, P0, paradise));
+}

@@ -34,6 +34,7 @@ pub(crate) fn devourer_id() -> Option<u16> {
 /// just left, for the damage it dealt).
 pub(crate) fn is_nishoba(state: &GameState, object: ObjectId) -> bool {
     name_of(state, object) == Some(PHANTOM_NISHOBA)
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
 }
 
 /// Printed protection from colors, as a color mask: Akroma ("protection
@@ -63,7 +64,13 @@ pub(crate) fn apply_entry_counters(
         _ => return,
     };
     let live = state.objects.get(object);
-    if live.zone != Zone::Battlefield || live.v4.face_index != 0 {
+    // 614.12: the replacement belongs to the permanent as it would be on the
+    // battlefield, so a creature that loses its abilities (Dress Down)
+    // enters without counters.
+    if live.zone != Zone::Battlefield
+        || live.v4.face_index != 0
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+    {
         return;
     }
     let controller = live.controller;
@@ -114,6 +121,11 @@ pub(crate) fn return_at_untap(state: &mut GameState, object: ObjectId) -> bool {
     if p2c.paradise_returns.is_empty() {
         return false;
     }
+    // A skipped untap step (Stasis) returns nothing; the next one that
+    // happens does. A permanent that merely does not untap still returns.
+    if crate::eternal_premodern_p2a_v1::statics::untap_step_skipped(state) {
+        return false;
+    }
     let link = live_link(state, object);
     if !p2c.paradise_returns.contains(&link) || state.objects.get(object).zone != Zone::Battlefield
     {
@@ -128,9 +140,57 @@ pub(crate) fn return_at_untap(state: &mut GameState, object: ObjectId) -> bool {
 
 // ---- Reflecting Pool ------------------------------------------------------------------
 
+/// Whether `land`, a land `player` controls, could produce `color` right
+/// now: what its current mana abilities (printed, or granted by a land type
+/// change, a moon or another effect) would add, ignoring whether it is
+/// tapped and ignoring the costs and activation restrictions of those
+/// abilities (the Reflecting Pool and Exotic Orchard rulings).
+fn land_could_produce(
+    state: &GameState,
+    player: PlayerId,
+    land: ObjectId,
+    color: ManaColor,
+) -> bool {
+    let live = state.objects.get(land);
+    if live.zone != Zone::Battlefield
+        || live.controller != player
+        || !crate::engine::object_has_type(state, land, CardType::Land)
+    {
+        return false;
+    }
+    let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
+        return false;
+    };
+    let printed = crate::continuous_characteristics_v1::printed_abilities_active(state, land);
+    if printed && def.name == REFLECTING_POOL {
+        return false;
+    }
+    if crate::standard_legends_v1::katilda_mana_colors(state, land).contains(&color) {
+        return true;
+    }
+    if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, land) {
+        return color == ManaColor::C;
+    }
+    if !printed
+        || !def.has_mana_ability()
+        || !crate::standard_cards_v1::mana_abilities_active(state, land, def)
+    {
+        return false;
+    }
+    def.primary_mana_ability_choices(live.v4.chosen_color)
+        .contains(&color)
+        || def
+            .restricted_mana_abilities
+            .iter()
+            .any(|restricted| restricted.colors.contains(&color))
+        || def
+            .additional_mana_abilities
+            .iter()
+            .any(|additional| additional.colors.contains(&color))
+}
+
 /// Whether a land `player` controls other than a Reflecting Pool could
-/// produce `color` (or colorless) mana right now, ignoring whether it is
-/// tapped.
+/// produce `color` (or colorless) mana right now.
 pub(crate) fn other_land_could_produce(
     state: &GameState,
     player: PlayerId,
@@ -140,47 +200,7 @@ pub(crate) fn other_land_could_produce(
         .battlefield
         .iter()
         .copied()
-        .any(|land| {
-            let live = state.objects.get(land);
-            if live.zone != Zone::Battlefield
-                || live.controller != player
-                || !crate::continuous_characteristics_v1::printed_abilities_active(state, land)
-            {
-                return false;
-            }
-            let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
-                return false;
-            };
-            if def.name == REFLECTING_POOL
-                || !def.has_type(CardType::Land)
-                || !def.has_mana_ability()
-            {
-                return false;
-            }
-            def.primary_mana_ability_choices(live.v4.chosen_color)
-                .contains(&color)
-                || def
-                    .restricted_mana_abilities
-                    .iter()
-                    .any(|restricted| restricted.colors.contains(&color))
-                || def
-                    .additional_mana_abilities
-                    .iter()
-                    .enumerate()
-                    .any(|(index, additional)| {
-                        additional.colors.contains(&color)
-                            && def
-                                .additional_mana_ability_conditions
-                                .get(index)
-                                .copied()
-                                .flatten()
-                                .is_none_or(|condition| {
-                                    crate::engine::mana_ability_condition_holds(
-                                        player, land, condition, state,
-                                    )
-                                })
-                    })
-        })
+        .any(|land| land_could_produce(state, player, land, color))
 }
 
 /// The colors the payment planner may take from a Reflecting Pool: every
@@ -271,20 +291,69 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     }
 }
 
+/// A batch of simultaneous damage events is about to be replaced: a Phantom
+/// Nishoba removes one counter for the whole batch (its prevention effect
+/// applies to each event, but the counter comes off once per batch). Returns
+/// whether this call opened the batch; pass it to [`end_damage_batch`].
+pub(crate) fn begin_damage_batch(state: &mut GameState, events: &[ProposedEvent]) -> bool {
+    if read_state(state).is_some_and(|p2c| p2c.nishoba_batch.is_some()) {
+        return false;
+    }
+    let hits_nishoba = events.iter().any(|event| {
+        matches!(
+            event,
+            ProposedEvent::Damage(damage)
+                if matches!(damage.target, Target::Object(target)
+                    if active_named(state, target, PHANTOM_NISHOBA))
+        )
+    });
+    if hits_nishoba {
+        p2c_state(state).nishoba_batch = Some(Vec::new());
+    }
+    hits_nishoba
+}
+
+/// Closes the batch [`begin_damage_batch`] opened.
+pub(crate) fn end_damage_batch(state: &mut GameState, began: bool) {
+    if began {
+        if let Some(eternal) = state.eternal_v1.as_mut() {
+            eternal.p2c.nishoba_batch = None;
+        }
+    }
+}
+
 /// Phantom Nishoba: "If damage would be dealt to this creature, prevent that
 /// damage. Remove a +1/+1 counter from it." Whether `damage` is prevented.
-pub(crate) fn prevent_damage(state: &mut GameState, damage: &DamageProposed) -> bool {
+/// Damage that can't be prevented is dealt, but the effect still applies its
+/// additional effect (615.12), and one batch of simultaneous damage removes
+/// one counter.
+pub(crate) fn prevent_damage(
+    state: &mut GameState,
+    damage: &DamageProposed,
+    unpreventable: bool,
+) -> bool {
     let Target::Object(target) = damage.target else {
         return false;
     };
     if damage.amount <= 0 || !active_named(state, target, PHANTOM_NISHOBA) {
         return false;
     }
+    let link = live_link(state, target);
+    if read_state(state).is_some_and(|p2c| p2c.nishoba_batch.is_some()) {
+        let seen = p2c_state(state)
+            .nishoba_batch
+            .as_mut()
+            .expect("an open batch");
+        if seen.contains(&link) {
+            return !unpreventable;
+        }
+        seen.push(link);
+    }
     let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
     if *counters > 0 {
         *counters -= 1;
     }
-    true
+    !unpreventable
 }
 
 /// Activation restrictions: Battlefield Scrounger needs threshold.
