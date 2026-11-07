@@ -404,6 +404,40 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1b, built in `src/eternal_sideboard_s1b_v1.rs` (with a `targets` submodule) and
+  `build_eternal_s1b_v1.rs`, whose tables E8a's (and E5b's modes, E6a's kicker cost and E7a's
+  alternative costs) fall through to: 26 of the 37 remaining Legacy sideboard cards, the ones
+  whose programs fit the existing primitives. Storm gains Grapeshot and Empty the Warrens
+  (E3's list) and dredge gains Shenanigans (E7b's table). Toxic Deluge's "pay X life" is
+  announced like Sickening Dreams' discard count (X up to the caster's life) and the life is
+  paid as the cast completes. Stony Silence reuses Null Rod's activation prohibition, and
+  Metallic Rebuke joins Kappa Cannoneer's improvise. Deafening Silence counts noncreature
+  spells per player and turn in module state (spells cast before it entered count);
+  Gaddock Teeg (new Kithkin and Advisor subtypes, stable ids 320 and 321), Meddling Mage and
+  Deafening Silence add to the E7a cast prohibition hook. Meddling Mage names a nonland card as
+  its resolving creature spell enters (Anointed Peacekeeper's letter, then name choice), so a
+  Mage that enters any other way names nothing. Sailors' Bane's reduction joins the spell cost
+  reductions of E8b and P1a. Temporary Lockdown and Perilous Snare use the linked "until this
+  leaves" exile (Lockdown records one link per exiled permanent). Perilous Snare starts the
+  Standard speed designation and its counter ability is gated to speed 4 by the activation
+  restriction hook. Tourach, Dread Cantor sees opponents' discards through the E7b discard
+  hook, its kicker uses E6a's kicker table, and protection from white joins the printed
+  protection mask. Extirpate's split second joins Legolas's Quick Reflexes' check. Leyline of
+  Sanctity is offered from an opening hand as the first upkeep begins (Chancellor of the
+  Annex's shape) and gives its controller hexproof through the E3 player targeting check.
+  Engineered Explosives records the colors its cast spent (Prismatic Ending's hook) as its
+  sunburst charge counters and keeps the count for the sacrificed incarnation's ability.
+  Liquimetal Coating records permanents that are artifacts this turn; the effective type
+  check reads it. New target filters: four-point divided damage among creatures (Pyrokinesis),
+  a creature or enchantment an opponent controls (Stern Dismissal), a graveyard card other than
+  a basic land (Extirpate) and a creature or Vehicle you control (Perilous Snare).
+  Not in this wave: Mycosynth Lattice (mana of any color needs a payment-planner change),
+  Extinguisher Battleship (station), Cityscape Leveler (unearth, Powerstone), Invasion
+  Submersible (waterbend, exhaust), Summon: Bahamut, Keen-Eyed Curator, Outland Liberator
+  (day and night), Fiery Confluence (choose three with repeats and per-instance targets),
+  Kiora's Dismissal (strive), Eowyn (a target filter that reads the source's power) and
+  Unlicensed Hearse (a single-graveyard target filter).
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every

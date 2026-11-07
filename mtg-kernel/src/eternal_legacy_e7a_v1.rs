@@ -2933,7 +2933,8 @@ pub(crate) fn improvises(state: &GameState, spell: ObjectId) -> bool {
 
 /// Whether the card named `name` has improvise.
 pub(crate) fn improvise_definition(name: &str) -> bool {
-    name == KAPPA_CANNONEER
+    // Metallic Rebuke (wave S1b) improvises the same way.
+    name == KAPPA_CANNONEER || name == "Metallic Rebuke"
 }
 
 /// Whether `id` is a face-down permanent manifest dread put onto the

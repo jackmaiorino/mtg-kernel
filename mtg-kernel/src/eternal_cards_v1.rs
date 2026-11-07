@@ -1671,7 +1671,9 @@ pub(crate) fn delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_e9b_v1::delayed_triggers(state, events));
-    triggers.extend(crate::eternal_sideboard_s1b_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_sideboard_s1b_v1::delayed_triggers(
+        state, events,
+    ));
     triggers.extend(crate::eternal_legacy_e9a_v1::delayed_triggers(
         state, events,
     ));
@@ -1732,6 +1734,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     }
     if e3::delayed_effect_matches(name, effect)
         || crate::eternal_e9b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_sideboard_s1b_v1::delayed_effect_matches(name, effect)
     {
         return true;
     }

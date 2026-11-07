@@ -18387,6 +18387,7 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Leyline Binding"
             | "Static Prison"
             | "Temporary Lockdown"
+            | "Perilous Snare"
     )
 }
 

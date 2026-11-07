@@ -2115,7 +2115,8 @@ pub(crate) fn mana_abilities_active(
 /// "Start your engines!" (Momentum Breaker), read by the Standard speed
 /// designation.
 pub(crate) fn starts_engines(name: &str) -> bool {
-    cfg!(feature = "eternal-fixtures") && name == MOMENTUM_BREAKER
+    cfg!(feature = "eternal-fixtures")
+        && (name == MOMENTUM_BREAKER || crate::eternal_sideboard_s1b_v1::starts_engines(name))
 }
 
 /// Secluded Courtyard: "As this land enters, choose a creature type." It

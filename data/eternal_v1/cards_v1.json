@@ -21993,6 +21993,237 @@
     "board_wipe"
    ],
    "java_file": "Mage.Sets/src/mage/cards/t/ToxicDeluge.java"
+  },
+  {
+   "name": "Pyrokinesis",
+   "engine_capability": "full",
+   "mana_cost": "{4}{R}{R}",
+   "mana_value": 6,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-naya-initiative",
+    "legacy-creative-technique",
+    "vintage-counter-vine",
+    "vintage-blue-tempo"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "alternative_cost",
+    "divided_damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/Pyrokinesis.java"
+  },
+  {
+   "name": "Stern Dismissal",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-led-dredge"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "bounce"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SternDismissal.java"
+  },
+  {
+   "name": "Extirpate",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beseech-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "split_second",
+    "exile_graveyard_hand_library"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/Extirpate.java"
+  },
+  {
+   "name": "Tourach, Dread Cantor",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mono-black-midrange"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "kicker",
+    "protection",
+    "discard_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TourachDreadCantor.java"
+  },
+  {
+   "name": "Leyline of Sanctity",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-led-dredge"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "leyline",
+    "hexproof"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LeylineOfSanctity.java"
+  },
+  {
+   "name": "Perilous Snare",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "start_your_engines",
+    "exile_until_leaves",
+    "max_speed"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PerilousSnare.java"
+  },
+  {
+   "name": "Engineered Explosives",
+   "engine_capability": "full",
+   "mana_cost": "{X}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "sunburst",
+    "destroy_each"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EngineeredExplosives.java"
+  },
+  {
+   "name": "Liquimetal Coating",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo",
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "type_change"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LiquimetalCoating.java"
   }
  ]
 }

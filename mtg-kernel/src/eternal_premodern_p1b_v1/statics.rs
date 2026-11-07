@@ -421,8 +421,10 @@ pub(crate) fn discard_x_cap(
 /// Sickening Dreams' additional discard: X cards, none for X = 0. `None`
 /// for every other card.
 pub(crate) fn additional_discard_count(def: &CardDef, x: Option<u16>) -> Option<Option<u8>> {
-    (announces_discard_x(def) && !crate::eternal_sideboard_s1b_v1::pays_life_for_x(def)).then(|| {
-        x.filter(|&x| x > 0)
-            .map(|x| u8::try_from(x).unwrap_or(u8::MAX))
-    })
+    (announces_discard_x(def) && !crate::eternal_sideboard_s1b_v1::pays_life_for_x(def)).then(
+        || {
+            x.filter(|&x| x > 0)
+                .map(|x| u8::try_from(x).unwrap_or(u8::MAX))
+        },
+    )
 }

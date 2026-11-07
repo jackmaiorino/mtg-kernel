@@ -288,8 +288,6 @@ pub mod eternal_legacy_e7a_v1;
 pub mod eternal_legacy_e8a_v1;
 /// Legacy long-tail card programs of the eternal catalog (wave E9a).
 pub mod eternal_legacy_e9a_v1;
-/// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).
-pub mod eternal_sideboard_s1b_v1;
 /// Vintage Lurrus card programs and companions of the eternal catalog (wave
 /// E4b).
 pub mod eternal_lurrus_v1;
@@ -307,6 +305,8 @@ pub mod eternal_premodern_p1a_v1;
 /// Premodern Enchantress, Replenish, Oath, Landstill, Psychatog and Grow
 /// card programs of the eternal catalog (wave P1b).
 pub mod eternal_premodern_p1b_v1;
+/// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).
+pub mod eternal_sideboard_s1b_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;

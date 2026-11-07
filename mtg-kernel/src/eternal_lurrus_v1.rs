@@ -1305,7 +1305,10 @@ pub(crate) fn mana_abilities_active(
 /// Records how many colors of mana were spent to cast `spell` (converge),
 /// for Prismatic Ending only.
 pub(crate) fn note_colors_spent(state: &mut GameState, spell: ObjectId, colors: u8) {
-    if definition_name(state, spell) != Some(PRISMATIC_ENDING) {
+    if !matches!(
+        definition_name(state, spell),
+        Some(PRISMATIC_ENDING | "Engineered Explosives")
+    ) {
         return;
     }
     let link = live_link(state, spell);
@@ -1317,6 +1320,12 @@ pub(crate) fn note_colors_spent(state: &mut GameState, spell: ObjectId, colors: 
     let records = &mut lurrus_state(state).colors_spent;
     records.retain(|(record, _)| record.object != spell && on_stack.contains(&record.object));
     records.push((link, colors));
+}
+
+/// The colors of mana spent to cast `spell` (Engineered Explosives'
+/// sunburst).
+pub(crate) fn colors_spent_on(state: &GameState, spell: ObjectId) -> u8 {
+    colors_spent(state, spell)
 }
 
 fn colors_spent(state: &GameState, spell: ObjectId) -> u8 {

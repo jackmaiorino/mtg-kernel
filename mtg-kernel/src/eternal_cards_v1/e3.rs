@@ -1786,8 +1786,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
         | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT | EMPTY_THE_WARRENS | THASSAS_ORACLE
-        | EMRAKUL | ATRAXA
-        | RAPH_AND_MIKEY => Some(TargetSpec::None),
+        | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -2003,6 +2002,8 @@ pub(crate) fn player_targetable(
     !player_protected(state, player)
         // Solitary Confinement: "You have shroud." (Premodern wave P1b)
         && !crate::eternal_premodern_p1b_v1::statics::player_has_shroud(state, player)
+        // Leyline of Sanctity: "You have hexproof." (wave S1b)
+        && (controller == player || !crate::eternal_sideboard_s1b_v1::player_hexproof(state, player))
         && (controller == player
             || active_veils(state, player).next().is_none()
             || !source_blue_or_black(state, source))

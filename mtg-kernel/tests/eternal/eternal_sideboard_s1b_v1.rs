@@ -4,10 +4,9 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
-    CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Supertype, TargetSpec, CARD_DEFS,
 };
-use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
@@ -15,7 +14,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const S1B_CARDS: [&str; 18] = [
+const S1B_CARDS: [&str; 26] = [
     "Deafening Silence",
     "Debt to the Deathless",
     "Gaddock Teeg",
@@ -24,6 +23,14 @@ const S1B_CARDS: [&str; 18] = [
     "Toxic Deluge",
     "Deafening Clarion",
     "Empty the Warrens",
+    "Engineered Explosives",
+    "Extirpate",
+    "Leyline of Sanctity",
+    "Liquimetal Coating",
+    "Perilous Snare",
+    "Pyrokinesis",
+    "Stern Dismissal",
+    "Tourach, Dread Cantor",
     "Grapeshot",
     "Metallic Rebuke",
     "Paradox Engine",
@@ -67,7 +74,6 @@ fn announce_x(state: &mut GameState, x: u16) {
         other => panic!("expected the X choice, got {other:?}"),
     }
 }
-
 
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]
@@ -518,7 +524,9 @@ fn s1b_cards_are_full_with_their_printed_characteristics() {
     assert_eq!(def("Debt to the Deathless").cost.x_count, 1);
     assert_eq!(def("Sudden Demise").cost.x_count, 1);
     assert!(def("Deafening Clarion").mode2.is_some() && def("Deafening Clarion").mode3.is_some());
-    assert!(def("Paradox Engine").supertypes.contains(&Supertype::Legendary));
+    assert!(def("Paradox Engine")
+        .supertypes
+        .contains(&Supertype::Legendary));
     assert!(def("Metallic Rebuke").alt_cost.is_some());
     assert!(def("Grapeshot").target_spec == TargetSpec::AnyTarget);
 }
@@ -577,17 +585,30 @@ fn debt_to_the_deathless_drains_two_times_x() {
 fn peer_into_the_abyss_draws_half_the_library_and_loses_half_the_life() {
     let mut state = islands();
     let peer = put(&mut state, P0, "Peer into the Abyss", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::B, ManaColor::B, ManaColor::B], 4);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B],
+        4,
+    );
     let library = state.players[0].library.len();
     cast(&mut state, peer, &[Target::Player(P0)]);
     settled(&mut state);
-    assert_eq!(state.players[0].library.len(), library - library.div_ceil(2));
+    assert_eq!(
+        state.players[0].library.len(),
+        library - library.div_ceil(2)
+    );
     assert_eq!(life(&state, P0), 10, "half of 20");
     // Odd amounts round up each time.
     let mut state = game(&["Island"; 7]);
     state.players[1].life = 7;
     let peer = put(&mut state, P0, "Peer into the Abyss", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::B, ManaColor::B, ManaColor::B], 4);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B],
+        4,
+    );
     cast(&mut state, peer, &[Target::Player(P1)]);
     settled(&mut state);
     assert_eq!(state.players[1].library.len(), 3, "drew four of seven");
@@ -645,8 +666,15 @@ fn deafening_clarion_deals_damage_gives_lifelink_or_both() {
         pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 1);
         cast_mode(&mut state, clarion, mode, &[]);
         settled(&mut state);
-        assert_eq!(zone(&state, fury) != Zone::Battlefield, damage, "mode {mode}");
-        assert_eq!(state.objects.get(altisaur).damage, if damage { 3 } else { 0 });
+        assert_eq!(
+            zone(&state, fury) != Zone::Battlefield,
+            damage,
+            "mode {mode}"
+        );
+        assert_eq!(
+            state.objects.get(altisaur).damage,
+            if damage { 3 } else { 0 }
+        );
         assert_eq!(
             keyword(&state, altisaur, Keywords::LIFELINK),
             lifelink,
@@ -689,7 +717,11 @@ fn shenanigans_destroys_an_artifact_and_dredges() {
         other => first_answer(other),
     });
     assert_eq!(dredged, 1);
-    assert_eq!(state.players[0].library.len(), library - 2, "milled one, drew one");
+    assert_eq!(
+        state.players[0].library.len(),
+        library - 2,
+        "milled one, drew one"
+    );
 }
 
 #[test]
@@ -731,9 +763,8 @@ fn metallic_rebuke_improvises_and_counters_unless_three_are_paid() {
         .map(|_| put(&mut state, P0, "Chromatic Star", Zone::Battlefield))
         .collect();
     let rebuke = put(&mut state, P0, "Metallic Rebuke", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::U], 0);
     let bolt = opponent_bolts(&mut state, Target::Player(P0));
-    state.priority_player = P0;
+    pool(&mut state, P0, &[ManaColor::U], 0);
     cast(&mut state, rebuke, &[Target::Object(bolt)]);
     settle_with(&mut state, |_, decision| match decision {
         Decision::ChooseCastMode { options, .. } => {
@@ -801,7 +832,12 @@ fn deafening_silence_allows_one_noncreature_spell_per_player_each_turn() {
     let first = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
     let second = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
     let creature = put(&mut state, P0, "Llanowar Elves", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::R, ManaColor::R, ManaColor::G], 0);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::R, ManaColor::R, ManaColor::G],
+        0,
+    );
     cast(&mut state, first, &[Target::Player(P1)]);
     settled(&mut state);
     assert!(!castable(&mut state, second), "a second noncreature spell");
@@ -837,7 +873,14 @@ fn gaddock_teeg_stops_expensive_and_x_noncreature_spells() {
     pool(
         &mut state,
         P0,
-        &[ManaColor::B, ManaColor::B, ManaColor::B, ManaColor::R, ManaColor::G],
+        &[
+            ManaColor::B,
+            ManaColor::B,
+            ManaColor::B,
+            ManaColor::R,
+            ManaColor::G,
+            ManaColor::G,
+        ],
         8,
     );
     assert!(!castable(&mut state, deluge), "mana value 7");
@@ -877,7 +920,7 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
     assert_eq!(zone(&state, mage), Zone::Battlefield);
     state.priority_player = P1;
     let theirs = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
-    let other = put(&mut state, P1, "Fireblast", Zone::Hand);
+    let other = put(&mut state, P1, "Lava Dart", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::R], 0);
     assert!(!castable(&mut state, theirs), "named");
     assert!(castable(&mut state, other), "another spell");
@@ -933,4 +976,218 @@ fn toxic_deluge_pays_x_life_and_shrinks_every_creature() {
     assert_ne!(zone(&state, goblin), Zone::Battlefield);
     assert_eq!(power_toughness(&state, fury), (1, 1));
     assert_eq!(power_toughness(&state, mine), (4, 3));
+}
+
+// ---- Stage 3 ------------------------------------------------------------------------------
+
+#[test]
+fn pyrokinesis_divides_four_damage_and_can_be_cast_by_exiling_a_red_card() {
+    let mut state = islands();
+    let fury = put(&mut state, P1, "Fury", Zone::Battlefield);
+    let goblin = token(&mut state, P1, "Goblin Token");
+    let pyro = put(&mut state, P0, "Pyrokinesis", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    cast(&mut state, pyro, &[]);
+    let mut picks = 0;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Alternative),
+        Decision::ChooseCostTargets { .. } => Action::ChooseCostTarget(bolt),
+        Decision::ChooseTargets { legal_targets, .. } => {
+            picks += 1;
+            assert_eq!(legal_targets.len(), 2, "creatures only");
+            // Three to Fury, one to the Goblin.
+            Action::ChooseTarget(Target::Object(if picks <= 3 { fury } else { goblin }))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(picks, 4);
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+    assert_ne!(zone(&state, fury), Zone::Battlefield);
+    assert_ne!(zone(&state, goblin), Zone::Battlefield);
+}
+
+#[test]
+fn stern_dismissal_returns_an_opponents_creature_or_enchantment_only() {
+    let mut state = islands();
+    let mine = put(&mut state, P0, "Fury", Zone::Battlefield);
+    let theirs = put(&mut state, P1, "Pestilence", Zone::Battlefield);
+    let creature = put(&mut state, P1, "Annoyed Altisaur", Zone::Battlefield);
+    let artifact = put(&mut state, P1, "Grim Monolith", Zone::Battlefield);
+    let dismissal = put(&mut state, P0, "Stern Dismissal", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    let legal = cast_targets(&state, dismissal);
+    assert!(legal.contains(&Target::Object(theirs)));
+    assert!(legal.contains(&Target::Object(creature)));
+    assert!(!legal.contains(&Target::Object(mine)), "your own");
+    assert!(!legal.contains(&Target::Object(artifact)), "an artifact");
+    cast(&mut state, dismissal, &[Target::Object(theirs)]);
+    settled(&mut state);
+    assert!(hand_contains(&state, P1, theirs));
+}
+
+#[test]
+fn extirpate_exiles_every_copy_from_the_graveyard_hand_and_library() {
+    let mut state = islands();
+    let gy_bolt = put(&mut state, P1, "Lightning Bolt", Zone::Graveyard);
+    let hand_bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    let lib_bolt = put(&mut state, P1, "Lightning Bolt", Zone::Library);
+    let other = put(&mut state, P1, "Fireblast", Zone::Graveyard);
+    let mountain = put(&mut state, P1, "Mountain", Zone::Graveyard);
+    let extirpate = put(&mut state, P0, "Extirpate", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    let legal = cast_targets(&state, extirpate);
+    assert!(legal.contains(&Target::Object(gy_bolt)));
+    assert!(!legal.contains(&Target::Object(mountain)), "basic land");
+    cast(&mut state, extirpate, &[Target::Object(gy_bolt)]);
+    // Split second: the opponent cannot respond with a spell.
+    state.priority_player = P1;
+    let response = put(&mut state, P1, "Fireblast", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    assert!(!castable(&mut state, response), "split second");
+    state.priority_player = P0;
+    settled(&mut state);
+    for card in [gy_bolt, hand_bolt, lib_bolt] {
+        assert_eq!(zone(&state, card), Zone::Exile);
+    }
+    assert_eq!(zone(&state, other), Zone::Graveyard);
+}
+
+#[test]
+fn tourach_grows_when_an_opponent_discards_and_makes_them_discard_when_kicked() {
+    let mut state = islands();
+    let tourach = put(&mut state, P0, "Tourach, Dread Cantor", Zone::Hand);
+    for _ in 0..4 {
+        put(&mut state, P1, "Island", Zone::Hand);
+    }
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B, ManaColor::B],
+        0,
+    );
+    act(&mut state, Action::CastSpell(tourach));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseKicker { .. } => Action::ChooseKicker(true),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, tourach), Zone::Battlefield);
+    assert_eq!(state.players[1].hand.len(), 2, "two discarded at random");
+    assert_eq!(power_toughness(&state, tourach), (4, 3), "two counters");
+    assert!(def("Tourach, Dread Cantor").kicker_cost.is_some());
+}
+
+#[test]
+fn leyline_of_sanctity_gives_its_controller_hexproof_and_may_open_the_game() {
+    let mut state = islands();
+    put(&mut state, P0, "Leyline of Sanctity", Zone::Battlefield);
+    state.priority_player = P1;
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    let legal = cast_targets(&state, bolt);
+    assert!(!legal.contains(&Target::Player(P0)), "hexproof");
+    assert!(legal.contains(&Target::Player(P1)));
+
+    // Opening hand: offered as the first upkeep begins.
+    let ids = vec![id("Island"); 20];
+    let mut state = GameState::new_from_libraries(
+        &ids,
+        &ids,
+        |id| CARD_DEFS[id as usize].object_name.into(),
+        0x4c45_594c,
+    );
+    let starter = state.starting_player;
+    let leyline = put(&mut state, starter, "Leyline of Sanctity", Zone::Hand);
+    let mut offered = false;
+    for _ in 0..100 {
+        match next(&mut state) {
+            Decision::ChooseEffectOption { .. } => {
+                offered = true;
+                act(&mut state, Action::ChooseEffectOption(0));
+                break;
+            }
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => act(&mut state, first_answer(other)),
+        }
+    }
+    assert!(offered, "the opening-hand offer");
+    settled(&mut state);
+    assert_eq!(zone(&state, leyline), Zone::Battlefield);
+}
+
+#[test]
+fn perilous_snare_exiles_until_it_leaves_and_grows_a_creature_at_max_speed() {
+    let mut state = islands();
+    let theirs = put(&mut state, P1, "Fury", Zone::Battlefield);
+    let mine = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let snare = put(&mut state, P0, "Perilous Snare", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 2);
+    cast(&mut state, snare, &[]);
+    settle_choosing(&mut state, theirs);
+    assert_eq!(zone(&state, snare), Zone::Battlefield);
+    assert_eq!(zone(&state, theirs), Zone::Exile);
+    assert_eq!(
+        state.speed_v1.map(|speed| speed.speeds[0]),
+        Some(1),
+        "start your engines"
+    );
+    // Below max speed the counter ability is not offered.
+    assert!(!activatable(&mut state, snare, 0));
+    state.speed_v1.as_mut().expect("speed").speeds[0] = 4;
+    state.objects.get_mut(snare).summoning_sick = false;
+    activate(&mut state, snare, 0, &[Target::Object(mine)]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, mine), (2, 2));
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(snare, Zone::Graveyard),
+    );
+    // Fury's own entry trigger asks for its damage.
+    settle_first(&mut state);
+    assert_eq!(zone(&state, theirs), Zone::Battlefield, "returned");
+}
+
+#[test]
+fn engineered_explosives_enters_with_a_counter_per_color_and_destroys_that_mana_value() {
+    let mut state = islands();
+    let oracle = put(&mut state, P1, "Thassa's Oracle", Zone::Battlefield);
+    let fury = put(&mut state, P1, "Fury", Zone::Battlefield);
+    let star = put(&mut state, P0, "Chromatic Star", Zone::Battlefield);
+    let ee = put(&mut state, P0, "Engineered Explosives", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
+    act(&mut state, Action::CastSpell(ee));
+    announce_x(&mut state, 2);
+    settled(&mut state);
+    assert_eq!(zone(&state, ee), Zone::Battlefield);
+    assert_eq!(state.objects.get(ee).counters.charge, 2, "two colors spent");
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, ee, 0, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, ee), Zone::Graveyard);
+    assert_eq!(zone(&state, oracle), Zone::Graveyard, "mana value 2");
+    assert_eq!(zone(&state, fury), Zone::Battlefield, "mana value 5");
+    assert_eq!(zone(&state, star), Zone::Battlefield, "mana value 1");
+}
+
+#[test]
+fn liquimetal_coating_makes_a_permanent_an_artifact_for_the_turn() {
+    let mut state = islands();
+    let fury = put(&mut state, P1, "Fury", Zone::Battlefield);
+    let coating = put(&mut state, P0, "Liquimetal Coating", Zone::Battlefield);
+    state.objects.get_mut(coating).summoning_sick = false;
+    assert!(!engine::object_has_type(&state, fury, CardType::Artifact));
+    activate(&mut state, coating, 0, &[Target::Object(fury)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, fury, CardType::Artifact));
+    assert!(engine::object_has_type(&state, fury, CardType::Creature));
+    // Stony Silence now stops its (nonexistent) abilities, and Whipflare
+    // spares it as an artifact creature.
+    let flare = put(&mut state, P0, "Whipflare", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, flare, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(fury).damage, 0);
 }

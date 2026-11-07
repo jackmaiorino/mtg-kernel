@@ -247,7 +247,7 @@ pub(crate) fn split_second_active(state: &GameState) -> bool {
                 .objects
                 .try_get(item.source)
                 .is_some_and(|live| live.zone == Zone::Stack && live.card_def == legolas)
-    })
+    }) || crate::eternal_sideboard_s1b_v1::extirpate_on_stack(state)
 }
 
 /// Orim's Chant: "Target player can't cast spells this turn." and split
@@ -286,6 +286,8 @@ pub(crate) fn activation_allowed(
     ability_index: usize,
 ) -> bool {
     match (name, ability_index) {
+        // Perilous Snare's "Max speed" ability (wave S1b).
+        ("Perilous Snare", 0) => crate::eternal_sideboard_s1b_v1::max_speed(state, source),
         (CEPHALID_COLISEUM, 0) => {
             let controller = state.objects.get(source).controller;
             crate::effect::controller_graveyard_card_count(state, controller) >= 7

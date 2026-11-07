@@ -380,11 +380,26 @@ pub enum StandardTargetV1 {
     CreatureManaValueAtMostV1(u8),
     /// "Target artifact defending player controls" (Goblin Vandal).
     OpponentArtifactV1,
+    /// "4 damage divided among any number of target creatures"
+    /// (Pyrokinesis): four picks, one point each. Wave S1b's filters follow
+    /// (`eternal_sideboard_s1b_v1::targets`).
+    DividedFourDamageCreaturesV1,
+    /// "Target creature or enchantment an opponent controls" (Stern
+    /// Dismissal).
+    OpponentCreatureOrEnchantmentV1,
+    /// "Target card in a graveyard other than a basic land card"
+    /// (Extirpate).
+    NonbasicLandCardInAGraveyardV1,
+    /// "Target creature or Vehicle you control" (Perilous Snare).
+    ControlledCreatureOrVehicleV1,
 }
 
 impl StandardTargetV1 {
     /// How many targets this filter takes, and how many at least.
     pub(crate) fn counts(self) -> (u8, u8) {
+        if let Some(counts) = crate::eternal_sideboard_s1b_v1::targets::counts(self) {
+            return counts;
+        }
         if let Some(counts) = crate::eternal_legacy_e9a_v1::targets::counts(self) {
             return counts;
         }
@@ -535,6 +550,7 @@ impl StandardTargetV1 {
                 | Self::UpToThreeLandCardsInOwnGraveyardV1
         ) || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
             || crate::eternal_legacy_e9a_v1::targets::in_graveyard(self)
+            || crate::eternal_sideboard_s1b_v1::targets::in_graveyard(self)
     }
 
     /// Wave E7a's filters (`eternal_legacy_e7a_v1`).
@@ -783,6 +799,11 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_sideboard_s1b_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_e9b_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -993,6 +1014,11 @@ pub(crate) fn target_matches(
     };
     if let Some(matches) =
         crate::eternal_vintage_e7b_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_sideboard_s1b_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
     }
@@ -1217,6 +1243,11 @@ pub(crate) fn target_matches(
         StandardTargetV1::DividedTwoDamageAnyTargetsV1
         | StandardTargetV1::CreatureManaValueAtMostV1(_)
         | StandardTargetV1::OpponentArtifactV1 => false,
+        // Answered by `eternal_sideboard_s1b_v1::targets` above.
+        StandardTargetV1::DividedFourDamageCreaturesV1
+        | StandardTargetV1::OpponentCreatureOrEnchantmentV1
+        | StandardTargetV1::NonbasicLandCardInAGraveyardV1
+        | StandardTargetV1::ControlledCreatureOrVehicleV1 => false,
     }
 }
 

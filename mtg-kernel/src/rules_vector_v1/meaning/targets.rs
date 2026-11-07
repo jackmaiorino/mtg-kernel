@@ -770,6 +770,10 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::DividedTwoDamageAnyTargetsV1 => ObjF::PlayerOrPermanent,
         S::CreatureManaValueAtMostV1(_) => creature(),
         S::OpponentArtifactV1 => typed(CardType::Artifact),
+        S::DividedFourDamageCreaturesV1 => creature(),
+        S::OpponentCreatureOrEnchantmentV1 => ObjF::Permanent,
+        S::NonbasicLandCardInAGraveyardV1 => ObjF::AnyCard,
+        S::ControlledCreatureOrVehicleV1 => ObjF::Permanent,
     }
 }
 
@@ -808,7 +812,10 @@ pub(super) fn standard_target_origin(
         | S::OpponentThenUpToOneTheirCreatureV1
         | S::UpToOneOpponentCreatureOrPlaneswalkerV1
         | S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_)
+        | S::OpponentCreatureOrEnchantmentV1
         | S::OpponentArtifactV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        S::NonbasicLandCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
+        S::ControlledCreatureOrVehicleV1 => (Some(ZoneF::Battlefield), Some(RelF::You)),
         S::LandCardInAGraveyardV1 | S::InstantOrSorceryCardInAGraveyardV1 => {
             (Some(ZoneF::Graveyard), None)
         }
@@ -824,6 +831,7 @@ pub(super) fn standard_target_origin(
         S::AnotherNonlandPermanent
         | S::UpToEightCreaturesOrPlaneswalkersV74
         | S::DividedFourDamageCreaturesOrPlaneswalkersV1
+        | S::DividedFourDamageCreaturesV1
         | S::DividedXDamageUpToTwoV1
         | S::UpToOnePlayerV1
         | S::CreaturePowerAtMostTreasureCountersV1
@@ -880,6 +888,7 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.atoms.push(Atom::Opaque);
         }
         S::DividedFourDamageCreaturesOrPlaneswalkersV1
+        | S::DividedFourDamageCreaturesV1
         | S::DividedXDamageUpToTwoV1
         | S::DividedTwoDamageAnyTargetsV1 => {
             // Vocabulary gap: divided damage and repeated picks have no facet.
@@ -1161,6 +1170,19 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
                 mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
                 excludes: None,
             });
+        }
+        S::OpponentCreatureOrEnchantmentV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Enchantment), relation, zone);
+        }
+        S::ControlledCreatureOrVehicleV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Artifact), relation, zone);
+        }
+        S::NonbasicLandCardInAGraveyardV1 => {
+            object(out, standard_target_obj(filter), relation, zone);
+            // The nonbasic-land refinement has no facet.
+            out.atoms.push(Atom::Opaque);
         }
         S::OpponentPermanentV1 | S::LandCardInAGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             object(out, standard_target_obj(filter), relation, zone);
