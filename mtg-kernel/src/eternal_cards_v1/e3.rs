@@ -289,6 +289,8 @@ pub enum E3ChoiceKindV1 {
     E9aV1(crate::eternal_legacy_e9a_v1::E9aChoiceV1),
     /// A Premodern wave P1b choice (`eternal_premodern_p1b_v1`).
     P1bV1(crate::eternal_premodern_p1b_v1::P1bChoiceV1),
+    /// A Premodern wave P2a choice (`eternal_premodern_p2a_v1`).
+    P2aV1(crate::eternal_premodern_p2a_v1::P2aChoiceV1),
     /// A Premodern wave P1a choice (`eternal_premodern_p1a_v1`).
     P1aV1(crate::eternal_premodern_p1a_v1::P1aChoiceV1),
 }
@@ -342,6 +344,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::P1bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::P2aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         if let E3ChoiceKindV1::P1aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
@@ -369,6 +374,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E9aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::P1bV1(kind) => kind.library_search(),
+            E3ChoiceKindV1::P2aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::P1aV1(kind) => kind.library_search(),
             _ => false,
         }
@@ -386,6 +392,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
@@ -439,6 +446,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
@@ -677,6 +685,13 @@ pub(crate) fn finish_selection(
             bindings,
         ),
         E3ChoiceKindV1::P1bV1(kind) => crate::eternal_premodern_p1b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::P2aV1(kind) => crate::eternal_premodern_p2a_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -1031,6 +1046,9 @@ pub(crate) fn drive(
         EternalOpV1::P1bV1(op) => {
             crate::eternal_premodern_p1b_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::P2aV1(op) => {
+            crate::eternal_premodern_p2a_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::P1aV1(op) => {
             crate::eternal_premodern_p1a_v1::drive(state, continuation, op, path)
         }
@@ -1064,6 +1082,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
         || matches!(op, EternalOpV1::E8aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::E9aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::P1bV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::P2aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::P1aV1(op) if op.contains_player_choice())
 }
 
@@ -1547,6 +1566,11 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_legacy_e9a_v1::statics::entry_choice_decision(state) {
         return Some(decision);
     }
+    // Bane of the Living's X (Premodern wave P2a).
+    if let Some(decision) = crate::eternal_premodern_p2a_v1::statics::entry_choice_decision(state)
+    {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1632,6 +1656,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_legacy_e9a_v1::statics::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_premodern_p2a_v1::statics::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;

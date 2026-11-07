@@ -871,7 +871,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         SEJIRI_STEPPE => &SEJIRI_TRIGGERS,
         UNDERMOUNTAIN_ADVENTURER => &INITIATIVE_TRIGGERS,
         // Premodern wave P1b names disjoint cards.
-        _ => crate::eternal_premodern_p1b_v1::triggers_for(name),
+        _ => crate::eternal_premodern_p2a_v1::triggers_for(name),
     }
 }
 

@@ -191,6 +191,12 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
             fields.restricted_mana_abilities = format!("&[RestrictedManaAbilityDef {{ colors: {ANY_COLOR}, restriction: ManaSpendRestrictionDef::LegendarySpell }}]");
             fields.additional_mana_ability_conditions = format!("&[{}]", ["W","U","B","R","G"].map(|color| format!("Some(ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(ManaColor::{color}))")).join(", "));
         }
+        // Eternal catalog (Premodern wave P2a): the Tainted lands' second
+        // mana ability needs "a Swamp" (a Verge's condition with one
+        // subtype named twice).
+        "Tainted Wood" | "Tainted Field" => {
+            fields.additional_mana_ability_conditions = "&[Some(ManaAbilityConditionDef::ControllerControlsPermanentWithEitherSubtype { first: Subtype::Swamp, second: Subtype::Swamp })]".to_string();
+        }
         "Starting Town" => {
             fields.enters_tapped_unless_controller =
                 "Some(EntersTappedUnlessControllerDef::WithinOwnFirstTurns(3))".to_string();

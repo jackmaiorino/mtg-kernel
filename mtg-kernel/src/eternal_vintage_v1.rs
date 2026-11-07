@@ -1172,6 +1172,12 @@ pub(crate) fn activation_allowed(
             name,
             ability_index,
         )
+        && crate::eternal_premodern_p2a_v1::statics::activation_allowed(
+            state,
+            source,
+            name,
+            ability_index,
+        )
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
@@ -1673,6 +1679,7 @@ pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
         || crate::eternal_e5a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_legacy_e8a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_premodern_p1b_v1::statics::prevents_untap_step(state, object)
+        || crate::eternal_premodern_p2a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_premodern_p1a_v1::statics::prevents_untap_step(state, object)
 }
 
@@ -1736,6 +1743,10 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
 
 /// Archon of Emeria: "Nonbasic lands your opponents control enter tapped."
 pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: PlayerId) -> bool {
+    // Root Maze (Premodern wave P2a).
+    if crate::eternal_premodern_p2a_v1::statics::enters_tapped(state, object, controller) {
+        return true;
+    }
     let Some(def) = state
         .objects
         .try_get(object)

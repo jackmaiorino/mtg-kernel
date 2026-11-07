@@ -42,6 +42,11 @@ pub(crate) fn library_top_cast(
     {
         return Some(true);
     }
+    // Future Sight: "You may play the top card of your library" (Premodern
+    // wave P2a), paying its mana cost.
+    if crate::eternal_premodern_p2a_v1::statics::future_sight(state, player) {
+        return Some(false);
+    }
     (controls_active(state, player, MYSTIC_FORGE)
         && (def.has_type(CardType::Artifact)
             || (def.colors.is_empty()
@@ -58,6 +63,26 @@ pub(crate) fn look_at_library_tops(state: &mut GameState) {
         let Some(&top) = state.players[player.index()].library.first() else {
             continue;
         };
+        // Future Sight: "Play with the top card of your library revealed",
+        // to both players (Premodern wave P2a).
+        if crate::eternal_premodern_p2a_v1::statics::future_sight(state, player) {
+            let incarnation = state.objects.get(top).zone_change_count;
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                let known = state
+                    .known_library_cards(observer, player)
+                    .iter()
+                    .any(|entry| {
+                        entry.position == 0
+                            && entry.object == top
+                            && entry.zone_change_count == incarnation
+                    });
+                if !known {
+                    // spellbench-public-reveal: Future Sight reveals the top card to both players.
+                    state.reveal_library_top(observer, player, 1);
+                }
+            }
+            continue;
+        }
         if !(controls_active(state, player, MYSTIC_FORGE)
             || controls_active(state, player, BOLAS_CITADEL))
         {
@@ -200,7 +225,9 @@ pub(crate) fn extra_land_candidates(state: &GameState, player: PlayerId) -> Vec<
                 }),
         );
     }
-    if controls_active(state, player, BOLAS_CITADEL) {
+    if controls_active(state, player, BOLAS_CITADEL)
+        || crate::eternal_premodern_p2a_v1::statics::future_sight(state, player)
+    {
         if let Some(&top) = state.players[player.index()].library.first() {
             if CARD_DEFS[state.objects.get(top).card_def as usize].is_playable_land() {
                 out.push(top);

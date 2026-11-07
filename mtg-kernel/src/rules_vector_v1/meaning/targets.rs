@@ -727,7 +727,9 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::CreaturesThenNonlandPermanentsV1 { .. } => ObjF::Permanent,
         S::TwoControlledArtifactsCreaturesOrLandsV1 => ObjF::Permanent,
         S::PlayerThenPlayerV1 => ObjF::PlayerOrPermanent,
-        S::PlayerThenGraveyardCardsV1 | S::CreatureThenGraveyardCardsV1 => ObjF::AnyCard,
+        S::PlayerThenGraveyardCardsV1
+        | S::PlayerThenUpToThreeOfTheirGraveyardCardsV1
+        | S::CreatureThenGraveyardCardsV1 => ObjF::AnyCard,
         S::UpToOneColoredPermanentV1 => ObjF::Permanent,
         S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => ObjF::Permanent,
         S::ForestV1 => typed(CardType::Land),
@@ -785,7 +787,8 @@ pub(super) fn standard_target_origin(
         S::CreatureCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
         S::CardInAGraveyard
         | S::CreatureCardPutIntoGraveyardThisTurnV1
-        | S::PlayerThenGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
+        | S::PlayerThenGraveyardCardsV1
+        | S::PlayerThenUpToThreeOfTheirGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
         S::UpToOnePermanentCardDiedThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
@@ -1081,7 +1084,7 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             // Both target words may name one player.
             out.atoms.push(Atom::Opaque);
         }
-        S::PlayerThenGraveyardCardsV1 => {
+        S::PlayerThenGraveyardCardsV1 | S::PlayerThenUpToThreeOfTheirGraveyardCardsV1 => {
             out.target(TargetAtom::PlayerYou);
             out.target(TargetAtom::PlayerOpponent);
             object(out, ObjF::AnyCard, None, ZoneF::Graveyard);

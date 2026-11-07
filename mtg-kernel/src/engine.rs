@@ -10775,6 +10775,12 @@ pub(crate) fn mana_ability_cost_targets_for_choice(
     if !primary.is_empty() {
         return primary;
     }
+    // Contamination: a land's tap adds {B} whichever ability is used, so
+    // sacrificing a creature for more adds nothing (Premodern wave P2a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source) {
+        return Vec::new();
+    }
     let Some(object) = state.objects.try_get(source) else {
         return Vec::new();
     };
@@ -10830,6 +10836,29 @@ fn mana_ability_condition_holds(
 /// paths (such as flat-action validation) that must not touch the heap. Same
 /// selection logic and ordering as the `Vec`-returning wrapper.
 pub(crate) fn available_mana_ability_choices_into(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    out: &mut ManaColorSetV1,
+) {
+    available_mana_ability_choices_unreplaced_into(player, source, state, out);
+    // Contamination: a land tapped for mana produces {B} instead (Premodern
+    // wave P2a).
+    #[cfg(feature = "eternal-fixtures")]
+    if !out.is_empty()
+        && crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source)
+    {
+        let room = state.players[player.index()].mana_pool[ManaColor::B.pool_index()] < u8::MAX;
+        *out = ManaColorSetV1::new();
+        if room {
+            out.push(ManaColor::B);
+        }
+    }
+}
+
+/// `available_mana_ability_choices_into` before any replacement of the mana
+/// a land produces.
+fn available_mana_ability_choices_unreplaced_into(
     player: PlayerId,
     source: ObjectId,
     state: &GameState,
@@ -11132,7 +11161,81 @@ fn activate_mana_ability_for_with_checkpoint(
     cost_target: Option<ObjectId>,
     checkpoint: bool,
 ) -> Result<(), String> {
-    let available_choices = available_mana_ability_choices(player, source, state);
+    // Contamination: the land taps for its own ability, but the mana it
+    // adds is one {B} instead (Premodern wave P2a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source) {
+        return activate_contaminated_land(state, player, source, choice, cost_target, checkpoint);
+    }
+    activate_mana_ability_unreplaced_for_with_checkpoint(
+        state,
+        player,
+        source,
+        choice,
+        cost_target,
+        checkpoint,
+    )
+}
+
+/// Taps `source` for the printed mana ability that needs no cost object and
+/// replaces what it adds by one {B} (Contamination).
+#[cfg(feature = "eternal-fixtures")]
+fn activate_contaminated_land(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    choice: ManaColor,
+    cost_target: Option<ObjectId>,
+    checkpoint: bool,
+) -> Result<(), String> {
+    if choice != ManaColor::B || cost_target.is_some() {
+        return Err(format!("{source} can only produce {{B}} with no cost object"));
+    }
+    let mut raw = ManaColorSetV1::new();
+    available_mana_ability_choices_unreplaced_into(player, source, state, &mut raw);
+    let underlying = raw
+        .as_slice()
+        .iter()
+        .copied()
+        .find(|&color| mana_ability_cost_targets_for_choice(player, source, color, state).is_empty())
+        .ok_or_else(|| format!("{source} cannot currently produce mana"))?;
+    let seat = &state.players[player.index()];
+    let pool_before = seat.mana_pool;
+    let restricted_before = seat.restricted_mana_pool.0.len();
+    activate_mana_ability_unreplaced_for_with_checkpoint(
+        state, player, source, underlying, None, false,
+    )?;
+    let seat = &mut state.players[player.index()];
+    let produced = seat
+        .mana_pool
+        .iter()
+        .zip(pool_before)
+        .any(|(now, before)| *now != before)
+        || seat.restricted_mana_pool.0.len() != restricted_before;
+    seat.mana_pool = pool_before;
+    seat.restricted_mana_pool.0.truncate(restricted_before);
+    if produced {
+        event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![ManaColor::B]));
+    }
+    if checkpoint {
+        collect_and_queue_triggers(state);
+    }
+    Ok(())
+}
+
+fn activate_mana_ability_unreplaced_for_with_checkpoint(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    choice: ManaColor,
+    cost_target: Option<ObjectId>,
+    checkpoint: bool,
+) -> Result<(), String> {
+    let available_choices = {
+        let mut choices = ManaColorSetV1::new();
+        available_mana_ability_choices_unreplaced_into(player, source, state, &mut choices);
+        choices.as_slice().to_vec()
+    };
     if !available_choices.contains(&choice) {
         return Err(format!("{source} cannot currently produce {choice:?}"));
     }
@@ -11545,6 +11648,9 @@ fn turn_face_up(state: &mut GameState, player: PlayerId, id: ObjectId) -> Result
     };
     state.engine.event_log.push(event.clone());
     state.engine.event_history.push(event);
+    // A Bane of the Living owes its X (Premodern wave P2a).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p2a_v1::statics::turned_face_up(state, id);
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];
     state.priority_player = player;
@@ -20617,9 +20723,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         // A morph card (eternal wave P1a) is face down without disguise's
         // ward.
         let morph = cfg!(feature = "eternal-fixtures")
-            && crate::eternal_premodern_p1a_v1::statics::is_morph(
+            && (crate::eternal_premodern_p1a_v1::statics::is_morph(
                 card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize].name,
-            );
+            ) || crate::eternal_premodern_p2a_v1::statics::is_morph(
+                card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize].name,
+            ));
         state.objects.get_mut(item.source).v4.ward_generic = if morph { 0 } else { 2 };
     }
     // A permanent spell cast for its warp cost remembers that on the
@@ -28810,6 +28918,11 @@ fn push_paid_activation(
             pending.ability_index,
         );
         crate::eternal_premodern_p1b_v1::statics::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+        );
+        crate::eternal_premodern_p2a_v1::statics::activation_paid(
             state,
             pending.source,
             pending.ability_index,

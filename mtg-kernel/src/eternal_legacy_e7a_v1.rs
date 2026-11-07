@@ -2953,13 +2953,17 @@ pub(crate) fn manifested(state: &GameState, id: ObjectId) -> bool {
 /// this way).
 pub(crate) fn turn_face_up_cost(state: &GameState, id: ObjectId) -> Option<crate::mana::Cost> {
     if !manifested(state, id) {
-        // A face-down morph card turns face up for its morph cost (wave P1a).
-        return crate::eternal_premodern_p1a_v1::statics::morph_face_up_cost(state, id);
+        // A face-down morph card turns face up for its morph cost (waves P1a
+        // and P2a).
+        return crate::eternal_premodern_p1a_v1::statics::morph_face_up_cost(state, id)
+            .or_else(|| crate::eternal_premodern_p2a_v1::statics::morph_face_up_cost(state, id));
     }
     // A manifested morph card may also turn face up for its morph cost
     // (701.34c); Exalted Angel's {2}{W}{W} is within its mana cost, so it is
     // the one offered.
-    if let Some(cost) = crate::eternal_premodern_p1a_v1::statics::morph_cost(state, id) {
+    if let Some(cost) = crate::eternal_premodern_p1a_v1::statics::morph_cost(state, id)
+        .or_else(|| crate::eternal_premodern_p2a_v1::statics::morph_cost(state, id))
+    {
         return Some(cost);
     }
     let def = definition(state, id)?;

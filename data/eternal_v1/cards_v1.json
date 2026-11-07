@@ -21454,6 +21454,948 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/ElephantToken.java",
    "is_token": true
+  },
+  {
+   "name": "Bane of the Living",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "morph",
+    "x_cost",
+    "turned_face_up_trigger",
+    "mass_pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BaneOfTheLiving.java"
+  },
+  {
+   "name": "Genesis",
+   "engine_capability": "full",
+   "mana_cost": "{4}{G}",
+   "mana_value": 5,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Incarnation"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "upkeep_trigger",
+    "graveyard_trigger",
+    "return_from_graveyard",
+    "pay_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Genesis.java"
+  },
+  {
+   "name": "Pernicious Deed",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{G}",
+   "mana_value": 3,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-the-rock",
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "x_cost",
+    "destroy_all"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PerniciousDeed.java"
+  },
+  {
+   "name": "Ravenous Baloth",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Beast"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RavenousBaloth.java"
+  },
+  {
+   "name": "Ravenous Rats",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Rat"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "target_opponent",
+    "discard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RavenousRats.java"
+  },
+  {
+   "name": "Tainted Wood",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C",
+    "B",
+    "G"
+   ],
+   "decks": [
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "conditional_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TaintedWood.java"
+  },
+  {
+   "name": "Wall of Blossoms",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Plant",
+    "Wall"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-the-rock"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "defender",
+    "etb_trigger",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WallOfBlossoms.java"
+  },
+  {
+   "name": "Contamination",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "upkeep_trigger",
+    "sacrifice_cost",
+    "mana_replacement"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Contamination.java"
+  },
+  {
+   "name": "Diabolic Tutor",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "tutor"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DiabolicTutor.java"
+  },
+  {
+   "name": "High Market",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "activated_ability",
+    "tap_ability",
+    "sacrifice_cost",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HighMarket.java"
+  },
+  {
+   "name": "Innocent Blood",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control",
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "edict",
+    "sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/InnocentBlood.java"
+  },
+  {
+   "name": "Nether Spirit",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "upkeep_trigger",
+    "graveyard_trigger",
+    "return_to_battlefield",
+    "intervening_if"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NetherSpirit.java"
+  },
+  {
+   "name": "Nevinyrral's Disk",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_tapped",
+    "activated_ability",
+    "tap_ability",
+    "board_wipe"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NevinyrralsDisk.java"
+  },
+  {
+   "name": "Zombie Infestation",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "discard_cost",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/z/ZombieInfestation.java"
+  },
+  {
+   "name": "Eternal Dragon",
+   "engine_capability": "full",
+   "mana_cost": "{5}{W}{W}",
+   "mana_value": 7,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dragon",
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-bw-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "activated_ability",
+    "graveyard_ability",
+    "landcycling",
+    "upkeep_only"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EternalDragon.java"
+  },
+  {
+   "name": "Gerrard's Verdict",
+   "engine_capability": "full",
+   "mana_cost": "{W}{B}",
+   "mana_value": 2,
+   "colors": [
+    "W",
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-bw-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "target_player",
+    "discard",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GerrardsVerdict.java"
+  },
+  {
+   "name": "Tainted Field",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C",
+    "W",
+    "B"
+   ],
+   "decks": [
+    "premodern-bw-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "conditional_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TaintedField.java"
+  },
+  {
+   "name": "Vindicate",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{B}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-bw-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/Vindicate.java"
+  },
+  {
+   "name": "Black Vise",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "as_enters_choose_opponent",
+    "upkeep_trigger",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BlackVise.java"
+  },
+  {
+   "name": "Forsaken City",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "any_color_mana",
+    "doesnt_untap",
+    "upkeep_trigger",
+    "exile_from_hand_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/ForsakenCity.java"
+  },
+  {
+   "name": "Mana Short",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "target_player",
+    "tap_lands",
+    "empty_mana_pool"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/ManaShort.java"
+  },
+  {
+   "name": "Root Maze",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_tapped_replacement"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RootMaze.java"
+  },
+  {
+   "name": "Stasis",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "skip_untap",
+    "upkeep_trigger",
+    "sacrifice_unless_pay"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Stasis.java"
+  },
+  {
+   "name": "Upheaval",
+   "engine_capability": "full",
+   "mana_cost": "{4}{U}{U}",
+   "mana_value": 6,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stasis"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "bounce_all"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/Upheaval.java"
+  },
+  {
+   "name": "Academy Rector",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "dies_trigger",
+    "library_search",
+    "put_onto_battlefield",
+    "exile_self"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AcademyRector.java"
+  },
+  {
+   "name": "Dromar's Charm",
+   "engine_capability": "full",
+   "mana_cost": "{W}{U}{B}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "U",
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "modal",
+    "life_gain",
+    "counterspell",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DromarsCharm.java"
+  },
+  {
+   "name": "Future Sight",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}{U}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "reveal_top",
+    "play_from_library"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FutureSight.java"
+  },
+  {
+   "name": "Gaea's Blessing",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "target_player",
+    "shuffle_graveyard",
+    "draw_card",
+    "graveyard_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GaeasBlessing.java"
+  },
+  {
+   "name": "Krosan Tusker",
+   "engine_capability": "full",
+   "mana_cost": "{5}{G}{G}",
+   "mana_value": 7,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Boar",
+    "Beast"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cycling",
+    "cycle_trigger",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KrosanTusker.java"
+  },
+  {
+   "name": "Phyrexian Tower",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "activated_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianTower.java"
+  },
+  {
+   "name": "Veteran Explorer",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier",
+    "Scout"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "dies_trigger",
+    "library_search",
+    "put_onto_battlefield"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VeteranExplorer.java"
   }
  ]
 }

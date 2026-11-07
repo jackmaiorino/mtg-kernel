@@ -34,6 +34,7 @@ mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_p1a_v1;
 mod build_eternal_p1b_v1;
+mod build_eternal_p2a_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -3333,6 +3334,9 @@ enum PermanentFilterRecipe {
     /// A controlled Goblin, the cost's source included (Siege-Gang
     /// Commander's "Sacrifice a Goblin").
     Goblin,
+    /// A controlled Beast, the cost's source included (Ravenous Baloth's
+    /// "Sacrifice a Beast").
+    Beast,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6558,6 +6562,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         }
         PermanentFilterRecipe::ForestOrPlains => "PermanentFilter::ForestOrPlainsV1",
         PermanentFilterRecipe::Goblin => "PermanentFilter::WithSubtypeV1(Subtype::Goblin)",
+        PermanentFilterRecipe::Beast => "PermanentFilter::WithSubtypeV1(Subtype::Beast)",
     }
 }
 
@@ -6576,6 +6581,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::AnotherArtifactOrCreature => "another_artifact_or_creature",
         PermanentFilterRecipe::ForestOrPlains => "forest_or_plains",
         PermanentFilterRecipe::Goblin => "with_subtype:Goblin",
+        PermanentFilterRecipe::Beast => "with_subtype:Beast",
     }
 }
 
