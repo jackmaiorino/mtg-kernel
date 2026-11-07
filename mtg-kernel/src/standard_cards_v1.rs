@@ -380,6 +380,21 @@ pub enum StandardTargetV1 {
     CreatureManaValueAtMostV1(u8),
     /// "Target artifact defending player controls" (Goblin Vandal).
     OpponentArtifactV1,
+    /// "Target noncreature artifact or noncreature enchantment" (Haywire
+    /// Mite). Sideboard wave S1a's filters follow
+    /// (`eternal_sideboard_s1a_v1::targets`).
+    NoncreatureArtifactOrEnchantmentV1,
+    /// "Target black or red permanent" (Celestial Purge).
+    BlackOrRedPermanentV1,
+    /// "Target creature with power or toughness 1 or less" (Warping Wail).
+    CreaturePowerOrToughnessAtMostOneV1,
+    /// "Up to two target artifacts and/or enchantments" (Force of Vigor).
+    UpToTwoArtifactsOrEnchantmentsV1,
+    /// "Target enchantment, instant, or sorcery spell" (Swan Song).
+    EnchantmentInstantOrSorcerySpellV1,
+    /// "Target card in a graveyard other than a basic land card" (Surgical
+    /// Extraction).
+    NonbasicLandCardInAGraveyardV1,
 }
 
 impl StandardTargetV1 {
@@ -389,6 +404,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1b_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_sideboard_s1a_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
@@ -535,6 +553,7 @@ impl StandardTargetV1 {
                 | Self::UpToThreeLandCardsInOwnGraveyardV1
         ) || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
             || crate::eternal_legacy_e9a_v1::targets::in_graveyard(self)
+            || crate::eternal_sideboard_s1a_v1::targets::in_graveyard(self)
     }
 
     /// Wave E7a's filters (`eternal_legacy_e7a_v1`).
@@ -557,6 +576,7 @@ impl StandardTargetV1 {
                 | Self::SpellWithSingleTargetV1
                 | Self::TriggeredAbilityOrColorlessSpellV1
         ) || crate::eternal_vintage_e7b_v1::targets::on_stack(self)
+            || crate::eternal_sideboard_s1a_v1::targets::on_stack(self)
     }
 }
 
@@ -747,6 +767,9 @@ fn stack_spell_matches(
                 || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery)
         }
         StandardTargetV1::SpellWithSingleTargetV1 => item.targets.len() == 1,
+        StandardTargetV1::EnchantmentInstantOrSorcerySpellV1 => {
+            crate::eternal_sideboard_s1a_v1::targets::spell_matches(state, item)
+        }
         StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => item.controller != controller,
         StandardTargetV1::TriggeredAbilityOrColorlessSpellV1 => {
             // Painter's Servant colors every spell (eternal wave E9a).
@@ -794,6 +817,11 @@ pub(crate) fn legal_targets(
     }
     if let Some(targets) =
         crate::eternal_premodern_p1b_v1::targets::legal_targets(target, source, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_sideboard_s1a_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
     }
@@ -1020,6 +1048,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_sideboard_s1a_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_premodern_p1a_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1217,6 +1250,14 @@ pub(crate) fn target_matches(
         StandardTargetV1::DividedTwoDamageAnyTargetsV1
         | StandardTargetV1::CreatureManaValueAtMostV1(_)
         | StandardTargetV1::OpponentArtifactV1 => false,
+        // Answered by `eternal_sideboard_s1a_v1::targets` above or, for a
+        // spell on the stack, by `stack_spell_matches`.
+        StandardTargetV1::NoncreatureArtifactOrEnchantmentV1
+        | StandardTargetV1::BlackOrRedPermanentV1
+        | StandardTargetV1::CreaturePowerOrToughnessAtMostOneV1
+        | StandardTargetV1::UpToTwoArtifactsOrEnchantmentsV1
+        | StandardTargetV1::EnchantmentInstantOrSorcerySpellV1
+        | StandardTargetV1::NonbasicLandCardInAGraveyardV1 => false,
     }
 }
 

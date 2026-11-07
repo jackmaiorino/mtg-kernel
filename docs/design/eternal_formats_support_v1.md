@@ -404,6 +404,33 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1a, built in `src/eternal_sideboard_s1a_v1.rs` (with `statics` and `targets` submodules)
+  and `build_eternal_s1a_v1.rs`, linked just before E9b in the recipe chain: Legacy sideboard
+  cards. Rest in Peace, Leyline of the Void and Containment Priest join the zone-change
+  replacement hook Dauthi Voidwalker uses (exile instead of a graveyard; exile a nontoken
+  creature entering from anywhere but the stack). Leyline's opening-hand permission is offered
+  as the first upkeep begins, as Chancellor of the Annex's reveal is. Disruptor Flute names a
+  card as Anointed Peacekeeper does: spells with the name cost {3} more (own-spell increase) and
+  its non-mana activated abilities are prohibited like Pithing Needle's. Choke is an untap-step
+  prohibition, Defense Grid a spell tax by the caster's turn, Dread of Night a power/toughness
+  modifier. Mass effects (Rough // Tumble, a split card through the Adventure form; Brotherhood's
+  End; Meltdown; Serenity; Massacre's -2/-2 on exact incarnations) are `S1aOpV1` leaves, and
+  Massacre adds `AltCostCondition::OpponentPlainsYouSwampV1`. Lavinia's cast restriction is a
+  cast prohibition (X judged as 0), and her counter reads the mana a cast spent
+  (`payment.commit`), recorded only while she is in play. Carpet of Flowers is queued by the
+  main-phase hook as a choice of color and amount, clamped to the Islands at resolution.
+  Surgical Extraction exiles every same-named card of the owner's graveyard, hand and library
+  and shuffles. New target shapes: noncreature artifact or enchantment, black or red permanent,
+  creature with power or toughness 1 or less, up to two artifacts and/or enchantments, an
+  enchantment, instant or sorcery spell, and a non-basic-land card in a graveyard.
+
+  Known gaps: Surgical Extraction's "any number" always takes every match. Lavinia judges X
+  as 0 and does not restrict casts made during resolution. Left out of the wave: Damping
+  Sphere (its land replacement spans the mana planner and every mana yield path), Collective
+  Brutality (escalate), Stronghold Gambit, Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
+  of Saint Katherine (miracle is Terminus-only and its cost needs generic mana) and From the
+  Ashes.
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every

@@ -153,6 +153,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_premodern_p1b_v1::P1bStateV1::is_empty"
     )]
     pub p1b: crate::eternal_premodern_p1b_v1::P1bStateV1,
+    /// Sideboard wave S1a's state (`eternal_sideboard_s1a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1a_v1::S1aStateV1::is_empty"
+    )]
+    pub s1a: crate::eternal_sideboard_s1a_v1::S1aStateV1,
     /// Premodern wave P1a's state (`eternal_premodern_p1a_v1`).
     #[serde(
         default,
@@ -372,6 +378,8 @@ pub enum EternalOpV1 {
     P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1),
     /// A leaf owned by Premodern wave P1a's module.
     P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1),
+    /// A leaf owned by sideboard wave S1a's module.
+    S1aV1(crate::eternal_sideboard_s1a_v1::S1aOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -427,6 +435,7 @@ impl EternalOpV1 {
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             EternalOpV1::P1bV1(op) => op.contains_player_choice(),
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1aV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -734,6 +743,11 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // Sideboard wave S1a's cards fall through the other waves' trigger
+    // tables, which would answer for them, so they answer first.
+    if let Some(spec) = crate::eternal_sideboard_s1a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Legolas's Quick Reflexes' trigger, granted to any creature (wave E9a).
     if let Some(spec) = crate::eternal_legacy_e9a_v1::granted_trigger_target_spec(effect) {
         return Some(spec);
@@ -935,6 +949,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::P1bV1(op) => crate::eternal_premodern_p1b_v1::execute(op, ctx, state),
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
+        EternalOpV1::S1aV1(op) => crate::eternal_sideboard_s1a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1670,6 +1685,9 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_premodern_p1a_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_sideboard_s1a_v1::delayed_triggers(
+        state, events,
+    ));
     triggers
 }
 
@@ -1721,6 +1739,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     }
     if e3::delayed_effect_matches(name, effect)
         || crate::eternal_e9b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_sideboard_s1a_v1::delayed_effect_matches(name, effect)
     {
         return true;
     }

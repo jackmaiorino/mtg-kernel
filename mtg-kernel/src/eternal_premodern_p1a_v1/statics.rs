@@ -422,7 +422,8 @@ pub(crate) fn land_type_setter(
 /// Split cards (708): Fire // Ice. The second half is cast as the card's
 /// Adventure form, and goes to the graveyard as it resolves.
 pub(crate) fn split_card(name: &str) -> bool {
-    name == FIRE_ICE
+    // Rough // Tumble (sideboard wave S1a) is split the same way.
+    name == FIRE_ICE || name == crate::eternal_sideboard_s1a_v1::ROUGH_TUMBLE
 }
 
 /// The split card spell `item`'s half: `true` for the second.

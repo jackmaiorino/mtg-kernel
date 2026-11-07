@@ -2351,6 +2351,9 @@ pub enum AltCostCondition {
     /// "If this spell is the first spell you've cast this game" (Once Upon a
     /// Time, `eternal_legacy_e8a_v1`). Appended for the eternal catalog.
     FirstSpellThisGameV1,
+    /// "If an opponent controls a Plains and you control a Swamp" (Massacre,
+    /// `eternal_sideboard_s1a_v1`). Appended for the eternal catalog.
+    OpponentPlainsYouSwampV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -3858,7 +3861,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xbaca_d3c1_a636_ec7d;
+        const EXPECTED_ETERNAL: u64 = 0xaa8b_8214_82c2_738f;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

@@ -1159,6 +1159,8 @@ pub(crate) fn note_combat_damage(state: &mut GameState, events: &[CommittedEvent
 pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
     let mut triggers = crate::eternal_legacy_e5b_v1::begin_main_phase(state);
     triggers.extend(mana_drains_due(state));
+    // Carpet of Flowers (sideboard wave S1a).
+    triggers.extend(crate::eternal_sideboard_s1a_v1::begin_main_phase(state));
     triggers
 }
 

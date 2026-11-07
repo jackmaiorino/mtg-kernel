@@ -7930,6 +7930,12 @@ fn alt_cost_condition_met(
             cfg!(feature = "eternal-fixtures")
                 && crate::eternal_legacy_e8a_v1::first_spell_this_game(state, player)
         }
+        // Massacre: "If an opponent controls a Plains and you control a
+        // Swamp".
+        card_def::AltCostCondition::OpponentPlainsYouSwampV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_sideboard_s1a_v1::statics::massacre_free(state, player)
+        }
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -8967,6 +8973,9 @@ fn spell_cost_generic_modifiers_v1(
             ))
             .saturating_add(crate::eternal_premodern_p1b_v1::statics::spell_tax(
                 state, types, caster,
+            ))
+            .saturating_add(crate::eternal_sideboard_s1a_v1::statics::spell_tax(
+                state, caster,
             ))
     } else {
         increase
@@ -10099,6 +10108,11 @@ fn is_castable_now(
     // Grafdigger's Cage, and Gaea's Will's missing mana cost.
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_legacy_e7a_v1::cast_prohibited(state, player, id) {
+        return false;
+    }
+    // Lavinia, Azorius Renegade (eternal wave S1a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(state, player, id, cast_method) {
         return false;
     }
     // Teferi, Time Raveler: an opponent casts spells only at sorcery speed.
@@ -22186,6 +22200,11 @@ fn checked_effective_stat(
             state, id,
         )))?;
     }
+    // Dread of Night: "White creatures get -1/-1." (eternal wave S1a)
+    #[cfg(feature = "eternal-fixtures")]
+    add(i128::from(
+        crate::eternal_sideboard_s1a_v1::statics::pt_modifier(state, id),
+    ))?;
     #[cfg(feature = "standard-magezero-fixtures")]
     {
         add(crate::standard_keywords_v1::controlled_forest_boost(
@@ -27963,6 +27982,14 @@ fn finalize_owned_cast(
         payment.restricted_pool_used(),
     );
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
+    // Lavinia, Azorius Renegade: a spell cast with no mana spent.
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1a_v1::statics::note_mana_spent(
+        state,
+        pending.spell,
+        pending.controller,
+        mana_spent,
+    );
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
     let sphinx_lore_cast_v1 = sphinx_lore_cast_v1::record_finalized(state, &pending)?;
     let omniscience_cast_v1 = omniscience_cast_v1::record_finalized(state, &pending)?;
