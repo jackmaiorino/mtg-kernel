@@ -1426,6 +1426,8 @@ pub(crate) fn foretell(
     if state.objects.get(source).zone != Zone::Exile {
         return Ok(());
     }
+    // Face down: the other player cannot tell which card left the hand.
+    state.forget_hand_after_face_down_departure_v1(player);
     let link = live_link(state, source);
     state.objects.get_mut(source).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
         disguised: false,

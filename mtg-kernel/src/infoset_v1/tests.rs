@@ -732,6 +732,59 @@ fn a_public_departure_of_another_copy_keeps_the_revealed_copy_tracked() {
     panic!("no seed deals the opponent two copies of one card");
 }
 
+/// Issue #531: the same shape under the engine's opt-in name-level rule.
+/// B's public departure ends V's row of A too, so the engine's rows name
+/// what the transcript reducer knows (43.8's L), by name.
+#[test]
+fn name_level_rows_agree_with_the_transcript_reducer_after_a_same_name_departure() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+    let viewer = PlayerId::P0;
+    let opp = viewer.opponent();
+    for seed in 50..200u64 {
+        let live = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+            seed,
+            seed,
+            2_000,
+            20_000,
+            ["Wildfire".to_string(), "Wildfire".to_string()],
+        )
+        .expect("reset");
+        let base = live.game_state().clone();
+        let hand = base.players[opp.index()].hand.clone();
+        let Some((a, b)) = hand.iter().enumerate().find_map(|(i, &a)| {
+            hand[i + 1..]
+                .iter()
+                .find(|&&b| base.objects.get(b).card_def == base.objects.get(a).card_def)
+                .map(|&b| (a, b))
+        }) else {
+            continue;
+        };
+        let mut st = base.clone();
+        st.enable_hand_departures_by_name_v1();
+        st.reveal_hand_card(viewer, opp, a).expect("reveal");
+        propose_and_commit(&mut st, ProposedEvent::zone_change(b, Zone::Graveyard));
+        let mut native: Vec<u16> = st
+            .known_hand_cards(viewer, opp)
+            .iter()
+            .map(|k| st.objects.get(k.object).card_def)
+            .collect();
+        native.sort_unstable();
+        let mut reducer: Vec<u16> =
+            super::projection::project_v1(&st, st.observation_journal.notes(), viewer)
+                .hand_facts
+                .iter()
+                .filter(|f| f.known)
+                .map(|f| f.card_def)
+                .collect();
+        reducer.sort_unstable();
+        assert!(native.is_empty(), "seed {seed}: the row of A ended");
+        assert_eq!(native, reducer, "seed {seed}");
+        return;
+    }
+    panic!("no seed deals the opponent two copies of one card");
+}
+
 /// Amendment 43.1: at every combat inclusion point (attackers, and blockers
 /// inside the per-attacker reshape) the payload carries the live scan, and
 /// the import presents the same point: the canonical row keys pair one to
