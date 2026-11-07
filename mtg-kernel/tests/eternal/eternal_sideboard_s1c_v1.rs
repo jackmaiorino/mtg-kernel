@@ -459,10 +459,13 @@ fn opponent_casts(
     colorless: u8,
     targets: &[Target],
 ) {
+    next(state);
     act(state, Action::Pass);
     pool(state, P1, colored, colorless);
     cast(state, spell, targets);
+    next(state);
     act(state, Action::Pass);
+    next(state);
 }
 
 #[test]
@@ -475,7 +478,11 @@ fn mystical_dispute_costs_two_less_only_against_a_blue_spell() {
     pool(&mut state, P0, &[ManaColor::U], 0);
     cast(&mut state, dispute, &[Target::Object(breacher)]);
     settle_first(&mut state);
-    assert_eq!(zone(&state, breacher), Zone::Graveyard, "countered unless {{3}}");
+    assert_eq!(
+        zone(&state, breacher),
+        Zone::Graveyard,
+        "countered unless {{3}}"
+    );
 
     // Against a nonblue spell it costs the full {2}{U}.
     let mut state = plains();
