@@ -871,7 +871,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         SEJIRI_STEPPE => &SEJIRI_TRIGGERS,
         UNDERMOUNTAIN_ADVENTURER => &INITIATIVE_TRIGGERS,
         // Premodern wave P1b names disjoint cards.
-        _ => crate::eternal_premodern_p1b_v1::triggers_for(name),
+        _ => crate::eternal_premodern_p2a_v1::triggers_for(name),
     }
 }
 
@@ -884,6 +884,11 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // Premodern wave P2a's cards fall through from this module's tables, then
+    // P1b's and P1a's.
+    if let Some(spec) = crate::eternal_premodern_p2a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Premodern wave P2d's, then P1a's cards fall through from this
     // module's tables.
     if let Some(spec) = crate::eternal_premodern_p2d_v1::trigger_target_spec(name, effect) {

@@ -261,7 +261,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
         "Heritage Reclamation" => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: crate::eternal_e9b_v1::destroy_target })",
         "Vraska's Final Mercy" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_e9b_v1::vraskas_final_mercy_empower })",
         "You Meet in a Tavern" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_e9b_v1::you_meet_in_a_tavern_brawl })",
-        _ => super::build_eternal_p2d_v1::mode2_for(name),
+        _ => super::build_eternal_p2a_v1::mode2_for(name),
     }
 }
 
@@ -270,7 +270,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Heritage Reclamation" => "Some(ModeDef { target_spec: TargetSpec::UpToOneCardInGraveyards, effect: crate::eternal_e9b_v1::heritage_reclamation_exile })",
-        _ => super::build_eternal_p2d_v1::mode3_for(name),
+        _ => super::build_eternal_p2a_v1::mode3_for(name),
     }
 }
 
@@ -322,7 +322,7 @@ pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str
     match name {
         "Simic Growth Chamber" => Some(vec!["G"]),
         "Black Dragon Gate" => Some(vec!["B"]),
-        _ => super::build_eternal_p1b_v1::primary_mana_ability_colors(name),
+        _ => super::build_eternal_p2a_v1::primary_mana_ability_colors(name),
     }
 }
 

@@ -488,6 +488,7 @@ reporting as E1 to E9:
 | P0 | Snapshot, capture tool, the catalog reads both snapshots | 0 | Premodern 0% |
 | P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
 | P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census; Enchantress plays through sessions once schema 5 reports shroud |
+| P2a | The Rock, Mono-Black Control, BW Control, Stasis, Other Control | 31 | Premodern 70% to 79% by the census |
 | P2d | White Weenie, Mono-Red Control (Beloved Chaplain, Devoted Caretaker, Glowrider, Mother of Runes, Nova Cleric, Shared Triumph, Soltari Monk, Soltari Priest, Avalanche Riders, Earthquake, Firebolt, Ghitu Encampment, Pillage, Stone Rain, Veteran Brawlers) | 15 | two decks, 2% of the field |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
@@ -639,3 +640,58 @@ later color-setting effect from another wave (Oko's Elk) does not override it. E
 Angel's life gain trigger reads its printed ability with last-known information, so damage
 an effect deals for it after it left the battlefield (Legolas's Quick Reflexes) still
 triggers it. Neither interaction needs a Premodern card.
+
+### P2a
+
+P2a is built in `src/eternal_premodern_p2a_v1.rs` (with `statics` and `targets` submodules) and
+`build_eternal_p2a_v1.rs`, which sit between E9a's tables and wave P1b's. No card needs a new
+creature type. New primitives:
+
+- Morph with an X cost (Bane of the Living) extends P1a's morph. Turning it face up pays {B}{B}
+  as the special action, then its controller announces X, from 0 to the generic mana they can
+  still pay, as an as-enters style choice (`entry_choice_decision`), pays it, and a
+  hook-queued "turned face up" trigger gives every creature -X/-X until end of turn. With no mana
+  to spare no choice is offered.
+- Contamination replaces the mana a land adds: the colors a land offers, the activation and the
+  payment planner all see a single {B}. The land's own ability still runs (City of Brass still
+  deals damage, Gemstone Mine still loses a counter); mana already floating is unchanged.
+- Stasis ("players skip their untap steps") and Forsaken City ("doesn't untap during your untap
+  step") are untap-step restrictions beside Tsabo's Web; Root Maze joins Archon of Emeria's tapped
+  entries. Forsaken City's upkeep trigger offers a card from hand to exile, and none declines.
+- Future Sight extends Bolas's Citadel's library permissions: the top card is revealed to both
+  players (each observer's knowledge is refreshed before a priority decision, as for the Citadel),
+  and its controller may play a land from the top or cast any other card from the top for its mana
+  cost. A controller who also has a Citadel casts through the Citadel while they can pay the life.
+- Cards in a graveyard act through hook-queued triggers: Genesis at its owner's upkeep (target
+  creature card announced as the trigger is put on the stack, {2}{G} paid on resolution), Nether
+  Spirit (only while it is the only creature card there, checked again on resolution), Gaea's
+  Blessing when it goes from a library to a graveyard, and Eternal Dragon's activated return, which
+  is allowed only in its owner's upkeep. Academy Rector and Veteran Explorer use dies triggers
+  that function from the graveyard and the engine's library searches to the battlefield.
+- Pernicious Deed's {X} is one ability per X from 0 to 8, the largest mana value in the Premodern
+  pool; the controller picks which to activate. The engine's announced X for activated abilities
+  belongs to a Standard card.
+- Black Vise records its chosen opponent as it enters (the one opponent of this kernel) and its
+  trigger is queued as that player's upkeep begins. Gerrard's Verdict's discards are chosen by
+  the target player (all of a hand of two or fewer), then the caster gains 3 life per land. Gaea's
+  Blessing's targets are a player and up to three cards in that player's graveyard
+  (`StandardTargetV1::PlayerThenUpToThreeOfTheirGraveyardCardsV1`). Stasis's and Contamination's
+  upkeep costs are choices between the cost and a sacrifice. Krosan Tusker's "When you cycle"
+  trigger is queued as the cycling cost is paid, like the Decrees'.
+- Diabolic Tutor reuses Demonic Tutor's program; Wall of Blossoms, Ravenous Rats, Ravenous
+  Baloth, Vindicate, Innocent Blood, Zombie Infestation, High Market, Phyrexian Tower and the Tainted
+  lands use existing recipes (the Tainted lands are a Verge with "a Swamp" as both subtypes).
+
+Known gaps:
+- Pernicious Deed cannot pay an X above 8.
+- Under Contamination a land's "{T}, Sacrifice a creature" ability (Phyrexian Tower) is not
+  offered, since it adds the same single {B} as tapping the land.
+- Stasis and Forsaken City stop permanents untapping; other things an untap step does (phasing in,
+  day and night) still happen.
+- Academy Rector's search may find an Aura, which the engine puts onto the battlefield with no
+  host rather than leaving it in the library (no Aura is in Other Control's list).
+- Veteran Explorer's search is not optional: each player searches, choosing no card is a search
+  that finds nothing, and every player shuffles.
+- The Tainted lands' second ability is an automatic payment source while a Swamp is controlled
+  (the planner reads the gated colors from `statics::tainted_colors`); a Verge's is not.
+- Black Vise's chosen opponent is not a choice, and its record does not follow a change of control.

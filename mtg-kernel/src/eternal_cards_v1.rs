@@ -153,6 +153,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_premodern_p1b_v1::P1bStateV1::is_empty"
     )]
     pub p1b: crate::eternal_premodern_p1b_v1::P1bStateV1,
+    /// Premodern wave P2a's state (`eternal_premodern_p2a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p2a_v1::P2aStateV1::is_empty"
+    )]
+    pub p2a: crate::eternal_premodern_p2a_v1::P2aStateV1,
     /// Premodern wave P2d's state (`eternal_premodern_p2d_v1`).
     #[serde(
         default,
@@ -376,6 +382,8 @@ pub enum EternalOpV1 {
     E9aV1(crate::eternal_legacy_e9a_v1::E9aOpV1),
     /// A leaf owned by Premodern wave P1b's module.
     P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1),
+    /// A leaf owned by Premodern wave P2a's module.
+    P2aV1(crate::eternal_premodern_p2a_v1::P2aOpV1),
     /// A leaf owned by Premodern wave P2d's module.
     P2dV1(crate::eternal_premodern_p2d_v1::P2dOpV1),
     /// A leaf owned by Premodern wave P1a's module.
@@ -434,6 +442,7 @@ impl EternalOpV1 {
             EternalOpV1::E9bV1(op) => op.contains_player_choice(),
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             EternalOpV1::P1bV1(op) => op.contains_player_choice(),
+            EternalOpV1::P2aV1(op) => op.contains_player_choice(),
             EternalOpV1::P2dV1(op) => op.contains_player_choice(),
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
@@ -943,6 +952,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::execute(op, ctx, state),
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::P1bV1(op) => crate::eternal_premodern_p1b_v1::execute(op, ctx, state),
+        EternalOpV1::P2aV1(op) => crate::eternal_premodern_p2a_v1::execute(op, ctx, state),
         EternalOpV1::P2dV1(op) => crate::eternal_premodern_p2d_v1::execute(op, ctx, state),
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
@@ -1502,6 +1512,7 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_legacy_e8a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_legacy_e9a_v1::statics::apply_entry_counters(state, object, input);
     crate::eternal_premodern_p1b_v1::statics::apply_entry_counters(state, object);
+    crate::eternal_premodern_p2a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_premodern_p2d_v1::apply_entry(state, object);
     crate::eternal_premodern_p1a_v1::statics::apply_entry_counters(state, object);
     let Some(name) = definition_name(state, object) else {
@@ -1677,6 +1688,9 @@ pub(crate) fn delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_premodern_p1b_v1::delayed_triggers(
+        state, events,
+    ));
+    triggers.extend(crate::eternal_premodern_p2a_v1::delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_premodern_p2d_v1::delayed_triggers(
