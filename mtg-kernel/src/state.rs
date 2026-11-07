@@ -3165,6 +3165,17 @@ impl GameState {
         self.forget_hand_object(object);
     }
 
+    /// A card of `owner`'s hand has just left face down to a public zone
+    /// (foretell), after its move was read by name. Under
+    /// [`GameState::hand_departures_by_name_v1`] the other player cannot
+    /// tell which card it was, so every row of that hand ends, as for any
+    /// hidden departure. Off, nothing changes.
+    pub(crate) fn forget_hand_after_face_down_departure_v1(&mut self, owner: PlayerId) {
+        if self.hand_departures_by_name_v1 {
+            self.hand_knowledge[owner.opponent().index()][owner.index()].clear();
+        }
+    }
+
     /// Clears exact identities another observer knew in `owner`'s hand.
     /// A private subset choice from the whole hand invalidates even facts
     /// about cards that remain: retaining them would reveal which hidden

@@ -7118,7 +7118,8 @@ fn materialize_zone_change_v1(
     remove_from_zone(state, owner, id, from_zone);
     if from_zone == Zone::Hand && to_zone != Zone::Hand {
         // The other player sees which card left unless it goes to a library
-        // position they are not shown or onto the battlefield face down.
+        // position they are not shown or onto the battlefield face down
+        // (`foretell` exiles face down and ends the rows after this move).
         let named = match to_zone {
             Zone::Library => library_insert_visibility == LibraryInsertVisibility::Public,
             Zone::Battlefield => entering_face_down.is_none(),
