@@ -583,6 +583,9 @@ fn sealed_batches_are_admitted_before_any_file_is_opened() {
     }
     // One such file alone is admitted, verified, and fails only when opened.
     let error = read_trajectories_v1(&pins[..1], 1).unwrap_err();
-    assert_ne!(error, "trajectory batch exceeds 512 MiB CPU ingestion bound");
+    assert_ne!(
+        error,
+        "trajectory batch exceeds 512 MiB CPU ingestion bound"
+    );
     fs::remove_dir_all(&directory).unwrap();
 }
