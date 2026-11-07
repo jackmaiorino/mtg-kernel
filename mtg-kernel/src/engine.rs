@@ -14747,7 +14747,18 @@ pub(crate) fn validate_pending_cast(
     } else {
         Some(0)
     };
+    // Bolas's Citadel: a spell cast from the library this way pays life
+    // rather than its mana cost, so its own alternative cost (Force of Will's)
+    // is no choice; `begin_cast_ex` seeds the normal mode for it.
+    let citadel_cast = cfg!(feature = "eternal-fixtures")
+        && pending.origin_zone == Zone::Library
+        && crate::eternal_e5a_v1::permissions::citadel_cast(
+            state,
+            pending.spell,
+            pending.controller,
+        );
     let has_cast_mode_choice = def.alt_cost.is_some()
+        && !citadel_cast
         && (!resolution_cast_v1::free_cast(state, pending.spell)
             || crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative)
                 .is_some());
