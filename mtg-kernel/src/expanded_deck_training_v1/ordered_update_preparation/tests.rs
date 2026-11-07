@@ -554,7 +554,10 @@ fn phase1_gae_loss_selection_wire_shape_is_exact() {
 fn sealed_records_claim_their_opened_length_against_the_batch_bound() {
     use super::super::record_envelope_v1::RecordEnvelopeV1;
     let record = vec![b' '; 4096];
-    let sealed = RecordEnvelopeV1::Zstd1.seal_v1(&record).unwrap().into_owned();
+    let sealed = RecordEnvelopeV1::Zstd1
+        .seal_v1(&record)
+        .unwrap()
+        .into_owned();
     assert!(sealed.len() < record.len());
     let claimed = AtomicU64::new(0);
     assert_eq!(claim_record_v1(&claimed, &sealed).unwrap(), 4096);
