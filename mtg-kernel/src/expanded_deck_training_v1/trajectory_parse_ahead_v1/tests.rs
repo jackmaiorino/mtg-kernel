@@ -12,6 +12,7 @@ fn insert_unqueued(key: &str, bytes: &[u8], slots: [SlotV1; 2]) -> Arc<Vec<u8>> 
         key.to_owned(),
         EntryV1 {
             bytes: Arc::clone(&bytes),
+            charge: bytes.len(),
             slots,
         },
     );
