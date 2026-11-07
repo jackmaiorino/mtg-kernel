@@ -491,7 +491,7 @@ def make_plan(inputs_path):
                'c_wall_seconds': c_wall if a == 'C' else None, 'tools': tools}
         if spec.get('scratch'):
             scratch_root = inputs.get('scratch_root')
-            require(a == 'C' and stage == '0', f'{a}: scratch segments are for C chains in Stage 0 plans only')
+            require(a == 'C' and stage == '0', f'{a}: scratch segments are for C-arm chains (net-8 or S parent) in Stage 0 plans only')
             require(scratch_root and Path(scratch_root).is_absolute(), f'{a}: scratch needs an absolute scratch_root')
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
@@ -830,9 +830,15 @@ def persist(arm, native, cdir):
     its = target / 'iterations'
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
     newest = done[-1] if done else None
-    keep = None
+    keep = {}  # the newest full train state: relative path -> pinned sha256 (checkpoint, and an S container)
     if newest is not None:
-        keep = attempt_dir(newest, read(newest / 'complete.json')) / 'update' / 'checkpoint.json'
+        complete = read(newest / 'complete.json')
+        upd = attempt_dir(newest, complete) / 'update'
+        doc = read(upd / 'update.json')
+        keep[upd / 'checkpoint.json'] = complete['output_identity']['checkpoint_sha256']
+        state = retention.state_pin(doc)
+        if state is not None:
+            keep[upd / Path(state['path']).name] = state['sha256']
     tmp = Path(cdir) / f'.{native.name}.persist'
     shutil.rmtree(tmp, ignore_errors=True)
     copied = 0
@@ -840,7 +846,7 @@ def persist(arm, native, cdir):
         if not f.is_file() or f.is_symlink():
             continue
         rel = f.relative_to(target)
-        if scratch_bulk(f) and not (keep is not None and f == keep):
+        if scratch_bulk(f) and f not in keep:
             continue
         if rel.parts[:1] == ('iterations',) and len(rel.parts) > 1 and not (target / 'iterations' / rel.parts[1] /
                                                                            'complete.json').exists():
@@ -855,10 +861,9 @@ def persist(arm, native, cdir):
             continue
         shutil.copy2(f, dst)
         copied += f.stat().st_size
-    if keep is not None:
-        dst = tmp / keep.relative_to(target)
-        require(sha(dst) == read(newest / 'complete.json')['output_identity']['checkpoint_sha256'],
-                f'{dst} differs from its pin')
+    for f, digest in keep.items():
+        dst = tmp / f.relative_to(target)
+        require(dst.exists() and sha(dst) == digest, f'{dst} is missing or differs from its pin')
     tmp.mkdir(parents=True, exist_ok=True)
     unmount(native)
     os.rename(tmp, native)  # replaces the empty segment directory left by the unmount

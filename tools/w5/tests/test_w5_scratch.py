@@ -17,14 +17,16 @@ def write(path, data):
     return hashlib.sha256(data).hexdigest()
 
 
-def iteration(seg, i, done=True):
+def iteration(seg, i, done=True, s_state=False):
     it = seg / 'iterations' / f'{i:06d}'
     att = it / 'attempt-000000'
     for j in range(3):
         write(att / 'collect' / f'episode-{j:04d}.json', b'traj' * 100)
     write(att / 'collect' / 'collection.json', b'{}')
     digest = write(att / 'update' / 'checkpoint.json', f'ckpt-{i}'.encode() * 50)
-    write(att / 'update' / 'update.json', b'{}')
+    write(att / 'update' / 'update.json', b'{}' if not s_state else json.dumps(
+        {'s_learner': {'state': {'path': (att / 'update' / 's-train-state.bin').as_posix(),
+                                 'sha256': write(att / 'update' / 's-train-state.bin', f'S{i}'.encode() * 9)}}}).encode())
     if done:
         write(it / 'complete.json', json.dumps({'update': {'path': (att / 'update' / 'update.json').as_posix()},
                                                 'output_identity': {'checkpoint_sha256': digest}}).encode())
@@ -114,6 +116,15 @@ class Scratch(unittest.TestCase):
         self.assertFalse(tmp.exists())
         self.assertFalse(chains.mounted(seg1))
         self.assertFalse(chains.scratch_dir(self.arm, self.cdir, seg1).exists())
+
+    def test_persist_keeps_the_newest_s_container(self):
+        for i in range(3):
+            iteration(self.target, i, s_state=True)
+        self.native.mkdir(parents=True)
+        self.mounts.add(self.native)
+        chains.persist(self.arm, self.native, self.cdir)
+        bins = sorted(p.relative_to(self.native).as_posix() for p in self.native.rglob('*.bin'))
+        self.assertEqual(bins, ['iterations/000002/attempt-000000/update/s-train-state.bin'])
 
     def test_compress_config(self):
         cfg = self.cdir / 'segments' / 'seg-00000.json'
