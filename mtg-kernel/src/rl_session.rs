@@ -5911,6 +5911,38 @@ impl RlEpisodeSessionV1 {
         foundations_combat: bool,
         london_mulligans: bool,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_custom_decks_companions_london_and_shroud_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            card_ids,
+            companions,
+            priority_mode,
+            foundations_combat,
+            london_mulligans,
+            false,
+        )
+    }
+
+    /// `reset_with_custom_decks_companions_and_london_v1`, optionally under
+    /// the public shroud contract (Limited schema 5,
+    /// `rl::enable_public_shroud_v1`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_with_custom_decks_companions_london_and_shroud_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        card_ids: [&[u16]; 2],
+        companions: [Option<u16>; 2],
+        priority_mode: crate::surface_v2::PriorityModeV1,
+        foundations_combat: bool,
+        london_mulligans: bool,
+        public_shroud: bool,
+    ) -> Result<Self, RlSessionError> {
         for cards in card_ids {
             crate::card_def::preflight_fully_supported_deck(cards).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
@@ -5934,6 +5966,9 @@ impl RlEpisodeSessionV1 {
         if london_mulligans {
             crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
                 .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        }
+        if public_shroud {
+            crate::rl::enable_public_shroud_v1(&mut state);
         }
         // Companions join exile after the opening deal is bound, which
         // requires an empty exile.

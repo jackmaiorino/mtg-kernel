@@ -450,7 +450,7 @@ reporting as E1 to E9:
 | --- | --- | ---: | --- |
 | P0 | Snapshot, capture tool, the catalog reads both snapshots | 0 | Premodern 0% |
 | P1a | Stiflenought, Sligh, RG Aggro, Goblins, Terrageddon, Mono-Black Aggro, plus the 11 cards they share with P1b (Armageddon, Disenchant, Fire // Ice, Foil, Gemstone Mine, Naturalize, Portent, Rishadan Port, Smother, Sylvan Library, Terravore) | 53 | Premodern 0% to 40% |
-| P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census, 62% playable through sessions (Enchantress is a known gap) |
+| P1b | Enchantress, Replenish, Oath of Druids, Landstill, Psychatog, Grow | 35 | Premodern 40% to 70% by the census; Enchantress plays through sessions once schema 5 reports shroud |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -481,14 +481,14 @@ Aura of Silence taxes its opponents' artifact and enchantment spells. Mishra's F
 Treetop Village reuse the Standard manland animation, Serra's Sanctum Tolarian Academy's
 yield, and Skycloud Expanse is a paid additional mana ability adding a fixed bundle.
 
+The schema 4 public-session observation cannot represent shroud, so a session refused games
+where Argothian Enchantress or Sterling Grove gave a permanent shroud. The catalog games now
+run on Limited schema 5, the [public shroud contract](limited_public_shroud_v1.md), whose
+policy observation reports shroud on permanents and players, and Enchantress is in `PLAYABLE`.
+Schema 4 still refuses those games, and now also refuses Solitary Confinement's player shroud,
+which it never represented.
+
 Known gaps:
-- Premodern Enchantress is fully supported by the catalog but is not in `PLAYABLE` (it is
-  `KNOWN_GAP` in `tests/eternal/eternal_catalog_v1.rs`). The schema 4 public-session observation
-  cannot represent a battlefield permanent's shroud, as granted by Argothian Enchantress or
-  Sterling Grove, so a session refuses such a game (`refuse_unrepresented_shroud`; Solitary
-  Confinement's player shroud is not checked by that guard). Representing it is a protocol
-  change outside P1b. The census counts the deck as Full (Premodern 70%); excluding it, 62% of
-  the field (11 decks) plays through sessions.
 - Fade, treasure and depletion counters live in module state: effects that read or move
   counters generally (none in the catalog) and policy observations don't see them.
 - Replenish leaves in the graveyard an Aura whose enchant rule neither `AttachmentDef` nor
