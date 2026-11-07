@@ -107,10 +107,13 @@ def draw(seed_root, update, slot, n):
     return _key([DRAW_TAG, seed_root, update, slot]) % n
 
 
-def ladder(parent_source, segments, offset, stride, record_path, next_source, chain=None):
-    """[(boundary, source)] for the ladder to date at `offset`, each state verified (module docstring). `segments` are
-    the chain manifest's; `next_source(root)` is chains.next_source (the segment's last source with its output
-    checkpoint, checked against the receipt pin). The record at `record_path` is extended with new states."""
+def ladder(parent_source, segments, offset, stride, record_path, next_source, chain=None, select=None):
+    """[(boundary, source)] for the roster members of the ladder to date at `offset` (`select(bounds)`, by default
+    every state), each verified (module docstring). A state not yet in the record at `record_path` is verified and
+    recorded at its first appearance whether or not it is a member; a recorded non-member is not read again, so a
+    segment start hashes at most the roster and the new states, not the whole ladder. `segments` are the chain
+    manifest's; `next_source(root)` is chains.next_source (the segment's last source with its output checkpoint,
+    checked against the receipt pin)."""
     record_path = Path(record_path)
     record = json.loads(record_path.read_text(encoding='utf-8')) if record_path.exists() else \
         {'schema': LADDER_SCHEMA, 'chain': chain, 'stride': stride, 'states': {}}
@@ -118,8 +121,12 @@ def ladder(parent_source, segments, offset, stride, record_path, next_source, ch
             (chain is not None and record.get('chain') != chain):
         raise LadderError(f'{record_path} is not this chain\'s ladder record at stride {stride}')
     ends = {seg['offset'] + seg['updates']: seg for seg in segments}
+    bounds = boundaries(offset, stride)
+    members = set(bounds if select is None else select(bounds))
     out, added = [], False
-    for b in boundaries(offset, stride):
+    for b in bounds:
+        if b not in members and str(b) in record['states']:
+            continue
         if b == 0:
             source = copy.deepcopy(parent_source)
         else:
@@ -152,7 +159,8 @@ def ladder(parent_source, segments, offset, stride, record_path, next_source, ch
             raise LadderError(f'ladder state {b} hashes to {pinned["sha256"]} (after state '
                               f'{entry["after_state_sha256"]}), recorded {have["sha256"]} '
                               f'({have.get("after_state_sha256")})')
-        out.append((b, source))
+        if b in members:
+            out.append((b, source))
     if added:
         record_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = record_path.with_name(record_path.name + '.tmp')
@@ -167,7 +175,8 @@ def ladder(parent_source, segments, offset, stride, record_path, next_source, ch
 def apply(cfg, spec, states, seed_root, segment, offset):
     """Rewrites a segment config built from the base: replaced episodes play their drawn roster member, and the
     config's named opponents are the base's others plus the members drawn in this segment (boundary order).
-    Returns the roster record (boundaries, hashes, per-member draw counts) for logging."""
+    `states` are the ladder's states to date or just the segment's roster members (pgrow.ladder with `select`):
+    the roster of a roster is itself. Returns the roster record (hashes, per-member draw counts) for logging."""
     by_b = dict(states)
     members = roster(seed_root, segment, [b for b, _ in states], spec['roster_max'])
     counts = {b: 0 for b in members}
@@ -183,6 +192,6 @@ def apply(cfg, spec, states, seed_root, segment, offset):
         [{'id': member_id(b), 'source': copy.deepcopy(by_b[b])} for b in used]
     if len(cfg['opponents']) > TRAINER_OPPONENTS_MAX:
         raise LadderError(f'{len(cfg["opponents"])} named opponents pass the trainer\'s {TRAINER_OPPONENTS_MAX}')
-    return {'segment': segment, 'offset': offset, 'ladder': [b for b, _ in states], 'roster': members,
+    return {'segment': segment, 'offset': offset, 'roster': members,
             'hashes': {str(b): by_b[b]['checkpoint']['sha256'] for b in members},
             'draws': {str(b): counts[b] for b in members}}

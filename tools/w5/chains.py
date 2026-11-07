@@ -372,8 +372,11 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
 def chain_ladder(arm, man, cdir, offset):
     """A CG chain's verified ladder to date at `offset` (pgrow.ladder; LADDER.json in the chain directory)."""
     try:
-        return pgrow.ladder(read(arm['parent']['path'])['source'], man['segments'], offset,
-                            arm['ladder']['stride'], Path(cdir) / 'LADDER.json', next_source, man['chain'])
+        spec = arm['ladder']
+        return pgrow.ladder(read(arm['parent']['path'])['source'], man['segments'], offset, spec['stride'],
+                            Path(cdir) / 'LADDER.json', next_source, man['chain'],
+                            lambda bounds: pgrow.roster(man['seed_root'], offset // arm['segment_updates'], bounds,
+                                                        spec['roster_max']))
     except pgrow.LadderError as exc:
         raise Stop(str(exc)) from exc
 

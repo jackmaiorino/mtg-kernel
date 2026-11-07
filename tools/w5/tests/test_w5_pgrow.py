@@ -268,6 +268,29 @@ class Chains(unittest.TestCase):
         with self.assertRaisesRegex(chains.Stop, 'ladder record'):
             chains.chain_ladder(arm, man, cdir, 0)
 
+    def test_a_segment_start_verifies_the_roster_and_new_states_only(self):
+        _, plan = self.plan({'stride': SEG, 'roster_max': 2, 'test_stride': True}, label='small')
+        self.assertEqual(self.run_segments(plan, 'g1', 6), chains.EXIT_ROOM)  # ladder 0, 4, ..., 24 at segment 6
+        arm = chains.load_arm(plan['arms']['CG']['file']['path'])
+        cdir = self.node.root / 'chains' / 'g1'
+        man = json.loads((cdir / 'chain.json').read_text())
+        for s, cfg in enumerate(self.configs('g1')):
+            self.assertLessEqual(len({o['id'] for o in cfg['opponents'] if o['id'].startswith('ladder-u')}), 2)
+        bounds = list(range(0, 6 * SEG + 1, SEG))
+        members = pgrow.roster('pg/c1', 6, bounds, 2)
+        _, records = self.records(plan, 'g1')
+        ck = {r['boundary']: Path(r['checkpoint']['path']) for r in records if r['boundary'] in bounds}
+        other = next(b for b in bounds if b and b not in members and b != 6 * SEG)
+        ck[other].write_bytes(b'corrupt')  # recorded, not a member: not read
+        states = chains.chain_ladder(arm, man, cdir, 6 * SEG)
+        self.assertEqual([b for b, _ in states], members)
+        ladder = json.loads((cdir / 'LADDER.json').read_text())
+        self.assertEqual(sorted(int(k) for k in ladder['states']), bounds)  # u24 verified and recorded when new
+        member = next(b for b in members if b)
+        ck[member].write_bytes(b'corrupt')
+        with self.assertRaisesRegex(chains.Stop, f'ladder state {member}'):
+            chains.chain_ladder(arm, man, cdir, 6 * SEG)
+
     def test_large_ladders_cap_the_roster(self):
         states = [(b, {'checkpoint': {'path': f'/x/{b}', 'sha256': f'{b:064x}'}}) for b in range(0, 200 * 8, 8)]
         def cfg(others):
