@@ -1285,3 +1285,19 @@ fn bane_of_the_living_with_no_spare_mana_owes_no_x() {
     assert_eq!(zone(&state, rats), Zone::Battlefield);
     assert_eq!(power_toughness(&state, bane), (4, 3));
 }
+
+// ---- Quirion Dryad (wave P1b) -----------------------------------------------------------
+
+#[test]
+fn quirion_dryad_trigger_does_nothing_if_the_dryad_left() {
+    let mut state = islands();
+    let dryad = put(&mut state, P0, "Quirion Dryad", Zone::Battlefield);
+    let land = put(&mut state, P1, "Forest", Zone::Battlefield);
+    let vindicate = put(&mut state, P0, "Vindicate", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::B], 1);
+    cast(&mut state, vindicate, &[Target::Object(land)]);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(dryad, Zone::Exile));
+    settled(&mut state);
+    assert_eq!(zone(&state, dryad), Zone::Exile);
+    assert_eq!(zone(&state, land), Zone::Graveyard);
+}
