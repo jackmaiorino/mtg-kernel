@@ -780,6 +780,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::CreaturePowerOrToughnessAtMostOneV1 => creature(),
         S::EnchantmentInstantOrSorcerySpellV1 => ObjF::Spell,
         S::NonbasicLandCardInAGraveyardV1 => ObjF::AnyCard,
+        S::DividedFourDamageCreaturesV1 => creature(),
+        S::ControlledCreatureOrVehicleV1 => ObjF::Permanent,
     }
 }
 
@@ -823,6 +825,7 @@ pub(super) fn standard_target_origin(
         S::LandCardInAGraveyardV1
         | S::InstantOrSorceryCardInAGraveyardV1
         | S::NonbasicLandCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
+        S::ControlledCreatureOrVehicleV1 => (Some(ZoneF::Battlefield), Some(RelF::You)),
         S::UpToOneLandCardInOwnGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             (Some(ZoneF::Graveyard), Some(RelF::You))
         }
@@ -836,6 +839,7 @@ pub(super) fn standard_target_origin(
         S::AnotherNonlandPermanent
         | S::UpToEightCreaturesOrPlaneswalkersV74
         | S::DividedFourDamageCreaturesOrPlaneswalkersV1
+        | S::DividedFourDamageCreaturesV1
         | S::DividedXDamageUpToTwoV1
         | S::UpToOnePlayerV1
         | S::CreaturePowerAtMostTreasureCountersV1
@@ -898,6 +902,7 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.atoms.push(Atom::Opaque);
         }
         S::DividedFourDamageCreaturesOrPlaneswalkersV1
+        | S::DividedFourDamageCreaturesV1
         | S::DividedXDamageUpToTwoV1
         | S::DividedTwoDamageAnyTargetsV1 => {
             // Vocabulary gap: divided damage and repeated picks have no facet.
@@ -930,9 +935,6 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
                 mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
                 excludes: None,
             });
-        }
-        S::OpponentCreatureOrEnchantmentV1 => {
-            object(out, ObjF::Permanent, relation, zone);
         }
         S::NoncreatureArtifactOrEnchantmentV1
         | S::BlackOrRedPermanentV1
@@ -1208,6 +1210,14 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
                 mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
                 excludes: None,
             });
+        }
+        S::OpponentCreatureOrEnchantmentV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Enchantment), relation, zone);
+        }
+        S::ControlledCreatureOrVehicleV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Artifact), relation, zone);
         }
         S::OpponentPermanentV1 | S::LandCardInAGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             object(out, standard_target_obj(filter), relation, zone);

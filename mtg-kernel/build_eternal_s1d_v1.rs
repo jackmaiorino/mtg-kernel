@@ -229,7 +229,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Firebending Lesson" => Some("{4}"),
-        _ => super::build_eternal_e9b_v1::kicker_cost_for(name),
+        _ => super::build_eternal_s1b_v1::kicker_cost_for(name),
     }
 }
 

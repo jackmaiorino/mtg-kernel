@@ -932,6 +932,10 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 /// Target specs of this module's triggered abilities, per ability. `None`
 /// for every other card.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to wave S1b's cards, so they answer first.
+    if let Some(spec) = crate::eternal_sideboard_s1b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     let own = triggers_for(name)
         .iter()
         .any(|trigger| (trigger.effect)() == *effect)
@@ -2114,7 +2118,8 @@ pub(crate) fn mana_abilities_active(
 /// "Start your engines!" (Momentum Breaker), read by the Standard speed
 /// designation.
 pub(crate) fn starts_engines(name: &str) -> bool {
-    cfg!(feature = "eternal-fixtures") && name == MOMENTUM_BREAKER
+    cfg!(feature = "eternal-fixtures")
+        && (name == MOMENTUM_BREAKER || crate::eternal_sideboard_s1b_v1::starts_engines(name))
 }
 
 /// Secluded Courtyard: "As this land enters, choose a creature type." It

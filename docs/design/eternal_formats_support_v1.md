@@ -405,8 +405,8 @@ New, each built once in the first wave that needs it:
   banding.
 
 - S1a, built in `src/eternal_sideboard_s1a_v1.rs` (with `statics` and `targets` submodules)
-  and `build_eternal_s1a_v1.rs`, linked just before E9b in the recipe chain: Legacy sideboard
-  cards. Rest in Peace, Leyline of the Void and Containment Priest join the zone-change
+  and `build_eternal_s1a_v1.rs`, linked late in the recipe chains (before S1b and E9b): Legacy
+  sideboard cards. Rest in Peace, Leyline of the Void and Containment Priest join the zone-change
   replacement hook Dauthi Voidwalker uses (exile instead of a graveyard; exile a nontoken
   creature entering from anywhere but the stack). Leyline's opening-hand permission is offered
   as the first upkeep begins, as Chancellor of the Annex's reveal is. Disruptor Flute names a
@@ -430,9 +430,42 @@ New, each built once in the first wave that needs it:
   Brutality (escalate), Stronghold Gambit, Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
   of Saint Katherine (miracle is Terminus-only and its cost needs generic mana) and From the
   Ashes.
+- S1b, built in `src/eternal_sideboard_s1b_v1.rs` (with a `targets` submodule) and
+  `build_eternal_s1b_v1.rs`, linked last in the recipe chains (after S1a, before E9b; E6a's
+  kicker cost after S1d; E7a's alternative and ward costs): 26 of the 37 remaining Legacy
+  sideboard cards, the ones whose programs fit the existing primitives. Storm gains Grapeshot and Empty the Warrens
+  (E3's list) and dredge gains Shenanigans (E7b's table). Toxic Deluge's "pay X life" is
+  announced like Sickening Dreams' discard count (X up to the caster's life) and the life is
+  paid as the cast completes. Stony Silence reuses Null Rod's activation prohibition, and
+  Metallic Rebuke joins Kappa Cannoneer's improvise. Deafening Silence counts noncreature
+  spells per player and turn in module state (spells cast before it entered count);
+  Gaddock Teeg (new Kithkin and Advisor subtypes, stable ids 320 and 321), Meddling Mage and
+  Deafening Silence add to the E7a cast prohibition hook. Meddling Mage names a nonland card as
+  its resolving creature spell enters (Anointed Peacekeeper's letter, then name choice), so a
+  Mage that enters any other way names nothing. Sailors' Bane's reduction joins the spell cost
+  reductions of E8b and P1a. Temporary Lockdown and Perilous Snare use the linked "until this
+  leaves" exile (Lockdown records one link per exiled permanent). Perilous Snare starts the
+  Standard speed designation and its counter ability is gated to speed 4 by the activation
+  restriction hook. Tourach, Dread Cantor sees opponents' discards through the E7b discard
+  hook, its kicker uses E6a's kicker table, and protection from white joins the printed
+  protection mask. Extirpate's split second joins Legolas's Quick Reflexes' check. Leyline of
+  Sanctity is offered from an opening hand as the first upkeep begins (Chancellor of the
+  Annex's shape) and gives its controller hexproof through the E3 player targeting check.
+  Engineered Explosives records the colors its cast spent (Prismatic Ending's hook) as its
+  sunburst charge counters and keeps the count for the sacrificed incarnation's ability.
+  Liquimetal Coating records permanents that are artifacts this turn; the effective type
+  check reads it. New target filters: four-point divided damage among creatures (Pyrokinesis)
+  and a creature or Vehicle you control (Perilous Snare); Stern Dismissal and Extirpate use
+  S1c's and S1a's filters.
+  Not in this wave: Mycosynth Lattice (mana of any color needs a payment-planner change),
+  Extinguisher Battleship (station), Cityscape Leveler (unearth, Powerstone), Invasion
+  Submersible (waterbend, exhaust), Summon: Bahamut, Keen-Eyed Curator, Outland Liberator
+  (day and night), Fiery Confluence (choose three with repeats and per-instance targets),
+  Kiora's Dismissal (strive), Eowyn (a target filter that reads the source's power) and
+  Unlicensed Hearse (a single-graveyard target filter).
 - S1c (issue #365, Vintage-only sideboard cards), built in `src/eternal_sideboard_s1c_v1.rs`
   (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked late in the recipe
-  chains (after E8a and S1d, before S1a and E9b). Bounce-all (Hurkyl's Recall, Rebuild with
+  chains (after E8a and S1d, before S1a, S1b and E9b). Bounce-all (Hurkyl's Recall, Rebuild with
   its cycling), Virtue's Ruin's destroy-all, Feed the Swarm's life loss (the destroyed
   permanent's mana value), Lithomantic Barrage's 5 damage to a white and/or blue target,
   Dark Petition's spell mastery mana and Wurmcoil Engine's two tokens (deathtouch and
@@ -461,7 +494,7 @@ New, each built once in the first wave that needs it:
   not choose the order of the two replacements.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
-  S1c, S1a and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
+  S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
   (Vandalblast, Electrickery) is the Adventure form of the card that split cards
   use, cast from hand with the overload cost, sending the card to the graveyard,
   with no targets and the printed mana value on the stack (118.9c). Circle of
@@ -585,6 +618,7 @@ S1 progress (census after each wave; full 75 share, then missing sideboard cards
 | S1d (Pauper) | 31 | 94.9%, 1 | 5.9%, 69 | 0.7%, 36 |
 | S1c (Vintage) | 17 | 94.9%, 1 | 5.9%, 69 | 5.9%, 19 |
 | S1a (Legacy) | 24 | 95.2%, 0 | 46.0%, 46 | 25.7%, 14 |
+| S1b (Legacy) | 26 | 95.2%, 0 | 52.7%, 20 | 44.3%, 10 |
 
 ## Execution
 

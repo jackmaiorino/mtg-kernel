@@ -23836,6 +23836,776 @@
     "add_mana"
    ],
    "java_file": "Mage.Sets/src/mage/cards/c/CarpetofFlowers.java"
+  },
+  {
+   "name": "Grapeshot",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beseech-storm",
+    "legacy-the-epic-gamble"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "storm",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Grapeshot.java"
+  },
+  {
+   "name": "Empty the Warrens",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-the-epic-storm",
+    "legacy-the-epic-gamble"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "storm",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EmptyTheWarrens.java"
+  },
+  {
+   "name": "Debt to the Deathless",
+   "engine_capability": "full",
+   "mana_cost": "{X}{W}{W}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "W",
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-the-epic-storm",
+    "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "life_drain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DebtToTheDeathless.java"
+  },
+  {
+   "name": "Peer into the Abyss",
+   "engine_capability": "full",
+   "mana_cost": "{4}{B}{B}{B}",
+   "mana_value": 7,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-the-epic-storm",
+    "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce",
+    "legacy-the-epic-gamble"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "draw",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PeerIntoTheAbyss.java"
+  },
+  {
+   "name": "Whipflare",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-affinity-stompy"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "damage_each_creature"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/Whipflare.java"
+  },
+  {
+   "name": "Shenanigans",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-inside-out-combo",
+    "legacy-led-dredge"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_target",
+    "dredge"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Shenanigans.java"
+  },
+  {
+   "name": "Steel Wrecking Ball",
+   "engine_capability": "full",
+   "mana_cost": "{5}",
+   "mana_value": 5,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-red-stompy"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "damage",
+    "discard_cost",
+    "activated_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SteelWreckingBall.java"
+  },
+  {
+   "name": "Stony Silence",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mardu-energy",
+    "legacy-azorius-tempo",
+    "vintage-jeskai-lurrus",
+    "vintage-4c-psychic-frog"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "static",
+    "activation_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StonySilence.java"
+  },
+  {
+   "name": "Deafening Clarion",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-stiflenought"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "modal",
+    "damage_each_creature",
+    "lifelink"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DeafeningClarion.java"
+  },
+  {
+   "name": "Sudden Demise",
+   "engine_capability": "full",
+   "mana_cost": "{X}{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-goblins",
+    "legacy-8-cast"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "choose_color",
+    "damage_each_creature"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SuddenDemise.java"
+  },
+  {
+   "name": "Metallic Rebuke",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-8-cast"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "improvise",
+    "counter_unless_pay"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MetallicRebuke.java"
+  },
+  {
+   "name": "Paradox Engine",
+   "engine_capability": "full",
+   "mana_cost": "{5}",
+   "mana_value": 5,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "cast_trigger",
+    "untap"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/ParadoxEngine.java"
+  },
+  {
+   "name": "Temporary Lockdown",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-stiflenought"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "exile_until_leaves"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TemporaryLockdown.java"
+  },
+  {
+   "name": "Deafening Silence",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mardu-energy",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "static",
+    "cast_limit"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DeafeningSilence.java"
+  },
+  {
+   "name": "Gaddock Teeg",
+   "engine_capability": "full",
+   "mana_cost": "{G}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Kithkin",
+    "Advisor"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-selesnya-depths",
+    "legacy-cradle-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "static",
+    "cast_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GaddockTeeg.java"
+  },
+  {
+   "name": "Meddling Mage",
+   "engine_capability": "full",
+   "mana_cost": "{W}{U}",
+   "mana_value": 2,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-azorius-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "as_enters_choice",
+    "cast_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MeddlingMage.java"
+  },
+  {
+   "name": "Sailors' Bane",
+   "engine_capability": "full",
+   "mana_cost": "{7}{U}{U}",
+   "mana_value": 9,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dragon",
+    "Turtle"
+   ],
+   "supertypes": [],
+   "power": 7,
+   "toughness": 7,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-stiflenought"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_reduction",
+    "ward"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SailorsBane.java"
+  },
+  {
+   "name": "Toxic Deluge",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mono-black-midrange",
+    "legacy-dimir-control",
+    "legacy-loam-pox",
+    "vintage-dimir-lurrus-control",
+    "vintage-fastbond-lands"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "additional_cost",
+    "x_cost",
+    "board_wipe"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ToxicDeluge.java"
+  },
+  {
+   "name": "Pyrokinesis",
+   "engine_capability": "full",
+   "mana_cost": "{4}{R}{R}",
+   "mana_value": 6,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-naya-initiative",
+    "legacy-creative-technique",
+    "vintage-counter-vine",
+    "vintage-blue-tempo"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "alternative_cost",
+    "divided_damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/Pyrokinesis.java"
+  },
+  {
+   "name": "Stern Dismissal",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-led-dredge"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "bounce"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SternDismissal.java"
+  },
+  {
+   "name": "Extirpate",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beseech-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "split_second",
+    "exile_graveyard_hand_library"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/Extirpate.java"
+  },
+  {
+   "name": "Tourach, Dread Cantor",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mono-black-midrange"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "kicker",
+    "protection",
+    "discard_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TourachDreadCantor.java"
+  },
+  {
+   "name": "Leyline of Sanctity",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-led-dredge"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "leyline",
+    "hexproof"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LeylineOfSanctity.java"
+  },
+  {
+   "name": "Perilous Snare",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "start_your_engines",
+    "exile_until_leaves",
+    "max_speed"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PerilousSnare.java"
+  },
+  {
+   "name": "Engineered Explosives",
+   "engine_capability": "full",
+   "mana_cost": "{X}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "sunburst",
+    "destroy_each"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EngineeredExplosives.java"
+  },
+  {
+   "name": "Liquimetal Coating",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo",
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "type_change"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LiquimetalCoating.java"
   }
  ]
 }

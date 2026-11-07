@@ -736,6 +736,11 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, player),
         );
+        // Sailors' Bane costs {1} less per instant, sorcery and Adventure
+        // card in its owner's graveyard and exile (wave S1b).
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_sideboard_s1b_v1::spell_cost_reduction(state, definition, player),
+        );
         // Goblin Warchief: Goblin spells cost {1} less (wave P1a).
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_premodern_p1a_v1::statics::spell_cost_reduction(

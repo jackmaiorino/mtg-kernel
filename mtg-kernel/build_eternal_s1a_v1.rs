@@ -58,7 +58,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Haywire Mite" => &HAYWIRE_MITE,
         "Tormod's Crypt" => &TORMODS_CRYPT,
         "Twinshot Sniper" => &TWINSHOT_SNIPER,
-        _ => super::build_eternal_e9b_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_s1b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -129,7 +129,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::EnchantmentInstantOrSorcerySpellV1)",
             "crate::eternal_sideboard_s1a_v1::swan_song",
         ),
-        _ => return super::build_eternal_e9b_v1::special_for(name),
+        _ => return super::build_eternal_s1b_v1::special_for(name),
     })
 }
 
@@ -141,7 +141,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
         "Rip Apart" => "Some(ModeDef { target_spec: TargetSpec::ArtifactOrEnchantmentPermanent, effect: crate::eternal_sideboard_s1a_v1::destroy_target })",
         "Brotherhood's End" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_sideboard_s1a_v1::brotherhoods_end_destroy })",
         "Warping Wail" => "Some(ModeDef { target_spec: TargetSpec::SorcerySpellOnStack, effect: crate::eternal_sideboard_s1a_v1::warping_wail_counter })",
-        _ => super::build_eternal_e9b_v1::mode2_for(name),
+        _ => super::build_eternal_s1b_v1::mode2_for(name),
     }
 }
 
@@ -150,7 +150,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Warping Wail" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_sideboard_s1a_v1::warping_wail_scion })",
-        _ => super::build_eternal_e9b_v1::mode3_for(name),
+        _ => super::build_eternal_s1b_v1::mode3_for(name),
     }
 }
 
@@ -160,7 +160,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Containment Priest" | "Disruptor Flute" => &["Keywords::FLASH"],
         "Swan Song Bird Token" => &["Keywords::FLYING"],
         "Twinshot Sniper" => &["Keywords::REACH"],
-        _ => super::build_eternal_e9b_v1::keywords_for(name),
+        _ => super::build_eternal_s1b_v1::keywords_for(name),
     }
 }
 
@@ -257,6 +257,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Warping Wail" => {
             "modal:exile_creature_power_or_toughness_1_or_less|counter_target_sorcery|create_eldrazi_scion"
         }
-        _ => super::build_eternal_e9b_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_s1b_v1::trigger_recipe_for(name),
     }
 }

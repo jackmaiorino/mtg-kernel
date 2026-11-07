@@ -7382,6 +7382,8 @@ fn commit_cost_components_from_plan_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_vintage_e7b_v1::statics::note_discard(state, source);
                 #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_sideboard_s1b_v1::note_discard(state, source);
+                #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
                     state,
@@ -9932,6 +9934,8 @@ fn maximum_payable_x(
                     state,
                 )
             })
+            // Toxic Deluge: at most the life its caster has (wave S1b).
+            .or_else(|| crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.controller, state))
             .unwrap_or(u8::MAX);
     let payable = |x| {
         pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
@@ -13179,6 +13183,7 @@ fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId]) {
     #[cfg(feature = "eternal-fixtures")]
     for &id in chosen {
         crate::eternal_vintage_e7b_v1::statics::note_discard(state, id);
+        crate::eternal_sideboard_s1b_v1::note_discard(state, id);
     }
     // All cards belong to one discard instruction. Capture original hand
     // incarnations and replacement destinations before moving any member.
@@ -21847,6 +21852,13 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     if let Some(answer) = crate::eternal_vintage_v1::has_type_override(state, id, card_type) {
         return answer;
     }
+    // Liquimetal Coating: "becomes an artifact in addition to its other
+    // types" (wave S1b).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Artifact && crate::eternal_sideboard_s1b_v1::artifact_added(state, id)
+    {
+        return true;
+    }
     if crate::standard_cards_v1::kaito_is_creature(state, id) {
         return card_type == CardType::Creature;
     }
@@ -28253,6 +28265,14 @@ fn finalize_owned_cast(
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
+    // Toxic Deluge: "As an additional cost to cast this spell, pay X life."
+    #[cfg(feature = "eternal-fixtures")]
+    if x_value > 0 && crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
+        event::propose_and_commit(
+            state,
+            ProposedEvent::life_loss(pending.controller, i32::from(x_value)),
+        );
+    }
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     crate::fake_your_own_death_v50::spell_custody::publish_spell(state, stack_item_id)?;
     if matches!(

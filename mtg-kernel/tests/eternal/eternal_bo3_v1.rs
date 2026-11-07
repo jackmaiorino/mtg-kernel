@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 67] = [
+const PLAYABLE_75: [(&str, &str); 82] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -97,18 +97,39 @@ const PLAYABLE_75: [(&str, &str); 67] = [
     ("legacy", "legacy-eldrazi"),
     ("legacy", "legacy-aluren"),
     ("legacy", "legacy-hogaak-moonshadow"),
+    ("legacy", "legacy-the-epic-storm"),
     ("legacy", "legacy-omni-tell"),
+    ("legacy", "legacy-stiflenought"),
+    ("legacy", "legacy-mardu-energy"),
     ("legacy", "legacy-cephalid-breakfast"),
+    ("legacy", "legacy-affinity-stompy"),
     ("legacy", "legacy-esper-control"),
+    ("legacy", "legacy-beseech-storm"),
+    (
+        "legacy",
+        "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce",
+    ),
+    (
+        "legacy",
+        "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    ),
     ("legacy", "legacy-reanimator"),
+    ("legacy", "legacy-death-and-taxes-60-card"),
+    ("legacy", "legacy-8-cast"),
     ("legacy", "legacy-temur-delver"),
     ("vintage", "vintage-esper-lurrus-control"),
+    ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),
+    ("vintage", "vintage-counter-vine"),
+    ("vintage", "vintage-jeskai-lurrus"),
     ("vintage", "vintage-blue-tinker"),
+    ("vintage", "vintage-blue-tempo"),
     ("vintage", "vintage-stiflenought"),
+    ("vintage", "vintage-beseech-storm"),
     ("vintage", "vintage-lurrus-drs"),
     ("vintage", "vintage-red-prison"),
     ("vintage", "vintage-sultai-psychic-frog"),
+    ("vintage", "vintage-4c-psychic-frog"),
     ("vintage", "vintage-rug-control"),
     ("vintage", "vintage-eldrazi"),
     ("vintage", "vintage-grixis-lurrus-control"),

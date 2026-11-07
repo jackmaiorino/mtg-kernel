@@ -34,6 +34,8 @@ mod eternal_premodern_p1a_v1;
 mod eternal_premodern_p1b_v1;
 #[path = "eternal/eternal_sideboard_s1a_v1.rs"]
 mod eternal_sideboard_s1a_v1;
+#[path = "eternal/eternal_sideboard_s1b_v1.rs"]
+mod eternal_sideboard_s1b_v1;
 #[path = "eternal/eternal_sideboard_s1c_v1.rs"]
 mod eternal_sideboard_s1c_v1;
 #[path = "eternal/eternal_sideboard_s1d_v1.rs"]

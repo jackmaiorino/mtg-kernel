@@ -560,7 +560,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         NYLEAS_DISCIPLE => &DEVOTION_TRIGGERS,
         STONEHORN_DIGNITARY => &SKIP_COMBAT_TRIGGERS,
         GRUUL_TURF => &KAROO_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_sideboard_s1b_v1::triggers_for(name),
     }
 }
 

@@ -313,6 +313,8 @@ pub mod eternal_premodern_p1a_v1;
 pub mod eternal_premodern_p1b_v1;
 /// Legacy sideboard card programs of the eternal catalog (wave S1a).
 pub mod eternal_sideboard_s1a_v1;
+/// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).
+pub mod eternal_sideboard_s1b_v1;
 /// Vintage-only sideboard card programs of the eternal catalog (wave S1c).
 pub mod eternal_sideboard_s1c_v1;
 /// Pauper sideboard card programs of the eternal catalog (wave S1d).
