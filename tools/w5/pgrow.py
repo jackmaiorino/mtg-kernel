@@ -165,12 +165,14 @@ def history_states(spec, parent_source):
 
 def complete_segment(seg, b):
     """Refuses unless the segment ending at ladder boundary `b` is complete: its completion marker and every one of its
-    iteration receipts (000000 to updates - 1) present. Returns its last receipt."""
+    iteration receipts (000000 to updates - 1) present, and no other (a stray completed iteration would move the
+    segment's last state). Returns its last receipt."""
     root = Path(seg['root'])
     its = root / 'iterations'
-    if not (root / 'completion.json').exists() or \
-            not all((its / f'{i:06d}' / 'complete.json').exists() for i in range(seg['updates'])):
-        raise LadderError(f'the segment ending at ladder boundary {b} ({root}) is not complete')
+    have = {q.parent.name for q in its.glob('*/complete.json')} if its.exists() else set()
+    if not (root / 'completion.json').exists() or have != {f'{i:06d}' for i in range(seg['updates'])}:
+        raise LadderError(f'the segment ending at ladder boundary {b} ({root}) is not complete '
+                          '(or holds extra iterations)')
     return json.loads((its / f'{seg["updates"] - 1:06d}' / 'complete.json').read_text(encoding='utf-8'))
 
 
@@ -248,6 +250,8 @@ def ladder(parent_source, segments, offset, spec, record_path, next_source, chai
                 after = json.loads(Path(complete['update']['path']).read_text(encoding='utf-8'))['after_state_sha256']
             except Exception as exc:  # chains.Stop: a missing checkpoint or one that differs from its receipt
                 raise LadderError(f'ladder state {b}: {exc}') from exc
+            if source['checkpoint']['sha256'] != complete['output_identity']['checkpoint_sha256']:
+                raise LadderError(f'ladder state {b}: the segment source is not its last receipt\'s output')
         pinned = source.get('checkpoint')
         if not pinned or not pinned.get('sha256'):
             raise LadderError(f'ladder state {i} has no checkpoint pin')

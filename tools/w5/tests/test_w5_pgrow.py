@@ -346,6 +346,14 @@ class Chains(unittest.TestCase):
             pgrow.write_history(man_path, 16, STRIDE, out)
         ck.write_bytes(good)
         complete.write_text(good_doc)
+        # A stray completed iteration after the segment's last (an incorrect restore) would move its last state.
+        stray = complete.parent.with_name(f'{SEG:06d}')
+        shutil.copytree(complete.parent, stray)
+        with self.assertRaisesRegex(pgrow.LadderError, 'extra iterations'):
+            pgrow.write_history(man_path, 16, STRIDE, out)
+        with self.assertRaisesRegex(chains.Stop, 'extra iterations'):
+            chains.chain_ladder(chains.load_arm(plan['arms']['CG']['file']['path']), man, cdir, 16)
+        shutil.rmtree(stray)
         record = (cdir / 'LADDER.json').read_bytes()
         (cdir / 'LADDER.json').unlink()
         with self.assertRaisesRegex(pgrow.LadderError, 'lacks established ladder states'):

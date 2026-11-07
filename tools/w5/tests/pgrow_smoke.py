@@ -83,7 +83,8 @@ def run_once(arm, path, native, logs, kill_after):
     finally:
         stop.set()
         t.join()
-    return code, bool(sent) and code == -signal.SIGKILL
+    # A kill counts only when it cut the segment short (a kill after its last update leaves it complete).
+    return code, bool(sent) and code == -signal.SIGKILL and not (Path(native) / 'completion.json').exists()
 
 
 def trim(arm, man, native, s):
@@ -135,7 +136,7 @@ def main(argv=None):
     arm = chains.load_arm(plan['arms'][a.arm]['file']['path'])
     man_path = Path(plan['chains']['g1']['manifest'])
     cdir = man_path.parent
-    segs, killed, t0 = [], False, time.time()
+    segs, killed, recovered, cut, t0 = [], False, False, None, time.time()
     while True:
         man = chains.read(man_path)
         done = [s for s in man['segments'] if (Path(s['root']) / 'completion.json').exists()]
@@ -148,6 +149,10 @@ def main(argv=None):
         if a.kill_at is not None and not killed and s * a.segment_updates <= a.kill_at < (s + 1) * a.segment_updates:
             kill_after = a.kill_at - s * a.segment_updates + 1
         code, was_kill = run_once(arm, path, native, cdir / 'logs', kill_after)
+        if was_kill:
+            cut = s
+        if killed and complete and s == cut:
+            recovered = True  # the cut segment, reset, completed on a later attempt
         killed = killed or was_kill
         complete = (native / 'completion.json').exists()
         cfg = chains.read(path)
@@ -182,7 +187,7 @@ def main(argv=None):
     per = [x['per_update_wall_seconds'] for x in segs if x['per_update_wall_seconds']]
     receipt = {'schema': 'w5-pgrow-smoke/v1', 'arm': a.arm, 'arm_file': plan['arms'][a.arm]['file'],
                'ladder': arm.get('ladder'), 'seed_root': a.seed_root, 'segment_updates': a.segment_updates,
-               'trainer': arm['trainer'], 'tools': arm['tools'], 'kill_at': a.kill_at, 'killed': killed,
+               'trainer': arm['trainer'], 'tools': arm['tools'], 'kill_at': a.kill_at, 'killed': killed, 'recovered': recovered,
                'segments': segs, 'states': states,
                'ladder_record': chains.read(cdir / 'LADDER.json') if (cdir / 'LADDER.json').exists() else None,
                'wall_seconds': round(time.time() - t0, 3),
@@ -191,7 +196,7 @@ def main(argv=None):
     chains.write(a.out, receipt)
     print(json.dumps({k: receipt[k] for k in ('wall_seconds', 'mean_per_update_wall_seconds', 'killed')}))
     ok = all(x['complete'] or x['killed'] for x in segs) and len(states) >= a.segments * a.segment_updates
-    return 0 if ok and (a.kill_at is None or killed) else 1
+    return 0 if ok and (a.kill_at is None or (killed and recovered)) else 1
 
 
 if __name__ == '__main__':
