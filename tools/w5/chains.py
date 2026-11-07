@@ -1788,6 +1788,8 @@ def end_oom_failures(plan, root):
                           end_doc(n, c['arm'], 'chain-failure', boundary, receipt, 'supervise', cause='oom kill')):
                 log(root, chain=n, event='end', reason='chain-failure', cause='oom kill', boundary=boundary)
                 ended.append(n)
+            if not live(root, n):  # the OOM-closed box has no driver left: drop its unpersisted scratch
+                release_scratch(plan, n, man)
     return ended
 
 
