@@ -277,17 +277,30 @@ pub(super) fn read_trajectories_v1(
     // A file parsed ahead by an idle collection worker yields that parse of
     // exactly these bytes instead of a second one.
     let parsed_ahead = AtomicUsize::new(0);
+    // Sealed files (`record_envelope_v1`) open only within the batch bound,
+    // decided in pin order before any is opened.
+    let admitted = record_envelope_v1::admit_batch_v1(
+        pins.iter().map(|pin| pin.path.as_path()),
+        MAX_BATCH_BYTES,
+    )?;
     let read = |ordinal: usize| {
         let bytes = read_pinned_bytes(&pins[ordinal])?;
+        admitted[ordinal].check_v1(&bytes)?;
+        let length = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?;
         let episode =
             match trajectory_parse_ahead_v1::take_trajectory_v1(&pins[ordinal].sha256, &bytes) {
                 Some(episode) => {
                     parsed_ahead.fetch_add(1, Ordering::Relaxed);
                     episode
                 }
-                None => serde_json::from_slice(&bytes).map_err(err)?,
+                None => {
+                    serde_json::from_slice(&record_envelope_v1::open_v1(&bytes, MAX_FILE_BYTES)?)
+                        .map_err(err)?
+                }
             };
-        Ok((bytes.len() as u64, episode))
+        // The batch bound counts record bytes, sealed (`record_envelope_v1`)
+        // or not.
+        Ok((length, episode))
     };
     let episodes = if workers == 1 {
         (0..pins.len())
@@ -324,7 +337,16 @@ pub(super) fn read_trajectories_v1(
 /// (`verify_collection_opponent_sources_v1`). A source of any other kind, or
 /// whose checkpoint names a further file (a phase-1 archive-distillation
 /// parent), is not kept and loads in full every time.
-const OPPONENT_CACHE_ENTRIES: usize = 8;
+///
+/// 32 entries hold a W5 pool roster (17 fixed opponents and the current
+/// model) across iterations; at 8 the roster evicted itself and most pool
+/// episodes paid a full load. An entry holds one policy and every verified
+/// file of its load: for a W5 net-8 opponent, a 15 MB checkpoint container
+/// plus its import inputs (about 30 MB in all; a 20 MB v1 JSON checkpoint or
+/// a converted source, which also keeps its base's files, holds more). The
+/// bound counts entries, not bytes, so 32 large sources can hold 1 to 2 GB;
+/// a run holds only the sources it plays.
+const OPPONENT_CACHE_ENTRIES: usize = 32;
 
 struct CachedOpponentV1 {
     source: ExpandedModelSourceV1,

@@ -2485,6 +2485,12 @@ pub struct GameState {
     /// rows.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hand_departures_by_name_v1: bool,
+    /// Opt-in public session contract (Limited schema 5): the policy
+    /// observation reports shroud on permanents and players instead of
+    /// refusing it. Absent (false) in every historical mode, so their bytes
+    /// and hashes are unchanged. See `rl::enable_public_shroud_v1`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub public_shroud_v1: bool,
     /// Observer-scoped facts for observation projection only; see
     /// [`ObservationJournalV1`]. Not serialized, hashed or compared.
     #[serde(skip)]
@@ -2756,6 +2762,9 @@ impl Hash for GameState {
         if self.hand_departures_by_name_v1 {
             "hand-departures-by-name/v1".hash(state);
         }
+        if self.public_shroud_v1 {
+            "public-shroud/v1".hash(state);
+        }
     }
 }
 
@@ -2969,6 +2978,7 @@ impl GameState {
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
             hand_departures_by_name_v1: false,
+            public_shroud_v1: false,
             observation_journal: ObservationJournalV1::default(),
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);

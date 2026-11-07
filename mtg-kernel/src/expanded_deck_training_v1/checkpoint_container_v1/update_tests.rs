@@ -202,6 +202,43 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
             .contains("already a checkpoint container")
     );
 
+    // Sealed checkpoints (`record_envelope_v1`) of either format give the
+    // same answers through every reader, the converter and the exporter.
+    let sealed_pin = |bytes: &[u8], name: &str| {
+        let sealed = crate::expanded_deck_training_v1::RecordEnvelopeV1::Zstd1
+            .seal_v1(bytes)
+            .unwrap()
+            .into_owned();
+        let path = root.join(name);
+        fs::write(&path, &sealed).unwrap();
+        PinnedFileV1 {
+            path,
+            sha256: hex(&Sha256::digest(&sealed)),
+        }
+    };
+    let sealed_v1 = sealed_pin(&bytes_v1, "sealed-v1.json");
+    let sealed_v2 = sealed_pin(&bytes_v2, "sealed-v2.json");
+    for pin in [&sealed_v1, &sealed_v2] {
+        assert_eq!(
+            serde_json::to_vec(&read_checkpoint_v1(pin).unwrap()).unwrap(),
+            bytes_v1
+        );
+        let typed: ExpandedCheckpointV1 = read_pinned(pin).unwrap();
+        assert_eq!(serde_json::to_vec(&typed).unwrap(), bytes_v1);
+        assert_eq!(
+            checkpoint_feature_contract_v1(pin).unwrap(),
+            checkpoint_feature_contract_v1(&pin_v1).unwrap()
+        );
+    }
+    let converted =
+        convert_checkpoint_v1_to_v2(&from(&sealed_v1), &root.join("sealed.ckpt")).unwrap();
+    let converted: PinnedFileV1 = serde_json::from_value(converted["output"].clone()).unwrap();
+    assert_eq!(converted.sha256, pin_v2.sha256);
+    let exported =
+        export_checkpoint_v2_to_v1(&sealed_v2, &root.join("sealed-exported.json")).unwrap();
+    let exported: PinnedFileV1 = serde_json::from_value(exported["output"].clone()).unwrap();
+    assert_eq!(exported.sha256, pin_v1.sha256);
+
     // The next update from either checkpoint, on trajectories collected from
     // that same checkpoint, reaches the same state, in either format and
     // across formats.
@@ -403,6 +440,7 @@ fn the_default_record_format_is_never_serialized() {
         line_b: None,
         training_math: TrainingMathV1::PlatformLibm,
         record_format,
+        record_envelope: Default::default(),
         output_directory: "out".into(),
     };
     let auto = serde_json::to_string(&prepared(CheckpointRecordFormatV1::default())).unwrap();

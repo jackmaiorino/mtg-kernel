@@ -392,6 +392,17 @@ pub struct NativeExpandedTrainingRunV1 {
         skip_serializing_if = "crate::expanded_deck_training_v1::CheckpointRecordFormatV1::is_auto"
     )]
     pub record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1,
+    /// Config-driven; absent means none (plain records), and none is never
+    /// serialized, so every existing config keeps its wire bytes and its run
+    /// identity. `"zstd1"` publishes every trajectory and checkpoint as one
+    /// zstd frame of its exact bytes (`record_envelope_v1`): the same states
+    /// and parses, about five times fewer bytes written per update. Parallel
+    /// collection and prepared CPU updates of ordinary runs only.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::expanded_deck_training_v1::RecordEnvelopeV1::is_none"
+    )]
+    pub record_envelope: crate::expanded_deck_training_v1::RecordEnvelopeV1,
     /// Config-driven; default `TerminalReinforceValueV3` keeps every
     /// existing config, its wire bytes, and its run identity byte-identical.
     /// See `ExpandedLossSelectionV1`.
@@ -556,6 +567,22 @@ impl NativeExpandedTrainingRunV1 {
                     && self.search_targets.is_none()
                     && self.ex1.is_none()),
             "record_format v2 is not available with e_supported, soft_q, search_targets or ex1 updates",
+        )?;
+        // The envelope is carried by the parallel collection and prepared
+        // update commands of ordinary CPU runs; every other path keeps plain
+        // records.
+        check(
+            self.record_envelope.is_none()
+                || (self.collection_workers > 1
+                    && self.preparation_workers > 1
+                    && self.update_backend.is_cpu()
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()
+                    && self.initial_source.s_learner.is_none()),
+            "record_envelope requires parallel collection and a prepared CPU update, without              line (b), E, SQ1, search targets, EX1 or an S learner",
         )?;
         if !self.training_math.is_platform_libm() {
             check(
@@ -919,9 +946,11 @@ fn pin(path: &Path) -> Result<PinnedFileV1, String> {
 fn read_pin(pin: &PinnedFileV1) -> Result<Value, String> {
     read_pin_bounded(pin, SMALL_CAP)
 }
+/// A sealed record (`record_envelope_v1`) is parsed from its opened bytes.
 fn read_pin_bounded(pin: &PinnedFileV1, cap: u64) -> Result<Value, String> {
     let bytes = read_pin_bounded_bytes(pin, cap)?;
-    serde_json::from_slice(&bytes).map_err(err)
+    let record = crate::expanded_deck_training_v1::record_envelope_v1::open_v1(&bytes, cap)?;
+    serde_json::from_slice(&record).map_err(err)
 }
 /// `read_pin_bounded`'s checks, returning the verified bytes.
 fn read_pin_bounded_bytes(pin: &PinnedFileV1, cap: u64) -> Result<Vec<u8>, String> {
@@ -1166,21 +1195,34 @@ fn validate_collection_episodes_with_sampler_v1(
     // and report the first failing trajectory exactly as the serial loop did.
     // A file parsed ahead by an idle collection worker yields that parse of
     // exactly these bytes instead of a second one.
+    // Sealed files (`record_envelope_v1`) open only within the update's batch
+    // bound, decided in pin order before any is opened.
+    let admitted = crate::expanded_deck_training_v1::record_envelope_v1::admit_batch_v1(
+        trajectories.iter().map(|pin| pin.path.as_path()),
+        ARTIFACT_CAP,
+    )?;
     let parsed_ahead = std::sync::atomic::AtomicUsize::new(0);
     let saved: Vec<Result<CollectionTrajectoryFieldsV1, String>> = std::thread::scope(|scope| {
         let parsed_ahead = &parsed_ahead;
         let handles: Vec<_> = trajectories
             .iter()
-            .map(|trajectory| {
+            .zip(&admitted)
+            .map(|(trajectory, admitted)| {
                 scope.spawn(move || -> Result<CollectionTrajectoryFieldsV1, String> {
                     let bytes = read_pin_bounded_bytes(trajectory, ARTIFACT_CAP)?;
+                    admitted.check_v1(&bytes)?;
                     match take_collection_fields_v1(&trajectory.sha256, &bytes) {
                         Some(fields) => {
                             parsed_ahead.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             Ok(fields)
                         }
                         None => {
-                            let document: Value = serde_json::from_slice(&bytes).map_err(err)?;
+                            let record =
+                                crate::expanded_deck_training_v1::record_envelope_v1::open_v1(
+                                    &bytes,
+                                    ARTIFACT_CAP,
+                                )?;
+                            let document: Value = serde_json::from_slice(&record).map_err(err)?;
                             Ok(CollectionTrajectoryFieldsV1::of_document_v1(&document))
                         }
                     }
@@ -1488,6 +1530,7 @@ fn collection_command(
             collection_sampler: config.collection_sampler,
             training_math: config.training_math,
             ex1,
+            record_envelope: config.record_envelope,
             output_directory,
         }
     }
@@ -1578,6 +1621,7 @@ fn update_command(
             max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
             training_math: config.training_math,
             record_format: config.record_format,
+            record_envelope: config.record_envelope,
             output_directory,
         }
     }
@@ -2290,6 +2334,7 @@ mod tests {
                 }],
             }],
             record_format: Default::default(),
+            record_envelope: Default::default(),
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -2548,6 +2593,146 @@ mod tests {
             let back: NativeExpandedTrainingRunV1 = serde_json::from_value(explicit_value).unwrap();
             assert_eq!(back.record_format, format);
         }
+    }
+
+    #[test]
+    fn record_envelope_default_preserves_the_config_wire_and_validates() {
+        use crate::expanded_deck_training_v1::RecordEnvelopeV1 as Envelope;
+        let default = schedule();
+        assert!(default.record_envelope.is_none());
+        let default_value = value(&default).unwrap();
+        assert!(default_value.get("record_envelope").is_none());
+        let mut explicit = default.clone();
+        explicit.record_envelope = Envelope::Zstd1;
+        let explicit_value = value(&explicit).unwrap();
+        assert_eq!(explicit_value["record_envelope"], "zstd1");
+        assert_ne!(identity(&explicit).unwrap(), identity(&default).unwrap());
+        let mut stripped = explicit_value.clone();
+        stripped.as_object_mut().unwrap().remove("record_envelope");
+        assert_eq!(stripped, default_value);
+        // Serial collection or a serial update keeps plain records.
+        let mut parallel = parallel_two_iteration_config_v1("envelope-validation");
+        parallel.record_envelope = Envelope::Zstd1;
+        parallel.validate_v1().unwrap();
+        for (collection, preparation) in [(1, 2), (2, 1)] {
+            let mut serial = parallel.clone();
+            serial.collection_workers = collection;
+            serial.preparation_workers = preparation;
+            assert!(serial
+                .validate_v1()
+                .unwrap_err()
+                .contains("record_envelope requires parallel collection"));
+        }
+    }
+
+    /// The envelope changes the bytes on disk and nothing else: every
+    /// iteration reaches the plain run's state, the sealed run resumes and
+    /// validates its sealed files, iteration 0's trajectories open to the
+    /// plain run's bytes exactly, and every checkpoint opens to the same
+    /// train state.
+    #[test]
+    fn record_envelope_run_keeps_every_state_and_seals_every_record() {
+        use crate::expanded_deck_training_v1::checkpoint_container_v1::parse_checkpoint_v1;
+        use crate::expanded_deck_training_v1::record_envelope_v1::{is_sealed_v1, open_v1};
+        use crate::expanded_deck_training_v1::RecordEnvelopeV1 as Envelope;
+        let plain = parallel_two_iteration_config_v1("envelope");
+        let mut sealed = plain.clone();
+        sealed.record_envelope = Envelope::Zstd1;
+        sealed.output_directory = plain.output_directory.with_file_name("run-sealed");
+        let _ = fs::remove_dir_all(&plain.output_directory);
+        let _ = fs::remove_dir_all(&sealed.output_directory);
+        let plain_result = run_native_expanded_training_v1(&plain, None).unwrap();
+        let partial = run_native_expanded_training_v1(&sealed, Some(1)).unwrap();
+        assert_eq!(partial["complete"], false);
+        let sealed_result = run_native_expanded_training_v1(&sealed, None).unwrap();
+        assert_eq!(sealed_result["complete"], true);
+        for field in ["state_sha256", "adam_step"] {
+            assert_eq!(
+                sealed_result["actual_identity"][field], plain_result["actual_identity"][field],
+                "{field}"
+            );
+        }
+        let mut plain_bytes = 0usize;
+        let mut sealed_bytes = 0usize;
+        for index in 0..2 {
+            let plain_receipt = iteration_receipt_v1(&plain_result, index);
+            let sealed_receipt = iteration_receipt_v1(&sealed_result, index);
+            for field in ["state_sha256", "adam_step"] {
+                assert_eq!(
+                    sealed_receipt["output_identity"][field],
+                    plain_receipt["output_identity"][field],
+                    "{field}"
+                );
+            }
+            let plain_update = read_pin(&parse_pin(&plain_receipt, "update").unwrap()).unwrap();
+            let sealed_update = read_pin(&parse_pin(&sealed_receipt, "update").unwrap()).unwrap();
+            for field in [
+                "after_state_sha256",
+                "before_state_sha256",
+                "adam_step",
+                "loss",
+            ] {
+                assert_eq!(sealed_update[field], plain_update[field], "{field}");
+            }
+            let trajectories = |receipt: &Value| -> Vec<PinnedFileV1> {
+                let collection = read_pin(&parse_pin(receipt, "collection").unwrap()).unwrap();
+                serde_json::from_value(collection["trajectories"].clone()).unwrap()
+            };
+            for (plain_pin, sealed_pin) in trajectories(&plain_receipt)
+                .iter()
+                .zip(&trajectories(&sealed_receipt))
+            {
+                let plain_file = fs::read(&plain_pin.path).unwrap();
+                let sealed_file = fs::read(&sealed_pin.path).unwrap();
+                assert!(!is_sealed_v1(&plain_file) && is_sealed_v1(&sealed_file));
+                let opened = open_v1(&sealed_file, ARTIFACT_CAP).unwrap();
+                if index == 0 {
+                    assert!(opened.as_ref() == plain_file.as_slice());
+                } else {
+                    // Later trajectories name the run's own checkpoint path.
+                    let plain_document: Value = serde_json::from_slice(&plain_file).unwrap();
+                    let sealed_document: Value = serde_json::from_slice(&opened).unwrap();
+                    assert_eq!(
+                        sealed_document["decisions"], plain_document["decisions"],
+                        "iteration {index} trajectory decisions"
+                    );
+                }
+                plain_bytes += plain_file.len();
+                sealed_bytes += sealed_file.len();
+            }
+            let checkpoint = |update: &Value| {
+                let pin = parse_pin(update, "checkpoint").unwrap();
+                let file = fs::read(&pin.path).unwrap();
+                let saved = serde_json::to_value(parse_checkpoint_v1(&file).unwrap()).unwrap();
+                (file, saved)
+            };
+            let (plain_file, plain_checkpoint) = checkpoint(&plain_update);
+            let (sealed_file, sealed_checkpoint) = checkpoint(&sealed_update);
+            assert!(!is_sealed_v1(&plain_file) && is_sealed_v1(&sealed_file));
+            for field in [
+                "state_sha256",
+                "adam_step",
+                "parameters",
+                "first_moments",
+                "second_moments",
+            ] {
+                assert!(
+                    sealed_checkpoint[field] == plain_checkpoint[field],
+                    "iteration {index} checkpoint {field}"
+                );
+            }
+            plain_bytes += plain_file.len();
+            sealed_bytes += sealed_file.len();
+        }
+        assert!(
+            sealed_bytes * 2 < plain_bytes,
+            "sealed {sealed_bytes} bytes against plain {plain_bytes}"
+        );
+        // A completed sealed run revalidates every sealed file on resume.
+        let again = run_native_expanded_training_v1(&sealed, None).unwrap();
+        assert_eq!(again, sealed_result);
+        fs::remove_dir_all(&plain.output_directory).unwrap();
+        fs::remove_dir_all(&sealed.output_directory).unwrap();
     }
 
     #[test]
@@ -3144,6 +3329,7 @@ mod tests {
             opponents: vec![],
             iterations,
             record_format: Default::default(),
+            record_envelope: Default::default(),
             learning_rate: 0.0003,
             value_coefficient: 0.5,
             update_backend,

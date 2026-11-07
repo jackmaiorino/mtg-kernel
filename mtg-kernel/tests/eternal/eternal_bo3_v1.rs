@@ -4,9 +4,7 @@
 //! builder and the match driver keep their rules.
 #![cfg(feature = "eternal-fixtures")]
 
-use crate::eternal_catalog_v1::{
-    fully_supported, play_with_outside, snapshot_decks, Policy, KNOWN_GAP,
-};
+use crate::eternal_catalog_v1::{fully_supported, play_with_outside, snapshot_decks, Policy};
 use mtg_kernel::bo3_match::{GameOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1};
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::eternal_bo3_v1::{
@@ -101,7 +99,6 @@ fn full75_snapshot_decks_match_the_tracked_list() {
                 .all(fully_supported)
         })
         .map(|deck| (deck.format.clone(), deck.archetype.clone()))
-        .filter(|key| !KNOWN_GAP.contains(&(key.0.as_str(), key.1.as_str())))
         .collect();
     let expected: BTreeSet<(String, String)> = PLAYABLE_75
         .iter()
