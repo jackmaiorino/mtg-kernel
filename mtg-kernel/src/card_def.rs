@@ -442,6 +442,9 @@ pub enum Subtype {
     Specter,
     Shade,
     Mystic,
+    /// Appended for the eternal catalog's Premodern wave P2d (Soltari Monk
+    /// and Soltari Priest). Stable ids from 240 leave 209 to 239 to wave P2a.
+    Soltari = 240,
     /// Appended for the eternal catalog's Premodern wave P2c (Verdant
     /// Force's Saproling token). Ids from 280 are reserved for this wave.
     Saproling = 280,
@@ -820,6 +823,7 @@ impl Subtype {
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mystic,
         #[cfg(feature = "eternal-fixtures")]
+        Subtype::Soltari,
         Subtype::Saproling,
     ];
 
@@ -1060,6 +1064,7 @@ impl Subtype {
             206 => Subtype::Specter,
             207 => Subtype::Shade,
             208 => Subtype::Mystic,
+            240 => Subtype::Soltari,
             280 => Subtype::Saproling,
             _ => return None,
         })
@@ -1279,6 +1284,7 @@ impl Subtype {
             Subtype::Specter => true,
             Subtype::Shade => true,
             Subtype::Mystic => true,
+            Subtype::Soltari => true,
             Subtype::Saproling => true,
         }
     }
@@ -1383,6 +1389,7 @@ impl Subtype {
                     | Subtype::Specter
                     | Subtype::Shade
                     | Subtype::Mystic
+                    | Subtype::Soltari
                     | Subtype::Saproling
             )
         {
@@ -3866,6 +3873,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
+        const EXPECTED_ETERNAL: u64 = 0x6187_3833_ede6_5656;
         const EXPECTED_ETERNAL: u64 = 0xf179_3e17_1875_4acf;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,

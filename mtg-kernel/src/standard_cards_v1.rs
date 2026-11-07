@@ -378,8 +378,18 @@ pub enum StandardTargetV1 {
     DividedTwoDamageAnyTargetsV1,
     /// "Target creature with mana value N or less" (Smother).
     CreatureManaValueAtMostV1(u8),
+    /// "Target player shuffles up to three target cards from their graveyard
+    /// into their library" (Gaea's Blessing): a player, then up to three
+    /// cards in that player's graveyard. Premodern wave P2a's filters follow
+    /// (`eternal_premodern_p2a_v1::targets`).
+    PlayerThenUpToThreeOfTheirGraveyardCardsV1,
     /// "Target artifact defending player controls" (Goblin Vandal).
     OpponentArtifactV1,
+    /// "Target artifact or land" (Pillage). Premodern wave P2d's filters
+    /// follow (`eternal_premodern_p2d_v1::targets`).
+    ArtifactOrLandV1,
+    /// "Target permanent you control" (Devoted Caretaker).
+    ControlledPermanentV1,
 }
 
 impl StandardTargetV1 {
@@ -389,6 +399,12 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1b_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p2a_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p2d_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
@@ -500,6 +516,7 @@ impl StandardTargetV1 {
             (Self::PlayerThenArtifactV1 | Self::PlayerThenCreatureV1, 0)
             | (Self::PlayerThenPlayerV1, 0 | 1)
             | (Self::PlayerThenGraveyardCardsV1, 0)
+            | (Self::PlayerThenUpToThreeOfTheirGraveyardCardsV1, 0)
             | (Self::OpponentThenUpToOneTheirCreatureV1, 0)
             | (Self::UpToOnePlayerV1, 0) => Some(None),
             (Self::PlayerThenArtifactV1, 1) | (Self::ArtifactThenCreatureV1, 0) => {
@@ -579,6 +596,7 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
         || (matches!(
             target,
             StandardTargetV1::PlayerThenGraveyardCardsV1
+                | StandardTargetV1::PlayerThenUpToThreeOfTheirGraveyardCardsV1
                 | StandardTargetV1::CreatureThenGraveyardCardsV1
                 | StandardTargetV1::ArtifactThenArtifactCardInItsControllersGraveyardV1
         ) && zone == Zone::Graveyard)
@@ -794,6 +812,16 @@ pub(crate) fn legal_targets(
     }
     if let Some(targets) =
         crate::eternal_premodern_p1b_v1::targets::legal_targets(target, source, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_premodern_p2a_v1::targets::legal_targets(target, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_premodern_p2d_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
     }
@@ -1019,6 +1047,14 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) = crate::eternal_premodern_p2a_v1::targets::target_matches(target) {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_premodern_p2d_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if let Some(matches) =
         crate::eternal_premodern_p1a_v1::targets::target_matches(target, controller, object, state)
     {
@@ -1213,10 +1249,14 @@ pub(crate) fn target_matches(
         // Answered by `eternal_premodern_p1b_v1::targets` above.
         StandardTargetV1::CreaturePowerAtMostTreasureCountersV1
         | StandardTargetV1::AssemblyWorkerCreatureV1 => false,
+        // Answered by `eternal_premodern_p2a_v1::targets` above.
+        StandardTargetV1::PlayerThenUpToThreeOfTheirGraveyardCardsV1 => false,
         // Answered by `eternal_premodern_p1a_v1::targets` above.
         StandardTargetV1::DividedTwoDamageAnyTargetsV1
         | StandardTargetV1::CreatureManaValueAtMostV1(_)
         | StandardTargetV1::OpponentArtifactV1 => false,
+        // Answered by `eternal_premodern_p2d_v1::targets` above.
+        StandardTargetV1::ArtifactOrLandV1 | StandardTargetV1::ControlledPermanentV1 => false,
     }
 }
 

@@ -706,10 +706,16 @@ const WHITE_BLUE_BLACK_OR_RED: u8 = crate::card_def::mana_color_mask(ManaColor::
     | crate::card_def::mana_color_mask(ManaColor::R);
 
 /// "put a +1/+1 counter on this creature."
+/// Nothing happens if the Dryad left the battlefield before the trigger
+/// resolved (the counter leaf would halt the game).
 fn dryad_counter() -> EffectOp {
-    EffectOp::AddPlusOnePlusOneCounters {
-        object: ObjectRef::ThisSource,
-        count: 1,
+    EffectOp::Conditional {
+        cond: crate::effect::EffectCond::SourceStillInTriggerZone,
+        then: Box::new(EffectOp::AddPlusOnePlusOneCounters {
+            object: ObjectRef::ThisSource,
+            count: 1,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
     }
 }
 
@@ -771,8 +777,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         PARALLAX_WAVE => &WAVE_TRIGGERS,
         SOLITARY_CONFINEMENT => &CONFINEMENT_TRIGGERS,
         TSABOS_WEB => &TSABOS_WEB_TRIGGERS,
-        // Premodern wave P1a names disjoint cards.
-        _ => crate::eternal_premodern_p1a_v1::triggers_for(name),
+        // Premodern wave P2d, then P1a, name disjoint cards.
+        _ => crate::eternal_premodern_p2d_v1::triggers_for(name),
     }
 }
 

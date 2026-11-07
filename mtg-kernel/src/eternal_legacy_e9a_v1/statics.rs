@@ -412,6 +412,9 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     let controller = live.controller;
     // Mystic Enforcer's threshold (wave P1a).
     let mut boost = crate::eternal_premodern_p1a_v1::statics::controlled_boost(state, object);
+    // Shared Triumph's chosen type (wave P2d).
+    let triumph = crate::eternal_premodern_p2d_v1::statics::controlled_boost(state, object);
+    boost = (boost.0 + triumph.0, boost.1 + triumph.1);
     if active_named(state, object, KNIGHT_OF_THE_RELIQUARY) {
         let lands = graveyard_lands(state, controller);
         boost.0 += lands;
@@ -431,6 +434,7 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
 pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     // Printed protection from a color (wave P1a).
     let printed = crate::eternal_premodern_p1a_v1::statics::protection_mask(state, host)
+        | crate::eternal_premodern_p2d_v1::statics::protection_mask(state, host)
         | crate::eternal_premodern_p2c_v1::statics::protection_mask(state, host);
     printed | granted_protection_mask(state, host)
 }

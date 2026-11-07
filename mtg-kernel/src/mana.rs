@@ -1189,6 +1189,13 @@ fn gather_sources_for_spell_restrictions_v1(
                 choices.push(color);
             }
         }
+        // The Tainted lands' Swamp-gated colors (Premodern wave P2a).
+        #[cfg(feature = "eternal-fixtures")]
+        for &color in crate::eternal_premodern_p2a_v1::statics::tainted_colors(state, id) {
+            if !choices.contains(&color) {
+                choices.push(color);
+            }
+        }
         {
             for restricted in def.restricted_mana_abilities {
                 let Some(restriction) =
@@ -1239,6 +1246,15 @@ fn gather_sources_for_spell_restrictions_v1(
                 choices,
                 yield_per_tap,
             });
+        }
+    }
+    // Contamination: a land tapped for mana produces one {B} instead
+    // (Premodern wave P2a).
+    #[cfg(feature = "eternal-fixtures")]
+    for source in &mut sources {
+        if crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source.id) {
+            source.choices = vec![ManaColor::B];
+            source.yield_per_tap = 1;
         }
     }
     sources
