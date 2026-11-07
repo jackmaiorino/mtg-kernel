@@ -774,13 +774,14 @@ def current_segment(arm, man, man_path, ledger_source):
 
 # ---------------------------------------------------------------- scratch segments (RAM-backed transient files)
 #
-# An arm with `scratch_root` (C only) runs each segment in a scratch directory (e.g. under /dev/shm) behind a
-# symlink at the segment's usual path, so every config, receipt and record keeps the path it would have on the
-# root's volume. While the trainer runs, a reaper in the driver deletes the transient bulk of every completed
+# An arm with `scratch_root` (C only, Linux, run as root) runs each segment in a scratch directory (e.g. under
+# /dev/shm) bind-mounted over the segment's usual directory, so every config, receipt and record keeps the path it
+# would have on the root's volume (the trainer refuses a symlink in its publication path; a mount point is a plain
+# directory). While the trainer runs, a reaper in the driver deletes the transient bulk of every completed
 # iteration but the newest (trajectories and checkpoints: regenerable, never read again by the run). When the
-# segment ends (complete, or cut by the C wall), the records and the newest checkpoint are copied to a real
-# directory on the root's volume, which replaces the symlink (two renames), and the scratch directory goes. An
-# unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
+# segment ends (complete, or cut by the C wall), the records and the newest checkpoint are copied to a directory
+# on the root's volume, the mount is removed, and the copy replaces the (empty) segment directory by one rename.
+# An unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
 # persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively).
 
 SCRATCH_BULK = ('episode-', 'ex1-')
@@ -848,18 +849,21 @@ def persist(native, cdir):
         require(sha(dst) == read(newest / 'complete.json')['output_identity']['checkpoint_sha256'],
                 f'{dst} differs from its pin')
     tmp.mkdir(parents=True, exist_ok=True)
-    swap(native, tmp)
+    unmount(native)
+    os.rename(tmp, native)  # replaces the empty segment directory left by the unmount
     shutil.rmtree(target, ignore_errors=True)
     return copied
 
 
-def swap(native, tmp):
-    aside = native.parent / f'.{native.name}.link'
-    if aside.is_symlink() or aside.exists():
-        aside.unlink()
-    os.rename(native, aside)
-    os.rename(tmp, native)
-    aside.unlink()
+def mounted(native):
+    return os.path.ismount(native)
+
+
+def unmount(native):
+    if mounted(native):
+        subprocess.run([shutil.which('umount') or '/bin/umount', str(native)], check=True)
+    require(not mounted(native) and Path(native).is_dir() and not any(Path(native).iterdir()),
+            f'{native} is still mounted or not empty after the unmount')
 
 
 def run_reaped(arm, config_path, deadline, logs, native):
@@ -883,33 +887,36 @@ def run_reaped(arm, config_path, deadline, logs, native):
 
 def scratch_settle(arm, root, cdir, man):
     """Before a segment: finish an interrupted swap, persist any ended scratch segment, and reset an unfinished
-    one (its scratch directory emptied, so the trainer starts it fresh)."""
+    one (its scratch directory emptied and mounted again, so the trainer starts it fresh)."""
     for seg in man['segments']:
         native = Path(seg['root'])
         tmp = cdir / f'.{native.name}.persist'
-        if not native.is_symlink() and not native.exists() and tmp.exists():
-            os.rename(tmp, native)  # the driver stopped between the two renames
+        if tmp.exists() and not mounted(native) and (not native.exists() or not any(native.iterdir())):
+            os.rename(tmp, native)  # the driver stopped between the unmount and the rename
             log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
-        if native.is_symlink() and (native / 'completion.json').exists():
+        if mounted(native) and (native / 'completion.json').exists():
             n = persist(native, cdir)
             log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True)
     if man['segments']:
         native = Path(man['segments'][-1]['root'])
-        if native.is_symlink() and not (native / 'completion.json').exists():
-            target = scratch_dir(arm, cdir, native)
-            had = completed(native) if Path(os.path.realpath(native)).exists() else 0
-            shutil.rmtree(target, ignore_errors=True)
-            target.mkdir(parents=True, exist_ok=True)
+        if not (native / 'completion.json').exists() and (mounted(native) or native.exists()):
+            had = completed(native)
+            unmount(native)  # refuses a non-empty segment directory on the root volume (not a scratch segment)
+            shutil.rmtree(scratch_dir(arm, cdir, native), ignore_errors=True)
             log(root, chain=cdir.name, event='scratch-reset', segment=native.name, discarded_iterations=had)
 
 
 def scratch_link(arm, cdir, native):
-    """The segment's scratch directory behind a symlink at its usual path (created once)."""
+    """The segment's scratch directory bind-mounted over its (empty) directory on the root volume."""
     target = scratch_dir(arm, cdir, native)
     target.mkdir(parents=True, exist_ok=True)
-    if not Path(native).is_symlink():
-        require(not Path(native).exists(), f'{native} exists on the root volume; a scratch arm cannot reuse it')
-        os.symlink(target, native, target_is_directory=True)
+    native = Path(native)
+    if mounted(native):
+        return
+    native.mkdir(parents=True, exist_ok=True)
+    require(not any(native.iterdir()), f'{native} is not empty on the root volume; a scratch arm cannot reuse it')
+    subprocess.run([shutil.which('mount') or '/bin/mount', '--bind', str(target), str(native)], check=True)
+    require(mounted(native), f'{native}: the scratch bind mount did not take')
 
 
 def drive(a):
