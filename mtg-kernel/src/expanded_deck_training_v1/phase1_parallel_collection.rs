@@ -167,11 +167,17 @@ pub(super) fn collect_parallel_v1(
     collection_sampler: CollectionSamplerV1,
     training_math: TrainingMathV1,
     ex1: Option<super::ex1_collect_v1::Ex1CollectOptionsV1>,
+    record_envelope: RecordEnvelopeV1,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = Instant::now();
     validate_collection_workers_v1(workers)?;
     ensure(workers >= 2, "use collect for a single collection worker")?;
+    // EX1's readers take plain trajectory JSON; the envelope is not offered there.
+    ensure(
+        record_envelope.is_none() || ex1.is_none(),
+        "a record envelope is not available with EX1 collection",
+    )?;
     ensure(
         !episodes.is_empty() && episodes.len() <= 1024,
         "invalid collection size",
@@ -291,9 +297,11 @@ pub(super) fn collect_parallel_v1(
             // Publish directly from each private worker. The published bytes,
             // at most one batch of them, are kept with the trajectory they were
             // serialized from for validation and the update
-            // (`trajectory_parse_ahead_v1`).
+            // (`trajectory_parse_ahead_v1`). A record envelope seals exactly
+            // the serialized bytes (`record_envelope_v1`), and the sealed
+            // bytes are the published and offered ones.
             let name = format!("episode-{index:04}.json");
-            let bytes = serialize_json_v1(&name, &trajectory)?;
+            let bytes = record_envelope.seal_owned_v1(serialize_json_v1(&name, &trajectory)?)?;
             let pin = publish_json_bytes_v1(&output_directory, &name, &bytes)?;
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             let ex1_pin = ex1_record
@@ -555,6 +563,7 @@ mod tests {
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
+            record_envelope: Default::default(),
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -713,6 +722,7 @@ mod tests {
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
+            record_envelope: Default::default(),
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -743,6 +753,7 @@ mod tests {
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
+            record_envelope: Default::default(),
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -1050,6 +1061,7 @@ mod tests {
                     collection_sampler: CollectionSamplerV1::Legacy,
                     training_math: TrainingMathV1::PlatformLibm,
                     ex1: None,
+                    record_envelope: Default::default(),
                     output_directory,
                 }
             };
@@ -1172,6 +1184,7 @@ mod tests {
                     collection_sampler: sampler,
                     training_math: TrainingMathV1::PlatformLibm,
                     ex1: None,
+                    record_envelope: Default::default(),
                     output_directory,
                 }
             };
