@@ -396,8 +396,8 @@ pub struct RuntimeRulesV1 {
     /// reads no hidden state, so whether an ordering stage appears tells the
     /// other seat nothing about hidden cards.
     pub auto_unobservable_graveyard_order: bool,
-    /// A loss ends the game before any further decision (104.3, 704.5).
-    /// Off, the historical engine can expose one more decision after a
+    /// A loss ends the game before any further decision (704.5, 104.2a).
+    /// Off, the historical engine can still expose a decision after a
     /// state-based action set `has_lost` inside a continuation (issue #433:
     /// Highway Robbery's sacrifice branch draws from an empty library, then
     /// the loser receives priority). Omitted from snapshots while off, so
