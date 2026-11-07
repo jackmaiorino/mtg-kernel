@@ -26,7 +26,10 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   from), `workers`, `memory_max_bytes`, `bytes_per_update`, optional `segment_updates`, `base` and `throughput`
   (a `w5-box-throughput/v1` record), for C-recipe arms optional `record_envelope` (`zstd1`: the trainer seals every
   trajectory and checkpoint in one zstd frame of its exact bytes, mtg-kernel `record_envelope_v1`; same states, about
-  a fifth of the bytes), and for X arms `budget`, `coefficient`, `dose`;
+  a fifth of the bytes), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
+  Stage 0 plans) `ladder` (`stride`, `roster_max`, `replaces`, `test_stride`, and for a fork `history`: pgrow.py;
+  the base's fixed-parent share plays a per-segment roster drawn from the chain's own checkpoint ladder, each state
+  verified before use);
 - `chains`: name to `{arm, slot, seed_root, pair}` (F: a filler box, no pair, run by supervise through `w5box.py
   fill`, not by `run`; XS in Stage 1b: `partner`, the Stage 1a C
   chain in the same root; Stage 0 chains may omit the pair, e.g. a box throughput run with every box on one
@@ -133,6 +136,7 @@ slowest box is reported beside it); a single-arm full node stands in for Stage 1
 """
 import argparse
 import copy
+import gzip
 import json
 import math
 import os
@@ -147,6 +151,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'ex1'))
+import pgrow  # noqa: E402
 import qual  # noqa: E402
 import retention  # noqa: E402
 import w5box  # noqa: E402
@@ -159,10 +164,14 @@ ARM_SCHEMA = 'w5-arm/v1'
 END_SCHEMA = 'w5-chain-end/v1'
 PAIR_SCHEMA = 'w5-pair/v1'
 SEGCHECK_SCHEMA = 'w5-segcheck/v1'
-ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None)}  # recipe, retention arm
-MEASURED = ('C', 'X8', 'XS')
+ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
+        'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C')}  # recipe, retention arm
+# CS, CP and CG: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S parent, a pool
+# base). CG (P-grow, pgrow.py) also plays its own checkpoint ladder in the base's fixed-parent share.
+EXTRA_C = ('CS', 'CP', 'CG')
+MEASURED = ('C', 'X8', 'XS') + EXTRA_C
 STAGES = ('0', '1a', '1b')
-SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64}
+SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256}
 HOT_CAP_BYTES = 60 * 10**9
 BYTE_CAP = 560 * 10**9
 HOLD_DAYS = 7
@@ -183,7 +192,7 @@ PAIR_ONLY_KEYS = {'ex1', 'preparation_workers', 'output_directory', 'chain_ledge
                   'record_envelope'}
 RECORD_ENVELOPES = ('zstd1',)  # mtg-kernel record_envelope_v1; C-recipe arms only (the trainer refuses EX1)
 TOOL_FILES = {'chains.py': HERE / 'chains.py', 'retention.py': HERE / 'retention.py', 'xact.py': HERE / 'xact.py',
-              'replay_sample.py': HERE / 'replay_sample.py',
+              'replay_sample.py': HERE / 'replay_sample.py', 'pgrow.py': HERE / 'pgrow.py',
               'w5box.py': HERE / 'w5box.py', 'qual.py': HERE.parent / 'ex1' / 'qual.py',
               'target_ref.py': HERE.parent / 'ex1' / 'target_ref.py'}
 NAME = re.compile(r'[a-z0-9][a-z0-9-]{0,31}')
@@ -344,18 +353,41 @@ def quarantine(native, dest_root):
     return moved
 
 
-def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_source=None):
+def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_source=None, ladder=None):
     """The arm's segment config: EX1's construction keyed by the seed root (xact.build_config), sliced at the
-    global update `offset`; `source` replaces the parent for every segment after the first."""
+    global update `offset`; `source` replaces the parent for every segment after the first. A CG arm's replaced
+    episodes then play its ladder roster (pgrow.apply): `ladder` is the chain's verified ladder to date
+    (pgrow.ladder), by default the parent alone (a chain's first segments, segcheck)."""
     x = arm['x'] or {}
-    cfg = xact.build_config(read(arm['base']['path']), read(arm['parent']['path']), native, seed_root, offset,
+    parent = read(arm['parent']['path'])
+    cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
                             updates, arm['workers'], x.get('budget'), x.get('coefficient'), x.get('dose', 'primary'),
                             ledger_source)
     if source is not None:
         cfg['initial_source'] = source
     if arm.get('record_envelope'):
         cfg['record_envelope'] = arm['record_envelope']
+    if arm.get('ladder'):
+        try:
+            states = ladder if ladder is not None else \
+                [(i, src) for i, src, _ in pgrow.history_states(arm['ladder'], parent['source'])] + \
+                [(pgrow.member_id(0), copy.deepcopy(parent['source']))]
+            pgrow.apply(cfg, arm['ladder'], states, seed_root, offset // arm['segment_updates'], offset)
+        except pgrow.LadderError as exc:
+            raise Stop(str(exc)) from exc
     return cfg
+
+
+def chain_ladder(arm, man, cdir, offset):
+    """A CG chain's verified ladder to date at `offset` (pgrow.ladder; LADDER.json in the chain directory)."""
+    try:
+        spec = arm['ladder']
+        return pgrow.ladder(read(arm['parent']['path'])['source'], man['segments'], offset, spec,
+                            Path(cdir) / 'LADDER.json', next_source, man['chain'],
+                            lambda ids: pgrow.roster(man['seed_root'], offset // arm['segment_updates'], ids,
+                                                     spec['roster_max']))
+    except pgrow.LadderError as exc:
+        raise Stop(str(exc)) from exc
 
 
 def run_trainer(arm, config_path, deadline=None, logs=None):
@@ -405,6 +437,8 @@ def recipe_identity(arm):
                                     'c_wall_seconds')} | {'trainer_sha256': arm['trainer']['sha256']}
     if arm.get('record_envelope'):
         identity['record_envelope'] = arm['record_envelope']
+    if arm.get('ladder'):
+        identity['ladder'] = arm['ladder']  # absent otherwise: existing manifests unchanged
     return identity
 
 
@@ -457,10 +491,17 @@ def make_plan(inputs_path):
     require(r_nom is None or (type(r_nom) is int and r_nom > 0), 'r_nom_usec must be a positive integer')
     require(stage == '0' or r_nom is not None, 'Stage 1 needs the frozen R_nom (r_nom_usec)')
     byte_cap = int(inputs.get('byte_cap', BYTE_CAP))
+    # Independent chains (Stage 0 plans only): no W5 matched-work holds. A closing chain's box does not freeze the
+    # node's other chains (w5box `handoff` off) and supervise starts no filler in an ended chain's box.
+    independent = inputs.get('independent', False)
+    require(independent in (True, False), 'independent is true or false')
+    require(not independent or stage == '0', 'independent chains are a Stage 0 plan option')
     arms_in, chains_in = inputs['arms'], inputs['chains']
     used = {c['arm'] for c in chains_in.values()} | {'F'}
     for a in used:
         require(a in ARMS and a in arms_in, f'arm {a} is unknown or has no inputs')
+    require(not (used & set(EXTRA_C)) or (stage == '0' and independent),
+            f'arms {sorted(EXTRA_C)} run only in independent Stage 0 plans')
     if stage == '1a':
         require({c['arm'] for c in chains_in.values()} == {'C', 'X8'}, 'Stage 1a runs C and X8 chains')
     if stage == '1b':
@@ -483,8 +524,18 @@ def make_plan(inputs_path):
                 f'{a}: {retention.TRAJECTORY_SEGMENTS + 1 + GUARD_SEGMENTS} segments of {length} updates at {bpu} '
                 'bytes pass the 60 GB per-chain hot cap')
         base = pin(spec.get('base', inputs['base']))
-        require(not history_relative(read(base['path'])), f'{a}: the base uses history-relative opponents, which '
+        base_doc = read(base['path'])
+        require(not history_relative(base_doc), f'{a}: the base uses history-relative opponents, which '
                 'segments would change')
+        ladder = None
+        if a == 'CG':
+            try:
+                ladder = pgrow.check_spec(spec.get('ladder'), base_doc, length, retention.C_LONG_STRIDE,
+                                          read(spec['parent'])['source'], pin)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
+        else:
+            require('ladder' not in spec, f'{a}: only a CG arm plays a checkpoint ladder')
         x = None
         if recipe == 'X':
             require(type(spec.get('budget')) is int and spec['budget'] > 0 and spec.get('dose') in xact.DOSES
@@ -499,7 +550,19 @@ def make_plan(inputs_path):
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
-               'c_wall_seconds': c_wall if a == 'C' else None, 'tools': tools}
+               'c_wall_seconds': c_wall if recipe == 'C' and a != 'F' else None, 'tools': tools}
+        if spec.get('scratch'):
+            scratch_root = inputs.get('scratch_root')
+            require(recipe == 'C' and a != 'F' and stage == '0',
+                    f'{a}: scratch segments are for C-recipe chains (net-8 or S parent) in Stage 0 plans only')
+            require(scratch_root and Path(scratch_root).is_absolute(), f'{a}: scratch needs an absolute scratch_root')
+            require(length % retention.FULL_STRIDE == 0 and retention.C_LONG_STRIDE % length == 0,
+                    f'{a}: a scratch segment length divides {retention.C_LONG_STRIDE} and is a multiple of '
+                    f'{retention.FULL_STRIDE}, so segment ends hold every ladder state')
+            require(r_nom is None, f'{a}: scratch keeps no look state (no r_nom_usec)')
+            doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
+        if ladder is not None:
+            doc['ladder'] = ladder  # CG only: other arm files unchanged
         if envelope is not None:  # absent otherwise, so every existing arm file keeps its bytes and pin
             doc['record_envelope'] = envelope
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
@@ -523,6 +586,7 @@ def make_plan(inputs_path):
         require(type(slot) is int and 0 <= slot < boxes and slot not in slots, f'{name}: bad or repeated slot')
         slots.add(slot)
         if a == 'F':
+            require(not independent, f'{name}: an independent plan has no filler boxes')
             require('pair' not in c, f'{name}: a filler has no pair')
             require(stage == '0' or seed_root == f'w5/filler{slot}', f'{name}: filler seed root is w5/filler<slot>')
         elif c.get('pair') is None:  # Stage 0 only: e.g. a box throughput run, every box on one seed root
@@ -531,6 +595,7 @@ def make_plan(inputs_path):
             p = c['pair']
             require(type(p) is int and p >= 1, f'{name}: pair must be a positive integer')
             require(stage == '0' or seed_root == f'w5/chain{p}', f'{name}: Stage 1 seed root is w5/chain<pair>')
+            require(a not in EXTRA_C, f'{name}: a {a} chain has no pair')
             role = 'C' if a == 'C' else 'X'
             require(role not in pairs.setdefault(p, {}), f'pair {p} has two {role} chains')
             pairs[p][role] = name
@@ -540,6 +605,8 @@ def make_plan(inputs_path):
         if stage == '0':
             require(not seed_root.startswith(('w5/chain', 'w5/filler')) and seed_root != 'w5/0b',
                     f'{name}: Stage 0 seed roots stay out of Stage 1 and 0b namespaces')
+        require(not (arms[a].get('scratch_root') and c.get('pair') is not None),
+                f'{name}: a scratch chain has no pair (W5 selection replays need the every-64 states)')
         chains[name] = {'arm': a, 'slot': slot, 'seed_root': seed_root, 'pair': c.get('pair'),
                         'manifest': None if a == 'F' else (root / 'chains' / name / 'chain.json').as_posix()}
     seeds = {}
@@ -624,7 +691,7 @@ def make_plan(inputs_path):
                'cgroup_root': inputs['cgroup_root'], 'state_root': (root / 'state').as_posix(),
                'isolation': inputs.get('isolation', 'partition-root'), 'stage': stage,
                'env': {'PYTHONDONTWRITEBYTECODE': '1'}, 'filler': filler,
-               'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'], handoff=True)
+               'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'], handoff=not independent)
                           for n, c in sorted(chains.items()) if c['arm'] == a}}
         if arms_in[a].get('throughput'):
             doc['throughput'] = pin(arms_in[a]['throughput'])
@@ -636,6 +703,7 @@ def make_plan(inputs_path):
             'cgroup_root': inputs['cgroup_root'], 'byte_cap': byte_cap,
             'hold_days': float(inputs.get('hold_days', HOLD_DAYS)),
             'x_cap_seconds': x_cap, 'c_wall_seconds': c_wall, 'r_nom_usec': r_nom, **common, 'tools': tools,
+            **({'independent': True} if independent else {}),
             'arms': {a: {'file': pin(arm_paths[a]), 'w5box_plan': w5plans.get(a),
                          'throughput': bool(arms_in[a].get('throughput')),
                          'segment_updates': arms[a]['segment_updates'],
@@ -668,6 +736,8 @@ def load_arm(path):
     require(arm['tools'] == tools_shas(), 'the W5 tools differ from the arm file pins')
     for key in ('trainer', 'base', 'parent'):
         check_pin(arm[key], key)
+    if (arm.get('ladder') or {}).get('history'):
+        check_pin(arm['ladder']['history'], 'the ladder history')
     if arm['frozen']:
         check_pin(arm['frozen'], 'the frozen-constants record')
     return arm
@@ -688,10 +758,13 @@ def stopped(root, cdir):
     return (Path(root) / 'STOP').exists() or (Path(cdir) / 'STOP').exists()
 
 
-def latest(man):
-    """(latest boundary, its receipt or None) from the manifest's segments."""
+def latest(man, persisted=False):
+    """(latest boundary, its receipt or None) from the manifest's segments; with `persisted`, an in-flight
+    (mounted) scratch segment is skipped, so the boundary survives a reboot."""
     segs = man['segments']
     for seg in reversed(segs):
+        if persisted and mounted(seg['root']):
+            continue
         n = completed(seg['root'])
         if n:
             return seg['offset'] + n, read(Path(seg['root']) / 'iterations' / f'{n - 1:06d}' / 'complete.json')
@@ -768,7 +841,8 @@ def current_segment(arm, man, man_path, ledger_source):
         s = len(segs)
     native = cdir / f'seg-{s:05d}'
     source = next_source(segs[s - 1]['root']) if s > 0 else None
-    cfg = arm_config(arm, man['seed_root'], s * length, length, native, source, ledger_source)
+    ladder = chain_ladder(arm, man, cdir, s * length) if arm.get('ladder') else None
+    cfg = arm_config(arm, man['seed_root'], s * length, length, native, source, ledger_source, ladder)
     path = cdir / 'segments' / f'seg-{s:05d}.json'
     if path.exists():
         require(read(path) == cfg, f'{path} differs from the segment config derived from the pins')
@@ -779,6 +853,236 @@ def current_segment(arm, man, man_path, ledger_source):
         segs.append({'config': path.as_posix(), 'offset': s * length, 'root': native.as_posix(), 'updates': length})
         write(man_path, man)
     return s, path, native
+
+
+# ---------------------------------------------------------------- scratch segments (RAM-backed transient files)
+#
+# An arm with `scratch_root` (C only, Linux, run as root) runs each segment in a scratch directory (e.g. under
+# /dev/shm) bind-mounted over the segment's usual directory, so every config, receipt and record keeps the path it
+# would have on the root's volume (the trainer refuses a symlink in its publication path; a mount point is a plain
+# directory). While the trainer runs, a reaper in the driver deletes the transient bulk of every completed
+# iteration but the newest (trajectories and checkpoints: regenerable, never read again by the run). When the
+# segment ends (complete, or cut by the C wall), the records and the newest checkpoint are copied to a directory
+# on the root's volume, the mount is removed, and the copy replaces the (empty) segment directory by one rename.
+# An unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
+# persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively). Full states are kept
+# at segment ends only, so the recent-window stride of a scratch C chain is its segment length (at most 255 updates
+# of replay rebuild any boundary) and the 4,096 ladder is exact; scratch chains therefore take no pair (W5 selection)
+# and no look. An END (wall, operator, OOM) names a persisted boundary only.
+
+SCRATCH_BULK = ('episode-', 'ex1-')
+REAP_EVERY = 0.5
+# Regenerable per-iteration and per-run records (commands, inputs, the run identity) are persisted gzip-compressed
+# as <name>.gz; receipts (complete.json, update.json, collection.json, completion.json) stay plain for the index.
+PERSIST_MARKER = '.scratch-persisted.json'  # written last (fsynced): only a marked staging copy is promoted
+SCRATCH_GZIP = ('collect-command.json', 'update-command.json', 'update-input.json', 'run.json')
+
+
+def scratch_dir(arm, cdir, native):
+    return Path(arm['scratch_root']) / Path(cdir).name / Path(native).name
+
+
+def scratch_bulk(path):
+    base = path.name.lstrip('.')
+    return base.startswith(SCRATCH_BULK) or base == 'checkpoint.json' or path.suffix == '.bin' or \
+        base.endswith('.stage')
+
+
+def reap(native):
+    """Deletes the transient bulk of every completed iteration except the newest; returns the number of files."""
+    its = Path(native) / 'iterations'
+    if not its.exists():
+        return 0
+    done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists())
+    n = 0
+    for d in done[:-1]:
+        for f in d.rglob('*'):
+            if f.is_file() and not f.is_symlink() and scratch_bulk(f):
+                try:
+                    f.unlink()
+                    n += 1
+                except FileNotFoundError:
+                    pass
+    return n
+
+
+def persist(arm, native, cdir):
+    """Copies a scratch segment's records and its newest checkpoint to the root's volume and swaps the copy in at
+    the segment's path. Returns the bytes copied."""
+    native = Path(native)
+    require(mounted(native), f'{native} is not a mounted scratch segment')
+    target = scratch_dir(arm, cdir, native)
+    reap(native)
+    its = target / 'iterations'
+    done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
+    newest = done[-1] if done else None
+    keep = {}  # the newest full train state: relative path -> pinned sha256 (checkpoint, and an S container)
+    if newest is not None:
+        complete = read(newest / 'complete.json')
+        upd = attempt_dir(newest, complete) / 'update'
+        doc = read(upd / 'update.json')
+        keep[upd / 'checkpoint.json'] = complete['output_identity']['checkpoint_sha256']
+        state = retention.state_pin(doc)
+        if state is not None:
+            keep[upd / Path(state['path']).name] = state['sha256']
+    tmp = Path(cdir) / f'.{native.name}.persist'
+    shutil.rmtree(tmp, ignore_errors=True)
+    copied, files = 0, []
+    for f in sorted(target.rglob('*')):
+        if not f.is_file() or f.is_symlink():
+            continue
+        rel = f.relative_to(target)
+        if scratch_bulk(f) and f not in keep:
+            continue
+        if rel.parts[:1] == ('iterations',) and len(rel.parts) > 1 and not (target / 'iterations' / rel.parts[1] /
+                                                                           'complete.json').exists():
+            continue  # an unfinished iteration (a wall cut): its records are not a boundary
+        dst = tmp / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if f.name in SCRATCH_GZIP:
+            dst = dst.with_name(dst.name + '.gz')
+            with open(f, 'rb') as src, gzip.open(dst, 'wb', compresslevel=1) as out:
+                shutil.copyfileobj(src, out)
+        else:
+            shutil.copy2(f, dst)
+        fsync_path(dst)
+        copied += dst.stat().st_size
+        files.append(dst.relative_to(tmp).as_posix())
+    for f, digest in keep.items():
+        dst = tmp / f.relative_to(target)
+        require(dst.exists() and sha(dst) == digest, f'{dst} is missing or differs from its pin')
+    tmp.mkdir(parents=True, exist_ok=True)
+    dirs = {tmp} | {q for q in tmp.rglob('*') if q.is_dir()}
+    for d in sorted(dirs, key=lambda q: -len(q.parts)):  # every directory entry is durable before the marker
+        fsync_path(d)
+    marker = tmp / PERSIST_MARKER
+    marker.write_text(json.dumps({'files': len(files), 'bytes': copied,
+                                  'kept': {f.relative_to(target).as_posix(): d for f, d in keep.items()}}) + '\n')
+    fsync_path(marker)
+    fsync_path(tmp)
+    with retention.index_lock(Path(cdir) / 'chain.json'):  # supervise's index scans wait out the swap
+        unmount(native)
+        os.rename(tmp, native)  # replaces the empty segment directory left by the unmount
+        fsync_path(native.parent)
+    shutil.rmtree(target, ignore_errors=True)
+    return copied
+
+
+def fsync_path(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def compress_config(config_path):
+    """A finished scratch segment's config (regenerable from the pins by `arm_config`) is kept as <name>.gz."""
+    path = Path(config_path)
+    if not path.exists():
+        return 0
+    gz = path.with_name(path.name + '.gz')
+    with open(path, 'rb') as src, gzip.open(gz.with_name(gz.name + '.tmp'), 'wb', compresslevel=1) as out:
+        shutil.copyfileobj(src, out)
+    os.replace(gz.with_name(gz.name + '.tmp'), gz)
+    path.unlink()
+    return gz.stat().st_size
+
+
+def mounted(native):
+    return os.path.ismount(native)
+
+
+def unmount(native, tries=20):
+    for _ in range(tries):
+        if not mounted(native):
+            break
+        r = subprocess.run([shutil.which('umount') or '/bin/umount', str(native)], capture_output=True)
+        if r.returncode != 0:
+            time.sleep(0.5)  # EBUSY while a reader holds a file open: retry
+    require(not mounted(native) and Path(native).is_dir() and not any(Path(native).iterdir()),
+            f'{native} is still mounted or not empty after the unmount')
+
+
+def run_reaped(arm, config_path, deadline, logs, native):
+    """run_trainer with the reaper running beside it in this (the chain's) process; returns (code, killed,
+    files reaped)."""
+    import threading
+    stop, count = threading.Event(), [0]
+
+    def loop():
+        while not stop.wait(REAP_EVERY):
+            count[0] += reap(native)
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    try:
+        code, killed = run_trainer(arm, config_path, deadline, logs)
+    finally:
+        stop.set()
+        t.join()
+    return code, killed, count[0]
+
+
+def scratch_settle(arm, root, cdir, man):
+    """First in each driver cycle: finish an interrupted swap (only a staging copy whose marker was written),
+    persist an ended scratch segment, and reset an unfinished one (unmounted, its scratch directory removed, so the
+    trainer starts it fresh on a new mount). Only the last two segments can be in these states."""
+    for seg in man['segments'][-2:]:
+        native = Path(seg['root'])
+        tmp = cdir / f'.{native.name}.persist'
+        if tmp.exists() and not mounted(native) and (not native.exists() or not any(native.iterdir())):
+            if (tmp / PERSIST_MARKER).exists():
+                with retention.index_lock(cdir / 'chain.json'):
+                    os.rename(tmp, native)  # the driver stopped between the unmount and the rename
+                log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
+            else:
+                shutil.rmtree(tmp)  # a copy cut before its marker: the segment reruns
+                log(root, chain=cdir.name, event='scratch-staging-discarded', segment=native.name)
+        if mounted(native) and (native / 'completion.json').exists():
+            n = persist(arm, native, cdir)
+            z = compress_config(seg['config']) if seg.get('config') else 0
+            log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True,
+                config_gz_bytes=z)
+    if man['segments']:
+        native = Path(man['segments'][-1]['root'])
+        if not mounted(native) and (native / PERSIST_MARKER).exists() and \
+                not (native / 'completion.json').exists():
+            # a persisted wall cut whose END was not written (the driver stopped in between)
+            boundary, receipt = latest(man, persisted=True)
+            write_once(cdir / 'END.json', end_doc(cdir.name, arm['arm'], 'c-wall', boundary, receipt, 'driver',
+                                                  recovered=True))
+            log(root, chain=cdir.name, event='end', reason='c-wall', boundary=boundary, recovered=True)
+            return
+        if not (native / 'completion.json').exists() and (mounted(native) or native.exists()):
+            had = completed(native)
+            unmount(native)  # refuses a non-empty segment directory on the root volume (not a scratch segment)
+            shutil.rmtree(scratch_dir(arm, cdir, native), ignore_errors=True)
+            log(root, chain=cdir.name, event='scratch-reset', segment=native.name, discarded_iterations=had)
+
+
+def release_scratch(plan, name, man):
+    """An ended chain's in-flight scratch segment (never persisted, past its END) is unmounted and dropped."""
+    if not man['segments']:
+        return
+    native = Path(man['segments'][-1]['root'])
+    if mounted(native):
+        arm = read(plan['arms'][plan['chains'][name]['arm']]['file']['path'])
+        unmount(native)
+        if arm.get('scratch_root'):
+            shutil.rmtree(scratch_dir(arm, native.parent, native), ignore_errors=True)
+
+
+def scratch_link(arm, cdir, native):
+    """The segment's scratch directory bind-mounted over its (empty) directory on the root volume."""
+    target = scratch_dir(arm, cdir, native)
+    target.mkdir(parents=True, exist_ok=True)
+    native = Path(native)
+    if mounted(native):
+        return
+    native.mkdir(parents=True, exist_ok=True)
+    require(not any(native.iterdir()), f'{native} is not empty on the root volume; a scratch arm cannot reuse it')
+    subprocess.run([shutil.which('mount') or '/bin/mount', '--bind', str(target), str(native)], check=True)
+    require(mounted(native), f'{native}: the scratch bind mount did not take')
 
 
 def drive(a):
@@ -810,9 +1114,14 @@ def drive_locked(a, arm, root, cdir, man_path):
         log(root, chain=a.chain, event='launched')
     deadline = man['launched_unix'] + arm['c_wall_seconds'] if arm['recipe'] == 'C' else None
     waiting = None
+    scratch = bool(arm.get('scratch_root'))
     while True:
         if (cdir / 'END.json').exists():
             return 0
+        if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
+            scratch_settle(arm, root, cdir, man)
+            if (cdir / 'END.json').exists():
+                return 0
         if stopped(root, cdir):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
@@ -835,12 +1144,25 @@ def drive_locked(a, arm, root, cdir, man_path):
             continue
         waiting = None
         s, path, native = current_segment(arm, man, man_path, a.ledger_source)
+        if scratch:
+            scratch_link(arm, cdir, native)
         moved = quarantine(native, cdir)
         log(root, chain=a.chain, event='segment', segment=s, config=pin(path), moved=moved)
-        code, killed = run_trainer(arm, path, deadline, cdir)
+        if scratch:
+            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native)
+        else:
+            code, killed = run_trainer(arm, path, deadline, cdir)
         if (native / 'completion.json').exists():
+            if scratch:
+                n = persist(arm, native, cdir)
+                z = compress_config(path)
+                log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped,
+                    config_gz_bytes=z)
             log(root, chain=a.chain, event='segment-done', segment=s)
             continue
+        if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept
+            n = persist(arm, native, cdir)
+            log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
         boundary, receipt = latest(man)
         if killed:
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
@@ -918,12 +1240,14 @@ def run(a):
     code = subprocess.call(cmd)
     log(root, chain=a.chain, event='run-exit', exit=code)
     if read_end(root, a.chain) is not None:
+        release_scratch(plan, a.chain, read(chain_dir(root, a.chain) / 'chain.json'))  # the box's driver is gone
         return 0
     if code == w5box.EXIT_OOM and c['arm'] in MEASURED:
         man = read(chain_dir(root, a.chain) / 'chain.json')
-        boundary, receipt = latest(man)
+        boundary, receipt = latest(man, persisted=True)
         write_once(chain_dir(root, a.chain) / 'END.json',
                    end_doc(a.chain, c['arm'], 'chain-failure', boundary, receipt, 'run', cause='oom kill'))
+        release_scratch(plan, a.chain, man)
     return code
 
 
@@ -954,7 +1278,7 @@ def end_cmd(a):
     require(a.chain in plan['chains'] and plan['chains'][a.chain]['arm'] in MEASURED, 'not a measured chain')
     root = Path(plan['root'])
     man = read(chain_dir(root, a.chain) / 'chain.json')
-    top, _ = latest(man)  # receipts only: the index cache is supervise's to write
+    top, _ = latest(man, persisted=True)  # receipts only (persisted ones for a scratch arm)
     boundary = top if a.boundary is None else a.boundary
     require(0 <= boundary <= top, f'boundary must be 0 to {top}')
     receipt = receipt_at(man, boundary) if boundary else None
@@ -1532,11 +1856,13 @@ def end_oom_failures(plan, root):
     for n, c in sorted(plan['chains'].items()):
         if c['arm'] in MEASURED and read_end(root, n) is None and oom_closed(root, n):
             man = read(chain_dir(root, n) / 'chain.json')
-            boundary, receipt = latest(man)
+            boundary, receipt = latest(man, persisted=True)
             if write_once(chain_dir(root, n) / 'END.json',
                           end_doc(n, c['arm'], 'chain-failure', boundary, receipt, 'supervise', cause='oom kill')):
                 log(root, chain=n, event='end', reason='chain-failure', cause='oom kill', boundary=boundary)
                 ended.append(n)
+            if not live(root, n):  # the OOM-closed box has no driver left: drop its unpersisted scratch
+                release_scratch(plan, n, man)
     return ended
 
 
@@ -1651,6 +1977,26 @@ def close_handoffs(plan, root):
                 closed.append(slot)
     if closed:
         w5box.enforce_node(read(fill_plan(plan)), node, 'stage-ended')
+    return closed
+
+
+def release_ended_boxes(plan, root):
+    """Independent plans: an outage w5box opened for a chain that has since ended (END written, no live instance;
+    with handoff off only an OOM kill opens one) is closed, so the node's other chains thaw. No filler is started."""
+    node = w5box.NodeLog(Path(root) / 'state')
+    if not node.path.exists():
+        return []
+    closed = []
+    with node.locked():
+        records, torn = node.read()
+        for slot, outage in sorted(w5box.NodeLog.state(records, torn)['open_outages'].items()):
+            n = outage.get('chain')
+            if outage.get('handoff') and n in plan['chains'] and read_end(root, n) is not None and not live(root, n):
+                node.append({'event': 'restored', 'outage_id': outage['id'], 'box_slot': slot, 'chain': n,
+                             'how': 'chain-ended-independent', 'source': 'w5-chains'})
+                closed.append(slot)
+    if closed:
+        w5box.enforce_node(read(fill_plan(plan)), node, 'chain-ended-independent')
     return closed
 
 
@@ -1806,7 +2152,11 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
         report['retention'][n] = {'removed': removed, 'bytes': sum(i['bytes'] for i in doc['checkpoints'])
                                   + sum(i['bytes'] for i in doc['trajectories'])}
     report['kills'] = enforce_ends(plan, root)
-    report['fills'] = occupancy(plan, root) if fills else None
+    if plan.get('independent'):
+        report['fills'] = None
+        report['released_boxes'] = release_ended_boxes(plan, root)
+    else:
+        report['fills'] = occupancy(plan, root) if fills else None
     report['purged'] = purge_hold(root, plan['hold_days'], now)
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
@@ -2112,8 +2462,9 @@ def stop_chains(plan, names):
 def reached(plan, name, updates):
     """The chain has completed update N - 1 (boundary N): its receipt exists (N is whole segments)."""
     length = plan['arms'][plan['chains'][name]['arm']]['segment_updates']
-    return (chain_dir(plan['root'], name) / f'seg-{updates // length - 1:05d}' / 'iterations' /
-            f'{length - 1:06d}' / 'complete.json').exists()
+    seg = chain_dir(plan['root'], name) / f'seg-{updates // length - 1:05d}'
+    # a scratch segment counts once persisted (unmounted): the measurement reads the index, which skips mounts
+    return (seg / 'iterations' / f'{length - 1:06d}' / 'complete.json').exists() and not mounted(seg)
 
 
 def end_phase(plan, procs, poll):
@@ -2177,7 +2528,13 @@ def drop_trees(plan):
     """A passing record's qualification chains: their segment trees (regenerable bulk) are removed."""
     removed = 0
     for n in plan['chains']:
+        arm_file = plan['arms'][plan['chains'][n]['arm']]['file']['path']
+        scratch_root = read(arm_file).get('scratch_root')
         for seg in sorted(chain_dir(plan['root'], n).glob('seg-*')):
+            if scratch_root and mounted(seg):  # a scratch segment cut by the phase's end: its RAM bulk goes too
+                removed += retention.tree_bytes(seg)
+                unmount(seg)
+                shutil.rmtree(Path(scratch_root) / n / seg.name, ignore_errors=True)
             if seg.is_dir() and not is_link(seg):
                 removed += retention.tree_bytes(seg)
                 shutil.rmtree(seg)
@@ -2285,7 +2642,7 @@ def stage0_exit(records, r_nom_usec=None):
         r_source = 'given'
     days = {}
     for name, arm in sorted(arms.items()):
-        if name == 'C':
+        if name not in ('X8', 'XS'):  # the W5 X projections and response (C and the extra C-recipe arms are not X)
             continue
         arm['projected_days_to_r_nom'] = r_nom_usec / arm['box_cpu_usec_per_wall_second_mean'] / retention.DAY
         arm['projected_days_slowest_box'] = r_nom_usec / arm['box_cpu_usec_per_wall_second_min'] / retention.DAY

@@ -2478,6 +2478,13 @@ pub struct GameState {
     /// Historical games and hands without this printing retain absence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
+    /// Opt-in (issue #531): the other player reads a card leaving a hand by
+    /// name, never by copy (see [`GameState::forget_departing_hand_object`]).
+    /// Off in every historical session, whose rows, snapshot bytes and hashes
+    /// are unchanged: trained policies and frozen studies saw the copy-level
+    /// rows.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hand_departures_by_name_v1: bool,
     /// Observer-scoped facts for observation projection only; see
     /// [`ObservationJournalV1`]. Not serialized, hashed or compared.
     #[serde(skip)]
@@ -2746,6 +2753,9 @@ impl Hash for GameState {
             "leyline-opening/v1".hash(state);
             opening.hash(state);
         }
+        if self.hand_departures_by_name_v1 {
+            "hand-departures-by-name/v1".hash(state);
+        }
     }
 }
 
@@ -2958,6 +2968,7 @@ impl GameState {
             eternal_v1: None,
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
+            hand_departures_by_name_v1: false,
             observation_journal: ObservationJournalV1::default(),
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
@@ -3099,6 +3110,69 @@ impl GameState {
                 self.hand_knowledge[observer.index()][owner.index()]
                     .retain(|entry| entry.object != object);
             }
+        }
+    }
+
+    /// Opts this game into name-level hand departures (issue #531, see
+    /// [`GameState::forget_departing_hand_object`]). Meant for a new game:
+    /// rows kept before the switch stay as the copy-level rule left them.
+    pub fn enable_hand_departures_by_name_v1(&mut self) {
+        self.hand_departures_by_name_v1 = true;
+    }
+
+    /// Updates the other player's rows as `object` leaves its owner's hand,
+    /// before the object takes its new zone. `named` says whether the move
+    /// shows the card to the other player (a public zone face up, or a
+    /// revealed library position).
+    ///
+    /// The historical rule forgets only rows of this exact copy, so a row of
+    /// a revealed copy outlives the departure of an unseen copy of its name.
+    /// Under [`GameState::hand_departures_by_name_v1`] the other player
+    /// reads the departure as the transcript shows it, by name: a named
+    /// departure ends that player's row of this copy, or else one row of
+    /// the same name (copies of one name in a hand look alike, so the known
+    /// copy may be the one that left; names are unique per definition, see
+    /// `card_def`'s duplicate-name test); a hidden departure ends every row,
+    /// since any known card may be the one that left.
+    pub(crate) fn forget_departing_hand_object(&mut self, object: ObjectId, named: bool) {
+        if self.hand_departures_by_name_v1 {
+            let (owner, card_def) = {
+                let departing = self.objects.get(object);
+                (departing.owner, departing.card_def)
+            };
+            let objects = &self.objects;
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                if observer == owner {
+                    continue;
+                }
+                let rows = &mut self.hand_knowledge[observer.index()][owner.index()];
+                if !named {
+                    rows.clear();
+                    continue;
+                }
+                let ended = rows
+                    .iter()
+                    .position(|row| row.object == object)
+                    .or_else(|| {
+                        rows.iter()
+                            .position(|row| objects.get(row.object).card_def == card_def)
+                    });
+                if let Some(index) = ended {
+                    rows.remove(index);
+                }
+            }
+        }
+        self.forget_hand_object(object);
+    }
+
+    /// A card of `owner`'s hand has just left face down to a public zone
+    /// (foretell), after its move was read by name. Under
+    /// [`GameState::hand_departures_by_name_v1`] the other player cannot
+    /// tell which card it was, so every row of that hand ends, as for any
+    /// hidden departure. Off, nothing changes.
+    pub(crate) fn forget_hand_after_face_down_departure_v1(&mut self, owner: PlayerId) {
+        if self.hand_departures_by_name_v1 {
+            self.hand_knowledge[owner.opponent().index()][owner.index()].clear();
         }
     }
 
@@ -4000,7 +4074,7 @@ impl GameState {
         };
         ps.hand.remove(pos);
         ps.battlefield.push(id);
-        self.forget_hand_object(id);
+        self.forget_departing_hand_object(id, true);
         self.clear_object_relations(id);
         let turn = self.turn_key_v1();
         let enters_battlefield_tapped = crate::card_def::CARD_DEFS

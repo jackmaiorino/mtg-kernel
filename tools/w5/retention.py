@@ -147,11 +147,21 @@ def load_chain(path):
         if seg['offset'] != offset:
             raise SystemExit('stop: segment offsets are not contiguous from 0')
         if 'root' not in seg or 'updates' not in seg:
-            cfg = read(seg['config'])
+            cfg = read_config(seg['config'])
             seg['root'] = cfg['output_directory']
             seg['updates'] = len(cfg['iterations'])
         offset += seg['updates']
     return chain
+
+
+def read_config(path):
+    """A segment config, or its `<name>.gz` form (chains.py compresses finished scratch segments' configs)."""
+    p = Path(path)
+    if not p.exists() and p.with_name(p.name + '.gz').exists():
+        import gzip
+        with gzip.open(p.with_name(p.name + '.gz'), 'rb') as f:
+            return json.loads(f.read().decode('utf-8'))
+    return read(p)
 
 
 def segment_complete(seg):
@@ -169,6 +179,8 @@ def scan(chain, known):
     for s, seg in enumerate(chain['segments']):
         if seg['offset'] + seg['updates'] <= known:
             continue
+        if os.path.ismount(seg['root']):  # an in-flight scratch segment (chains.py): indexed once persisted
+            return new
         for i in range(max(0, known - seg['offset']), seg['updates']):
             complete = Path(seg['root'], 'iterations', f'{i:06d}', 'complete.json')
             if not complete.exists():
@@ -634,7 +646,7 @@ def replay_config(chain, spec, out_dir):
     last = spec['endpoint_boundary']
     iterations, used = [], []
     for seg in chain['segments']:
-        cfg = read(seg['config'])
+        cfg = read_config(seg['config'])
         for i, item in enumerate(cfg['iterations']):
             if first <= seg['offset'] + i < last:
                 for episode in item['episodes']:
@@ -658,7 +670,7 @@ def replay_config(chain, spec, out_dir):
     elif first != 0:
         raise SystemExit('stop: a replay from a nonzero boundary needs its kept checkpoint')
     else:
-        source = dict(read(chain['segments'][0]['config'])['initial_source'])
+        source = dict(read_config(chain['segments'][0]['config'])['initial_source'])
     cfg['initial_source'] = source
     cfg['iterations'] = iterations
     if cfg.get('ex1'):
