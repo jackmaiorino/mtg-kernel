@@ -536,6 +536,7 @@ reporting as E1 to E9:
 | P2a | The Rock, Mono-Black Control, BW Control, Stasis, Other Control | 31 | Premodern 70% to 79% by the census |
 | P2d | White Weenie, Mono-Red Control (Beloved Chaplain, Devoted Caretaker, Glowrider, Mother of Runes, Nova Cleric, Shared Triumph, Soltari Monk, Soltari Priest, Avalanche Riders, Earthquake, Firebolt, Ghitu Encampment, Pillage, Stone Rain, Veteran Brawlers) | 15 | two decks, 2% of the field |
 | P2b | Survival, Madness Threshold, and the cards Elves shares with them (17 of 19; Birchlore Rangers and Thornscape Battlemage stay out) | 17 | Survival and Madness Threshold playable (4%); Elves needs Birchlore Rangers, Thornscape Battlemage and wave P2a's Genesis and Wall of Blossoms |
+| P2c | Reanimator, Full English Breakfast (20 of 21 cards; Volrath's Shapeshifter stays out) | 20 | Reanimator playable; Full English Breakfast needs Volrath's Shapeshifter (see below) |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -590,6 +591,58 @@ Known gaps:
 - An Opalescence or Sterling Grove entering by a path that skips the entry-counter hook is
   recorded at the next trigger collection instead.
 
+P2c is built in `src/eternal_premodern_p2c_v1.rs` (with `statics` and `targets` submodules) and
+`build_eternal_p2c_v1.rs`, which `build.rs` asks before `build_eternal_v1` and whose runtime
+tables head the `eternal_cards_v1` chains (subtype ids from 280: Saproling, Centaur). Its state
+(`P2cStateV1`) is created only when one of its cards needs it. New primitives:
+
+- Undiscovered Paradise records each tap for mana and returns to hand as its controller's untap
+  step begins (a hook in the untap loop, skipped while Stasis skips the whole step, so the land
+  returns in the next untap step that happens); Reflecting Pool has one ability per mana type,
+  each gated by `ManaAbilityConditionDef::ControllerOtherLandCouldProduceV1` (another land, not a
+  Reflecting Pool, whose current mana abilities could add the type: printed colors, restricted
+  colors and gated abilities with their conditions and costs ignored, plus abilities granted by
+  land type changes, moons and the like, tapped or not), plus a planner hook like the Tainted
+  lands'.
+- Exhume is a Show-and-Tell shaped choice (active player first, a lone creature card is taken
+  without a decision, then both enter at once); Death reanimates and loses life equal to the
+  card's mana value; Life animates every land its controller controls through a type override
+  and a 7b base of 1/1 until the turn ends (`split_card` covers Life // Death).
+- Avatar of Woe: fear as a blocker restriction, `DynamicCountDef::TenCreatureCardsInAllGraveyardsV1`
+  as the {6} cost reduction, destruction that cannot be regenerated (Pillage's mechanism).
+- Petradon exiles two target lands (`StandardTargetV1::TwoLandsV1`) and remembers them by its
+  battlefield incarnation; its leaves trigger returns those still exiled under their owners'
+  control, so an exile that resolves after Petradon left is permanent.
+- Phantom Nishoba: seven entry counters (none while its abilities are removed, 614.12), damage to
+  it is prevented and removes a counter (a hook after the protection check in `event.rs`; one
+  counter per batch of simultaneous damage, tracked by `begin_damage_batch`/`end_damage_batch`
+  around the batch replacement, and damage that can't be prevented is dealt while the counter
+  still comes off), and a queued life-gain trigger for the damage it dealt (wave P1a's queue),
+  neither of which applies while its abilities are removed. Palinchron's bounce
+  (`P2cOpV1::ReturnSourceV1`) acts only on the live incarnation that activated it.
+- Putrid Imp: threshold boost and "can't block" hooks, flying until end of turn through the
+  engine's keyword effect. Hermit Druid reveals to the first basic land (library knowledge is
+  public), the land to hand, the rest to the graveyard.
+- Phyrexian Devourer: `CostComponent::ExileTopCardOfLibraryV1` freezes the exiled card in the
+  ability's paid-cost provenance and the counters read its mana value; "power 7 or greater" is
+  a state trigger queued once until that instance leaves the stack (resolved or countered, 603.8)
+  and queued again while the power is still 7 or more.
+- Battlefield Scrounger: `CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1` (the
+  exile-from-graveyard cost's choice machinery, moving to the library bottom), a threshold
+  activation gate and the once-per-turn limit.
+- Krosan Reclamation: `StandardTargetV1::PlayerThenUpToTwoOfTheirGraveyardCardsV1` over wave
+  P2a's shuffle; flashback {1}{G}. Karmic Guide: echo generalizes wave P2d's (`echo_cost`),
+  flying, protection from black and the reanimation trigger.
+
+Known gaps (P2c): Volrath's Shapeshifter stays out. It has the full text of the top creature
+card of its controller's graveyard, which needs a permanent whose definition, abilities, triggers
+and activated abilities follow another card while the top card changes; the engine reads all of
+these from the object's own card definition and has no copiable-values layer for permanents
+(only token copies at creation), so Full English Breakfast is not playable. Reanimator is
+playable. Phantom Nishoba's life gain reads the creature when its trigger is collected, so a
+Nishoba that has lost its abilities (Dress Down) and dies from the same damage it deals still
+gains that life.
+
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
 so the catalog needs no format legality check.
@@ -630,10 +683,12 @@ it, because only legal actions are offered. Representing granted protection and 
 public facts is a protocol change outside P2d.
 
 Known gaps (P2d):
-- Echo is owed only by the controller who first controlled the creature: a creature that
-  changes control owes no echo to its new controller. Its cost is paid by the automatic mana
-  planner without a choice of sources.
-- Shared Triumph offers only creature types of cards in the game when it enters.
+- Echo is recorded for a new controller when `standard_cards_v1::gain_control` moves the
+  creature; other control changes (the temporary control effects) do not record it. Its cost is
+  paid by the automatic mana planner without a choice of sources.
+- Shared Triumph offers the creature types of the creature cards its controller owns, as Cavern
+  of Souls does, so the option count reveals nothing hidden; a type no card of theirs has cannot
+  be named.
 - Protection from instant and sorcery spells counts a card in hand, graveyard, exile or
   library being cast as a spell, so an instant's activated ability from those zones (none in
   the catalog) would be treated as one.

@@ -317,6 +317,9 @@ pub mod eternal_premodern_p2a_v1;
 /// Premodern Survival and Madness Threshold card programs of the eternal
 /// catalog (wave P2b).
 pub mod eternal_premodern_p2b_v1;
+/// Premodern Reanimator and Full English Breakfast card programs of the
+/// eternal catalog (wave P2c).
+pub mod eternal_premodern_p2c_v1;
 /// Premodern White Weenie and Mono-Red Control card programs of the eternal
 /// catalog (wave P2d).
 pub mod eternal_premodern_p2d_v1;

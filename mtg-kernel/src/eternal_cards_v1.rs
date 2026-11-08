@@ -159,6 +159,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_premodern_p2a_v1::P2aStateV1::is_empty"
     )]
     pub p2a: crate::eternal_premodern_p2a_v1::P2aStateV1,
+    /// Premodern wave P2c's state (`eternal_premodern_p2c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p2c_v1::P2cStateV1::is_empty"
+    )]
+    pub p2c: crate::eternal_premodern_p2c_v1::P2cStateV1,
     /// Premodern wave P2d's state (`eternal_premodern_p2d_v1`).
     #[serde(
         default,
@@ -402,6 +408,9 @@ pub enum EternalOpV1 {
     P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1),
     /// A leaf owned by Premodern wave P2b's module.
     P2bV1(crate::eternal_premodern_p2b_v1::P2bOpV1),
+    /// A leaf owned by Premodern wave P2c's module. Appended to preserve
+    /// existing stack and continuation hash discriminants.
+    P2cV1(crate::eternal_premodern_p2c_v1::P2cOpV1),
     /// A leaf owned by the outside-the-game zone's module (wishes, learn).
     OutsideGameV1(crate::eternal_outside_game_v1::OutsideGameOpV1),
 }
@@ -459,6 +468,7 @@ impl EternalOpV1 {
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             EternalOpV1::P1bV1(op) => op.contains_player_choice(),
             EternalOpV1::P2aV1(op) => op.contains_player_choice(),
+            EternalOpV1::P2cV1(op) => op.contains_player_choice(),
             EternalOpV1::P2dV1(op) => op.contains_player_choice(),
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
             EternalOpV1::P2bV1(op) => op.contains_player_choice(),
@@ -747,6 +757,11 @@ const ORCISH_BOWMASTERS_TRIGGERS: [TriggeredAbilityDef; 2] = [
 
 /// Triggered abilities of this module's cards.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+    // Premodern wave P2c's cards head the chain.
+    let p2c = crate::eternal_premodern_p2c_v1::triggers_for(name);
+    if !p2c.is_empty() {
+        return p2c;
+    }
     match name {
         MELDED_MOXITE => &MELDED_MOXITE_TRIGGERS,
         INVENTORS_AXE => &INVENTORS_AXE_TRIGGERS,
@@ -770,6 +785,10 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // Premodern wave P2c.
+    if let Some(spec) = crate::eternal_premodern_p2c_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Legolas's Quick Reflexes' trigger, granted to any creature (wave E9a).
     if let Some(spec) = crate::eternal_legacy_e9a_v1::granted_trigger_target_spec(effect) {
         return Some(spec);
@@ -971,6 +990,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::P1bV1(op) => crate::eternal_premodern_p1b_v1::execute(op, ctx, state),
         EternalOpV1::P2aV1(op) => crate::eternal_premodern_p2a_v1::execute(op, ctx, state),
+        EternalOpV1::P2cV1(op) => crate::eternal_premodern_p2c_v1::execute(op, ctx, state),
         EternalOpV1::P2dV1(op) => crate::eternal_premodern_p2d_v1::execute(op, ctx, state),
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
         EternalOpV1::P2bV1(op) => crate::eternal_premodern_p2b_v1::execute(op, ctx, state),
@@ -1466,6 +1486,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_e9b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_legacy_e9a_v1::statics::blocker_allowed(state, blocker)
         && crate::eternal_premodern_p2d_v1::statics::blocker_allowed(state, blocker)
+        && crate::eternal_premodern_p2c_v1::statics::blocker_allowed(state, attacker, blocker)
         && crate::eternal_premodern_p1a_v1::statics::blocker_allowed(state, attacker, blocker)
 }
 
@@ -1531,6 +1552,7 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_vintage_e7b_v1::statics::apply_entry_counters(state, object, input);
     crate::eternal_legacy_e8a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_legacy_e9a_v1::statics::apply_entry_counters(state, object, input);
+    crate::eternal_premodern_p2c_v1::statics::apply_entry_counters(state, object, input);
     crate::eternal_premodern_p1b_v1::statics::apply_entry_counters(state, object);
     crate::eternal_premodern_p2a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_premodern_p2d_v1::apply_entry(state, object);
@@ -1708,6 +1730,8 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_legacy_e9a_v1::delayed_triggers(
         state, events,
     ));
+    // Queues into wave P1a's queue, which is drained below.
+    crate::eternal_premodern_p2c_v1::delayed_triggers(state, events);
     triggers.extend(crate::eternal_premodern_p1b_v1::delayed_triggers(
         state, events,
     ));
@@ -1772,7 +1796,8 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     {
         return true;
     }
-    if e3::delayed_effect_matches(name, effect)
+    if crate::eternal_premodern_p2c_v1::delayed_effect_matches(name, effect)
+        || e3::delayed_effect_matches(name, effect)
         || crate::eternal_e9b_v1::delayed_effect_matches(name, effect)
     {
         return true;
@@ -1827,6 +1852,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_legacy_e7a_v1::begin_turn(state, player);
     crate::eternal_legacy_e8a_v1::begin_turn(state, player);
     crate::eternal_legacy_e9a_v1::begin_turn(state, player);
+    crate::eternal_premodern_p2c_v1::begin_turn(state, player);
     crate::eternal_premodern_p2d_v1::begin_turn(state, player);
     crate::eternal_premodern_p1a_v1::begin_turn(state, player);
     crate::eternal_premodern_p2b_v1::begin_turn(state, player);
