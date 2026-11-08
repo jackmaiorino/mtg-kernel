@@ -6,10 +6,10 @@ Issue #110 milestones 6 (fair Limited search) and 7 (DraftZero integration). Sou
 
 ## Games
 
-Every game runs on the Prepared V57 session (`FastActorSessionV1::reset_prepared_v57`), the
-newest general Limited session on main. It accepts any mainboard of 40 or more Full cards, with
-Foundations combat, London mulligans and engine priority windows. Coverage therefore follows the
-card registry: a deck plays once every card in it is Full.
+The default Prepared V57 session accepts mainboards of 40 or more Full cards. The `rules-only`
+and `rules-only-all` sessions use the engine's current Limited candidate builder and admit
+executable Partial cards according to [the rules-only tier](limited_rules_only_v1.md). Both use
+Foundations combat, London mulligans and engine priority windows.
 
 ## Policies
 
@@ -17,6 +17,7 @@ card registry: a deck plays once every card in it is Full.
 | --- | --- |
 | `random` | Uniform over the legal actions |
 | `pimc:sims=N:depth=D:closedlist` | Fair root-level determinized search (below) |
+| `pimc:sims=N:depth=D:closedlist-v2` | Rules-only search with name-level hand facts and independently seeded future shuffles |
 | `pimc:...:truelist` | The same search over the opponent's real unseen cards, shuffled. Leaks the decklist; for comparison only |
 | `pimc:...:peek` | The same search with no redetermination. Sees every hidden card; for comparison only |
 
@@ -66,6 +67,30 @@ Acceptance tests (`limited_match_v1::tests`):
 Known approximation: seen cards are those the actor can see now. A card seen earlier and then
 shuffled back into a hidden zone is not remembered, so the belief uses less than the full public
 history, never more.
+
+### Closed-list v2 for rules-only search
+
+`-session rules-only` or `-session rules-only-all` with `closedlist-v2` enables name-level hand
+knowledge from the start of the match. The sampler fills the opponent's unknown hand and library
+from the corpus directly. It assigns known hand names to sampled hand slots, preserves visible
+library positions and current selection pins, and seeds future shuffles from the simulation seed.
+The belief corpus for an evaluation split must be disjoint by deck name and card multiset. The
+summary includes hashes of the exact resolved game and belief decks in input order.
+
+The game rows distinguish searched decisions, all-rejected roots that fell back to a uniform
+pick, rejection reasons and rollout errors. Roots that bind physical copies in an opponent's
+hand, refer to hidden frozen sources or contain an unknown face-down identity are rejected.
+V2 keeps native object bindings and history for rule execution. The paired opening test varies
+the hidden composition, reveal copy, own library order and future RNG while keeping the public
+decision fixed. A second probe attempts opening search in rules-only decks containing each of the
+286 frozen printings. Exercising those printings' later decisions and canonicalizing history
+across distinct but publicly equivalent native trajectories remain acceptance work for #552.
+
+The `smoke` command runs a bounded pair on the original DraftZero evaluation decks and replays
+it at a second worker count. Its turn-limited or decision-limited rows are engineering checks.
+For a substantial evaluation, qualify the complete collection path first with identical deck
+hashes, policy specification and seed schedule at one and multiple workers. Compare completed
+natural games per second, retain failures and replay the deterministic result rows.
 
 ## DraftZero driver (milestone 7)
 
