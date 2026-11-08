@@ -576,7 +576,12 @@ The combined thirty-two source passed pinned formatting on all 42 staged Rust
 inputs; all 25 changed outputs were independently hash-verified and applied in
 `e68ce9757`. Receipt SHA-256
 `625599aa9d5a8906c13864558b5a6fe631d981298bfd25f3755e9206406f1c67`.
-Its combined type check and native execution are pending.
+The frozen `e68ce9757` type check drained in 475.809 seconds with four E0507
+errors: Sphinx's two printed-cost projection paths moved `flashback` and
+`escape` definitions from borrowed CardDef values. Receipt SHA-256
+`aea35ffd79a83a774cd5fae7ff7fea187988090bc5ab78df3a10909d351ad952`.
+Commit `20d003d4f` borrows all four options before reading their cost. The
+frozen failed checkout and diagnostics are retained.
 
 Harvester's reviewed source `579f4bc12` binds the actual activation tap and
 original this-turn graveyard target, replacement-aware physical departures,
@@ -587,6 +592,15 @@ tap cannot substitute for the genuine payment. Its event kind is appended at
 319, preserving Greatwurm 318. Both-seat paid and hidden-pair, Human/wire,
 restore, fizzle and removed-operation fixtures remain unrun. A genuine receipt
 sample is still required.
+Review also found that the legacy common copy-prefix gate could overlook the
+new Harvester mode after its source departed. `20d003d4f` rejects both the mode
+and any retained new receipt independently of public source visibility, with
+Legacy, Chandra and Base refusal assertions before the declared source enters.
+The repair was reviewed. Pinned formatting passed on all 28 staged Rust inputs;
+17 changed outputs were independently hash-verified and applied in `3d20f546e`.
+Receipt SHA-256
+`24c290d06da886fe3a4e8abe6cab3cdab1485a5bdff1409ad769ca63ecf1d8bb`.
+The combined thirty-three type check is pinned to `3d20f546e` and pending.
 
 The bounded learner pilot still selects Return. No Mixed learner, all-286
 fair-search run, training/evaluation result or Full promotion is qualified.
