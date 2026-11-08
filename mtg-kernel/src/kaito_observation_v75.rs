@@ -494,6 +494,8 @@ fn captured_reference(
             || crate::effect::chandra_flameshaper_v1::definition(source.card_def)
             || crate::effect::kaito_cunning_v75::definition(source.card_def)
             || source.card_def == crate::drakuseth_consumer_v1::PRINTING_V1
+            || state.curator_unordered_reveal_v1
+                && source.card_def == crate::curator_public_v1::PRINTING
         {
             source.card_def
         } else {
@@ -585,6 +587,9 @@ pub(crate) fn stack_source_reference(
             }
             _ => false,
         };
+    let curator = state.curator_unordered_reveal_v1
+        && source.card_def == crate::curator_public_v1::PRINTING
+        && matches!(item.inline_effect, Some(crate::effect::EffectOp::CuratorDestiniesV1 { .. }));
     if !selected_source(source)
         && !artist_trigger
         && !drakuseth_trigger
@@ -592,6 +597,7 @@ pub(crate) fn stack_source_reference(
         && !embercleave_attachment
         && !zimone_counters
         && !tutelage
+        && !curator
     {
         return Ok(None);
     }
@@ -649,6 +655,9 @@ pub(crate) fn pending_source_reference(
             pending.effect,
             crate::effect::EffectOp::SphinxsTutelageMillV1 { .. }
         );
+    let curator = state.curator_unordered_reveal_v1
+        && source.card_def == crate::curator_public_v1::PRINTING
+        && matches!(pending.effect, crate::effect::EffectOp::CuratorDestiniesV1 { .. });
     if !selected_source(source)
         && !artist_trigger
         && !drakuseth_trigger
@@ -656,6 +665,7 @@ pub(crate) fn pending_source_reference(
         && !embercleave_attachment
         && !zimone_trigger
         && !tutelage
+        && !curator
     {
         return Ok(None);
     }
