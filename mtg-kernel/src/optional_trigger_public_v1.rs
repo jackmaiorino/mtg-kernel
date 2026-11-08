@@ -350,7 +350,7 @@ pub(crate) fn validate_state_for_consumer(
     if !matches!(consumer, ConsumerV1::KaitoOmniscienceV1 | ConsumerV1::KaitoMixedV1) {
         crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
     }
-    if consumer == ConsumerV1::KaitoProgenitusV1 {
+    if matches!(consumer, ConsumerV1::KaitoProgenitusV1) {
         crate::progenitus_v1::validate(state)?;
     } else {
         crate::progenitus_v1::refuse_legacy(state)?;
