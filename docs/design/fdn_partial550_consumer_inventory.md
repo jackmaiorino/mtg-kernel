@@ -40,7 +40,7 @@ reusable evidence only for the mechanics they actually exercise.
 | Electroduplicate | Native: effect/copy pipeline | Complete stack; complete copiable blueprint, haste, delayed sacrifice and flashback payment |
 | Curator of Destinies | Appendix: curator_public_v1 | Finite owner, Human, JSONL and sealed numeric source. Scoped unordered reveal, chooser-only look and ordering, and actual moves. Native qualification and event-sample harvest pending |
 | Loot, Exuberant Explorer | Native: effect/loot_v1 | Complete stack; current land allowance, private top-six selection and random-bottom boundary |
-| Kykar, Zephyr Awakener | Native: effect/kykar_v1 | Complete stack; original cast-mode choice, linked exile/return and exact Spirit meaning |
+| Kykar, Zephyr Awakener | Appendix: kykar_public_v1 | Finite owner, Human, JSONL and sealed numeric source; original mode/target references, exact Spirit meaning and original exile schedules. Native qualification pending |
 | Quilled Greatwurm | Native: effect/greatwurm_v1 | Complete stack; original combat amount and graveyard six-counter payment across exact permanents |
 | Sphinx of Forgotten Lore | Native: effect/sphinx_lore_v1 | Complete stack; original attack target, temporary flashback grant and actual cast/payment route |
 | Omniscience | Native: engine/omniscience_cast_v1 | Complete stack; optional free hand casting and its restrictions, original route and remaining costs |
@@ -320,18 +320,18 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `c483b1aa975773c48c249f3602fd0824289c5a78` covers
-28 of the 36 Partial booster printings in eighteen finite profiles: Return (3),
+The source candidate at `2e804e92ac9b65a37f506f1306391cf9f10329b0` covers
+30 of the 36 Partial booster printings in twenty finite profiles: Return (3),
 V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
 Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), Moon (1), and
 Leyline Axe (1), Progenitus (1), Aberration (1), Lathril (1), and
-Electroduplicate (1), Blasphemous Edict (1), and Loot (1). Eight original Partial consumer
+Electroduplicate (1), Blasphemous Edict (1), Loot (1), Curator (1), and Kykar (1). Six original Partial consumer
 gaps remain. Catalog tiers are unchanged.
 This is source coverage; the complete composition is not natively qualified.
 
 The additional `fdn-mixed-consumer/v1` owner composes the first twenty
 printings, excluding Moon, Leyline Axe, Progenitus, Aberration, Lathril and
-Electroduplicate, Blasphemous Edict and Loot. It authenticates every represented native printed
+Electroduplicate, Blasphemous Edict, Loot, Curator and Kykar. It authenticates every represented native printed
 definition before reset and retains the real declared deck IDs. Its exact
 Mixed capability enables all eight existing appendices together. Its distinct
 observation and candidate schemas require all eight facts; single-family
@@ -486,7 +486,7 @@ None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
-consumer fixtures before building all eighteen individual-profile binaries and
+consumer fixtures before building all twenty individual-profile binaries and
 the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
 `leyline_axe_consumer_v1::tests::`, `leyline_axe_v1::tests::`,
@@ -496,6 +496,8 @@ the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `electroduplicate_consumer_v1::tests::`, `effect::electroduplicate_v1_tests::`,
 `edict_consumer_v1::tests::`, `effect::blasphemous_edict_v1_tests::`,
 `loot_consumer_v1::tests::`, `effect::loot_v1::tests::`,
+`curator_consumer_v1::tests::`, `effect::curator_v1::tests::`,
+`kykar_consumer_v1::tests::`, `effect::kykar_v1::tests::`,
 `rl::complete_copy_prefix_scope_tests::`,
 `niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
 `drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
@@ -504,8 +506,20 @@ the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `omniscience_consumer_v1::tests::`, `tutelage_consumer_v1::tests::`, their
 native mechanics, and the rules-only Courtyard regression. Tutelage also
 needs its genuine mixed-Progenitus replacement case. Keep event-history
-serialization tests separate from sample harvesting; the new Niv sample
-remains provisional until the paid native fixture is harvested.
+serialization tests separate from sample harvesting. The Niv sample now comes
+from the actual passing paid fixture; Lathril, Edict and Curator still require
+their genuine event samples.
+
+Curator's reviewed source preserves unordered opponent face-up piles, the
+chooser's original private look, and independent prior position knowledge.
+Native adjacent move/visibility records bind public arrival names after serde
+restore, while concealed hand arrivals remain anonymous. Its opt-in native
+mode is absent from existing producers. Kykar's reviewed source keeps original
+mode/target indices, source departure, Spirit meaning, physical owner and
+one-shot end-step collection. A ceased token is absent from current exile facts;
+later incarnations cannot establish an original return. Both retain actual
+paid native fixtures and hidden-pair, Human/wire, restore and stale-action tests.
+The two new profiles are source-reviewed but have not compiled or run.
 
 The bounded learner pilot still selects Return. No Mixed learner, all-286
 fair-search run, training/evaluation result or Full promotion is qualified.
