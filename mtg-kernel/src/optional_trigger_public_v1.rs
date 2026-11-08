@@ -321,6 +321,7 @@ pub(crate) enum ConsumerV1 {
     KaitoSphinxLoreV1,
     KaitoGreatwurmV1,
     KaitoHarvesterV1,
+    KaitoEtaliV1,
 }
 impl ConsumerV1 {
     pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
@@ -339,6 +340,7 @@ impl ConsumerV1 {
             LimitedAppendixV1::SphinxLore => Self::KaitoSphinxLoreV1,
             LimitedAppendixV1::Greatwurm => Self::KaitoGreatwurmV1,
             LimitedAppendixV1::Harvester => Self::KaitoHarvesterV1,
+            LimitedAppendixV1::Etali => Self::KaitoEtaliV1,
             _ => Self::KaitoV75,
         }
     }
@@ -361,6 +363,9 @@ impl ConsumerV1 {
             | Self::KaitoSphinxLoreV1
             | Self::KaitoGreatwurmV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Base)
+            }
+            Self::KaitoEtaliV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Etali)
             }
             Self::KaitoHarvesterV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Harvester)

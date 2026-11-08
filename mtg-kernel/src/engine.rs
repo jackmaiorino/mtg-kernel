@@ -17388,6 +17388,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             ..StackStateV4::default()
         },
     });
+    crate::etali_primal_storm_receipts_v1::record_published(state)?;
     if state
         .stack
         .last()
@@ -19165,6 +19166,7 @@ pub(crate) fn counter_stack_item_by_id(
         }
     } else {
         state.stack.remove(position);
+        crate::etali_primal_storm_receipts_v1::record_countered(state, &item);
     }
     if let Some(owner) = niv_counter {
         niv_mizzet_resolution_v1::counter(state, owner)?;
@@ -27152,6 +27154,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             state.engine.event_log.push(event.clone());
             state.engine.event_history.push(event);
             let declaration = state.engine.event_history.len() - 1;
+            crate::etali_primal_storm_receipts_v1::record_attack(state, source);
             crate::effect::sphinx_lore_v1::record_attack(state, source);
             crate::ashroot_dispatch_v2::record_attack(state, source);
             crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
@@ -28437,6 +28440,7 @@ fn finalize_owned_cast(
     crate::cast_identity_v1::publish(state, finalized_source_contract, stack_item_id);
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast(state, pending.spell, pending.controller);
+    crate::etali_primal_storm_receipts_v1::record_cast(state, stack_item_id, finalized_source_contract)?;
     if let Some((creatures_before, _)) = edict_input {
         crate::edict_receipts_v1::record_paid(
             state,

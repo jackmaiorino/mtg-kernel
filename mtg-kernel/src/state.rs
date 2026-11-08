@@ -2547,6 +2547,8 @@ pub struct GameState {
     pub(crate) greatwurm_commit_receipts_v1: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) harvester_commit_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) etali_commit_receipts_v1: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2830,6 +2832,9 @@ impl Hash for GameState {
         if self.harvester_commit_receipts_v1 {
             "harvester-commit-receipts/v1".hash(state);
         }
+        if self.etali_commit_receipts_v1 {
+            "etali-primal-storm-commit-receipts/v1".hash(state);
+        }
         if self.greatwurm_commit_receipts_v1 {
             "greatwurm-commit-receipts/v1".hash(state);
         }
@@ -3054,6 +3059,7 @@ impl GameState {
             curator_unordered_reveal_v1: false,
             greatwurm_commit_receipts_v1: false,
             harvester_commit_receipts_v1: false,
+            etali_commit_receipts_v1: false,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);

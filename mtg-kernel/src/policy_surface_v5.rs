@@ -402,6 +402,7 @@ pub(crate) enum LimitedAppendixV1 {
     SphinxLore,
     Greatwurm,
     Harvester,
+    Etali,
 }
 
 impl LimitedAppendixV1 {

@@ -79,7 +79,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     greatwurm: Option<super::greatwurm_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    harvester: Option<super::harvester_consumer_v1::HumanFactsV1>
+    harvester: Option<super::harvester_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    etali: Option<super::etali_primal_storm_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -143,7 +145,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     greatwurm_action: Option<crate::greatwurm_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    harvester_action: Option<crate::harvester_consumer_v1::ActionV1>
+    harvester_action: Option<crate::harvester_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    etali_action: Option<crate::etali_primal_storm_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -365,6 +369,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) = super::etali_primal_storm_consumer_v1::label(obs.etali.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::harvester_consumer_v1::label(obs.harvester.as_ref(), a, h)? { return Ok(Some(label)); }
     if let Some(label) = super::greatwurm_consumer_v1::label(obs.greatwurm.as_ref(), a, h)? {
         return Ok(Some(label));
@@ -926,6 +933,9 @@ pub(super) fn project_with_handles(
         .map(|facts| super::curator_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
     let harvester = obs.harvester.as_ref().map(|facts| super::harvester_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
+    let etali = obs.etali.as_ref()
+        .map(|facts| super::etali_primal_storm_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -955,6 +965,7 @@ pub(super) fn project_with_handles(
                 sphinx_lore_action: r.sphinx_lore_action,
                 greatwurm_action: r.greatwurm_action,
                 harvester_action: r.harvester_action,
+                etali_action: r.etali_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1229,6 +1240,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-electroduplicate-decision/v1"
             } else if harvester.is_some() {
                 "mtg-kernel-human-harvester-decision/v1"
+            } else if etali.is_some() {
+                "mtg-kernel-human-etali-primal-storm-decision/v1"
             } else if greatwurm.is_some() {
                 "mtg-kernel-human-greatwurm-decision/v1"
             } else if sphinx_lore.is_some() {
@@ -1282,6 +1295,7 @@ pub(super) fn project_with_handles(
                 sphinx_lore,
                 greatwurm,
                 harvester,
+                etali,
             },
             actions,
             action_meanings,

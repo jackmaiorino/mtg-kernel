@@ -113,6 +113,8 @@ pub struct KaitoObservationV75 {
     pub greatwurm: Option<crate::greatwurm_public_v1::FactsV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harvester: Option<crate::harvester_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etali: Option<crate::etali_primal_storm_public_v1::FactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -178,6 +180,8 @@ pub fn producer_sha256() -> String {
             include_str!("curator_receipts_v1.rs"),
             include_str!("harvester_public_v1.rs"),
             include_str!("harvester_receipts_v1.rs"),
+            include_str!("etali_primal_storm_public_v1.rs"),
+            include_str!("etali_primal_storm_receipts_v1.rs"),
             include_str!("greatwurm_public_v1.rs"),
             include_str!("greatwurm_receipts_v1.rs"),
             include_str!("drakuseth_consumer_v1.rs"),
@@ -334,6 +338,12 @@ pub(crate) fn validate_state_scoped(
     } else if state.harvester_commit_receipts_v1 {
         return Err("Harvester native receipts require its distinct owning profile".into());
     }
+    if appendix == LimitedAppendixV1::Etali {
+        let rows = crate::etali_primal_storm_receipts_v1::occurrences(state)?;
+        crate::etali_primal_storm_receipts_v1::validate_current(state, &rows)?;
+    } else if crate::etali_primal_storm_receipts_v1::has_receipts(state) {
+        return Err("Etali native receipts require its distinct complete consumer".into());
+    }
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
         state,
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
@@ -390,6 +400,7 @@ fn require_supported(
         LimitedAppendixV1::SphinxLore => Some(crate::sphinx_lore_public_v1::selected_id()?),
         LimitedAppendixV1::Greatwurm => Some(crate::greatwurm_public_v1::selected_id()?),
         LimitedAppendixV1::Harvester => Some(crate::harvester_public_v1::selected_id()?),
+        LimitedAppendixV1::Etali => Some(crate::etali_primal_storm_public_v1::selected_id()?),
     };
     let unsupported = |id: u16| {
         id >= 460
@@ -488,6 +499,7 @@ fn require_supported(
             | E::LathrilCombatObservedV1 { .. }
             | E::LathrilReceiptV1 { .. } => appendix != LimitedAppendixV1::Lathril,
             E::BlasphemousEdictReceiptV1 { .. } => appendix != LimitedAppendixV1::Edict,
+            E::EtaliPrimalStormReceiptV1 { .. } => appendix != LimitedAppendixV1::Etali,
             E::CuratorEnteredV1 { .. }
             | E::CuratorCollectedV1 { .. }
             | E::CuratorPublishedV1 { .. }
@@ -559,6 +571,8 @@ fn captured_reference(
             || crate::effect::chandra_flameshaper_v1::definition(source.card_def)
             || crate::effect::kaito_cunning_v75::definition(source.card_def)
             || source.card_def == crate::drakuseth_consumer_v1::PRINTING_V1
+            || state.etali_commit_receipts_v1
+                && source.card_def == crate::etali_primal_storm_public_v1::PRINTING
             || state.curator_unordered_reveal_v1
                 && source.card_def == crate::curator_public_v1::PRINTING
             || state.greatwurm_commit_receipts_v1
@@ -669,6 +683,9 @@ pub(crate) fn stack_source_reference(
         );
     let harvester = state.harvester_commit_receipts_v1 && source.card_def == crate::harvester_public_v1::PRINTING
         && crate::harvester_receipts_v1::selected(item);
+    let etali = state.etali_commit_receipts_v1
+        && source.card_def == crate::etali_primal_storm_public_v1::PRINTING
+        && crate::etali_primal_storm_receipts_v1::selected(item);
     let kykar = crate::effect::kykar_v1::item_selected(state, item);
     let sphinx_lore = crate::effect::sphinx_lore_v1::selected(state, item);
     if !selected_source(source)
@@ -676,6 +693,7 @@ pub(crate) fn stack_source_reference(
         && !sphinx_lore
         && !greatwurm
         && !harvester
+        && !etali
         && !artist_trigger
         && !drakuseth_trigger
         && !niv_trigger
@@ -754,12 +772,16 @@ pub(crate) fn pending_source_reference(
             pending.effect,
             crate::effect::EffectOp::GreatwurmCountersV1 { .. }
         );
+    let etali = state.etali_commit_receipts_v1
+        && source.card_def == crate::etali_primal_storm_public_v1::PRINTING
+        && pending.effect == crate::effect::EffectOp::ExileTopEachPlayerThenCastV1;
     let kykar = crate::effect::kykar_v1::definition(source.card_def)
         && crate::effect::kykar_v1::recipe(&pending.effect);
     if !selected_source(source)
         && !kykar
         && !sphinx_lore
         && !greatwurm
+        && !etali
         && !artist_trigger
         && !drakuseth_trigger
         && !niv_trigger
@@ -866,6 +888,7 @@ pub(crate) fn observe_parts_v75(
             LimitedAppendixV1::SphinxLore => crate::sphinx_lore_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Greatwurm => crate::greatwurm_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Harvester => crate::harvester_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Etali => crate::etali_primal_storm_consumer_v1::OBSERVATION_SCHEMA,
         }
         .into(),
         producer_sha256: producer_sha256(),
@@ -1045,6 +1068,10 @@ pub(crate) fn observe_parts_v75(
         harvester: (appendix == LimitedAppendixV1::Harvester)
             .then(|| crate::harvester_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
             .transpose().map_err(RlContractError)?,
+        etali: (appendix == LimitedAppendixV1::Etali)
+            .then(|| crate::etali_primal_storm_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -1089,6 +1116,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         &value.sphinx_lore,
         &value.greatwurm,
         &value.harvester,
+        &value.etali,
     ) {
         (
             Some(artist),
@@ -1099,6 +1127,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             Some(zimone),
             Some(omniscience),
             Some(tutelage),
+            None,
             None,
             None,
             None,
@@ -1150,6 +1179,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
             crate::artist_consumer_v1::OBSERVATION_SCHEMA
@@ -1157,6 +1187,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         (
             None,
             Some(niv),
+            None,
             None,
             None,
             None,
@@ -1202,6 +1233,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
                 .map_err(RlContractError)?;
@@ -1212,6 +1244,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             Some(facts),
+            None,
             None,
             None,
             None,
@@ -1255,6 +1288,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::embercleave_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
@@ -1267,6 +1301,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             Some(facts),
+            None,
             None,
             None,
             None,
@@ -1308,6 +1343,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::omniscience_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
@@ -1322,6 +1358,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             Some(facts),
+            None,
             None,
             None,
             None,
@@ -1361,6 +1398,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::moon_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::moon_consumer_v1::OBSERVATION_SCHEMA
@@ -1387,12 +1425,14 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::leyline_axe_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::leyline_axe_consumer_v1::OBSERVATION_SCHEMA
         }
         (
+            None,
             None,
             None,
             None,
@@ -1437,6 +1477,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::progenitus_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::progenitus_consumer_v1::OBSERVATION_SCHEMA
@@ -1454,6 +1495,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             Some(facts),
+            None,
             None,
             None,
             None,
@@ -1489,6 +1531,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::lathril_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::lathril_consumer_v1::OBSERVATION_SCHEMA
@@ -1508,6 +1551,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             Some(facts),
+            None,
             None,
             None,
             None,
@@ -1544,6 +1588,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::edict_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::edict_consumer_v1::OBSERVATION_SCHEMA
@@ -1565,6 +1610,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             Some(facts),
+            None,
             None,
             None,
             None,
@@ -1596,6 +1642,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             None,
+            None,
         ) => {
             crate::curator_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::curator_consumer_v1::OBSERVATION_SCHEMA
@@ -1619,6 +1666,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
             Some(facts),
+            None,
             None,
             None,
             None,
@@ -1648,6 +1696,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             Some(facts),
             None,
             None,
+            None,
         ) => {
             crate::sphinx_lore_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
@@ -1675,13 +1724,41 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             Some(facts),
             None,
+            None,
         ) => {
             crate::greatwurm_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::greatwurm_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts)) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None) => {
             crate::harvester_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::harvester_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+        ) => {
+            crate::etali_primal_storm_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::etali_primal_storm_consumer_v1::OBSERVATION_SCHEMA
         }
         _ => return Err(RlContractError("mixed appendix profiles".into())),
     };
