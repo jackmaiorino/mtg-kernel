@@ -486,11 +486,19 @@ pub(crate) fn stack_source_reference(
         && item.inline_effect.as_ref() == Some(&crate::standard_cards_v1::drakuseth_attack_v1());
     let embercleave_attachment = source.card_def == crate::embercleave_consumer_v1::PRINTING_V1
         && item.v4.granted_by.is_none()
-        && matches!(item.kind, crate::state::StackItemKind::ActivatedAbility
-            | crate::state::StackItemKind::TriggeredAbility)
-        && item.inline_effect.as_ref()
+        && matches!(
+            item.kind,
+            crate::state::StackItemKind::ActivatedAbility
+                | crate::state::StackItemKind::TriggeredAbility
+        )
+        && item
+            .inline_effect
+            .as_ref()
             .is_some_and(crate::embercleave_consumer_v1::is_attachment_program);
-    if !selected_source(source) && !artist_trigger && !drakuseth_trigger && !niv_trigger
+    if !selected_source(source)
+        && !artist_trigger
+        && !drakuseth_trigger
+        && !niv_trigger
         && !embercleave_attachment
     {
         return Ok(None);
@@ -541,7 +549,10 @@ pub(crate) fn pending_source_reference(
     let embercleave_attachment = source.card_def == crate::embercleave_consumer_v1::PRINTING_V1
         && pending.granted_by.is_none()
         && crate::embercleave_consumer_v1::is_attachment_program(&pending.effect);
-    if !selected_source(source) && !artist_trigger && !drakuseth_trigger && !niv_trigger
+    if !selected_source(source)
+        && !artist_trigger
+        && !drakuseth_trigger
+        && !niv_trigger
         && !embercleave_attachment
     {
         return Ok(None);
@@ -731,7 +742,8 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA
         }
         (None, None, None, None, Some(facts)) => {
-            crate::embercleave_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::embercleave_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
             crate::embercleave_consumer_v1::OBSERVATION_SCHEMA
         }
         (None, None, None, None, None) => SCHEMA,

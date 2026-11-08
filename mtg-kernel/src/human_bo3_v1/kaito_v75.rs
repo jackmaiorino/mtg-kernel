@@ -307,15 +307,26 @@ pub(super) fn choice_label(
         use crate::embercleave_consumer_v1::ActionV1;
         use crate::embercleave_public_v65::AbilityKindV65;
         return Ok(Some(match embercleave {
-            ActionV1::CastQuote { generic_due_now, retained_red_pips, .. } => {
+            ActionV1::CastQuote {
+                generic_due_now,
+                retained_red_pips,
+                ..
+            } => {
                 format!("Cast Embercleave (current printed quote {generic_due_now} generic, {retained_red_pips} red)")
             }
-            ActionV1::ActivateEquip { printed_generic_cost } => {
+            ActionV1::ActivateEquip {
+                printed_generic_cost,
+            } => {
                 format!("Activate Embercleave equip {printed_generic_cost}")
             }
             ActionV1::AttachTarget { kind, .. } => {
-                let ActionSemanticV1::ChooseTarget { target: TargetRefV1::Object { object }, .. } = a
-                    else { return Err(Error::InvalidVisibleReference) };
+                let ActionSemanticV1::ChooseTarget {
+                    target: TargetRefV1::Object { object },
+                    ..
+                } = a
+                else {
+                    return Err(Error::InvalidVisibleReference);
+                };
                 let route = match kind {
                     AbilityKindV65::EntryAttach => "entry attachment",
                     AbilityKindV65::Equip => "equip",
@@ -722,7 +733,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::drakuseth_consumer_v1::capture(facts, &mut handles, &mut roles))
         .transpose()?;
-    let embercleave = obs.embercleave.as_ref()
+    let embercleave = obs
+        .embercleave
+        .as_ref()
         .map(|facts| super::embercleave_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
     let action_meanings = indexes
