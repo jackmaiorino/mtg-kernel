@@ -1146,13 +1146,12 @@ fn nishoba_life_trigger_uses_damage_time_abilities_even_after_lethal_damage() {
         let nishoba = put(&mut state, P0, "Phantom Nishoba", Zone::Battlefield);
         state.objects.get_mut(nishoba).counters.plus1_plus1 = 7;
         let other = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
-        state
-            .engine
-            .until_end_of_turn
-            .push(engine::UntilEndOfTurnEffect::DamageCannotBePrevented {
+        state.engine.until_end_of_turn.push(
+            engine::UntilEndOfTurnEffect::DamageCannotBePrevented {
                 timestamp: 1_000_000,
                 duration: engine::EffectDuration::EndOfTurn,
-            });
+            },
+        );
         event::propose_and_commit_batch(
             &mut state,
             vec![
@@ -1168,7 +1167,10 @@ fn nishoba_life_trigger_uses_damage_time_abilities_even_after_lethal_damage() {
         state.engine.pending_triggers.extend(triggers);
         settled(&mut state);
         assert_eq!(state.players[P1.index()].life, 13);
-        assert_eq!(state.players[P0.index()].life, if suppressed { 20 } else { 27 });
+        assert_eq!(
+            state.players[P0.index()].life,
+            if suppressed { 20 } else { 27 }
+        );
     }
 }
 
