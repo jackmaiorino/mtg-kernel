@@ -214,6 +214,100 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
         leaf.get(index - start)
     }
 
+    /// Exact logical prefix equality. Shared immutable subtrees are skipped in
+    /// one step; only unshared leaf segments compare their values. `Eq` is
+    /// required because identity cannot prove non-reflexive `PartialEq` values
+    /// (for example NaN) equal. No contiguous storage is materialized.
+    pub(crate) fn common_prefix_len(&self, other: &Self) -> usize
+    where
+        T: Eq,
+    {
+        self.common_prefix_len_inner(other, || {})
+    }
+
+    // The callback lets tests measure traversal work as well as value compares:
+    // counting only compares would miss an accidental walk over shared leaves.
+    fn common_prefix_len_inner(&self, other: &Self, mut visit: impl FnMut()) -> usize
+    where
+        T: Eq,
+    {
+        if self.editable || other.editable {
+            return self.iter().zip(other.iter()).take_while(|(a, b)| a == b).count();
+        }
+        let limit = self.len().min(other.len());
+        if limit == 0 {
+            return 0;
+        }
+        fn height<T: Clone, const C: usize>(mut node: &Node<T, C>) -> usize {
+            let mut height = 0;
+            while let Body::Branch(children) = &node.body {
+                height += 1;
+                node = &children[0];
+            }
+            height
+        }
+        fn expand<T: Clone, const C: usize>(
+            frontier: &mut Vec<(&Arc<Node<T, C>>, usize, usize, usize)>,
+        ) {
+            let (node, height, start, end) = frontier.pop().expect("nonempty frontier");
+            let Body::Branch(children) = &node.body else {
+                unreachable!("only branch frontiers expand");
+            };
+            let mut child_end = node.len;
+            for child in children.iter().rev() {
+                let child_start = child_end - child.len;
+                let from = start.max(child_start);
+                let to = end.min(child_end);
+                if from < to {
+                    frontier.push((child, height - 1, from - child_start, to - child_start));
+                }
+                child_end = child_start;
+            }
+        }
+        let a = self.root.as_ref().expect("nonempty tree");
+        let b = other.root.as_ref().expect("nonempty tree");
+        let mut left = vec![(a, height(a), 0, limit)];
+        let mut right = vec![(b, height(b), 0, limit)];
+        let mut matched = 0;
+        while matched < limit {
+            visit();
+            let (a, a_height, a_start, a_end) = *left.last().expect("left prefix remaining");
+            let (b, b_height, b_start, b_end) = *right.last().expect("right prefix remaining");
+            let count = (a_end - a_start).min(b_end - b_start);
+            if !(Arc::ptr_eq(a, b) && a_start == b_start) {
+                // Expanding both sides blindly would discard a shared subtree
+                // when one root has grown or a prefix root has collapsed.
+                if a_height != 0 || b_height != 0 {
+                    if a_height >= b_height && a_height != 0 {
+                        expand(&mut left);
+                    }
+                    if b_height >= a_height && b_height != 0 {
+                        expand(&mut right);
+                    }
+                    continue;
+                }
+                let (Body::Leaf(a_values), Body::Leaf(b_values)) = (&a.body, &b.body) else {
+                    unreachable!("height zero is a leaf");
+                };
+                for offset in 0..count {
+                    if a_values[a_start + offset] != b_values[b_start + offset] {
+                        return matched + offset;
+                    }
+                }
+            }
+            matched += count;
+            left.pop();
+            right.pop();
+            if a_start + count < a_end {
+                left.push((a, a_height, a_start + count, a_end));
+            }
+            if b_start + count < b_end {
+                right.push((b, b_height, b_start + count, b_end));
+            }
+        }
+        matched
+    }
+
     pub(crate) fn prefix(&self, len: usize) -> Self {
         let len = len.min(self.len());
         if self.editable {
@@ -525,6 +619,104 @@ mod tests {
             (Bound::Unbounded, Bound::Included(3)),
             (Bound::Excluded(usize::MAX), Bound::Unbounded)] {
             assert!(std::panic::catch_unwind(|| { tree.range(bounds); }).is_err());
+        }
+    }
+
+    #[test]
+    fn common_prefix_matches_vec_at_boundaries_and_divergences() {
+        fn expected(a: &[usize], b: &[usize]) -> usize {
+            a.iter().zip(b).take_while(|(a, b)| a == b).count()
+        }
+        for len in [0, 1, 63, 64, 65, 2047, 2048, 2049, 65536, 65537] {
+            let values: Vec<_> = (0..len).collect();
+            let tree = SharedSequence::<_, 3>::from_vec(values.clone(), kind);
+            let mut separate = SharedSequence::<_, 3>::new(kind);
+            for value in &values { separate.push(*value); }
+            assert_eq!(tree.common_prefix_len(&tree.clone()), len);
+            assert_eq!(tree.common_prefix_len(&separate), len);
+            for cut in [0, 1, 63, 64, 65, 2047, 2048, 2049, len / 2, len, len + 1] {
+                let cut = cut.min(len);
+                let prefix = tree.prefix(cut);
+                assert_eq!(tree.common_prefix_len(&prefix), cut);
+                assert_eq!(prefix.common_prefix_len(&tree), cut);
+                // Appending at a cut replaces only the bounded last leaf, and
+                // can grow a root after prefix() has collapsed its ancestors.
+                let mut fork = prefix.clone();
+                let mut altered = values[..cut].to_vec();
+                for value in [usize::MAX, 1, 2, 3, 4] {
+                    fork.push(value);
+                    altered.push(value);
+                }
+                let common = expected(&values, &altered);
+                assert_eq!(tree.common_prefix_len(&fork), common);
+                assert_eq!(fork.common_prefix_len(&tree), common);
+                let unshared = SharedSequence::<_, 3>::from_vec(altered, kind);
+                assert_eq!(tree.common_prefix_len(&unshared), common);
+            }
+        }
+    }
+
+    #[test]
+    fn common_prefix_reads_cold_edits_exactly_before_and_after_repack() {
+        let tree = SharedSequence::<_, 3>::from_vec((0..4099).collect(), kind);
+        let mut edited = tree.clone();
+        // A clean materialization must not become the authority for a tree
+        // comparison, nor prevent the identity shortcut.
+        assert_eq!(edited.as_vec().len(), tree.len());
+        assert_eq!(tree.common_prefix_len(&edited), tree.len());
+        edited.as_mut_vec()[2048] = 7777;
+        for _ in 0..2 {
+            assert_eq!(tree.common_prefix_len(&edited), 2048);
+            assert_eq!(edited.common_prefix_len(&tree), 2048);
+            assert_eq!(edited.common_prefix_len(&edited), edited.len());
+            edited.repack();
+        }
+        edited.as_mut_vec().truncate(64);
+        assert_eq!(tree.common_prefix_len(&edited), 64);
+        edited.as_mut_vec().clear();
+        assert_eq!(edited.common_prefix_len(&tree), 0);
+        assert_eq!(tree.common_prefix_len(&edited), 0);
+    }
+
+    #[derive(Clone)]
+    struct Compared { value: usize, comparisons: Arc<AtomicUsize> }
+    impl PartialEq for Compared {
+        fn eq(&self, other: &Self) -> bool {
+            self.comparisons.fetch_add(1, Ordering::Relaxed);
+            self.value == other.value
+        }
+    }
+    impl Eq for Compared {}
+
+    #[test]
+    fn shared_prefix_skips_whole_subtrees_not_just_equal_leaves() {
+        let comparisons = Arc::new(AtomicUsize::new(0));
+        let len = 262147;
+        let tree = SharedSequence::<_, 0>::from_vec((0..len).map(|value| Compared {
+            value, comparisons: comparisons.clone(),
+        }).collect(), |_| panic!("zero-count sequence must not classify values"));
+        let mut visits = 0;
+        assert_eq!(tree.common_prefix_len_inner(&tree.clone(), || visits += 1), len);
+        assert_eq!(visits, 1);
+        assert_eq!(comparisons.load(Ordering::Relaxed), 0);
+        for cut in [1, 63, 64, 2047, 2048, 2049, 65535, 65536, 65537, len - 1, len] {
+            let prefix = tree.prefix(cut);
+            let mut appended = prefix.clone();
+            appended.push(Compared { value: usize::MAX, comparisons: comparisons.clone() });
+            for (left, right, expected) in [
+                (&tree, &prefix, cut), (&prefix, &tree, cut),
+                (&tree, &appended, cut), (&appended, &tree, cut),
+                (&prefix, &appended, cut), (&appended, &prefix, cut),
+            ] {
+                comparisons.store(0, Ordering::Relaxed);
+                let mut visits = 0;
+                assert_eq!(left.common_prefix_len_inner(right, || visits += 1), expected);
+                assert!(comparisons.load(Ordering::Relaxed) <= LEAF, "cut={cut}");
+                // This is far below the >4096 leaf visits a leaf-by-leaf
+                // identity traversal would need for the long shared prefix.
+                assert!(visits <= 4 * FANOUT, "cut={cut}, visited={visits}");
+                assert!(left.flat.get().is_none() && right.flat.get().is_none());
+            }
         }
     }
 }

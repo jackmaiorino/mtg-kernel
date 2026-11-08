@@ -1069,6 +1069,10 @@ impl EventHistoryV1 {
 
     pub fn len(&self) -> usize { self.events.len() }
     pub fn is_empty(&self) -> bool { self.events.is_empty() }
+    /// Exact prefix equality, skipping shared immutable history subtrees.
+    pub fn common_prefix_len_v2(&self, other: &Self) -> usize {
+        self.events.common_prefix_len(&other.events)
+    }
     pub fn iter(&self) -> EventHistoryIterV2<'_> {
         EventHistoryIterV2 { inner: self.events.iter() }
     }
@@ -1348,7 +1352,7 @@ impl<'a> IntoIterator for &'a mut EventHistoryV1 {
 // the events, so they never enter a comparison, hash, print or record.
 impl PartialEq for EventHistoryV1 {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().eq(other.iter())
+        self.len() == other.len() && self.common_prefix_len_v2(other) == self.len()
     }
 }
 

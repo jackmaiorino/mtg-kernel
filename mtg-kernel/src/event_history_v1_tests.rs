@@ -112,6 +112,26 @@ fn logical_ranges_and_shared_prefixes_preserve_vec_observations() {
     assert_eq!(history.get(63..65), Some(&[tap(63), upkeep()][..]));
 }
 
+#[test]
+fn history_common_prefix_and_equality_follow_exact_events_after_cold_edits() {
+    let original = EventHistoryV1::from((0..4165).map(tap).collect::<Vec<_>>());
+    let mut fork = original.prefix_v1(2049);
+    assert_eq!(original.common_prefix_len_v2(&fork), 2049);
+    assert_eq!(fork.common_prefix_len_v2(&original), 2049);
+    assert_ne!(original, fork);
+    fork.push(upkeep());
+    assert_eq!(original.common_prefix_len_v2(&fork), 2049);
+    let mut copy = original.clone();
+    assert_eq!(original, copy);
+    copy[64] = upkeep();
+    assert_eq!(original.common_prefix_len_v2(&copy), 64);
+    assert_ne!(original, copy);
+    copy[64] = tap(64);
+    assert_eq!(original, copy);
+    copy.push(upkeep());
+    assert_eq!(copy.common_prefix_len_v2(&original), original.len());
+}
+
 /// Every byte a value feeds a hasher, so two values can be compared on the
 /// exact calls their `Hash` makes.
 #[derive(Default)]
