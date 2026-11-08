@@ -11,7 +11,7 @@ import subprocess
 import time
 import numpy as np
 
-from prepare_postboard_qualification_v1 import BASE, REPO, read, write, pin
+from prepare_postboard_qualification_v1 import BASE, REPO, read, read_pinned_checkpoint, write, pin
 from postboard_bo3_qualification_v1 import execute, seed
 from run_postboard_pilot_v1 import verify_pin
 from g115_opponent_profile_v1 import checkpoint_metadata
@@ -142,7 +142,8 @@ def endpoint(root,m,arm):
     if arm=='g115':return m['initial_source']
     a=read(root/arm/'training-audit.json');assert a['complete'] and a['updates']==200
     assert a['source']['checkpoint']['path'].replace('\\','/').endswith('/iterations/000199/attempt-000000/update/checkpoint.json')
-    c=read(verify_pin(a['source']['checkpoint']));assert c['adam_step']==32600 and c['state_sha256']==a['full_model_state_sha256']
+    checkpoint = read_pinned_checkpoint(a['source']['checkpoint'])
+    assert checkpoint['adam_step'] == 32600 and checkpoint['state_sha256'] == a['full_model_state_sha256']
     return a['source']
 
 
@@ -202,7 +203,9 @@ def evaluate(root,arms):
 def audit_training(root,m,arm):
     config=read(verify_pin(m['training_configs'][arm]));run=root/arm/'run';final=read(run/'completion.json')
     assert final['complete'] and final['completed_iterations']==200 and final['gpu_ordinal']==1 and final['loss_identity']=='gae_advantage_value/v1'
-    source=config['initial_source'];state=read(verify_pin(source['checkpoint']))['state_sha256'];natural=decisions=additional=0
+    source = config['initial_source']
+    state = read_pinned_checkpoint(source['checkpoint'])['state_sha256']
+    natural = decisions = additional = 0
     for i,batch in enumerate(config['iterations']):
         receipt=read(run/'iterations'/f'{i:06}'/'complete.json');assert receipt['source']==source
         update=read(verify_pin(receipt['update']));collection=read(verify_pin(receipt['collection']))
@@ -223,7 +226,8 @@ def audit_training(root,m,arm):
             natural+=1;decisions+=terminal['physical_decision_count'];additional+=expected['registered'][expected['learner_seat']]['label'].startswith('published-')
         source=dict(config['initial_source'],checkpoint=update['checkpoint']);state=update['after_state_sha256']
     assert natural==2000 and additional==(1000 if arm=='broader' else 0) and final['source']==source
-    checkpoint=read(verify_pin(source['checkpoint']));assert checkpoint['adam_step']==32600 and checkpoint['state_sha256']==state
+    checkpoint = read_pinned_checkpoint(source['checkpoint'])
+    assert checkpoint['adam_step'] == 32600 and checkpoint['state_sha256'] == state
     assert {k:checkpoint[k] for k in ('gamma_bits','gae_lambda_bits','entropy_coefficient_bits','learning_rate_bits','value_coefficient_bits')}=={
         'gamma_bits':1065353216,'gae_lambda_bits':1063675494,'entropy_coefficient_bits':0,'learning_rate_bits':953267991,'value_coefficient_bits':1056964608}
     result={'complete':True,'updates':200,'natural_games':natural,'additional_learner_games':additional,'physical_decisions':decisions,
