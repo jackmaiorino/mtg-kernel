@@ -42,7 +42,7 @@ reusable evidence only for the mechanics they actually exercise.
 | Loot, Exuberant Explorer | Native: effect/loot_v1 | Complete stack; current land allowance, private top-six selection and random-bottom boundary |
 | Kykar, Zephyr Awakener | Appendix: kykar_public_v1 | Finite owner, Human, JSONL and sealed numeric source; original mode/target references, exact Spirit meaning and original exile schedules. Native qualification pending |
 | Quilled Greatwurm | Appendix: greatwurm_public_v1 | Finite owner, Human, JSONL and sealed numeric source. Original combat amount, actual placement and exact six-counter graveyard payment. Native qualification and event-sample harvest pending |
-| Sphinx of Forgotten Lore | Native: effect/sphinx_lore_v1 | Complete stack; original attack target, temporary flashback grant and actual cast/payment route |
+| Sphinx of Forgotten Lore | Appendix: sphinx_lore_public_v1 | Finite owner, Human, JSONL and numeric source; original attack target, exact-incarnation temporary flashback, native printed/granted costs. Native qualification pending |
 | Omniscience | Native: engine/omniscience_cast_v1 | Complete stack; optional free hand casting and its restrictions, original route and remaining costs |
 | Abyssal Harvester | Native: effect/harvester_v1 | Complete stack; this-turn graveyard eligibility, exact exile, Nightmare copy and other-token exile batch |
 | Progenitus | Native: progenitus_v1 | Complete stack; protection from everything and actual reveal/shuffle replacement from hidden and public zones |
@@ -320,12 +320,13 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `2e804e92ac9b65a37f506f1306391cf9f10329b0` covers
-30 of the 36 Partial booster printings in twenty finite profiles: Return (3),
+The source candidate at `59924e865` covers
+32 of the 36 Partial booster printings in twenty-two finite profiles: Return (3),
 V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
 Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), Moon (1), and
 Leyline Axe (1), Progenitus (1), Aberration (1), Lathril (1), and
-Electroduplicate (1), Blasphemous Edict (1), Loot (1), Curator (1), and Kykar (1). Six original Partial consumer
+Electroduplicate (1), Blasphemous Edict (1), Loot (1), Curator (1), Kykar (1),
+Sphinx of Forgotten Lore (1), and Quilled Greatwurm (1). Four original Partial consumer
 gaps remain. Catalog tiers are unchanged.
 This is source coverage; the complete composition is not natively qualified.
 
@@ -512,7 +513,7 @@ None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
-consumer fixtures before building all twenty individual-profile binaries and
+consumer fixtures before building all twenty-two individual-profile binaries and
 the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
 `leyline_axe_consumer_v1::tests::`, `leyline_axe_v1::tests::`,
@@ -524,6 +525,8 @@ the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `loot_consumer_v1::tests::`, `effect::loot_v1::tests::`,
 `curator_consumer_v1::tests::`, `effect::curator_v1::tests::`,
 `kykar_consumer_v1::tests::`, `effect::kykar_v1::tests::`,
+`sphinx_lore_consumer_v1::tests::`, `effect::sphinx_lore_v1::tests::`,
+`greatwurm_consumer_v1::tests::`, `effect::greatwurm_v1::tests::`,
 `rl::complete_copy_prefix_scope_tests::`,
 `niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
 `drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
@@ -545,7 +548,22 @@ mode/target indices, source departure, Spirit meaning, physical owner and
 one-shot end-step collection. A ceased token is absent from current exile facts;
 later incarnations cannot establish an original return. Both retain actual
 paid native fixtures and hidden-pair, Human/wire, restore and stale-action tests.
-The two new profiles are source-reviewed but have not compiled or run.
+These profiles are source-reviewed but have not compiled or run.
+
+Sphinx's reviewed source `7a489b208` retains original attack and graveyard
+incarnations, real cleanup expiration, each native printed/granted cost route
+and its finalized method. Historical grants and attacks do not consult a later
+concealed incarnation's printing. Paid both-seat attack, source death,
+two-versus-three-mana Think Twice routes, fizzle, paired hidden source/target,
+Human/wire/numeric index and restore fixtures remain unrun.
+Greatwurm's reviewed source `8725bd9aa` binds six actual counter debits and
+original combat placement. Native dispatch distinguishes countered, gone,
+zero and positive placement; a terminal edit cannot substitute another branch.
+Face-down payments retain the neutral public printing, including after serde
+restore. Wide/stolen debit, genuinely paid graveyard recast and combat fixtures
+remain unrun. Its new event kind is appended at 318; earlier Edict 316 and
+Curator 317 stay fixed. A genuine Greatwurm receipt sample is still required.
+The combined thirty-two source has not been formatted, compiled or executed.
 
 The bounded learner pilot still selects Return. No Mixed learner, all-286
 fair-search run, training/evaluation result or Full promotion is qualified.
