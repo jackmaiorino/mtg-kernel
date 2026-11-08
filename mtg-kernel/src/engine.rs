@@ -29143,6 +29143,7 @@ fn push_paid_activation(
         crate::eternal_sideboard_s1d_v1::statics::activation_paid(
             state,
             pending.source,
+            pending.controller,
             pending.ability_index,
         );
     }

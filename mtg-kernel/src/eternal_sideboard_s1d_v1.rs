@@ -1194,19 +1194,30 @@ pub(crate) mod statics {
     /// Martyr of Sands: the cost "Reveal X white cards from your hand" is
     /// paid as the ability is put on the stack. The revealed cards are the
     /// first X white cards in the hand's order.
-    pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_index: u8) {
+    pub(crate) fn activation_paid(
+        state: &mut GameState,
+        source: ObjectId,
+        controller: PlayerId,
+        ability_index: u8,
+    ) {
         if definition_name(state, source) != Some(MARTYR_OF_SANDS) {
             return;
         }
-        let owner = state.objects.get(source).controller;
-        let revealed = white_cards_in_hand(state, owner)
+        let revealed = white_cards_in_hand(state, controller)
             .into_iter()
             .take(usize::from(ability_index) + 1)
             .collect::<Vec<_>>();
-        for card in revealed {
+        for &card in &revealed {
+            let card_def = state.objects.get(card).card_def;
+            let same_name = revealed
+                .iter()
+                .filter(|&&object| state.objects.get(object).card_def == card_def)
+                .count();
             // spellbench-public-reveal: Martyr of Sands reveals the cards to
             // pay its cost.
-            let _ = state.reveal_hand_card(owner.opponent(), owner, card);
+            state
+                .record_hand_reveal(controller.opponent(), controller, card, Some(same_name))
+                .expect("Martyr's cost reveals cards still in the payer's hand");
         }
     }
 }

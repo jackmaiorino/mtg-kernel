@@ -1219,6 +1219,34 @@ fn martyr_of_sands_gains_three_life_per_white_card_revealed() {
     assert_eq!(zone(&state, martyr), Zone::Graveyard);
 }
 
+#[test]
+fn martyr_of_sands_reveals_distinct_copies_from_the_activation_payer() {
+    let mut state = plains();
+    state.enable_hand_knowledge_by_name_v2();
+    let martyr = put(&mut state, P1, "Martyr of Sands", Zone::Battlefield);
+    state.players[P1.index()]
+        .battlefield
+        .retain(|&object| object != martyr);
+    state.players[P0.index()].battlefield.push(martyr);
+    state.objects.get_mut(martyr).controller = P0;
+    let first = put(&mut state, P0, "Thraben Inspector", Zone::Hand);
+    let second = put(&mut state, P0, "Thraben Inspector", Zone::Hand);
+    put(&mut state, P1, "Kor Skyfisher", Zone::Hand);
+    pool(&mut state, P0, &[], 1);
+
+    activate(&mut state, martyr, 1, &[]);
+
+    let known = state.known_hand_cards(P1, P0);
+    assert_eq!(
+        known.iter().map(|entry| entry.object).collect::<Vec<_>>(),
+        vec![first, second]
+    );
+    assert!(state.known_hand_cards(P0, P1).is_empty());
+    settled(&mut state);
+    assert_eq!(life(&state, P0), 26);
+    assert!(state.players[P1.index()].graveyard.contains(&martyr));
+}
+
 // ---- Foot Ninjas -------------------------------------------------------------------
 
 #[test]
